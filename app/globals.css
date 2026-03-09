@@ -1,0 +1,402 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f3f6fa;
+  --fg: #0f172a;
+  --muted: #64748b;
+  --border: #d6dde8;
+  --brand: #1359a2;
+  --brand-soft: #deebfa;
+  --success: #198754;
+  --danger: #b42318;
+  --warning: #b46a00;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at 8% 8%, #f9fbff 0%, var(--bg) 48%, #edf2f8 100%);
+  color: var(--fg);
+  font-family: "Avenir", "Avenir Next", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+main {
+  min-height: 100svh;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.7rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+th {
+  font-weight: 700;
+  color: #334155;
+}
+
+.portal-theme {
+  --bg: #ffffff;
+  --fg: #4e4e4e;
+  --muted: #8099b6;
+  --border: #d9d8d6;
+  --brand: #1b3e93;
+  --brand-soft: #d4eefc;
+  --success: #99cc33;
+}
+
+.portal-theme aside {
+  background: #1b3e93 !important;
+  color: #ffffff !important;
+  border-color: #d9d8d6 !important;
+}
+
+.portal-theme aside > div:first-child {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.portal-theme aside > div:first-child a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.portal-theme aside > div:first-child a::before {
+  content: "";
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #fff url('/memory-lane-logo.png') center/contain no-repeat;
+  display: inline-block;
+}
+
+.portal-theme table {
+  background: #ffffff;
+  border: 1px solid #d9d8d6;
+}
+
+.portal-theme th,
+.portal-theme td {
+  border-bottom: 1px solid #d9d8d6;
+  color: #4e4e4e;
+}
+
+.portal-theme th {
+  background: #8099b6;
+  color: #ffffff;
+}
+
+.portal-theme input:focus,
+.portal-theme select:focus,
+.portal-theme textarea:focus {
+  outline: 2px solid #8099b6 !important;
+  border-color: #8099b6 !important;
+  box-shadow: 0 0 0 2px rgba(128, 153, 182, 0.2) !important;
+}
+
+.face-sheet-page {
+  background: #ffffff;
+  color: #111111;
+  border: 1px solid #c8ced6;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.face-sheet-heading {
+  margin: 0 0 0.45rem;
+  font-size: 0.95rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid #d5dbe4;
+  padding-bottom: 0.25rem;
+}
+
+.face-sheet-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.face-sheet-table th,
+.face-sheet-table td {
+  border: 1px solid #d5dbe4;
+  padding: 0.35rem 0.45rem;
+  text-align: left;
+  font-size: 0.8rem;
+  white-space: normal;
+}
+
+.face-sheet-table th {
+  background: #eef2f8;
+  color: #111111;
+  font-weight: 700;
+}
+
+.diet-card-page {
+  background: #ffffff;
+  color: #111111;
+  border: 1px solid #c8ced6;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.name-badge-page {
+  background: #ffffff;
+  color: #111111;
+  border: 1px solid #c8ced6;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.name-badge-preview {
+  position: relative;
+  width: 100mm;
+  height: 85mm;
+  margin: 0 auto;
+  border: 1px solid #d1d8e3;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 8mm 7mm 7mm;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+}
+
+.name-badge-logo {
+  width: 42mm;
+  height: auto;
+  object-fit: contain;
+}
+
+.name-badge-member-name {
+  margin: 7mm 0 1.5mm;
+  line-height: 1.1;
+  font-size: 7.2mm;
+  font-weight: 700;
+  color: #1f2937;
+  text-align: center;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.name-badge-locker {
+  margin: 0;
+  font-size: 6mm;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #1b3e93;
+}
+
+.name-badge-divider {
+  margin-top: auto;
+  width: 100%;
+  border-top: 1.5px solid #1b3e93;
+}
+
+.name-badge-icons {
+  margin-top: 3mm;
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 2.2mm;
+  min-height: 13mm;
+}
+
+.name-badge-icon-item {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4mm;
+}
+
+.name-badge-icon {
+  width: 9.5mm;
+  height: 9.5mm;
+  object-fit: contain;
+}
+
+.name-badge-icon-label {
+  font-size: 1.9mm;
+  line-height: 1;
+  font-weight: 700;
+  color: #1f2937;
+  letter-spacing: 0.02em;
+}
+
+.name-badge-icon-fallback {
+  width: 12mm;
+  height: 11mm;
+  border: 1px solid #1b3e93;
+  color: #1b3e93;
+  font-size: 1.9mm;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+}
+
+.name-badge-empty-icons {
+  margin: 0;
+  font-size: 3.1mm;
+  color: #6b7280;
+}
+
+.name-badge-star {
+  position: absolute;
+  font-size: 5mm;
+  color: rgba(27, 62, 147, 0.25);
+  line-height: 1;
+}
+
+.name-badge-star-left {
+  left: 4mm;
+  top: 3.6mm;
+}
+
+.name-badge-star-right {
+  right: 4mm;
+  top: 3.6mm;
+}
+
+.diet-card-sheet {
+  width: 100%;
+  max-width: 8in;
+  min-height: 4.9in;
+  border: 1.5px solid #111111;
+  border-radius: 6px;
+  padding: 0.65in 0.55in;
+  background: #ffffff;
+}
+
+.diet-card-grid {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.diet-card-row {
+  display: grid;
+  gap: 0.25rem;
+  grid-template-columns: 180px 1fr;
+  border-bottom: 1px solid #d5dbe4;
+  padding-bottom: 0.35rem;
+}
+
+.diet-card-row dt {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #111111;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.diet-card-row dd {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #111111;
+}
+
+.diet-card-row-notes {
+  min-height: 1.25in;
+  align-items: start;
+}
+
+@page {
+  size: letter portrait;
+  margin: 0.45in;
+}
+
+@media print {
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  .portal-shell {
+    display: block !important;
+    max-width: none !important;
+    gap: 0 !important;
+    padding: 0 !important;
+  }
+
+  .portal-shell aside,
+  .portal-shell main > div:first-child,
+  .print-hide {
+    display: none !important;
+  }
+
+  .portal-shell main {
+    min-height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .face-sheet-page {
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .face-sheet-section {
+    page-break-inside: avoid;
+  }
+
+  .diet-card-page {
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .diet-card-sheet {
+    page-break-inside: avoid;
+    border-radius: 0 !important;
+  }
+
+  .name-badge-page {
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .name-badge-preview {
+    border: 1px solid #111 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+  }
+}

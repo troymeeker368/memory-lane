@@ -1,0 +1,568 @@
+﻿{
+    "source":  {
+                   "operationsWarehouse":  "Operations Warehouse (3).xlsx",
+                   "leadsPipeline":  "Leads Pipeline (1).xlsx",
+                   "bloodSugar":  "Blood Sugar Results.xlsx",
+                   "masterMar":  "Master MAR 2025 (1).xlsx",
+                   "generatedAt":  "2026-03-07T11:15:16"
+               },
+    "counts":  {
+                   "staff":  14,
+                   "members":  45,
+                   "participation":  3158,
+                   "toilet":  2412,
+                   "shower":  208,
+                   "transportation":  1975,
+                   "ancillary":  63,
+                   "photos":  998,
+                   "timeClock":  38,
+                   "leads":  139,
+                   "leadActivities":  22,
+                   "referralSources":  382,
+                   "partners":  268,
+                   "partnerActivities":  0,
+                   "bloodSugar":  81,
+                   "medications":  22,
+                   "medSchedules":  22,
+                   "prnLog":  13,
+                   "notGivenLog":  2,
+                   "marMaster":  456
+               },
+    "options":  {
+                    "participationReasons":  [
+                                                 "Arrives Late",
+                                                 "Could not see properly",
+                                                 "Fell Asleep",
+                                                 "Left Early",
+                                                 "Medical Appointment",
+                                                 "Other",
+                                                 "Reason for Missing",
+                                                 "Refused",
+                                                 "Resting",
+                                                 "Therapy Session"
+                                             ],
+                    "transportTypes":  [
+                                           "Bus stop",
+                                           "Door to door",
+                                           "Refused/no show"
+                                       ],
+                    "transportPeriods":  [
+                                             "AM",
+                                             "PM"
+                                         ],
+                    "toiletBriefs":  [
+                                         "No",
+                                         "Yes",
+                                         "Yes (member supplied - no charge)",
+                                         "Yes (member supplied)"
+                                     ],
+                    "toiletUseTypes":  [
+                                           "Bladder",
+                                           "Bowel",
+                                           "No Output",
+                                           "Refused",
+                                           "Unknown (independent)"
+                                       ],
+                    "ancillaryCategories":  [
+                                                "Briefs",
+                                                "Laundry",
+                                                "Shower"
+                                            ],
+                    "leadStages":  [
+                                       "Closed - Lost",
+                                       "Closed - Won",
+                                       "Enrollment in Progress",
+                                       "Inquiry",
+                                       "Nurture",
+                                       "Tour"
+                                   ],
+                    "leadStatuses":  [
+                                         "Lost",
+                                         "Nurture",
+                                         "Open",
+                                         "Won"
+                                     ],
+                    "followUpTypes":  [
+                                          "Call",
+                                          "Discovery",
+                                          "Email",
+                                          "Other",
+                                          "Text",
+                                          "Tour"
+                                      ],
+                    "leadActivityTypes":  [
+                                              "Call",
+                                              "Discovery",
+                                              "Email",
+                                              "Follow-up",
+                                              "Other",
+                                              "Text",
+                                              "Tour",
+                                              "Voicemail"
+                                          ],
+                    "leadActivityOutcomes":  [
+                                                 "Completed discovery",
+                                                 "Completed tour",
+                                                 "Enrollment completed",
+                                                 "Enrollment started",
+                                                 "Left voicemail",
+                                                 "Member start confirmed",
+                                                 "No answer",
+                                                 "Not a fit",
+                                                 "Other",
+                                                 "Scheduled discovery",
+                                                 "Scheduled tour",
+                                                 "Sent info/packet",
+                                                 "Spoke with caregiver"
+                                             ],
+                    "leadSources":  [
+                                        "Community Event",
+                                        "Facebook/Instagram",
+                                        "Google",
+                                        "Hospital/Provider",
+                                        "Other",
+                                        "Phone",
+                                        "Referral",
+                                        "Walk-in",
+                                        "Website"
+                                    ],
+                    "leadLikelihoods":  [
+                                            "Cold",
+                                            "Hot",
+                                            "Warm"
+                                        ],
+                    "leadLostReasons":  [
+                                            "Chose competitor",
+                                            "Could not reach",
+                                            "No longer needed",
+                                            "Not eligible",
+                                            "Other",
+                                            "Price",
+                                            "Schedule/Availability"
+                                        ],
+                    "partnerCategories":  [
+                                              "Advertising",
+                                              "Community Organizations",
+                                              "Events",
+                                              "Government Programs",
+                                              "Groups",
+                                              "Internet",
+                                              "Medical Provider",
+                                              "Paid Referral Agency",
+                                              "Professional Organizations",
+                                              "Senior Care",
+                                              "Word of Mouth"
+                                          ],
+                    "notGivenReasons":  [
+                                            "Allergy concern",
+                                            "Error in order – clarification needed",
+                                            "Held per clinical judgment",
+                                            "Med not available",
+                                            "Medication discontinued",
+                                            "Not scheduled today",
+                                            "Offsite appointment",
+                                            "Other",
+                                            "Patient absent",
+                                            "Pharmacy delay",
+                                            "Reason Not Given",
+                                            "Refused by patient",
+                                            "Vitals outside parameters"
+                                        ],
+                    "prnIndications":  [
+                                           "Agitation",
+                                           "Allergies",
+                                           "Anxiety",
+                                           "Indication",
+                                           "Indigestion",
+                                           "Itching",
+                                           "Nausea",
+                                           "Pain"
+                                       ]
+                },
+    "staff":  [
+                  {
+                      "staff_id":  "stf_500937EF",
+                      "name":  "Jess Sheldon",
+                      "role":  "Staff",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_3EE3313A",
+                      "name":  "Robin Newell",
+                      "role":  "Staff",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_2C8B398D",
+                      "name":  "Trish Church",
+                      "role":  "Staff",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_9160CE9D",
+                      "name":  "Daniel",
+                      "role":  "Staff",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_EB85BA6B",
+                      "name":  "Troy Meeker, BSN, RN, CDP",
+                      "role":  "Admin",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_59FE3DB3",
+                      "name":  "Shayne Meeker",
+                      "role":  "Staff",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_E245A573",
+                      "name":  "Joslyn Meeker",
+                      "role":  "Staff",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_8B8A3A0C",
+                      "name":  "Michelle Piscatelli, LPN, CDP",
+                      "role":  "Admin",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_4D9CABF5",
+                      "name":  "Kelli Gagne, MSN, BSN, APRN, PMHNP-BC",
+                      "role":  "Admin",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_A4B6E42A",
+                      "name":  "Other",
+                      "role":  "Admin",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_A4B6E64B",
+                      "name":  "Arzu Uranli",
+                      "role":  "Admin",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_A4B6E89C",
+                      "name":  "Lauren Locke",
+                      "role":  "Staff",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_A4B6F82C",
+                      "name":  "Ivette Tanis",
+                      "role":  "Staff",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  },
+                  {
+                      "staff_id":  "stf_A4B6E32T",
+                      "name":  "Jamillah Wade",
+                      "role":  "Admin",
+                      "active":  "1",
+                      "email":  "",
+                      "email_normalized":  ""
+                  }
+              ],
+    "memberKeys":  [
+                       {
+                           "key":  "row:2",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  2
+                       },
+                       {
+                           "key":  "row:3",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  3
+                       },
+                       {
+                           "key":  "row:4",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  4
+                       },
+                       {
+                           "key":  "qr:10103020241016220537",
+                           "qr":  "10103020241016220537",
+                           "status":  "Active",
+                           "row":  5
+                       },
+                       {
+                           "key":  "qr:10101720241243070531",
+                           "qr":  "10101720241243070531",
+                           "status":  "Active",
+                           "row":  6
+                       },
+                       {
+                           "key":  "qr:10112620241018390563",
+                           "qr":  "10112620241018390563",
+                           "status":  "Active",
+                           "row":  7
+                       },
+                       {
+                           "key":  "qr:10092320250813410800",
+                           "qr":  "10092320250813410800",
+                           "status":  "Active",
+                           "row":  8
+                       },
+                       {
+                           "key":  "row:9",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  9
+                       },
+                       {
+                           "key":  "qr:10103020240908150536",
+                           "qr":  "10103020240908150536",
+                           "status":  "Active",
+                           "row":  10
+                       },
+                       {
+                           "key":  "qr:10090220250602120780",
+                           "qr":  "10090220250602120780",
+                           "status":  "Active",
+                           "row":  11
+                       },
+                       {
+                           "key":  "qr:10030620250851300631",
+                           "qr":  "10030620250851300631",
+                           "status":  "Active",
+                           "row":  12
+                       },
+                       {
+                           "key":  "qr:10101520250746520820",
+                           "qr":  "10101520250746520820",
+                           "status":  "Active",
+                           "row":  13
+                       },
+                       {
+                           "key":  "qr:10042420250939390666",
+                           "qr":  "10042420250939390666",
+                           "status":  "Active",
+                           "row":  14
+                       },
+                       {
+                           "key":  "qr:10102220240539120533",
+                           "qr":  "10102220240539120533",
+                           "status":  "Active",
+                           "row":  15
+                       },
+                       {
+                           "key":  "qr:10110120241314320542",
+                           "qr":  "10110120241314320542",
+                           "status":  "Active",
+                           "row":  16
+                       },
+                       {
+                           "key":  "row:17",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  17
+                       },
+                       {
+                           "key":  "row:18",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  18
+                       },
+                       {
+                           "key":  "qr:10101720241229580528",
+                           "qr":  "10101720241229580528",
+                           "status":  "Active",
+                           "row":  19
+                       },
+                       {
+                           "key":  "qr:10092620250445500801",
+                           "qr":  "10092620250445500801",
+                           "status":  "Active",
+                           "row":  20
+                       },
+                       {
+                           "key":  "qr:10111420251048560846",
+                           "qr":  "10111420251048560846",
+                           "status":  "Active",
+                           "row":  21
+                       },
+                       {
+                           "key":  "row:22",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  22
+                       },
+                       {
+                           "key":  "qr:10100120251316180806",
+                           "qr":  "10100120251316180806",
+                           "status":  "Active",
+                           "row":  23
+                       },
+                       {
+                           "key":  "qr:10111420250757510844",
+                           "qr":  "10111420250757510844",
+                           "status":  "Active",
+                           "row":  24
+                       },
+                       {
+                           "key":  "qr:10061020250821500697",
+                           "qr":  "10061020250821500697",
+                           "status":  "Active",
+                           "row":  25
+                       },
+                       {
+                           "key":  "row:26",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  26
+                       },
+                       {
+                           "key":  "qr:10111920251214030854",
+                           "qr":  "10111920251214030854",
+                           "status":  "Active",
+                           "row":  27
+                       },
+                       {
+                           "key":  "row:28",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  28
+                       },
+                       {
+                           "key":  "qr:10042820251326310670",
+                           "qr":  "10042820251326310670",
+                           "status":  "Active",
+                           "row":  29
+                       },
+                       {
+                           "key":  "qr:10103120241255270539",
+                           "qr":  "10103120241255270539",
+                           "status":  "Active",
+                           "row":  30
+                       },
+                       {
+                           "key":  "qr:10032420250801240647",
+                           "qr":  "10032420250801240647",
+                           "status":  "Active",
+                           "row":  31
+                       },
+                       {
+                           "key":  "row:32",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  32
+                       },
+                       {
+                           "key":  "qr:10110420241038260544",
+                           "qr":  "10110420241038260544",
+                           "status":  "Active",
+                           "row":  33
+                       },
+                       {
+                           "key":  "row:34",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  34
+                       },
+                       {
+                           "key":  "qr:10082220250753560769",
+                           "qr":  "10082220250753560769",
+                           "status":  "Active",
+                           "row":  35
+                       },
+                       {
+                           "key":  "qr:10022720250613140628",
+                           "qr":  "10022720250613140628",
+                           "status":  "Active",
+                           "row":  36
+                       },
+                       {
+                           "key":  "qr:10112620240545290562",
+                           "qr":  "10112620240545290562",
+                           "status":  "Active",
+                           "row":  37
+                       },
+                       {
+                           "key":  "qr:10013120250938080613",
+                           "qr":  "10013120250938080613",
+                           "status":  "Active",
+                           "row":  38
+                       },
+                       {
+                           "key":  "qr:10070320250758540716",
+                           "qr":  "10070320250758540716",
+                           "status":  "Active",
+                           "row":  39
+                       },
+                       {
+                           "key":  "qr:10111220250551230843",
+                           "qr":  "10111220250551230843",
+                           "status":  "Active",
+                           "row":  40
+                       },
+                       {
+                           "key":  "qr:10110120241329470543",
+                           "qr":  "10110120241329470543",
+                           "status":  "Active",
+                           "row":  41
+                       },
+                       {
+                           "key":  "qr:10073020250848480739",
+                           "qr":  "10073020250848480739",
+                           "status":  "Active",
+                           "row":  42
+                       },
+                       {
+                           "key":  "qr:10012220251048160599",
+                           "qr":  "10012220251048160599",
+                           "status":  "Active",
+                           "row":  43
+                       },
+                       {
+                           "key":  "qr:10071120250936380723",
+                           "qr":  "10071120250936380723",
+                           "status":  "Active",
+                           "row":  44
+                       },
+                       {
+                           "key":  "qr:10041820250625320662",
+                           "qr":  "10041820250625320662",
+                           "status":  "Active",
+                           "row":  45
+                       },
+                       {
+                           "key":  "row:46",
+                           "qr":  "",
+                           "status":  "Active",
+                           "row":  46
+                       }
+                   ]
+}

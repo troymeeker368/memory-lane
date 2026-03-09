@@ -1,0 +1,483 @@
+{
+    "workbook":  "Operations Warehouse (3).xlsx",
+    "sheets":  [
+                   {
+                       "sheet":  "Participation Log",
+                       "path":  "xl/worksheets/sheet1.xml",
+                       "columns":  [
+                                       "Timestamp",
+                                       "Date",
+                                       "Staff Recording Activity",
+                                       "Member Name",
+                                       "Activity 1 Participation Level",
+                                       "Reason for missing activity 1",
+                                       "Activity 2 Participation Level",
+                                       "Reason for Missing Activity 2 (if applicable)",
+                                       "Activity 3 Participation Level",
+                                       "Reason for Missing Activity 3 (if applicable)",
+                                       "Activity 4 Participation Level",
+                                       "Reason for Missing Activity 4 (if applicable)",
+                                       "Activity 5 Participation Level",
+                                       "Reason for Missing Activity 5 (if applicable)",
+                                       "Additional Staff Notes - please do not use this form for medical concerns. Report to the nurse on duty.",
+                                       "Email Address"
+                                   ],
+                       "sampleRow":  {
+                                         "Member Name":  "",
+                                         "Reason for Missing Activity 5 (if applicable)":  "",
+                                         "Staff Recording Activity":  "Other",
+                                         "Activity 5 Participation Level":  "",
+                                         "Email Address":  "",
+                                         "Additional Staff Notes - please do not use this form for medical concerns. Report to the nurse on duty.":  "",
+                                         "Reason for Missing Activity 3 (if applicable)":  "",
+                                         "Reason for missing activity 1":  "Therapy Session",
+                                         "Reason for Missing Activity 4 (if applicable)":  "",
+                                         "Date":  "45740",
+                                         "Reason for Missing Activity 2 (if applicable)":  "",
+                                         "Activity 4 Participation Level":  "",
+                                         "Activity 3 Participation Level":  "",
+                                         "Activity 1 Participation Level":  "75",
+                                         "Activity 2 Participation Level":  "",
+                                         "Timestamp":  "45740.557806377314"
+                                     },
+                       "rowCount":  3159
+                   },
+                   {
+                       "sheet":  "Site",
+                       "path":  "xl/worksheets/sheet2.xml",
+                       "columns":  [
+                                       "SiteID",
+                                       "SiteName",
+                                       "SiteLatLong",
+                                       "FenceRadiusMeters"
+                                   ],
+                       "sampleRow":  {
+                                         "SiteName":  "Town Square Fort Mill",
+                                         "SiteLatLong":  "34.992613,-80.963116",
+                                         "SiteID":  "TSFM",
+                                         "FenceRadiusMeters":  "1000"
+                                     },
+                       "rowCount":  1000
+                   },
+                   {
+                       "sheet":  "TimeClock",
+                       "path":  "xl/worksheets/sheet3.xml",
+                       "columns":  [
+                                       "PunchID",
+                                       "StaffID",
+                                       "StaffName",
+                                       "PunchType",
+                                       "PunchTime",
+                                       "PunchLatLong",
+                                       "SiteID",
+                                       "DistanceMeters",
+                                       "WithinFence"
+                                   ],
+                       "sampleRow":  {
+                                         "StaffID":  "stf_A4B6F82C",
+                                         "PunchID":  "2c70da25",
+                                         "PunchType":  "In",
+                                         "PunchTime":  "46083.333333333336",
+                                         "StaffName":  "Ivette Tanis",
+                                         "SiteID":  "TSFM",
+                                         "PunchLatLong":  "34.992738, -80.962909",
+                                         "WithinFence":  "1",
+                                         "DistanceMeters":  "23"
+                                     },
+                       "rowCount":  39
+                   },
+                   {
+                       "sheet":  "Toilet Log",
+                       "path":  "xl/worksheets/sheet4.xml",
+                       "columns":  [
+                                       "Ratee",
+                                       "Date",
+                                       "Member Name",
+                                       "Briefs",
+                                       "Type of Use",
+                                       "Staff Assisting",
+                                       "Additional Staff Notes - please do not use this form for acute/immediate medical concerns. Report to the nurse on duty."
+                                   ],
+                       "sampleRow":  {
+                                         "Type of Use":  "",
+                                         "Briefs":  "No",
+                                         "Ratee":  "45897.38857638889",
+                                         "Additional Staff Notes - please do not use this form for acute/immediate medical concerns. Report to the nurse on duty.":  "",
+                                         "Date":  "45897",
+                                         "Staff Assisting":  "Jess Sheldon",
+                                         "Member Name":  ""
+                                     },
+                       "rowCount":  2413
+                   },
+                   {
+                       "sheet":  "Shower Log",
+                       "path":  "xl/worksheets/sheet5.xml",
+                       "columns":  [
+                                       "Timestamp",
+                                       "Date",
+                                       "Member Name",
+                                       "Laundry",
+                                       "Briefs",
+                                       "Staff Assisting"
+                                   ],
+                       "sampleRow":  {
+                                         "Member Name":  "",
+                                         "Briefs":  "",
+                                         "Date":  "45685",
+                                         "Timestamp":  "45685.565387060182",
+                                         "Laundry":  "Yes",
+                                         "Staff Assisting":  ""
+                                     },
+                       "rowCount":  997
+                   },
+                   {
+                       "sheet":  "Transportation Log",
+                       "path":  "xl/worksheets/sheet6.xml",
+                       "columns":  [
+                                       "Timestamp",
+                                       "First Name",
+                                       "Member Name",
+                                       "Pick Up / Drop Off",
+                                       "Type",
+                                       "Date",
+                                       "Staff Responsible"
+                                   ],
+                       "sampleRow":  {
+                                         "Member Name":  "",
+                                         "Type":  "",
+                                         "Pick Up / Drop Off":  "AM",
+                                         "Timestamp":  "45678.365781527777",
+                                         "Staff Responsible":  "",
+                                         "Date":  "45677",
+                                         "First Name":  ""
+                                     },
+                       "rowCount":  1976
+                   },
+                   {
+                       "sheet":  "Ancillary Charges Log",
+                       "path":  "xl/worksheets/sheet7.xml",
+                       "columns":  [
+                                       "Timestamp",
+                                       "Member Name",
+                                       "Category",
+                                       "If late pick up - what time was member picked up?",
+                                       "Staff Recording Entry",
+                                       "Date"
+                                   ],
+                       "sampleRow":  {
+                                         "Member Name":  "",
+                                         "Staff Recording Entry":  "Daniel",
+                                         "Date":  "45898",
+                                         "Category":  "Laundry",
+                                         "Timestamp":  "45898.618356481478",
+                                         "If late pick up - what time was member picked up?":  "0.61805555555555558"
+                                     },
+                       "rowCount":  994
+                   },
+                   {
+                       "sheet":  "Today at a Glance",
+                       "path":  "xl/worksheets/sheet8.xml",
+                       "columns":  [
+                                       "Staff",
+                                       "Participation",
+                                       "Toilet",
+                                       "Shower",
+                                       "Transportation",
+                                       "Ancillary Charges",
+                                       "Total",
+                                       "Uploaded Today?",
+                                       "Photos Uploaded",
+                                       "Staff Clean"
+                                   ],
+                       "sampleRow":  {
+                                         "Shower":  "0",
+                                         "Participation":  "0",
+                                         "Staff":  "Ivette Tanis",
+                                         "Photos Uploaded":  "0",
+                                         "Uploaded Today?":  "No",
+                                         "Toilet":  "9",
+                                         "Staff Clean":  "IVETTE TANIS",
+                                         "Transportation":  "0",
+                                         "Total":  "9",
+                                         "Ancillary Charges":  "0"
+                                     },
+                       "rowCount":  37611
+                   },
+                   {
+                       "sheet":  "Member Photo Uploads",
+                       "path":  "xl/worksheets/sheet9.xml",
+                       "columns":  [
+                                       "ID",
+                                       "Photo 1",
+                                       "Photo 2",
+                                       "Photo 3",
+                                       "Photo 4",
+                                       "Photo 5",
+                                       "Photo 6",
+                                       "Photo 7",
+                                       "Photo 8",
+                                       "Photo 9",
+                                       "Photo 10",
+                                       "Taken By",
+                                       "Upload Date",
+                                       "Staff Clean"
+                                   ],
+                       "sampleRow":  {
+                                         "ID":  "00043c66",
+                                         "Photo 8":  "",
+                                         "Photo 6":  "",
+                                         "Photo 4":  "Photos/2025-09//00043c66.Photo 4.140727.jpg",
+                                         "Photo 7":  "",
+                                         "Photo 5":  "Photos/2025-09//00043c66.Photo 5.140727.jpg",
+                                         "Photo 1":  "Member Photo Uploads_Images/00043c66.Photo 1.140724.jpg",
+                                         "Photo 10":  "",
+                                         "Staff Clean":  "TROY",
+                                         "Taken By":  "Troy",
+                                         "Photo 2":  "Photos/2025-09//00043c66.Photo 2.140724.jpg",
+                                         "Photo 3":  "Photos/2025-09//00043c66.Photo 3.140724.jpg",
+                                         "Upload Date":  "45913",
+                                         "Photo 9":  ""
+                                     },
+                       "rowCount":  999
+                   },
+                   {
+                       "sheet":  "Weekly Summary",
+                       "path":  "xl/worksheets/sheet10.xml",
+                       "columns":  [
+                                       "Staff",
+                                       "Weekly Timeliness %",
+                                       "# Participation Logs",
+                                       "# Toilet Logs",
+                                       "# Shower Logs",
+                                       "# Transportation Logs",
+                                       "# Ancillary Charges Logs"
+                                   ],
+                       "sampleRow":  {
+                                         "# Ancillary Charges Logs":  "0",
+                                         "Staff":  "Robin Newell",
+                                         "# Participation Logs":  "9",
+                                         "Weekly Timeliness %":  "1",
+                                         "# Shower Logs":  "1",
+                                         "# Transportation Logs":  "0",
+                                         "# Toilet Logs":  "15"
+                                     },
+                       "rowCount":  1000
+                   },
+                   {
+                       "sheet":  "TimelyDocs_Work",
+                       "path":  "xl/worksheets/sheet11.xml",
+                       "columns":  [
+                                       "Timestamp",
+                                       "Date",
+                                       "Staff Recording Activity",
+                                       "LagHours",
+                                       "OnTime",
+                                       "OnTimeNum",
+                                       "LateNum"
+                                   ],
+                       "sampleRow":  {
+                                         "Date":  "46058",
+                                         "OnTime":  "1",
+                                         "Staff Recording Activity":  "Robin Newell",
+                                         "LateNum":  "0",
+                                         "Timestamp":  "46058.398263888797",
+                                         "LagHours":  "9.5583333311369643",
+                                         "OnTimeNum":  "1"
+                                     },
+                       "rowCount":  1000
+                   },
+                   {
+                       "sheet":  "TimelyDocs_Summary",
+                       "path":  "xl/worksheets/sheet12.xml",
+                       "columns":  [
+                                       "Staff",
+                                       "On-Time",
+                                       "Late",
+                                       "Total",
+                                       "On-Time %"
+                                   ],
+                       "sampleRow":  {
+                                         "Total":  "116",
+                                         "On-Time":  "89",
+                                         "Late":  "27",
+                                         "On-Time %":  "0.76724137931034397",
+                                         "Staff":  "Robin Newell"
+                                     },
+                       "rowCount":  1000
+                   },
+                   {
+                       "sheet":  "Monthly Ancillary Charges Summa",
+                       "path":  "xl/worksheets/sheet13.xml",
+                       "columns":  [
+                                       "Month",
+                                       "Key",
+                                       "Member Name",
+                                       "Laundry",
+                                       "Briefs",
+                                       "Shower",
+                                       "Insulin Supplies",
+                                       "Transport - Bus",
+                                       "Transport - D2D",
+                                       "Late Pick-Up (first 15 min)",
+                                       "Late Pick-Up (next 15 min)"
+                                   ],
+                       "sampleRow":  {
+                                         "Member Name":  "",
+                                         "Shower":  "",
+                                         "Briefs":  "",
+                                         "Key":  "",
+                                         "Late Pick-Up (next 15 min)":  "",
+                                         "Month":  "",
+                                         "Insulin Supplies":  "",
+                                         "Laundry":  "",
+                                         "Transport - D2D":  "",
+                                         "Transport - Bus":  "",
+                                         "Late Pick-Up (first 15 min)":  ""
+                                     },
+                       "rowCount":  1005
+                   },
+                   {
+                       "sheet":  "Master Staff",
+                       "path":  "xl/worksheets/sheet14.xml",
+                       "columns":  [
+                                       "StaffID",
+                                       "Staff",
+                                       "Email",
+                                       "Role",
+                                       "Active",
+                                       "EmailNormalized"
+                                   ],
+                       "sampleRow":  {
+                                         "StaffID":  "stf_500937EF",
+                                         "Staff":  "Jess Sheldon",
+                                         "Role":  "Staff",
+                                         "EmailNormalized":  "",
+                                         "Active":  "1",
+                                         "Email":  ""
+                                     },
+                       "rowCount":  993
+                   },
+                   {
+                       "sheet":  "Master Members",
+                       "path":  "xl/worksheets/sheet15.xml",
+                       "columns":  [
+                                       "Status",
+                                       "Member Name",
+                                       "QR Code"
+                                   ],
+                       "sampleRow":  {
+                                         "Status":  "Active",
+                                         "Member Name":  "",
+                                         "QR Code":  ""
+                                     },
+                       "rowCount":  1014
+                   },
+                   {
+                       "sheet":  "HomeNav",
+                       "path":  "xl/worksheets/sheet16.xml",
+                       "columns":  [
+                                       "Task Name",
+                                       "Task View Name",
+                                       "Task Link",
+                                       "Admin Only",
+                                       "Category",
+                                       "Subcategory",
+                                       "Icon"
+                                   ],
+                       "sampleRow":  {
+                                         "Task Link":  "",
+                                         "Task Name":  "Sales Activities",
+                                         "Category":  "Main",
+                                         "Task View Name":  "Sales Activities",
+                                         "Icon":  "",
+                                         "Subcategory":  "",
+                                         "Admin Only":  "Yes"
+                                     },
+                       "rowCount":  1006
+                   },
+                   {
+                       "sheet":  "Links",
+                       "path":  "xl/worksheets/sheet17.xml",
+                       "columns":  [
+                                       "ID",
+                                       "Name"
+                                   ],
+                       "sampleRow":  {
+                                         "ID":  "1",
+                                         "Name":  "PTO Request"
+                                     },
+                       "rowCount":  2
+                   },
+                   {
+                       "sheet":  "Charge Catalog",
+                       "path":  "xl/worksheets/sheet18.xml",
+                       "columns":  [
+                                       "Ancillary Category",
+                                       "Price"
+                                   ],
+                       "sampleRow":  {
+                                         "Ancillary Category":  "Laundry",
+                                         "Price":  "5"
+                                     },
+                       "rowCount":  1000
+                   },
+                   {
+                       "sheet":  "Scan Launcher",
+                       "path":  "xl/worksheets/sheet19.xml",
+                       "columns":  [
+                                       "QR Code",
+                                       "Timestamp",
+                                       "ScanID",
+                                       "ConfirmTrigger"
+                                   ],
+                       "sampleRow":  {
+                                         "ConfirmTrigger":  "",
+                                         "Timestamp":  "45897.686689814815",
+                                         "ScanID":  "17c97727",
+                                         "QR Code":  "10071020250857250720"
+                                     },
+                       "rowCount":  1000
+                   },
+                   {
+                       "sheet":  "Scan Context",
+                       "path":  "xl/worksheets/sheet20.xml",
+                       "columns":  [
+                                       "ScanID",
+                                       "Timestamp",
+                                       "Member Name",
+                                       "Singleton",
+                                       "MatchedMember"
+                                   ],
+                       "sampleRow":  {
+                                         "Singleton":  "singleton",
+                                         "Timestamp":  "",
+                                         "ScanID":  "",
+                                         "MatchedMember":  "",
+                                         "Member Name":  ""
+                                     },
+                       "rowCount":  1000
+                   },
+                   {
+                       "sheet":  "Master No Activity Particpation",
+                       "path":  "xl/worksheets/sheet21.xml",
+                       "columns":  [
+                                       "Reason for Missing"
+                                   ],
+                       "sampleRow":  {
+                                         "Reason for Missing":  "Therapy Session"
+                                     },
+                       "rowCount":  1000
+                   },
+                   {
+                       "sheet":  "UI_Messages",
+                       "path":  "xl/worksheets/sheet22.xml",
+                       "columns":  [
+                                       "UI_Messages"
+                                   ],
+                       "sampleRow":  {
+                                         "UI_Messages":  "? Entry submitted successfully."
+                                     },
+                       "rowCount":  2
+                   }
+               ]
+}

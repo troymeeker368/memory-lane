@@ -1,0 +1,19 @@
+{
+    "workbook":  "Blood Sugar Results.xlsx",
+    "sheets":  [
+                   {
+                       "sheet":  "Blood Sugar Results",
+                       "columns":  [
+                                       "Date",
+                                       "Time Taken",
+                                       "Taken By",
+                                       "Member Name",
+                                       "Result",
+                                       "Before/After Eating?",
+                                       "Notes",
+                                       "UniqueID"
+                                   ],
+                       "rowCount":  82
+                   }
+               ]
+}
