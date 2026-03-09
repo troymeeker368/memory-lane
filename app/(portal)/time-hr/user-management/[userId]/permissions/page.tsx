@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 
-import { updateManagedUserPermissionsAction } from "@/lib/actions/user-management";
+import { resetManagedUserPermissionsAction, updateManagedUserPermissionsAction } from "@/lib/actions/user-management";
 import { UserPermissionsForm } from "@/components/forms/user-permissions-form";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
@@ -29,6 +29,12 @@ export default async function ManagedUserPermissionsPage({ params }: { params: P
       </Card>
 
       <Card>
+        <form action={resetManagedUserPermissionsAction} className="mb-3">
+          <input type="hidden" name="userId" value={user.id} />
+          <button type="submit" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold text-brand">
+            Reset To Role Defaults
+          </button>
+        </form>
         <UserPermissionsForm user={user} action={updateManagedUserPermissionsAction} />
       </Card>
     </div>

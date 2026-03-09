@@ -3,35 +3,106 @@ import Link from "next/link";
 import { Card, CardBody, CardTitle } from "@/components/ui/card";
 import { PunchStatusBadge, PunchTypeBadge } from "@/components/ui/punch-type-badge";
 import { getCurrentProfile } from "@/lib/auth";
+import { canonicalLeadStage, canonicalLeadStatus, isOpenLeadStatus } from "@/lib/canonical";
+import { getMockDb } from "@/lib/mock-repo";
+import { canView, normalizeRoleKey } from "@/lib/permissions";
+import { getDailyAttendanceView } from "@/lib/services/attendance";
 import { getDashboardAlerts, getDashboardStats } from "@/lib/services/dashboard";
-import { formatDateTime } from "@/lib/utils";
+import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
+import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import { formatDate, formatDateTime } from "@/lib/utils";
+
+const HOLD_EXPIRY_LOOKAHEAD_DAYS = 14;
+
+function toDateOnly(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  return raw.slice(0, 10);
+}
+
+function addDays(dateOnly: string, days: number) {
+  const date = new Date(`${dateOnly}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return dateOnly;
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatCurrency(cents: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format((cents || 0) / 100);
+}
 
 export default async function DashboardPage() {
   const profile = await getCurrentProfile();
-  const [stats, alerts] = await Promise.all([getDashboardStats(profile.id), getDashboardAlerts()]);
-  const firstName = profile.full_name.trim().split(/\s+/)[0] || profile.full_name;
+  const normalizedRole = normalizeRoleKey(profile.role);
+  const isAdminOrCoordinator = normalizedRole === "admin" || normalizedRole === "coordinator";
+  const canPunch = normalizedRole === "program-assistant";
+  const canViewSales = canView(profile.permissions, "sales-activities");
+  const canViewReports = canView(profile.permissions, "reports");
+  const canViewOperations = canView(profile.permissions, "operations");
 
-  const showLeadershipShortcuts = profile.role === "manager" || profile.role === "admin";
-  const showNursingShortcuts = profile.role === "nurse";
-  const canPunch = profile.role === "staff";
-  const showIncompleteAttendanceFlag = profile.role === "admin" && stats.incompleteAttendance.totalIncomplete > 0;
+  const [stats, alerts, salesWorkflows] = await Promise.all([
+    getDashboardStats(profile.id),
+    getDashboardAlerts(),
+    canViewSales ? getSalesWorkflows() : Promise.resolve(null)
+  ]);
+
+  const firstName = profile.full_name.trim().split(/\s+/)[0] || profile.full_name;
+  const today = getOperationsTodayDate();
+  const dailyAttendance = canViewOperations ? getDailyAttendanceView({ selectedDate: today }) : null;
+  const absentTodayRows = (dailyAttendance?.rows ?? []).filter((row) => row.recordStatus === "absent");
+
+  const db = getMockDb();
+  const expiryThreshold = addDays(today, HOLD_EXPIRY_LOOKAHEAD_DAYS);
+  const activeHolds = db.memberHolds.filter((row) => row.status === "active");
+  const memberNameById = new Map(db.members.map((member) => [member.id, member.display_name] as const));
+  const upcomingHolds = activeHolds
+    .filter((hold) => toDateOnly(hold.start_date) && (toDateOnly(hold.start_date) as string) > today)
+    .sort((left, right) => String(left.start_date).localeCompare(String(right.start_date)))
+    .slice(0, 6);
+  const expiringHolds = activeHolds
+    .filter((hold) => {
+      const endDate = toDateOnly(hold.end_date);
+      if (!endDate) return false;
+      return endDate >= today && endDate <= expiryThreshold;
+    })
+    .sort((left, right) => String(left.end_date).localeCompare(String(right.end_date)))
+    .slice(0, 6);
+
+  const currentMonthKey = today.slice(0, 7);
+  const monthlyAncillary = db.ancillaryLogs.filter((row) => String(row.service_date).startsWith(currentMonthKey));
+  const monthlyRevenueCents = monthlyAncillary.reduce((sum, row) => sum + row.amount_cents, 0);
+  const unreconciledCharges = monthlyAncillary.filter((row) => (row.reconciliation_status ?? "open") !== "reconciled").length;
+
+  const unresolvedLeads = salesWorkflows
+    ? salesWorkflows.openLeads.filter((lead) => isOpenLeadStatus(canonicalLeadStatus(lead.status, lead.stage))).length
+    : 0;
+  const unresolvedInquiryLeads = salesWorkflows
+    ? salesWorkflows.openLeads.filter((lead) => canonicalLeadStage(lead.stage) === "Inquiry").length
+    : 0;
+
+  const showIncompleteAttendanceFlag =
+    (normalizedRole === "admin" || normalizedRole === "director") && stats.incompleteAttendance.totalIncomplete > 0;
 
   return (
-    <>
+    <div className="space-y-4">
       <header className="rounded-xl border border-border bg-white p-4">
         <p className="text-center text-xl font-bold text-brand">Welcome, {firstName}!</p>
         <h1 className="text-xl font-bold">Home Dashboard</h1>
-        <p className="mt-1 text-sm text-muted">Operational overview for today, quick links, and role-specific priorities.</p>
+        <p className="mt-1 text-sm text-muted">Today&apos;s operational priorities, quick links, and role-based activity.</p>
       </header>
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
           <CardTitle>Today&apos;s Logs</CardTitle>
-          <CardBody><p className="text-2xl font-bold">{stats.todaysLogs}</p></CardBody>
+          <CardBody>
+            <p className="text-2xl font-bold">{stats.todaysLogs}</p>
+          </CardBody>
         </Card>
         <Card>
           <CardTitle>Missing Documentation</CardTitle>
-          <CardBody><p className="text-2xl font-bold">{stats.missingDocs}</p></CardBody>
+          <CardBody>
+            <p className="text-2xl font-bold">{stats.missingDocs}</p>
+          </CardBody>
         </Card>
         {canPunch ? (
           <Card>
@@ -43,26 +114,138 @@ export default async function DashboardPage() {
         ) : null}
       </section>
 
-      {showIncompleteAttendanceFlag ? (
-        <section>
-          <Card className="border-amber-300">
-            <CardTitle>Attendance Incomplete Records</CardTitle>
-            <CardBody>
-              <p className="text-sm">
-                {stats.incompleteAttendance.totalIncomplete} incomplete attendance record(s) for {stats.incompleteAttendance.selectedDate}.
-              </p>
-              <p className="mt-1 text-xs text-muted">
-                Pending (not checked in and not absent): {stats.incompleteAttendance.pendingWithoutStatus} | Check-in without check-out: {stats.incompleteAttendance.checkInMissingCheckOut} | Check-out without check-in: {stats.incompleteAttendance.checkOutMissingCheckIn}
-              </p>
-              <Link
-                href={`/operations/attendance?tab=daily-attendance&date=${stats.incompleteAttendance.selectedDate}`}
-                className="mt-2 inline-block text-sm font-semibold text-brand"
-              >
-                Open Daily Attendance
-              </Link>
+      {isAdminOrCoordinator ? (
+        <section className="space-y-3">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Operational Snapshot</h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Card>
+              <CardTitle>Attendance Today</CardTitle>
+              <CardBody>
+                <p className="text-sm">Scheduled: <span className="font-semibold">{dailyAttendance?.summary.scheduledMembers ?? 0}</span></p>
+                <p className="text-sm">Present: <span className="font-semibold">{dailyAttendance?.summary.presentMembers ?? 0}</span></p>
+                <p className="text-sm">Absent: <span className="font-semibold">{dailyAttendance?.summary.absentMembers ?? 0}</span></p>
+                <Link href={`/operations/attendance?tab=daily-attendance&date=${today}`} className="mt-2 inline-block text-sm font-semibold text-brand">
+                  Open Daily Attendance
+                </Link>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardTitle>Members Absent Today</CardTitle>
+              <CardBody>
+                {absentTodayRows.length === 0 ? (
+                  <p className="text-sm text-muted">No absences recorded.</p>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {absentTodayRows.slice(0, 6).map((row) => (
+                      <li key={`absent-${row.memberId}`}>
+                        <span className="font-semibold">{row.memberName}</span>
+                        {row.absentReason ? ` - ${row.absentReason === "Other" ? row.absentReasonOther || "Other" : row.absentReason}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardTitle>Revenue Snapshot (This Month)</CardTitle>
+              <CardBody>
+                <p className="text-sm">Recognized Charges: <span className="font-semibold">{formatCurrency(monthlyRevenueCents)}</span></p>
+                <p className="text-sm">Unreconciled Entries: <span className="font-semibold">{unreconciledCharges}</span></p>
+                {canViewReports ? (
+                  <Link href="/reports/monthly-ancillary" className="mt-2 inline-block text-sm font-semibold text-brand">
+                    Open Monthly Ancillary
+                  </Link>
+                ) : null}
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardTitle>Upcoming Holds</CardTitle>
+              <CardBody>
+                {upcomingHolds.length === 0 ? (
+                  <p className="text-sm text-muted">No future holds scheduled.</p>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {upcomingHolds.map((hold) => (
+                      <li key={`hold-upcoming-${hold.id}`}>
+                        <span className="font-semibold">{memberNameById.get(hold.member_id) ?? "Member"}</span> - starts {formatDate(hold.start_date)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <Link href="/operations/holds" className="mt-2 inline-block text-sm font-semibold text-brand">
+                  Open Holds
+                </Link>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardTitle>Holds Expiring Soon</CardTitle>
+              <CardBody>
+                {expiringHolds.length === 0 ? (
+                  <p className="text-sm text-muted">No holds expiring in the next {HOLD_EXPIRY_LOOKAHEAD_DAYS} days.</p>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {expiringHolds.map((hold) => (
+                      <li key={`hold-expiring-${hold.id}`}>
+                        <span className="font-semibold">{memberNameById.get(hold.member_id) ?? "Member"}</span> - ends {formatDate(hold.end_date as string)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardTitle>Unresolved Leads / Inquiries</CardTitle>
+              <CardBody>
+                <p className="text-sm">Open Leads: <span className="font-semibold">{unresolvedLeads}</span></p>
+                <p className="text-sm">Inquiry Stage: <span className="font-semibold">{unresolvedInquiryLeads}</span></p>
+                {canViewSales ? (
+                  <Link href="/sales/pipeline" className="mt-2 inline-block text-sm font-semibold text-brand">
+                    Open Sales Pipeline
+                  </Link>
+                ) : (
+                  <p className="mt-2 text-xs text-muted">Sales module access is restricted for your role.</p>
+                )}
+              </CardBody>
+            </Card>
+          </div>
+
+          <Card>
+            <CardTitle>Admin Quick Links</CardTitle>
+            <CardBody className="flex flex-wrap gap-3">
+              <Link href="/operations/attendance" className="text-sm font-semibold text-brand">Attendance</Link>
+              <Link href="/operations/transportation-station" className="text-sm font-semibold text-brand">Transportation Station</Link>
+              <Link href="/operations/holds" className="text-sm font-semibold text-brand">Holds</Link>
+              <Link href="/reports/member-summary" className="text-sm font-semibold text-brand">Documentation Summary</Link>
+              <Link href="/time-hr/user-management" className="text-sm font-semibold text-brand">User Management</Link>
+              <Link href="/admin-reports/audit-trail" className="text-sm font-semibold text-brand">Audit Trail</Link>
             </CardBody>
           </Card>
         </section>
+      ) : null}
+
+      {showIncompleteAttendanceFlag ? (
+        <Card className="border-amber-300">
+          <CardTitle>Attendance Incomplete Records</CardTitle>
+          <CardBody>
+            <p className="text-sm">
+              {stats.incompleteAttendance.totalIncomplete} incomplete attendance record(s) for {stats.incompleteAttendance.selectedDate}.
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Pending: {stats.incompleteAttendance.pendingWithoutStatus} | Missing check-out: {stats.incompleteAttendance.checkInMissingCheckOut} | Missing check-in: {stats.incompleteAttendance.checkOutMissingCheckIn}
+            </p>
+            <Link
+              href={`/operations/attendance?tab=daily-attendance&date=${stats.incompleteAttendance.selectedDate}`}
+              className="mt-2 inline-block text-sm font-semibold text-brand"
+            >
+              Open Daily Attendance
+            </Link>
+          </CardBody>
+        </Card>
       ) : null}
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -71,33 +254,18 @@ export default async function DashboardPage() {
           <CardBody className="space-x-2">
             <Link href="/documentation/activity" className="text-sm font-semibold text-brand">Participation Log</Link>
             <Link href="/documentation/toilet" className="text-sm font-semibold text-brand">Toilet Log</Link>
-            {canPunch ? (
-              <Link href="/time-card" className="text-sm font-semibold text-brand">Clock In/Out</Link>
-            ) : null}
-            {showLeadershipShortcuts ? (
-              <Link href="/time-card/punch-history" className="text-sm font-semibold text-brand">Punch History</Link>
-            ) : null}
+            {canPunch ? <Link href="/time-card" className="text-sm font-semibold text-brand">Clock In/Out</Link> : null}
+            {!canPunch ? <Link href="/time-card/punch-history" className="text-sm font-semibold text-brand">Punch History</Link> : null}
           </CardBody>
         </Card>
 
-        {showLeadershipShortcuts ? (
-          <Card>
-            <CardTitle>Manager/Admin Shortcuts</CardTitle>
-            <CardBody className="space-x-2">
-              <Link href="/reports" className="text-sm font-semibold text-brand">Reports</Link>
-              <Link href="/reports/member-summary" className="text-sm font-semibold text-brand">Member Documentation Summary</Link>
-              <Link href="/sales" className="text-sm font-semibold text-brand">Pipeline</Link>
-              <Link href="/health/assessment" className="text-sm font-semibold text-brand">Assessments</Link>
-            </CardBody>
-          </Card>
-        ) : null}
-
-        {showNursingShortcuts ? (
+        {normalizedRole === "nurse" ? (
           <Card>
             <CardTitle>Nursing Shortcuts</CardTitle>
             <CardBody className="space-x-2">
               <Link href="/health" className="text-sm font-semibold text-brand">Health Unit</Link>
               <Link href="/documentation/blood-sugar" className="text-sm font-semibold text-brand">Blood Sugar</Link>
+              <Link href="/health/member-health-profiles" className="text-sm font-semibold text-brand">Member Health Profiles</Link>
             </CardBody>
           </Card>
         ) : null}
@@ -109,8 +277,12 @@ export default async function DashboardPage() {
         {alerts.map((alert) => (
           <Card key={alert.id} className={alert.severity === "critical" ? "border-rose-200" : "border-amber-200"}>
             <div className="flex items-center justify-between gap-2">
-              <div><p className="text-sm font-semibold">{alert.message}</p></div>
-              <Link href={alert.actionHref} className="text-sm font-semibold text-brand">{alert.actionLabel}</Link>
+              <p className="text-sm font-semibold">{alert.message}</p>
+              {alert.actionHref && alert.actionLabel ? (
+                <Link href={alert.actionHref} className="text-sm font-semibold text-brand">
+                  {alert.actionLabel}
+                </Link>
+              ) : null}
             </div>
           </Card>
         ))}
@@ -120,16 +292,25 @@ export default async function DashboardPage() {
         <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Recent Punches</h2>
         <Card className="table-wrap">
           <table>
-            <thead><tr><th>Type</th><th>When</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>When</th>
+              </tr>
+            </thead>
             <tbody>
               {stats.latestPunches.map((p) => (
-                <tr key={p.id}><td><PunchTypeBadge punchType={p.punch_type} /></td><td>{formatDateTime(p.punch_at)}</td></tr>
+                <tr key={p.id}>
+                  <td>
+                    <PunchTypeBadge punchType={p.punch_type} />
+                  </td>
+                  <td>{formatDateTime(p.punch_at)}</td>
+                </tr>
               ))}
             </tbody>
           </table>
         </Card>
       </section>
-    </>
+    </div>
   );
 }
-

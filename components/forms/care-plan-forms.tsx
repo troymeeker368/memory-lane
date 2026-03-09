@@ -42,12 +42,14 @@ export function NewCarePlanForm({
   members,
   templates,
   tracks,
-  initialMemberId
+  initialMemberId,
+  signerNameDefault
 }: {
   members: MemberOption[];
   templates: CarePlanTemplate[];
   tracks: CarePlanTrack[];
   initialMemberId?: string;
+  signerNameDefault: string;
 }) {
   const router = useRouter();
   const today = useMemo(() => toEasternDate(), []);
@@ -67,12 +69,12 @@ export function NewCarePlanForm({
     modificationsRequired: false,
     modificationsDescription: "",
     careTeamNotes: "",
-    completedBy: "",
+    completedBy: signerNameDefault,
     dateOfCompletion: today,
     responsiblePartySignature: "",
     responsiblePartySignatureDate: "",
-    administratorSignature: "",
-    administratorSignatureDate: ""
+    administratorSignature: signerNameDefault,
+    administratorSignatureDate: today
   });
 
   const [sections, setSections] = useState(() => sectionsForTrack(initialTrack, templates));
@@ -193,14 +195,8 @@ export function NewCarePlanForm({
             <input
               className="h-11 w-full rounded-lg border border-border px-3"
               value={form.completedBy}
-              onChange={(event) => {
-                const completedBy = event.target.value;
-                setForm((current) => ({
-                  ...current,
-                  completedBy,
-                  administratorSignature: !current.administratorSignature || current.administratorSignature === current.completedBy ? completedBy : current.administratorSignature
-                }));
-              }}
+              readOnly
+              aria-readonly="true"
             />
           </label>
           <label className="space-y-1 text-sm">
@@ -223,7 +219,7 @@ export function NewCarePlanForm({
           </label>
           <label className="space-y-1 text-sm">
             <span className="font-semibold">Administrator/Designee Signature (usually center nurse)</span>
-            <input className="h-11 w-full rounded-lg border border-border px-3" value={form.administratorSignature} onChange={(event) => setForm((current) => ({ ...current, administratorSignature: event.target.value }))} />
+            <input className="h-11 w-full rounded-lg border border-border px-3" value={form.administratorSignature} readOnly aria-readonly="true" />
           </label>
           <label className="space-y-1 text-sm">
             <span className="font-semibold">Administrator/Designee Signature Date</span>
@@ -279,7 +275,6 @@ export function NewCarePlanForm({
       </Button>
 
       {status ? <p className="text-sm text-muted">{status}</p> : null}
-      <p className="text-xs text-muted">TODO: Add print/PDF export + signature image capture after backend document storage is wired.</p>
     </div>
   );
 }
@@ -348,14 +343,8 @@ export function CarePlanReviewForm({
           <input
             className="h-11 w-full rounded-lg border border-border px-3"
             value={form.reviewedBy}
-            onChange={(event) => {
-              const reviewedBy = event.target.value;
-              setForm((current) => ({
-                ...current,
-                reviewedBy,
-                administratorSignature: !current.administratorSignature || current.administratorSignature === current.reviewedBy ? reviewedBy : current.administratorSignature
-              }));
-            }}
+            readOnly
+            aria-readonly="true"
           />
         </label>
       </div>
@@ -399,7 +388,7 @@ export function CarePlanReviewForm({
         <div className="grid gap-3 md:grid-cols-2">
           <input className="h-11 w-full rounded-lg border border-border px-3" placeholder="Member/Responsible Party Signature" value={form.responsiblePartySignature} onChange={(event) => setForm((current) => ({ ...current, responsiblePartySignature: event.target.value }))} />
           <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.responsiblePartySignatureDate} onChange={(event) => setForm((current) => ({ ...current, responsiblePartySignatureDate: event.target.value }))} />
-          <input className="h-11 w-full rounded-lg border border-border px-3" placeholder="Administrator/Designee Signature (defaults to nurse)" value={form.administratorSignature} onChange={(event) => setForm((current) => ({ ...current, administratorSignature: event.target.value }))} />
+          <input className="h-11 w-full rounded-lg border border-border px-3" placeholder="Administrator/Designee Signature (defaults to nurse)" value={form.administratorSignature} readOnly aria-readonly="true" />
           <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.administratorSignatureDate} onChange={(event) => setForm((current) => ({ ...current, administratorSignatureDate: event.target.value }))} />
         </div>
       </div>

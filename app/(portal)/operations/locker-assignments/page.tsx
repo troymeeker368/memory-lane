@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { unstable_noStore as noStore } from "next/cache";
 
 import { assignLockerAction, clearLockerAction } from "@/app/(portal)/operations/locker-assignments/actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
@@ -54,6 +55,7 @@ export default async function LockerAssignmentsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  noStore();
   const profile = await requireModuleAccess("operations");
   const canEdit = profile.role === "admin" || profile.role === "manager";
   const params = await searchParams;
@@ -290,11 +292,6 @@ export default async function LockerAssignmentsPage({
                           className="text-sm font-semibold text-brand"
                         >
                           Assign/Reassign
-                        </Link>
-                      ) : null}
-                      {row.currentMember ? (
-                        <Link href={`/operations/member-command-center/${row.currentMember.id}`} className="text-sm font-semibold text-brand">
-                          Open MCC
                         </Link>
                       ) : null}
                       {canEdit && row.currentMember ? (

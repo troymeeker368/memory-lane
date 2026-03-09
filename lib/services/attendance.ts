@@ -33,7 +33,7 @@ export interface DailyAttendanceRow {
   checkOutAt: string | null;
   transportRequired: boolean;
   transportType: "Bus Stop" | "Door to Door" | null;
-  transportBusNumber: "1" | "2" | "3" | null;
+  transportBusNumber: string | null;
   transportLocation: string | null;
 }
 
@@ -133,7 +133,7 @@ export interface DailyTrackMemberRow {
   lockerNumber: string | null;
   attendanceStatus: AttendanceStatusLabel;
   transportRequired: boolean;
-  transportBusNumber: "1" | "2" | "3" | null;
+  transportBusNumber: string | null;
 }
 
 export interface DailyTrackGroup {

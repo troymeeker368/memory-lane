@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { getCurrentProfile, requireRoles } from "@/lib/auth";
+import { getCurrentProfile, requireModuleAction } from "@/lib/auth";
 import {
   LEAD_ACTIVITY_OUTCOMES,
   LEAD_ACTIVITY_TYPES,
@@ -23,7 +23,7 @@ import { toEasternDate, toEasternDateTimeLocal, toEasternISO } from "@/lib/timez
 const optionalString = z.string().optional().or(z.literal(""));
 
 async function requireSalesRoles() {
-  await requireRoles(["admin"]);
+  await requireModuleAction("sales", "canEdit");
 }
 
 function revalidateSalesLeadViews(leadId?: string) {

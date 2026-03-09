@@ -9,19 +9,22 @@ import { normalizePermissionSet, PERMISSION_MODULES } from "@/lib/permissions";
 import {
   createManagedUser,
   getManagedUserById,
+  resetManagedUserPermissionsToRoleDefaults,
   setManagedUserStatus,
   updateManagedUser,
   updateManagedUserPermissions
 } from "@/lib/services/user-management";
 import type { AppRole, PermissionSet, UserStatus } from "@/types/app";
 
-const roleSchema = z.enum(["admin", "manager", "nurse", "staff"]);
+const roleSchema = z.enum(["program-assistant", "coordinator", "nurse", "sales", "manager", "director", "admin"]);
 const statusSchema = z.enum(["active", "inactive"]);
+const permissionModeSchema = z.enum(["template", "custom"]);
 
 const userSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   displayName: z.string().min(1),
+  credentials: z.string().optional().or(z.literal("")),
   email: z.string().email(),
   role: roleSchema,
   status: statusSchema,
@@ -40,8 +43,9 @@ function parseUserFromFormData(formData: FormData) {
     firstName: String(formData.get("firstName") ?? "").trim(),
     lastName: String(formData.get("lastName") ?? "").trim(),
     displayName: String(formData.get("displayName") ?? "").trim(),
+    credentials: String(formData.get("credentials") ?? "").trim(),
     email: String(formData.get("email") ?? "").trim(),
-    role: String(formData.get("role") ?? "staff") as AppRole,
+    role: String(formData.get("role") ?? "program-assistant") as AppRole,
     status: String(formData.get("status") ?? "active") as UserStatus,
     phone: String(formData.get("phone") ?? "").trim(),
     title: String(formData.get("title") ?? "").trim(),
@@ -68,7 +72,7 @@ export async function createManagedUserFormAction(formData: FormData) {
   await requireUserManagementAdmin();
   const payload = parseUserFromFormData(formData);
   if (!payload.success) {
-    return { error: "Invalid user fields." };
+    return;
   }
 
   const created = createManagedUser(payload.data);
@@ -82,17 +86,17 @@ export async function updateManagedUserFormAction(formData: FormData) {
   await requireUserManagementAdmin();
   const userId = String(formData.get("userId") ?? "").trim();
   if (!userId) {
-    return { error: "Missing user id." };
+    return;
   }
 
   const payload = parseUserFromFormData(formData);
   if (!payload.success) {
-    return { error: "Invalid user fields." };
+    return;
   }
 
   const updated = updateManagedUser(userId, payload.data);
   if (!updated) {
-    return { error: "User not found." };
+    return;
   }
 
   revalidatePath("/time-hr/user-management");
@@ -107,38 +111,62 @@ export async function updateManagedUserStatusAction(formData: FormData) {
 
   const nextStatusParsed = statusSchema.safeParse(nextStatusRaw);
   if (!userId || !nextStatusParsed.success) {
-    return { error: "Invalid status update." };
+    return;
   }
 
   const updated = setManagedUserStatus(userId, nextStatusParsed.data);
   if (!updated) {
-    return { error: "User not found." };
+    return;
   }
 
   revalidatePath("/time-hr/user-management");
   revalidatePath(`/time-hr/user-management/${userId}`);
-  return { ok: true };
 }
 
 export async function updateManagedUserPermissionsAction(formData: FormData) {
   await requireUserManagementAdmin();
   const userId = String(formData.get("userId") ?? "").trim();
   if (!userId) {
-    return { error: "Missing user id." };
+    return;
   }
 
   const user = getManagedUserById(userId);
   if (!user) {
-    return { error: "User not found." };
+    return;
   }
 
-  const permissions = parsePermissionSetFromFormData(formData);
-  const updated = updateManagedUserPermissions(userId, permissions);
+  const modeResult = permissionModeSchema.safeParse(String(formData.get("permissionMode") ?? "custom"));
+  if (!modeResult.success) {
+    return;
+  }
+
+  const updated =
+    modeResult.data === "template"
+      ? resetManagedUserPermissionsToRoleDefaults(userId)
+      : updateManagedUserPermissions(userId, parsePermissionSetFromFormData(formData));
+
   if (!updated) {
-    return { error: "Unable to update permissions." };
+    return;
   }
 
   revalidatePath("/time-hr/user-management");
   revalidatePath(`/time-hr/user-management/${userId}`);
   redirect(`/time-hr/user-management/${userId}`);
+}
+
+export async function resetManagedUserPermissionsAction(formData: FormData) {
+  await requireUserManagementAdmin();
+  const userId = String(formData.get("userId") ?? "").trim();
+  if (!userId) {
+    return;
+  }
+
+  const updated = resetManagedUserPermissionsToRoleDefaults(userId);
+  if (!updated) {
+    return;
+  }
+
+  revalidatePath("/time-hr/user-management");
+  revalidatePath(`/time-hr/user-management/${userId}`);
+  redirect(`/time-hr/user-management/${userId}/permissions`);
 }

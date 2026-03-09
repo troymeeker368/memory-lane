@@ -1,10 +1,10 @@
 import Link from "next/link";
 
 import { createMemberHoldAction, endMemberHoldAction } from "@/app/(portal)/operations/holds/actions";
+import { MemberHoldCreateForm } from "@/components/forms/member-hold-create-form";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { MEMBER_HOLD_REASON_OPTIONS } from "@/lib/canonical";
 import { getMockDb } from "@/lib/mock-repo";
 import {
   normalizeOperationalDateOnly,
@@ -37,7 +37,8 @@ export default async function OperationsHoldsPage({
   const canEdit = profile.role === "admin" || profile.role === "manager";
   const params = await searchParams;
   const selectedDate = normalizeOperationalDateOnly(firstString(params.date) ?? getOperationsTodayDate());
-  const defaultHoldStartDate = getFirstDayOfNextMonth();
+  const defaultHoldStartDate = getOperationsTodayDate();
+  const defaultHoldEndDate = getFirstDayOfNextMonth(defaultHoldStartDate);
 
   const db = getMockDb();
   const memberById = new Map(db.members.map((member) => [member.id, member] as const));
@@ -91,57 +92,12 @@ export default async function OperationsHoldsPage({
       {canEdit ? (
         <Card>
           <CardTitle>Add New Hold</CardTitle>
-          <form action={createMemberHoldAction} className="mt-3 grid gap-3 md:grid-cols-3">
-            <label className="space-y-1 text-sm md:col-span-2">
-              <span className="text-xs font-semibold text-muted">Member</span>
-              <select name="memberId" required className="h-10 w-full rounded-lg border border-border px-3">
-                <option value="">Select member</option>
-                {activeMembers.map((member) => (
-                  <option key={member.id} value={member.id}>
-                    {member.display_name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">Reason</span>
-              <select name="reason" required className="h-10 w-full rounded-lg border border-border px-3">
-                <option value="">Select reason</option>
-                {MEMBER_HOLD_REASON_OPTIONS.map((reason) => (
-                  <option key={reason} value={reason}>
-                    {reason}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">Start Date</span>
-              <input
-                type="date"
-                name="startDate"
-                required
-                defaultValue={defaultHoldStartDate}
-                className="h-10 w-full rounded-lg border border-border px-3"
-              />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">End Date</span>
-              <input type="date" name="endDate" className="h-10 w-full rounded-lg border border-border px-3" />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">Reason (Other)</span>
-              <input name="reasonOther" placeholder="Required when reason = Other" className="h-10 w-full rounded-lg border border-border px-3" />
-            </label>
-            <label className="space-y-1 text-sm md:col-span-3">
-              <span className="text-xs font-semibold text-muted">Notes</span>
-              <textarea name="notes" className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
-            </label>
-            <div className="md:col-span-3">
-              <button type="submit" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
-                Save Hold
-              </button>
-            </div>
-          </form>
+          <MemberHoldCreateForm
+            action={createMemberHoldAction}
+            activeMembers={activeMembers.map((member) => ({ id: member.id, displayName: member.display_name }))}
+            defaultStartDate={defaultHoldStartDate}
+            defaultEndDate={defaultHoldEndDate}
+          />
         </Card>
       ) : null}
 
@@ -229,6 +185,43 @@ export default async function OperationsHoldsPage({
                     <td>{hold.reason === "Other" ? hold.reason_other ?? "Other" : hold.reason}</td>
                     <td>{formatDate(hold.start_date)}</td>
                     <td>{formatOptionalDate(hold.end_date)}</td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card className="table-wrap">
+        <CardTitle>Past Holds ({ended.length})</CardTitle>
+        <table className="mt-3">
+          <thead>
+            <tr>
+              <th>Member</th>
+              <th>Reason</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Ended</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ended.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="text-sm text-muted">
+                  No past holds.
+                </td>
+              </tr>
+            ) : (
+              ended.map((hold) => {
+                const member = memberById.get(hold.member_id);
+                return (
+                  <tr key={`past-${hold.id}`}>
+                    <td>{member?.display_name ?? hold.member_id}</td>
+                    <td>{hold.reason === "Other" ? hold.reason_other ?? "Other" : hold.reason}</td>
+                    <td>{formatDate(hold.start_date)}</td>
+                    <td>{formatOptionalDate(hold.end_date)}</td>
+                    <td>{formatOptionalDate(hold.ended_at?.slice(0, 10) ?? null)}</td>
                   </tr>
                 );
               })

@@ -5,6 +5,8 @@ import { z } from "zod";
 
 import { requireRoles } from "@/lib/auth";
 import { CARE_PLAN_SECTION_TYPES, createCarePlan, reviewCarePlan } from "@/lib/services/care-plans";
+import { getManagedUserSignatureName } from "@/lib/services/user-management";
+import { toEasternDate } from "@/lib/timezone";
 
 const sectionSchema = z.object({
   sectionType: z.enum(CARE_PLAN_SECTION_TYPES),
@@ -50,13 +52,21 @@ const createCarePlanSchema = z
   });
 
 export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSchema>) {
-  await requireRoles(["admin", "manager", "nurse"]);
+  const profile = await requireRoles(["admin", "manager", "nurse"]);
   const payload = createCarePlanSchema.safeParse(raw);
   if (!payload.success) {
     return { error: "Invalid care plan submission." };
   }
 
-  const created = createCarePlan(payload.data);
+  const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
+  const completedDate = payload.data.dateOfCompletion || payload.data.reviewDate || toEasternDate();
+  const created = createCarePlan({
+    ...payload.data,
+    completedBy: signerName,
+    dateOfCompletion: completedDate,
+    administratorSignature: signerName,
+    administratorSignatureDate: payload.data.administratorSignatureDate || completedDate
+  });
   revalidatePath("/health");
   revalidatePath("/health/care-plans");
   revalidatePath("/health/care-plans/list");
@@ -105,14 +115,18 @@ const reviewCarePlanSchema = z
   });
 
 export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSchema>) {
-  await requireRoles(["admin", "manager", "nurse"]);
+  const profile = await requireRoles(["admin", "manager", "nurse"]);
   const payload = reviewCarePlanSchema.safeParse(raw);
   if (!payload.success) {
     return { error: "Invalid care plan review submission." };
   }
 
+  const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
   const updated = reviewCarePlan({
     ...payload.data,
+    reviewedBy: signerName,
+    administratorSignature: signerName,
+    administratorSignatureDate: payload.data.administratorSignatureDate || payload.data.reviewDate,
     modificationsDescription: payload.data.modificationsDescription || ""
   });
 

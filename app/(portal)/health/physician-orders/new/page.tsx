@@ -6,6 +6,7 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { getMockDb } from "@/lib/mock-repo";
+import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import {
   POF_LEVEL_OF_CARE_OPTIONS,
   POF_NUTRITION_OPTIONS,
@@ -43,6 +44,7 @@ export default async function NewPhysicianOrderPage({
 }) {
   await requireRoles(["admin", "nurse"]);
   const profile = await getCurrentProfile();
+  const actorDisplayName = getManagedUserSignatureName(profile.id, profile.full_name);
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";
   const pofId = firstString(query.pofId) ?? "";
@@ -79,7 +81,7 @@ export default async function NewPhysicianOrderPage({
   }
 
   const editing = pofId ? getPhysicianOrderById(pofId) : null;
-  const draft = editing ?? (memberId ? buildNewPhysicianOrderDraft({ memberId, actor: { id: profile.id, fullName: profile.full_name } }) : null);
+  const draft = editing ?? (memberId ? buildNewPhysicianOrderDraft({ memberId, actor: { id: profile.id, fullName: actorDisplayName } }) : null);
   if (!draft) notFound();
 
   return (
@@ -178,105 +180,126 @@ export default async function NewPhysicianOrderPage({
 
         <Card>
           <CardTitle>Member Care Information</CardTitle>
-          <div className="mt-3 grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <p className="text-sm font-semibold">Disoriented</p>
-              <CheckboxField name="disorientedConstantly" label="Constantly" defaultChecked={draft.careInformation.disorientedConstantly} />
-              <CheckboxField name="disorientedIntermittently" label="Intermittently" defaultChecked={draft.careInformation.disorientedIntermittently} />
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-semibold">Inappropriate Behavior</p>
-              <CheckboxField name="inappropriateBehaviorWanderer" label="Wanderer" defaultChecked={draft.careInformation.inappropriateBehaviorWanderer} />
-              <CheckboxField name="inappropriateBehaviorVerbalAggression" label="Verbal Aggression" defaultChecked={draft.careInformation.inappropriateBehaviorVerbalAggression} />
-              <CheckboxField name="inappropriateBehaviorAggression" label="Aggression" defaultChecked={draft.careInformation.inappropriateBehaviorAggression} />
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-semibold">Personal Care Assistance</p>
-              <CheckboxField name="personalCareBathing" label="Bathing" defaultChecked={draft.careInformation.personalCareBathing} />
-              <CheckboxField name="personalCareFeeding" label="Feeding" defaultChecked={draft.careInformation.personalCareFeeding} />
-              <CheckboxField name="personalCareDressing" label="Dressing" defaultChecked={draft.careInformation.personalCareDressing} />
-              <CheckboxField name="personalCareMedication" label="Medication" defaultChecked={draft.careInformation.personalCareMedication} />
-              <CheckboxField name="personalCareToileting" label="Toileting" defaultChecked={draft.careInformation.personalCareToileting} />
-            </div>
-            <div className="space-y-2">
-              <label className="space-y-1 text-sm">
-                <span className="text-xs font-semibold text-muted">Ambulatory Status</span>
-                <select name="ambulatoryStatus" defaultValue={draft.careInformation.ambulatoryStatus ?? ""} className="h-10 w-full rounded-lg border border-border px-3">
-                  <option value="">Not set</option>
-                  <option value="Full">Full</option>
-                  <option value="Semi">Semi</option>
-                  <option value="Non">Non</option>
-                </select>
+          <p className="mt-1 text-sm text-muted">Grouped by behavior, function, clinical support, and nutrition to simplify review.</p>
+
+          <div className="mt-3 space-y-3">
+            <details className="rounded-lg border border-border p-3" open>
+              <summary className="cursor-pointer text-sm font-semibold">Behavior & Orientation</summary>
+              <div className="mt-3 grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Disoriented</p>
+                  <CheckboxField name="disorientedConstantly" label="Constantly" defaultChecked={draft.careInformation.disorientedConstantly} />
+                  <CheckboxField name="disorientedIntermittently" label="Intermittently" defaultChecked={draft.careInformation.disorientedIntermittently} />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Inappropriate Behavior</p>
+                  <CheckboxField name="inappropriateBehaviorWanderer" label="Wanderer" defaultChecked={draft.careInformation.inappropriateBehaviorWanderer} />
+                  <CheckboxField name="inappropriateBehaviorVerbalAggression" label="Verbal Aggression" defaultChecked={draft.careInformation.inappropriateBehaviorVerbalAggression} />
+                  <CheckboxField name="inappropriateBehaviorAggression" label="Aggression" defaultChecked={draft.careInformation.inappropriateBehaviorAggression} />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Activities / Social</p>
+                  <CheckboxField name="activitiesPassive" label="Passive" defaultChecked={draft.careInformation.activitiesPassive} />
+                  <CheckboxField name="activitiesActive" label="Active" defaultChecked={draft.careInformation.activitiesActive} />
+                  <CheckboxField name="activitiesGroupParticipation" label="Group Participation" defaultChecked={draft.careInformation.activitiesGroupParticipation} />
+                  <CheckboxField name="activitiesPrefersAlone" label="Prefers alone time" defaultChecked={draft.careInformation.activitiesPrefersAlone} />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Stimulation</p>
+                  <CheckboxField name="stimulationAfraidLoudNoises" label="Afraid of loud noises" defaultChecked={draft.careInformation.stimulationAfraidLoudNoises} />
+                  <CheckboxField name="stimulationEasilyOverwhelmed" label="Easily overwhelmed" defaultChecked={draft.careInformation.stimulationEasilyOverwhelmed} />
+                  <CheckboxField name="stimulationAdaptsEasily" label="Adapts easily" defaultChecked={draft.careInformation.stimulationAdaptsEasily} />
+                </div>
+              </div>
+            </details>
+
+            <details className="rounded-lg border border-border p-3" open>
+              <summary className="cursor-pointer text-sm font-semibold">ADLs & Mobility</summary>
+              <div className="mt-3 grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Personal Care Assistance</p>
+                  <CheckboxField name="personalCareBathing" label="Bathing" defaultChecked={draft.careInformation.personalCareBathing} />
+                  <CheckboxField name="personalCareFeeding" label="Feeding" defaultChecked={draft.careInformation.personalCareFeeding} />
+                  <CheckboxField name="personalCareDressing" label="Dressing" defaultChecked={draft.careInformation.personalCareDressing} />
+                  <CheckboxField name="personalCareMedication" label="Medication" defaultChecked={draft.careInformation.personalCareMedication} />
+                  <CheckboxField name="personalCareToileting" label="Toileting" defaultChecked={draft.careInformation.personalCareToileting} />
+                </div>
+                <div className="space-y-2">
+                  <label className="space-y-1 text-sm">
+                    <span className="text-xs font-semibold text-muted">Ambulatory Status</span>
+                    <select name="ambulatoryStatus" defaultValue={draft.careInformation.ambulatoryStatus ?? ""} className="h-10 w-full rounded-lg border border-border px-3">
+                      <option value="">Not set</option>
+                      <option value="Full">Full</option>
+                      <option value="Semi">Semi</option>
+                      <option value="Non">Non</option>
+                    </select>
+                  </label>
+                  <p className="text-sm font-semibold">Mobility</p>
+                  <CheckboxField name="mobilityIndependent" label="Independent" defaultChecked={draft.careInformation.mobilityIndependent} />
+                  <CheckboxField name="mobilityWalker" label="Walker" defaultChecked={draft.careInformation.mobilityWalker} />
+                  <CheckboxField name="mobilityWheelchair" label="Wheelchair" defaultChecked={draft.careInformation.mobilityWheelchair} />
+                  <CheckboxField name="mobilityScooter" label="Scooter" defaultChecked={draft.careInformation.mobilityScooter} />
+                  <CheckboxField name="mobilityOther" label="Other" defaultChecked={draft.careInformation.mobilityOther} />
+                  <input name="mobilityOtherText" defaultValue={draft.careInformation.mobilityOtherText ?? ""} placeholder="Mobility other detail" className="h-10 w-full rounded-lg border border-border px-3 text-sm" />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Functional Limitations</p>
+                  <CheckboxField name="functionalLimitationSight" label="Sight" defaultChecked={draft.careInformation.functionalLimitationSight} />
+                  <CheckboxField name="functionalLimitationHearing" label="Hearing" defaultChecked={draft.careInformation.functionalLimitationHearing} />
+                  <CheckboxField name="functionalLimitationSpeech" label="Speech" defaultChecked={draft.careInformation.functionalLimitationSpeech} />
+                </div>
+              </div>
+            </details>
+
+            <details className="rounded-lg border border-border p-3" open>
+              <summary className="cursor-pointer text-sm font-semibold">Clinical Support</summary>
+              <div className="mt-3 grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Medication Administration</p>
+                  <CheckboxField name="medAdministrationSelf" label="Self administration" defaultChecked={draft.careInformation.medAdministrationSelf} />
+                  <CheckboxField name="medAdministrationNurse" label="Nurse administration" defaultChecked={draft.careInformation.medAdministrationNurse} />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Neurological</p>
+                  <CheckboxField name="neurologicalConvulsionsSeizures" label="Convulsions/Seizures" defaultChecked={draft.careInformation.neurologicalConvulsionsSeizures} />
+                </div>
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-4">
+                <CheckboxField name="bladderContinent" label="Bladder Continent" defaultChecked={draft.careInformation.bladderContinent} />
+                <CheckboxField name="bladderIncontinent" label="Bladder Incontinent" defaultChecked={draft.careInformation.bladderIncontinent} />
+                <CheckboxField name="bowelContinent" label="Bowel Continent" defaultChecked={draft.careInformation.bowelContinent} />
+                <CheckboxField name="bowelIncontinent" label="Bowel Incontinent" defaultChecked={draft.careInformation.bowelIncontinent} />
+                <CheckboxField name="skinNormal" label="Skin Normal" defaultChecked={draft.careInformation.skinNormal} />
+                <input name="skinOther" defaultValue={draft.careInformation.skinOther ?? ""} placeholder="Skin other" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                <CheckboxField name="breathingRoomAir" label="Room Air" defaultChecked={draft.careInformation.breathingRoomAir} />
+                <CheckboxField name="breathingOxygenTank" label="Oxygen Tank" defaultChecked={draft.careInformation.breathingOxygenTank} />
+                <input name="breathingOxygenLiters" defaultValue={draft.careInformation.breathingOxygenLiters ?? ""} placeholder="Oxygen liters (L)" className="h-10 rounded-lg border border-border px-3 text-sm" />
+              </div>
+            </details>
+
+            <details className="rounded-lg border border-border p-3" open>
+              <summary className="cursor-pointer text-sm font-semibold">Nutrition & Joy Sparks</summary>
+              <div className="mt-3">
+                <p className="text-sm font-semibold">Nutrition / Diet</p>
+                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                  {POF_NUTRITION_OPTIONS.map((option) => (
+                    <CheckboxField
+                      key={option}
+                      name="nutritionDiet"
+                      label={option}
+                      defaultChecked={draft.careInformation.nutritionDiets.includes(option)}
+                    />
+                  ))}
+                </div>
+                <input name="nutritionDietOther" defaultValue={draft.careInformation.nutritionDietOther ?? ""} placeholder="Nutrition other detail" className="mt-2 h-10 w-full rounded-lg border border-border px-3 text-sm" />
+              </div>
+
+              <label className="mt-4 block space-y-1 text-sm">
+                <span className="text-xs font-semibold text-muted">Additional information to help spark joy</span>
+                <textarea name="joySparksNotes" defaultValue={draft.careInformation.joySparksNotes ?? ""} className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
               </label>
-              <p className="text-sm font-semibold">Mobility</p>
-              <CheckboxField name="mobilityIndependent" label="Independent" defaultChecked={draft.careInformation.mobilityIndependent} />
-              <CheckboxField name="mobilityWalker" label="Walker" defaultChecked={draft.careInformation.mobilityWalker} />
-              <CheckboxField name="mobilityWheelchair" label="Wheelchair" defaultChecked={draft.careInformation.mobilityWheelchair} />
-              <CheckboxField name="mobilityScooter" label="Scooter" defaultChecked={draft.careInformation.mobilityScooter} />
-              <CheckboxField name="mobilityOther" label="Other" defaultChecked={draft.careInformation.mobilityOther} />
-              <input name="mobilityOtherText" defaultValue={draft.careInformation.mobilityOtherText ?? ""} placeholder="Mobility other detail" className="h-10 w-full rounded-lg border border-border px-3 text-sm" />
-            </div>
+            </details>
           </div>
-
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <p className="text-sm font-semibold">Functional Limitations</p>
-              <CheckboxField name="functionalLimitationSight" label="Sight" defaultChecked={draft.careInformation.functionalLimitationSight} />
-              <CheckboxField name="functionalLimitationHearing" label="Hearing" defaultChecked={draft.careInformation.functionalLimitationHearing} />
-              <CheckboxField name="functionalLimitationSpeech" label="Speech" defaultChecked={draft.careInformation.functionalLimitationSpeech} />
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-semibold">Activities / Social</p>
-              <CheckboxField name="activitiesPassive" label="Passive" defaultChecked={draft.careInformation.activitiesPassive} />
-              <CheckboxField name="activitiesActive" label="Active" defaultChecked={draft.careInformation.activitiesActive} />
-              <CheckboxField name="activitiesGroupParticipation" label="Group Participation" defaultChecked={draft.careInformation.activitiesGroupParticipation} />
-              <CheckboxField name="activitiesPrefersAlone" label="Prefers alone time" defaultChecked={draft.careInformation.activitiesPrefersAlone} />
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-semibold">Stimulation</p>
-              <CheckboxField name="stimulationAfraidLoudNoises" label="Afraid of loud noises" defaultChecked={draft.careInformation.stimulationAfraidLoudNoises} />
-              <CheckboxField name="stimulationEasilyOverwhelmed" label="Easily overwhelmed" defaultChecked={draft.careInformation.stimulationEasilyOverwhelmed} />
-              <CheckboxField name="stimulationAdaptsEasily" label="Adapts easily" defaultChecked={draft.careInformation.stimulationAdaptsEasily} />
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-semibold">Medication Administration</p>
-              <CheckboxField name="medAdministrationSelf" label="Self administration" defaultChecked={draft.careInformation.medAdministrationSelf} />
-              <CheckboxField name="medAdministrationNurse" label="Nurse administration" defaultChecked={draft.careInformation.medAdministrationNurse} />
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-4">
-            <CheckboxField name="bladderContinent" label="Bladder Continent" defaultChecked={draft.careInformation.bladderContinent} />
-            <CheckboxField name="bladderIncontinent" label="Bladder Incontinent" defaultChecked={draft.careInformation.bladderIncontinent} />
-            <CheckboxField name="bowelContinent" label="Bowel Continent" defaultChecked={draft.careInformation.bowelContinent} />
-            <CheckboxField name="bowelIncontinent" label="Bowel Incontinent" defaultChecked={draft.careInformation.bowelIncontinent} />
-            <CheckboxField name="skinNormal" label="Skin Normal" defaultChecked={draft.careInformation.skinNormal} />
-            <input name="skinOther" defaultValue={draft.careInformation.skinOther ?? ""} placeholder="Skin other" className="h-10 rounded-lg border border-border px-3 text-sm" />
-            <CheckboxField name="breathingRoomAir" label="Room Air" defaultChecked={draft.careInformation.breathingRoomAir} />
-            <CheckboxField name="breathingOxygenTank" label="Oxygen Tank" defaultChecked={draft.careInformation.breathingOxygenTank} />
-            <input name="breathingOxygenLiters" defaultValue={draft.careInformation.breathingOxygenLiters ?? ""} placeholder="Oxygen liters (L)" className="h-10 rounded-lg border border-border px-3 text-sm" />
-            <CheckboxField name="neurologicalConvulsionsSeizures" label="Convulsions/Seizures" defaultChecked={draft.careInformation.neurologicalConvulsionsSeizures} />
-          </div>
-
-          <div className="mt-4">
-            <p className="text-sm font-semibold">Nutrition / Diet</p>
-            <div className="mt-2 grid gap-2 md:grid-cols-3">
-              {POF_NUTRITION_OPTIONS.map((option) => (
-                <CheckboxField
-                  key={option}
-                  name="nutritionDiet"
-                  label={option}
-                  defaultChecked={draft.careInformation.nutritionDiets.includes(option)}
-                />
-              ))}
-            </div>
-            <input name="nutritionDietOther" defaultValue={draft.careInformation.nutritionDietOther ?? ""} placeholder="Nutrition other detail" className="mt-2 h-10 w-full rounded-lg border border-border px-3 text-sm" />
-          </div>
-
-          <label className="mt-4 block space-y-1 text-sm">
-            <span className="text-xs font-semibold text-muted">Additional information to help spark joy</span>
-            <textarea name="joySparksNotes" defaultValue={draft.careInformation.joySparksNotes ?? ""} className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
-          </label>
         </Card>
 
         <Card>

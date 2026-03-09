@@ -1,7 +1,7 @@
 import { PERMISSION_MODULES } from "@/lib/permissions";
 import type { ManagedUser, PermissionModuleKey } from "@/types/app";
 
-type FormAction = (formData: FormData) => void | Promise<void | { error?: string }>;
+type FormAction = (formData: FormData) => void | Promise<void>;
 
 function moduleLabel(module: PermissionModuleKey) {
   return module
@@ -11,9 +11,27 @@ function moduleLabel(module: PermissionModuleKey) {
 }
 
 export function UserPermissionsForm({ user, action }: { user: ManagedUser; action: FormAction }) {
+  const isCustom = user.hasCustomPermissions;
+
   return (
     <form action={action} className="space-y-3">
       <input type="hidden" name="userId" value={user.id} />
+      <div className="grid gap-2 md:grid-cols-2">
+        <label className="grid gap-1 text-sm">
+          <span>Permission Source</span>
+          <select
+            className="h-11 rounded-lg border border-border px-3"
+            name="permissionMode"
+            defaultValue={isCustom ? "custom" : "template"}
+          >
+            <option value="template">Use Role Template Defaults</option>
+            <option value="custom">Use Custom Overrides</option>
+          </select>
+        </label>
+        <div className="rounded-lg border border-border px-3 py-2 text-sm text-muted">
+          Effective source: <span className="font-semibold text-primary-text">{user.permissionSource}</span>
+        </div>
+      </div>
 
       <div className="table-wrap">
         <table>

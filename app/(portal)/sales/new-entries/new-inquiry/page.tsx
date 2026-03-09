@@ -1,10 +1,10 @@
 import { SalesInquiryForm } from "@/components/forms/sales-inquiry-form";
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 
 export default async function NewInquiryPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const params = await searchParams;
   const { partners, referralSources } = await getSalesWorkflows();
   const partnerId = typeof params.partnerId === "string" ? params.partnerId : undefined;

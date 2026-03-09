@@ -1,10 +1,10 @@
 import { NewReferralSourceForm } from "@/components/forms/sales-partner-source-forms";
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 
 export default async function NewReferralSourcePage() {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const { partners } = await getSalesWorkflows();
 
   return (

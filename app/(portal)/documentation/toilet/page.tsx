@@ -3,6 +3,7 @@ import { ToiletLogForm } from "@/components/forms/workflow-forms";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { getMembers } from "@/lib/services/documentation";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
 import { formatDateTime } from "@/lib/utils";
@@ -14,8 +15,9 @@ function briefsLabel(briefs: boolean, memberSupplied: boolean) {
 
 export default async function ToiletLogPage() {
   const profile = await requireModuleAccess("documentation");
-  const canEdit = profile.role === "admin" || profile.role === "manager";
-  const showStaffColumn = profile.role !== "staff";
+  const normalizedRole = normalizeRoleKey(profile.role);
+  const canEdit = normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director";
+  const showStaffColumn = normalizedRole !== "program-assistant";
   const [members, workflows] = await Promise.all([getMembers(), getDocumentationWorkflows({ role: profile.role, staffUserId: profile.id })]);
   const toiletRows = workflows.toilets ?? [];
 

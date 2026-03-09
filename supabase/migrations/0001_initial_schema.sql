@@ -1,6 +1,6 @@
 ﻿create extension if not exists pgcrypto;
 
-create type app_role as enum ('admin', 'manager', 'nurse', 'staff');
+create type app_role as enum ('admin', 'director', 'manager', 'sales', 'nurse', 'coordinator', 'program-assistant', 'staff');
 create type lead_status as enum ('open', 'won', 'lost');
 create type punch_type as enum ('in', 'out');
 
@@ -19,7 +19,7 @@ create table if not exists public.profiles (
   email text not null unique,
   full_name text not null,
   staff_id text unique,
-  role app_role not null default 'staff',
+  role app_role not null default 'program-assistant',
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

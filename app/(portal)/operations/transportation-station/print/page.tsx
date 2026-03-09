@@ -1,6 +1,9 @@
+import { unstable_noStore as noStore } from "next/cache";
+
 import { ManifestPrintActions } from "@/components/transportation-station/manifest-print-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireModuleAccess } from "@/lib/auth";
+import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import {
   getTransportationManifest,
   type TransportationManifestBusFilter,
@@ -29,8 +32,10 @@ function normalizeShift(value: string | undefined): TransportationStationShift {
   return "Both";
 }
 
-function normalizeBusFilter(value: string | undefined): TransportationManifestBusFilter {
-  if (value === "1" || value === "2" || value === "3" || value === "all" || value === "unassigned") return value;
+function normalizeBusFilter(value: string | undefined, busNumberOptions: string[]): TransportationManifestBusFilter {
+  if (!value) return "all";
+  if (value === "all" || value === "unassigned") return value;
+  if (busNumberOptions.includes(value)) return value;
   return "all";
 }
 
@@ -39,11 +44,13 @@ export default async function TransportationManifestPrintPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  noStore();
   await requireModuleAccess("operations");
   const params = await searchParams;
+  const busNumberOptions = getConfiguredBusNumbers();
   const date = firstString(params.date) ?? toEasternDate();
   const shift = normalizeShift(firstString(params.shift));
-  const bus = normalizeBusFilter(firstString(params.bus));
+  const bus = normalizeBusFilter(firstString(params.bus), busNumberOptions);
   const manifest = getTransportationManifest({
     selectedDate: date,
     shift,

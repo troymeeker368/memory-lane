@@ -6,6 +6,7 @@ import { requireModuleAccess } from "@/lib/auth";
 import { getUserManagementMetrics, listManagedUsers } from "@/lib/services/user-management";
 import type { AppRole, UserStatus } from "@/types/app";
 import { formatOptionalDateTime } from "@/lib/utils";
+import { CANONICAL_ROLE_ORDER, getRoleLabel, normalizeRoleKey } from "@/lib/permissions";
 
 function firstParam(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0] ?? "";
@@ -13,8 +14,10 @@ function firstParam(value: string | string[] | undefined) {
 }
 
 function parseRole(raw: string | undefined): AppRole | "all" {
-  if (raw === "admin" || raw === "manager" || raw === "nurse" || raw === "staff") {
-    return raw;
+  if (!raw) return "all";
+  const normalized = normalizeRoleKey(raw);
+  if (CANONICAL_ROLE_ORDER.includes(normalized)) {
+    return normalized;
   }
   return "all";
 }
@@ -29,13 +32,14 @@ function parseStatus(raw: string | undefined): UserStatus | "all" {
 export default async function UserManagementPage({
   searchParams
 }: {
-  searchParams?: { search?: string | string[]; role?: string | string[]; status?: string | string[] };
+  searchParams?: Promise<{ search?: string | string[]; role?: string | string[]; status?: string | string[] }>;
 }) {
   await requireModuleAccess("user-management");
+  const resolvedSearchParams = (await searchParams) ?? {};
 
-  const search = firstParam(searchParams?.search).trim();
-  const role = parseRole(firstParam(searchParams?.role));
-  const status = parseStatus(firstParam(searchParams?.status));
+  const search = firstParam(resolvedSearchParams.search).trim();
+  const role = parseRole(firstParam(resolvedSearchParams.role));
+  const status = parseStatus(firstParam(resolvedSearchParams.status));
 
   const users = listManagedUsers({ search, role, status });
   const metrics = getUserManagementMetrics();
@@ -57,9 +61,9 @@ export default async function UserManagementPage({
           <div className="rounded border border-border px-2 py-1">Total: <span className="font-semibold">{metrics.total}</span></div>
           <div className="rounded border border-border px-2 py-1">Active: <span className="font-semibold">{metrics.active}</span></div>
           <div className="rounded border border-border px-2 py-1">Inactive: <span className="font-semibold">{metrics.inactive}</span></div>
-          <div className="rounded border border-border px-2 py-1">Admins: <span className="font-semibold">{metrics.admins}</span></div>
-          <div className="rounded border border-border px-2 py-1">Managers: <span className="font-semibold">{metrics.managers}</span></div>
-          <div className="rounded border border-border px-2 py-1">Nurses/Staff: <span className="font-semibold">{metrics.nurses + metrics.staff}</span></div>
+          <div className="rounded border border-border px-2 py-1">Program Assistants: <span className="font-semibold">{metrics.byRole["program-assistant"] ?? 0}</span></div>
+          <div className="rounded border border-border px-2 py-1">Managers: <span className="font-semibold">{metrics.byRole.manager ?? 0}</span></div>
+          <div className="rounded border border-border px-2 py-1">Admins: <span className="font-semibold">{metrics.byRole.admin ?? 0}</span></div>
         </div>
       </Card>
 
@@ -73,10 +77,11 @@ export default async function UserManagementPage({
           />
           <select className="h-11 rounded-lg border border-border px-3" name="role" defaultValue={role}>
             <option value="all">All roles</option>
-            <option value="admin">admin</option>
-            <option value="manager">manager</option>
-            <option value="nurse">nurse</option>
-            <option value="staff">staff</option>
+            {CANONICAL_ROLE_ORDER.map((roleOption) => (
+              <option key={roleOption} value={roleOption}>
+                {getRoleLabel(roleOption)}
+              </option>
+            ))}
           </select>
           <select className="h-11 rounded-lg border border-border px-3" name="status" defaultValue={status}>
             <option value="all">All status</option>
@@ -112,7 +117,7 @@ export default async function UserManagementPage({
                   </Link>
                 </td>
                 <td>{user.email}</td>
-                <td><span className="rounded bg-brand-soft px-2 py-1 text-xs font-semibold text-brand">{user.role}</span></td>
+                <td><span className="rounded bg-brand-soft px-2 py-1 text-xs font-semibold text-brand">{getRoleLabel(user.role)}</span></td>
                 <td>
                   <span className={`rounded px-2 py-1 text-xs font-semibold ${user.status === "active" ? "bg-[#99CC33]/20 text-[#3f6d12]" : "bg-slate-200 text-slate-700"}`}>
                     {user.status}

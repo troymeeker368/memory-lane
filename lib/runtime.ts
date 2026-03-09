@@ -1,6 +1,7 @@
 import type { AppRole } from "../types/app";
+import { normalizeRoleKey } from "@/lib/permissions";
 
-const MOCK_ROLE_VALUES: AppRole[] = ["admin", "manager", "nurse", "staff"];
+const MOCK_ROLE_VALUES: AppRole[] = ["program-assistant", "coordinator", "nurse", "sales", "manager", "director", "admin", "staff"];
 
 export const MOCK_ROLE_COOKIE_KEY = "ml_mock_role";
 export const MOCK_USER_COOKIE_KEY = "ml_mock_user_id";
@@ -10,12 +11,12 @@ export function isAppRole(value: string | null | undefined): value is AppRole {
 }
 
 export function resolveMockRole(value: string | null | undefined): AppRole {
-  if (isAppRole(value)) return value;
+  if (isAppRole(value)) return normalizeRoleKey(value);
 
   const envRole = process.env.NEXT_PUBLIC_MOCK_ROLE as AppRole | undefined;
   // Use least-privilege default to avoid accidental elevated permissions
   // when dev role cookies are missing/expired.
-  return isAppRole(envRole) ? envRole : "staff";
+  return isAppRole(envRole) ? normalizeRoleKey(envRole) : "program-assistant";
 }
 
 export function hasSupabaseEnv() {

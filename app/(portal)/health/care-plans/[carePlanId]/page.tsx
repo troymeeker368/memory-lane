@@ -5,6 +5,7 @@ import { CarePlanReviewForm } from "@/components/forms/care-plan-forms";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { CARE_PLAN_LONG_TERM_LABEL, CARE_PLAN_SHORT_TERM_LABEL, getCarePlanById, getGoalListItems } from "@/lib/services/care-plans";
+import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
 
 function GoalList({ value }: { value: string }) {
@@ -32,6 +33,7 @@ export default async function CarePlanDetailPage({
 }) {
   await requireRoles(["admin", "manager", "nurse"]);
   const profile = await getCurrentProfile();
+  const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
   const { carePlanId } = await params;
   const query = searchParams ? await searchParams : {};
   const detail = getCarePlanById(carePlanId);
@@ -48,14 +50,14 @@ export default async function CarePlanDetailPage({
       <CardTitle>{reviewMode ? "New Care Plan Review" : "Review / Update Care Plan"}</CardTitle>
       <CarePlanReviewForm
         carePlanId={detail.carePlan.id}
-        reviewedByDefault={profile.full_name}
+        reviewedByDefault={signerName}
         sections={detail.sections.map((section) => ({ id: section.id, sectionType: section.sectionType, shortTermGoals: section.shortTermGoals, longTermGoals: section.longTermGoals }))}
         careTeamNotes={detail.carePlan.careTeamNotes}
         responsiblePartySignature={detail.carePlan.responsiblePartySignature}
         responsiblePartySignatureDate={detail.carePlan.responsiblePartySignatureDate}
         administratorSignature={detail.carePlan.administratorSignature}
         administratorSignatureDate={detail.carePlan.administratorSignatureDate}
-        returnTo={returnTo}
+        returnTo={returnTo ?? undefined}
       />
     </Card>
   ) : null;

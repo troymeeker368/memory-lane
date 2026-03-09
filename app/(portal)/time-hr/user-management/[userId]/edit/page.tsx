@@ -24,7 +24,7 @@ export default async function EditManagedUserPage({ params }: { params: Promise<
             <CardTitle>Edit User</CardTitle>
             <p className="mt-1 text-sm text-muted">Update profile fields, role, and baseline account status.</p>
           </div>
-          <BackArrowButton fallbackHref={`/time-hr/user-management/${user.id}`} ariaLabel="Back to user details" />
+          <BackArrowButton fallbackHref="/time-hr/user-management" ariaLabel="Back to user management list" />
         </div>
       </Card>
 

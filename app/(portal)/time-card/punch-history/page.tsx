@@ -2,13 +2,15 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { PunchTypeBadge } from "@/components/ui/punch-type-badge";
 import { getCurrentProfile, requireModuleAccess } from "@/lib/auth";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { getPunchHistory } from "@/lib/services/time";
 import { formatDateTime } from "@/lib/utils";
 
 export default async function PunchHistoryPage() {
   await requireModuleAccess("time-card");
   const profile = await getCurrentProfile();
-  const showStaffColumn = profile.role !== "staff";
+  const normalizedRole = normalizeRoleKey(profile.role);
+  const showStaffColumn = normalizedRole !== "program-assistant";
   const punches = await getPunchHistory(profile.id, profile.role);
 
   return (
@@ -17,7 +19,7 @@ export default async function PunchHistoryPage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <CardTitle>Punch History</CardTitle>
-            <p className="mt-1 text-sm text-muted">{profile.role === "admin" || profile.role === "manager" ? "All staff punches for operational review." : "Your punch history."}</p>
+            <p className="mt-1 text-sm text-muted">{normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director" ? "All staff punches for operational review." : "Your punch history."}</p>
           </div>
           <BackArrowButton fallbackHref="/time-card" ariaLabel="Back to time clock" />
         </div>

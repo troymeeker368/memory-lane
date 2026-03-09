@@ -2,12 +2,12 @@ import Link from "next/link";
 
 import { SalesLeadActivityForm } from "@/components/forms/sales-lead-activity-form";
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 export default async function LogLeadActivityPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const params = await searchParams;
   const { openLeads, wonLeads, lostLeads, activities, partners, referralSources } = await getSalesWorkflows();
 

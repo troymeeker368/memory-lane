@@ -1,6 +1,105 @@
-﻿insert into public.sites (site_code, site_name, latitude, longitude, fence_radius_meters)
+insert into public.sites (site_code, site_name, latitude, longitude, fence_radius_meters)
 values ('TSFM', 'Town Square Fort Mill', 34.9925600, -80.9629550, 75)
 on conflict (site_code) do nothing;
+insert into public.roles (key, name, rank, is_system_role)
+values
+  ('program-assistant', 'Program Assistant', 1, true),
+  ('coordinator', 'Coordinator', 2, true),
+  ('nurse', 'Nurse', 3, true),
+  ('sales', 'Sales', 4, true),
+  ('manager', 'Manager', 5, true),
+  ('director', 'Director', 6, true),
+  ('admin', 'Admin', 7, true)
+on conflict (key) do update set
+  name = excluded.name,
+  rank = excluded.rank,
+  is_system_role = excluded.is_system_role;
+
+with module_defaults as (
+  select *
+  from (values
+    ('program-assistant','documentation', true,  true,  true,  false),
+    ('program-assistant','operations',     false, false, false, false),
+    ('program-assistant','reports',        false, false, false, false),
+    ('program-assistant','time-hr',        true,  true,  true,  false),
+    ('program-assistant','sales-activities',false,false, false, false),
+    ('program-assistant','health-unit',    false, false, false, false),
+    ('program-assistant','admin-reports',  false, false, false, false),
+    ('program-assistant','user-management',false, false, false, false),
+
+    ('coordinator','documentation', true,  true,  true,  false),
+    ('coordinator','operations',    true,  true,  true,  false),
+    ('coordinator','reports',       true,  false, false, false),
+    ('coordinator','time-hr',       true,  true,  true,  false),
+    ('coordinator','sales-activities',false,false, false, false),
+    ('coordinator','health-unit',   true,  false, false, false),
+    ('coordinator','admin-reports', false, false, false, false),
+    ('coordinator','user-management',false,false, false, false),
+
+    ('nurse','documentation', true,  true,  true,  false),
+    ('nurse','operations',    true,  false, true,  false),
+    ('nurse','reports',       true,  false, false, false),
+    ('nurse','time-hr',       true,  true,  true,  false),
+    ('nurse','sales-activities',false,false, false, false),
+    ('nurse','health-unit',   true,  true,  true,  false),
+    ('nurse','admin-reports', false, false, false, false),
+    ('nurse','user-management',false,false, false, false),
+
+    ('sales','documentation', false, false, false, false),
+    ('sales','operations',    false, false, false, false),
+    ('sales','reports',       true,  false, false, false),
+    ('sales','time-hr',       true,  true,  true,  false),
+    ('sales','sales-activities',true,true, true,  false),
+    ('sales','health-unit',   false, false, false, false),
+    ('sales','admin-reports', false, false, false, false),
+    ('sales','user-management',false,false, false, false),
+
+    ('manager','documentation', true,  true,  true,  false),
+    ('manager','operations',    true,  true,  true,  false),
+    ('manager','reports',       true,  true,  true,  false),
+    ('manager','time-hr',       true,  true,  true,  false),
+    ('manager','sales-activities',true,false, false, false),
+    ('manager','health-unit',   true,  false, false, false),
+    ('manager','admin-reports', true,  false, false, false),
+    ('manager','user-management',false,false, false, false),
+
+    ('director','documentation', true,  true,  true,  false),
+    ('director','operations',    true,  true,  true,  false),
+    ('director','reports',       true,  true,  true,  false),
+    ('director','time-hr',       true,  true,  true,  false),
+    ('director','sales-activities',true,true, true,  false),
+    ('director','health-unit',   true,  true,  true,  false),
+    ('director','admin-reports', true,  true,  true,  false),
+    ('director','user-management',false, false, false, false),
+
+    ('admin','documentation', true,  true,  true,  true),
+    ('admin','operations',    true,  true,  true,  true),
+    ('admin','reports',       true,  true,  true,  true),
+    ('admin','time-hr',       true,  true,  true,  true),
+    ('admin','sales-activities',true,true, true,  true),
+    ('admin','health-unit',   true,  true,  true,  true),
+    ('admin','admin-reports', true,  true,  true,  true),
+    ('admin','user-management',true, true,  true,  true)
+  ) as x(role_key, module_key, can_view, can_create, can_edit, can_admin)
+)
+insert into public.role_permissions (role_id, module_key, can_view, can_create, can_edit, can_admin)
+select r.id, m.module_key, m.can_view, m.can_create, m.can_edit, m.can_admin
+from module_defaults m
+join public.roles r on r.key = m.role_key
+on conflict (role_id, module_key) do update set
+  can_view = excluded.can_view,
+  can_create = excluded.can_create,
+  can_edit = excluded.can_edit,
+  can_admin = excluded.can_admin;
+
+
+update public.profiles p
+set role_id = r.id
+from public.roles r
+where r.key = case p.role::text
+  when 'staff' then 'program-assistant'
+  else p.role::text
+end;
 
 insert into public.members (display_name, status, qr_code)
 values

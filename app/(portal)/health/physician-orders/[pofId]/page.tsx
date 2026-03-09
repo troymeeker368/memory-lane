@@ -174,23 +174,38 @@ export default async function PhysicianOrderDetailPage({
 
       <Card>
         <CardTitle>Member Care Information</CardTitle>
-        <div className="mt-3 grid gap-3 text-sm md:grid-cols-2">
-          <p><span className="font-semibold">Disoriented:</span> {selectedList([{ label: "Constantly", value: care.disorientedConstantly }, { label: "Intermittently", value: care.disorientedIntermittently }])}</p>
-          <p><span className="font-semibold">Inappropriate Behavior:</span> {selectedList([{ label: "Wanderer", value: care.inappropriateBehaviorWanderer }, { label: "Verbal Aggression", value: care.inappropriateBehaviorVerbalAggression }, { label: "Aggression", value: care.inappropriateBehaviorAggression }])}</p>
-          <p><span className="font-semibold">Personal Care Assistance:</span> {selectedList([{ label: "Bathing", value: care.personalCareBathing }, { label: "Feeding", value: care.personalCareFeeding }, { label: "Dressing", value: care.personalCareDressing }, { label: "Medication", value: care.personalCareMedication }, { label: "Toileting", value: care.personalCareToileting }])}</p>
-          <p><span className="font-semibold">Ambulatory Status:</span> {care.ambulatoryStatus ?? "-"}</p>
-          <p><span className="font-semibold">Mobility:</span> {selectedList([{ label: "Independent", value: care.mobilityIndependent }, { label: "Walker", value: care.mobilityWalker }, { label: "Wheelchair", value: care.mobilityWheelchair }, { label: "Scooter", value: care.mobilityScooter }, { label: "Other", value: care.mobilityOther }])}{care.mobilityOtherText ? ` (${care.mobilityOtherText})` : ""}</p>
-          <p><span className="font-semibold">Functional Limitations:</span> {selectedList([{ label: "Sight", value: care.functionalLimitationSight }, { label: "Hearing", value: care.functionalLimitationHearing }, { label: "Speech", value: care.functionalLimitationSpeech }])}</p>
-          <p><span className="font-semibold">Activities / Social:</span> {selectedList([{ label: "Passive", value: care.activitiesPassive }, { label: "Active", value: care.activitiesActive }, { label: "Group Participation", value: care.activitiesGroupParticipation }, { label: "Prefers Alone Time", value: care.activitiesPrefersAlone }])}</p>
-          <p><span className="font-semibold">Neurological:</span> {care.neurologicalConvulsionsSeizures ? "Convulsions / Seizures" : "-"}</p>
-          <p><span className="font-semibold">Stimulation:</span> {selectedList([{ label: "Afraid of loud noises", value: care.stimulationAfraidLoudNoises }, { label: "Easily overwhelmed", value: care.stimulationEasilyOverwhelmed }, { label: "Adapts easily", value: care.stimulationAdaptsEasily }])}</p>
-          <p><span className="font-semibold">Medication Administration:</span> {selectedList([{ label: "Self administration", value: care.medAdministrationSelf }, { label: "Nurse administration", value: care.medAdministrationNurse }])}</p>
-          <p><span className="font-semibold">Bladder:</span> {selectedList([{ label: "Continent", value: care.bladderContinent }, { label: "Incontinent", value: care.bladderIncontinent }])}</p>
-          <p><span className="font-semibold">Bowel:</span> {selectedList([{ label: "Continent", value: care.bowelContinent }, { label: "Incontinent", value: care.bowelIncontinent }])}</p>
-          <p><span className="font-semibold">Skin:</span> {care.skinNormal ? "Normal" : "Other"}{care.skinOther ? ` (${care.skinOther})` : ""}</p>
-          <p><span className="font-semibold">Breathing:</span> {selectedList([{ label: "Room Air", value: care.breathingRoomAir }, { label: "Oxygen tank", value: care.breathingOxygenTank }])}{care.breathingOxygenLiters ? ` (${care.breathingOxygenLiters}L)` : ""}</p>
-          <p className="md:col-span-2"><span className="font-semibold">Nutrition / Diet:</span> {care.nutritionDiets.length > 0 ? care.nutritionDiets.join(", ") : "-"}{care.nutritionDietOther ? ` | Other: ${care.nutritionDietOther}` : ""}</p>
-          <p className="md:col-span-2"><span className="font-semibold">Additional Information to Help Spark Joy:</span> {care.joySparksNotes ?? "-"}</p>
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <div className="rounded-lg border border-border p-3 text-sm">
+            <p className="font-semibold">Behavior & Orientation</p>
+            <p className="mt-2"><span className="font-semibold">Disoriented:</span> {selectedList([{ label: "Constantly", value: care.disorientedConstantly }, { label: "Intermittently", value: care.disorientedIntermittently }])}</p>
+            <p><span className="font-semibold">Inappropriate Behavior:</span> {selectedList([{ label: "Wanderer", value: care.inappropriateBehaviorWanderer }, { label: "Verbal Aggression", value: care.inappropriateBehaviorVerbalAggression }, { label: "Aggression", value: care.inappropriateBehaviorAggression }])}</p>
+            <p><span className="font-semibold">Activities / Social:</span> {selectedList([{ label: "Passive", value: care.activitiesPassive }, { label: "Active", value: care.activitiesActive }, { label: "Group Participation", value: care.activitiesGroupParticipation }, { label: "Prefers Alone Time", value: care.activitiesPrefersAlone }])}</p>
+            <p><span className="font-semibold">Stimulation:</span> {selectedList([{ label: "Afraid of loud noises", value: care.stimulationAfraidLoudNoises }, { label: "Easily overwhelmed", value: care.stimulationEasilyOverwhelmed }, { label: "Adapts easily", value: care.stimulationAdaptsEasily }])}</p>
+          </div>
+
+          <div className="rounded-lg border border-border p-3 text-sm">
+            <p className="font-semibold">ADLs & Mobility</p>
+            <p className="mt-2"><span className="font-semibold">Personal Care Assistance:</span> {selectedList([{ label: "Bathing", value: care.personalCareBathing }, { label: "Feeding", value: care.personalCareFeeding }, { label: "Dressing", value: care.personalCareDressing }, { label: "Medication", value: care.personalCareMedication }, { label: "Toileting", value: care.personalCareToileting }])}</p>
+            <p><span className="font-semibold">Ambulatory Status:</span> {care.ambulatoryStatus ?? "-"}</p>
+            <p><span className="font-semibold">Mobility:</span> {selectedList([{ label: "Independent", value: care.mobilityIndependent }, { label: "Walker", value: care.mobilityWalker }, { label: "Wheelchair", value: care.mobilityWheelchair }, { label: "Scooter", value: care.mobilityScooter }, { label: "Other", value: care.mobilityOther }])}{care.mobilityOtherText ? ` (${care.mobilityOtherText})` : ""}</p>
+            <p><span className="font-semibold">Functional Limitations:</span> {selectedList([{ label: "Sight", value: care.functionalLimitationSight }, { label: "Hearing", value: care.functionalLimitationHearing }, { label: "Speech", value: care.functionalLimitationSpeech }])}</p>
+          </div>
+
+          <div className="rounded-lg border border-border p-3 text-sm">
+            <p className="font-semibold">Clinical Support</p>
+            <p className="mt-2"><span className="font-semibold">Neurological:</span> {care.neurologicalConvulsionsSeizures ? "Convulsions / Seizures" : "-"}</p>
+            <p><span className="font-semibold">Medication Administration:</span> {selectedList([{ label: "Self administration", value: care.medAdministrationSelf }, { label: "Nurse administration", value: care.medAdministrationNurse }])}</p>
+            <p><span className="font-semibold">Bladder:</span> {selectedList([{ label: "Continent", value: care.bladderContinent }, { label: "Incontinent", value: care.bladderIncontinent }])}</p>
+            <p><span className="font-semibold">Bowel:</span> {selectedList([{ label: "Continent", value: care.bowelContinent }, { label: "Incontinent", value: care.bowelIncontinent }])}</p>
+            <p><span className="font-semibold">Skin:</span> {care.skinNormal ? "Normal" : "Other"}{care.skinOther ? ` (${care.skinOther})` : ""}</p>
+            <p><span className="font-semibold">Breathing:</span> {selectedList([{ label: "Room Air", value: care.breathingRoomAir }, { label: "Oxygen tank", value: care.breathingOxygenTank }])}{care.breathingOxygenLiters ? ` (${care.breathingOxygenLiters}L)` : ""}</p>
+          </div>
+
+          <div className="rounded-lg border border-border p-3 text-sm">
+            <p className="font-semibold">Nutrition & Joy Sparks</p>
+            <p className="mt-2"><span className="font-semibold">Nutrition / Diet:</span> {care.nutritionDiets.length > 0 ? care.nutritionDiets.join(", ") : "-"}{care.nutritionDietOther ? ` | Other: ${care.nutritionDietOther}` : ""}</p>
+            <p><span className="font-semibold">Additional Information to Help Spark Joy:</span> {care.joySparksNotes ?? "-"}</p>
+          </div>
         </div>
       </Card>
 

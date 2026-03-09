@@ -1,6 +1,7 @@
 import type { ManagedUser } from "@/types/app";
+import { CANONICAL_ROLE_ORDER, getRoleLabel, normalizeRoleKey } from "@/lib/permissions";
 
-type FormAction = (formData: FormData) => void | Promise<void | { error?: string }>;
+type FormAction = (formData: FormData) => void | Promise<void>;
 
 export function UserManagementForm({
   action,
@@ -31,17 +32,28 @@ export function UserManagementForm({
       </label>
 
       <label className="grid gap-1 text-sm md:col-span-2">
+        <span>Credentials (optional)</span>
+        <input
+          className="h-11 rounded-lg border border-border px-3"
+          name="credentials"
+          defaultValue={user?.credentials ?? ""}
+          placeholder="Example: BSN, RN, CDP"
+        />
+      </label>
+
+      <label className="grid gap-1 text-sm md:col-span-2">
         <span>Email</span>
         <input className="h-11 rounded-lg border border-border px-3" type="email" name="email" defaultValue={user?.email ?? ""} required />
       </label>
 
       <label className="grid gap-1 text-sm">
         <span>Role</span>
-        <select className="h-11 rounded-lg border border-border px-3" name="role" defaultValue={user?.role ?? "staff"}>
-          <option value="staff">staff</option>
-          <option value="nurse">nurse</option>
-          <option value="manager">manager</option>
-          <option value="admin">admin</option>
+        <select className="h-11 rounded-lg border border-border px-3" name="role" defaultValue={normalizeRoleKey(user?.role ?? "program-assistant")}>
+          {CANONICAL_ROLE_ORDER.map((role) => (
+            <option key={role} value={role}>
+              {getRoleLabel(role)}
+            </option>
+          ))}
         </select>
       </label>
 

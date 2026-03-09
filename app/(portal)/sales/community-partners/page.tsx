@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 
 const communityLinks = [
   { label: "Community Partner Organizations", href: "/sales/community-partners/organizations" },
@@ -9,7 +9,7 @@ const communityLinks = [
 ];
 
 export default async function SalesCommunityPartnersPage() {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
 
   return (
     <Card>

@@ -7,6 +7,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getManagedUserById, getManagedUserRecentActivity, summarizePermissionSet } from "@/lib/services/user-management";
 import { formatDateTime, formatOptionalDateTime } from "@/lib/utils";
+import { getRoleLabel } from "@/lib/permissions";
 
 function firstString(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0];
@@ -21,8 +22,9 @@ export default async function ManagedUserDetailPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   await requireModuleAccess("user-management");
+
   const { userId } = await params;
-  const query: Record<string, string | string[] | undefined> = searchParams ? await searchParams : {};
+  const query: Record<string, string | string[] | undefined> = (await searchParams) ?? {};
   const from = firstString(query.from);
   const to = firstString(query.to);
   const user = getManagedUserById(userId);
@@ -63,8 +65,10 @@ export default async function ManagedUserDetailPage({
       <Card>
         <CardTitle>User Details</CardTitle>
         <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
-          <p><span className="font-semibold">Role:</span> {user.role}</p>
+          <p><span className="font-semibold">Role:</span> {getRoleLabel(user.role)}</p>
           <p><span className="font-semibold">Status:</span> {user.status}</p>
+          <p><span className="font-semibold">Permission Source:</span> {user.permissionSource}</p>
+          <p><span className="font-semibold">Credentials:</span> {user.credentials ?? "-"}</p>
           <p><span className="font-semibold">Phone:</span> {user.phone ?? "-"}</p>
           <p><span className="font-semibold">Title:</span> {user.title ?? "-"}</p>
           <p><span className="font-semibold">Department:</span> {user.department ?? "-"}</p>
@@ -164,7 +168,7 @@ export default async function ManagedUserDetailPage({
                         <td>{formatDateTime(item.occurredAt)}</td>
                         <td>{item.context}</td>
                         <td>{item.details}</td>
-                        <td><Link className="font-semibold text-brand" href={item.href}>Open</Link></td>
+                        <td><Link className="font-semibold text-brand" href={item.href as any}>Open</Link></td>
                       </tr>
                     ))}
                   </tbody>

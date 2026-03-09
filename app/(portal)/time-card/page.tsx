@@ -6,15 +6,16 @@ import { MobileList } from "@/components/ui/mobile-list";
 import { PunchStatusBadge, PunchTypeBadge } from "@/components/ui/punch-type-badge";
 import { TimePunchControls } from "@/components/forms/time-punch-controls";
 import { getCurrentProfile, requireModuleAccess } from "@/lib/auth";
-import { PTO_EXTERNAL_URL } from "@/lib/permissions";
+import { normalizeRoleKey, PTO_EXTERNAL_URL } from "@/lib/permissions";
 import { getManagerTimeReview, getTimeCardOverview } from "@/lib/services/time";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 export default async function TimeCardPage() {
   await requireModuleAccess("time-card");
   const profile = await getCurrentProfile();
-  const canPunch = profile.role === "staff";
-  const canSeeAllEmployeeHistory = profile.role === "admin" || profile.role === "manager";
+  const normalizedRole = normalizeRoleKey(profile.role);
+  const canPunch = normalizedRole === "program-assistant";
+  const canSeeAllEmployeeHistory = normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director";
   const { punches, exceptions, currentStatus, dailyHours, payPeriodHours, payPeriodLabel, mealDeductionHours, adjustedPayPeriodHours } = await getTimeCardOverview(profile.id);
   const managerRows = canSeeAllEmployeeHistory ? await getManagerTimeReview() : [];
   type TimePunchRow = (typeof punches)[number];
@@ -32,7 +33,7 @@ export default async function TimeCardPage() {
         <div className="mt-2 flex flex-wrap gap-3 text-sm">
           <Link href="/time-card/punch-history" className="font-semibold text-brand">Open Punch History</Link>
           <a href={PTO_EXTERNAL_URL} target="_blank" rel="noopener noreferrer" className="font-semibold text-brand">Open PTO Request</a>
-          {profile.role === "admin" ? <Link href="/time-hr/user-management" className="font-semibold text-brand">Open User Management</Link> : null}
+          {normalizedRole === "admin" ? <Link href="/time-hr/user-management" className="font-semibold text-brand">Open User Management</Link> : null}
         </div>
         {canPunch ? (
           <div className="mt-3 grid gap-3 sm:grid-cols-4">

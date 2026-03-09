@@ -5,18 +5,26 @@ import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
 import {
-  MEMBER_BUS_NUMBER_OPTIONS,
   MEMBER_CONTACT_CATEGORY_OPTIONS,
   MEMBER_FILE_CATEGORY_OPTIONS,
   MEMBER_TRANSPORTATION_SERVICE_OPTIONS
 } from "@/lib/canonical";
-import { addMockRecord, getMockDb, removeMockRecord, updateMockRecord } from "@/lib/mock-repo";
+import {
+  addAuditLogEvent,
+  addMemberMakeupLedgerEntry,
+  addMockRecord,
+  getMemberMakeupDayBalance,
+  getMockDb,
+  removeMockRecord,
+  updateMockRecord
+} from "@/lib/mock-repo";
 import {
   ensureMemberAttendanceSchedule,
   ensureMemberCommandCenterProfile,
   updateMemberDobFromCommandCenter,
   updateMemberEnrollmentFromSchedule
 } from "@/lib/services/member-command-center";
+import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import { syncCommandCenterToMhp, syncMhpToCommandCenter } from "@/lib/services/member-profile-sync";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -228,6 +236,41 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
   const wednesdayAdded = wednesday && !wasWednesday;
   const thursdayAdded = thursday && !wasThursday;
   const fridayAdded = friday && !wasFriday;
+  const currentMakeupBalance = getMemberMakeupDayBalance(memberId);
+  const requestedMakeupBalanceRaw = asString(formData, "makeUpDaysAvailable");
+  let resolvedMakeupBalance = currentMakeupBalance;
+  if (requestedMakeupBalanceRaw.length > 0) {
+    const parsed = Number(requestedMakeupBalanceRaw);
+    if (Number.isFinite(parsed)) {
+      const requestedBalance = Math.max(0, Math.trunc(parsed));
+      const delta = requestedBalance - currentMakeupBalance;
+      if (delta !== 0) {
+        addMemberMakeupLedgerEntry({
+          memberId,
+          deltaDays: delta,
+          reason: "Manual makeup-day balance adjustment",
+          source: "mcc-attendance-adjustment",
+          actorUserId: actor.id,
+          actorName: actor.full_name
+        });
+        addAuditLogEvent({
+          actorUserId: actor.id,
+          actorName: actor.full_name,
+          actorRole: actor.role,
+          action: "manager_review",
+          entityType: "makeup_day",
+          entityId: memberId,
+          details: {
+            source: "mcc-attendance-adjustment",
+            previousBalance: currentMakeupBalance,
+            nextBalance: requestedBalance,
+            deltaDays: delta
+          }
+        });
+      }
+      resolvedMakeupBalance = getMemberMakeupDayBalance(memberId);
+    }
+  }
 
   const defaultDoorToDoorAddress =
     [
@@ -318,16 +361,16 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     existingSlots.find((slot) => slot.doorToDoorAddress)?.doorToDoorAddress ??
     defaultDoorToDoorAddress;
 
-  const resolveSlot = (
-    dayEnabled: boolean,
-    dayWasAdded: boolean,
-    current: {
-      mode: "Door to Door" | "Bus Stop" | null;
-      doorToDoorAddress: string | null;
-      busNumber: "1" | "2" | "3" | null;
-      busStop: string | null;
-    }
-  ) => {
+    const resolveSlot = (
+      dayEnabled: boolean,
+      dayWasAdded: boolean,
+      current: {
+        mode: "Door to Door" | "Bus Stop" | null;
+        doorToDoorAddress: string | null;
+        busNumber: string | null;
+        busStop: string | null;
+      }
+    ) => {
     if (!dayEnabled) {
       return { mode: null, doorToDoorAddress: null, busNumber: null, busStop: null } as const;
     }
@@ -481,12 +524,7 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     transport_friday_pm_door_to_door_address: fridayPm.doorToDoorAddress,
     transport_friday_pm_bus_number: fridayPm.busNumber,
     transport_friday_pm_bus_stop: fridayPm.busStop,
-    make_up_days_available: (() => {
-      const raw = asString(formData, "makeUpDaysAvailable");
-      if (!raw) return null;
-      const parsed = Number(raw);
-      return Number.isFinite(parsed) ? parsed : null;
-    })(),
+    make_up_days_available: resolvedMakeupBalance,
     attendance_notes: asNullableString(formData, "attendanceNotes"),
     updated_by_user_id: actor.id,
     updated_by_name: actor.full_name,
@@ -521,14 +559,15 @@ export async function saveMemberCommandCenterTransportationAction(formData: Form
         .join(", ") || null;
 
     const transportationRequired = asNullableBoolSelect(formData, "transportationRequired");
+    const configuredBusNumbers = getConfiguredBusNumbers();
     const normalizeMode = (raw: string) =>
       MEMBER_TRANSPORTATION_SERVICE_OPTIONS.includes(raw as (typeof MEMBER_TRANSPORTATION_SERVICE_OPTIONS)[number])
         ? (raw as "Door to Door" | "Bus Stop")
         : null;
-    const normalizeBusNumber = (raw: string) =>
-      MEMBER_BUS_NUMBER_OPTIONS.includes(raw as (typeof MEMBER_BUS_NUMBER_OPTIONS)[number])
-        ? (raw as "1" | "2" | "3")
-        : null;
+    const normalizeBusNumber = (raw: string) => {
+      const normalized = raw.trim();
+      return configuredBusNumbers.includes(normalized) ? normalized : null;
+    };
     const parseSlot = (dayEnabled: boolean, slotPrefix: string) => {
       if (transportationRequired !== true || !dayEnabled) {
         return { mode: null, doorToDoorAddress: null, busNumber: null, busStop: null } as const;

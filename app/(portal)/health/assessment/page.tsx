@@ -5,6 +5,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getAssessmentMembers } from "@/lib/services/documentation";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
+import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { formatDate } from "@/lib/utils";
 
 export default async function HealthAssessmentPage({
@@ -22,6 +23,7 @@ export default async function HealthAssessmentPage({
         : undefined;
 
   const [members, workflows] = await Promise.all([getAssessmentMembers(), getDocumentationWorkflows()]);
+  const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
 
   return (
     <div className="space-y-4">
@@ -31,7 +33,7 @@ export default async function HealthAssessmentPage({
           Structured intake assessment for Tour/EIP leads with score-based track recommendation and member profile writeback.
         </p>
         <div className="mt-3">
-          <AssessmentForm members={members} initialMemberId={initialMemberId} initialStaffName={profile.full_name} />
+          <AssessmentForm members={members} initialMemberId={initialMemberId} initialStaffName={signerName} />
         </div>
       </Card>
 

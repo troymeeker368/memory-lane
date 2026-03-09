@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 import { formatOptionalDate } from "@/lib/utils";
 
@@ -32,7 +32,7 @@ export default async function CommunityPartnerOrganizationsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const params = await searchParams;
   const { partners, referralSources } = await getSalesWorkflows();
 

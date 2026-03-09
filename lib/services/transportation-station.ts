@@ -1,12 +1,13 @@
 import { getMockDb } from "@/lib/mock-repo";
 import { normalizeOperationalDateOnly, getWeekdayForDate, type OperationsWeekdayKey } from "@/lib/services/operations-calendar";
 import { getTransportSlotForDate, isScheduledWeekday } from "@/lib/services/member-schedule-selectors";
+import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import { isMemberOnHoldOnDate } from "@/lib/services/holds";
 import { toEasternISO } from "@/lib/timezone";
 
 type Shift = "AM" | "PM";
 type TransportMode = "Bus Stop" | "Door to Door";
-type BusNumber = "1" | "2" | "3";
+type BusNumber = string;
 
 export type TransportationStationShift = Shift | "Both";
 export type TransportationManifestRiderSource = "schedule" | "manual-add";
@@ -104,7 +105,14 @@ function sortGroups(left: TransportationManifestGroup, right: TransportationMani
   }
   if (left.busNumber == null) return 1;
   if (right.busNumber == null) return -1;
-  return Number(left.busNumber) - Number(right.busNumber);
+  const leftNum = Number(left.busNumber);
+  const rightNum = Number(right.busNumber);
+  const leftIsNumber = Number.isFinite(leftNum);
+  const rightIsNumber = Number.isFinite(rightNum);
+  if (leftIsNumber && rightIsNumber) return leftNum - rightNum;
+  if (leftIsNumber) return -1;
+  if (rightIsNumber) return 1;
+  return left.busNumber.localeCompare(right.busNumber, undefined, { sensitivity: "base" });
 }
 
 export function getTransportationManifest(input?: {
@@ -115,9 +123,11 @@ export function getTransportationManifest(input?: {
   const db = getMockDb();
   const selectedDate = normalizeOperationalDateOnly(input?.selectedDate);
   const selectedShift = input?.shift === "AM" || input?.shift === "PM" || input?.shift === "Both" ? input.shift : "Both";
-  const busFilter =
-    input?.busFilter === "1" || input?.busFilter === "2" || input?.busFilter === "3" || input?.busFilter === "unassigned"
-      ? input.busFilter
+  const configuredBusNumbers = getConfiguredBusNumbers();
+  const requestedBusFilter = String(input?.busFilter ?? "all").trim();
+  const busFilter: TransportationManifestBusFilter =
+    requestedBusFilter === "all" || requestedBusFilter === "unassigned" || configuredBusNumbers.includes(requestedBusFilter)
+      ? requestedBusFilter
       : "all";
   const weekday = getWeekdayForDate(selectedDate);
   const selectedShifts = shiftsForSelection(selectedShift);

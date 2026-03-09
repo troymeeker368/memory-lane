@@ -3,12 +3,12 @@ import { notFound } from "next/navigation";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getReferralSourceDetail } from "@/lib/services/relations";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 export default async function ReferralSourceDetailPage({ params }: { params: Promise<{ sourceId: string }> }) {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const { sourceId } = await params;
   const detail = await getReferralSourceDetail(sourceId);
   if (!detail) notFound();

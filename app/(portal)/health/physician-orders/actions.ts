@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { syncPhysicianOrderToMemberProfiles } from "@/lib/services/member-profile-sync";
+import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import {
   POF_LEVEL_OF_CARE_OPTIONS,
   buildPhysicianOrderPdfDataUrl,
@@ -178,6 +179,7 @@ async function savePofPdfToMemberFiles(input: {
 
 export async function savePhysicianOrderFormAction(formData: FormData) {
   const profile = await requireRoles(["admin", "nurse"]);
+  const actorDisplayName = getManagedUserSignatureName(profile.id, profile.full_name);
   const memberId = asString(formData, "memberId");
   if (!memberId) throw new Error("Member is required.");
 
@@ -185,7 +187,7 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
   const status = parseStatusFromIntent(saveIntent);
 
   const providerNameFromForm = asNullableString(formData, "providerName");
-  const providerNameResolved = providerNameFromForm ?? (status === "Signed" ? profile.full_name : null);
+  const providerNameResolved = providerNameFromForm ?? (status === "Signed" ? actorDisplayName : null);
   const providerSignatureDate = asNullableString(formData, "providerSignatureDate");
   const providerSignature = asNullableString(formData, "providerSignature");
 
@@ -212,7 +214,7 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
     status,
     actor: {
       id: profile.id,
-      fullName: profile.full_name
+      fullName: actorDisplayName
     }
   });
 
@@ -253,7 +255,7 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
     },
     actor: {
       id: profile.id,
-      fullName: profile.full_name
+      fullName: actorDisplayName
     },
     at: saved.updatedAt
   });
@@ -266,7 +268,7 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
       dataUrl: generated.dataUrl,
       uploadedBy: {
         id: profile.id,
-        name: profile.full_name
+        name: actorDisplayName
       }
     });
   }
@@ -277,6 +279,7 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
 
 export async function generatePhysicianOrderPdfAction(input: { pofId: string }) {
   const profile = await getCurrentProfile();
+  const actorDisplayName = getManagedUserSignatureName(profile.id, profile.full_name);
   if (profile.role !== "admin" && profile.role !== "nurse") {
     return { ok: false, error: "You do not have access to generate POF PDFs." } as const;
   }
@@ -292,7 +295,7 @@ export async function generatePhysicianOrderPdfAction(input: { pofId: string }) 
       dataUrl: generated.dataUrl,
       uploadedBy: {
         id: profile.id,
-        name: profile.full_name
+        name: actorDisplayName
       }
     });
     revalidatePofRoutes(generated.form.memberId, generated.form.id);

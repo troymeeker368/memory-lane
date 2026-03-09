@@ -5,14 +5,16 @@ import { AncillaryChargeForm } from "@/components/forms/ancillary-charge-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { getAncillarySummary } from "@/lib/services/ancillary";
 import { getMembers } from "@/lib/services/documentation";
 import { formatDate } from "@/lib/utils";
 
 export default async function AncillaryPage() {
   const profile = await requireModuleAccess("ancillary");
-  const canManageEntries = profile.role === "admin" || profile.role === "manager";
-  const showStaffColumn = profile.role !== "staff";
+  const normalizedRole = normalizeRoleKey(profile.role);
+  const canManageEntries = normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director";
+  const showStaffColumn = normalizedRole !== "program-assistant";
   const [summary, members] = await Promise.all([getAncillarySummary(undefined, { role: profile.role, staffUserId: profile.id }), getMembers()]);
 
   const currentMonthRows = summary.logs.filter((row: any) => {

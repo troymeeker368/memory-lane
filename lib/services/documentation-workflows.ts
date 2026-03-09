@@ -1,4 +1,5 @@
 import { getMockDb } from "@/lib/mock-repo";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { isMockMode } from "@/lib/runtime";
 import type { AppRole } from "@/types/app";
 
@@ -8,7 +9,7 @@ interface DocumentationWorkflowScope {
 }
 
 function isStaffScoped(scope?: DocumentationWorkflowScope) {
-  return scope?.role === "staff" && !!scope.staffUserId;
+  return Boolean(scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && !!scope.staffUserId);
 }
 
 export async function getDocumentationWorkflows(scope?: DocumentationWorkflowScope) {

@@ -1,10 +1,10 @@
 import { LeadsPipelineTable } from "@/components/sales/leads-pipeline-table";
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 
 export default async function LeadsPipelineTablePage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const params = await searchParams;
   const { openLeads } = await getSalesWorkflows();
 

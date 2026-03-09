@@ -4,12 +4,11 @@ import { FormEvent, useState, useTransition } from "react";
 
 import { saveMemberCommandCenterTransportationAction } from "@/app/(portal)/operations/member-command-center/actions";
 import {
-  MEMBER_BUS_NUMBER_OPTIONS,
   MEMBER_TRANSPORTATION_SERVICE_OPTIONS
 } from "@/lib/canonical";
 
 type TransportMode = "Door to Door" | "Bus Stop" | null;
-type TransportBusNumber = "1" | "2" | "3" | null;
+type TransportBusNumber = string | null;
 type DayKey = "monday" | "tuesday" | "wednesday" | "thursday" | "friday";
 type SlotKey =
   | "mondayAm"
@@ -72,7 +71,8 @@ export function MccTransportationForm({
   transportFridayPmDoorToDoorAddress,
   transportFridayPmBusNumber,
   transportFridayPmBusStop,
-  busStopOptions
+  busStopOptions,
+  busNumberOptions
 }: {
   memberId: string;
   transportationRequired: boolean | null;
@@ -123,6 +123,7 @@ export function MccTransportationForm({
   transportFridayPmBusNumber: TransportBusNumber;
   transportFridayPmBusStop: string | null;
   busStopOptions: string[];
+  busNumberOptions: string[];
 }) {
   const [requiredValue, setRequiredValue] = useState(
     transportationRequired == null ? "" : transportationRequired ? "true" : "false"
@@ -184,11 +185,11 @@ export function MccTransportationForm({
     if (requiredValue !== "true") return "-";
 
     const activeSlots: SlotKey[] = [
-      ...(monday ? ["mondayAm", "mondayPm"] : []),
-      ...(tuesday ? ["tuesdayAm", "tuesdayPm"] : []),
-      ...(wednesday ? ["wednesdayAm", "wednesdayPm"] : []),
-      ...(thursday ? ["thursdayAm", "thursdayPm"] : []),
-      ...(friday ? ["fridayAm", "fridayPm"] : [])
+      ...(monday ? (["mondayAm", "mondayPm"] as SlotKey[]) : []),
+      ...(tuesday ? (["tuesdayAm", "tuesdayPm"] as SlotKey[]) : []),
+      ...(wednesday ? (["wednesdayAm", "wednesdayPm"] as SlotKey[]) : []),
+      ...(thursday ? (["thursdayAm", "thursdayPm"] as SlotKey[]) : []),
+      ...(friday ? (["fridayAm", "fridayPm"] as SlotKey[]) : [])
     ];
 
     const selectedModes = activeSlots
@@ -360,7 +361,7 @@ export function MccTransportationForm({
                               className="h-10 w-full rounded-lg border border-border px-3"
                             >
                               <option value="">Select bus</option>
-                              {MEMBER_BUS_NUMBER_OPTIONS.map((option) => (
+                              {busNumberOptions.map((option) => (
                                 <option key={option} value={option}>
                                   {option}
                                 </option>
@@ -399,7 +400,7 @@ export function MccTransportationForm({
                               className="h-10 w-full rounded-lg border border-border px-3"
                             >
                               <option value="">Select bus</option>
-                              {MEMBER_BUS_NUMBER_OPTIONS.map((option) => (
+                              {busNumberOptions.map((option) => (
                                 <option key={option} value={option}>
                                   {option}
                                 </option>

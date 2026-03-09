@@ -2,6 +2,7 @@ import type { AppRole } from "@/types/app";
 import { getMockTimeCardOverview } from "@/lib/mock-data";
 import { getMockDb, getTimeReview } from "@/lib/mock-repo";
 import { getCurrentPayPeriod, isDateInPayPeriod } from "@/lib/pay-period";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { isMockMode } from "@/lib/runtime";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate } from "@/lib/timezone";
@@ -168,10 +169,11 @@ export async function getManagerTimeReview() {
 }
 
 export async function getPunchHistory(staffUserId: string, role: AppRole) {
+  const normalizedRole = normalizeRoleKey(role);
   if (isMockMode()) {
     const db = getMockDb();
     return db.timePunches
-      .filter((row) => (role === "admin" || role === "manager" ? true : row.staff_user_id === staffUserId))
+      .filter((row) => (normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director" ? true : row.staff_user_id === staffUserId))
       .sort((a, b) => (a.punch_at < b.punch_at ? 1 : -1));
   }
 
@@ -181,7 +183,7 @@ export async function getPunchHistory(staffUserId: string, role: AppRole) {
     .select("id, staff_user_id, staff_name, punch_type, punch_at, within_fence, distance_meters, note")
     .order("punch_at", { ascending: false });
 
-  if (role !== "admin" && role !== "manager") {
+  if (normalizedRole !== "admin" && normalizedRole !== "manager" && normalizedRole !== "director") {
     query = query.eq("staff_user_id", staffUserId);
   }
 

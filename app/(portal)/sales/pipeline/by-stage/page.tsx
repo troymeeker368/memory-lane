@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 
 function stageHref(stage: string) {
@@ -16,7 +16,7 @@ function stageHref(stage: string) {
 }
 
 export default async function PipelineByStagePage() {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const { stageCounts } = await getSalesWorkflows();
 
   return (

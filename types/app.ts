@@ -1,4 +1,14 @@
-export type AppRole = "admin" | "manager" | "nurse" | "staff";
+export type CanonicalAppRole =
+  | "program-assistant"
+  | "coordinator"
+  | "nurse"
+  | "sales"
+  | "manager"
+  | "director"
+  | "admin";
+
+// Keep legacy "staff" compatibility for persisted mock state and older cookies.
+export type AppRole = CanonicalAppRole | "staff";
 
 export type NavGroup = "Documentation" | "Operations" | "Reports" | "Time & HR" | "Sales Activities" | "Health Unit";
 
@@ -71,6 +81,8 @@ export interface UserProfile {
   active: boolean;
   staff_id: string | null;
   permissions: PermissionSet;
+  has_custom_permissions?: boolean;
+  permission_source?: "role-template" | "custom-override";
 }
 
 export type UserStatus = "active" | "inactive";
@@ -80,6 +92,7 @@ export interface ManagedUser {
   firstName: string;
   lastName: string;
   displayName: string;
+  credentials: string | null;
   email: string;
   role: AppRole;
   status: UserStatus;
@@ -88,6 +101,9 @@ export interface ManagedUser {
   department: string | null;
   defaultLanding: string;
   permissions: PermissionSet;
+  hasCustomPermissions: boolean;
+  customPermissions: PermissionSet | null;
+  permissionSource: "role-template" | "custom-override";
   lastLogin: string | null;
   createdAt: string;
   updatedAt: string;

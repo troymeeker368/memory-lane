@@ -1,5 +1,12 @@
 import type { AppRole, ManagedUser, PermissionModuleKey, PermissionSet, UserStatus } from "@/types/app";
-import { getDefaultPermissionSet, normalizePermissionSet, PERMISSION_MODULES } from "@/lib/permissions";
+import {
+  CANONICAL_ROLE_ORDER,
+  getDefaultPermissionSet,
+  normalizePermissionSet,
+  normalizeRoleKey,
+  PERMISSION_MODULES,
+  resolveEffectivePermissionSet
+} from "@/lib/permissions";
 import { readMockStateJson, writeMockStateJson } from "@/lib/mock-persistence";
 import { getMockDb, replaceMockStaff } from "@/lib/mock-repo";
 import { isMockMode } from "@/lib/runtime";
@@ -15,6 +22,7 @@ export interface ManagedUserInput {
   firstName: string;
   lastName: string;
   displayName: string;
+  credentials?: string | null;
   email: string;
   role: AppRole;
   status: UserStatus;
@@ -42,7 +50,7 @@ export interface ManagedUserRecentActivityResult {
 }
 
 interface PersistedManagedUsersState {
-  version: 1;
+  version: 2;
   sequence: number;
   users: ManagedUser[];
 }
@@ -50,11 +58,73 @@ interface PersistedManagedUsersState {
 const DEFAULT_LANDING = "/";
 const MANAGED_USERS_FILE = "managed-users.json";
 
-const ROLE_DEFAULT_DEPARTMENT: Record<AppRole, string> = {
+const ROLE_DEFAULT_DEPARTMENT: Record<Exclude<AppRole, "staff">, string> = {
+  "program-assistant": "Frontline Operations",
+  coordinator: "Center Coordination",
+  sales: "Sales Activities",
+  director: "Executive Leadership",
   admin: "Administration",
   manager: "Operations",
-  nurse: "Health Unit",
-  staff: "Frontline Staff"
+  nurse: "Health Unit"
+};
+
+const OFFICE_LINE_SEED_OVERRIDES: Record<
+  string,
+  Partial<Pick<ManagedUserInput, "email" | "title" | "department" | "phone" | "credentials">>
+> = {
+  "Jess Sheldon": {
+    email: "sheldonJessd@gmail.com"
+  },
+  "Robin Newell": {
+    email: "robinjnewell64@gmail.com"
+  },
+  "Trish Church": {
+    email: "trishchurch78@gmail.com"
+  },
+  "Daniel Ratterree": {
+    email: "dratterree@townsquare.net"
+  },
+  "Arzu Uranli": {
+    email: "auranli@townsquare.net",
+    title: "Program Director",
+    department: "Executive Leadership",
+    phone: "803-591-9517 x406"
+  },
+  "Joslyn Meeker": {
+    email: "jmeeker@townsquare.net",
+    title: "Center Coordinator",
+    department: "Center Coordination",
+    phone: "803-591-9519 x407"
+  },
+  "Michelle Piscatelli": {
+    email: "michelle_piscatelli@yahoo.com",
+    title: "Center Director",
+    department: "Executive Leadership",
+    phone: "803-591-9522 x408",
+    credentials: "LPN, CDP"
+  },
+  "Troy Meeker": {
+    email: "tmeeker@townsquare.net",
+    title: "Center Nurse",
+    department: "Health Unit",
+    phone: "Office 803-986-4012 | Cell 980-420-2753 x503",
+    credentials: "BSN, RN, CDP"
+  },
+  "Shayne Meeker": {
+    email: "smeeker@townsquare.net"
+  },
+  Other: {
+    email: "tsfmdata@gmail.com"
+  },
+  "Lauren Locke": {
+    email: "lm.locke453@gmail.com"
+  },
+  "Ivette Tanis": {
+    email: "ivette.tanis@gmail.com"
+  },
+  "Jamillah Wade": {
+    email: "jwade@townsquare.net"
+  }
 };
 
 function asDate(value?: string | null) {
@@ -118,9 +188,22 @@ function splitName(fullName: string) {
   };
 }
 
+function splitNameAndCredentials(value: string) {
+  const normalized = value.trim();
+  const [namePart, ...credentialParts] = normalized.split(",");
+  const displayName = (namePart ?? normalized).trim();
+  const credentials = normalizeString(credentialParts.join(","));
+  const name = splitName(displayName);
+  return { ...name, displayName, credentials };
+}
+
 function normalizeString(value?: string | null) {
   const cleaned = (value ?? "").trim();
   return cleaned.length > 0 ? cleaned : null;
+}
+
+function defaultDepartmentForRole(role: AppRole) {
+  return ROLE_DEFAULT_DEPARTMENT[normalizeRoleKey(role)] ?? "Operations";
 }
 
 function resolveSequence(rows: ManagedUser[]) {
@@ -135,19 +218,51 @@ function resolveSequence(rows: ManagedUser[]) {
 }
 
 function normalizePersistedUsersState(candidate: PersistedManagedUsersState | null | undefined): PersistedManagedUsersState | null {
-  if (!candidate || candidate.version !== 1 || !Array.isArray(candidate.users)) {
+  if (!candidate || !Array.isArray(candidate.users)) {
     return null;
   }
 
-  const users = candidate.users.map((user) => ({
-    ...user,
-    permissions: normalizePermissionSet(user.permissions)
-  }));
+  const users = candidate.users.map((user) => {
+    const parsedName = splitNameAndCredentials(String(user.displayName ?? ""));
+    const normalizedRole = normalizeRoleKey(user.role);
+    const roleDefaults = getDefaultPermissionSet(normalizedRole);
+    const normalizedExistingPermissions = normalizePermissionSet(user.permissions ?? roleDefaults);
+    const roleDefaultsJson = JSON.stringify(roleDefaults);
+    const normalizedExistingPermissionsJson = JSON.stringify(normalizedExistingPermissions);
+    const inferredHasCustomPermissions =
+      typeof user.hasCustomPermissions === "boolean"
+        ? user.hasCustomPermissions
+        : normalizedExistingPermissionsJson !== roleDefaultsJson;
+    // Legacy rows did not persist explicit override mode; infer it by diffing against template defaults.
+    const customPermissions = inferredHasCustomPermissions
+      ? normalizePermissionSet(user.customPermissions ?? normalizedExistingPermissions)
+      : null;
+    const effectivePermissions = resolveEffectivePermissionSet({
+      role: normalizedRole,
+      hasCustomPermissions: inferredHasCustomPermissions,
+      customPermissions,
+      permissions: normalizedExistingPermissions
+    });
+
+    return {
+      ...user,
+      firstName: normalizeString(user.firstName) ?? parsedName.firstName,
+      lastName: normalizeString(user.lastName) ?? parsedName.lastName,
+      displayName: normalizeString(user.displayName) ?? parsedName.displayName,
+      credentials: normalizeString(user.credentials) ?? parsedName.credentials,
+      role: normalizedRole,
+      department: normalizeString(user.department) ?? defaultDepartmentForRole(normalizedRole),
+      permissions: effectivePermissions,
+      hasCustomPermissions: inferredHasCustomPermissions,
+      customPermissions,
+      permissionSource: inferredHasCustomPermissions ? "custom-override" : "role-template"
+    } satisfies ManagedUser;
+  });
 
   const computedSequence = resolveSequence(users);
 
   return {
-    version: 1,
+    version: 2,
     users,
     sequence: Number.isFinite(candidate.sequence) ? Math.max(candidate.sequence, computedSequence) : computedSequence
   };
@@ -171,7 +286,7 @@ function syncMockStaff(rows: ManagedUser[]) {
       full_name: user.displayName,
       email,
       email_normalized: email.toLowerCase(),
-      role: user.role,
+      role: normalizeRoleKey(user.role),
       active: user.status === "active"
     };
   });
@@ -183,7 +298,7 @@ function persistManagedUsers() {
   if (!managedUsers) return;
 
   writeMockStateJson<PersistedManagedUsersState>(MANAGED_USERS_FILE, {
-    version: 1,
+    version: 2,
     sequence,
     users: managedUsers
   });
@@ -196,20 +311,33 @@ function seedUsersFromStaff() {
   const now = toEasternISO();
 
   const rows = db.staff.map((staff, index) => {
-    const name = splitName(staff.full_name);
+    const identity = splitNameAndCredentials(staff.full_name);
+    const role = normalizeRoleKey(staff.role);
+    const roleDefaults = getDefaultPermissionSet(role);
+    const override = OFFICE_LINE_SEED_OVERRIDES[identity.displayName];
+    const overrideEmail = normalizeString(override?.email);
+    const overrideTitle = normalizeString(override?.title);
+    const overrideDepartment = normalizeString(override?.department);
+    const overridePhone = normalizeString(override?.phone);
+    const overrideCredentials = normalizeString(override?.credentials);
+    const staffEmail = normalizeString(staff.email);
     return {
       id: staff.id,
-      firstName: name.firstName,
-      lastName: name.lastName,
-      displayName: staff.full_name,
-      email: staff.email || `${staff.full_name.toLowerCase().replace(/\s+/g, ".")}@memorylane.local`,
-      role: staff.role,
+      firstName: identity.firstName,
+      lastName: identity.lastName,
+      displayName: identity.displayName,
+      credentials: overrideCredentials ?? identity.credentials,
+      email: overrideEmail ?? staffEmail ?? `${staff.full_name.toLowerCase().replace(/\s+/g, ".")}@memorylane.local`,
+      role,
       status: staff.active ? "active" : "inactive",
-      phone: null,
-      title: staff.role === "nurse" ? "Center Nurse" : staff.role === "manager" ? "Center Manager" : null,
-      department: ROLE_DEFAULT_DEPARTMENT[staff.role],
+      phone: overridePhone,
+      title: overrideTitle ?? (role === "nurse" ? "Center Nurse" : role === "manager" ? "Center Manager" : null),
+      department: overrideDepartment ?? defaultDepartmentForRole(role),
       defaultLanding: DEFAULT_LANDING,
-      permissions: getDefaultPermissionSet(staff.role),
+      permissions: roleDefaults,
+      hasCustomPermissions: false,
+      customPermissions: null,
+      permissionSource: "role-template",
       lastLogin: toEasternISO(new Date(Date.now() - (index + 1) * 3600000)),
       createdAt: now,
       updatedAt: now
@@ -241,16 +369,22 @@ function ensureStore() {
 }
 
 function sanitizeManagedUserInput(input: ManagedUserInput): ManagedUserInput {
+  const identity = splitNameAndCredentials(input.displayName);
+  const firstName = input.firstName.trim() || identity.firstName;
+  const lastName = input.lastName.trim() || identity.lastName;
+  const displayName = identity.displayName || `${firstName} ${lastName}`.trim();
+  const normalizedRole = normalizeRoleKey(input.role);
   return {
-    firstName: input.firstName.trim(),
-    lastName: input.lastName.trim(),
-    displayName: input.displayName.trim(),
+    firstName,
+    lastName,
+    displayName,
+    credentials: normalizeString(input.credentials) ?? identity.credentials,
     email: input.email.trim().toLowerCase(),
-    role: input.role,
+    role: normalizedRole,
     status: input.status,
     phone: normalizeString(input.phone),
     title: normalizeString(input.title),
-    department: normalizeString(input.department) ?? ROLE_DEFAULT_DEPARTMENT[input.role],
+    department: normalizeString(input.department) ?? defaultDepartmentForRole(normalizedRole),
     defaultLanding: normalizeString(input.defaultLanding) ?? DEFAULT_LANDING
   };
 }
@@ -261,11 +395,11 @@ export function listManagedUsers(filters?: ManagedUserFilters): ManagedUser[] {
 
   return rows
     .filter((row) => {
-      if (filters?.role && filters.role !== "all" && row.role !== filters.role) return false;
+      if (filters?.role && filters.role !== "all" && normalizeRoleKey(row.role) !== normalizeRoleKey(filters.role)) return false;
       if (filters?.status && filters.status !== "all" && row.status !== filters.status) return false;
       if (!search) return true;
 
-      const haystack = [row.displayName, row.email, row.role, row.department ?? ""].join(" ").toLowerCase();
+      const haystack = [row.displayName, row.credentials ?? "", row.email, row.role, row.department ?? ""].join(" ").toLowerCase();
       return haystack.includes(search);
     })
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -276,9 +410,27 @@ export function getManagedUserById(userId: string): ManagedUser | null {
   return rows.find((row) => row.id === userId) ?? null;
 }
 
+export function formatNameWithCredentials(name: string, credentials?: string | null) {
+  const baseName = String(name ?? "").trim();
+  const normalizedCredentials = normalizeString(credentials);
+  if (!normalizedCredentials) return baseName;
+  if (!baseName) return normalizedCredentials;
+  if (baseName.toLowerCase().endsWith(normalizedCredentials.toLowerCase())) {
+    return baseName;
+  }
+  return `${baseName}, ${normalizedCredentials}`;
+}
+
+export function getManagedUserSignatureName(userId: string, fallbackName: string) {
+  const managedUser = getManagedUserById(userId);
+  return formatNameWithCredentials(fallbackName, managedUser?.credentials ?? null);
+}
+
 export function createManagedUser(input: ManagedUserInput): ManagedUser {
   const rows = ensureStore();
   const cleaned = sanitizeManagedUserInput(input);
+  const role = normalizeRoleKey(cleaned.role);
+  const roleDefaults = getDefaultPermissionSet(role);
   const now = toEasternISO();
 
   const next: ManagedUser = {
@@ -286,14 +438,18 @@ export function createManagedUser(input: ManagedUserInput): ManagedUser {
     firstName: cleaned.firstName,
     lastName: cleaned.lastName,
     displayName: cleaned.displayName,
+    credentials: cleaned.credentials ?? null,
     email: cleaned.email,
-    role: cleaned.role,
+    role,
     status: cleaned.status,
     phone: cleaned.phone ?? null,
     title: cleaned.title ?? null,
     department: cleaned.department ?? null,
     defaultLanding: cleaned.defaultLanding ?? DEFAULT_LANDING,
-    permissions: getDefaultPermissionSet(cleaned.role),
+    permissions: roleDefaults,
+    hasCustomPermissions: false,
+    customPermissions: null,
+    permissionSource: "role-template",
     lastLogin: null,
     createdAt: now,
     updatedAt: now
@@ -311,26 +467,37 @@ export function updateManagedUser(userId: string, patch: ManagedUserInput): Mana
 
   const current = rows[index];
   const cleaned = sanitizeManagedUserInput(patch);
+  const nextRole = normalizeRoleKey(cleaned.role);
   const now = toEasternISO();
-
-  let permissions = current.permissions;
-  if (current.role !== cleaned.role) {
-    permissions = getDefaultPermissionSet(cleaned.role);
-  }
+  const roleChanged = normalizeRoleKey(current.role) !== nextRole;
+  const shouldUseCustomPermissions = current.hasCustomPermissions && !roleChanged;
+  const roleDefaults = getDefaultPermissionSet(nextRole);
+  const permissions = shouldUseCustomPermissions
+    ? resolveEffectivePermissionSet({
+        role: nextRole,
+        hasCustomPermissions: true,
+        customPermissions: current.customPermissions,
+        permissions: current.permissions
+      })
+    : roleDefaults;
 
   const next: ManagedUser = {
     ...current,
     firstName: cleaned.firstName,
     lastName: cleaned.lastName,
     displayName: cleaned.displayName,
+    credentials: cleaned.credentials ?? null,
     email: cleaned.email,
-    role: cleaned.role,
+    role: nextRole,
     status: cleaned.status,
     phone: cleaned.phone ?? null,
     title: cleaned.title ?? null,
     department: cleaned.department ?? null,
     defaultLanding: cleaned.defaultLanding ?? DEFAULT_LANDING,
     permissions,
+    hasCustomPermissions: shouldUseCustomPermissions,
+    customPermissions: shouldUseCustomPermissions ? current.customPermissions : null,
+    permissionSource: shouldUseCustomPermissions ? "custom-override" : "role-template",
     updatedAt: now
   };
 
@@ -360,9 +527,33 @@ export function updateManagedUserPermissions(userId: string, permissions: Permis
   const index = rows.findIndex((row) => row.id === userId);
   if (index < 0) return null;
 
+  const normalized = normalizePermissionSet(permissions);
   const next: ManagedUser = {
     ...rows[index],
-    permissions: normalizePermissionSet(permissions),
+    permissions: normalized,
+    hasCustomPermissions: true,
+    customPermissions: normalized,
+    permissionSource: "custom-override",
+    updatedAt: toEasternISO()
+  };
+
+  rows[index] = next;
+  persistManagedUsers();
+  return next;
+}
+
+export function resetManagedUserPermissionsToRoleDefaults(userId: string): ManagedUser | null {
+  const rows = ensureStore();
+  const index = rows.findIndex((row) => row.id === userId);
+  if (index < 0) return null;
+
+  const roleDefaults = getDefaultPermissionSet(rows[index].role);
+  const next: ManagedUser = {
+    ...rows[index],
+    permissions: roleDefaults,
+    hasCustomPermissions: false,
+    customPermissions: null,
+    permissionSource: "role-template",
     updatedAt: toEasternISO()
   };
 
@@ -372,7 +563,7 @@ export function updateManagedUserPermissions(userId: string, permissions: Permis
 }
 
 export function getRoleOptions(): AppRole[] {
-  return ["staff", "nurse", "manager", "admin"];
+  return [...CANONICAL_ROLE_ORDER];
 }
 
 export function getPermissionModules(): PermissionModuleKey[] {
@@ -395,10 +586,10 @@ export function getUserManagementMetrics() {
     total: rows.length,
     active,
     inactive,
-    admins: rows.filter((row) => row.role === "admin").length,
-    managers: rows.filter((row) => row.role === "manager").length,
-    nurses: rows.filter((row) => row.role === "nurse").length,
-    staff: rows.filter((row) => row.role === "staff").length
+    byRole: CANONICAL_ROLE_ORDER.reduce((acc, role) => {
+      acc[role] = rows.filter((row) => normalizeRoleKey(row.role) === role).length;
+      return acc;
+    }, {} as Record<string, number>)
   };
 }
 

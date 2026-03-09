@@ -146,26 +146,36 @@ function uuidFromKey(key: string) {
 
 function toRole(rawRole: string): AppRole {
   const value = rawRole.trim().toLowerCase();
+  if (value.includes("program") || value.includes("assistant") || value.includes("staff")) return "program-assistant";
+  if (value.includes("coordinator")) return "coordinator";
+  if (value.includes("sales")) return "sales";
+  if (value.includes("director")) return "director";
   if (value.includes("nurse")) return "nurse";
   if (value.includes("manager")) return "manager";
   if (value.includes("admin")) return "admin";
-  return "staff";
+  return "program-assistant";
 }
 
 function ensureRoleCoverage(rows: MockStaff[]) {
   const staff = [...rows];
   const has = (role: AppRole) => staff.some((row) => row.role === role);
 
-  if (!has("admin") && staff[0]) staff[0] = { ...staff[0], role: "admin" };
-  if (!has("manager") && staff[1]) staff[1] = { ...staff[1], role: "manager" };
+  if (!has("program-assistant") && staff[0]) staff[0] = { ...staff[0], role: "program-assistant" };
+  if (!has("coordinator") && staff[1]) staff[1] = { ...staff[1], role: "coordinator" };
   if (!has("nurse") && staff[2]) staff[2] = { ...staff[2], role: "nurse" };
-  if (!has("staff") && staff[3]) staff[3] = { ...staff[3], role: "staff" };
+  if (!has("sales") && staff[3]) staff[3] = { ...staff[3], role: "sales" };
+  if (!has("manager") && staff[4]) staff[4] = { ...staff[4], role: "manager" };
+  if (!has("director") && staff[5]) staff[5] = { ...staff[5], role: "director" };
+  if (!has("admin") && staff[6]) staff[6] = { ...staff[6], role: "admin" };
 
   const required: Array<{ role: AppRole; name: string; staffId: string }> = [
+    { role: "program-assistant", name: "Skyler Program Assistant", staffId: "stf_seed_program_assistant" },
+    { role: "coordinator", name: "Casey Coordinator", staffId: "stf_seed_coordinator" },
+    { role: "sales", name: "Sasha Sales", staffId: "stf_seed_sales" },
+    { role: "director", name: "Dakota Director", staffId: "stf_seed_director" },
     { role: "admin", name: "Avery Admin", staffId: "stf_seed_admin" },
     { role: "manager", name: "Morgan Manager", staffId: "stf_seed_manager" },
-    { role: "nurse", name: "Nora Nurse", staffId: "stf_seed_nurse" },
-    { role: "staff", name: "Skyler Staff", staffId: "stf_seed_staff" }
+    { role: "nurse", name: "Nora Nurse", staffId: "stf_seed_nurse" }
   ];
 
   required.forEach((item) => {

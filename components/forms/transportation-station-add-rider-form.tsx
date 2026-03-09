@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+
+import { copyForwardTransportationDetailsAction } from "@/app/(portal)/operations/transportation-station/actions";
 
 type ShiftOption = "AM" | "PM" | "Both";
 type TransportType = "Door to Door" | "Bus Stop";
-type BusNumber = "" | "1" | "2" | "3";
+type BusNumber = string;
 
 interface MemberPrefillOption {
   id: string;
@@ -20,15 +22,24 @@ export function TransportationStationAddRiderForm({
   action,
   selectedDate,
   defaultShift,
-  members
+  members,
+  busNumberOptions
 }: {
   action: (formData: FormData) => void | Promise<void>;
   selectedDate: string;
   defaultShift: "AM" | "PM";
   members: MemberPrefillOption[];
+  busNumberOptions: string[];
 }) {
+  const [isCopyPending, startCopyTransition] = useTransition();
   const [memberId, setMemberId] = useState("");
   const [shift, setShift] = useState<ShiftOption>(defaultShift);
+  const [copySourceDate, setCopySourceDate] = useState(() => {
+    const parsed = new Date(`${selectedDate}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime())) return selectedDate;
+    parsed.setUTCDate(parsed.getUTCDate() - 1);
+    return parsed.toISOString().slice(0, 10);
+  });
   const [transportType, setTransportType] = useState<TransportType>("Door to Door");
   const [busNumber, setBusNumber] = useState<BusNumber>("");
   const [busStopName, setBusStopName] = useState("");
@@ -36,6 +47,7 @@ export function TransportationStationAddRiderForm({
   const [caregiverContactName, setCaregiverContactName] = useState("");
   const [caregiverContactPhone, setCaregiverContactPhone] = useState("");
   const [caregiverContactAddress, setCaregiverContactAddress] = useState("");
+  const [copyStatus, setCopyStatus] = useState("");
 
   const selectedMember = useMemo(
     () => members.find((row) => row.id === memberId) ?? null,
@@ -62,6 +74,37 @@ export function TransportationStationAddRiderForm({
     if (!doorToDoorAddress.trim()) {
       setDoorToDoorAddress(selectedMember?.defaultDoorToDoorAddress ?? "");
     }
+  };
+
+  const applyCopyForward = () => {
+    if (!memberId) {
+      setCopyStatus("Select a member first.");
+      return;
+    }
+    const effectiveShift = shift === "Both" ? "AM" : shift;
+    startCopyTransition(async () => {
+      setCopyStatus("");
+      const payload = new FormData();
+      payload.set("memberId", memberId);
+      payload.set("sourceDate", copySourceDate);
+      payload.set("targetDate", selectedDate);
+      payload.set("shift", effectiveShift);
+      const result = await copyForwardTransportationDetailsAction(payload);
+      if (!result.ok) {
+        setCopyStatus(result.error ?? "Unable to copy transport details.");
+        return;
+      }
+
+      const snapshot = result.snapshot;
+      setTransportType(snapshot.transportType);
+      setBusNumber(snapshot.busNumber);
+      setBusStopName(snapshot.busStopName);
+      setDoorToDoorAddress(snapshot.doorToDoorAddress || selectedMember?.defaultDoorToDoorAddress || "");
+      setCaregiverContactName(snapshot.caregiverContactName || selectedMember?.defaultContactName || "");
+      setCaregiverContactPhone(snapshot.caregiverContactPhone || selectedMember?.defaultContactPhone || "");
+      setCaregiverContactAddress(snapshot.caregiverContactAddress || selectedMember?.defaultContactAddress || "");
+      setCopyStatus(result.unchanged ? "Current manifest already matches copied transport details." : "Transport details copied. You can edit before saving.");
+    });
   };
 
   return (
@@ -102,6 +145,26 @@ export function TransportationStationAddRiderForm({
       </label>
 
       <label className="space-y-1 text-sm">
+        <span className="text-xs font-semibold text-muted">Copy From Date</span>
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={copySourceDate}
+            onChange={(event) => setCopySourceDate(event.target.value)}
+            className="h-10 w-full rounded-lg border border-border px-3"
+          />
+          <button
+            type="button"
+            onClick={applyCopyForward}
+            disabled={isCopyPending}
+            className="h-10 rounded-lg border border-border px-3 text-xs font-semibold"
+          >
+            {isCopyPending ? "Copying..." : "Copy"}
+          </button>
+        </div>
+      </label>
+
+      <label className="space-y-1 text-sm">
         <span className="text-xs font-semibold text-muted">Transport Type</span>
         <select
           name="transportType"
@@ -124,9 +187,11 @@ export function TransportationStationAddRiderForm({
           className="h-10 w-full rounded-lg border border-border px-3"
         >
           <option value="">Select bus</option>
-          <option value="1">Bus 1</option>
-          <option value="2">Bus 2</option>
-          <option value="3">Bus 3</option>
+          {busNumberOptions.map((option) => (
+            <option key={option} value={option}>
+              Bus {option}
+            </option>
+          ))}
         </select>
       </label>
 
@@ -194,6 +259,7 @@ export function TransportationStationAddRiderForm({
           Add Rider
         </button>
       </div>
+      {copyStatus ? <p className="md:col-span-3 text-xs text-muted">{copyStatus}</p> : null}
     </form>
   );
 }

@@ -1,0 +1,310 @@
+
+> adult-day-operations-portal@1.0.0 typecheck
+> tsc --noEmit
+
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(auth)/login/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/admin-reports/audit-trail/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/admin-reports/layout.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/admin-reports/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/ancillary/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/documentation/activity/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/documentation/assessment/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/documentation/blood-sugar/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/documentation/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/documentation/photo-upload/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/documentation/shower/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/documentation/toilet/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/documentation/transportation/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/assessment/[assessmentId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/assessment/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/care-plans/[carePlanId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/care-plans/[carePlanId]/versions/[versionId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/care-plans/due-report/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/care-plans/list/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/care-plans/member/[memberId]/latest/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/care-plans/new/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/care-plans/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/member-health-profiles/[memberId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/member-health-profiles/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/physician-orders/[pofId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/physician-orders/[pofId]/print/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/physician-orders/new/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/health/physician-orders/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/members/[memberId]/diet-card/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/members/[memberId]/face-sheet/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/members/[memberId]/name-badge/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/members/[memberId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/members/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/operations/additional-charges/manage-ancillary-pricing/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/operations/additional-charges/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/operations/attendance/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/operations/holds/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/operations/locker-assignments/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/operations/member-command-center/[memberId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/operations/member-command-center/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/operations/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/operations/payor/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/operations/transportation-station/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/operations/transportation-station/print/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/pto/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/reports/assessments/[assessmentId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/reports/member-summary/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/reports/monthly-ancillary/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/reports/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/reports/staff/[staffSlug]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/reports/staff/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/activities/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/community-partners/[partnerId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/community-partners/organizations/[partnerId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/community-partners/organizations/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/community-partners/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/community-partners/referral-sources/[sourceId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/community-partners/referral-sources/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/eip/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/inquiry/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/leads/[leadId]/edit/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/leads/[leadId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/lost/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/new-entries/log-lead-activity/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/new-entries/log-partner-activities/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/new-entries/new-community-partner/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/new-entries/new-inquiry/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/new-entries/new-referral-source/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/new-entries/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/nurture/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline-by-stage/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline-table/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/by-stage/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/closed-lost/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/closed-won/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/eip/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/follow-up-dashboard/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/inquiry/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/leads-table/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/leads/[leadId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/nurture/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/referrals-only/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/pipeline/tour/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/referrals-only/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/tour/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/sales/won/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/time-card/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/time-card/punch-history/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/time-hr/user-management/[userId]/edit/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/time-hr/user-management/[userId]/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/time-hr/user-management/[userId]/permissions/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/time-hr/user-management/layout.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/time-hr/user-management/new/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/time-hr/user-management/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/(portal)/unauthorized/page.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/api/health/route.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/app/layout.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'
+error TS6053: File 'D:/Memory Lane App/.next/types/cache-life.d.ts' not found.
+  The file is in the program because:
+    Matched by include pattern '.next/types/**/*.ts' in 'D:/Memory Lane App/tsconfig.json'

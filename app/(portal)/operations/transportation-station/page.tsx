@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { unstable_noStore as noStore } from "next/cache";
 
 import {
   addTransportationManifestRiderAction,
@@ -10,9 +11,9 @@ import { TransportationStationAddRiderForm } from "@/components/forms/transporta
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { MEMBER_BUS_NUMBER_OPTIONS } from "@/lib/canonical";
 import { getMockDb } from "@/lib/mock-repo";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
+import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import {
   buildTransportationManifestCsv,
   getTransportationManifest,
@@ -22,7 +23,6 @@ import {
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 const SHIFT_OPTIONS: TransportationStationShift[] = ["AM", "PM", "Both"];
-const BUS_FILTER_OPTIONS: TransportationManifestBusFilter[] = ["all", "1", "2", "3", "unassigned"];
 const WEEKDAY_LABELS: Record<string, string> = {
   monday: "Monday",
   tuesday: "Tuesday",
@@ -43,8 +43,10 @@ function normalizeShift(value: string | undefined): TransportationStationShift {
   return "Both";
 }
 
-function normalizeBusFilter(value: string | undefined): TransportationManifestBusFilter {
-  if (value === "1" || value === "2" || value === "3" || value === "all" || value === "unassigned") return value;
+function normalizeBusFilter(value: string | undefined, busNumberOptions: string[]): TransportationManifestBusFilter {
+  if (!value) return "all";
+  if (value === "all" || value === "unassigned") return value;
+  if (busNumberOptions.includes(value)) return value;
   return "all";
 }
 
@@ -78,12 +80,17 @@ export default async function TransportationStationPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  noStore();
   const profile = await requireModuleAccess("operations");
   const canEdit = profile.role === "admin" || profile.role === "manager";
+  const busNumberOptions = getConfiguredBusNumbers();
   const query = await searchParams;
   const selectedDate = firstString(query.date) ?? getOperationsTodayDate();
   const selectedShift = normalizeShift(firstString(query.shift));
-  const busFilter = normalizeBusFilter(firstString(query.bus));
+  const busFilter = normalizeBusFilter(firstString(query.bus), busNumberOptions);
+  const busFilterOptions: TransportationManifestBusFilter[] = ["all", ...busNumberOptions, "unassigned"];
+  const errorMessage = firstString(query.error) ?? "";
+  const successMessage = firstString(query.success) ?? "";
   const manifest = getTransportationManifest({
     selectedDate,
     shift: selectedShift,
@@ -169,6 +176,17 @@ export default async function TransportationStationPage({
         </div>
       </Card>
 
+      {errorMessage ? (
+        <Card>
+          <p className="text-sm font-semibold text-danger">{errorMessage}</p>
+        </Card>
+      ) : null}
+      {successMessage ? (
+        <Card>
+          <p className="text-sm font-semibold text-emerald-700">{successMessage}</p>
+        </Card>
+      ) : null}
+
       <Card className="table-wrap">
         <form method="get" className="grid gap-2 md:grid-cols-5">
           <label className="space-y-1 text-sm">
@@ -190,7 +208,7 @@ export default async function TransportationStationPage({
           <label className="space-y-1 text-sm">
             <span className="text-xs font-semibold text-muted">Bus Filter</span>
             <select name="bus" defaultValue={busFilter} className="h-10 w-full rounded-lg border border-border px-3">
-              {BUS_FILTER_OPTIONS.map((option) => (
+              {busFilterOptions.map((option) => (
                 <option key={option} value={option}>
                   {option === "all" ? "All Buses" : option === "unassigned" ? "Unassigned" : `Bus ${option}`}
                 </option>
@@ -245,6 +263,7 @@ export default async function TransportationStationPage({
             selectedDate={manifest.selectedDate}
             defaultShift={selectedShift === "Both" ? "AM" : selectedShift}
             members={addRiderMemberOptions}
+            busNumberOptions={busNumberOptions}
           />
         </Card>
       ) : null}
@@ -300,6 +319,7 @@ export default async function TransportationStationPage({
                                   <input type="hidden" name="selectedDate" value={manifest.selectedDate} />
                                   <input type="hidden" name="memberId" value={rider.memberId} />
                                   <input type="hidden" name="shift" value={rider.shift} />
+                                  <input type="hidden" name="busFilter" value={busFilter} />
                                   <input type="hidden" name="transportType" value={rider.transportType} />
                                   <input type="hidden" name="busStopName" value={rider.busStopName ?? ""} />
                                   <input type="hidden" name="doorToDoorAddress" value={rider.doorToDoorAddress ?? ""} />
@@ -317,7 +337,7 @@ export default async function TransportationStationPage({
                                     <option value="" disabled>
                                       Bus
                                     </option>
-                                    {MEMBER_BUS_NUMBER_OPTIONS.map((option) => (
+                                    {busNumberOptions.map((option) => (
                                       <option key={option} value={option}>
                                         {option}
                                       </option>

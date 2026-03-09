@@ -29,14 +29,18 @@ export function PortalNav({ role, permissions }: { role: AppRole; permissions?: 
     return acc;
   }, {});
 
+  const visibleGroups = groupOrder.filter((group) => grouped[group]?.length);
+
   return (
-    <nav className="space-y-4">
-      {groupOrder.filter((group) => grouped[group]?.length).map((group) => {
+    <nav className="space-y-2">
+      {visibleGroups.map((group, idx) => {
         const items = grouped[group];
         return (
-          <section key={group}>
-            <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-white/80">{group}</h2>
-            <div className="grid gap-2">
+          <details key={group} className="rounded-lg border border-white/20 bg-white/5" open={idx === 0}>
+            <summary className="cursor-pointer list-none px-3 py-2 text-xs font-bold uppercase tracking-wide text-white/85 hover:bg-white/10">
+              {group}
+            </summary>
+            <div className="grid gap-2 p-2">
               {items.map((item) => {
                 const commonClass = "rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-[#8099B6]";
 
@@ -58,7 +62,7 @@ export function PortalNav({ role, permissions }: { role: AppRole; permissions?: 
                 );
               })}
             </div>
-          </section>
+          </details>
         );
       })}
     </nav>

@@ -1,11 +1,11 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 
 export default async function SalesReferralsOnlyPage() {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const { referralOnlyLeads } = await getSalesWorkflows();
 
   return (

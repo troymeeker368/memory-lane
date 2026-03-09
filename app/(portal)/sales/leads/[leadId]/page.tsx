@@ -4,12 +4,12 @@ import { notFound } from "next/navigation";
 import { LeadContactQuickActions } from "@/components/sales/lead-contact-quick-actions";
 import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getLeadDetail } from "@/lib/services/relations";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ leadId: string }> }) {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const { leadId } = await params;
   const detail = await getLeadDetail(leadId);
 

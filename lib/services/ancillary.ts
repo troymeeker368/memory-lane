@@ -1,5 +1,6 @@
 import { getMockAncillarySummary } from "@/lib/mock-data";
 import { getMockDb } from "@/lib/mock-repo";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { isMockMode } from "@/lib/runtime";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";
@@ -13,7 +14,7 @@ export async function getAncillarySummary(monthKey?: string, scope?: AncillarySc
   if (isMockMode()) {
     // TODO(backend): Remove mock branch when ancillary data is loaded from Supabase in local/dev.
     return getMockAncillarySummary(monthKey, {
-      staffUserId: scope?.role === "staff" ? scope.staffUserId ?? null : null
+      staffUserId: scope?.role && normalizeRoleKey(scope.role) === "program-assistant" ? scope.staffUserId ?? null : null
     });
   }
 
@@ -26,7 +27,7 @@ export async function getAncillarySummary(monthKey?: string, scope?: AncillarySc
     .limit(100);
 
   // TODO(backend): ensure staff_user_id is exposed in view for strict staff-level filtering in real backend mode.
-  if (scope?.role === "staff" && scope.staffUserId) {
+  if (scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && scope.staffUserId) {
     logsQuery = logsQuery.eq("staff_user_id", scope.staffUserId);
   }
 
@@ -46,7 +47,7 @@ export async function getAncillarySummary(monthKey?: string, scope?: AncillarySc
       .order("service_date", { ascending: false })
       .limit(100);
 
-    if (scope?.role === "staff" && scope.staffUserId) {
+    if (scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && scope.staffUserId) {
       fallbackLogsQuery = fallbackLogsQuery.eq("staff_user_id", scope.staffUserId);
     }
 

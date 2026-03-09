@@ -4,6 +4,7 @@ import { DailyActivityForm } from "@/components/forms/daily-activity-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { getStaffActivitySnapshot, staffNameToSlug } from "@/lib/services/activity-snapshots";
 import { getDocumentationSummary, getDocumentationTracker, getMembers } from "@/lib/services/documentation";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
@@ -37,8 +38,9 @@ export default async function DocumentationPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const profile = await requireModuleAccess("documentation");
+  const normalizedRole = normalizeRoleKey(profile.role);
 
-  if (profile.role === "staff") {
+  if (normalizedRole === "program-assistant") {
     const params = searchParams ? await searchParams : {};
     const from = typeof params.from === "string" ? params.from : undefined;
     const to = typeof params.to === "string" ? params.to : undefined;
@@ -229,7 +231,7 @@ export default async function DocumentationPage({
       <Card>
         <CardTitle>Documentation</CardTitle>
         <p className="mt-1 text-sm text-muted">Fast mobile-first logs with manager dashboards mirroring day-to-day AppSheet workflows.</p>
-        {profile.role === "admin" ? (
+        {normalizedRole === "admin" ? (
           <details className="mt-3 rounded-lg border border-border bg-brandSoft">
             <summary className="cursor-pointer list-none px-3 py-2 text-sm font-semibold text-brand">Documentation Entry Menu</summary>
             <div className="grid gap-2 border-t border-border p-2 sm:grid-cols-2">

@@ -1,12 +1,12 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 export default async function SalesRecentActivityPage() {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const { activities, partnerActivities, openLeads, wonLeads, lostLeads, partners, referralSources } = await getSalesWorkflows();
 
   const allLeads = [...openLeads, ...wonLeads, ...lostLeads].reduce<any[]>((acc, lead) => {

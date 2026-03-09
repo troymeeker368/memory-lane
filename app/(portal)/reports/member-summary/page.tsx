@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { unstable_noStore as noStore } from "next/cache";
 
+import { MemberDocumentationSummaryFilters } from "@/components/forms/member-documentation-summary-filters";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
 import { getMembers } from "@/lib/services/documentation";
@@ -78,6 +80,7 @@ export default async function MemberSummaryPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  noStore();
   await requireRoles(["admin", "manager"]);
 
   const params = await searchParams;
@@ -101,60 +104,15 @@ export default async function MemberSummaryPage({
   return (
     <div className="space-y-4">
         <Card>
-          <CardTitle>Member Documentation Summary</CardTitle>
+        <CardTitle>Member Documentation Summary</CardTitle>
         <p className="mt-1 text-sm text-muted">Select a member and date range to review documentation, clinical logs, and ancillary activity.</p>
-        <form className="mt-3 grid gap-2 md:grid-cols-6">
-          <div className="md:col-span-2">
-            <label className="mb-1 block text-xs font-semibold text-muted" htmlFor="memberId">Member</label>
-            <select
-              id="memberId"
-              name="memberId"
-              defaultValue={memberId}
-              size={Math.min(Math.max(members.length, 2), 10)}
-              className="h-auto max-h-56 w-full overflow-y-auto rounded-lg border border-border bg-white px-3 py-2 text-sm text-fg"
-            >
-              <option value="">Select member</option>
-              {members.map((member) => (
-                <option key={member.id} value={member.id}>{member.display_name}</option>
-              ))}
-            </select>
-            <p className="mt-1 text-xs text-muted">Scroll to browse member options.</p>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-muted" htmlFor="range">Date Range</label>
-            <select id="range" name="range" defaultValue={resolvedRange.preset} className="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm text-fg">
-              {RANGE_PRESETS.map((preset) => (
-                <option key={preset.value} value={preset.value}>{preset.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-muted" htmlFor="from">From</label>
-            <input
-              id="from"
-              name="from"
-              type="date"
-              defaultValue={resolvedRange.from}
-              readOnly={!isCustomRange}
-              className="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm text-fg read-only:bg-slate-50"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-muted" htmlFor="to">To</label>
-            <input
-              id="to"
-              name="to"
-              type="date"
-              defaultValue={resolvedRange.to}
-              readOnly={!isCustomRange}
-              className="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm text-fg read-only:bg-slate-50"
-            />
-          </div>
-          <div className="flex items-end gap-2">
-            <button type="submit" className="h-10 rounded-lg bg-brand px-3 text-sm font-semibold text-white">Load Summary</button>
-            <Link href="/" className="h-10 rounded-lg border border-border px-3 text-sm font-semibold leading-10">Home</Link>
-          </div>
-        </form>
+        <MemberDocumentationSummaryFilters
+          members={members}
+          initialMemberId={memberId}
+          initialRange={resolvedRange.preset}
+          initialFrom={resolvedRange.from}
+          initialTo={resolvedRange.to}
+        />
         {!isCustomRange ? (
           <p className="mt-2 text-xs text-muted">Selected preset controls From/To. Choose Custom Range to edit dates manually.</p>
         ) : null}

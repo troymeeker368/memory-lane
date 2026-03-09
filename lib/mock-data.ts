@@ -5,7 +5,8 @@ import { getMockDb } from "@/lib/mock-repo";
 import { getCurrentPayPeriod } from "@/lib/pay-period";
 import { getMockRole } from "@/lib/runtime";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
-import { getDefaultPermissionSet } from "@/lib/permissions";
+import { getPermissionSource, normalizeRoleKey, resolveEffectivePermissionSet } from "@/lib/permissions";
+import { getManagedUserById, listManagedUsers } from "@/lib/services/user-management";
 
 function todayIsoDate() {
   return toEasternDate();
@@ -17,34 +18,49 @@ function twoWeeksAgoIso() {
 
 export function getMockProfile(roleOverride?: AppRole, selectedUserId?: string | null): UserProfile {
   const db = getMockDb();
-  const role = roleOverride ?? getMockRole();
-  const roleStaff = db.staff
-    .filter((staff) => staff.active && staff.role === role)
-    .sort((a, b) => a.full_name.localeCompare(b.full_name));
+  const role = normalizeRoleKey(roleOverride ?? getMockRole());
+  const managedUsersForRole = listManagedUsers({ role, status: "active" });
+  const selectedManagedUser = selectedUserId ? getManagedUserById(selectedUserId) : null;
+  const managedUser =
+    (selectedManagedUser && selectedManagedUser.status === "active" ? selectedManagedUser : null) ??
+    managedUsersForRole[0] ??
+    listManagedUsers({ role: "all", status: "active" })[0] ??
+    null;
 
+  const roleStaff = db.staff
+    .filter((staff) => staff.active && normalizeRoleKey(staff.role) === role)
+    .sort((a, b) => a.full_name.localeCompare(b.full_name));
   const selectedStaff = selectedUserId ? roleStaff.find((staff) => staff.id === selectedUserId) : null;
-  const staff = selectedStaff ?? roleStaff[0] ?? db.staff.find((s) => s.role === role) ?? db.staff[0];
+  const staff = selectedStaff ?? roleStaff[0] ?? db.staff.find((s) => normalizeRoleKey(s.role) === role) ?? db.staff[0];
+
+  const resolvedRole = managedUser?.role ? normalizeRoleKey(managedUser.role) : role;
+  const permissions = resolveEffectivePermissionSet({
+    role: resolvedRole,
+    hasCustomPermissions: managedUser?.hasCustomPermissions,
+    customPermissions: managedUser?.customPermissions,
+    permissions: managedUser?.permissions
+  });
 
   return {
-    id: staff.id,
-    email: staff.email || `${staff.full_name.toLowerCase().replace(/\s+/g, ".")}@memorylane.local`,
-    full_name: staff.full_name,
-    role,
-    active: staff.active,
+    id: managedUser?.id ?? staff.id,
+    email: managedUser?.email ?? (staff.email || `${staff.full_name.toLowerCase().replace(/\s+/g, ".")}@memorylane.local`),
+    full_name: managedUser?.displayName ?? staff.full_name,
+    role: resolvedRole,
+    active: managedUser ? managedUser.status === "active" : staff.active,
     staff_id: staff.id.slice(-4),
-    permissions: getDefaultPermissionSet(role)
+    permissions,
+    has_custom_permissions: managedUser?.hasCustomPermissions ?? false,
+    permission_source: getPermissionSource(managedUser?.hasCustomPermissions ?? false)
   };
 }
 
 export function getMockUsersByRole(role?: AppRole) {
-  const db = getMockDb();
-  return db.staff
-    .filter((staff) => (role ? staff.role === role : true))
-    .filter((staff) => staff.active)
-    .map((staff) => ({
-      id: staff.id,
-      full_name: staff.full_name,
-      role: staff.role
+  const normalizedRole = role ? normalizeRoleKey(role) : undefined;
+  return listManagedUsers({ role: normalizedRole ?? "all", status: "active" })
+    .map((user) => ({
+      id: user.id,
+      full_name: user.displayName,
+      role: normalizeRoleKey(user.role)
     }))
     .sort((a, b) => a.full_name.localeCompare(b.full_name));
 }
@@ -148,7 +164,7 @@ export function getMockManagerTimeReview() {
       meal_deduction_applied: mealDeductHours,
       adjusted_hours: Number((regularHours - mealDeductHours).toFixed(2)),
       exception_notes: regularHours > 12 ? "Long shift flagged" : "-",
-      approval_status: s.role === "staff" ? "Pending" : "Reviewed",
+      approval_status: normalizeRoleKey(s.role) === "program-assistant" ? "Pending" : "Reviewed",
       regular_hours: regularHours,
       meal_deduct_hours: mealDeductHours,
       payable_hours: Number((regularHours - mealDeductHours).toFixed(2)),

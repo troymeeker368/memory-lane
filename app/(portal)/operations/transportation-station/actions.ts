@@ -1,15 +1,19 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { addMockRecord, getMockDb, removeMockRecord, updateMockRecord } from "@/lib/mock-repo";
-import { getWeekdayForDate, normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
+import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
+import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
+import { getTransportationManifest } from "@/lib/services/transportation-station";
 import { toEasternISO } from "@/lib/timezone";
 
 type Shift = "AM" | "PM";
+type TransportationStationShift = Shift | "Both";
 type TransportMode = "Bus Stop" | "Door to Door";
-type BusNumber = "1" | "2" | "3";
+type BusNumber = string;
 
 function asString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
@@ -33,9 +37,32 @@ function normalizeTransportMode(raw: string | null | undefined): TransportMode |
   return null;
 }
 
-function normalizeBusNumber(raw: string | null | undefined): BusNumber | null {
-  if (raw === "1" || raw === "2" || raw === "3") return raw;
+function normalizeBusNumber(raw: string | null | undefined, busNumberOptions: string[]): BusNumber | null {
+  const normalized = String(raw ?? "").trim();
+  if (busNumberOptions.includes(normalized)) return normalized;
   return null;
+}
+
+function normalizeBusFilter(raw: string | null | undefined, busNumberOptions: string[]): "all" | "unassigned" | string {
+  if (raw === "all" || raw === "unassigned") return raw;
+  if (busNumberOptions.includes(String(raw ?? "").trim())) return String(raw ?? "").trim();
+  return "all";
+}
+
+function buildStationHref(input: {
+  selectedDate: string;
+  shift: TransportationStationShift;
+  busFilter: "all" | "unassigned" | string;
+  error?: string;
+  success?: string;
+}): `/operations/transportation-station?${string}` {
+  const params = new URLSearchParams();
+  params.set("date", input.selectedDate);
+  params.set("shift", input.shift);
+  params.set("bus", input.busFilter);
+  if (input.error) params.set("error", input.error);
+  if (input.success) params.set("success", input.success);
+  return `/operations/transportation-station?${params.toString()}`;
 }
 
 async function requireTransportationEditor() {
@@ -144,88 +171,14 @@ function upsertAdjustment(input: {
   });
 }
 
-function computePrimaryScheduleTransport(schedule: NonNullable<ReturnType<typeof getMockDb>["memberAttendanceSchedules"][number]>) {
-  const slots = [
-    { mode: schedule.transport_monday_am_mode, busNumber: schedule.transport_monday_am_bus_number, busStop: schedule.transport_monday_am_bus_stop },
-    { mode: schedule.transport_monday_pm_mode, busNumber: schedule.transport_monday_pm_bus_number, busStop: schedule.transport_monday_pm_bus_stop },
-    { mode: schedule.transport_tuesday_am_mode, busNumber: schedule.transport_tuesday_am_bus_number, busStop: schedule.transport_tuesday_am_bus_stop },
-    { mode: schedule.transport_tuesday_pm_mode, busNumber: schedule.transport_tuesday_pm_bus_number, busStop: schedule.transport_tuesday_pm_bus_stop },
-    { mode: schedule.transport_wednesday_am_mode, busNumber: schedule.transport_wednesday_am_bus_number, busStop: schedule.transport_wednesday_am_bus_stop },
-    { mode: schedule.transport_wednesday_pm_mode, busNumber: schedule.transport_wednesday_pm_bus_number, busStop: schedule.transport_wednesday_pm_bus_stop },
-    { mode: schedule.transport_thursday_am_mode, busNumber: schedule.transport_thursday_am_bus_number, busStop: schedule.transport_thursday_am_bus_stop },
-    { mode: schedule.transport_thursday_pm_mode, busNumber: schedule.transport_thursday_pm_bus_number, busStop: schedule.transport_thursday_pm_bus_stop },
-    { mode: schedule.transport_friday_am_mode, busNumber: schedule.transport_friday_am_bus_number, busStop: schedule.transport_friday_am_bus_stop },
-    { mode: schedule.transport_friday_pm_mode, busNumber: schedule.transport_friday_pm_bus_number, busStop: schedule.transport_friday_pm_bus_stop }
-  ];
-  const first = slots.find((slot) => slot.mode) ?? null;
-  return {
-    transportationMode: first?.mode ?? null,
-    transportBusNumber: first?.busNumber ?? null,
-    transportationBusStop: first?.mode === "Bus Stop" ? first?.busStop ?? null : null
-  };
-}
-
-function updateScheduleBusAssignment(input: {
-  selectedDate: string;
-  shift: Shift;
-  memberId: string;
-  busNumber: BusNumber;
-  transportType: TransportMode;
-  busStopName: string | null;
-  doorToDoorAddress: string | null;
-  actorUserId: string;
-  actorName: string;
-}) {
-  const db = getMockDb();
-  const schedule = db.memberAttendanceSchedules.find((row) => row.member_id === input.memberId);
-  if (!schedule || schedule.transportation_required !== true) {
-    return { updated: false as const };
-  }
-
-  const weekday = getWeekdayForDate(input.selectedDate);
-  if (weekday !== "monday" && weekday !== "tuesday" && weekday !== "wednesday" && weekday !== "thursday" && weekday !== "friday") {
-    return { updated: false as const };
-  }
-
-  if (!schedule[weekday]) {
-    return { updated: false as const };
-  }
-
-  const patch: Record<string, string | null> = {};
-  const dayPrefix = `transport_${weekday}_${input.shift.toLowerCase()}`;
-  patch[`${dayPrefix}_mode`] = input.transportType;
-  patch[`${dayPrefix}_bus_number`] = input.busNumber;
-  patch[`${dayPrefix}_bus_stop`] = input.transportType === "Bus Stop" ? input.busStopName : null;
-  patch[`${dayPrefix}_door_to_door_address`] = input.transportType === "Door to Door" ? input.doorToDoorAddress : null;
-
-  const previewSchedule = { ...schedule, ...patch } as typeof schedule;
-  const primary = computePrimaryScheduleTransport(previewSchedule);
-
-  const schedulePatch = {
-    ...(patch as Record<string, string | null>),
-    transportation_mode: primary.transportationMode,
-    transport_bus_number: primary.transportBusNumber,
-    transportation_bus_stop: primary.transportationBusStop,
-    updated_by_user_id: input.actorUserId,
-    updated_by_name: input.actorName,
-    updated_at: toEasternISO()
-  } as Partial<(typeof db.memberAttendanceSchedules)[number]>;
-
-  const updated = updateMockRecord("memberAttendanceSchedules", schedule.id, schedulePatch);
-  if (!updated) {
-    return { updated: false as const, error: "Unable to update recurring transportation schedule." };
-  }
-
-  return { updated: true as const };
-}
-
 export async function addTransportationManifestRiderAction(formData: FormData) {
   const actor = await requireTransportationEditor();
+  const busNumberOptions = getConfiguredBusNumbers();
   const selectedDate = normalizeDateOnly(asString(formData, "selectedDate"));
   const memberId = asString(formData, "memberId");
   const shiftInput = asString(formData, "shift");
   const transportType = normalizeTransportMode(asString(formData, "transportType")) ?? "Door to Door";
-  const busNumber = normalizeBusNumber(asString(formData, "busNumber"));
+  const busNumber = normalizeBusNumber(asString(formData, "busNumber"), busNumberOptions);
   const busStopName = asNullableString(formData, "busStopName");
   const doorToDoorAddress = asNullableString(formData, "doorToDoorAddress");
   const caregiverContactId = asNullableString(formData, "caregiverContactId");
@@ -288,10 +241,11 @@ export async function addTransportationManifestRiderAction(formData: FormData) {
 
 export async function excludeTransportationManifestRiderAction(formData: FormData) {
   const actor = await requireTransportationEditor();
+  const busNumberOptions = getConfiguredBusNumbers();
   const selectedDate = normalizeDateOnly(asString(formData, "selectedDate"));
   const memberId = asString(formData, "memberId");
   const shift = normalizeShift(asString(formData, "shift"));
-  const busNumber = normalizeBusNumber(asString(formData, "busNumber"));
+  const busNumber = normalizeBusNumber(asString(formData, "busNumber"), busNumberOptions);
   const transportType = normalizeTransportMode(asString(formData, "transportType"));
   const busStopName = asNullableString(formData, "busStopName");
   const doorToDoorAddress = asNullableString(formData, "doorToDoorAddress");
@@ -327,11 +281,15 @@ export async function excludeTransportationManifestRiderAction(formData: FormDat
 }
 
 export async function reassignTransportationManifestBusAction(formData: FormData) {
-  const actor = await requireTransportationEditor();
+  const busNumberOptions = getConfiguredBusNumbers();
   const selectedDate = normalizeDateOnly(asString(formData, "selectedDate"));
-  const memberId = asString(formData, "memberId");
   const shift = normalizeShift(asString(formData, "shift"));
-  const busNumber = normalizeBusNumber(asString(formData, "busNumber"));
+  const busFilter = normalizeBusFilter(asString(formData, "busFilter"), busNumberOptions);
+  const failureHref = (message: string) =>
+    buildStationHref({ selectedDate, shift, busFilter, error: message });
+  const actor = await requireTransportationEditor();
+  const memberId = asString(formData, "memberId");
+  const busNumber = normalizeBusNumber(asString(formData, "busNumber"), busNumberOptions);
   const transportType = normalizeTransportMode(asString(formData, "transportType"));
   const busStopName = asNullableString(formData, "busStopName");
   const doorToDoorAddress = asNullableString(formData, "doorToDoorAddress");
@@ -342,13 +300,13 @@ export async function reassignTransportationManifestBusAction(formData: FormData
   const notes = asNullableString(formData, "notes");
 
   if (!memberId) {
-    throw new Error("Member is required.");
+    redirect(failureHref("Member is required."));
   }
   if (!busNumber) {
-    throw new Error("Bus assignment is required.");
+    redirect(failureHref("Bus assignment is required."));
   }
   if (!transportType) {
-    throw new Error("Transport type is required.");
+    redirect(failureHref("Transport type is required."));
   }
 
   const db = getMockDb();
@@ -363,43 +321,8 @@ export async function reassignTransportationManifestBusAction(formData: FormData
     removeMockRecord("transportationManifestAdjustments", exclusion.id);
   }
 
-  const scheduleUpdate = updateScheduleBusAssignment({
-    selectedDate,
-    shift,
-    memberId,
-    busNumber,
-    transportType,
-    busStopName: transportType === "Bus Stop" ? busStopName : null,
-    doorToDoorAddress: transportType === "Door to Door" ? doorToDoorAddress : null,
-    actorUserId: actor.id,
-    actorName: actor.full_name
-  });
-  if (scheduleUpdate.error) {
-    console.error("[Transport] schedule bus reassignment failed", {
-      memberId,
-      selectedDate,
-      shift,
-      error: scheduleUpdate.error
-    });
-    throw new Error(scheduleUpdate.error);
-  }
-
-  if (scheduleUpdate.updated) {
-    const scheduleOverride = db.transportationManifestAdjustments.find(
-      (row) =>
-        row.selected_date === selectedDate &&
-        row.shift === shift &&
-        row.member_id === memberId &&
-        row.adjustment_type === "add"
-    );
-    if (scheduleOverride) {
-      removeMockRecord("transportationManifestAdjustments", scheduleOverride.id);
-    }
-    revalidateTransportationStation();
-    return;
-  }
-
-  // If the rider is not on recurring schedule for this day/shift, keep this as a one-day manual override.
+  // Reassignments from Transportation Station are one-day operational overrides only.
+  // They intentionally do not mutate the recurring MCC transportation schedule.
   upsertAdjustment({
     date: selectedDate,
     shift,
@@ -419,6 +342,14 @@ export async function reassignTransportationManifestBusAction(formData: FormData
   });
 
   revalidateTransportationStation();
+  redirect(
+    buildStationHref({
+      selectedDate,
+      shift,
+      busFilter,
+      success: "Bus assignment updated."
+    })
+  );
 }
 
 export async function undoTransportationManifestAdjustmentAction(formData: FormData) {
@@ -434,4 +365,66 @@ export async function undoTransportationManifestAdjustmentAction(formData: FormD
   }
 
   revalidateTransportationStation();
+}
+
+export async function copyForwardTransportationDetailsAction(formData: FormData) {
+  try {
+    await requireTransportationEditor();
+    const memberId = asString(formData, "memberId");
+    const sourceDate = normalizeDateOnly(asString(formData, "sourceDate"));
+    const targetDate = normalizeDateOnly(asString(formData, "targetDate"));
+    const shift = normalizeShift(asString(formData, "shift"));
+    if (!memberId) {
+      return { ok: false as const, error: "Member is required." };
+    }
+
+    const sourceManifest = getTransportationManifest({
+      selectedDate: sourceDate,
+      shift,
+      busFilter: "all"
+    });
+    const sourceRider =
+      sourceManifest.groups
+        .flatMap((group) => group.riders)
+        .find((rider) => rider.memberId === memberId && rider.shift === shift) ?? null;
+    if (!sourceRider) {
+      return { ok: false as const, error: "No transport details found for that member/date/shift." };
+    }
+
+    const targetManifest = getTransportationManifest({
+      selectedDate: targetDate,
+      shift,
+      busFilter: "all"
+    });
+    const targetRider =
+      targetManifest.groups
+        .flatMap((group) => group.riders)
+        .find((rider) => rider.memberId === memberId && rider.shift === shift) ?? null;
+    const unchanged =
+      Boolean(targetRider) &&
+      targetRider?.transportType === sourceRider.transportType &&
+      (targetRider?.busNumber ?? "") === (sourceRider.busNumber ?? "") &&
+      (targetRider?.busStopName ?? "") === (sourceRider.busStopName ?? "") &&
+      (targetRider?.doorToDoorAddress ?? "") === (sourceRider.doorToDoorAddress ?? "") &&
+      (targetRider?.caregiverContactName ?? "") === (sourceRider.caregiverContactName ?? "") &&
+      (targetRider?.caregiverContactPhone ?? "") === (sourceRider.caregiverContactPhone ?? "") &&
+      (targetRider?.caregiverContactAddress ?? "") === (sourceRider.caregiverContactAddress ?? "");
+
+    return {
+      ok: true as const,
+      unchanged,
+      snapshot: {
+        transportType: sourceRider.transportType,
+        busNumber: sourceRider.busNumber ?? "",
+        busStopName: sourceRider.busStopName ?? "",
+        doorToDoorAddress: sourceRider.doorToDoorAddress ?? "",
+        caregiverContactName: sourceRider.caregiverContactName ?? "",
+        caregiverContactPhone: sourceRider.caregiverContactPhone ?? "",
+        caregiverContactAddress: sourceRider.caregiverContactAddress ?? ""
+      }
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to copy transport details.";
+    return { ok: false as const, error: message };
+  }
 }

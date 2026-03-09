@@ -7,7 +7,7 @@ import {
 export type ScheduleWeekdayKey = "monday" | "tuesday" | "wednesday" | "thursday" | "friday";
 export type TransportShift = "AM" | "PM";
 export type TransportMode = "Door to Door" | "Bus Stop";
-export type TransportBusNumber = "1" | "2" | "3";
+export type TransportBusNumber = string;
 
 export interface MemberTransportSlot {
   mode: TransportMode | null;
@@ -206,4 +206,3 @@ export function getPrimaryTransportSnapshotForDate(
     doorToDoorAddress: amSlot.doorToDoorAddress ?? pmSlot.doorToDoorAddress
   };
 }
-

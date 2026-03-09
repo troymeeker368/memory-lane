@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 
 const pipelineLinks = [
   { label: "Pipeline by Stage", href: "/sales/pipeline/by-stage" },
@@ -17,7 +17,7 @@ const pipelineLinks = [
 ];
 
 export default async function SalesPipelineMenuPage() {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
 
   return (
     <Card>

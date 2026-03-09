@@ -41,6 +41,9 @@ import {
 import { prefillMemberHealthProfileFromAssessment } from "@/lib/services/member-health-profiles";
 import { prefillMemberCommandCenterFromAssessment } from "@/lib/services/member-command-center";
 import { syncCommandCenterToMhp, syncMhpToCommandCenter } from "@/lib/services/member-profile-sync";
+import { calculateLatePickupFee, getOperationalSettings, parseBusNumbersInput, updateOperationalSettings } from "@/lib/services/operations-settings";
+import { getManagedUserSignatureName } from "@/lib/services/user-management";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { isMockMode } from "@/lib/runtime";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -76,8 +79,9 @@ async function insertAudit(action: AuditAction, entityType: string, entityId: st
 
 async function requireManagerAdminEditor() {
   const profile = await getCurrentProfile();
-  if (profile.role !== "admin" && profile.role !== "manager") {
-    return { error: "Only manager/admin can edit submitted entries." } as const;
+  const role = normalizeRoleKey(profile.role);
+  if (role !== "admin" && role !== "manager" && role !== "director") {
+    return { error: "Only manager/director/admin can edit submitted entries." } as const;
   }
   return profile;
 }
@@ -239,8 +243,8 @@ export async function timePunchAction(raw: z.infer<typeof timePunchSchema>) {
   }
 
   const profile = await getCurrentProfile();
-  if (profile.role !== "staff") {
-    return { error: "Clock in/out is only available for staff users." };
+  if (normalizeRoleKey(profile.role) !== "program-assistant") {
+    return { error: "Clock in/out is only available for Program Assistant users." };
   }
 
   if (isMockMode()) {
@@ -330,12 +334,13 @@ export async function createDailyActivityAction(raw: z.infer<typeof dailyActivit
   const participation = Math.round(
     (payload.data.activity1 + payload.data.activity2 + payload.data.activity3 + payload.data.activity4 + payload.data.activity5) / 5
   );
+  const memberName = payload.data.memberId ? getMemberName(payload.data.memberId) : "Unknown Member";
 
   if (isMockMode()) {
     const created = addMockRecord("dailyActivities", {
       timestamp: toEasternISO(),
       member_id: payload.data.memberId,
-      member_name: getMemberName(payload.data.memberId),
+      member_name: memberName,
       activity_date: payload.data.activityDate,
       staff_user_id: profile.id,
       staff_name: profile.full_name,
@@ -551,6 +556,21 @@ export async function createAncillaryChargeAction(raw: z.infer<typeof ancillaryS
       return { error: "Late pick-up time is required for late pick-up charges." };
     }
     const latePickupTime = requiresLatePickupTime ? payload.data.latePickupTime?.trim() || null : null;
+    let amountCents = category?.price_cents ?? 0;
+    if (requiresLatePickupTime) {
+      // Late pickup charges are computed from centralized operations rules, not static category price.
+      const fee = calculateLatePickupFee({
+        latePickupTime: latePickupTime ?? "",
+        rules: getOperationalSettings().latePickupRules
+      });
+      if (!fee) {
+        return { error: "Invalid late pick-up time." };
+      }
+      if (fee.amountCents <= 0) {
+        return { error: "Selected pick-up time is not later than the configured late threshold." };
+      }
+      amountCents = fee.amountCents;
+    }
     const existingDuplicate = db.ancillaryLogs.find((row) => {
       const sameMember = row.member_id === payload.data.memberId;
       const sameCategory = row.category_id === payload.data.categoryId;
@@ -570,7 +590,7 @@ export async function createAncillaryChargeAction(raw: z.infer<typeof ancillaryS
       member_name: getMemberName(payload.data.memberId),
       category_id: payload.data.categoryId,
       category_name: category?.name ?? "Unknown",
-      amount_cents: category?.price_cents ?? 0,
+      amount_cents: amountCents,
       service_date: payload.data.serviceDate,
       late_pickup_time: latePickupTime,
       staff_user_id: profile.id,
@@ -599,6 +619,18 @@ export async function createAncillaryChargeAction(raw: z.infer<typeof ancillaryS
     return { error: "Late pick-up time is required for late pick-up charges." };
   }
   const latePickupTime = requiresLatePickupTime ? payload.data.latePickupTime?.trim() || null : null;
+  if (requiresLatePickupTime) {
+    const fee = calculateLatePickupFee({
+      latePickupTime: latePickupTime ?? "",
+      rules: getOperationalSettings().latePickupRules
+    });
+    if (!fee) {
+      return { error: "Invalid late pick-up time." };
+    }
+    if (fee.amountCents <= 0) {
+      return { error: "Selected pick-up time is not later than the configured late threshold." };
+    }
+  }
   const { data, error } = await supabase
     .from("ancillary_charge_logs")
     .insert({
@@ -662,6 +694,62 @@ export async function updateAncillaryCategoryPriceAction(raw: z.infer<typeof anc
   revalidatePath("/reports/monthly-ancillary");
 
   return { ok: true };
+}
+
+const operationalSettingsSchema = z.object({
+  busNumbersCsv: z.string().optional().default(""),
+  makeupPolicy: z.enum(["rolling_30_day_expiration", "running_total"]),
+  latePickupGraceStartTime: z.string().regex(/^\d{2}:\d{2}$/),
+  latePickupFirstWindowMinutes: z.coerce.number().int().min(1).max(180),
+  latePickupFirstWindowFeeDollars: z.coerce.number().min(0).max(9999),
+  latePickupAdditionalPerMinuteDollars: z.coerce.number().min(0).max(999),
+  latePickupAdditionalMinutesCap: z.coerce.number().int().min(0).max(240)
+});
+
+export async function updateOperationalSettingsAction(raw: z.infer<typeof operationalSettingsSchema>) {
+  const payload = operationalSettingsSchema.safeParse(raw);
+  if (!payload.success) {
+    return { error: "Invalid operations settings update." };
+  }
+
+  const editor = await requireAdminEditor();
+  if ("error" in editor) return editor;
+
+  if (!isMockMode()) {
+    // TODO(backend): Persist operations settings in production data store.
+    return { error: "Operations settings backend integration pending." };
+  }
+
+  const busNumbers = parseBusNumbersInput(payload.data.busNumbersCsv);
+  const settings = updateOperationalSettings({
+    busNumbers,
+    makeupPolicy: payload.data.makeupPolicy,
+    latePickupRules: {
+      graceStartTime: payload.data.latePickupGraceStartTime,
+      firstWindowMinutes: payload.data.latePickupFirstWindowMinutes,
+      firstWindowFeeCents: Math.round(payload.data.latePickupFirstWindowFeeDollars * 100),
+      additionalPerMinuteCents: Math.round(payload.data.latePickupAdditionalPerMinuteDollars * 100),
+      additionalMinutesCap: payload.data.latePickupAdditionalMinutesCap
+    }
+  });
+
+  await insertAudit("manager_review", "operations_settings", null, {
+    busNumbers: settings.busNumbers,
+    makeupPolicy: settings.makeupPolicy,
+    latePickupRules: settings.latePickupRules
+  });
+
+  revalidatePath("/operations/additional-charges/manage-ancillary-pricing");
+  revalidatePath("/operations/transportation-station");
+  revalidatePath("/operations/transportation-station/print");
+  revalidatePath("/operations/member-command-center");
+  revalidatePath("/operations/attendance");
+  revalidatePath("/operations/holds");
+  revalidatePath("/ancillary");
+  revalidatePath("/reports");
+  revalidatePath("/reports/monthly-ancillary");
+
+  return { ok: true, settings };
 }
 
 const toiletUseTypeSchema = z.enum(TOILET_USE_TYPE_OPTIONS);
@@ -997,6 +1085,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
   }
 
   const profile = await getCurrentProfile();
+  const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
   const db = getMockDb();
   const lead = db.leads.find((row) => row.id === payload.data.leadId);
   if (!lead) {
@@ -1036,8 +1125,8 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     member_id: effectiveMemberId,
     member_name: getMemberName(effectiveMemberId),
     assessment_date: payload.data.assessmentDate,
-    completed_by: payload.data.completedBy,
-    signed_by: payload.data.signedBy,
+    completed_by: signerName,
+    signed_by: signerName,
     complete: payload.data.complete,
 
     feeling_today: payload.data.feelingToday,
@@ -1095,7 +1184,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     vitals_o2_percent: payload.data.vitalsO2Percent,
     vitals_rr: payload.data.vitalsRr,
 
-    reviewer_name: payload.data.signedBy,
+    reviewer_name: signerName,
     created_by_user_id: profile.id,
     created_by_name: profile.full_name,
     created_at: toEasternISO(),
@@ -1584,11 +1673,29 @@ export async function updateLeadDetailsAction(raw: { id: string; stage: string; 
   if (!isMockMode()) return { error: "Lead update backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const stage = canonicalLeadStage(payload.data.stage);
-  const status = canonicalLeadStatus(payload.data.status, stage);
+  let stage = canonicalLeadStage(payload.data.stage);
+  let status = canonicalLeadStatus(payload.data.status, stage);
+  if (stage === "Closed - Lost") status = "Lost";
+  if (status === "Lost") stage = "Closed - Lost";
+  if (status === "Won") stage = "Closed - Won";
+  if (status === "Nurture" && stage !== "Nurture") stage = "Nurture";
+  status = canonicalLeadStatus(status, stage);
+  // Keep closed-date semantics consistent with the primary lead save action across all edit entry points.
+  const closedDate = status === "Lost" || status === "Won" ? toEasternDate() : null;
   const existingLead = getMockDb().leads.find((row) => row.id === payload.data.id) ?? null;
-  const updated = updateMockRecord("leads", payload.data.id, { stage, status, notes_summary: payload.data.notes ?? null });
-  if (!updated) return { error: "Lead not found." };
+  const updated = updateMockRecord("leads", payload.data.id, {
+    stage,
+    status,
+    stage_updated_at: toEasternISO(),
+    notes_summary: payload.data.notes ?? null,
+    closed_date: closedDate,
+    next_follow_up_date: status === "Lost" ? null : existingLead?.next_follow_up_date ?? null,
+    next_follow_up_type: status === "Lost" ? null : existingLead?.next_follow_up_type ?? null
+  });
+  if (!updated) {
+    console.error("[Sales] updateLeadDetailsAction update failed", { leadId: payload.data.id, stage, status });
+    return { error: "Lead not found." };
+  }
   const profile = editor;
   const fromStage = existingLead?.stage ?? null;
   const fromStatus = existingLead?.status ?? null;
@@ -1614,6 +1721,19 @@ export async function updateLeadDetailsAction(raw: { id: string; stage: string; 
   });
   syncLeadToMemberList(updated);
   revalidatePath("/sales");
+  revalidatePath("/sales/activities");
+  revalidatePath("/sales/pipeline");
+  revalidatePath("/sales/pipeline/leads-table");
+  revalidatePath("/sales/pipeline/by-stage");
+  revalidatePath("/sales/pipeline/follow-up-dashboard");
+  revalidatePath("/sales/pipeline/inquiry");
+  revalidatePath("/sales/pipeline/tour");
+  revalidatePath("/sales/pipeline/eip");
+  revalidatePath("/sales/pipeline/nurture");
+  revalidatePath("/sales/pipeline/closed-won");
+  revalidatePath("/sales/pipeline/closed-lost");
+  revalidatePath(`/sales/leads/${payload.data.id}`);
+  revalidatePath(`/sales/leads/${payload.data.id}/edit`);
   revalidatePath("/sales/won");
   revalidatePath("/sales/lost");
   return { ok: true };

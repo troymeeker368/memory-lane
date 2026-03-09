@@ -2,6 +2,7 @@
 import { ANCILLARY_CHARGE_CATALOG, canonicalLeadStatus } from "@/lib/canonical";
 import { buildSeededMockDb } from "@/lib/mock/seed";
 import { readMockStateJson, writeMockStateJson } from "@/lib/mock-persistence";
+import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import type { AppRole, AuditAction } from "@/types/app";
 
@@ -19,6 +20,29 @@ interface PersistedMockRepoState {
     previousMemberId: string | null;
     previousMemberName: string;
     recordedAt: string;
+  }>;
+  operationalConfig: {
+    busNumbers: string[];
+    makeupPolicy: "rolling_30_day_expiration" | "running_total";
+    latePickupRules: {
+      graceStartTime: string;
+      firstWindowMinutes: number;
+      firstWindowFeeCents: number;
+      additionalPerMinuteCents: number;
+      additionalMinutesCap: number;
+    };
+  };
+  makeupLedger: Array<{
+    id: string;
+    memberId: string;
+    deltaDays: number;
+    reason: string;
+    source: string;
+    effectiveDate: string;
+    expiresAt: string | null;
+    createdAt: string;
+    createdByUserId: string;
+    createdByName: string;
   }>;
 }
 
@@ -59,7 +83,7 @@ function buildBaselineAuditLogs(seedDb: MockDb) {
     push({
       actor_user_id: punch.staff_user_id,
       actor_name: punch.staff_name,
-      actor_role: "staff",
+      actor_role: "program-assistant",
       action: punch.punch_type === "in" ? "clock_in" : "clock_out",
       entity_type: "time_punch",
       entity_id: punch.id,
@@ -72,7 +96,7 @@ function buildBaselineAuditLogs(seedDb: MockDb) {
     push({
       actor_user_id: charge.staff_user_id,
       actor_name: charge.staff_name,
-      actor_role: "staff",
+      actor_role: "program-assistant",
       action: "create_log",
       entity_type: "ancillary_charge",
       entity_id: charge.id,
@@ -159,8 +183,32 @@ function createInitialState(): PersistedMockRepoState {
     timeReviews: [],
     documentationReviews: [],
     leadMemberLinks: [],
-    lockerHistory: []
+    lockerHistory: [],
+    operationalConfig: {
+      busNumbers: ["1", "2", "3"],
+      makeupPolicy: "rolling_30_day_expiration",
+      latePickupRules: {
+        graceStartTime: "17:00",
+        firstWindowMinutes: 15,
+        firstWindowFeeCents: 2500,
+        additionalPerMinuteCents: 200,
+        additionalMinutesCap: 15
+      }
+    },
+    makeupLedger: []
   };
+}
+
+function normalizeBusNumberList(values: unknown): string[] {
+  if (!Array.isArray(values)) return ["1", "2", "3"];
+  const next = Array.from(
+    new Set(
+      values
+        .map((value) => String(value ?? "").trim())
+        .filter((value) => /^\d+$/.test(value) && Number(value) > 0)
+    )
+  ).sort((left, right) => Number(left) - Number(right));
+  return next.length > 0 ? next : ["1", "2", "3"];
 }
 
 function normalizeAncillaryCategoryName(name: string | null | undefined) {
@@ -1039,6 +1087,7 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
       const attendanceDate = /^\d{4}-\d{2}-\d{2}$/.test(attendanceDateRaw)
         ? attendanceDateRaw
         : toEasternDate(attendanceDateRaw || toEasternDate());
+      // Older persisted states can contain mixed-case status values; normalize to prevent absent rows from being coerced back to present.
       const normalizedStatus = String(row.status ?? "").trim().toLowerCase();
       const status = normalizedStatus === "absent" ? "absent" : "present";
       const normalized = {
@@ -1354,6 +1403,52 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
             recordedAt: String(entry.recordedAt ?? toEasternISO())
           }))
           .filter((entry) => entry.lockerNumber.length > 0 && entry.previousMemberName.length > 0)
+      : [],
+    operationalConfig: {
+      busNumbers: normalizeBusNumberList(candidate.operationalConfig?.busNumbers),
+      makeupPolicy:
+        candidate.operationalConfig?.makeupPolicy === "running_total"
+          ? "running_total"
+          : "rolling_30_day_expiration",
+      latePickupRules: {
+        graceStartTime:
+          typeof candidate.operationalConfig?.latePickupRules?.graceStartTime === "string" &&
+          /^\d{2}:\d{2}$/.test(candidate.operationalConfig?.latePickupRules?.graceStartTime)
+            ? candidate.operationalConfig?.latePickupRules?.graceStartTime
+            : "17:00",
+        firstWindowMinutes:
+          Number.isFinite(candidate.operationalConfig?.latePickupRules?.firstWindowMinutes)
+            ? Math.max(1, Math.round(Number(candidate.operationalConfig?.latePickupRules?.firstWindowMinutes)))
+            : 15,
+        firstWindowFeeCents:
+          Number.isFinite(candidate.operationalConfig?.latePickupRules?.firstWindowFeeCents)
+            ? Math.max(0, Math.round(Number(candidate.operationalConfig?.latePickupRules?.firstWindowFeeCents)))
+            : 2500,
+        additionalPerMinuteCents:
+          Number.isFinite(candidate.operationalConfig?.latePickupRules?.additionalPerMinuteCents)
+            ? Math.max(0, Math.round(Number(candidate.operationalConfig?.latePickupRules?.additionalPerMinuteCents)))
+            : 200,
+        additionalMinutesCap:
+          Number.isFinite(candidate.operationalConfig?.latePickupRules?.additionalMinutesCap)
+            ? Math.max(0, Math.round(Number(candidate.operationalConfig?.latePickupRules?.additionalMinutesCap)))
+            : 15
+      }
+    },
+    makeupLedger: Array.isArray(candidate.makeupLedger)
+      ? candidate.makeupLedger
+          .map((entry) => ({
+            id: String(entry.id ?? ""),
+            memberId: String(entry.memberId ?? ""),
+            deltaDays: Number.isFinite(entry.deltaDays) ? Number(entry.deltaDays) : 0,
+            reason: String(entry.reason ?? "").trim() || "Adjustment",
+            source: String(entry.source ?? "").trim() || "system",
+            effectiveDate: String(entry.effectiveDate ?? toEasternDate()),
+            expiresAt: entry.expiresAt ? String(entry.expiresAt) : null,
+            createdAt: String(entry.createdAt ?? toEasternISO()),
+            createdByUserId: String(entry.createdByUserId ?? ""),
+            createdByName: String(entry.createdByName ?? "Unknown Staff")
+          }))
+          .filter((entry) => entry.id.length > 0 && entry.memberId.length > 0 && entry.deltaDays !== 0)
       : []
   };
 }
@@ -1364,6 +1459,21 @@ let counter = persistedState.counter;
 const timeReviewState = new Map<string, StoredReview>(persistedState.timeReviews.map((item) => [item.key, item.review]));
 const documentationReviewState = new Map<string, StoredReview>(persistedState.documentationReviews.map((item) => [item.key, item.review]));
 const leadMemberMap = new Map<string, string>(persistedState.leadMemberLinks.map((entry) => [entry.leadId, entry.memberId]));
+const operationalConfigState: {
+  busNumbers: string[];
+  makeupPolicy: "rolling_30_day_expiration" | "running_total";
+  latePickupRules: {
+    graceStartTime: string;
+    firstWindowMinutes: number;
+    firstWindowFeeCents: number;
+    additionalPerMinuteCents: number;
+    additionalMinutesCap: number;
+  };
+} = {
+  busNumbers: [...persistedState.operationalConfig.busNumbers],
+  makeupPolicy: persistedState.operationalConfig.makeupPolicy,
+  latePickupRules: { ...persistedState.operationalConfig.latePickupRules }
+};
 const lockerHistoryState = new Map<
   string,
   { lockerNumber: string; previousMemberId: string | null; previousMemberName: string; recordedAt: string }
@@ -1378,6 +1488,21 @@ const lockerHistoryState = new Map<
     }
   ])
 );
+const makeupLedgerState = new Map<
+  string,
+  {
+    id: string;
+    memberId: string;
+    deltaDays: number;
+    reason: string;
+    source: string;
+    effectiveDate: string;
+    expiresAt: string | null;
+    createdAt: string;
+    createdByUserId: string;
+    createdByName: string;
+  }
+>(persistedState.makeupLedger.map((entry) => [entry.id, { ...entry }]));
 
 function persistMockRepoState() {
   writeMockStateJson<PersistedMockRepoState>(MOCK_REPO_STATE_FILE, {
@@ -1387,7 +1512,13 @@ function persistMockRepoState() {
     timeReviews: Array.from(timeReviewState.entries()).map(([key, review]) => ({ key, review })),
     documentationReviews: Array.from(documentationReviewState.entries()).map(([key, review]) => ({ key, review })),
     leadMemberLinks: Array.from(leadMemberMap.entries()).map(([leadId, memberId]) => ({ leadId, memberId })),
-    lockerHistory: Array.from(lockerHistoryState.values())
+    lockerHistory: Array.from(lockerHistoryState.values()),
+    operationalConfig: {
+      busNumbers: [...operationalConfigState.busNumbers],
+      makeupPolicy: operationalConfigState.makeupPolicy,
+      latePickupRules: { ...operationalConfigState.latePickupRules }
+    },
+    makeupLedger: Array.from(makeupLedgerState.values())
   });
 }
 
@@ -1429,6 +1560,119 @@ export function getLockerHistoryEntries() {
   return Array.from(lockerHistoryState.values());
 }
 
+export function getOperationalConfig() {
+  return {
+    busNumbers: [...operationalConfigState.busNumbers],
+    makeupPolicy: operationalConfigState.makeupPolicy,
+    latePickupRules: { ...operationalConfigState.latePickupRules }
+  };
+}
+
+export function updateOperationalConfig(input: {
+  busNumbers?: string[];
+  makeupPolicy?: "rolling_30_day_expiration" | "running_total";
+  latePickupRules?: Partial<{
+    graceStartTime: string;
+    firstWindowMinutes: number;
+    firstWindowFeeCents: number;
+    additionalPerMinuteCents: number;
+    additionalMinutesCap: number;
+  }>;
+}) {
+  if (input.busNumbers) {
+    operationalConfigState.busNumbers = normalizeBusNumberList(input.busNumbers);
+  }
+  if (input.makeupPolicy === "rolling_30_day_expiration" || input.makeupPolicy === "running_total") {
+    operationalConfigState.makeupPolicy = input.makeupPolicy;
+  }
+  if (input.latePickupRules) {
+    const current = operationalConfigState.latePickupRules;
+    operationalConfigState.latePickupRules = {
+      graceStartTime:
+        typeof input.latePickupRules.graceStartTime === "string" &&
+        /^\d{2}:\d{2}$/.test(input.latePickupRules.graceStartTime)
+          ? input.latePickupRules.graceStartTime
+          : current.graceStartTime,
+      firstWindowMinutes:
+        Number.isFinite(input.latePickupRules.firstWindowMinutes)
+          ? Math.max(1, Math.round(Number(input.latePickupRules.firstWindowMinutes)))
+          : current.firstWindowMinutes,
+      firstWindowFeeCents:
+        Number.isFinite(input.latePickupRules.firstWindowFeeCents)
+          ? Math.max(0, Math.round(Number(input.latePickupRules.firstWindowFeeCents)))
+          : current.firstWindowFeeCents,
+      additionalPerMinuteCents:
+        Number.isFinite(input.latePickupRules.additionalPerMinuteCents)
+          ? Math.max(0, Math.round(Number(input.latePickupRules.additionalPerMinuteCents)))
+          : current.additionalPerMinuteCents,
+      additionalMinutesCap:
+        Number.isFinite(input.latePickupRules.additionalMinutesCap)
+          ? Math.max(0, Math.round(Number(input.latePickupRules.additionalMinutesCap)))
+          : current.additionalMinutesCap
+    };
+  }
+  persistMockRepoState();
+  return getOperationalConfig();
+}
+
+export function listMemberMakeupLedger(memberId: string) {
+  return Array.from(makeupLedgerState.values())
+    .filter((entry) => entry.memberId === memberId)
+    .sort((left, right) => (left.createdAt > right.createdAt ? -1 : 1));
+}
+
+export function getMemberMakeupDayBalance(memberId: string, asOfDate?: string) {
+  const asOf = asOfDate ? normalizeOperationalDateOnly(asOfDate) : toEasternDate();
+  const config = getOperationalConfig();
+  const entries = listMemberMakeupLedger(memberId);
+  return entries.reduce((sum, entry) => {
+    if (entry.effectiveDate > asOf) return sum;
+    if (config.makeupPolicy === "rolling_30_day_expiration" && entry.deltaDays > 0 && entry.expiresAt && entry.expiresAt < asOf) {
+      return sum;
+    }
+    return sum + entry.deltaDays;
+  }, 0);
+}
+
+export function addMemberMakeupLedgerEntry(input: {
+  memberId: string;
+  deltaDays: number;
+  reason: string;
+  source: string;
+  effectiveDate?: string;
+  actorUserId: string;
+  actorName: string;
+}) {
+  const normalizedDelta = Number(input.deltaDays);
+  if (!Number.isFinite(normalizedDelta) || normalizedDelta === 0) return null;
+  const now = toEasternISO();
+  const effectiveDate = normalizeOperationalDateOnly(input.effectiveDate ?? now);
+  const config = getOperationalConfig();
+  const expiresAt =
+    normalizedDelta > 0 && config.makeupPolicy === "rolling_30_day_expiration"
+      ? (() => {
+          const base = new Date(`${effectiveDate}T00:00:00.000Z`);
+          base.setUTCDate(base.getUTCDate() + 30);
+          return base.toISOString().slice(0, 10);
+        })()
+      : null;
+  const id = nextId("makeup-ledger");
+  makeupLedgerState.set(id, {
+    id,
+    memberId: input.memberId,
+    deltaDays: Math.trunc(normalizedDelta),
+    reason: String(input.reason ?? "").trim() || "Adjustment",
+    source: String(input.source ?? "").trim() || "system",
+    effectiveDate,
+    expiresAt,
+    createdAt: now,
+    createdByUserId: input.actorUserId,
+    createdByName: input.actorName
+  });
+  persistMockRepoState();
+  return makeupLedgerState.get(id) ?? null;
+}
+
 function nextId(prefix: string) {
   counter += 1;
   return `${prefix}-${counter}`;
@@ -1441,7 +1685,7 @@ function pickFallbackStaff() {
     full_name: "Unknown Staff",
     email: "",
     email_normalized: "",
-    role: "staff",
+    role: "program-assistant",
     active: true
   };
 }
@@ -1836,7 +2080,7 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
     return {
       actor_user_id: String(record.actor_user_id ?? ""),
       actor_name: String(record.actor_name ?? "Unknown User"),
-      actor_role: String(record.actor_role ?? "staff"),
+      actor_role: String(record.actor_role ?? "program-assistant"),
       action: String(record.action ?? "create_log"),
       entity_type: String(record.entity_type ?? ""),
       entity_id: (record.entity_id as string | null) ?? null,
@@ -2189,6 +2433,7 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
     const attendanceDate = /^\d{4}-\d{2}-\d{2}$/.test(attendanceDateRaw)
       ? attendanceDateRaw
       : toEasternDate(attendanceDateRaw || today);
+    // Normalize status casing during writes so "Absent"/"ABSENT" persists as absent across reloads.
     const normalizedStatus = String(record.status ?? "").trim().toLowerCase();
     const status = normalizedStatus === "absent" ? "absent" : "present";
     const checkInAt = status === "present" ? (record.check_in_at ? String(record.check_in_at) : null) : null;

@@ -3,9 +3,11 @@ import Image from "next/image";
 import { unstable_noStore as noStore } from "next/cache";
 
 import { AttendanceMemberCell } from "@/components/forms/attendance-member-cell";
+import { UnscheduledAttendanceForm } from "@/components/forms/unscheduled-attendance-form";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { getMemberMakeupDayBalance, getMockDb } from "@/lib/mock-repo";
 import {
   getDailyAttendanceView,
   getDailyCensusView,
@@ -15,6 +17,8 @@ import {
   getWeeklyCensusView,
   type DailyAttendanceRow
 } from "@/lib/services/attendance";
+import { isMemberOnHoldOnDate } from "@/lib/services/holds";
+import { isMemberScheduledForDate } from "@/lib/services/member-schedule-selectors";
 import {
   coerceToOperationalWeekday,
   getOperationsTodayDate,
@@ -121,7 +125,7 @@ function filterTrackGroupsByQuery(
 
 function renderBusNumber(row: DailyAttendanceRow) {
   if (!row.transportRequired) return "-";
-  if (!row.transportBusNumber) return "Bus TBD";
+  if (!row.transportBusNumber) return "Unassigned";
   return `Bus ${row.transportBusNumber}`;
 }
 
@@ -195,6 +199,21 @@ export default async function OperationsAttendancePage({
   const weeklyCensus = getWeeklyCensusView({ anchorDate: selectedWeekAnchor });
   const weeklyAttendanceDays = weeklyAttendance.days.filter((day) => OPERATIONAL_WEEKDAYS.has(day.weekday));
   const weeklyCensusDays = weeklyCensus.days.filter((day) => OPERATIONAL_WEEKDAYS.has(day.weekday));
+  const db = getMockDb();
+  const scheduleByMember = new Map(db.memberAttendanceSchedules.map((row) => [row.member_id, row] as const));
+  const unscheduledMembers = db.members
+    .filter((member) => member.status === "active")
+    .filter((member) => {
+      const schedule = scheduleByMember.get(member.id) ?? null;
+      if (isMemberOnHoldOnDate(member.id, selectedDate)) return false;
+      return !isMemberScheduledForDate(schedule, selectedDate);
+    })
+    .map((member) => ({
+      id: member.id,
+      displayName: member.display_name,
+      makeupBalance: getMemberMakeupDayBalance(member.id, selectedDate)
+    }))
+    .sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: "base" }));
 
   const dailyRows = filterRowsByQuery(dailyAttendance.rows, query);
   const weeklyDays = weeklyAttendanceDays.map((day) => ({
@@ -285,6 +304,17 @@ export default async function OperationsAttendancePage({
             {canEdit ? <p className="text-xs text-muted">Click a member name to check in, check out, or mark absent.</p> : null}
           </div>
 
+          {canEdit ? (
+            <div className="mt-3">
+              <p className="text-sm font-semibold text-primary-text">Unscheduled Day Add</p>
+              {unscheduledMembers.length === 0 ? (
+                <p className="mt-1 text-xs text-muted">All active members are already scheduled (or on hold) for this date.</p>
+              ) : (
+                <UnscheduledAttendanceForm selectedDate={dailyAttendance.selectedDate} members={unscheduledMembers} />
+              )}
+            </div>
+          ) : null}
+
           <table className="mt-3">
             <thead>
               <tr>
@@ -370,10 +400,6 @@ export default async function OperationsAttendancePage({
               Clear
             </Link>
           </form>
-
-          <p className="mt-3 text-xs text-muted">
-            Week: {formatDate(weeklyAttendance.weekStartDate)} - {formatDate(weeklyAttendance.weekEndDate)}
-          </p>
 
           <div className="mt-2 grid gap-2 text-xs text-muted md:grid-cols-4">
             <p>Scheduled Member-Days: {weeklyAttendance.totals.scheduledMemberDays}</p>
@@ -561,7 +587,7 @@ export default async function OperationsAttendancePage({
                               {member.attendanceStatus}
                             </span>
                           </td>
-                          <td>{member.transportRequired ? (member.transportBusNumber ? `Bus ${member.transportBusNumber}` : "Bus TBD") : "-"}</td>
+                          <td>{member.transportRequired ? (member.transportBusNumber ? `Bus ${member.transportBusNumber}` : "Unassigned") : "-"}</td>
                           <td>{member.lockerNumber ?? "-"}</td>
                         </tr>
                       ))}

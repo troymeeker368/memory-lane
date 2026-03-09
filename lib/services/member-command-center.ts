@@ -1,4 +1,4 @@
-import { addMockRecord, getMockDb, updateMockRecord } from "@/lib/mock-repo";
+import { addMockRecord, getMemberMakeupDayBalance, getMockDb, listMemberMakeupLedger, updateMockRecord } from "@/lib/mock-repo";
 import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans";
 import { isMockMode } from "@/lib/runtime";
 import { toEasternISO } from "@/lib/timezone";
@@ -285,6 +285,7 @@ export function getMemberCommandCenterIndex(filters?: { q?: string; status?: "al
     .map((member) => {
       const profile = db.memberCommandCenters.find((row) => row.member_id === member.id) ?? defaultCommandCenter(member.id);
       const schedule = db.memberAttendanceSchedules.find((row) => row.member_id === member.id) ?? defaultAttendanceSchedule(member);
+      const makeupBalance = getMemberMakeupDayBalance(member.id);
       const mhpPhoto = db.memberHealthProfiles.find((row) => row.member_id === member.id)?.profile_image_url ?? null;
       return {
         member,
@@ -292,7 +293,11 @@ export function getMemberCommandCenterIndex(filters?: { q?: string; status?: "al
           ...profile,
           profile_image_url: profile.profile_image_url ?? mhpPhoto
         },
-        schedule,
+        schedule: {
+          ...schedule,
+          make_up_days_available: makeupBalance
+        },
+        makeupBalance,
         age: calculateAgeYears(member.dob),
         monthsEnrolled: calculateMonthsEnrolled(schedule.enrollment_date ?? member.enrollment_date)
       };
@@ -312,6 +317,14 @@ export function getMemberCommandCenterDetail(memberId: string) {
 
   const profile = ensureMemberCommandCenterProfile(memberId);
   const schedule = ensureMemberAttendanceSchedule(memberId);
+  const makeupBalance = getMemberMakeupDayBalance(memberId);
+  const makeupLedger = listMemberMakeupLedger(memberId);
+  const scheduleWithBalance = schedule
+    ? {
+        ...schedule,
+        make_up_days_available: makeupBalance
+      }
+    : schedule;
   const contacts = [...db.memberContacts]
     .filter((row) => row.member_id === memberId)
     .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
@@ -338,11 +351,13 @@ export function getMemberCommandCenterDetail(memberId: string) {
       ...profile,
       profile_image_url: effectiveProfileImage
     },
-    schedule,
+    schedule: scheduleWithBalance,
     contacts,
     files,
     busStopDirectory,
     mhpAllergies,
+    makeupBalance,
+    makeupLedger,
     assessmentsCount: assessments.length,
     carePlansCount: carePlans.length,
     carePlanSummary,

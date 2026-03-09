@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Building2, CirclePlus, Clock3, GitBranch } from "lucide-react";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 
 function SalesMenuCard({ href, label, subtitle, icon }: { href: string; label: string; subtitle: string; icon: ReactNode }) {
@@ -16,7 +16,7 @@ function SalesMenuCard({ href, label, subtitle, icon }: { href: string; label: s
 }
 
 export default async function SalesPage() {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const { openLeads, activities, partners, referralSources, partnerActivities } = await getSalesWorkflows();
 
   return (

@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import type { AppRole } from "@/types/app";
+import { CANONICAL_ROLE_ORDER, getRoleLabel, normalizeRoleKey } from "@/lib/permissions";
 
-const ROLE_OPTIONS: AppRole[] = ["staff", "nurse", "manager", "admin"];
+const ROLE_OPTIONS: AppRole[] = [...CANONICAL_ROLE_ORDER];
 const ROLE_STORAGE_KEY = "memory_lane_dev_role";
 const USER_STORAGE_KEY = "memory_lane_dev_user";
 const ROLE_COOKIE_KEY = "ml_mock_role";
@@ -18,7 +19,7 @@ type DevUserOption = {
 };
 
 function isRole(value: string | null | undefined): value is AppRole {
-  return Boolean(value && ROLE_OPTIONS.includes(value as AppRole));
+  return Boolean(value && ROLE_OPTIONS.includes(normalizeRoleKey(value)));
 }
 
 function persistRole(role: AppRole) {
@@ -54,7 +55,7 @@ export function DevRoleSwitcher({
   const [selectedUserId, setSelectedUserId] = useState<string>(currentUserId);
 
   const usersForRole = useMemo(
-    () => availableUsers.filter((user) => user.role === selectedRole).sort((a, b) => a.full_name.localeCompare(b.full_name)),
+    () => availableUsers.filter((user) => normalizeRoleKey(user.role) === selectedRole).sort((a, b) => a.full_name.localeCompare(b.full_name)),
     [availableUsers, selectedRole]
   );
 
@@ -62,10 +63,10 @@ export function DevRoleSwitcher({
     if (!enabled) return;
 
     const storedRole = window.localStorage.getItem(ROLE_STORAGE_KEY);
-    const effectiveRole = isRole(storedRole) ? storedRole : currentRole;
+    const effectiveRole = normalizeRoleKey(isRole(storedRole) ? storedRole : currentRole);
 
     const storedUserId = window.localStorage.getItem(USER_STORAGE_KEY);
-    const roleUsers = availableUsers.filter((user) => user.role === effectiveRole);
+    const roleUsers = availableUsers.filter((user) => normalizeRoleKey(user.role) === effectiveRole);
 
     const currentUserForRole = roleUsers.find((user) => user.id === currentUserId)?.id ?? null;
     const storedUserForRole = roleUsers.find((user) => user.id === storedUserId)?.id ?? null;
@@ -93,8 +94,10 @@ export function DevRoleSwitcher({
           value={selectedRole}
           disabled={isPending}
           onChange={(event) => {
-            const nextRole = event.target.value as AppRole;
-            const nextUsers = availableUsers.filter((user) => user.role === nextRole).sort((a, b) => a.full_name.localeCompare(b.full_name));
+            const nextRole = normalizeRoleKey(event.target.value);
+            const nextUsers = availableUsers
+              .filter((user) => normalizeRoleKey(user.role) === nextRole)
+              .sort((a, b) => a.full_name.localeCompare(b.full_name));
             const nextUserId = nextUsers[0]?.id ?? "";
 
             setSelectedRole(nextRole);
@@ -106,7 +109,7 @@ export function DevRoleSwitcher({
         >
           {ROLE_OPTIONS.map((role) => (
             <option key={role} value={role}>
-              {role}
+              {getRoleLabel(role)}
             </option>
           ))}
         </select>

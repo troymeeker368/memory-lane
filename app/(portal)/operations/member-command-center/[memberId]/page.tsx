@@ -21,6 +21,7 @@ import {
   getAvailableLockerNumbersForMember,
   getMemberCommandCenterDetail
 } from "@/lib/services/member-command-center";
+import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
@@ -137,6 +138,7 @@ export default async function MemberCommandCenterDetailPage({
   const detail = getMemberCommandCenterDetail(memberId);
   if (!detail) notFound();
   const lockerOptions = getAvailableLockerNumbersForMember(memberId);
+  const busNumberOptions = getConfiguredBusNumbers();
 
   const scheduleDays = [
     detail.schedule?.monday ? "Mon" : null,
@@ -167,7 +169,7 @@ export default async function MemberCommandCenterDetailPage({
   const formatTransportSlot = (
     mode: "Door to Door" | "Bus Stop" | null | undefined,
     doorToDoorAddress: string | null | undefined,
-    busNumber: "1" | "2" | "3" | null | undefined,
+    busNumber: string | null | undefined,
     busStop: string | null | undefined
   ) => {
     if (!mode) return "None";
@@ -307,11 +309,12 @@ export default async function MemberCommandCenterDetailPage({
       {tab === "member-summary" ? (
         <Card id="member-summary">
           <SectionHeading title="Member Summary" lastUpdatedAt={profileUpdatedAt} lastUpdatedBy={profileUpdatedBy} />
-          <div className="mt-3 grid gap-3 md:grid-cols-5">
+          <div className="mt-3 grid gap-3 md:grid-cols-6">
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Age</p><p className="font-semibold">{detail.age ?? "-"}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Months Enrolled</p><p className="font-semibold">{monthsEnrolled ?? "-"}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Current Status</p><p className="font-semibold capitalize">{detail.member.status}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Locker #</p><p className="font-semibold">{detail.member.locker_number ?? "-"}</p></div>
+            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Makeup Days</p><p className="font-semibold">{detail.makeupBalance}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Photo Consent</p><p className="font-semibold">{boolLabel(detail.profile.photo_consent)}</p></div>
           </div>
 
@@ -351,6 +354,40 @@ export default async function MemberCommandCenterDetailPage({
               friday={detail.schedule.friday}
             />
           ) : null}
+
+          <div className="mt-4 table-wrap">
+            <p className="text-sm font-semibold text-primary-text">Makeup Day History</p>
+            <table className="mt-2">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Delta</th>
+                  <th>Balance Policy</th>
+                  <th>Reason</th>
+                  <th>By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detail.makeupLedger.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="text-sm text-muted">
+                      No makeup day activity yet.
+                    </td>
+                  </tr>
+                ) : (
+                  detail.makeupLedger.slice(0, 20).map((entry) => (
+                    <tr key={entry.id}>
+                      <td>{formatOptionalDate(entry.effectiveDate)}</td>
+                      <td>{entry.deltaDays > 0 ? `+${entry.deltaDays}` : entry.deltaDays}</td>
+                      <td>{entry.expiresAt ? `Expires ${formatOptionalDate(entry.expiresAt)}` : "Running total"}</td>
+                      <td>{entry.reason}</td>
+                      <td>{entry.createdByName}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </Card>
       ) : null}
 
@@ -462,6 +499,7 @@ export default async function MemberCommandCenterDetailPage({
               transportFridayPmBusNumber={detail.schedule.transport_friday_pm_bus_number}
               transportFridayPmBusStop={detail.schedule.transport_friday_pm_bus_stop}
               busStopOptions={detail.busStopDirectory.map((entry) => entry.bus_stop_name)}
+              busNumberOptions={busNumberOptions}
             />
           ) : null}
         </Card>

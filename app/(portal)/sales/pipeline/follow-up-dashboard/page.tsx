@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
-import { requireRoles } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDate } from "@/lib/utils";
@@ -23,7 +23,7 @@ function asFollowUpDateValue(date: string | null): string {
 }
 
 export default async function FollowUpDashboardPage() {
-  await requireRoles(["admin"]);
+  await requireModuleAccess("sales");
   const { openLeads } = await getSalesWorkflows();
 
   const seenLeadIds = new Set<string>();

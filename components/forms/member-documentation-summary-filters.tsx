@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 type RangePreset = "today" | "last-week" | "last-30-days" | "last-90-days" | "last-year" | "custom";
 
@@ -71,6 +71,13 @@ export function MemberDocumentationSummaryFilters({
   const [from, setFrom] = useState(initialFrom);
   const [to, setTo] = useState(initialTo);
 
+  useEffect(() => {
+    setMemberId(initialMemberId);
+    setRange(initialRange);
+    setFrom(initialFrom);
+    setTo(initialTo);
+  }, [initialFrom, initialMemberId, initialRange, initialTo]);
+
   const displayFromTo = useMemo(() => {
     if (range === "custom") {
       return { from, to };
@@ -90,7 +97,7 @@ export function MemberDocumentationSummaryFilters({
     }
     const href = params.toString().length > 0 ? `${pathname}?${params.toString()}` : pathname;
     startTransition(() => {
-      router.replace(href, { scroll: false });
+      router.replace(href as never, { scroll: false });
       router.refresh();
     });
   };

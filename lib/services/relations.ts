@@ -1,8 +1,10 @@
 import { getMockDb } from "@/lib/mock-repo";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { isMockMode } from "@/lib/runtime";
 import { getCarePlansForMember } from "@/lib/services/care-plans";
 import { getCurrentPayPeriod, isDateInPayPeriod } from "@/lib/pay-period";
 import { toEasternDate } from "@/lib/timezone";
+import type { AppRole } from "@/types/app";
 
 function sortDesc<T>(rows: T[], getValue: (row: T) => string) {
   return [...rows].sort((a, b) => (getValue(a) < getValue(b) ? 1 : -1));
@@ -45,7 +47,7 @@ function summarizePunches(punches: { punch_type: "in" | "out"; punch_at: string 
 export async function getMemberDetail(
   memberId: string,
   scope?: {
-    role?: "admin" | "manager" | "nurse" | "staff";
+    role?: AppRole;
     staffUserId?: string | null;
   }
 ) {
@@ -59,7 +61,7 @@ export async function getMemberDetail(
   const member = db.members.find((m) => m.id === memberId);
   if (!member) return null;
 
-  const isStaffViewer = scope?.role === "staff" && !!scope.staffUserId;
+  const isStaffViewer = Boolean(scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && !!scope.staffUserId);
   const staffUserId = scope?.staffUserId ?? null;
 
   const dailyActivities = sortDesc(
