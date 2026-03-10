@@ -576,12 +576,21 @@ export async function getOnDemandReportData(input: {
 }): Promise<OnDemandReportResult> {
   if (!isMockMode()) {
     // TODO(quickbooks): Wire report views to accounting and operations warehouse tables.
+    const label = ON_DEMAND_REPORT_CATEGORIES.find((option) => option.value === input.category)?.label ?? "On-Demand";
     return {
       category: input.category,
-      title: "On-Demand Report",
-      description: "No data available in non-mock mode yet.",
-      columns: [],
-      rows: []
+      title: `${label} On-Demand`,
+      description: "Placeholder state: this on-demand category is not yet connected to live warehouse-backed reporting tables.",
+      columns: [
+        { key: "status", label: "Status", kind: "text" },
+        { key: "details", label: "Details", kind: "text" }
+      ],
+      rows: [
+        {
+          status: "Placeholder",
+          details: `No live ${label.toLowerCase()} dataset is wired for ${input.range.from} to ${input.range.to}.`
+        }
+      ]
     };
   }
 

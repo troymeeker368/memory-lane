@@ -2,6 +2,7 @@ import { getMockDocumentationTracker } from "@/lib/mock-data";
 import { getMockDb } from "@/lib/mock-repo";
 import { isMockMode } from "@/lib/runtime";
 import { canonicalLeadStatus } from "@/lib/canonical";
+import { staffNameToSlug } from "@/lib/services/activity-snapshots";
 import { getCurrentPayPeriod, isDateInPayPeriod } from "@/lib/pay-period";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -96,6 +97,10 @@ function statusPass(value: StatusFilter, requested?: string) {
 function normalizeDocTypeFilter(value?: string) {
   if (!value || value === "All") return undefined;
   return value;
+}
+
+function staffReportHref(staffName: string) {
+  return `/reports/staff/${staffNameToSlug(staffName)}`;
 }
 
 function buildDays(range: ReportDateRange) {
@@ -422,7 +427,7 @@ export async function getAdminPayPeriodReview() {
       missing_punches: missingPunches,
       long_shift_flags: longShift,
       approval_status: missingPunches > 0 || longShift > 0 ? "Needs Follow-up" : "Reviewed",
-      staff_href: `/staff/${staff.id}`
+      staff_href: staffReportHref(staff.full_name)
     };
   });
 }
@@ -463,7 +468,7 @@ export async function getAdminPunchExceptions(filters: ReportDateRange & { staff
             exception_type: "Missing clock out",
             detail: `No matching clock-out for ${current.punch_at}`,
             when: current.punch_at,
-            staff_href: `/staff/${staff.id}`
+            staff_href: staffReportHref(staff.full_name)
           });
         } else {
           const duration = hoursBetween(current.punch_at, next.punch_at);
@@ -475,7 +480,7 @@ export async function getAdminPunchExceptions(filters: ReportDateRange & { staff
               exception_type: "Long shift",
               detail: `${duration.toFixed(2)}h shift between punches`,
               when: current.punch_at,
-              staff_href: `/staff/${staff.id}`
+              staff_href: staffReportHref(staff.full_name)
             });
           }
         }
@@ -489,7 +494,7 @@ export async function getAdminPunchExceptions(filters: ReportDateRange & { staff
           exception_type: "Duplicate pattern",
           detail: `Back-to-back ${current.punch_type.toUpperCase()} punches`,
           when: current.punch_at,
-          staff_href: `/staff/${staff.id}`
+          staff_href: staffReportHref(staff.full_name)
         });
       }
     }

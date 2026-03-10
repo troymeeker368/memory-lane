@@ -515,6 +515,11 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
   db.memberAttendanceSchedules = Array.isArray(db.memberAttendanceSchedules) ? db.memberAttendanceSchedules : [];
   db.memberHolds = Array.isArray(db.memberHolds) ? db.memberHolds : [];
   db.attendanceRecords = Array.isArray(db.attendanceRecords) ? db.attendanceRecords : [];
+  db.punches = Array.isArray(db.punches) ? db.punches : [];
+  db.dailyTimecards = Array.isArray(db.dailyTimecards) ? db.dailyTimecards : [];
+  db.forgottenPunchRequests = Array.isArray(db.forgottenPunchRequests) ? db.forgottenPunchRequests : [];
+  db.ptoEntries = Array.isArray(db.ptoEntries) ? db.ptoEntries : [];
+  db.payPeriods = Array.isArray(db.payPeriods) ? db.payPeriods : [];
   db.transportationManifestAdjustments = Array.isArray(db.transportationManifestAdjustments)
     ? db.transportationManifestAdjustments
     : [];
@@ -2388,6 +2393,111 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
     };
   }
 
+  if (key === "punches") {
+    const staff = pickStaffById(String(record.employee_id ?? ""), String(record.employee_name ?? ""));
+    return {
+      employee_id: String(record.employee_id ?? staff.id),
+      employee_name: String(record.employee_name ?? staff.full_name),
+      timestamp: String(record.timestamp ?? nowIso),
+      type: record.type === "out" ? "out" : "in",
+      source:
+        record.source === "director_correction" || record.source === "approved_forgotten_punch"
+          ? record.source
+          : "employee",
+      status: record.status === "voided" ? "voided" : "active",
+      note: (record.note as string | null) ?? null,
+      created_by: String(record.created_by ?? staff.full_name ?? "System"),
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? record.created_at ?? nowIso),
+      linked_time_punch_id: (record.linked_time_punch_id as string | null | undefined) ?? null
+    };
+  }
+
+  if (key === "dailyTimecards") {
+    const staff = pickStaffById(String(record.employee_id ?? ""), String(record.employee_name ?? ""));
+    return {
+      employee_id: String(record.employee_id ?? staff.id),
+      employee_name: String(record.employee_name ?? staff.full_name),
+      work_date: String(record.work_date ?? today),
+      first_in: (record.first_in as string | null | undefined) ?? null,
+      last_out: (record.last_out as string | null | undefined) ?? null,
+      raw_hours: Number(record.raw_hours ?? 0),
+      meal_deduction_hours: Number(record.meal_deduction_hours ?? 0),
+      worked_hours: Number(record.worked_hours ?? 0),
+      pto_hours: Number(record.pto_hours ?? 0),
+      overtime_hours: Number(record.overtime_hours ?? 0),
+      total_paid_hours: Number(record.total_paid_hours ?? 0),
+      status:
+        record.status === "approved" || record.status === "needs_review" || record.status === "corrected"
+          ? record.status
+          : "pending",
+      director_note: (record.director_note as string | null | undefined) ?? null,
+      approved_by: (record.approved_by as string | null | undefined) ?? null,
+      approved_at: (record.approved_at as string | null | undefined) ?? null,
+      pay_period_id: String(record.pay_period_id ?? `pay-period-${today}`),
+      has_exception: Boolean(record.has_exception),
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? record.created_at ?? nowIso)
+    };
+  }
+
+  if (key === "forgottenPunchRequests") {
+    const staff = pickStaffById(String(record.employee_id ?? ""), String(record.employee_name ?? ""));
+    return {
+      employee_id: String(record.employee_id ?? staff.id),
+      employee_name: String(record.employee_name ?? staff.full_name),
+      work_date: String(record.work_date ?? today),
+      request_type:
+        record.request_type === "missing_in" ||
+        record.request_type === "missing_out" ||
+        record.request_type === "full_shift" ||
+        record.request_type === "edit_shift"
+          ? record.request_type
+          : "missing_out",
+      requested_in: (record.requested_in as string | null | undefined) ?? null,
+      requested_out: (record.requested_out as string | null | undefined) ?? null,
+      reason: String(record.reason ?? "").trim() || "Forgot to punch.",
+      employee_note: (record.employee_note as string | null | undefined) ?? null,
+      status: record.status === "approved" || record.status === "denied" ? record.status : "submitted",
+      director_decision_note: (record.director_decision_note as string | null | undefined) ?? null,
+      approved_by: (record.approved_by as string | null | undefined) ?? null,
+      approved_at: (record.approved_at as string | null | undefined) ?? null,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? record.created_at ?? nowIso)
+    };
+  }
+
+  if (key === "ptoEntries") {
+    const staff = pickStaffById(String(record.employee_id ?? ""), String(record.employee_name ?? ""));
+    return {
+      employee_id: String(record.employee_id ?? staff.id),
+      employee_name: String(record.employee_name ?? staff.full_name),
+      work_date: String(record.work_date ?? today),
+      hours: Number(record.hours ?? 0),
+      type:
+        record.type === "sick" || record.type === "holiday" || record.type === "personal"
+          ? record.type
+          : "vacation",
+      status: record.status === "approved" || record.status === "denied" ? record.status : "pending",
+      note: (record.note as string | null | undefined) ?? null,
+      approved_by: (record.approved_by as string | null | undefined) ?? null,
+      approved_at: (record.approved_at as string | null | undefined) ?? null,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? record.created_at ?? nowIso)
+    };
+  }
+
+  if (key === "payPeriods") {
+    const startDate = String(record.start_date ?? today);
+    const endDate = String(record.end_date ?? startDate);
+    return {
+      label: String(record.label ?? `${startDate} to ${endDate}`),
+      start_date: startDate,
+      end_date: endDate,
+      is_closed: Boolean(record.is_closed)
+    };
+  }
+
   if (key === "dailyActivities") {
     const member = pickMemberById(String(record.member_id ?? ""), String(record.member_name ?? ""));
     const staff = pickStaffById(String(record.staff_user_id ?? ""), String(record.staff_name ?? ""));
@@ -4014,9 +4124,33 @@ function ensureCanonicalAncillaryCategories() {
   }
 }
 
+let ancillaryHydrationSignature: string | null = null;
+let closureAutomationHydrationSignature: string | null = null;
+
+function ensureRuntimeHydrationState() {
+  const today = toEasternDate();
+  const latestRuleUpdate = db.closureRules.reduce((latest, row) => {
+    const value = String(row.updated_at ?? "");
+    return value > latest ? value : latest;
+  }, "");
+  const closureSignature = `${today}|${db.closureRules.length}|${latestRuleUpdate}`;
+  const ancillarySignature = String(db.ancillaryCategories.length);
+
+  // Closure automation is date-sensitive; hydrate once per day instead of on every read.
+  if (closureAutomationHydrationSignature !== closureSignature) {
+    ensureCenterClosureAutomationState();
+    closureAutomationHydrationSignature = closureSignature;
+  }
+
+  // Canonical categories are static defaults; hydrate once per process startup.
+  if (ancillaryHydrationSignature !== ancillarySignature) {
+    ensureCanonicalAncillaryCategories();
+    ancillaryHydrationSignature = String(db.ancillaryCategories.length);
+  }
+}
+
 export function getMockDb() {
-  ensureCenterClosureAutomationState();
-  ensureCanonicalAncillaryCategories();
+  ensureRuntimeHydrationState();
   return db;
 }
 

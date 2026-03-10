@@ -1,6 +1,7 @@
 "use server";
 
-import { readFileSync } from "node:fs";
+import { Buffer } from "node:buffer";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
@@ -26,6 +27,15 @@ function imagePathFromPublicSrc(src: string) {
   return path.join(process.cwd(), "public", normalized.replaceAll("/", path.sep));
 }
 
+async function loadPngFromPublic(pdf: PDFDocument, src: string) {
+  try {
+    const bytes = await readFile(imagePathFromPublicSrc(src));
+    return await pdf.embedPng(bytes);
+  } catch {
+    return null;
+  }
+}
+
 async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?: string[]) {
   const badge = getMemberNameBadgeDetail(memberId);
   if (!badge) {
@@ -41,19 +51,29 @@ async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const brandBlue = rgb(0.106, 0.243, 0.576);
 
-  const logoPath = imagePathFromPublicSrc(badge.logoSrc);
-  const logoBytes = readFileSync(logoPath);
-  const logoImage = await pdf.embedPng(logoBytes);
   const logoMaxWidth = toPoints(45);
-  const logoScale = logoMaxWidth / logoImage.width;
-  const logoWidth = logoImage.width * logoScale;
-  const logoHeight = logoImage.height * logoScale;
-  page.drawImage(logoImage, {
-    x: (pageWidth - logoWidth) / 2,
-    y: pageHeight - margin - logoHeight,
-    width: logoWidth,
-    height: logoHeight
-  });
+  let logoHeight = toPoints(12);
+  const logoImage = await loadPngFromPublic(pdf, badge.logoSrc);
+  if (logoImage) {
+    const logoScale = logoMaxWidth / logoImage.width;
+    const logoWidth = logoImage.width * logoScale;
+    logoHeight = logoImage.height * logoScale;
+    page.drawImage(logoImage, {
+      x: (pageWidth - logoWidth) / 2,
+      y: pageHeight - margin - logoHeight,
+      width: logoWidth,
+      height: logoHeight
+    });
+  } else {
+    const fallbackText = "Town Square";
+    page.drawText(fallbackText, {
+      x: (pageWidth - fontBold.widthOfTextAtSize(fallbackText, 12)) / 2,
+      y: pageHeight - margin - logoHeight + 2,
+      size: 12,
+      font: fontBold,
+      color: brandBlue
+    });
+  }
 
   const availableNameWidth = pageWidth - margin * 2;
   let nameFontSize = 30;
@@ -109,16 +129,15 @@ async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?
 
   for (const indicator of enabledIndicators) {
     if (indicator.iconSrc) {
-      try {
-        const bytes = readFileSync(imagePathFromPublicSrc(indicator.iconSrc));
-        const embedded = await pdf.embedPng(bytes);
+      const embedded = await loadPngFromPublic(pdf, indicator.iconSrc);
+      if (embedded) {
         page.drawImage(embedded, {
           x: cursorX,
           y: iconY,
           width: iconSize,
           height: iconSize
         });
-      } catch {
+      } else {
         page.drawRectangle({
           x: cursorX,
           y: iconY,

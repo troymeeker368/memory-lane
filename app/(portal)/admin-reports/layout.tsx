@@ -1,7 +1,7 @@
 import type React from "react";
 import Link from "next/link";
 
-import { requireRoles } from "@/lib/auth";
+import { requireNavItemAccess } from "@/lib/auth";
 
 const adminReportLinks = [
   { href: "/admin-reports/attendance-summary", label: "Attendance Summary" },
@@ -16,7 +16,7 @@ const adminReportLinks = [
 ];
 
 export default async function AdminReportsLayout({ children }: { children: React.ReactNode }) {
-  await requireRoles(["admin", "manager", "director", "coordinator"]);
+  await requireNavItemAccess("/admin-reports");
 
   return (
     <div className="space-y-4">

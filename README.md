@@ -47,6 +47,16 @@ Notes:
 - `next.config.ts` includes development watch ignores for heavy/non-source paths (`.mock-state`, spreadsheet/PDF/Doc files, `.next`, `.git`, `node_modules`) to reduce watch overhead.
 - TODO: If future spreadsheet/PDF ingestion is added into the repo, keep raw imports under a non-source folder (for example `data-imports/`) so they stay outside hot-reload watch scope.
 
+## Quality Gates
+
+- Run `npm run quality:gates` before merging stabilization work.
+- Current gates cover:
+  - permission/access regression checks for key role boundaries
+  - payroll/time calculation regression checks (`lib/services/timecard-workflow.ts`)
+  - critical route availability checks for stabilized portal paths
+  - migration naming/order hygiene checks
+- Migration files in `supabase/migrations` must use `####_description.sql` and unique numeric prefixes.
+
 ## Run Modes
 
 ### Local mock mode (no Supabase required)

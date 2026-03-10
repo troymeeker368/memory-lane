@@ -2,7 +2,17 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import type { AppRole, ModuleKey, PermissionModuleKey, UserProfile } from "@/types/app";
-import { canAccessModule, canPerformModuleAction, getPermissionSource, normalizeRoleKey, PERMISSION_MODULES, resolveEffectivePermissionSet } from "@/lib/permissions";
+import type { PermissionAction } from "@/lib/permissions";
+import {
+  canAccessModule,
+  canAccessNavItem,
+  canPerformModuleAction,
+  getNavItemByHref,
+  getPermissionSource,
+  normalizeRoleKey,
+  PERMISSION_MODULES,
+  resolveEffectivePermissionSet
+} from "@/lib/permissions";
 import { getMockProfile } from "@/lib/mock-data";
 import { isMockMode, MOCK_ROLE_COOKIE_KEY, MOCK_USER_COOKIE_KEY, resolveMockRole } from "@/lib/runtime";
 import { getManagedUserById } from "@/lib/services/user-management";
@@ -118,6 +128,23 @@ export async function requireModuleAction(
   const profile = await getCurrentProfile();
   if (!canPerformModuleAction(profile.role as AppRole, module, action, profile.permissions)) {
     redirect(`/unauthorized?module=${encodeURIComponent(module)}&action=${encodeURIComponent(action)}`);
+  }
+  return profile;
+}
+
+export async function requireNavItemAccess(
+  href: string,
+  action: PermissionAction = "canView"
+): Promise<UserProfile> {
+  const profile = await getCurrentProfile();
+  if (!canAccessNavItem(profile.role as AppRole, href, profile.permissions, action)) {
+    const navItem = getNavItemByHref(href);
+    if (navItem) {
+      redirect(
+        `/unauthorized?module=${encodeURIComponent(navItem.module)}&action=${encodeURIComponent(action)}`
+      );
+    }
+    redirect("/unauthorized");
   }
   return profile;
 }

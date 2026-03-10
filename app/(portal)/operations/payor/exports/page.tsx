@@ -27,7 +27,7 @@ export default async function BillingExportsPage({
       <Card>
         <CardTitle>Export Billing Data</CardTitle>
         <p className="mt-1 text-sm text-muted">
-          Export uses invoice headers and finalized invoice lines. This is QuickBooks-ready CSV architecture without API integration yet.
+          Export uses invoice headers and finalized invoice lines. QuickBooks-friendly exports default to summarized invoice-level lines.
         </p>
         <form action={createBillingExportAction} className="mt-3 grid gap-2 md:grid-cols-4">
           <input type="hidden" name="returnPath" value="/operations/payor/exports" />
@@ -43,6 +43,10 @@ export default async function BillingExportsPage({
             <option value="QuickBooksCSV">QuickBooks-Friendly CSV</option>
             <option value="InternalReviewCSV">Internal Review CSV</option>
             <option value="InvoiceSummaryCSV">Invoice Summary CSV</option>
+          </select>
+          <select name="quickbooksDetailLevel" className="h-10 rounded-lg border border-border px-3">
+            <option value="Summary">QuickBooks: Summarized Lines</option>
+            <option value="Detailed">QuickBooks: Detailed Raw Lines</option>
           </select>
           <button type="submit" className="h-10 rounded-lg bg-brand px-3 text-sm font-semibold text-white">
             Generate Export

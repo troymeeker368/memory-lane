@@ -1,6 +1,14 @@
-export const POF_CENTER_ADDRESS = "368 Fort Mill Parkway, Suite 106, Fort Mill, SC";
-export const POF_CENTER_PHONE = "803-591-9898";
-export const POF_CENTER_LOGO_PUBLIC_PATH = "/TS logo_Innovative Adult Day-BLUE (2).png";
+import {
+  DOCUMENT_CENTER_ADDRESS,
+  DOCUMENT_CENTER_LOGO_PUBLIC_PATH,
+  DOCUMENT_CENTER_NAME,
+  DOCUMENT_CENTER_PHONE
+} from "@/lib/services/document-branding";
+
+export const POF_CENTER_NAME = DOCUMENT_CENTER_NAME;
+export const POF_CENTER_ADDRESS = DOCUMENT_CENTER_ADDRESS;
+export const POF_CENTER_PHONE = DOCUMENT_CENTER_PHONE;
+export const POF_CENTER_LOGO_PUBLIC_PATH = DOCUMENT_CENTER_LOGO_PUBLIC_PATH;
 
 export const POF_LEVEL_OF_CARE_OPTIONS = ["Home", "SNF", "MCU", "ALF", "ILF"] as const;
 export const POF_NUTRITION_OPTIONS = [

@@ -37,6 +37,7 @@ export default async function PhysicianOrderDetailPage({
   const { pofId } = await params;
   const query = await searchParams;
   const source = firstString(query.from);
+  const pdfSaveFailed = firstString(query.pdfSave) === "failed";
 
   const form = getPhysicianOrderById(pofId);
   if (!form) notFound();
@@ -88,6 +89,13 @@ export default async function PhysicianOrderDetailPage({
           <PhysicianOrderPdfActions pofId={form.id} />
         </div>
       </Card>
+
+      {pdfSaveFailed ? (
+        <Card>
+          <p className="text-sm font-semibold text-amber-700">POF was saved, but automatic PDF save to member files did not complete.</p>
+          <p className="mt-1 text-xs text-muted">Use Download PDF to regenerate and save the document.</p>
+        </Card>
+      ) : null}
 
       <Card>
         <CardTitle>Identification / Medical Orders</CardTitle>

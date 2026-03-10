@@ -6,6 +6,19 @@ import { normalizeRoleKey } from "@/lib/permissions";
 import { getPunchHistory } from "@/lib/services/time";
 import { formatDateTime } from "@/lib/utils";
 
+function formatFenceValue(value: boolean | null | undefined) {
+  if (value == null) return "-";
+  return value ? "Yes" : "No";
+}
+
+function describePunchMeta(punch: { source?: string | null; status?: string | null; note?: string | null }) {
+  const tags: string[] = [];
+  if (punch.status && punch.status !== "active") tags.push(punch.status);
+  if (punch.source && punch.source !== "employee") tags.push(punch.source);
+  const prefix = tags.length ? `[${tags.join(" | ")}] ` : "";
+  return `${prefix}${punch.note ?? "-"}`;
+}
+
 export default async function PunchHistoryPage() {
   await requireModuleAccess("time-card");
   const profile = await getCurrentProfile();
@@ -43,9 +56,9 @@ export default async function PunchHistoryPage() {
                 {showStaffColumn ? <td>{punch.staff_name}</td> : null}
                 <td>{formatDateTime(punch.punch_at)}</td>
                 <td><PunchTypeBadge punchType={punch.punch_type} /></td>
-                <td>{punch.within_fence ? "Yes" : "No"}</td>
+                <td>{formatFenceValue(punch.within_fence)}</td>
                 <td>{punch.distance_meters ?? "-"}</td>
-                <td>{punch.note ?? "-"}</td>
+                <td>{describePunchMeta(punch)}</td>
               </tr>
             ))}
           </tbody>

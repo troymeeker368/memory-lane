@@ -1,23 +1,40 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { AssessmentPdfActions } from "@/components/assessment/assessment-pdf-actions";
+import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
 import { getAssessmentDetail } from "@/lib/services/relations";
-import { formatDate } from "@/lib/utils";
+import { toEasternISO } from "@/lib/timezone";
+import { formatDate, formatDateTime } from "@/lib/utils";
 
 function yesNo(value: boolean) {
   return value ? "Yes" : "No";
 }
 
-export default async function HealthAssessmentDetailPage({ params }: { params: Promise<{ assessmentId: string }> }) {
+function firstString(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+export default async function HealthAssessmentDetailPage({
+  params,
+  searchParams
+}: {
+  params: Promise<{ assessmentId: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await requireRoles(["admin", "manager", "nurse"]);
   const { assessmentId } = await params;
+  const query = (await searchParams) ?? {};
   const detail = await getAssessmentDetail(assessmentId);
 
   if (!detail) notFound();
 
   const assessment = detail.assessment as any;
+  const generatedAt = toEasternISO();
+  const pdfSaveFailed = firstString(query?.pdfSave) === "failed";
   const responsesBySection = detail.responses.reduce((acc, response) => {
     if (!acc[response.section_type]) {
       acc[response.section_type] = [];
@@ -28,6 +45,26 @@ export default async function HealthAssessmentDetailPage({ params }: { params: P
 
   return (
     <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-white p-4">
+        <DocumentBrandHeader
+          title="Intake Assessment"
+          metaLines={[
+            `Generated: ${formatDateTime(generatedAt)} (ET)`,
+            `Assessment ID: ${assessment.id}`
+          ]}
+        />
+        <div className="mt-3">
+          <AssessmentPdfActions assessmentId={assessment.id} />
+        </div>
+      </div>
+
+      {pdfSaveFailed ? (
+        <Card>
+          <p className="text-sm font-semibold text-amber-700">Assessment saved, but the PDF could not be saved to member files.</p>
+          <p className="mt-1 text-xs text-muted">Please retry from the assessment workflow or generate the document again after resolving file-generation issues.</p>
+        </Card>
+      ) : null}
+
       <Card>
         <CardTitle>Intake Assessment Detail</CardTitle>
         <div className="mt-2 grid gap-3 md:grid-cols-4">
@@ -144,3 +181,5 @@ export default async function HealthAssessmentDetailPage({ params }: { params: P
     </div>
   );
 }
+
+

@@ -169,7 +169,7 @@ export function NameBadgeBuilder({
                 </div>
               ) : (
                 <div key={indicator.key} className="name-badge-icon-fallback" title={indicator.label}>
-                  <span aria-hidden>•</span>
+                  <span aria-hidden>*</span>
                 </div>
               )
             )
@@ -179,3 +179,4 @@ export function NameBadgeBuilder({
     </div>
   );
 }
+

@@ -36,15 +36,21 @@ export default async function ReportsPage() {
             </tr>
           </thead>
           <tbody>
-            {timelyDocs.map((row: any) => (
-              <tr key={row.staff_name}>
-                <td><StaffLink staffName={row.staff_name} /></td>
-                <td>{row.on_time}</td>
-                <td>{row.late}</td>
-                <td>{row.total}</td>
-                <td>{formatPercent(row.on_time_percent || 0)}</td>
+            {timelyDocs.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="text-center text-sm text-muted">No documentation timeliness rows are available for the current reporting dataset.</td>
               </tr>
-            ))}
+            ) : (
+              timelyDocs.map((row: any) => (
+                <tr key={row.staff_name}>
+                  <td><StaffLink staffName={row.staff_name} /></td>
+                  <td>{row.on_time}</td>
+                  <td>{row.late}</td>
+                  <td>{row.total}</td>
+                  <td>{formatPercent(row.on_time_percent || 0)}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </Card>
@@ -63,16 +69,22 @@ export default async function ReportsPage() {
             </tr>
           </thead>
           <tbody>
-            {ops.staffProductivity.map((row: any) => (
-              <tr key={row.staff_name}>
-                <td><StaffLink staffName={row.staff_name} /></td>
-                <td>{row.activity_logs}</td>
-                <td>{row.toilet_logs}</td>
-                <td>{row.shower_logs}</td>
-                <td>{row.transportation_logs}</td>
-                <td>{Number(row.activity_logs ?? 0) + Number(row.toilet_logs ?? 0) + Number(row.shower_logs ?? 0) + Number(row.transportation_logs ?? 0)}</td>
+            {ops.staffProductivity.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="text-center text-sm text-muted">No staff productivity rows are available for the current reporting dataset.</td>
               </tr>
-            ))}
+            ) : (
+              ops.staffProductivity.map((row: any) => (
+                <tr key={row.staff_name}>
+                  <td><StaffLink staffName={row.staff_name} /></td>
+                  <td>{row.activity_logs}</td>
+                  <td>{row.toilet_logs}</td>
+                  <td>{row.shower_logs}</td>
+                  <td>{row.transportation_logs}</td>
+                  <td>{Number(row.activity_logs ?? 0) + Number(row.toilet_logs ?? 0) + Number(row.shower_logs ?? 0) + Number(row.transportation_logs ?? 0)}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </Card>
@@ -88,13 +100,19 @@ export default async function ReportsPage() {
             </tr>
           </thead>
           <tbody>
-            {ops.timeSummary.map((row: any) => (
-              <tr key={row.staff_name}>
-                <td><StaffLink staffName={row.staff_name} /></td>
-                <td>{row.punches}</td>
-                <td>{row.outside_fence}</td>
+            {ops.timeSummary.length === 0 ? (
+              <tr>
+                <td colSpan={3} className="text-center text-sm text-muted">No time clock summary rows are available for the current reporting dataset.</td>
               </tr>
-            ))}
+            ) : (
+              ops.timeSummary.map((row: any) => (
+                <tr key={row.staff_name}>
+                  <td><StaffLink staffName={row.staff_name} /></td>
+                  <td>{row.punches}</td>
+                  <td>{row.outside_fence}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </Card>
@@ -139,15 +157,21 @@ export default async function ReportsPage() {
             </tr>
           </thead>
           <tbody>
-            {careTracker.map((row: any, idx: number) => (
-              <tr key={`${row.member_name}-${idx}`}>
-                <td>{row.member_name}</td>
-                <td>{formatDate(row.next_care_plan_due)}</td>
-                <td>{row.care_plan_done ? "Yes" : "No"}</td>
-                <td>{formatDate(row.next_progress_note_due)}</td>
-                <td>{row.note_done ? "Yes" : "No"}</td>
+            {careTracker.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="text-center text-sm text-muted">No care tracker rows are available for the current reporting dataset.</td>
               </tr>
-            ))}
+            ) : (
+              careTracker.map((row: any, idx: number) => (
+                <tr key={`${row.member_name}-${idx}`}>
+                  <td>{row.member_name}</td>
+                  <td>{formatDate(row.next_care_plan_due)}</td>
+                  <td>{row.care_plan_done ? "Yes" : "No"}</td>
+                  <td>{formatDate(row.next_progress_note_due)}</td>
+                  <td>{row.note_done ? "Yes" : "No"}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </Card>
@@ -163,13 +187,19 @@ export default async function ReportsPage() {
             </tr>
           </thead>
           <tbody>
-            {toileted.map((row: any, idx: number) => (
-              <tr key={`${row.member_name}-${idx}`}>
-                <td>{row.member_name}</td>
-                <td>{formatOptionalDateTime(row.last_toileted_at)}</td>
-                <td>{row.staff_name}</td>
+            {toileted.length === 0 ? (
+              <tr>
+                <td colSpan={3} className="text-center text-sm text-muted">No toileting rows are available for the current reporting dataset.</td>
               </tr>
-            ))}
+            ) : (
+              toileted.map((row: any, idx: number) => (
+                <tr key={`${row.member_name}-${idx}`}>
+                  <td>{row.member_name}</td>
+                  <td>{formatOptionalDateTime(row.last_toileted_at)}</td>
+                  <td>{row.staff_name}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </Card>

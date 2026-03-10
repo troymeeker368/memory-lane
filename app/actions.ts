@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { createSalesLeadActivityAction, saveSalesLeadAction } from "@/app/sales-actions";
 import { getCurrentProfile } from "@/lib/auth";
 import {
   LEAD_ACTIVITY_OUTCOMES,
@@ -40,7 +41,9 @@ import {
 } from "@/lib/mock-repo";
 import { prefillMemberHealthProfileFromAssessment } from "@/lib/services/member-health-profiles";
 import { prefillMemberCommandCenterFromAssessment } from "@/lib/services/member-command-center";
+import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { syncCommandCenterToMhp, syncMhpToCommandCenter } from "@/lib/services/member-profile-sync";
+import { buildIntakeAssessmentPdfDataUrl } from "@/lib/services/intake-assessment-pdf";
 import { calculateLatePickupFee, getOperationalSettings, parseBusNumbersInput, updateOperationalSettings } from "@/lib/services/operations-settings";
 import { getActiveCenterBillingSetting, getActiveMemberBillingSetting, getMemberAttendanceBillingSetting } from "@/lib/services/billing";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
@@ -269,9 +272,23 @@ export async function timePunchAction(raw: z.infer<typeof timePunchSchema>) {
       distance_meters: payload.data.lat && payload.data.lng ? 12 : null,
       note: payload.data.note ?? null
     });
+    addMockRecord("punches", {
+      employee_id: profile.id,
+      employee_name: profile.full_name,
+      timestamp: created.punch_at,
+      type: created.punch_type,
+      source: "employee",
+      status: "active",
+      note: created.note ?? null,
+      created_by: profile.full_name,
+      created_at: created.punch_at,
+      updated_at: created.punch_at,
+      linked_time_punch_id: created.id
+    });
 
     await insertAudit(payload.data.punchType === "in" ? "clock_in" : "clock_out", "time_punch", created.id, payload.data);
     revalidatePath("/time-card");
+    revalidatePath("/time-card/punch-history");
     revalidatePath("/");
     return { ok: true };
   }
@@ -296,6 +313,7 @@ export async function timePunchAction(raw: z.infer<typeof timePunchSchema>) {
 
   await insertAudit(payload.data.punchType === "in" ? "clock_in" : "clock_out", "time_punch", data.id, payload.data);
   revalidatePath("/time-card");
+  revalidatePath("/time-card/punch-history");
   revalidatePath("/");
   return { ok: true };
 }
@@ -413,6 +431,166 @@ export async function createDailyActivityAction(raw: z.infer<typeof dailyActivit
   return { ok: true };
 }
 
+function normalizeLegacyLeadStageOption(stage: string): (typeof LEAD_STAGE_OPTIONS)[number] {
+  const normalized = canonicalLeadStage(stage);
+  return LEAD_STAGE_OPTIONS.includes(normalized as (typeof LEAD_STAGE_OPTIONS)[number])
+    ? (normalized as (typeof LEAD_STAGE_OPTIONS)[number])
+    : "Inquiry";
+}
+
+function normalizeLegacyLeadStatusOption(status: string, stage: string): (typeof LEAD_STATUS_OPTIONS)[number] {
+  const normalized = canonicalLeadStatus(status, stage);
+  return LEAD_STATUS_OPTIONS.includes(normalized) ? normalized : "Open";
+}
+
+function normalizeLegacyLeadSourceOption(leadSource: string | null | undefined): (typeof LEAD_SOURCE_OPTIONS)[number] {
+  const normalized = (leadSource ?? "").trim();
+  return LEAD_SOURCE_OPTIONS.includes(normalized as (typeof LEAD_SOURCE_OPTIONS)[number])
+    ? (normalized as (typeof LEAD_SOURCE_OPTIONS)[number])
+    : "Other";
+}
+
+function normalizeLegacyLikelihoodOption(likelihood: string | null | undefined): (typeof LEAD_LIKELIHOOD_OPTIONS)[number] | "" {
+  const normalized = (likelihood ?? "").trim();
+  return LEAD_LIKELIHOOD_OPTIONS.includes(normalized as (typeof LEAD_LIKELIHOOD_OPTIONS)[number])
+    ? (normalized as (typeof LEAD_LIKELIHOOD_OPTIONS)[number])
+    : "";
+}
+
+function normalizeLegacyFollowUpTypeOption(followUpType: string | null | undefined): (typeof LEAD_FOLLOW_UP_TYPES)[number] | "" {
+  const normalized = (followUpType ?? "").trim();
+  return LEAD_FOLLOW_UP_TYPES.includes(normalized as (typeof LEAD_FOLLOW_UP_TYPES)[number])
+    ? (normalized as (typeof LEAD_FOLLOW_UP_TYPES)[number])
+    : "";
+}
+
+function splitLegacyLostReasonParts(lostReason: string | null | undefined) {
+  const normalized = (lostReason ?? "").trim();
+  if (!normalized) {
+    return { lostReason: "", lostReasonOther: "" };
+  }
+  if (LEAD_LOST_REASON_OPTIONS.includes(normalized as (typeof LEAD_LOST_REASON_OPTIONS)[number])) {
+    return { lostReason: normalized, lostReasonOther: "" };
+  }
+  return { lostReason: "Other", lostReasonOther: normalized };
+}
+
+function resolveLegacyReferralLookup(input: { partnerId?: string | null; referralSourceId?: string | null; referralName?: string | null }) {
+  const requestedPartnerId = (input.partnerId ?? "").trim();
+  const requestedReferralSourceId = (input.referralSourceId ?? "").trim();
+  const referralName = (input.referralName ?? "").trim().toLowerCase();
+
+  if (!isMockMode()) {
+    return { partnerId: requestedPartnerId, referralSourceId: requestedReferralSourceId };
+  }
+
+  const db = getMockDb();
+  const resolvedSource =
+    db.referralSources.find((row) => row.id === requestedReferralSourceId || row.referral_source_id === requestedReferralSourceId) ??
+    (referralName
+      ? db.referralSources.find(
+          (row) =>
+            row.contact_name.trim().toLowerCase() === referralName || row.organization_name.trim().toLowerCase() === referralName
+        ) ?? null
+      : null);
+
+  const resolvedPartnerFromInput =
+    db.partners.find((row) => row.id === requestedPartnerId || row.partner_id === requestedPartnerId) ?? null;
+  const resolvedPartnerFromSource = resolvedSource
+    ? db.partners.find((row) => row.partner_id === resolvedSource.partner_id || row.id === resolvedSource.partner_id) ?? null
+    : null;
+  const resolvedPartner = resolvedPartnerFromInput ?? resolvedPartnerFromSource;
+
+  return {
+    partnerId: resolvedPartner?.id ?? requestedPartnerId,
+    referralSourceId: resolvedSource?.id ?? requestedReferralSourceId
+  };
+}
+
+type LegacyLeadSaveInput = {
+  leadId?: string;
+  stage: string;
+  status: string;
+  inquiryDate: string;
+  caregiverName: string;
+  caregiverRelationship?: string | null;
+  caregiverEmail?: string | null;
+  caregiverPhone: string;
+  memberName: string;
+  memberDob?: string | null;
+  leadSource?: string | null;
+  leadSourceOther?: string | null;
+  partnerId?: string | null;
+  referralSourceId?: string | null;
+  referralName?: string | null;
+  likelihood?: string | null;
+  nextFollowUpDate?: string | null;
+  nextFollowUpType?: string | null;
+  tourDate?: string | null;
+  tourCompleted?: boolean;
+  discoveryDate?: string | null;
+  memberStartDate?: string | null;
+  notesSummary?: string | null;
+  lostReason?: string | null;
+  closedDate?: string | null;
+  allowUnlinkedReferral?: boolean;
+};
+
+function buildLegacyLeadSavePayload(input: LegacyLeadSaveInput): Parameters<typeof saveSalesLeadAction>[0] {
+  const stage = normalizeLegacyLeadStageOption(input.stage);
+  const status = normalizeLegacyLeadStatusOption(input.status, stage);
+  const leadSource = normalizeLegacyLeadSourceOption(input.leadSource);
+  const isLost = canonicalLeadStatus(status, stage) === "Lost";
+  const lostReasonParts = splitLegacyLostReasonParts(input.lostReason);
+  const referralLookup = resolveLegacyReferralLookup({
+    partnerId: input.partnerId,
+    referralSourceId: input.referralSourceId,
+    referralName: input.referralName
+  });
+  const leadSourceOther =
+    leadSource === "Other"
+      ? ((input.leadSourceOther ?? "").trim() || ((input.leadSource ?? "").trim() !== "Other" ? (input.leadSource ?? "").trim() : ""))
+      : "";
+  const lostReason = isLost ? lostReasonParts.lostReason || "Other" : "";
+  const lostReasonOther =
+    isLost && lostReason === "Other"
+      ? lostReasonParts.lostReasonOther || "Legacy update without explicit lost reason."
+      : "";
+
+  return {
+    leadId: input.leadId ?? "",
+    stage,
+    status,
+    inquiryDate: input.inquiryDate,
+    caregiverName: input.caregiverName,
+    caregiverRelationship: input.caregiverRelationship ?? "",
+    caregiverEmail: input.caregiverEmail ?? "",
+    caregiverPhone: input.caregiverPhone,
+    memberName: input.memberName,
+    memberDob: input.memberDob ?? "",
+    leadSource,
+    leadSourceOther,
+    partnerId: referralLookup.partnerId,
+    referralSourceId: referralLookup.referralSourceId,
+    referralName: input.referralName ?? "",
+    likelihood: normalizeLegacyLikelihoodOption(input.likelihood),
+    nextFollowUpDate: isLost ? "" : input.nextFollowUpDate ?? "",
+    nextFollowUpType: isLost ? "" : normalizeLegacyFollowUpTypeOption(input.nextFollowUpType),
+    tourDate: input.tourDate ?? "",
+    tourCompleted: input.tourDate ? Boolean(input.tourCompleted) : undefined,
+    discoveryDate: input.discoveryDate ?? "",
+    memberStartDate: stage === "Enrollment in Progress" ? input.memberStartDate ?? "" : "",
+    notesSummary: input.notesSummary ?? "",
+    lostReason,
+    lostReasonOther,
+    closedDate: isLost ? input.closedDate ?? toEasternDate() : "",
+    duplicateDecision: "" as const,
+    mergeTargetLeadId: "",
+    allowUnlinkedReferral: input.allowUnlinkedReferral ?? false,
+    skipDuplicateReview: true
+  };
+}
+
 const leadSchema = z
   .object({
     stage: z.enum(LEAD_STAGE_OPTIONS),
@@ -450,92 +628,29 @@ export async function createLeadAction(raw: z.infer<typeof leadSchema>) {
     return { error: "Invalid lead data." };
   }
 
-  const profile = await getCurrentProfile();
-  const stage = canonicalLeadStage(payload.data.stage);
-  const derivedStatus = canonicalLeadStatus(payload.data.status, stage);
-
-  if (isMockMode()) {
-    const nowIso = toEasternISO();
-    const created = addMockRecord("leads", {
-      lead_id: `L-${Date.now()}`,
-      status: derivedStatus,
-      stage,
-      stage_updated_at: nowIso,
-      inquiry_date: payload.data.inquiryDate,
-      tour_date: payload.data.tourDate || null,
-      tour_completed: false,
-      discovery_date: null,
-      member_start_date: null,
-      caregiver_name: payload.data.caregiverName,
-      caregiver_relationship: payload.data.caregiverRelationship || null,
-      caregiver_email: payload.data.caregiverEmail || null,
-      caregiver_phone: payload.data.caregiverPhone,
-      member_name: payload.data.memberName,
-      lead_source: payload.data.leadSource,
-      referral_name: payload.data.referralName || null,
-      likelihood: payload.data.likelihood || null,
-      next_follow_up_date: payload.data.nextFollowUpDate || null,
-      next_follow_up_type: payload.data.nextFollowUpType || null,
-      notes_summary: payload.data.notes ?? null,
-      lost_reason: derivedStatus === "Lost" ? payload.data.lostReason || null : null,
-      closed_date: derivedStatus === "Open" || derivedStatus === "Nurture" ? null : payload.data.inquiryDate,
-      partner_id: null,
-      created_by_user_id: profile.id,
-      created_by_name: profile.full_name,
-      created_at: nowIso
-    });
-
-    syncLeadToMemberList(created);
-    addLeadStageHistoryEntry({
-      leadId: created.id,
-      fromStage: null,
-      toStage: created.stage,
-      fromStatus: null,
-      toStatus: created.status,
-      changedByUserId: profile.id,
-      changedByName: profile.full_name,
-      reason: "Lead created",
-      source: "createLeadAction",
-      changedAt: nowIso
-    });
-
-    await insertAudit("create_lead", "lead", created.id, payload.data);
-    revalidatePath("/sales");
-    return { ok: true };
-  }
-
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("leads")
-    .insert({
-      status: derivedStatus,
-      stage,
-      inquiry_date: payload.data.inquiryDate,
-      caregiver_name: payload.data.caregiverName,
-      caregiver_relationship: payload.data.caregiverRelationship || null,
-      caregiver_email: payload.data.caregiverEmail || null,
-      caregiver_phone: payload.data.caregiverPhone,
-      member_name: payload.data.memberName,
-      lead_source: payload.data.leadSource,
-      referral_name: payload.data.referralName || null,
-      likelihood: payload.data.likelihood || null,
-      next_follow_up_date: payload.data.nextFollowUpDate || null,
-      next_follow_up_type: payload.data.nextFollowUpType || null,
-      tour_date: payload.data.tourDate || null,
-      notes_summary: payload.data.notes ?? null,
-      lost_reason: derivedStatus === "Lost" ? payload.data.lostReason || null : null,
-      created_by_user_id: profile.id
+  return saveSalesLeadAction(
+    buildLegacyLeadSavePayload({
+      stage: payload.data.stage,
+      status: payload.data.status,
+      inquiryDate: payload.data.inquiryDate,
+      caregiverName: payload.data.caregiverName,
+      caregiverRelationship: payload.data.caregiverRelationship,
+      caregiverEmail: payload.data.caregiverEmail,
+      caregiverPhone: payload.data.caregiverPhone,
+      memberName: payload.data.memberName,
+      leadSource: payload.data.leadSource,
+      referralName: payload.data.referralName,
+      likelihood: payload.data.likelihood,
+      nextFollowUpDate: payload.data.nextFollowUpDate,
+      nextFollowUpType: payload.data.nextFollowUpType,
+      tourDate: payload.data.tourDate,
+      tourCompleted: Boolean(payload.data.tourDate),
+      notesSummary: payload.data.notes,
+      lostReason: payload.data.lostReason,
+      closedDate: payload.data.lostReason ? payload.data.inquiryDate : "",
+      allowUnlinkedReferral: true
     })
-    .select("id")
-    .single();
-
-  if (error) {
-    return { error: error.message };
-  }
-
-  await insertAudit("create_lead", "lead", data.id, payload.data);
-  revalidatePath("/sales");
-  return { ok: true };
+  );
 }
 
 const ancillarySchema = z.object({
@@ -1313,6 +1428,28 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       { syncAllergies: true }
     );
 
+    let pdfWarning: string | null = null;
+    try {
+      const generated = await buildIntakeAssessmentPdfDataUrl(created.id);
+      saveGeneratedMemberPdfToFiles({
+        memberId: effectiveMemberId,
+        memberName: created.member_name,
+        documentLabel: "Intake Assessment",
+        documentSource: `Intake Assessment:${created.id}`,
+        category: "Assessment",
+        dataUrl: generated.dataUrl,
+        uploadedBy: {
+          id: profile.id,
+          name: profile.full_name
+        },
+        generatedAtIso: created.created_at,
+        replaceExistingByDocumentSource: true
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown PDF generation error.";
+      pdfWarning = `Assessment saved, but Intake Assessment PDF could not be saved to member files (${message}).`;
+    }
+
     const shouldAutoAdvanceLeadToEip =
       payload.data.complete &&
       leadProgressRank(lead.stage, lead.status) < leadProgressRank("Enrollment in Progress", "Open");
@@ -1368,9 +1505,12 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     revalidatePath(`/health/assessment/${created.id}`);
     revalidatePath("/health/member-health-profiles");
     revalidatePath(`/health/member-health-profiles/${effectiveMemberId}`);
+    revalidatePath(`/operations/member-command-center/${effectiveMemberId}`);
     revalidatePath(`/members/${effectiveMemberId}`);
     revalidatePath(`/reports/assessments/${created.id}`);
-    return { ok: true, assessmentId: created.id };
+    return pdfWarning
+      ? { ok: true, assessmentId: created.id, warning: pdfWarning }
+      : { ok: true, assessmentId: created.id };
 }
 
 const leadActivitySchema = z
@@ -1399,38 +1539,18 @@ export async function createLeadActivityAction(raw: z.infer<typeof leadActivityS
     return { error: "Invalid lead activity." };
   }
 
-  if (!isMockMode()) {
-    // TODO(backend): wire to public.lead_activities.
-    return { error: "Lead activity backend integration pending." };
-  }
-
-  const profile = await getCurrentProfile();
-  const db = getMockDb();
-  const lead = db.leads.find((row) => row.id === payload.data.leadId);
-
-  if (!lead) {
-    return { error: "Lead not found." };
-  }
-
-  addMockRecord("leadActivities", {
-    activity_id: `LA-${Date.now()}`,
-    lead_id: payload.data.leadId,
-    member_name: lead.member_name,
-    activity_at: toEasternISO(),
-    activity_type: payload.data.activityType,
+  return createSalesLeadActivityAction({
+    leadId: payload.data.leadId,
+    activityAt: "",
+    activityType: payload.data.activityType,
     outcome: payload.data.outcome,
-    lost_reason: payload.data.lostReason || null,
-    notes: payload.data.notes ?? null,
-    next_follow_up_date: payload.data.nextFollowUpDate || null,
-    next_follow_up_type: payload.data.nextFollowUpType ?? null,
-    completed_by_user_id: profile.id,
-    completed_by_name: profile.full_name
+    lostReason: payload.data.lostReason || "",
+    notes: payload.data.notes ?? "",
+    nextFollowUpDate: payload.data.nextFollowUpDate || "",
+    nextFollowUpType: payload.data.nextFollowUpType || "",
+    partnerId: "",
+    referralSourceId: ""
   });
-
-  revalidatePath("/sales");
-  revalidatePath("/sales/activities");
-  revalidatePath(`/sales/leads/${payload.data.leadId}`);
-  return { ok: true };
 }
 
 const leadStatusSchema = z.object({
@@ -1457,44 +1577,40 @@ export async function updateLeadStatusAction(raw: z.infer<typeof leadStatusSchem
     return { error: "Lead not found." };
   }
 
-  const fromStatus = lead.status;
-  const fromStage = lead.stage;
-  const nextStatus = canonicalLeadStatus(payload.data.status, payload.data.stage);
-  const nextStage = canonicalLeadStage(payload.data.stage);
-  const updatedLead = updateMockRecord("leads", lead.id, {
-    status: nextStatus,
-    stage: nextStage,
-    stage_updated_at: toEasternISO()
-  });
-  if (!updatedLead) return { error: "Lead not found." };
+  const nextStage = normalizeLegacyLeadStageOption(payload.data.stage);
+  const nextStatus = normalizeLegacyLeadStatusOption(payload.data.status, nextStage);
+  const isLost = canonicalLeadStatus(nextStatus, nextStage) === "Lost";
 
-  syncLeadToMemberList(updatedLead);
-
-  const profile = await getCurrentProfile();
-  if (fromStage !== updatedLead.stage || fromStatus !== updatedLead.status) {
-    addLeadStageHistoryEntry({
-      leadId: updatedLead.id,
-      fromStage,
-      toStage: updatedLead.stage,
-      fromStatus,
-      toStatus: updatedLead.status,
-      changedByUserId: profile.id,
-      changedByName: profile.full_name,
-      reason: "Lead status update",
-      source: "updateLeadStatusAction"
-    });
-  }
-  await insertAudit("update_lead", "lead", updatedLead.id, {
-    fromStage,
-    toStage: updatedLead.stage,
-    fromStatus,
-    toStatus: updatedLead.status
-  });
-
-  revalidatePath("/sales");
-  revalidatePath("/sales/won");
-  revalidatePath("/sales/lost");
-  return { ok: true };
+  return saveSalesLeadAction(
+    buildLegacyLeadSavePayload({
+      leadId: lead.id,
+      stage: nextStage,
+      status: nextStatus,
+      inquiryDate: lead.inquiry_date,
+      caregiverName: lead.caregiver_name,
+      caregiverRelationship: lead.caregiver_relationship,
+      caregiverEmail: lead.caregiver_email,
+      caregiverPhone: lead.caregiver_phone,
+      memberName: lead.member_name,
+      memberDob: lead.member_dob,
+      leadSource: lead.lead_source,
+      leadSourceOther: lead.lead_source_other,
+      partnerId: lead.partner_id,
+      referralSourceId: lead.referral_source_id,
+      referralName: lead.referral_name,
+      likelihood: lead.likelihood,
+      nextFollowUpDate: lead.next_follow_up_date,
+      nextFollowUpType: lead.next_follow_up_type,
+      tourDate: lead.tour_date,
+      tourCompleted: lead.tour_completed,
+      discoveryDate: lead.discovery_date,
+      memberStartDate: lead.member_start_date,
+      notesSummary: lead.notes_summary,
+      lostReason: isLost ? lead.lost_reason || "Other" : "",
+      closedDate: isLost ? lead.closed_date || toEasternDate() : "",
+      allowUnlinkedReferral: true
+    })
+  );
 }
 
 export async function getMockStaffLookup() {
@@ -1787,70 +1903,45 @@ export async function updateLeadDetailsAction(raw: { id: string; stage: string; 
   if (!isMockMode()) return { error: "Lead update backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  let stage = canonicalLeadStage(payload.data.stage);
-  let status = canonicalLeadStatus(payload.data.status, stage);
-  if (stage === "Closed - Lost") status = "Lost";
-  if (status === "Lost") stage = "Closed - Lost";
-  if (status === "Won") stage = "Closed - Won";
-  if (status === "Nurture" && stage !== "Nurture") stage = "Nurture";
-  status = canonicalLeadStatus(status, stage);
-  // Keep closed-date semantics consistent with the primary lead save action across all edit entry points.
-  const closedDate = status === "Lost" || status === "Won" ? toEasternDate() : null;
   const existingLead = getMockDb().leads.find((row) => row.id === payload.data.id) ?? null;
-  const updated = updateMockRecord("leads", payload.data.id, {
-    stage,
-    status,
-    stage_updated_at: toEasternISO(),
-    notes_summary: payload.data.notes ?? null,
-    closed_date: closedDate,
-    next_follow_up_date: status === "Lost" ? null : existingLead?.next_follow_up_date ?? null,
-    next_follow_up_type: status === "Lost" ? null : existingLead?.next_follow_up_type ?? null
-  });
-  if (!updated) {
-    console.error("[Sales] updateLeadDetailsAction update failed", { leadId: payload.data.id, stage, status });
+  if (!existingLead) {
     return { error: "Lead not found." };
   }
-  const profile = editor;
-  const fromStage = existingLead?.stage ?? null;
-  const fromStatus = existingLead?.status ?? null;
-  if (fromStage !== stage || fromStatus !== status) {
-    addLeadStageHistoryEntry({
-      leadId: payload.data.id,
-      fromStage,
-      toStage: stage,
-      fromStatus,
-      toStatus: status,
-      changedByUserId: profile.id,
-      changedByName: profile.full_name,
-      reason: "Lead detail edit",
-      source: "updateLeadDetailsAction"
-    });
-  }
-  await insertAudit("update_lead", "lead", payload.data.id, {
-    fromStage,
-    toStage: stage,
-    fromStatus,
-    toStatus: status,
-    notes: payload.data.notes ?? null
-  });
-  syncLeadToMemberList(updated);
-  revalidatePath("/sales");
-  revalidatePath("/sales/activities");
-  revalidatePath("/sales/pipeline");
-  revalidatePath("/sales/pipeline/leads-table");
-  revalidatePath("/sales/pipeline/by-stage");
-  revalidatePath("/sales/pipeline/follow-up-dashboard");
-  revalidatePath("/sales/pipeline/inquiry");
-  revalidatePath("/sales/pipeline/tour");
-  revalidatePath("/sales/pipeline/eip");
-  revalidatePath("/sales/pipeline/nurture");
-  revalidatePath("/sales/pipeline/closed-won");
-  revalidatePath("/sales/pipeline/closed-lost");
-  revalidatePath(`/sales/leads/${payload.data.id}`);
-  revalidatePath(`/sales/leads/${payload.data.id}/edit`);
-  revalidatePath("/sales/won");
-  revalidatePath("/sales/lost");
-  return { ok: true };
+
+  const nextStage = normalizeLegacyLeadStageOption(payload.data.stage);
+  const nextStatus = normalizeLegacyLeadStatusOption(payload.data.status, nextStage);
+  const isLost = canonicalLeadStatus(nextStatus, nextStage) === "Lost";
+
+  return saveSalesLeadAction(
+    buildLegacyLeadSavePayload({
+      leadId: existingLead.id,
+      stage: nextStage,
+      status: nextStatus,
+      inquiryDate: existingLead.inquiry_date,
+      caregiverName: existingLead.caregiver_name,
+      caregiverRelationship: existingLead.caregiver_relationship,
+      caregiverEmail: existingLead.caregiver_email,
+      caregiverPhone: existingLead.caregiver_phone,
+      memberName: existingLead.member_name,
+      memberDob: existingLead.member_dob,
+      leadSource: existingLead.lead_source,
+      leadSourceOther: existingLead.lead_source_other,
+      partnerId: existingLead.partner_id,
+      referralSourceId: existingLead.referral_source_id,
+      referralName: existingLead.referral_name,
+      likelihood: existingLead.likelihood,
+      nextFollowUpDate: existingLead.next_follow_up_date,
+      nextFollowUpType: existingLead.next_follow_up_type,
+      tourDate: existingLead.tour_date,
+      tourCompleted: existingLead.tour_completed,
+      discoveryDate: existingLead.discovery_date,
+      memberStartDate: existingLead.member_start_date,
+      notesSummary: payload.data.notes ?? existingLead.notes_summary,
+      lostReason: isLost ? existingLead.lost_reason || "Other" : "",
+      closedDate: isLost ? existingLead.closed_date || toEasternDate() : "",
+      allowUnlinkedReferral: true
+    })
+  );
 }
 
 export async function setMemberStatusAction(raw: {

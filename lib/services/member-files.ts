@@ -1,4 +1,4 @@
-import { addMockRecord, getMockDb } from "@/lib/mock-repo";
+import { addMockRecord, getMockDb, updateMockRecord } from "@/lib/mock-repo";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 type MemberFileCategory =
@@ -25,6 +25,7 @@ type SaveGeneratedMemberPdfInput = {
     name: string;
   };
   generatedAtIso?: string;
+  replaceExistingByDocumentSource?: boolean;
 };
 
 function safeFileName(value: string) {
@@ -48,6 +49,39 @@ export function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPdfInput
   const now = input.generatedAtIso ?? toEasternISO();
   const db = getMockDb();
   const defaultName = basePdfFileName(input.documentLabel, input.memberName, now);
+  const categoryOther = input.category === "Other" ? input.categoryOther ?? null : null;
+
+  if (input.replaceExistingByDocumentSource) {
+    const existing = db.memberFiles.find(
+      (row) =>
+        row.member_id === input.memberId &&
+        String(row.document_source ?? "").trim().toLowerCase() === input.documentSource.trim().toLowerCase()
+    );
+
+    if (existing) {
+      const updated = updateMockRecord("memberFiles", existing.id, {
+        file_name: defaultName,
+        file_type: "application/pdf",
+        file_data_url: input.dataUrl,
+        category: input.category,
+        category_other: categoryOther,
+        document_source: input.documentSource,
+        uploaded_by_user_id: input.uploadedBy.id,
+        uploaded_by_name: input.uploadedBy.name,
+        uploaded_at: now,
+        updated_at: now
+      });
+
+      if (updated) {
+        return {
+          created: updated,
+          fileName: defaultName,
+          generatedAtIso: now
+        };
+      }
+    }
+  }
+
   const hasConflict = db.memberFiles.some(
     (row) =>
       row.member_id === input.memberId &&
@@ -61,7 +95,7 @@ export function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPdfInput
     file_type: "application/pdf",
     file_data_url: input.dataUrl,
     category: input.category,
-    category_other: input.category === "Other" ? input.categoryOther ?? null : null,
+    category_other: categoryOther,
     document_source: input.documentSource,
     uploaded_by_user_id: input.uploadedBy.id,
     uploaded_by_name: input.uploadedBy.name,

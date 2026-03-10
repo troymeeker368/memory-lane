@@ -12,7 +12,8 @@
     "build": "next build",
     "start": "next start -p 3001",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "quality:gates": "node scripts/quality-gates/run.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

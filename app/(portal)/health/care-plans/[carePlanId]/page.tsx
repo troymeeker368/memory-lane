@@ -1,9 +1,11 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { CarePlanPdfActions } from "@/components/care-plans/care-plan-pdf-actions";
 import { CarePlanReviewForm } from "@/components/forms/care-plan-forms";
 import { Card, CardTitle } from "@/components/ui/card";
-import { getCurrentProfile, requireRoles } from "@/lib/auth";
+import { requireNavItemAccess } from "@/lib/auth";
+import { canAccessNavItem } from "@/lib/permissions";
 import { CARE_PLAN_LONG_TERM_LABEL, CARE_PLAN_SHORT_TERM_LABEL, getCarePlanById, getGoalListItems } from "@/lib/services/care-plans";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
@@ -31,8 +33,7 @@ export default async function CarePlanDetailPage({
   params: Promise<{ carePlanId: string }>;
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireRoles(["admin", "manager", "nurse"]);
-  const profile = await getCurrentProfile();
+  const profile = await requireNavItemAccess("/health/care-plans");
   const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
   const { carePlanId } = await params;
   const query = searchParams ? await searchParams : {};
@@ -40,7 +41,7 @@ export default async function CarePlanDetailPage({
 
   if (!detail) redirect("/health/care-plans/list");
 
-  const canEdit = profile.role === "admin" || profile.role === "manager" || profile.role === "nurse";
+  const canEdit = canAccessNavItem(profile.role, "/health/care-plans", profile.permissions);
   const reviewMode = typeof query.view === "string" && query.view === "review";
   const requestedReturnTo = typeof query.returnTo === "string" ? query.returnTo : null;
   const returnTo = requestedReturnTo && requestedReturnTo.startsWith("/") ? requestedReturnTo : null;
@@ -68,6 +69,9 @@ export default async function CarePlanDetailPage({
         <Card>
           <CardTitle>{detail.carePlan.memberName} - Care Plan Review ({detail.carePlan.track})</CardTitle>
           <p className="mt-1 text-sm text-muted">Review history is shown first. Submit the next review below.</p>
+          <div className="mt-3">
+            <CarePlanPdfActions carePlanId={detail.carePlan.id} />
+          </div>
           <div className="mt-3 grid gap-3 md:grid-cols-4">
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Enrollment Date</p><p className="font-semibold">{formatDate(detail.carePlan.enrollmentDate)}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Last Completed</p><p className="font-semibold">{formatOptionalDate(detail.carePlan.lastCompletedDate)}</p></div>
@@ -132,7 +136,7 @@ export default async function CarePlanDetailPage({
 
         {reviewForm}
 
-        <p className="text-xs text-muted">TODO: Add print-friendly care plan view and PDF export/e-sign pipeline once document backend is connected.</p>
+        <p className="text-xs text-muted">Typed signatures are preserved. Full e-sign attestations and durable document storage are tracked as follow-up dependencies.</p>
       </div>
     );
   }
@@ -141,6 +145,9 @@ export default async function CarePlanDetailPage({
     <div className="space-y-4">
       <Card>
         <CardTitle>{detail.carePlan.memberName} - Member Care Plan ({detail.carePlan.track})</CardTitle>
+        <div className="mt-3">
+          <CarePlanPdfActions carePlanId={detail.carePlan.id} />
+        </div>
         <div className="mt-3 space-y-2">
           <p className="text-sm font-semibold">Member Information</p>
           <div className="grid gap-3 md:grid-cols-4">
@@ -249,7 +256,8 @@ export default async function CarePlanDetailPage({
 
       {reviewForm}
 
-      <p className="text-xs text-muted">TODO: Add print-friendly care plan view and PDF export/e-sign pipeline once document backend is connected.</p>
+      <p className="text-xs text-muted">Typed signatures are preserved. Full e-sign attestations and durable document storage are tracked as follow-up dependencies.</p>
     </div>
   );
 }
+

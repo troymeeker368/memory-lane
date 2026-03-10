@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { requireRoles } from "@/lib/auth";
+import { requireNavItemAccess } from "@/lib/auth";
 import { CARE_PLAN_SECTION_TYPES, createCarePlan, reviewCarePlan } from "@/lib/services/care-plans";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { toEasternDate } from "@/lib/timezone";
@@ -52,7 +52,7 @@ const createCarePlanSchema = z
   });
 
 export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSchema>) {
-  const profile = await requireRoles(["admin", "manager", "nurse"]);
+  const profile = await requireNavItemAccess("/health/care-plans");
   const payload = createCarePlanSchema.safeParse(raw);
   if (!payload.success) {
     return { error: "Invalid care plan submission." };
@@ -115,7 +115,7 @@ const reviewCarePlanSchema = z
   });
 
 export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSchema>) {
-  const profile = await requireRoles(["admin", "manager", "nurse"]);
+  const profile = await requireNavItemAccess("/health/care-plans");
   const payload = reviewCarePlanSchema.safeParse(raw);
   if (!payload.success) {
     return { error: "Invalid care plan review submission." };

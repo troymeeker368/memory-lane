@@ -412,21 +412,26 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
     at: saved.updatedAt
   });
 
+  let pdfSaveFailed = false;
   if (status === "Completed" || status === "Signed") {
-    const generated = await buildPhysicianOrderPdfDataUrl(saved.id);
-    await savePofPdfToMemberFiles({
-      memberId: saved.memberId,
-      memberName: saved.memberNameSnapshot,
-      dataUrl: generated.dataUrl,
-      uploadedBy: {
-        id: profile.id,
-        name: actorDisplayName
-      }
-    });
+    try {
+      const generated = await buildPhysicianOrderPdfDataUrl(saved.id);
+      await savePofPdfToMemberFiles({
+        memberId: saved.memberId,
+        memberName: saved.memberNameSnapshot,
+        dataUrl: generated.dataUrl,
+        uploadedBy: {
+          id: profile.id,
+          name: actorDisplayName
+        }
+      });
+    } catch {
+      pdfSaveFailed = true;
+    }
   }
 
   revalidatePofRoutes(saved.memberId, saved.id);
-  redirect(`/health/physician-orders/${saved.id}`);
+  redirect(pdfSaveFailed ? `/health/physician-orders/${saved.id}?pdfSave=failed` : `/health/physician-orders/${saved.id}`);
 }
 
 export async function generatePhysicianOrderPdfAction(input: { pofId: string }) {

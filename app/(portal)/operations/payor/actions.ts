@@ -31,7 +31,7 @@ import {
   validateMemberBillingSettingOverlap,
   validateScheduleTemplateOverlap
 } from "@/lib/services/billing";
-import { normalizeRoleKey } from "@/lib/permissions";
+import { canAccessNavItem, normalizeRoleKey } from "@/lib/permissions";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 type CustomInvoiceManualLineInput = NonNullable<Parameters<typeof createCustomInvoice>[0]["manualLineItems"]>[number];
@@ -65,8 +65,7 @@ function asDateOnly(formData: FormData, key: string, fallback = toEasternDate())
 
 async function requireBillingProfile() {
   const profile = await getCurrentProfile();
-  const role = normalizeRoleKey(profile.role);
-  if (role !== "admin" && role !== "manager" && role !== "director" && role !== "coordinator") {
+  if (!canAccessNavItem(profile.role, "/operations/payor", profile.permissions, "canEdit")) {
     throw new Error("You do not have access to billing workflows.");
   }
   return profile;
@@ -594,12 +593,14 @@ export async function createBillingExportAction(formData: FormData) {
   try {
     const profile = await requireBillingProfile();
     const exportType = asString(formData, "exportType");
+    const quickbooksDetailLevel = asString(formData, "quickbooksDetailLevel");
     const result = createBillingExport({
       billingBatchId: asString(formData, "billingBatchId"),
       exportType:
         exportType === "InternalReviewCSV" || exportType === "InvoiceSummaryCSV"
           ? exportType
           : ("QuickBooksCSV" as (typeof BILLING_EXPORT_TYPES)[number]),
+      quickbooksDetailLevel: quickbooksDetailLevel === "Detailed" ? "Detailed" : "Summary",
       generatedBy: profile.full_name
     });
     if (!result.ok) {

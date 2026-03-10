@@ -1,9 +1,9 @@
 import { MonthlyAncillaryReport } from "@/components/reports/monthly-ancillary-report";
-import { requireRoles } from "@/lib/auth";
+import { requireNavItemAccess } from "@/lib/auth";
 import { getAncillarySummary } from "@/lib/services/ancillary";
 
 export default async function MonthlyAncillaryPage() {
-  await requireRoles(["admin", "manager"]);
+  await requireNavItemAccess("/reports/monthly-ancillary");
   const summary = await getAncillarySummary();
 
   return (

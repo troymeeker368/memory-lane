@@ -5,3 +5,8 @@ node_modules
 .DS_Store
 *.log
 .mock-state/
+
+*.tsbuildinfo
+.tmp-*
+test-results/
+playwright-report/

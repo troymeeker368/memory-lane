@@ -60,7 +60,7 @@ export const PERMISSION_MODULES: PermissionModuleKey[] = [
   "user-management"
 ];
 
-type PermissionAction = keyof ModulePermission;
+export type PermissionAction = keyof ModulePermission;
 
 function permission(canView: boolean, canCreate: boolean, canEdit: boolean, canAdmin: boolean): ModulePermission {
   return { canView, canCreate, canEdit, canAdmin };
@@ -194,6 +194,8 @@ export const NAV_ITEMS: AppNavItem[] = [
 
   { label: "Time Clock", href: "/time-card", group: "Time & HR", module: "time-card" },
   { label: "Punch History", href: "/time-card/punch-history", group: "Time & HR", module: "time-card" },
+  { label: "Forgotten Punch", href: "/time-card/forgotten-punch", group: "Time & HR", module: "time-card" },
+  { label: "Director Timecards", href: "/time-card/director", group: "Time & HR", module: "time-card", roles: ["manager", "director", "admin"] },
   { label: "PTO Request", href: PTO_EXTERNAL_URL, group: "Time & HR", module: "pto", external: true },
   { label: "User Management", href: "/time-hr/user-management", group: "Time & HR", module: "user-management" },
 
@@ -207,8 +209,56 @@ export const NAV_ITEMS: AppNavItem[] = [
   { label: "Blood Sugar", href: "/documentation/blood-sugar", group: "Health Unit", module: "health" },
   { label: "New Intake Assessment", href: "/health/assessment", group: "Health Unit", module: "health" },
   { label: "Physician Orders", href: "/health/physician-orders", group: "Health Unit", module: "health", roles: ["admin", "nurse"] },
-  { label: "Care Plans", href: "/health/care-plans", group: "Health Unit", module: "health" }
+  { label: "Care Plans", href: "/health/care-plans", group: "Health Unit", module: "health", roles: ["admin", "manager", "nurse"] }
 ];
+
+function normalizeNavHref(href: string): string {
+  const withoutHash = href.split("#", 1)[0] ?? href;
+  const withoutQuery = withoutHash.split("?", 1)[0] ?? withoutHash;
+  if (withoutQuery === "/") return "/";
+  return withoutQuery.endsWith("/") ? withoutQuery.slice(0, -1) : withoutQuery;
+}
+
+function isRoleAllowedForNavItem(role: CanonicalAppRole, item: AppNavItem): boolean {
+  if (!item.roles?.length) {
+    return true;
+  }
+
+  const allowedRoles = item.roles.map((allowed) => normalizeRoleKey(allowed));
+  return allowedRoles.includes(role);
+}
+
+function canAccessNavItemDefinition(
+  role: CanonicalAppRole,
+  item: AppNavItem,
+  permissions: PermissionSet,
+  action: PermissionAction
+): boolean {
+  if (!isRoleAllowedForNavItem(role, item)) {
+    return false;
+  }
+
+  return hasModulePermission(permissions, item.module, action);
+}
+
+export function getNavItemByHref(href: string): AppNavItem | null {
+  const normalizedHref = normalizeNavHref(href);
+  return NAV_ITEMS.find((item) => normalizeNavHref(item.href) === normalizedHref) ?? null;
+}
+
+export function canAccessNavItem(
+  role: string | AppRole,
+  href: string,
+  permissionsOverride?: PermissionSet,
+  action: PermissionAction = "canView"
+): boolean {
+  const item = getNavItemByHref(href);
+  if (!item) return false;
+
+  const normalizedRole = normalizeRoleKey(role);
+  const permissions = permissionsOverride ?? getDefaultPermissionSet(normalizedRole);
+  return canAccessNavItemDefinition(normalizedRole, item, permissions, action);
+}
 
 export function normalizeRoleKey(value: string | AppRole | null | undefined): CanonicalAppRole {
   if (!value) return "program-assistant";
@@ -324,13 +374,5 @@ export function navForRole(role: string | AppRole, permissionsOverride?: Permiss
   const normalizedRole = normalizeRoleKey(role);
   const permissions = permissionsOverride ?? getDefaultPermissionSet(normalizedRole);
 
-  return NAV_ITEMS.filter((item) => {
-    if (item.roles?.length) {
-      const allowedRoles = item.roles.map((allowed) => normalizeRoleKey(allowed));
-      if (!allowedRoles.includes(normalizedRole)) {
-        return false;
-      }
-    }
-    return hasModulePermission(permissions, item.module, "canView");
-  });
+  return NAV_ITEMS.filter((item) => canAccessNavItemDefinition(normalizedRole, item, permissions, "canView"));
 }

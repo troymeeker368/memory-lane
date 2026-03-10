@@ -3,7 +3,7 @@ import { unstable_noStore as noStore } from "next/cache";
 
 import { MemberDocumentationSummaryFilters } from "@/components/forms/member-documentation-summary-filters";
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireNavItemAccess } from "@/lib/auth";
 import { getMembers } from "@/lib/services/documentation";
 import { getMemberActivitySnapshot } from "@/lib/services/activity-snapshots";
 import { toEasternDate } from "@/lib/timezone";
@@ -81,7 +81,7 @@ export default async function MemberSummaryPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   noStore();
-  await requireRoles(["admin", "manager"]);
+  await requireNavItemAccess("/reports/member-summary");
 
   const params = await searchParams;
   const memberId = typeof params.memberId === "string" ? params.memberId : "";
@@ -94,6 +94,7 @@ export default async function MemberSummaryPage({
 
   const members = await getMembers();
   const snapshot = memberId ? await getMemberActivitySnapshot(memberId, resolvedRange.from, resolvedRange.to) : null;
+  const placeholderNotice = snapshot?.placeholderNotice;
   const timelineItems = snapshot
     ? [...snapshot.activities].sort((a, b) => {
         if (a.when === b.when) return a.type.localeCompare(b.type);
@@ -120,6 +121,18 @@ export default async function MemberSummaryPage({
 
       {!memberId ? (
         <Card><p className="text-sm text-muted">Choose a member to view their summary.</p></Card>
+      ) : null}
+
+      {memberId && !snapshot?.member ? (
+        <Card>
+          <p className="text-sm text-muted">The selected member summary could not be loaded from the current reporting dataset.</p>
+        </Card>
+      ) : null}
+
+      {placeholderNotice ? (
+        <Card>
+          <p className="text-sm text-amber-800">{placeholderNotice}</p>
+        </Card>
       ) : null}
 
       {snapshot?.member && snapshot.counts ? (

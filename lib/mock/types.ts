@@ -293,6 +293,85 @@ export interface MockTimePunch {
   note: string | null;
 }
 
+export interface MockDirectorPunch {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  timestamp: string;
+  type: "in" | "out";
+  source: "employee" | "director_correction" | "approved_forgotten_punch";
+  status: "active" | "voided";
+  note: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  linked_time_punch_id?: string | null;
+}
+
+export interface MockDailyTimecard {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  work_date: string;
+  first_in: string | null;
+  last_out: string | null;
+  raw_hours: number;
+  meal_deduction_hours: number;
+  worked_hours: number;
+  pto_hours: number;
+  overtime_hours: number;
+  total_paid_hours: number;
+  status: "pending" | "needs_review" | "approved" | "corrected";
+  director_note: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  pay_period_id: string;
+  has_exception: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MockForgottenPunchRequest {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  work_date: string;
+  request_type: "missing_in" | "missing_out" | "full_shift" | "edit_shift";
+  requested_in: string | null;
+  requested_out: string | null;
+  reason: string;
+  employee_note: string | null;
+  status: "submitted" | "approved" | "denied";
+  director_decision_note: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MockPtoEntry {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  work_date: string;
+  hours: number;
+  type: "vacation" | "sick" | "holiday" | "personal";
+  status: "pending" | "approved" | "denied";
+  note: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MockPayPeriod {
+  id: string;
+  label: string;
+  start_date: string;
+  end_date: string;
+  is_closed: boolean;
+}
+
 export interface MockDailyActivityLog {
   id: string;
   timestamp: string;
@@ -1128,6 +1207,11 @@ export interface MockDb {
   memberFiles: MockMemberFile[];
   attendanceRecords: MockAttendanceRecord[];
   timePunches: MockTimePunch[];
+  punches: MockDirectorPunch[];
+  dailyTimecards: MockDailyTimecard[];
+  forgottenPunchRequests: MockForgottenPunchRequest[];
+  ptoEntries: MockPtoEntry[];
+  payPeriods: MockPayPeriod[];
   dailyActivities: MockDailyActivityLog[];
   toiletLogs: MockToiletLog[];
   showerLogs: MockShowerLog[];

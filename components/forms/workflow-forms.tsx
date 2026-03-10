@@ -971,9 +971,10 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
             }
 
             setValidationErrors([]);
-            setStatus("Assessment saved.");
+            setStatus(res.warning ?? "Assessment saved. Intake Assessment PDF saved to member files.");
             if (res.assessmentId) {
-              window.location.href = `/health/assessment/${res.assessmentId}`;
+              const query = res.warning ? "?pdfSave=failed" : "";
+              window.location.href = `/health/assessment/${res.assessmentId}${query}`;
             }
           })
         }
@@ -993,7 +994,7 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
       ) : null}
 
       {status ? <p className="text-sm text-muted">{status}</p> : null}
-      <p className="text-xs text-muted">TODO: Add final print-ready intake assessment and PDF export once backend document storage is connected.</p>
+      <p className="text-xs text-muted">Saving creates an Intake Assessment PDF and adds it to member files.</p>
     </div>
   );
 }

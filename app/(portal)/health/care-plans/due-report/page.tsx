@@ -1,7 +1,7 @@
 ﻿import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireNavItemAccess } from "@/lib/auth";
 import { getCarePlanTracks, getCarePlans } from "@/lib/services/care-plans";
 import { getMembers } from "@/lib/services/documentation";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
@@ -23,7 +23,7 @@ export default async function CarePlanDueReportPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireRoles(["admin", "manager", "nurse"]);
+  await requireNavItemAccess("/health/care-plans");
 
   const params = await searchParams;
   const status = typeof params.status === "string" ? params.status : "All";

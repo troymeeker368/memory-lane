@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { FaceSheetActions } from "@/components/face-sheet/face-sheet-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireRoles } from "@/lib/auth";
@@ -51,16 +52,11 @@ export default async function MemberFaceSheetPage({
       </div>
 
       <header className="face-sheet-header border-b border-black/30 pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-xl font-bold uppercase tracking-wide">Member Face Sheet</p>
-            <p className="text-sm">Town Square Fort Mill</p>
-          </div>
-          <div className="text-right text-xs">
-            <p>Generated: {formatDateTime(faceSheet.generatedAt)} (ET)</p>
-            <p>Member ID: {faceSheet.member.id}</p>
-          </div>
-        </div>
+        <DocumentBrandHeader
+          title="Member Face Sheet"
+          className="border-b-0 pb-0"
+          metaLines={[`Generated: ${formatDateTime(faceSheet.generatedAt)} (ET)`]}
+        />
         <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[110px_1fr]">
           {faceSheet.member.photoUrl ? (
             <img src={faceSheet.member.photoUrl} alt={`${faceSheet.member.name} photo`} className="h-28 w-28 rounded border border-black/30 object-cover" />

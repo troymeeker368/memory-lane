@@ -1,10 +1,18 @@
 "use server";
 
 import { Buffer } from "node:buffer";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
+import {
+  DOCUMENT_CENTER_ADDRESS,
+  DOCUMENT_CENTER_LOGO_PUBLIC_PATH,
+  DOCUMENT_CENTER_NAME,
+  DOCUMENT_CENTER_PHONE
+} from "@/lib/services/document-branding";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { getMemberFaceSheet } from "@/lib/services/member-face-sheet";
 import { toEasternISO } from "@/lib/timezone";
@@ -22,6 +30,20 @@ function listOrDash(values: string[]) {
   return values.length > 0 ? values.join(", ") : "-";
 }
 
+function publicAssetPath(publicPath: string) {
+  const normalized = publicPath.startsWith("/") ? publicPath.slice(1) : publicPath;
+  return path.join(process.cwd(), "public", normalized);
+}
+
+async function loadCenterLogoImage(pdf: PDFDocument) {
+  try {
+    const bytes = await readFile(publicAssetPath(DOCUMENT_CENTER_LOGO_PUBLIC_PATH));
+    return await pdf.embedPng(bytes);
+  } catch {
+    return null;
+  }
+}
+
 async function buildFaceSheetPdf(memberId: string) {
   const faceSheet = getMemberFaceSheet(memberId);
   if (!faceSheet) {
@@ -32,10 +54,65 @@ async function buildFaceSheetPdf(memberId: string) {
   const page = pdf.addPage([612, 792]);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
+  const logo = await loadCenterLogoImage(pdf);
   const brand = rgb(0.106, 0.243, 0.576);
 
-  let y = 760;
+  const pageWidth = page.getWidth();
   const left = 48;
+  let y = 760;
+
+  if (logo) {
+    const logoHeight = 38;
+    const scaled = logo.scale(logoHeight / logo.height);
+    const logoWidth = Math.min(scaled.width, 160);
+    page.drawImage(logo, {
+      x: left,
+      y: y - logoHeight + 4,
+      width: logoWidth,
+      height: logoHeight
+    });
+  }
+
+  const centerX = pageWidth / 2;
+  page.drawText(DOCUMENT_CENTER_NAME, {
+    x: centerX - bold.widthOfTextAtSize(DOCUMENT_CENTER_NAME, 14) / 2,
+    y,
+    size: 14,
+    font: bold,
+    color: brand
+  });
+  y -= 14;
+  page.drawText(DOCUMENT_CENTER_ADDRESS, {
+    x: centerX - regular.widthOfTextAtSize(DOCUMENT_CENTER_ADDRESS, 9.5) / 2,
+    y,
+    size: 9.5,
+    font: regular,
+    color: rgb(0.1, 0.1, 0.1)
+  });
+  y -= 12;
+  page.drawText(DOCUMENT_CENTER_PHONE, {
+    x: centerX - regular.widthOfTextAtSize(DOCUMENT_CENTER_PHONE, 9.5) / 2,
+    y,
+    size: 9.5,
+    font: regular,
+    color: rgb(0.1, 0.1, 0.1)
+  });
+
+  const generated = `Generated: ${faceSheet.generatedAt} ET`;
+  page.drawText(generated, {
+    x: pageWidth - regular.widthOfTextAtSize(generated, 8.5) - left,
+    y: 760,
+    size: 8.5,
+    font: regular,
+    color: rgb(0.1, 0.1, 0.1)
+  });
+  page.drawLine({
+    start: { x: left, y: 712 },
+    end: { x: pageWidth - left, y: 712 },
+    color: rgb(0.75, 0.78, 0.84),
+    thickness: 1
+  });
+  y = 694;
 
   const write = (label: string, value: string, options?: { heading?: boolean }) => {
     if (options?.heading) {
@@ -48,8 +125,7 @@ async function buildFaceSheetPdf(memberId: string) {
   };
 
   write("Member Face Sheet", "", { heading: true });
-  write("Facility", "Town Square Fort Mill");
-  write("Generated", `${faceSheet.generatedAt} ET`);
+  write("Facility", DOCUMENT_CENTER_NAME);
   y -= 6;
 
   write("Identification", "", { heading: true });

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireNavItemAccess } from "@/lib/auth";
 import { CARE_PLAN_LONG_TERM_LABEL, CARE_PLAN_SHORT_TERM_LABEL, getCarePlanVersionById, getGoalListItems } from "@/lib/services/care-plans";
 import { formatDate } from "@/lib/utils";
 
@@ -22,7 +22,7 @@ export default async function CarePlanVersionDetailPage({
 }: {
   params: Promise<{ carePlanId: string; versionId: string }>;
 }) {
-  await requireRoles(["admin", "manager", "nurse"]);
+  await requireNavItemAccess("/health/care-plans");
   const { carePlanId, versionId } = await params;
   const detail = getCarePlanVersionById(carePlanId, versionId);
   if (!detail) notFound();
@@ -101,4 +101,3 @@ export default async function CarePlanVersionDetailPage({
     </div>
   );
 }
-

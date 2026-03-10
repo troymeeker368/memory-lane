@@ -54,6 +54,7 @@ export default async function StaffActivitySnapshotPage({
 
   const snapshot = await getStaffActivitySnapshot(routeParams.staffSlug, from, to);
   if (!snapshot.staff) notFound();
+  const placeholderNotice = snapshot.placeholderNotice;
 
   const activeStaffSlug = staffNameToSlug(snapshot.staff.full_name);
 
@@ -100,6 +101,12 @@ export default async function StaffActivitySnapshotPage({
         <Card><CardTitle>Media / Charges</CardTitle><p className="text-sm">Photos {snapshot.counts.photoUpload}</p></Card>
         <Card><CardTitle>Time / Sales</CardTitle><p className="text-sm">Punches {snapshot.counts.timePunches} | Lead Acts {snapshot.counts.leadActivities} | Partner Acts {snapshot.counts.partnerActivities}</p></Card>
       </section>
+
+      {placeholderNotice ? (
+        <Card>
+          <p className="text-sm text-amber-800">{placeholderNotice}</p>
+        </Card>
+      ) : null}
 
       {LOG_TABLES.map((table) => {
         const rows = snapshot.activities.filter((activity) => activity.type === table.key);

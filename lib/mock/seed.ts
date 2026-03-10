@@ -42,8 +42,11 @@ import type {
   MockCenterClosure,
   MockBusStopDirectory,
   MockBloodSugarLog,
+  MockDailyTimecard,
   MockDailyActivityLog,
   MockDb,
+  MockDirectorPunch,
+  MockForgottenPunchRequest,
   MockMemberAttendanceSchedule,
   MockMemberAllergy,
   MockMemberCommandCenter,
@@ -55,6 +58,8 @@ import type {
   MockMemberHealthProfile,
   MockMemberMedication,
   MockMemberNote,
+  MockPayPeriod,
+  MockPtoEntry,
   MockMemberProvider,
   MockMemberBillingSetting,
   MockPayor,
@@ -708,6 +713,51 @@ function buildTimePunches(staff: MockStaff[]) {
   }
 
   return punches.slice(0, count);
+}
+
+function addDaysDateOnly(dateOnly: string, days: number) {
+  const d = new Date(`${dateOnly}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function buildPayPeriods(): MockPayPeriod[] {
+  const current = getCurrentPayPeriod();
+  const rows: MockPayPeriod[] = [];
+
+  for (let i = -6; i <= 6; i += 1) {
+    const startDate = addDaysDateOnly(current.startDate, i * 14);
+    const endDate = addDaysDateOnly(startDate, 13);
+    rows.push({
+      id: `pay-period-${startDate}`,
+      label: `${startDate} to ${endDate}`,
+      start_date: startDate,
+      end_date: endDate,
+      is_closed: i < -1
+    });
+  }
+
+  return rows.sort((left, right) => (left.start_date > right.start_date ? -1 : 1));
+}
+
+function buildDirectorPunches(timePunches: MockTimePunch[]): MockDirectorPunch[] {
+  return timePunches.map((row) => ({
+    id: `director-punch-${row.id}`,
+    employee_id: row.staff_user_id,
+    employee_name: row.staff_name,
+    timestamp: row.punch_at,
+    type: row.punch_type,
+    source: "employee",
+    status: "active",
+    note: row.note ?? null,
+    created_by: row.staff_name,
+    created_at: row.punch_at,
+    updated_at: row.punch_at,
+    linked_time_punch_id: row.id
+  }));
 }
 
 function stageForLead(index: number) {
@@ -2145,6 +2195,11 @@ export function buildSeededMockDb(): MockDb {
   const assessments = buildAssessments(staff, members);
   const assessmentResponses = buildAssessmentResponses(assessments);
   const timePunches = buildTimePunches(staff);
+  const payPeriods = buildPayPeriods();
+  const punches = buildDirectorPunches(timePunches);
+  const dailyTimecards: MockDailyTimecard[] = [];
+  const forgottenPunchRequests: MockForgottenPunchRequest[] = [];
+  const ptoEntries: MockPtoEntry[] = [];
   const leadStageHistory = buildLeadStageHistory(sales.leads);
   const auditLogs = buildAuditLogs();
   const memberHealthArtifacts = buildMemberHealthArtifacts(members, assessments, staff);
@@ -2252,6 +2307,11 @@ export function buildSeededMockDb(): MockDb {
     memberContacts: memberCommandCenterArtifacts.memberContacts,
     memberFiles: memberCommandCenterArtifacts.memberFiles,
     timePunches,
+    punches,
+    dailyTimecards,
+    forgottenPunchRequests,
+    ptoEntries,
+    payPeriods,
     dailyActivities: operational.dailyActivities,
     toiletLogs: operational.toiletLogs,
     showerLogs: operational.showerLogs,

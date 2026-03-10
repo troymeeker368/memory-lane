@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { requireRoles } from "@/lib/auth";
+import { requireNavItemAccess } from "@/lib/auth";
 import { getLatestCarePlanForMember } from "@/lib/services/care-plans";
 
 export default async function LatestMemberCarePlanPage({
@@ -8,7 +8,7 @@ export default async function LatestMemberCarePlanPage({
 }: {
   params: Promise<{ memberId: string }>;
 }) {
-  await requireRoles(["admin", "manager", "nurse"]);
+  await requireNavItemAccess("/health/care-plans");
   const { memberId } = await params;
 
   const latest = getLatestCarePlanForMember(memberId);

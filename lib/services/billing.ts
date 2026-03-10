@@ -1062,13 +1062,31 @@ function buildPreviewRowsForMonth(input: { billingMonth: string; batchType: (typ
   const db = getMockDb();
   const invoiceMonthStart = startOfMonth(input.billingMonth);
   const centerSetting = getCenterBillingSettingForGeneration(invoiceMonthStart);
+  const payorMap = new Map(db.payors.map((row) => [row.id, row] as const));
+  const memberSettingCache = new Map<string, ReturnType<typeof getActiveMemberBillingSetting>>();
+  const scheduleTemplateCache = new Map<string, ReturnType<typeof getActiveBillingScheduleTemplate>>();
+
+  const getCachedMemberSetting = (memberId: string, dateOnly: string) => {
+    const key = `${memberId}|${normalizeDateOnly(dateOnly)}`;
+    if (!memberSettingCache.has(key)) {
+      memberSettingCache.set(key, getActiveMemberBillingSetting(memberId, dateOnly));
+    }
+    return memberSettingCache.get(key) ?? null;
+  };
+
+  const getCachedScheduleTemplate = (memberId: string, dateOnly: string) => {
+    const key = `${memberId}|${normalizeDateOnly(dateOnly)}`;
+    if (!scheduleTemplateCache.has(key)) {
+      scheduleTemplateCache.set(key, getActiveBillingScheduleTemplate(memberId, dateOnly));
+    }
+    return scheduleTemplateCache.get(key) ?? null;
+  };
 
   const members = db.members.filter((member) => member.status === "active");
-  const payorMap = payorById();
   const rows: BillingPreviewRow[] = [];
 
   members.forEach((member) => {
-    const modeSetting = getActiveMemberBillingSetting(member.id, invoiceMonthStart);
+    const modeSetting = getCachedMemberSetting(member.id, invoiceMonthStart);
     if (!modeSetting || !modeSetting.active) return;
     const mode = getEffectiveBillingMode({ memberSetting: modeSetting, centerSetting });
     if (!shouldProcessModeInBatch({ mode, batchType: input.batchType })) return;
@@ -1078,8 +1096,8 @@ function buildPreviewRowsForMonth(input: { billingMonth: string; batchType: (typ
       invoiceMonthStart
     });
     const effectiveDate = periods.baseRange.start;
-    const memberSetting = getActiveMemberBillingSetting(member.id, effectiveDate) ?? modeSetting;
-    const schedule = getActiveBillingScheduleTemplate(member.id, effectiveDate);
+    const memberSetting = getCachedMemberSetting(member.id, effectiveDate) ?? modeSetting;
+    const schedule = getCachedScheduleTemplate(member.id, effectiveDate);
     if (!memberSetting || !memberSetting.active || !schedule || !schedule.active) return;
 
     const payor = memberSetting.payor_id ? payorMap.get(memberSetting.payor_id) ?? null : null;
@@ -1188,6 +1206,25 @@ export function generateBillingBatch(input: BatchGenerationInput) {
   const invoiceMonthStart = startOfMonth(input.billingMonth);
   const batchType = input.batchType ?? "Mixed";
   const runDate = normalizeDateOnly(input.runDate, toEasternDate());
+  const payorByIdMap = new Map(db.payors.map((row) => [row.id, row] as const));
+  const memberSettingCache = new Map<string, ReturnType<typeof getActiveMemberBillingSetting>>();
+  const scheduleTemplateCache = new Map<string, ReturnType<typeof getActiveBillingScheduleTemplate>>();
+
+  const getCachedMemberSetting = (memberId: string, dateOnly: string) => {
+    const key = `${memberId}|${normalizeDateOnly(dateOnly)}`;
+    if (!memberSettingCache.has(key)) {
+      memberSettingCache.set(key, getActiveMemberBillingSetting(memberId, dateOnly));
+    }
+    return memberSettingCache.get(key) ?? null;
+  };
+
+  const getCachedScheduleTemplate = (memberId: string, dateOnly: string) => {
+    const key = `${memberId}|${normalizeDateOnly(dateOnly)}`;
+    if (!scheduleTemplateCache.has(key)) {
+      scheduleTemplateCache.set(key, getActiveBillingScheduleTemplate(memberId, dateOnly));
+    }
+    return scheduleTemplateCache.get(key) ?? null;
+  };
 
   const centerSetting = getCenterBillingSettingForGeneration(invoiceMonthStart);
   if (!centerSetting) {
@@ -1232,7 +1269,7 @@ export function generateBillingBatch(input: BatchGenerationInput) {
   let invoiceSequence = 0;
 
   members.forEach((member) => {
-    const modeSetting = getActiveMemberBillingSetting(member.id, invoiceMonthStart);
+    const modeSetting = getCachedMemberSetting(member.id, invoiceMonthStart);
     if (!modeSetting || !modeSetting.active) return;
     const mode = getEffectiveBillingMode({ memberSetting: modeSetting, centerSetting });
     if (!shouldProcessModeInBatch({ mode, batchType })) return;
@@ -1242,11 +1279,11 @@ export function generateBillingBatch(input: BatchGenerationInput) {
       invoiceMonthStart
     });
     const effectiveDate = periods.baseRange.start;
-    const memberSetting = getActiveMemberBillingSetting(member.id, effectiveDate) ?? modeSetting;
-    const schedule = getActiveBillingScheduleTemplate(member.id, effectiveDate);
+    const memberSetting = getCachedMemberSetting(member.id, effectiveDate) ?? modeSetting;
+    const schedule = getCachedScheduleTemplate(member.id, effectiveDate);
     if (!memberSetting || !memberSetting.active || !schedule || !schedule.active) return;
 
-    const payor = memberSetting.payor_id ? db.payors.find((row) => row.id === memberSetting.payor_id) ?? null : null;
+    const payor = memberSetting.payor_id ? payorByIdMap.get(memberSetting.payor_id) ?? null : null;
     if (!payor || payor.status !== "active") return;
 
     const monthlyBasis = mode === "Monthly" ? getMonthlyBillingBasis(memberSetting) : null;
@@ -1390,12 +1427,7 @@ export function generateBillingBatch(input: BatchGenerationInput) {
       });
     });
 
-    const lineTotal = toAmount(
-      getMockDb()
-        .billingInvoiceLines
-        .filter((line) => line.invoice_id === invoice.id)
-        .reduce((sum, line) => sum + line.amount, 0)
-    );
+    const lineTotal = subtotal;
     if (lineTotal !== invoice.total_amount) {
       updateMockRecord("billingInvoices", invoice.id, { total_amount: lineTotal });
     }
@@ -1427,7 +1459,27 @@ export function generateBillingBatch(input: BatchGenerationInput) {
   };
 }
 
-function resolveInvoiceSourceRows(invoiceId: string) {
+function buildInvoiceSourceLineIndex(lines: ReturnType<typeof getMockDb>["billingInvoiceLines"]) {
+  const index = new Map<string, Array<(typeof lines)[number]>>();
+  lines.forEach((line) => {
+    if (!line.source_table || !line.source_record_id) return;
+    const existing = index.get(line.invoice_id);
+    if (existing) {
+      existing.push(line);
+      return;
+    }
+    index.set(line.invoice_id, [line]);
+  });
+  return index;
+}
+
+function resolveInvoiceSourceRows(
+  invoiceId: string,
+  sourceLineIndex?: Map<string, Array<ReturnType<typeof getMockDb>["billingInvoiceLines"][number]>>
+) {
+  if (sourceLineIndex) {
+    return sourceLineIndex.get(invoiceId) ?? [];
+  }
   const db = getMockDb();
   return db.billingInvoiceLines
     .filter((line) => line.invoice_id === invoiceId)
@@ -1484,6 +1536,7 @@ export function finalizeBillingBatch(input: FinalizeBatchInput) {
   const batch = db.billingBatches.find((row) => row.id === input.billingBatchId) ?? null;
   if (!batch) return { ok: false as const, error: "Billing batch not found." };
   if (batch.batch_status === "Closed") return { ok: false as const, error: "Closed batches cannot be finalized." };
+  const sourceLineIndex = buildInvoiceSourceLineIndex(db.billingInvoiceLines);
 
   const nowIso = toEasternISO();
   const completionDate = toEasternDate();
@@ -1505,7 +1558,7 @@ export function finalizeBillingBatch(input: FinalizeBatchInput) {
         updated_at: nowIso
       });
 
-      resolveInvoiceSourceRows(invoice.id).forEach((line) => {
+      resolveInvoiceSourceRows(invoice.id, sourceLineIndex).forEach((line) => {
         if (!line.source_table || !line.source_record_id) return;
         if (line.source_table === "transportationLogs") {
           updateMockRecord("transportationLogs", line.source_record_id, { billing_status: "Billed", invoice_id: invoice.id });
@@ -1521,7 +1574,7 @@ export function finalizeBillingBatch(input: FinalizeBatchInput) {
       ensureInvoiceCoverageRecords(invoice.id);
     });
 
-  const refreshedInvoices = getMockDb().billingInvoices.filter((row) => row.billing_batch_id === batch.id);
+  const refreshedInvoices = db.billingInvoices.filter((row) => row.billing_batch_id === batch.id);
   const batchTotal = toAmount(refreshedInvoices.reduce((sum, row) => sum + row.total_amount, 0));
 
   updateMockRecord("billingBatches", batch.id, {
@@ -1551,6 +1604,7 @@ export function reopenBillingBatch(input: ReopenBatchInput) {
   if (batch.batch_status === "Draft") {
     return { ok: false as const, error: "Batch is already in Draft status." };
   }
+  const sourceLineIndex = buildInvoiceSourceLineIndex(db.billingInvoiceLines);
 
   const invoices = db.billingInvoices.filter((row) => row.billing_batch_id === batch.id);
   if (invoices.length === 0) {
@@ -1561,7 +1615,7 @@ export function reopenBillingBatch(input: ReopenBatchInput) {
   const today = toEasternDate();
 
   invoices.forEach((invoice) => {
-    resolveInvoiceSourceRows(invoice.id).forEach((line) => {
+    resolveInvoiceSourceRows(invoice.id, sourceLineIndex).forEach((line) => {
       if (!line.source_table || !line.source_record_id) return;
       if (line.source_table === "transportationLogs") {
         updateMockRecord("transportationLogs", line.source_record_id, { billing_status: "Unbilled", invoice_id: null });
@@ -1583,7 +1637,7 @@ export function reopenBillingBatch(input: ReopenBatchInput) {
     });
   });
 
-  const refreshedInvoices = getMockDb().billingInvoices.filter((row) => row.billing_batch_id === batch.id);
+  const refreshedInvoices = db.billingInvoices.filter((row) => row.billing_batch_id === batch.id);
   const batchTotal = toAmount(refreshedInvoices.reduce((sum, row) => sum + row.total_amount, 0));
   updateMockRecord("billingBatches", batch.id, {
     batch_status: "Draft",
@@ -2065,9 +2119,9 @@ export function getCustomInvoices(input?: { status?: "Draft" | "Finalized" | "Al
 
 export function getBillingBatchReviewRows(billingBatchId: string) {
   const db = getMockDb();
-  const memberNames = fullNameByMemberId();
-  const payorNames = payorNameById();
-  const payors = payorById();
+  const memberNames = new Map(db.members.map((row) => [row.id, row.display_name] as const));
+  const payorNames = new Map(db.payors.map((row) => [row.id, row.payor_name] as const));
+  const payors = new Map(db.payors.map((row) => [row.id, row] as const));
 
   return db.billingInvoices
     .filter((invoice) => invoice.billing_batch_id === billingBatchId)
@@ -2099,12 +2153,21 @@ export function getBillingBatchReviewRows(billingBatchId: string) {
 export function getVariableChargesQueue(input: { month: string }) {
   const db = getMockDb();
   const range = toMonthRange(input.month);
+  const memberNames = new Map(db.members.map((member) => [member.id, member.display_name] as const));
+  const memberSettingCache = new Map<string, ReturnType<typeof getActiveMemberBillingSetting>>();
+  const getCachedMemberSetting = (memberId: string, dateOnly: string) => {
+    const key = `${memberId}|${normalizeDateOnly(dateOnly)}`;
+    if (!memberSettingCache.has(key)) {
+      memberSettingCache.set(key, getActiveMemberBillingSetting(memberId, dateOnly));
+    }
+    return memberSettingCache.get(key) ?? null;
+  };
 
   const transport = db.transportationLogs
     .filter((row) => isWithin(row.service_date, range))
     .map((row) => {
       const serviceDate = normalizeDateOnly(row.service_date, range.start);
-      const memberSetting = getActiveMemberBillingSetting(row.member_id, serviceDate);
+      const memberSetting = getCachedMemberSetting(row.member_id, serviceDate);
       const transportStatus = resolveTransportationBillingStatus({
         memberId: row.member_id,
         memberSetting: memberSetting ?? null
@@ -2115,7 +2178,7 @@ export function getVariableChargesQueue(input: { month: string }) {
         type: "Transportation" as const,
         id: row.id,
         memberId: row.member_id,
-        memberName: db.members.find((member) => member.id === row.member_id)?.display_name ?? "Unknown Member",
+        memberName: memberNames.get(row.member_id) ?? "Unknown Member",
         chargeDate: row.service_date,
         description: `Transportation ${row.trip_type ?? "OneWay"}`,
         amount: toAmount(row.total_amount ?? 0),
@@ -2134,14 +2197,14 @@ export function getVariableChargesQueue(input: { month: string }) {
     .filter((row) => isWithin(ancillaryChargeDate(row), range))
     .map((row) => {
       const chargeDate = ancillaryChargeDate(row);
-      const memberSetting = getActiveMemberBillingSetting(row.member_id, chargeDate);
+      const memberSetting = getCachedMemberSetting(row.member_id, chargeDate);
       const autoExcluded = memberSetting?.bill_ancillary_arrears === false;
       const billable = row.billable !== false && !autoExcluded;
       return {
         type: "Ancillary" as const,
         id: row.id,
         memberId: row.member_id,
-        memberName: db.members.find((member) => member.id === row.member_id)?.display_name ?? "Unknown Member",
+        memberName: memberNames.get(row.member_id) ?? "Unknown Member",
         chargeDate,
         description: ancillaryChargeType(row),
         amount: ancillaryTotalAmount(row),
@@ -2157,7 +2220,7 @@ export function getVariableChargesQueue(input: { month: string }) {
       type: "Adjustment" as const,
       id: row.id,
       memberId: row.member_id,
-      memberName: db.members.find((member) => member.id === row.member_id)?.display_name ?? "Unknown Member",
+      memberName: memberNames.get(row.member_id) ?? "Unknown Member",
       chargeDate: row.adjustment_date,
       description: row.description,
       amount: toAmount(row.amount),
@@ -2182,10 +2245,193 @@ function escapeCsv(value: string | number | null | undefined) {
   return stringValue;
 }
 
-function buildQuickBooksCsv(batchId: string) {
+function formatTransportTripTypeLabel(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "Trips";
+  const normalized = raw.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (normalized === "oneway") return "One-Way";
+  if (normalized === "roundtrip") return "Round Trip";
+  return raw
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+interface QuickBooksExportLine {
+  lineType: ReturnType<typeof getMockDb>["billingInvoiceLines"][number]["line_type"];
+  description: string;
+  quantity: number;
+  unitRate: number;
+  amount: number;
+  servicePeriodStart: string | null;
+  servicePeriodEnd: string | null;
+}
+
+function toQuickBooksLineQuantity(value: number) {
+  if (Number.isFinite(value) && value > 0) return Number(value);
+  return 1;
+}
+
+function mapRawQuickBooksLine(line: ReturnType<typeof getMockDb>["billingInvoiceLines"][number]): QuickBooksExportLine {
+  return {
+    lineType: line.line_type,
+    description: line.description,
+    quantity: line.quantity,
+    unitRate: toAmount(line.unit_rate),
+    amount: toAmount(line.amount),
+    servicePeriodStart: line.service_period_start,
+    servicePeriodEnd: line.service_period_end
+  };
+}
+
+function deriveTransportationTripType(input: {
+  line: ReturnType<typeof getMockDb>["billingInvoiceLines"][number];
+  transportById: Map<string, ReturnType<typeof getMockDb>["transportationLogs"][number]>;
+}) {
+  if (input.line.source_table === "transportationLogs" && input.line.source_record_id) {
+    const source = input.transportById.get(input.line.source_record_id);
+    if (source) return formatTransportTripTypeLabel(source.trip_type);
+  }
+  const match = String(input.line.description ?? "").match(/\(([^)]+)\)\s*$/);
+  return formatTransportTripTypeLabel(match?.[1]);
+}
+
+function deriveAncillaryChargeType(input: {
+  line: ReturnType<typeof getMockDb>["billingInvoiceLines"][number];
+  ancillaryById: Map<string, ReturnType<typeof getMockDb>["ancillaryLogs"][number]>;
+}) {
+  if (input.line.source_table === "ancillaryLogs" && input.line.source_record_id) {
+    const source = input.ancillaryById.get(input.line.source_record_id);
+    if (source) return ancillaryChargeType(source);
+  }
+  const raw = String(input.line.description ?? "").trim();
+  if (!raw) return "Ancillary Charge";
+  const match = raw.match(/^(.*?)\s*-\s*\d{4}-\d{2}-\d{2}$/);
+  const parsed = match?.[1]?.trim() ?? raw;
+  return parsed.length > 0 ? parsed : "Ancillary Charge";
+}
+
+function summarizeQuickBooksInvoiceLines(input: {
+  invoice: ReturnType<typeof getMockDb>["billingInvoices"][number];
+  invoiceLines: ReturnType<typeof getMockDb>["billingInvoiceLines"];
+  transportById: Map<string, ReturnType<typeof getMockDb>["transportationLogs"][number]>;
+  ancillaryById: Map<string, ReturnType<typeof getMockDb>["ancillaryLogs"][number]>;
+}) {
+  const baseLines = input.invoiceLines.filter((line) => line.line_type === "BaseProgram");
+  const transportationLines = input.invoiceLines.filter((line) => line.line_type === "Transportation");
+  const ancillaryLines = input.invoiceLines.filter((line) => line.line_type === "Ancillary");
+  const otherLines = input.invoiceLines.filter(
+    (line) => line.line_type !== "BaseProgram" && line.line_type !== "Transportation" && line.line_type !== "Ancillary"
+  );
+  const summarized: QuickBooksExportLine[] = [];
+
+  if (baseLines.length > 0) {
+    const baseAmount = toAmount(baseLines.reduce((sum, line) => sum + line.amount, 0));
+    const baseQuantity =
+      input.invoice.base_program_billed_days > 0
+        ? input.invoice.base_program_billed_days
+        : toQuickBooksLineQuantity(baseLines.reduce((sum, line) => sum + line.quantity, 0));
+    const baseDescription = `Adult Day Services - ${input.invoice.base_period_start} to ${input.invoice.base_period_end}`;
+    summarized.push({
+      lineType: "BaseProgram",
+      description: baseDescription,
+      quantity: baseQuantity,
+      unitRate: baseQuantity > 0 ? toAmount(baseAmount / baseQuantity) : baseAmount,
+      amount: baseAmount,
+      servicePeriodStart: input.invoice.base_period_start,
+      servicePeriodEnd: input.invoice.base_period_end
+    });
+  }
+
+  if (transportationLines.length > 0) {
+    const transportGroups = new Map<string, { tripTypeLabel: string; quantity: number; amount: number }>();
+    transportationLines.forEach((line) => {
+      const tripTypeLabel = deriveTransportationTripType({
+        line,
+        transportById: input.transportById
+      });
+      const key = tripTypeLabel.toLowerCase();
+      const existing = transportGroups.get(key) ?? { tripTypeLabel, quantity: 0, amount: 0 };
+      existing.quantity += toQuickBooksLineQuantity(line.quantity);
+      existing.amount = toAmount(existing.amount + line.amount);
+      transportGroups.set(key, existing);
+    });
+    const preferredOrder: Record<string, number> = {
+      "one-way": 0,
+      "round trip": 1,
+      trips: 2
+    };
+    [...transportGroups.values()]
+      .sort((left, right) => {
+        const leftRank = preferredOrder[left.tripTypeLabel.toLowerCase()] ?? 99;
+        const rightRank = preferredOrder[right.tripTypeLabel.toLowerCase()] ?? 99;
+        if (leftRank !== rightRank) return leftRank - rightRank;
+        return left.tripTypeLabel.localeCompare(right.tripTypeLabel, undefined, { sensitivity: "base" });
+      })
+      .forEach((group) => {
+        const quantity = toAmount(group.quantity);
+        const amount = toAmount(group.amount);
+        summarized.push({
+          lineType: "Transportation",
+          description: `Transportation ${group.tripTypeLabel} - ${input.invoice.variable_charge_period_start} to ${input.invoice.variable_charge_period_end}`,
+          quantity,
+          unitRate: quantity > 0 ? toAmount(amount / quantity) : amount,
+          amount,
+          servicePeriodStart: input.invoice.variable_charge_period_start,
+          servicePeriodEnd: input.invoice.variable_charge_period_end
+        });
+      });
+  }
+
+  if (ancillaryLines.length > 0) {
+    const ancillaryGroups = new Map<string, { chargeTypeLabel: string; quantity: number; amount: number }>();
+    ancillaryLines.forEach((line) => {
+      const chargeTypeLabel = deriveAncillaryChargeType({
+        line,
+        ancillaryById: input.ancillaryById
+      });
+      const key = chargeTypeLabel.toLowerCase();
+      const existing = ancillaryGroups.get(key) ?? { chargeTypeLabel, quantity: 0, amount: 0 };
+      existing.quantity += toQuickBooksLineQuantity(line.quantity);
+      existing.amount = toAmount(existing.amount + line.amount);
+      ancillaryGroups.set(key, existing);
+    });
+    [...ancillaryGroups.values()]
+      .sort((left, right) => left.chargeTypeLabel.localeCompare(right.chargeTypeLabel, undefined, { sensitivity: "base" }))
+      .forEach((group) => {
+        const quantity = toAmount(group.quantity);
+        const amount = toAmount(group.amount);
+        summarized.push({
+          lineType: "Ancillary",
+          description: `${group.chargeTypeLabel} - ${input.invoice.variable_charge_period_start} to ${input.invoice.variable_charge_period_end}`,
+          quantity,
+          unitRate: quantity > 0 ? toAmount(amount / quantity) : amount,
+          amount,
+          servicePeriodStart: input.invoice.variable_charge_period_start,
+          servicePeriodEnd: input.invoice.variable_charge_period_end
+        });
+      });
+  }
+
+  otherLines
+    .slice()
+    .sort((left, right) => left.line_order - right.line_order)
+    .forEach((line) => {
+      summarized.push(mapRawQuickBooksLine(line));
+    });
+
+  return summarized;
+}
+
+function buildQuickBooksCsv(batchId: string, options?: { detailed?: boolean }) {
   const db = getMockDb();
   const payors = payorById();
   const memberNames = fullNameByMemberId();
+  const detailed = options?.detailed === true;
+  const transportById = new Map(db.transportationLogs.map((row) => [row.id, row] as const));
+  const ancillaryById = new Map(db.ancillaryLogs.map((row) => [row.id, row] as const));
   const invoices = db.billingInvoices.filter((row) => row.billing_batch_id === batchId);
   const lines = [
     [
@@ -2210,8 +2456,19 @@ function buildQuickBooksCsv(batchId: string) {
     ].join(",")
   ];
   invoices.forEach((invoice) => {
-    db.billingInvoiceLines
+    const invoiceLines = db.billingInvoiceLines
       .filter((line) => line.invoice_id === invoice.id)
+      .sort((left, right) => left.line_order - right.line_order);
+    const quickBooksLines = detailed
+      ? invoiceLines.map((line) => mapRawQuickBooksLine(line))
+      : summarizeQuickBooksInvoiceLines({
+          invoice,
+          invoiceLines,
+          transportById,
+          ancillaryById
+        });
+
+    quickBooksLines
       .forEach((line) => {
         lines.push(
           [
@@ -2220,13 +2477,13 @@ function buildQuickBooksCsv(batchId: string) {
             escapeCsv(invoice.due_date),
             escapeCsv(invoice.payor_id ? payors.get(invoice.payor_id)?.payor_name ?? "" : ""),
             escapeCsv(memberNames.get(invoice.member_id) ?? ""),
-            escapeCsv(line.line_type),
+            escapeCsv(line.lineType),
             escapeCsv(line.description),
             escapeCsv(line.quantity),
-            escapeCsv(line.unit_rate.toFixed(2)),
+            escapeCsv(line.unitRate.toFixed(2)),
             escapeCsv(line.amount.toFixed(2)),
-            escapeCsv(line.service_period_start),
-            escapeCsv(line.service_period_end),
+            escapeCsv(line.servicePeriodStart),
+            escapeCsv(line.servicePeriodEnd),
             escapeCsv(invoice.invoice_source),
             escapeCsv(invoice.billing_mode_snapshot),
             escapeCsv(invoice.base_period_start),
@@ -2347,6 +2604,7 @@ function buildInvoiceSummaryCsv(batchId: string) {
 export function createBillingExport(input: {
   billingBatchId: string;
   exportType: (typeof BILLING_EXPORT_TYPES)[number];
+  quickbooksDetailLevel?: "Summary" | "Detailed";
   generatedBy: string;
 }) {
   const db = getMockDb();
@@ -2356,15 +2614,18 @@ export function createBillingExport(input: {
     return { ok: false as const, error: "Only finalized/exported batches can be exported." };
   }
 
+  const quickbooksDetailed = input.quickbooksDetailLevel === "Detailed";
   const csv =
     input.exportType === "QuickBooksCSV"
-      ? buildQuickBooksCsv(input.billingBatchId)
+      ? buildQuickBooksCsv(input.billingBatchId, { detailed: quickbooksDetailed })
       : input.exportType === "InternalReviewCSV"
         ? buildInternalReviewCsv(input.billingBatchId)
         : buildInvoiceSummaryCsv(input.billingBatchId);
   const prefix =
     input.exportType === "QuickBooksCSV"
-      ? "quickbooks-friendly"
+      ? quickbooksDetailed
+        ? "quickbooks-friendly-detailed"
+        : "quickbooks-friendly"
       : input.exportType === "InternalReviewCSV"
         ? "internal-review"
         : "invoice-summary";
@@ -2378,7 +2639,10 @@ export function createBillingExport(input: {
     generated_by: input.generatedBy,
     file_name: fileName,
     status: "Success",
-    notes: `Export generated for ${batch.billing_month}.`,
+    notes:
+      input.exportType === "QuickBooksCSV" && quickbooksDetailed
+        ? `Export generated for ${batch.billing_month} (detailed QuickBooks lines).`
+        : `Export generated for ${batch.billing_month}.`,
     file_data_url: fileDataUrl
   });
 

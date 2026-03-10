@@ -334,11 +334,14 @@ const salesLeadSchema = z
     lostReasonOther: optionalString,
     closedDate: optionalString,
     duplicateDecision: z.enum(["keep-separate", "merge"]).optional().or(z.literal("")),
-    mergeTargetLeadId: optionalString
+    mergeTargetLeadId: optionalString,
+    allowUnlinkedReferral: z.boolean().optional(),
+    skipDuplicateReview: z.boolean().optional()
   })
   .superRefine((val, ctx) => {
     const stage = canonicalLeadStage(val.stage);
     const status = stage === "Closed - Lost" ? "Lost" : canonicalLeadStatus(val.status, stage);
+    const requireLinkedReferral = val.leadSource === "Referral" && !val.allowUnlinkedReferral;
 
     if (val.leadSource === "Referral" && !val.referralName?.trim()) {
       ctx.addIssue({
@@ -348,7 +351,7 @@ const salesLeadSchema = z
       });
     }
 
-    if (val.leadSource === "Referral" && !val.partnerId?.trim()) {
+    if (requireLinkedReferral && !val.partnerId?.trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["partnerId"],
@@ -356,7 +359,7 @@ const salesLeadSchema = z
       });
     }
 
-    if (val.leadSource === "Referral" && !val.referralSourceId?.trim()) {
+    if (requireLinkedReferral && !val.referralSourceId?.trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["referralSourceId"],
@@ -499,114 +502,116 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
     closed_date: isLostStatus ? payload.data.closedDate?.trim() || toEasternDate() : status === "Won" ? toEasternDate() : null
   };
 
-  const duplicateMatches = findLikelyLeadDuplicates(db, {
-    leadId: payload.data.leadId?.trim() || null,
-    memberName: commonPatch.member_name,
-    caregiverName: commonPatch.caregiver_name,
-    caregiverPhone: commonPatch.caregiver_phone,
-    caregiverEmail: commonPatch.caregiver_email,
-    memberDob: commonPatch.member_dob
-  });
-  const duplicateDecision = payload.data.duplicateDecision?.trim() || "";
-  const canKeepSeparate = canKeepDuplicateAsSeparate(profile.role);
+  if (!payload.data.skipDuplicateReview) {
+    const duplicateMatches = findLikelyLeadDuplicates(db, {
+      leadId: payload.data.leadId?.trim() || null,
+      memberName: commonPatch.member_name,
+      caregiverName: commonPatch.caregiver_name,
+      caregiverPhone: commonPatch.caregiver_phone,
+      caregiverEmail: commonPatch.caregiver_email,
+      memberDob: commonPatch.member_dob
+    });
+    const duplicateDecision = payload.data.duplicateDecision?.trim() || "";
+    const canKeepSeparate = canKeepDuplicateAsSeparate(profile.role);
 
-  if (duplicateMatches.length > 0) {
-    if (duplicateDecision !== "keep-separate" && duplicateDecision !== "merge") {
-      return {
-        error: "Potential duplicate leads found. Review matches before saving.",
-        duplicateRequiresDecision: true,
-        duplicateMatches,
-        canKeepSeparate
-      };
-    }
-
-    if (duplicateDecision === "keep-separate" && !canKeepSeparate) {
-      return {
-        error: "Only Admin, Manager, or Director can keep possible duplicates as separate leads.",
-        duplicateRequiresDecision: true,
-        duplicateMatches,
-        canKeepSeparate
-      };
-    }
-
-    if (duplicateDecision === "merge") {
-      const mergeTargetLeadId = payload.data.mergeTargetLeadId?.trim() || duplicateMatches[0]?.leadId || "";
-      const targetLead = db.leads.find((row) => row.id === mergeTargetLeadId) ?? null;
-      if (!targetLead) {
+    if (duplicateMatches.length > 0) {
+      if (duplicateDecision !== "keep-separate" && duplicateDecision !== "merge") {
         return {
-          error: "Select a valid lead to merge into.",
+          error: "Potential duplicate leads found. Review matches before saving.",
           duplicateRequiresDecision: true,
           duplicateMatches,
           canKeepSeparate
         };
       }
 
-      if (payload.data.leadId?.trim() && payload.data.leadId.trim() === targetLead.id) {
+      if (duplicateDecision === "keep-separate" && !canKeepSeparate) {
         return {
-          error: "Cannot merge a lead into itself.",
+          error: "Only Admin, Manager, or Director can keep possible duplicates as separate leads.",
           duplicateRequiresDecision: true,
           duplicateMatches,
           canKeepSeparate
         };
       }
 
-      const sourceLead = payload.data.leadId?.trim()
-        ? db.leads.find((row) => row.id === payload.data.leadId?.trim()) ?? null
-        : null;
+      if (duplicateDecision === "merge") {
+        const mergeTargetLeadId = payload.data.mergeTargetLeadId?.trim() || duplicateMatches[0]?.leadId || "";
+        const targetLead = db.leads.find((row) => row.id === mergeTargetLeadId) ?? null;
+        if (!targetLead) {
+          return {
+            error: "Select a valid lead to merge into.",
+            duplicateRequiresDecision: true,
+            duplicateMatches,
+            canKeepSeparate
+          };
+        }
 
-      const mergedPatch = mergeLeadPatch(targetLead, commonPatch, sourceLead?.lead_id ?? null);
-      const mergedTarget = updateMockRecord("leads", targetLead.id, mergedPatch);
-      if (!mergedTarget) {
-        return { error: "Unable to merge into selected lead." };
-      }
+        if (payload.data.leadId?.trim() && payload.data.leadId.trim() === targetLead.id) {
+          return {
+            error: "Cannot merge a lead into itself.",
+            duplicateRequiresDecision: true,
+            duplicateMatches,
+            canKeepSeparate
+          };
+        }
 
-      if (payload.data.leadSource === "Referral") {
-        touchPartnerAndSource(db, selectedPartner, selectedReferralSource);
-      }
+        const sourceLead = payload.data.leadId?.trim()
+          ? db.leads.find((row) => row.id === payload.data.leadId?.trim()) ?? null
+          : null;
 
-      if (sourceLead && sourceLead.id !== mergedTarget.id) {
-        copyLeadHistoryToTarget({
-          db,
-          sourceLead,
-          targetLead: mergedTarget
-        });
-        closeMergedSourceLead({
-          sourceLead,
-          targetLead: mergedTarget,
-          actor: {
-            id: profile.id,
-            fullName: profile.full_name,
-            role: profile.role
+        const mergedPatch = mergeLeadPatch(targetLead, commonPatch, sourceLead?.lead_id ?? null);
+        const mergedTarget = updateMockRecord("leads", targetLead.id, mergedPatch);
+        if (!mergedTarget) {
+          return { error: "Unable to merge into selected lead." };
+        }
+
+        if (payload.data.leadSource === "Referral") {
+          touchPartnerAndSource(db, selectedPartner, selectedReferralSource);
+        }
+
+        if (sourceLead && sourceLead.id !== mergedTarget.id) {
+          copyLeadHistoryToTarget({
+            db,
+            sourceLead,
+            targetLead: mergedTarget
+          });
+          closeMergedSourceLead({
+            sourceLead,
+            targetLead: mergedTarget,
+            actor: {
+              id: profile.id,
+              fullName: profile.full_name,
+              role: profile.role
+            }
+          });
+        }
+
+        addAuditLogEvent({
+          actorUserId: profile.id,
+          actorName: profile.full_name,
+          actorRole: profile.role,
+          action: "update_lead",
+          entityType: "lead",
+          entityId: mergedTarget.id,
+          details: {
+            operation: "merge-duplicate",
+            mergedSourceLeadId: sourceLead?.id ?? null,
+            mergedSourceLeadDisplayId: sourceLead?.lead_id ?? null
           }
         });
-      }
 
-      addAuditLogEvent({
-        actorUserId: profile.id,
-        actorName: profile.full_name,
-        actorRole: profile.role,
-        action: "update_lead",
-        entityType: "lead",
-        entityId: mergedTarget.id,
-        details: {
-          operation: "merge-duplicate",
-          mergedSourceLeadId: sourceLead?.id ?? null,
-          mergedSourceLeadDisplayId: sourceLead?.lead_id ?? null
+        revalidateSalesLeadViews(mergedTarget.id);
+        if (sourceLead) {
+          revalidateSalesLeadViews(sourceLead.id);
         }
-      });
-
-      revalidateSalesLeadViews(mergedTarget.id);
-      if (sourceLead) {
-        revalidateSalesLeadViews(sourceLead.id);
+        revalidatePath("/sales/new-entries/new-inquiry");
+        return {
+          ok: true,
+          id: mergedTarget.id,
+          merged: true,
+          mergedIntoLeadId: mergedTarget.id,
+          mergedSourceLeadId: sourceLead?.id ?? null
+        };
       }
-      revalidatePath("/sales/new-entries/new-inquiry");
-      return {
-        ok: true,
-        id: mergedTarget.id,
-        merged: true,
-        mergedIntoLeadId: mergedTarget.id,
-        mergedSourceLeadId: sourceLead?.id ?? null
-      };
     }
   }
 

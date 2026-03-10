@@ -17,6 +17,7 @@ import {
   POF_ALLERGY_GROUP_OPTIONS,
   POF_CENTER_ADDRESS,
   POF_CENTER_LOGO_PUBLIC_PATH,
+  POF_CENTER_NAME,
   POF_CENTER_PHONE,
   POF_DEFAULT_MEDICATION_FORM,
   POF_DEFAULT_MEDICATION_QUANTITY,
@@ -1262,7 +1263,7 @@ function drawPofHeader(input: {
     });
   }
 
-  const centerTitle = "Town Square Fort Mill";
+  const centerTitle = POF_CENTER_NAME;
   const centerX = pageWidth / 2;
   page.drawText(centerTitle, {
     x: centerX - fontBold.widthOfTextAtSize(centerTitle, 14) / 2,

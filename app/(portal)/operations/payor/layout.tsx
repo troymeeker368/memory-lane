@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireNavItemAccess } from "@/lib/auth";
 
 const TABS = [
   { href: "/operations/payor", label: "Billing Hub" },
@@ -19,7 +19,7 @@ const TABS = [
 ] as const;
 
 export default async function BillingLayout({ children }: { children: ReactNode }) {
-  await requireRoles(["admin", "manager", "director", "coordinator"]);
+  await requireNavItemAccess("/operations/payor");
 
   return (
     <div className="space-y-4">

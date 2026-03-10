@@ -1,11 +1,10 @@
 import Link from "next/link";
-import Image from "next/image";
 import { notFound } from "next/navigation";
 
+import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { PhysicianOrderPdfActions } from "@/components/physician-orders/pof-pdf-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireRoles } from "@/lib/auth";
-import { POF_CENTER_ADDRESS, POF_CENTER_LOGO_PUBLIC_PATH, POF_CENTER_PHONE } from "@/lib/services/physician-order-config";
 import { getPhysicianOrderById } from "@/lib/services/physician-orders";
 import { toEasternISO } from "@/lib/timezone";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
@@ -46,24 +45,10 @@ export default async function PhysicianOrderPrintPage({
       </div>
 
       <div className="rounded-lg border border-border bg-white p-4">
-        <header className="border-b border-black/20 pb-2">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <Image src={POF_CENTER_LOGO_PUBLIC_PATH} alt="Town Square logo" width={120} height={38} priority />
-              <div>
-                <p className="text-sm font-semibold">Town Square Fort Mill</p>
-                <p className="text-xs">{POF_CENTER_ADDRESS}</p>
-                <p className="text-xs">{POF_CENTER_PHONE}</p>
-              </div>
-            </div>
-            <div>
-              <p className="text-xl font-bold uppercase tracking-wide">Physician Order & Physical Exam Form</p>
-            </div>
-            <div className="text-right text-xs">
-              <p>Generated: {formatDateTime(generatedAt)} (ET)</p>
-            </div>
-          </div>
-        </header>
+        <DocumentBrandHeader
+          title="Physician Order & Physical Exam Form"
+          metaLines={[`Generated: ${formatDateTime(generatedAt)} (ET)`]}
+        />
 
         <section className="mt-3">
           <h2 className="text-sm font-bold uppercase tracking-wide">Page 1 - Identification / Medical Orders</h2>

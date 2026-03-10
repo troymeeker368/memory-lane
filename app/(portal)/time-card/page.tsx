@@ -10,6 +10,19 @@ import { normalizeRoleKey, PTO_EXTERNAL_URL } from "@/lib/permissions";
 import { getManagerTimeReview, getTimeCardOverview } from "@/lib/services/time";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
+function formatFenceValue(value: boolean | null | undefined) {
+  if (value == null) return "-";
+  return value ? "Yes" : "No";
+}
+
+function describePunchMeta(punch: { source?: string | null; status?: string | null; note?: string | null }) {
+  const tags: string[] = [];
+  if (punch.status && punch.status !== "active") tags.push(punch.status);
+  if (punch.source && punch.source !== "employee") tags.push(punch.source);
+  const prefix = tags.length ? `[${tags.join(" | ")}] ` : "";
+  return `${prefix}${punch.note ?? "-"}`;
+}
+
 export default async function TimeCardPage() {
   await requireModuleAccess("time-card");
   const profile = await getCurrentProfile();
@@ -32,6 +45,8 @@ export default async function TimeCardPage() {
         </p>
         <div className="mt-2 flex flex-wrap gap-3 text-sm">
           <Link href="/time-card/punch-history" className="font-semibold text-brand">Open Punch History</Link>
+          <Link href="/time-card/forgotten-punch" className="font-semibold text-brand">Forgotten Punch</Link>
+          {canSeeAllEmployeeHistory ? <Link href="/time-card/director" className="font-semibold text-brand">Director Timecards</Link> : null}
           <a href={PTO_EXTERNAL_URL} target="_blank" rel="noopener noreferrer" className="font-semibold text-brand">Open PTO Request</a>
           {normalizedRole === "admin" ? <Link href="/time-hr/user-management" className="font-semibold text-brand">Open User Management</Link> : null}
         </div>
@@ -52,7 +67,7 @@ export default async function TimeCardPage() {
         ) : null}
       </Card>
 
-      <MobileList items={punches.map((p: TimePunchRow) => ({ id: p.id, title: `${p.punch_type === "in" ? "Clock In" : "Clock Out"} - ${formatDateTime(p.punch_at)}`, fields: [{ label: "Fence", value: p.within_fence ? "Yes" : "No" }, { label: "Distance", value: p.distance_meters ?? "-" }, { label: "Note", value: p.note ?? "-" }] }))} />
+      <MobileList items={punches.map((p: TimePunchRow) => ({ id: p.id, title: `${p.punch_type === "in" ? "Clock In" : "Clock Out"} - ${formatDateTime(p.punch_at)}`, fields: [{ label: "Fence", value: formatFenceValue(p.within_fence) }, { label: "Distance", value: p.distance_meters ?? "-" }, { label: "Note", value: describePunchMeta(p) }] }))} />
 
       <Card className="table-wrap hidden md:block">
         <CardTitle>Punch History</CardTitle>
@@ -71,9 +86,9 @@ export default async function TimeCardPage() {
               <tr key={p.id}>
                 <td>{formatDateTime(p.punch_at)}</td>
                 <td><PunchTypeBadge punchType={p.punch_type} /></td>
-                <td>{p.within_fence ? "Yes" : "No"}</td>
+                <td>{formatFenceValue(p.within_fence)}</td>
                 <td>{p.distance_meters ?? "-"}</td>
-                <td>{p.note ?? "-"}</td>
+                <td>{describePunchMeta(p)}</td>
               </tr>
             ))}
           </tbody>

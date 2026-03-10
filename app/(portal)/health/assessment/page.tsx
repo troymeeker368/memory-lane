@@ -78,7 +78,7 @@ export default async function HealthAssessmentPage({
       <Card>
         <CardTitle>Future Backend TODO</CardTitle>
         <p className="text-sm text-muted">
-          TODO: Add locked revision workflow, PDF export, and e-signature validation when backend document storage is connected.
+          TODO: Add locked revision workflow and e-signature validation when backend document storage is fully connected.
         </p>
       </Card>
     </div>
