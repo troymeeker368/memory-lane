@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
 import { getMockDb } from "@/lib/mock-repo";
+import { ensureCenterClosuresForCurrentAndNextYear } from "@/lib/services/billing";
 
 import { saveCenterBillingSettingAction } from "@/app/(portal)/operations/payor/actions";
 
@@ -12,6 +13,7 @@ function todayDate() {
 
 export default async function MccAttendanceBillingSettingsPage() {
   await requireRoles(["admin", "manager", "director", "coordinator"]);
+  ensureCenterClosuresForCurrentAndNextYear();
   const db = getMockDb();
   const current = db.centerBillingSettings.find((row) => row.active) ?? db.centerBillingSettings[0] ?? null;
 

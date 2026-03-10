@@ -457,11 +457,29 @@ export interface MockCenterBillingSetting {
   updated_by_name: string | null;
 }
 
+export interface MockClosureRule {
+  id: string;
+  name: string;
+  rule_type: "fixed" | "nth_weekday";
+  month: number;
+  day: number | null;
+  weekday: "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | null;
+  occurrence: "first" | "second" | "third" | "fourth" | "last" | null;
+  observed_when_weekend: "none" | "friday" | "monday" | "nearest_weekday";
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+  updated_by_user_id: string | null;
+  updated_by_name: string | null;
+}
+
 export interface MockCenterClosure {
   id: string;
   closure_date: string;
   closure_name: string;
   closure_type: "Holiday" | "Weather" | "Planned" | "Emergency" | "Other";
+  auto_generated: boolean;
+  closure_rule_id: string | null;
   billable_override: boolean;
   notes: string | null;
   active: boolean;
@@ -1119,6 +1137,7 @@ export interface MockDb {
   ancillaryCategories: MockAncillaryCategory[];
   ancillaryLogs: MockAncillaryLog[];
   centerBillingSettings: MockCenterBillingSetting[];
+  closureRules: MockClosureRule[];
   centerClosures: MockCenterClosure[];
   payors: MockPayor[];
   memberBillingSettings: MockMemberBillingSetting[];

@@ -2,6 +2,7 @@
 import { ANCILLARY_CHARGE_CATALOG, canonicalLeadStatus } from "@/lib/canonical";
 import { buildSeededMockDb } from "@/lib/mock/seed";
 import { readMockStateJson, writeMockStateJson } from "@/lib/mock-persistence";
+import { generateClosureDatesFromRules, type ClosureRuleLike } from "@/lib/services/closure-rules";
 import { getStandardDailyRateForAttendanceDays } from "@/lib/services/billing-rate-tiers";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -518,6 +519,7 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
     ? db.transportationManifestAdjustments
     : [];
   db.centerBillingSettings = Array.isArray(db.centerBillingSettings) ? db.centerBillingSettings : [];
+  db.closureRules = Array.isArray(db.closureRules) ? db.closureRules : [];
   db.centerClosures = Array.isArray(db.centerClosures) ? db.centerClosures : [];
   db.payors = Array.isArray(db.payors) ? db.payors : [];
   db.memberBillingSettings = Array.isArray(db.memberBillingSettings) ? db.memberBillingSettings : [];
@@ -1603,6 +1605,53 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
       .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1));
   }
 
+  if (Array.isArray(db.closureRules)) {
+    db.closureRules = db.closureRules
+      .map((row): MockDb["closureRules"][number] => {
+        const ruleType: MockDb["closureRules"][number]["rule_type"] =
+          row.rule_type === "nth_weekday" ? "nth_weekday" : "fixed";
+        const weekday: MockDb["closureRules"][number]["weekday"] =
+          row.weekday === "sunday" ||
+          row.weekday === "monday" ||
+          row.weekday === "tuesday" ||
+          row.weekday === "wednesday" ||
+          row.weekday === "thursday" ||
+          row.weekday === "friday" ||
+          row.weekday === "saturday"
+            ? row.weekday
+            : null;
+        const occurrence: MockDb["closureRules"][number]["occurrence"] =
+          row.occurrence === "first" ||
+          row.occurrence === "second" ||
+          row.occurrence === "third" ||
+          row.occurrence === "fourth" ||
+          row.occurrence === "last"
+            ? row.occurrence
+            : null;
+        return {
+          ...row,
+          name: String(row.name ?? "Closure Rule"),
+          rule_type: ruleType,
+          month: Number.isFinite(row.month) ? Math.min(12, Math.max(1, Math.round(Number(row.month)))) : 1,
+          day: row.day == null || Number.isFinite(row.day) ? (row.day == null ? null : Math.min(31, Math.max(1, Math.round(Number(row.day))))) : null,
+          weekday,
+          occurrence,
+          observed_when_weekend:
+            row.observed_when_weekend === "friday" ||
+            row.observed_when_weekend === "monday" ||
+            row.observed_when_weekend === "nearest_weekday"
+              ? row.observed_when_weekend
+              : "none",
+          active: typeof row.active === "boolean" ? row.active : true,
+          created_at: String(row.created_at ?? toEasternISO()),
+          updated_at: String(row.updated_at ?? row.created_at ?? toEasternISO()),
+          updated_by_user_id: row.updated_by_user_id ?? null,
+          updated_by_name: row.updated_by_name ?? null
+        };
+      })
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
+  }
+
   if (Array.isArray(db.centerClosures)) {
     db.centerClosures = db.centerClosures
       .map((row) => {
@@ -1618,6 +1667,8 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
           closure_date: String(row.closure_date ?? toEasternDate()),
           closure_name: String(row.closure_name ?? "Center Closure"),
           closure_type: closureType,
+          auto_generated: typeof row.auto_generated === "boolean" ? row.auto_generated : false,
+          closure_rule_id: row.closure_rule_id ?? null,
           billable_override: typeof row.billable_override === "boolean" ? row.billable_override : false,
           notes: row.notes ?? null,
           active: typeof row.active === "boolean" ? row.active : true,
@@ -2584,6 +2635,47 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
     };
   }
 
+  if (key === "closureRules") {
+    return {
+      name: String(record.name ?? "Closure Rule"),
+      rule_type: record.rule_type === "nth_weekday" ? "nth_weekday" : "fixed",
+      month: Number.isFinite(record.month) ? Math.min(12, Math.max(1, Number(record.month))) : 1,
+      day:
+        record.day == null || Number.isFinite(record.day)
+          ? (record.day == null ? null : Math.min(31, Math.max(1, Number(record.day))))
+          : null,
+      weekday:
+        record.weekday === "sunday" ||
+        record.weekday === "monday" ||
+        record.weekday === "tuesday" ||
+        record.weekday === "wednesday" ||
+        record.weekday === "thursday" ||
+        record.weekday === "friday" ||
+        record.weekday === "saturday"
+          ? record.weekday
+          : null,
+      occurrence:
+        record.occurrence === "first" ||
+        record.occurrence === "second" ||
+        record.occurrence === "third" ||
+        record.occurrence === "fourth" ||
+        record.occurrence === "last"
+          ? record.occurrence
+          : null,
+      observed_when_weekend:
+        record.observed_when_weekend === "friday" ||
+        record.observed_when_weekend === "monday" ||
+        record.observed_when_weekend === "nearest_weekday"
+          ? record.observed_when_weekend
+          : "none",
+      active: typeof record.active === "boolean" ? record.active : true,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? nowIso),
+      updated_by_user_id: (record.updated_by_user_id as string | null) ?? null,
+      updated_by_name: (record.updated_by_name as string | null) ?? null
+    };
+  }
+
   if (key === "centerClosures") {
     return {
       closure_date: String(record.closure_date ?? today),
@@ -2595,6 +2687,8 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
         record.closure_type === "Other"
           ? record.closure_type
           : "Holiday",
+      auto_generated: typeof record.auto_generated === "boolean" ? record.auto_generated : false,
+      closure_rule_id: (record.closure_rule_id as string | null) ?? null,
       billable_override: typeof record.billable_override === "boolean" ? record.billable_override : false,
       notes: (record.notes as string | null) ?? null,
       active: typeof record.active === "boolean" ? record.active : true,
@@ -3745,6 +3839,146 @@ function canonicalAncillaryCategoryId(name: string) {
   return `ancillary-category-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 }
 
+function defaultClosureRuleSeeds(nowIso: string) {
+  const base = {
+    created_at: nowIso,
+    updated_at: nowIso,
+    updated_by_user_id: null,
+    updated_by_name: "System"
+  };
+  return [
+    {
+      id: `closure-rule-${hashFromKey("Memorial Day").toString(16)}`,
+      name: "Memorial Day",
+      rule_type: "nth_weekday" as const,
+      month: 5,
+      day: null,
+      weekday: "monday" as const,
+      occurrence: "last" as const,
+      observed_when_weekend: "none" as const,
+      active: true,
+      ...base
+    },
+    {
+      id: `closure-rule-${hashFromKey("Labor Day").toString(16)}`,
+      name: "Labor Day",
+      rule_type: "nth_weekday" as const,
+      month: 9,
+      day: null,
+      weekday: "monday" as const,
+      occurrence: "first" as const,
+      observed_when_weekend: "none" as const,
+      active: true,
+      ...base
+    },
+    {
+      id: `closure-rule-${hashFromKey("Thanksgiving").toString(16)}`,
+      name: "Thanksgiving",
+      rule_type: "nth_weekday" as const,
+      month: 11,
+      day: null,
+      weekday: "thursday" as const,
+      occurrence: "fourth" as const,
+      observed_when_weekend: "none" as const,
+      active: true,
+      ...base
+    },
+    {
+      id: `closure-rule-${hashFromKey("July 4").toString(16)}`,
+      name: "July 4",
+      rule_type: "fixed" as const,
+      month: 7,
+      day: 4,
+      weekday: null,
+      occurrence: null,
+      observed_when_weekend: "nearest_weekday" as const,
+      active: true,
+      ...base
+    },
+    {
+      id: `closure-rule-${hashFromKey("Christmas").toString(16)}`,
+      name: "Christmas",
+      rule_type: "fixed" as const,
+      month: 12,
+      day: 25,
+      weekday: null,
+      occurrence: null,
+      observed_when_weekend: "nearest_weekday" as const,
+      active: true,
+      ...base
+    }
+  ] satisfies MockDb["closureRules"];
+}
+
+function ensureClosureRulesSeeded() {
+  if (!Array.isArray(db.closureRules)) {
+    db.closureRules = [];
+  }
+  const defaults = defaultClosureRuleSeeds(toEasternISO());
+  const existingByName = new Map(
+    db.closureRules.map((row) => [String(row.name ?? "").trim().toLowerCase(), row] as const)
+  );
+  let changed = false;
+  defaults.forEach((rule) => {
+    const key = rule.name.trim().toLowerCase();
+    if (existingByName.has(key)) return;
+    db.closureRules.push(rule);
+    changed = true;
+  });
+  if (changed) {
+    db.closureRules.sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
+  }
+  return changed;
+}
+
+function ensureAutoGeneratedCenterClosuresForYears(years: number[]) {
+  if (!Array.isArray(db.centerClosures)) {
+    db.centerClosures = [];
+  }
+  if (!Array.isArray(db.closureRules) || db.closureRules.length === 0) {
+    return false;
+  }
+  const rules = db.closureRules.filter((rule) => rule.active) as ClosureRuleLike[];
+  const existingDates = new Set(db.centerClosures.map((row) => String(row.closure_date ?? "").slice(0, 10)));
+  let changed = false;
+  years.forEach((year) => {
+    generateClosureDatesFromRules({ year, rules }).forEach((generated) => {
+      if (existingDates.has(generated.date)) return;
+      existingDates.add(generated.date);
+      db.centerClosures.push({
+        id: `center-closure-auto-${generated.date}-${generated.ruleId}`.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+        closure_date: generated.date,
+        closure_name: generated.reason,
+        closure_type: "Holiday",
+        auto_generated: true,
+        closure_rule_id: generated.ruleId,
+        billable_override: false,
+        notes: generated.observed ? "Observed closure generated from holiday rule." : null,
+        active: true,
+        created_at: toEasternISO(),
+        updated_at: toEasternISO(),
+        updated_by_user_id: null,
+        updated_by_name: "System"
+      });
+      changed = true;
+    });
+  });
+  if (changed) {
+    db.centerClosures.sort((left, right) => (left.closure_date < right.closure_date ? 1 : -1));
+  }
+  return changed;
+}
+
+function ensureCenterClosureAutomationState() {
+  const currentYear = Number(toEasternDate().slice(0, 4));
+  const years = [currentYear, currentYear + 1];
+  const seededRules = ensureClosureRulesSeeded();
+  const seededClosures = ensureAutoGeneratedCenterClosuresForYears(years);
+  if (seededRules || seededClosures) {
+    persistMockRepoState();
+  }
+}
+
 function ensureCanonicalAncillaryCategories() {
   if (!Array.isArray(db.ancillaryCategories)) {
     db.ancillaryCategories = [];
@@ -3781,6 +4015,7 @@ function ensureCanonicalAncillaryCategories() {
 }
 
 export function getMockDb() {
+  ensureCenterClosureAutomationState();
   ensureCanonicalAncillaryCategories();
   return db;
 }

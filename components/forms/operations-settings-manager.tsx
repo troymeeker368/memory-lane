@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { updateOperationalSettingsAction } from "@/app/actions";
+import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 
 export function OperationsSettingsManager({
   initialBusNumbers,
@@ -22,14 +23,23 @@ export function OperationsSettingsManager({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [status, setStatus] = useState("");
-  const [busNumbersCsv, setBusNumbersCsv] = useState(initialBusNumbers.join(", "));
-  const [makeupPolicy, setMakeupPolicy] = useState(initialMakeupPolicy);
-  const [graceStartTime, setGraceStartTime] = useState(initialLatePickupRules.graceStartTime);
-  const [firstWindowMinutes, setFirstWindowMinutes] = useState(String(initialLatePickupRules.firstWindowMinutes));
-  const [firstWindowFeeDollars, setFirstWindowFeeDollars] = useState((initialLatePickupRules.firstWindowFeeCents / 100).toFixed(2));
-  const [additionalPerMinuteDollars, setAdditionalPerMinuteDollars] = useState((initialLatePickupRules.additionalPerMinuteCents / 100).toFixed(2));
-  const [additionalMinutesCap, setAdditionalMinutesCap] = useState(String(initialLatePickupRules.additionalMinutesCap));
+  const syncDeps = [
+    initialBusNumbers.join(","),
+    initialMakeupPolicy,
+    initialLatePickupRules.graceStartTime,
+    initialLatePickupRules.firstWindowMinutes,
+    initialLatePickupRules.firstWindowFeeCents,
+    initialLatePickupRules.additionalPerMinuteCents,
+    initialLatePickupRules.additionalMinutesCap
+  ];
+  const [status, setStatus] = usePropSyncedStatus(syncDeps);
+  const [busNumbersCsv, setBusNumbersCsv] = usePropSyncedState(initialBusNumbers.join(", "), syncDeps);
+  const [makeupPolicy, setMakeupPolicy] = usePropSyncedState(initialMakeupPolicy, syncDeps);
+  const [graceStartTime, setGraceStartTime] = usePropSyncedState(initialLatePickupRules.graceStartTime, syncDeps);
+  const [firstWindowMinutes, setFirstWindowMinutes] = usePropSyncedState(String(initialLatePickupRules.firstWindowMinutes), syncDeps);
+  const [firstWindowFeeDollars, setFirstWindowFeeDollars] = usePropSyncedState((initialLatePickupRules.firstWindowFeeCents / 100).toFixed(2), syncDeps);
+  const [additionalPerMinuteDollars, setAdditionalPerMinuteDollars] = usePropSyncedState((initialLatePickupRules.additionalPerMinuteCents / 100).toFixed(2), syncDeps);
+  const [additionalMinutesCap, setAdditionalMinutesCap] = usePropSyncedState(String(initialLatePickupRules.additionalMinutesCap), syncDeps);
 
   return (
     <div className="space-y-3">

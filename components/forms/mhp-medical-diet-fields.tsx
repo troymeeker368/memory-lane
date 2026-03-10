@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 
 export function MhpMedicalDietFields({
   dietTypeDefault,
@@ -16,7 +17,7 @@ export function MhpMedicalDietFields({
   dietTextureOptions: readonly string[];
 }) {
   const initialDiet = useMemo(() => dietTypeDefault || "Regular", [dietTypeDefault]);
-  const [dietType, setDietType] = useState(initialDiet);
+  const [dietType, setDietType] = usePropSyncedState(initialDiet, [initialDiet, dietTypeDefault]);
 
   return (
     <>

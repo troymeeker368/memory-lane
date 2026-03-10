@@ -1,4 +1,5 @@
 import { addMockRecord, getMockDb, removeMockRecord, updateMockRecord } from "@/lib/mock-repo";
+import { generateClosureDatesFromRules, type ClosureRuleLike } from "@/lib/services/closure-rules";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export type BillingModuleRole = "admin" | "manager" | "director" | "coordinator";
@@ -81,6 +82,68 @@ function isWithin(dateOnly: string | null | undefined, range: DateRange) {
   return normalized >= range.start && normalized <= range.end;
 }
 
+function normalizeYear(value: number) {
+  if (!Number.isFinite(value)) return Number(toEasternDate().slice(0, 4));
+  return Math.max(2000, Math.min(2100, Math.round(value)));
+}
+
+export function listClosureRules() {
+  const db = getMockDb();
+  return [...db.closureRules].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
+}
+
+export function generateClosuresForYear(year: number, input?: { generatedByUserId?: string | null; generatedByName?: string | null }) {
+  const db = getMockDb();
+  const targetYear = normalizeYear(year);
+  const rules = db.closureRules.filter((rule) => rule.active) as ClosureRuleLike[];
+  const generated = generateClosureDatesFromRules({
+    year: targetYear,
+    rules
+  });
+  const existingDates = new Set(db.centerClosures.map((row) => normalizeDateOnly(row.closure_date)));
+  let insertedCount = 0;
+
+  generated.forEach((row) => {
+    if (existingDates.has(row.date)) return;
+    existingDates.add(row.date);
+    addMockRecord("centerClosures", {
+      closure_date: row.date,
+      closure_name: row.reason,
+      closure_type: "Holiday",
+      auto_generated: true,
+      closure_rule_id: row.ruleId,
+      billable_override: false,
+      notes: row.observed ? "Observed closure generated from holiday rule." : null,
+      active: true,
+      created_at: toEasternISO(),
+      updated_at: toEasternISO(),
+      updated_by_user_id: input?.generatedByUserId ?? null,
+      updated_by_name: input?.generatedByName ?? "System"
+    });
+    insertedCount += 1;
+  });
+
+  return {
+    year: targetYear,
+    generatedCount: generated.length,
+    insertedCount
+  };
+}
+
+export function ensureCenterClosuresForCurrentAndNextYear(input?: { generatedByUserId?: string | null; generatedByName?: string | null }) {
+  const currentYear = Number(toEasternDate().slice(0, 4));
+  const years = [currentYear, currentYear + 1];
+  return years.map((year) => generateClosuresForYear(year, input));
+}
+
+function ensureCenterClosuresForRange(range: DateRange) {
+  const startYear = Number(range.start.slice(0, 4));
+  const endYear = Number(range.end.slice(0, 4));
+  for (let year = startYear; year <= endYear; year += 1) {
+    generateClosuresForYear(year);
+  }
+}
+
 function toAmount(value: number | null | undefined) {
   if (!Number.isFinite(value)) return 0;
   return Number(Number(value).toFixed(2));
@@ -126,6 +189,7 @@ function scheduleIncludesDate(
 }
 
 function getNonBillableCenterClosuresByDate(range: DateRange) {
+  ensureCenterClosuresForRange(range);
   const db = getMockDb();
   const map = new Map<string, ReturnType<typeof getMockDb>["centerClosures"][number]>();
   db.centerClosures
@@ -461,9 +525,13 @@ export function listPayors() {
   return [...db.payors].sort((left, right) => left.payor_name.localeCompare(right.payor_name, undefined, { sensitivity: "base" }));
 }
 
-export function listCenterClosures() {
+export function listCenterClosures(input?: { includeInactive?: boolean }) {
+  ensureCenterClosuresForCurrentAndNextYear();
   const db = getMockDb();
-  return [...db.centerClosures].sort((left, right) => (left.closure_date > right.closure_date ? 1 : -1));
+  const includeInactive = input?.includeInactive ?? false;
+  return [...db.centerClosures]
+    .filter((row) => (includeInactive ? true : row.active))
+    .sort((left, right) => (left.closure_date > right.closure_date ? 1 : -1));
 }
 
 export function listMemberBillingSettings() {
@@ -494,6 +562,7 @@ export const BILLING_SOURCE_OF_TRUTH = {
   // Billing ownership rules:
   // - Center default rates live in centerBillingSettings and are coordinator-managed.
   // - Member-level DailyRate / TransportationBillingStatus live in memberAttendanceSchedules (MCC Attendance).
+  // - Recurring holiday/weekend-observed logic lives in closureRules and auto-generates centerClosures by year.
   // - Center closures live in centerClosures and define non-billable schedule exclusions by date.
   // - MemberBillingSettings/ScheduleTemplates hold billing mode/payor exceptions and contracted attendance pattern.
   // - Operational attendance/transport/existing ancillary log rows remain source for actual services.

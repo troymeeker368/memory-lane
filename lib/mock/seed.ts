@@ -20,6 +20,7 @@ import { isScheduledWeekday } from "@/lib/services/member-schedule-selectors";
 import fixturesJson from "@/lib/mock/canonical-fixtures.json";
 import { createStablePseudonym, createStablePseudonymMap } from "@/lib/mock/pseudonyms";
 import { getCurrentPayPeriod } from "@/lib/pay-period";
+import { generateClosureDatesFromRules } from "@/lib/services/closure-rules";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
 import type {
@@ -37,6 +38,7 @@ import type {
   MockBillingInvoiceLine,
   MockBillingScheduleTemplate,
   MockCenterBillingSetting,
+  MockClosureRule,
   MockCenterClosure,
   MockBusStopDirectory,
   MockBloodSugarLog,
@@ -1916,14 +1918,16 @@ function buildBillingFoundation(input: {
     }
   ];
 
-  const centerClosures: MockCenterClosure[] = [
+  const closureRules: MockClosureRule[] = [
     {
-      id: uuidFromKey(`center-closure:${yearStart.slice(0, 4)}-01-01`),
-      closure_date: `${yearStart.slice(0, 4)}-01-01`,
-      closure_name: "New Year's Day",
-      closure_type: "Holiday",
-      billable_override: false,
-      notes: null,
+      id: uuidFromKey("closure-rule:memorial-day"),
+      name: "Memorial Day",
+      rule_type: "nth_weekday",
+      month: 5,
+      day: null,
+      weekday: "monday",
+      occurrence: "last",
+      observed_when_weekend: "none",
       active: true,
       created_at: input.nowIso,
       updated_at: input.nowIso,
@@ -1931,12 +1935,14 @@ function buildBillingFoundation(input: {
       updated_by_name: actorName
     },
     {
-      id: uuidFromKey(`center-closure:${yearStart.slice(0, 4)}-11-27`),
-      closure_date: `${yearStart.slice(0, 4)}-11-27`,
-      closure_name: "Thanksgiving Closure",
-      closure_type: "Holiday",
-      billable_override: false,
-      notes: null,
+      id: uuidFromKey("closure-rule:labor-day"),
+      name: "Labor Day",
+      rule_type: "nth_weekday",
+      month: 9,
+      day: null,
+      weekday: "monday",
+      occurrence: "first",
+      observed_when_weekend: "none",
       active: true,
       created_at: input.nowIso,
       updated_at: input.nowIso,
@@ -1944,12 +1950,44 @@ function buildBillingFoundation(input: {
       updated_by_name: actorName
     },
     {
-      id: uuidFromKey(`center-closure:${yearStart.slice(0, 4)}-12-25`),
-      closure_date: `${yearStart.slice(0, 4)}-12-25`,
-      closure_name: "Christmas Day",
-      closure_type: "Holiday",
-      billable_override: false,
-      notes: null,
+      id: uuidFromKey("closure-rule:thanksgiving"),
+      name: "Thanksgiving",
+      rule_type: "nth_weekday",
+      month: 11,
+      day: null,
+      weekday: "thursday",
+      occurrence: "fourth",
+      observed_when_weekend: "none",
+      active: true,
+      created_at: input.nowIso,
+      updated_at: input.nowIso,
+      updated_by_user_id: actorId,
+      updated_by_name: actorName
+    },
+    {
+      id: uuidFromKey("closure-rule:july-4"),
+      name: "July 4",
+      rule_type: "fixed",
+      month: 7,
+      day: 4,
+      weekday: null,
+      occurrence: null,
+      observed_when_weekend: "nearest_weekday",
+      active: true,
+      created_at: input.nowIso,
+      updated_at: input.nowIso,
+      updated_by_user_id: actorId,
+      updated_by_name: actorName
+    },
+    {
+      id: uuidFromKey("closure-rule:christmas"),
+      name: "Christmas",
+      rule_type: "fixed",
+      month: 12,
+      day: 25,
+      weekday: null,
+      occurrence: null,
+      observed_when_weekend: "nearest_weekday",
       active: true,
       created_at: input.nowIso,
       updated_at: input.nowIso,
@@ -1957,6 +1995,25 @@ function buildBillingFoundation(input: {
       updated_by_name: actorName
     }
   ];
+
+  const closureYears = [Number(yearStart.slice(0, 4)), Number(yearStart.slice(0, 4)) + 1];
+  const centerClosures: MockCenterClosure[] = closureYears
+    .flatMap((year) => generateClosureDatesFromRules({ year, rules: closureRules }))
+    .map((generated) => ({
+      id: uuidFromKey(`center-closure:${generated.date}:${generated.ruleId}`),
+      closure_date: generated.date,
+      closure_name: generated.reason,
+      closure_type: "Holiday" as const,
+      auto_generated: true,
+      closure_rule_id: generated.ruleId,
+      billable_override: false,
+      notes: generated.observed ? "Observed closure generated from holiday rule." : null,
+      active: true,
+      created_at: input.nowIso,
+      updated_at: input.nowIso,
+      updated_by_user_id: actorId,
+      updated_by_name: actorName
+    }));
 
   const payors: MockPayor[] = input.members
     .filter((member) => member.status === "active")
@@ -2059,6 +2116,7 @@ function buildBillingFoundation(input: {
 
   return {
     centerBillingSettings,
+    closureRules,
     centerClosures,
     payors,
     memberBillingSettings,
@@ -2203,6 +2261,7 @@ export function buildSeededMockDb(): MockDb {
     ancillaryCategories,
     ancillaryLogs: operational.ancillaryLogs,
     centerBillingSettings: billingFoundation.centerBillingSettings,
+    closureRules: billingFoundation.closureRules,
     centerClosures: billingFoundation.centerClosures,
     payors: billingFoundation.payors,
     memberBillingSettings: billingFoundation.memberBillingSettings,

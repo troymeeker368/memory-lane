@@ -12,6 +12,7 @@ export default function AdminReportsHomePage() {
           <Link href="/admin-reports/attendance-summary" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Attendance Summary</Link>
           <Link href="/admin-reports/revenue" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Revenue Summary</Link>
           <Link href="/admin-reports/on-demand" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">On-Demand Reports</Link>
+          <Link href="/operations/payor/center-closures" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Center Closures</Link>
           <Link href="/sales/summary" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Sales Summary</Link>
           <Link href="/reports" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Open Reports</Link>
           <Link href="/reports/monthly-ancillary" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Monthly Ancillary</Link>

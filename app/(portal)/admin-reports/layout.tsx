@@ -7,6 +7,7 @@ const adminReportLinks = [
   { href: "/admin-reports/attendance-summary", label: "Attendance Summary" },
   { href: "/admin-reports/revenue", label: "Revenue Summary" },
   { href: "/admin-reports/on-demand", label: "On-Demand Reports" },
+  { href: "/operations/payor/center-closures", label: "Center Closures" },
   { href: "/sales/summary", label: "Sales Summary" },
   { href: "/reports", label: "Operations Reports" },
   { href: "/reports/monthly-ancillary", label: "Monthly Ancillary Charges" },

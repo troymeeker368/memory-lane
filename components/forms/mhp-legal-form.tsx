@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { saveMhpLegalAction } from "@/app/(portal)/health/member-health-profiles/actions";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 
 function boolToSelectValue(value: boolean | null | undefined) {
   if (value == null) return "";
@@ -177,9 +178,10 @@ export function MhpLegalForm({
   hospitalPreference: string | null | undefined;
   legalComments: string | null | undefined;
 }) {
-  const [codeStatusValue, setCodeStatusValue] = useState(codeStatus ?? "");
-  const [dnrValue, setDnrValue] = useState(boolToSelectValue(dnr));
-  const [hospitalPreferenceValue, setHospitalPreferenceValue] = useState(hospitalPreference ?? "");
+  const syncDeps = [memberId, codeStatus, dnr, hospitalPreference];
+  const [codeStatusValue, setCodeStatusValue] = usePropSyncedState(codeStatus ?? "", syncDeps);
+  const [dnrValue, setDnrValue] = usePropSyncedState(boolToSelectValue(dnr), syncDeps);
+  const [hospitalPreferenceValue, setHospitalPreferenceValue] = usePropSyncedState(hospitalPreference ?? "", syncDeps);
 
   const hospitalOptions = useMemo(
     () =>

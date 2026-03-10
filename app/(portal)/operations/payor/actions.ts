@@ -4,7 +4,13 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
-import { addMockRecord, updateMockRecord } from "@/lib/mock-repo";
+import { addMockRecord, getMockDb, removeMockRecord, updateMockRecord } from "@/lib/mock-repo";
+import {
+  CLOSURE_RULE_OBSERVED_WEEKEND_OPTIONS,
+  CLOSURE_RULE_OCCURRENCE_OPTIONS,
+  CLOSURE_RULE_TYPE_OPTIONS,
+  CLOSURE_RULE_WEEKDAY_OPTIONS
+} from "@/lib/services/closure-rules";
 import {
   BILLING_ADJUSTMENT_TYPE_OPTIONS,
   BILLING_BATCH_TYPE_OPTIONS,
@@ -12,6 +18,7 @@ import {
   BILLING_MODE_OPTIONS,
   CENTER_CLOSURE_TYPE_OPTIONS,
   MONTHLY_BILLING_BASIS_OPTIONS,
+  ensureCenterClosuresForCurrentAndNextYear,
   createCustomInvoice,
   createEnrollmentProratedInvoice,
   createBillingExport,
@@ -181,6 +188,92 @@ export async function saveCenterClosureAction(formData: FormData) {
     });
   }
 
+  revalidateBillingPaths();
+}
+
+export async function saveClosureRuleAction(formData: FormData) {
+  const profile = await requireBillingProfile();
+  const id = asString(formData, "id");
+  if (!id) throw new Error("Closure rule id is required.");
+
+  const ruleTypeInput = asString(formData, "ruleType");
+  const observedInput = asString(formData, "observedWhenWeekend");
+  const weekdayInput = asString(formData, "weekday");
+  const occurrenceInput = asString(formData, "occurrence");
+  const ruleType = CLOSURE_RULE_TYPE_OPTIONS.includes(ruleTypeInput as (typeof CLOSURE_RULE_TYPE_OPTIONS)[number])
+    ? (ruleTypeInput as (typeof CLOSURE_RULE_TYPE_OPTIONS)[number])
+    : ("fixed" as const);
+  const observedWhenWeekend = CLOSURE_RULE_OBSERVED_WEEKEND_OPTIONS.includes(
+    observedInput as (typeof CLOSURE_RULE_OBSERVED_WEEKEND_OPTIONS)[number]
+  )
+    ? (observedInput as (typeof CLOSURE_RULE_OBSERVED_WEEKEND_OPTIONS)[number])
+    : ("none" as const);
+  const weekday = CLOSURE_RULE_WEEKDAY_OPTIONS.includes(
+    weekdayInput as (typeof CLOSURE_RULE_WEEKDAY_OPTIONS)[number]
+  )
+    ? (weekdayInput as (typeof CLOSURE_RULE_WEEKDAY_OPTIONS)[number])
+    : null;
+  const occurrence = CLOSURE_RULE_OCCURRENCE_OPTIONS.includes(
+    occurrenceInput as (typeof CLOSURE_RULE_OCCURRENCE_OPTIONS)[number]
+  )
+    ? (occurrenceInput as (typeof CLOSURE_RULE_OCCURRENCE_OPTIONS)[number])
+    : null;
+
+  const now = toEasternISO();
+  const payload = {
+    name: asString(formData, "name") || "Closure Rule",
+    rule_type: ruleType,
+    month: Math.min(12, Math.max(1, Math.round(asNumber(formData, "month", 1)))),
+    day:
+      ruleType === "fixed"
+        ? Math.min(31, Math.max(1, Math.round(asNumber(formData, "day", 1))))
+        : null,
+    weekday,
+    occurrence,
+    observed_when_weekend: observedWhenWeekend,
+    active: asBoolean(formData, "active", false),
+    updated_at: now,
+    updated_by_user_id: profile.id,
+    updated_by_name: profile.full_name
+  };
+  const updated = updateMockRecord("closureRules", id, payload);
+  if (!updated) throw new Error("Closure rule not found.");
+
+  ensureCenterClosuresForCurrentAndNextYear({
+    generatedByUserId: profile.id,
+    generatedByName: profile.full_name
+  });
+  revalidateBillingPaths();
+}
+
+export async function deleteCenterClosureAction(formData: FormData) {
+  const profile = await requireBillingProfile();
+  const id = asString(formData, "id");
+  if (!id) throw new Error("Center closure id is required.");
+  const existing = getMockDb().centerClosures.find((row) => row.id === id) ?? null;
+  if (existing?.auto_generated) {
+    const updated = updateMockRecord("centerClosures", id, {
+      active: false,
+      notes: existing.notes ?? "Auto-generated closure manually removed.",
+      updated_at: toEasternISO(),
+      updated_by_user_id: profile.id,
+      updated_by_name: profile.full_name
+    });
+    if (!updated) throw new Error("Center closure not found.");
+    revalidateBillingPaths();
+    return;
+  }
+  const removed = removeMockRecord("centerClosures", id);
+  if (!removed) throw new Error("Center closure not found.");
+  revalidateBillingPaths();
+}
+
+export async function ensureCenterClosuresAction(_formData: FormData) {
+  const profile = await requireBillingProfile();
+  ensureCenterClosuresForCurrentAndNextYear({
+    generatedByUserId: profile.id,
+    generatedByName: profile.full_name
+  });
   revalidateBillingPaths();
 }
 

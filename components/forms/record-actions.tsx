@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useState, useTransition } from "react";
+import { type ReactNode, useState, useTransition } from "react";
 
 import {
   deleteWorkflowRecordAction,
@@ -14,6 +14,7 @@ import {
   updateToiletLogAction,
   updateTransportationLogAction
 } from "@/app/actions";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
 import { LEAD_STATUS_OPTIONS, PARTICIPATION_MISSING_REASONS, TOILET_USE_TYPE_OPTIONS, TRANSPORT_TYPE_OPTIONS } from "@/lib/canonical";
 
@@ -139,22 +140,16 @@ function toParticipationMissingReason(value: string | null | undefined): Partici
 }
 
 export function QuickEditToilet({ id, useType, briefs, memberSupplied, notes }: { id: string; useType: string; briefs: boolean; memberSupplied?: boolean; notes: string | null }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const syncDeps = [id, useType, briefs, memberSupplied, notes];
+  const [isOpen, setIsOpen] = usePropSyncedState(false, syncDeps);
   const [isPending, startTransition] = useTransition();
-  const [localUseType, setLocalUseType] = useState<string>(
-    TOILET_USE_OPTIONS.includes(useType as (typeof TOILET_USE_OPTIONS)[number]) ? useType : "Bladder"
+  const [localUseType, setLocalUseType] = usePropSyncedState<string>(
+    TOILET_USE_OPTIONS.includes(useType as (typeof TOILET_USE_OPTIONS)[number]) ? useType : "Bladder",
+    syncDeps
   );
-  const [localBriefs, setLocalBriefs] = useState(briefs);
-  const [localMemberSupplied, setLocalMemberSupplied] = useState(memberSupplied ?? false);
-  const [localNotes, setLocalNotes] = useState(notes ?? "");
-
-  useEffect(() => {
-    setLocalUseType(TOILET_USE_OPTIONS.includes(useType as (typeof TOILET_USE_OPTIONS)[number]) ? useType : "Bladder");
-    setLocalBriefs(briefs);
-    setLocalMemberSupplied(memberSupplied ?? false);
-    setLocalNotes(notes ?? "");
-    setIsOpen(false);
-  }, [id, useType, briefs, memberSupplied, notes]);
+  const [localBriefs, setLocalBriefs] = usePropSyncedState(briefs, syncDeps);
+  const [localMemberSupplied, setLocalMemberSupplied] = usePropSyncedState(memberSupplied ?? false, syncDeps);
+  const [localNotes, setLocalNotes] = usePropSyncedState(notes ?? "", syncDeps);
 
   return (
     <>
@@ -207,18 +202,12 @@ export function QuickEditToilet({ id, useType, briefs, memberSupplied, notes }: 
 }
 
 export function QuickEditShower({ id, laundry, briefs, notes }: { id: string; laundry: boolean; briefs: boolean; notes: string | null }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const syncDeps = [id, laundry, briefs, notes];
+  const [isOpen, setIsOpen] = usePropSyncedState(false, syncDeps);
   const [isPending, startTransition] = useTransition();
-  const [localLaundry, setLocalLaundry] = useState(laundry);
-  const [localBriefs, setLocalBriefs] = useState(briefs);
-  const [localNotes, setLocalNotes] = useState(notes ?? "");
-
-  useEffect(() => {
-    setLocalLaundry(laundry);
-    setLocalBriefs(briefs);
-    setLocalNotes(notes ?? "");
-    setIsOpen(false);
-  }, [id, laundry, briefs, notes]);
+  const [localLaundry, setLocalLaundry] = usePropSyncedState(laundry, syncDeps);
+  const [localBriefs, setLocalBriefs] = usePropSyncedState(briefs, syncDeps);
+  const [localNotes, setLocalNotes] = usePropSyncedState(notes ?? "", syncDeps);
 
   return (
     <>
@@ -261,22 +250,14 @@ export function QuickEditShower({ id, laundry, briefs, notes }: { id: string; la
 }
 
 export function QuickEditTransportation({ id, period, transportType }: { id: string; period: "AM" | "PM"; transportType: string; notes?: string | null }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const syncDeps = [id, period, transportType];
+  const [isOpen, setIsOpen] = usePropSyncedState(false, syncDeps);
   const [isPending, startTransition] = useTransition();
-  const [localPeriod, setLocalPeriod] = useState<"AM" | "PM">(period);
-  const [localType, setLocalType] = useState<TransportOption>(
-    TRANSPORT_OPTIONS.includes(transportType as TransportOption) ? (transportType as TransportOption) : TRANSPORT_OPTIONS[0]
+  const [localPeriod, setLocalPeriod] = usePropSyncedState<"AM" | "PM">(period, syncDeps);
+  const [localType, setLocalType] = usePropSyncedState<TransportOption>(
+    TRANSPORT_OPTIONS.includes(transportType as TransportOption) ? (transportType as TransportOption) : TRANSPORT_OPTIONS[0],
+    syncDeps
   );
-
-  useEffect(() => {
-    setLocalPeriod(period);
-    setLocalType(
-      TRANSPORT_OPTIONS.includes(transportType as TransportOption)
-        ? (transportType as TransportOption)
-        : TRANSPORT_OPTIONS[0]
-    );
-    setIsOpen(false);
-  }, [id, period, transportType]);
 
   return (
     <>
@@ -324,16 +305,11 @@ export function QuickEditTransportation({ id, period, transportType }: { id: str
 }
 
 export function QuickEditBloodSugar({ id, reading, notes }: { id: string; reading: number; notes: string | null }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const syncDeps = [id, reading, notes];
+  const [isOpen, setIsOpen] = usePropSyncedState(false, syncDeps);
   const [isPending, startTransition] = useTransition();
-  const [localReading, setLocalReading] = useState(reading);
-  const [localNotes, setLocalNotes] = useState(notes ?? "");
-
-  useEffect(() => {
-    setLocalReading(reading);
-    setLocalNotes(notes ?? "");
-    setIsOpen(false);
-  }, [id, reading, notes]);
+  const [localReading, setLocalReading] = usePropSyncedState(reading, syncDeps);
+  const [localNotes, setLocalNotes] = usePropSyncedState(notes ?? "", syncDeps);
 
   return (
     <>
@@ -398,24 +374,11 @@ export function QuickEditDailyActivity({
   r5?: string | null;
   notes: string | null;
 }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const syncDeps = [id, a1, a2, a3, a4, a5, r1, r2, r3, r4, r5, notes];
+  const [isOpen, setIsOpen] = usePropSyncedState(false, syncDeps);
   const [isPending, startTransition] = useTransition();
-  const [vals, setVals] = useState<QuickDailyActivityValues>({
-    a1,
-    a2,
-    a3,
-    a4,
-    a5,
-    r1: toParticipationMissingReason(r1),
-    r2: toParticipationMissingReason(r2),
-    r3: toParticipationMissingReason(r3),
-    r4: toParticipationMissingReason(r4),
-    r5: toParticipationMissingReason(r5),
-    notes: notes ?? ""
-  });
-
-  useEffect(() => {
-    setVals({
+  const [vals, setVals] = usePropSyncedState<QuickDailyActivityValues>(
+    () => ({
       a1,
       a2,
       a3,
@@ -427,9 +390,9 @@ export function QuickEditDailyActivity({
       r4: toParticipationMissingReason(r4),
       r5: toParticipationMissingReason(r5),
       notes: notes ?? ""
-    });
-    setIsOpen(false);
-  }, [id, a1, a2, a3, a4, a5, r1, r2, r3, r4, r5, notes]);
+    }),
+    syncDeps
+  );
 
   const reasonRequired = [
     vals.a1 === 0 && !vals.r1,
@@ -527,14 +490,10 @@ export function QuickEditDailyActivity({
 }
 
 export function QuickEditAncillary({ id, notes }: { id: string; notes: string | null }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const syncDeps = [id, notes];
+  const [isOpen, setIsOpen] = usePropSyncedState(false, syncDeps);
   const [isPending, startTransition] = useTransition();
-  const [localNotes, setLocalNotes] = useState(notes ?? "");
-
-  useEffect(() => {
-    setLocalNotes(notes ?? "");
-    setIsOpen(false);
-  }, [id, notes]);
+  const [localNotes, setLocalNotes] = usePropSyncedState(notes ?? "", syncDeps);
 
   return (
     <>
@@ -567,18 +526,12 @@ export function QuickEditAncillary({ id, notes }: { id: string; notes: string | 
 }
 
 export function QuickEditLead({ id, stage, status, notes }: { id: string; stage: string; status: (typeof LEAD_STATUS_OPTIONS)[number]; notes: string | null }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const syncDeps = [id, stage, status, notes];
+  const [isOpen, setIsOpen] = usePropSyncedState(false, syncDeps);
   const [isPending, startTransition] = useTransition();
-  const [localStage, setLocalStage] = useState(stage);
-  const [localStatus, setLocalStatus] = useState<(typeof LEAD_STATUS_OPTIONS)[number]>(status);
-  const [localNotes, setLocalNotes] = useState(notes ?? "");
-
-  useEffect(() => {
-    setLocalStage(stage);
-    setLocalStatus(status);
-    setLocalNotes(notes ?? "");
-    setIsOpen(false);
-  }, [id, stage, status, notes]);
+  const [localStage, setLocalStage] = usePropSyncedState(stage, syncDeps);
+  const [localStatus, setLocalStatus] = usePropSyncedState<(typeof LEAD_STATUS_OPTIONS)[number]>(status, syncDeps);
+  const [localNotes, setLocalNotes] = usePropSyncedState(notes ?? "", syncDeps);
 
   return (
     <>
