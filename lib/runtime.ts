@@ -1,5 +1,5 @@
 import type { AppRole } from "../types/app";
-import { normalizeRoleKey } from "@/lib/permissions";
+import { normalizeRoleKey } from "./permissions";
 
 const MOCK_ROLE_VALUES: AppRole[] = ["program-assistant", "coordinator", "nurse", "sales", "manager", "director", "admin", "staff"];
 
