@@ -84,6 +84,12 @@ export function MemberCommandCenterContactManager({
     setLocalRows(rows);
   }, [rows]);
 
+  useEffect(() => {
+    setForm(blankForm());
+    setShowForm(false);
+    setStatus(null);
+  }, [memberId]);
+
   function loadForEdit(row: ContactRow) {
     setStatus(null);
     setShowForm(true);

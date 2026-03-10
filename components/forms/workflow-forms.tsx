@@ -38,6 +38,10 @@ const TOILET_OPTIONS = TOILET_USE_TYPE_OPTIONS;
 const TRANSPORT_OPTIONS = TRANSPORT_TYPE_OPTIONS;
 const LEAD_FOLLOWUP_TYPES = LEAD_FOLLOW_UP_TYPES;
 const MAX_PHOTO_UPLOAD_BYTES = 5 * 1024 * 1024;
+type LeadActivityType = (typeof LEAD_ACTIVITY_TYPES)[number];
+type LeadActivityOutcome = (typeof LEAD_ACTIVITY_OUTCOMES)[number];
+type LeadFollowUpType = (typeof LEAD_FOLLOW_UP_TYPES)[number];
+type LeadLostReason = "" | (typeof LEAD_LOST_REASON_OPTIONS)[number];
 
 function useNowIso() {
   return useMemo(() => toEasternDateTimeLocal(), []);
@@ -56,7 +60,7 @@ export function ToiletLogForm({ members }: { members: MemberOption[] }) {
     eventAt: now,
     briefs: false,
     memberSupplied: true,
-    useType: TOILET_OPTIONS[0],
+    useType: TOILET_OPTIONS[0] as (typeof TOILET_OPTIONS)[number],
     notes: ""
   });
 
@@ -74,7 +78,11 @@ export function ToiletLogForm({ members }: { members: MemberOption[] }) {
           ))}
         </select>
         <input type="datetime-local" className="h-11 rounded-lg border border-border px-3" value={form.eventAt} onChange={(e) => setForm((f) => ({ ...f, eventAt: e.target.value }))} />
-        <select className="h-11 rounded-lg border border-border px-3" value={form.useType} onChange={(e) => setForm((f) => ({ ...f, useType: e.target.value }))}>
+        <select
+          className="h-11 rounded-lg border border-border px-3"
+          value={form.useType}
+          onChange={(e) => setForm((f) => ({ ...f, useType: e.target.value as (typeof TOILET_OPTIONS)[number] }))}
+        >
           {TOILET_OPTIONS.map((opt) => (
             <option key={opt} value={opt}>{opt}</option>
           ))}
@@ -372,7 +380,7 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
     healthLately: "",
     allergyType: "NKA" as "NKA" | "Other",
     allergyOther: "",
-    codeStatus: "Full Code",
+    codeStatus: "Full Code" as (typeof CODE_STATUS_OPTIONS)[number],
     orientationDobVerified: false,
     orientationCityVerified: false,
     orientationYearVerified: false,
@@ -993,7 +1001,15 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
 export function LeadActivityForm({ leads, initialLeadId }: { leads: LeadOption[]; initialLeadId?: string }) {
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    leadId: string;
+    activityType: LeadActivityType;
+    outcome: LeadActivityOutcome;
+    lostReason: LeadLostReason;
+    nextFollowUpDate: string;
+    nextFollowUpType: LeadFollowUpType;
+    notes: string;
+  }>({
     leadId: (initialLeadId && leads.some((l) => l.id === initialLeadId) ? initialLeadId : leads[0]?.id) ?? "",
     activityType: "Call",
     outcome: "Spoke with caregiver",
@@ -1011,21 +1027,37 @@ export function LeadActivityForm({ leads, initialLeadId }: { leads: LeadOption[]
         <select className="h-11 rounded-lg border border-border px-3" value={form.leadId} onChange={(e) => setForm((f) => ({ ...f, leadId: e.target.value }))}>
           {leads.map((l) => <option key={l.id} value={l.id}>{l.member_name} ({l.stage})</option>)}
         </select>
-        <select className="h-11 rounded-lg border border-border px-3" value={form.activityType} onChange={(e) => setForm((f) => ({ ...f, activityType: e.target.value }))}>
+        <select
+          className="h-11 rounded-lg border border-border px-3"
+          value={form.activityType}
+          onChange={(e) => setForm((f) => ({ ...f, activityType: e.target.value as LeadActivityType }))}
+        >
           {LEAD_ACTIVITY_TYPES.map((activityType) => <option key={activityType} value={activityType}>{activityType}</option>)}
         </select>
-        <select className="h-11 rounded-lg border border-border px-3" value={form.outcome} onChange={(e) => setForm((f) => ({ ...f, outcome: e.target.value }))}>
+        <select
+          className="h-11 rounded-lg border border-border px-3"
+          value={form.outcome}
+          onChange={(e) => setForm((f) => ({ ...f, outcome: e.target.value as LeadActivityOutcome }))}
+        >
           {LEAD_ACTIVITY_OUTCOMES.map((outcome) => <option key={outcome} value={outcome}>{outcome}</option>)}
         </select>
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
         <input type="date" className="h-11 rounded-lg border border-border px-3" value={form.nextFollowUpDate} onChange={(e) => setForm((f) => ({ ...f, nextFollowUpDate: e.target.value }))} />
-        <select className="h-11 rounded-lg border border-border px-3" value={form.nextFollowUpType} onChange={(e) => setForm((f) => ({ ...f, nextFollowUpType: e.target.value }))}>
+        <select
+          className="h-11 rounded-lg border border-border px-3"
+          value={form.nextFollowUpType}
+          onChange={(e) => setForm((f) => ({ ...f, nextFollowUpType: e.target.value as LeadFollowUpType }))}
+        >
           {LEAD_FOLLOWUP_TYPES.map((followupType) => <option key={followupType} value={followupType}>{followupType}</option>)}
         </select>
         {showLostReason ? (
-          <select className="h-11 rounded-lg border border-border px-3" value={form.lostReason} onChange={(e) => setForm((f) => ({ ...f, lostReason: e.target.value }))}>
+          <select
+            className="h-11 rounded-lg border border-border px-3"
+            value={form.lostReason}
+            onChange={(e) => setForm((f) => ({ ...f, lostReason: e.target.value as LeadLostReason }))}
+          >
             <option value="">Lost Reason</option>
             {LEAD_LOST_REASON_OPTIONS.map((lostReason) => <option key={lostReason} value={lostReason}>{lostReason}</option>)}
           </select>

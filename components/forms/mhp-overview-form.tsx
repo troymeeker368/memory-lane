@@ -1,9 +1,10 @@
 "use client";
 
-import { type ChangeEvent, useState } from "react";
+import { type ChangeEvent } from "react";
 
 import { saveMhpOverviewAction } from "@/app/(portal)/health/member-health-profiles/actions";
 import { SegmentedChoiceGroup } from "@/components/forms/segmented-choice-group";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 
 function Field({
   label,
@@ -80,11 +81,18 @@ export function MhpOverviewForm(props: {
   responsiblePartyPhone: string;
   importantAlerts: string;
 }) {
-  const [primaryCaregiverName, setPrimaryCaregiverName] = useState(props.primaryCaregiverName);
-  const [primaryCaregiverPhone, setPrimaryCaregiverPhone] = useState(props.primaryCaregiverPhone);
-  const [responsiblePartyName, setResponsiblePartyName] = useState(props.responsiblePartyName);
-  const [responsiblePartyPhone, setResponsiblePartyPhone] = useState(props.responsiblePartyPhone);
-  const [sameAsPrimary, setSameAsPrimary] = useState(false);
+  const syncDeps = [
+    props.memberId,
+    props.primaryCaregiverName,
+    props.primaryCaregiverPhone,
+    props.responsiblePartyName,
+    props.responsiblePartyPhone
+  ];
+  const [primaryCaregiverName, setPrimaryCaregiverName] = usePropSyncedState(props.primaryCaregiverName, syncDeps);
+  const [primaryCaregiverPhone, setPrimaryCaregiverPhone] = usePropSyncedState(props.primaryCaregiverPhone, syncDeps);
+  const [responsiblePartyName, setResponsiblePartyName] = usePropSyncedState(props.responsiblePartyName, syncDeps);
+  const [responsiblePartyPhone, setResponsiblePartyPhone] = usePropSyncedState(props.responsiblePartyPhone, syncDeps);
+  const [sameAsPrimary, setSameAsPrimary] = usePropSyncedState(false, syncDeps);
 
   const handlePrimaryNameChange = (next: string) => {
     setPrimaryCaregiverName(next);

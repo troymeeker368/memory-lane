@@ -59,7 +59,8 @@ export default async function LockerAssignmentsPage({
   const profile = await requireModuleAccess("operations");
   const canEdit = profile.role === "admin" || profile.role === "manager";
   const params = await searchParams;
-  const query = (firstString(params.q) ?? "").trim().toLowerCase();
+  const rawQuery = (firstString(params.q) ?? "").trim();
+  const normalizedQuery = rawQuery.toLowerCase();
   const status = (firstString(params.status) as "all" | "assigned" | "open" | undefined) ?? "all";
   const requestedPage = parsePage(params.page);
   const selectedLocker = normalizeLocker(firstString(params.locker)) ?? "";
@@ -68,12 +69,20 @@ export default async function LockerAssignmentsPage({
   const successMessage = firstString(params.success) ?? "";
 
   const db = getMockDb();
-  const activeMembers = [...db.members]
-    .filter((member) => member.status === "active")
-    .sort((a, b) => a.display_name.localeCompare(b.display_name, undefined, { sensitivity: "base" }));
-  const inactiveMembers = [...db.members]
-    .filter((member) => member.status === "inactive")
-    .sort((a, b) => {
+  const activeMembers = Array.from(
+    new Map(
+      db.members
+        .filter((member) => member.status === "active")
+        .map((member) => [member.id, member] as const)
+    ).values()
+  ).sort((a, b) => a.display_name.localeCompare(b.display_name, undefined, { sensitivity: "base" }));
+  const inactiveMembers = Array.from(
+    new Map(
+      db.members
+        .filter((member) => member.status === "inactive")
+        .map((member) => [member.id, member] as const)
+    ).values()
+  ).sort((a, b) => {
       const aDate = a.discharge_date ?? "";
       const bDate = b.discharge_date ?? "";
       if (aDate === bDate) return a.display_name.localeCompare(b.display_name, undefined, { sensitivity: "base" });
@@ -131,11 +140,11 @@ export default async function LockerAssignmentsPage({
     })
     .filter((row) => (status === "all" ? true : status === "assigned" ? Boolean(row.currentMember) : !row.currentMember))
     .filter((row) => {
-      if (!query) return true;
+      if (!normalizedQuery) return true;
       return (
-        row.locker.toLowerCase().includes(query) ||
-        (row.currentMember?.display_name ?? "").toLowerCase().includes(query) ||
-        (row.previousMember ?? "").toLowerCase().includes(query)
+        row.locker.toLowerCase().includes(normalizedQuery) ||
+        (row.currentMember?.display_name ?? "").toLowerCase().includes(normalizedQuery) ||
+        (row.previousMember ?? "").toLowerCase().includes(normalizedQuery)
       );
     });
 
@@ -153,12 +162,22 @@ export default async function LockerAssignmentsPage({
 
   const pageHref = (page: number) => {
     const qs = new URLSearchParams();
-    if (query) qs.set("q", query);
+    if (rawQuery) qs.set("q", rawQuery);
     if (status !== "all") qs.set("status", status);
     if (selectedLocker) qs.set("locker", selectedLocker);
     if (selectedMemberId) qs.set("memberId", selectedMemberId);
     qs.set("page", String(page));
     return `/operations/locker-assignments?${qs.toString()}`;
+  };
+
+  const assignLinkHref = (locker: string, memberId?: string) => {
+    const qs = new URLSearchParams();
+    if (rawQuery) qs.set("q", rawQuery);
+    if (status !== "all") qs.set("status", status);
+    qs.set("locker", locker);
+    if (memberId) qs.set("memberId", memberId);
+    qs.set("page", String(currentPage));
+    return `/operations/locker-assignments?${qs.toString()}#assignment-form`;
   };
 
   return (
@@ -187,12 +206,20 @@ export default async function LockerAssignmentsPage({
       ) : null}
 
       {canEdit ? (
-        <Card>
+        <Card id="assignment-form">
           <CardTitle>Assign / Reassign Locker</CardTitle>
-          <form action={assignLockerAction} className="mt-3 grid gap-2 md:grid-cols-4">
+          <form
+            key={`assign-form-${selectedLocker}-${selectedMemberId}`}
+            action={assignLockerAction}
+            className="mt-3 grid gap-2 md:grid-cols-4"
+          >
+            <input type="hidden" name="q" value={rawQuery} />
+            <input type="hidden" name="status" value={status} />
+            <input type="hidden" name="page" value={String(currentPage)} />
             <label className="space-y-1 text-sm">
               <span className="text-xs font-semibold text-muted">Locker #</span>
               <select
+                key={`locker-select-${selectedLocker}-${selectedMemberId}`}
                 name="lockerNumber"
                 defaultValue={selectedLocker}
                 required
@@ -208,7 +235,13 @@ export default async function LockerAssignmentsPage({
             </label>
             <label className="space-y-1 text-sm md:col-span-2">
               <span className="text-xs font-semibold text-muted">Member</span>
-              <select name="memberId" defaultValue={selectedMemberId} required className="h-10 w-full rounded-lg border border-border px-3">
+              <select
+                key={`member-select-${selectedLocker}-${selectedMemberId}`}
+                name="memberId"
+                defaultValue={selectedMemberId}
+                required
+                className="h-10 w-full rounded-lg border border-border px-3"
+              >
                 <option value="">Select active member</option>
                 {activeMembers.map((member) => (
                   <option key={member.id} value={member.id}>
@@ -231,7 +264,7 @@ export default async function LockerAssignmentsPage({
         <form method="get" className="grid gap-2 md:grid-cols-4">
           <input
             name="q"
-            defaultValue={query}
+            defaultValue={rawQuery}
             placeholder="Search locker or member"
             className="h-10 rounded-lg border border-border px-3"
           />
@@ -288,7 +321,7 @@ export default async function LockerAssignmentsPage({
                     <div className="flex flex-wrap items-center gap-2">
                       {canEdit ? (
                         <Link
-                          href={`/operations/locker-assignments?locker=${encodeURIComponent(row.locker)}${row.currentMember ? `&memberId=${encodeURIComponent(row.currentMember.id)}` : ""}`}
+                          href={assignLinkHref(row.locker, row.currentMember?.id)}
                           className="text-sm font-semibold text-brand"
                         >
                           Assign/Reassign
@@ -297,6 +330,10 @@ export default async function LockerAssignmentsPage({
                       {canEdit && row.currentMember ? (
                         <form action={clearLockerAction}>
                           <input type="hidden" name="memberId" value={row.currentMember.id} />
+                          <input type="hidden" name="q" value={rawQuery} />
+                          <input type="hidden" name="status" value={status} />
+                          <input type="hidden" name="page" value={String(currentPage)} />
+                          <input type="hidden" name="locker" value={row.locker} />
                           <button type="submit" className="text-sm font-semibold text-danger">Clear</button>
                         </form>
                       ) : null}
@@ -311,27 +348,39 @@ export default async function LockerAssignmentsPage({
 
       <Card>
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <a
-            href={currentPage > 1 ? pageHref(currentPage - 1) : "#"}
-            className={`rounded border px-3 py-1 font-semibold ${currentPage > 1 ? "border-border text-brand" : "cursor-not-allowed border-border text-muted"}`}
-          >
-            Previous
-          </a>
+          {currentPage > 1 ? (
+            <Link
+              href={pageHref(currentPage - 1)}
+              className="rounded border border-border px-3 py-1 font-semibold text-brand"
+            >
+              Previous
+            </Link>
+          ) : (
+            <span className="cursor-not-allowed rounded border border-border px-3 py-1 font-semibold text-muted">
+              Previous
+            </span>
+          )}
           {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-            <a
+            <Link
               key={page}
               href={pageHref(page)}
               className={`rounded border px-3 py-1 ${page === currentPage ? "border-brand bg-brand text-white" : "border-border text-brand"}`}
             >
               {page}
-            </a>
+            </Link>
           ))}
-          <a
-            href={currentPage < totalPages ? pageHref(currentPage + 1) : "#"}
-            className={`rounded border px-3 py-1 font-semibold ${currentPage < totalPages ? "border-border text-brand" : "cursor-not-allowed border-border text-muted"}`}
-          >
-            Next
-          </a>
+          {currentPage < totalPages ? (
+            <Link
+              href={pageHref(currentPage + 1)}
+              className="rounded border border-border px-3 py-1 font-semibold text-brand"
+            >
+              Next
+            </Link>
+          ) : (
+            <span className="cursor-not-allowed rounded border border-border px-3 py-1 font-semibold text-muted">
+              Next
+            </span>
+          )}
         </div>
       </Card>
     </div>

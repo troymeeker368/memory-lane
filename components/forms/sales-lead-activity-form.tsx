@@ -1,9 +1,10 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { createSalesLeadActivityAction } from "@/app/sales-actions";
+import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
 import {
   LEAD_ACTIVITY_OUTCOMES,
@@ -12,6 +13,8 @@ import {
   LEAD_LOST_REASON_OPTIONS
 } from "@/lib/canonical";
 import { toEasternDateTimeLocal } from "@/lib/timezone";
+
+type LeadLostReason = "" | (typeof LEAD_LOST_REASON_OPTIONS)[number];
 
 type LeadLookup = {
   id: string;
@@ -59,7 +62,7 @@ export function SalesLeadActivityForm({
   const router = useRouter();
   const now = useMemo(() => toEasternDateTimeLocal(), []);
   const [isPending, startTransition] = useTransition();
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = usePropSyncedStatus([initialLeadId, initialPartnerId, initialReferralSourceId, lockedLeadId], "");
 
   const uniqueLeads = useMemo(() => {
     const seen = new Set<string>();
@@ -97,18 +100,21 @@ export function SalesLeadActivityForm({
     uniqueLeads[0]?.id ??
     "";
 
-  const [form, setForm] = useState({
-    leadId: resolvedInitialLeadId,
-    activityAt: now,
-    activityType: "Call" as (typeof LEAD_ACTIVITY_TYPES)[number],
-    outcome: "Spoke with caregiver" as (typeof LEAD_ACTIVITY_OUTCOMES)[number],
-    lostReason: "",
-    nextFollowUpDate: "",
-    nextFollowUpType: "Call" as (typeof LEAD_FOLLOW_UP_TYPES)[number],
-    notes: "",
-    partnerId: initialPartnerId ?? "",
-    referralSourceId: initialReferralSourceId ?? ""
-  });
+  const [form, setForm] = usePropSyncedState(
+    () => ({
+      leadId: resolvedInitialLeadId,
+      activityAt: now,
+      activityType: "Call" as (typeof LEAD_ACTIVITY_TYPES)[number],
+      outcome: "Spoke with caregiver" as (typeof LEAD_ACTIVITY_OUTCOMES)[number],
+      lostReason: "" as LeadLostReason,
+      nextFollowUpDate: "",
+      nextFollowUpType: "Call" as (typeof LEAD_FOLLOW_UP_TYPES)[number],
+      notes: "",
+      partnerId: initialPartnerId ?? "",
+      referralSourceId: initialReferralSourceId ?? ""
+    }),
+    [resolvedInitialLeadId, initialPartnerId, initialReferralSourceId, now]
+  );
 
   const showLostReason = form.outcome === "Not a fit";
   const selectedLead = uniqueLeads.find((lead) => lead.id === form.leadId) ?? null;
@@ -237,7 +243,7 @@ export function SalesLeadActivityForm({
             <select
               className="h-11 rounded-lg border border-border px-3"
               value={form.lostReason}
-              onChange={(event) => setForm((current) => ({ ...current, lostReason: event.target.value }))}
+              onChange={(event) => setForm((current) => ({ ...current, lostReason: event.target.value as LeadLostReason }))}
             >
               <option value="">Select lost reason</option>
               {LEAD_LOST_REASON_OPTIONS.map((reason) => (

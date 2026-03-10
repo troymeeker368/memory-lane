@@ -2,6 +2,7 @@
 import { ANCILLARY_CHARGE_CATALOG, canonicalLeadStatus } from "@/lib/canonical";
 import { buildSeededMockDb } from "@/lib/mock/seed";
 import { readMockStateJson, writeMockStateJson } from "@/lib/mock-persistence";
+import { getStandardDailyRateForAttendanceDays } from "@/lib/services/billing-rate-tiers";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import type { AppRole, AuditAction } from "@/types/app";
@@ -257,6 +258,65 @@ function normalizeLockerNumber(value: unknown): string | null {
   return normalized.toUpperCase();
 }
 
+function timestampFromRowValue(row: Record<string, unknown>) {
+  const rawUpdatedAt = row.updated_at ?? row.updatedAt ?? row.created_at ?? row.createdAt;
+  if (typeof rawUpdatedAt !== "string" || rawUpdatedAt.trim().length === 0) {
+    return Number.NaN;
+  }
+  const parsed = Date.parse(rawUpdatedAt);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function shouldReplaceDuplicateRow(existing: Record<string, unknown>, next: Record<string, unknown>) {
+  const existingTs = timestampFromRowValue(existing);
+  const nextTs = timestampFromRowValue(next);
+
+  if (Number.isFinite(nextTs) && Number.isFinite(existingTs)) {
+    return nextTs >= existingTs;
+  }
+  if (Number.isFinite(nextTs)) return true;
+  if (Number.isFinite(existingTs)) return false;
+  return true;
+}
+
+function dedupeRowsById<T extends Record<string, unknown>>(rows: T[]) {
+  const deduped: T[] = [];
+  const indexById = new Map<string, number>();
+
+  rows.forEach((row) => {
+    const id = String(row.id ?? "").trim();
+    if (!id) {
+      deduped.push(row);
+      return;
+    }
+
+    const existingIndex = indexById.get(id);
+    if (existingIndex == null) {
+      indexById.set(id, deduped.length);
+      deduped.push(row);
+      return;
+    }
+
+    const existing = deduped[existingIndex];
+    if (existing && shouldReplaceDuplicateRow(existing, row)) {
+      deduped[existingIndex] = row;
+    }
+  });
+
+  return deduped;
+}
+
+function dedupeMockDbTablesById(db: MockDb) {
+  const mutableDb = db as unknown as Record<string, unknown>;
+  Object.keys(mutableDb).forEach((key) => {
+    const rows = mutableDb[key];
+    if (!Array.isArray(rows) || rows.length < 2) return;
+    if (!rows.every((row) => row && typeof row === "object")) return;
+    if (!rows.some((row) => Object.prototype.hasOwnProperty.call(row as object, "id"))) return;
+    mutableDb[key] = dedupeRowsById(rows as Record<string, unknown>[]);
+  });
+}
+
 function ensureBalancedMemberTracks(members: MockDb["members"]) {
   const trackCycle: Array<"Track 1" | "Track 2" | "Track 3"> = ["Track 1", "Track 2", "Track 3"];
   const activeMembers = members.filter((member) => member.status === "active");
@@ -431,6 +491,15 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
     }));
   }
 
+  if (Array.isArray(db.leads)) {
+    db.leads = db.leads.map((lead) => ({
+      ...lead,
+      member_dob: (lead.member_dob as string | null | undefined) ?? null,
+      lead_source_other: (lead.lead_source_other as string | null | undefined) ?? null,
+      referral_source_id: (lead.referral_source_id as string | null | undefined) ?? null
+    }));
+  }
+
   db.memberHealthProfiles = Array.isArray(db.memberHealthProfiles) ? db.memberHealthProfiles : [];
   db.memberDiagnoses = Array.isArray(db.memberDiagnoses) ? db.memberDiagnoses : [];
   db.memberMedications = Array.isArray(db.memberMedications) ? db.memberMedications : [];
@@ -448,8 +517,20 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
   db.transportationManifestAdjustments = Array.isArray(db.transportationManifestAdjustments)
     ? db.transportationManifestAdjustments
     : [];
+  db.centerBillingSettings = Array.isArray(db.centerBillingSettings) ? db.centerBillingSettings : [];
+  db.centerClosures = Array.isArray(db.centerClosures) ? db.centerClosures : [];
+  db.payors = Array.isArray(db.payors) ? db.payors : [];
+  db.memberBillingSettings = Array.isArray(db.memberBillingSettings) ? db.memberBillingSettings : [];
+  db.billingScheduleTemplates = Array.isArray(db.billingScheduleTemplates) ? db.billingScheduleTemplates : [];
+  db.billingAdjustments = Array.isArray(db.billingAdjustments) ? db.billingAdjustments : [];
+  db.billingBatches = Array.isArray(db.billingBatches) ? db.billingBatches : [];
+  db.billingInvoices = Array.isArray(db.billingInvoices) ? db.billingInvoices : [];
+  db.billingInvoiceLines = Array.isArray(db.billingInvoiceLines) ? db.billingInvoiceLines : [];
+  db.billingExportJobs = Array.isArray(db.billingExportJobs) ? db.billingExportJobs : [];
+  db.billingCoverages = Array.isArray(db.billingCoverages) ? db.billingCoverages : [];
   db.memberContacts = Array.isArray(db.memberContacts) ? db.memberContacts : [];
   db.memberFiles = Array.isArray(db.memberFiles) ? db.memberFiles : [];
+  dedupeMockDbTablesById(db);
 
   if (Array.isArray(db.memberCommandCenters)) {
     db.memberCommandCenters = db.memberCommandCenters.map((row) => ({
@@ -739,6 +820,8 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
         thursdayPm.busStop ??
         fridayAm.busStop ??
         fridayPm.busStop;
+      const attendanceDaysPerWeek = [monday, tuesday, wednesday, thursday, friday].filter(Boolean).length;
+      const defaultDailyRate = getStandardDailyRateForAttendanceDays(attendanceDaysPerWeek);
 
       existingByMember.set(member.id, {
         id: `member-attendance-${member.id}`,
@@ -799,6 +882,14 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
         transport_friday_pm_door_to_door_address: fridayPm.doorToDoorAddress,
         transport_friday_pm_bus_number: fridayPm.busNumber,
         transport_friday_pm_bus_stop: fridayPm.busStop,
+        daily_rate: defaultDailyRate,
+        transportation_billing_status: "BillNormally",
+        billing_rate_effective_date: member.enrollment_date ?? null,
+        billing_notes: null,
+        attendance_days_per_week: attendanceDaysPerWeek,
+        default_daily_rate: defaultDailyRate,
+        use_custom_daily_rate: false,
+        custom_daily_rate: null,
         make_up_days_available: hashFromKey(`transport-makeup:${member.id}`) % 3,
         attendance_notes: null,
         updated_by_user_id: null,
@@ -824,6 +915,27 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
       const thursday = hasAnyDay ? rawThursday : false;
       const friday = hasAnyDay ? rawFriday : true;
       const dayEnabled: Record<WeekdayKey, boolean> = { monday, tuesday, wednesday, thursday, friday };
+      const attendanceDaysPerWeek = [monday, tuesday, wednesday, thursday, friday].filter(Boolean).length;
+      const sourceDefaultDailyRate = Number(source.default_daily_rate);
+      const defaultDailyRate =
+        Number.isFinite(sourceDefaultDailyRate) && sourceDefaultDailyRate > 0
+          ? sourceDefaultDailyRate
+          : getStandardDailyRateForAttendanceDays(attendanceDaysPerWeek);
+      const useCustomDailyRate = typeof source.use_custom_daily_rate === "boolean" ? source.use_custom_daily_rate : false;
+      const sourceCustomDailyRate = source.custom_daily_rate == null ? null : Number(source.custom_daily_rate);
+      const customDailyRate =
+        sourceCustomDailyRate == null || (Number.isFinite(sourceCustomDailyRate) && sourceCustomDailyRate > 0)
+          ? sourceCustomDailyRate
+          : null;
+      const sourceDailyRate = Number(source.daily_rate);
+      const resolvedDailyRate =
+        Number.isFinite(sourceDailyRate) && sourceDailyRate > 0
+          ? sourceDailyRate
+          : customDailyRate ?? defaultDailyRate;
+      const transportationBillingStatus =
+        source.transportation_billing_status === "Waived" || source.transportation_billing_status === "IncludedInProgramRate"
+          ? source.transportation_billing_status
+          : "BillNormally";
       const legacyMode = normalizeTransportMode(row.transportation_mode);
       const legacyBusNumber = normalizeTransportBusNumber(row.transport_bus_number);
       const legacyBusStop = row.transportation_bus_stop ?? null;
@@ -976,6 +1088,14 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
         transport_friday_pm_door_to_door_address: slotsByDay.friday.pmDoorToDoorAddress,
         transport_friday_pm_bus_number: slotsByDay.friday.pmBusNumber,
         transport_friday_pm_bus_stop: slotsByDay.friday.pmBusStop,
+        daily_rate: resolvedDailyRate,
+        transportation_billing_status: transportationBillingStatus,
+        billing_rate_effective_date: (source.billing_rate_effective_date as string | null) ?? row.enrollment_date ?? null,
+        billing_notes: (source.billing_notes as string | null) ?? null,
+        attendance_days_per_week: attendanceDaysPerWeek,
+        default_daily_rate: defaultDailyRate,
+        use_custom_daily_rate: useCustomDailyRate,
+        custom_daily_rate: customDailyRate,
         make_up_days_available: typeof row.make_up_days_available === "number" ? row.make_up_days_available : null,
         attendance_notes: row.attendance_notes ?? null,
         updated_by_user_id: row.updated_by_user_id ?? null,
@@ -1098,6 +1218,12 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
         check_in_at: row.check_in_at ?? null,
         check_out_at: row.check_out_at ?? null,
         notes: row.notes ?? null,
+        scheduled_day: typeof row.scheduled_day === "boolean" ? row.scheduled_day : null,
+        unscheduled_day: typeof row.unscheduled_day === "boolean" ? row.unscheduled_day : null,
+        billable_extra_day: typeof row.billable_extra_day === "boolean" ? row.billable_extra_day : null,
+        billing_status:
+          row.billing_status === "Billed" || row.billing_status === "Excluded" ? row.billing_status : "Unbilled",
+        linked_adjustment_id: row.linked_adjustment_id ?? null,
         recorded_by_user_id: String(row.recorded_by_user_id ?? ""),
         recorded_by_name: String(row.recorded_by_name ?? "Unknown Staff"),
         created_at: String(row.created_at ?? toEasternISO()),
@@ -1118,6 +1244,62 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
         return left.member_id.localeCompare(right.member_id, undefined, { sensitivity: "base" });
       }
       return left.attendance_date > right.attendance_date ? -1 : 1;
+    });
+  }
+
+  if (Array.isArray(db.transportationLogs)) {
+    const activeCenterSettings =
+      db.centerBillingSettings.find((row) => row.active && !row.effective_end_date) ??
+      db.centerBillingSettings.find((row) => row.active) ??
+      seededDb.centerBillingSettings[0] ??
+      null;
+    const oneWayRate = Number.isFinite(activeCenterSettings?.default_transport_one_way_rate)
+      ? Number(activeCenterSettings?.default_transport_one_way_rate)
+      : 10;
+    const roundTripRate = Number.isFinite(activeCenterSettings?.default_transport_round_trip_rate)
+      ? Number(activeCenterSettings?.default_transport_round_trip_rate)
+      : 20;
+
+    db.transportationLogs = db.transportationLogs.map((row) => {
+      const normalizedTransportType = String(row.transport_type ?? "").trim().toLowerCase();
+      const inferredTripType =
+        row.trip_type === "OneWay" || row.trip_type === "RoundTrip" || row.trip_type === "Other"
+          ? row.trip_type
+          : normalizedTransportType.includes("round")
+            ? "RoundTrip"
+            : normalizedTransportType.length > 0
+              ? "OneWay"
+              : "Other";
+      const quantity = Number.isFinite(row.quantity) && Number(row.quantity) > 0 ? Number(row.quantity) : 1;
+      const unitRate =
+        Number.isFinite(row.unit_rate) && Number(row.unit_rate) >= 0
+          ? Number(row.unit_rate)
+          : inferredTripType === "RoundTrip"
+            ? roundTripRate
+            : oneWayRate;
+      const totalAmount =
+        Number.isFinite(row.total_amount) && Number(row.total_amount) >= 0
+          ? Number(row.total_amount)
+          : unitRate * quantity;
+      const billable = typeof row.billable === "boolean" ? row.billable : true;
+      const billingStatus =
+        row.billing_status === "Billed" || row.billing_status === "Excluded"
+          ? row.billing_status
+          : billable
+            ? "Unbilled"
+            : "Excluded";
+
+      return {
+        ...row,
+        trip_type: inferredTripType,
+        quantity,
+        unit_rate: unitRate,
+        total_amount: totalAmount,
+        billable,
+        billing_status: billingStatus,
+        billing_exclusion_reason: row.billing_exclusion_reason ?? (billable ? null : "Non-billable member transport rule"),
+        invoice_id: row.invoice_id ?? null
+      };
     });
   }
 
@@ -1352,13 +1534,36 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
         : Number.isFinite(parsedAmount)
           ? parsedAmount
           : (category?.price_cents ?? 0) * quantity;
+      const unitRate =
+        Number.isFinite(row.unit_rate) && Number(row.unit_rate) >= 0
+          ? Number(row.unit_rate)
+          : quantity > 0
+            ? Number((amountCents / quantity).toFixed(2))
+            : amountCents;
+      const totalAmount =
+        Number.isFinite(row.total_amount) && Number(row.total_amount) >= 0 ? Number(row.total_amount) : amountCents;
+      const billable = typeof row.billable === "boolean" ? row.billable : true;
+      const billingStatus =
+        row.billing_status === "Billed" || row.billing_status === "Excluded"
+          ? row.billing_status
+          : billable
+            ? "Unbilled"
+            : "Excluded";
 
       return {
         ...row,
         category_id: category?.id ?? row.category_id,
         category_name: category?.name ?? normalizedCategoryName ?? row.category_name,
+        charge_type: row.charge_type ?? category?.name ?? normalizedCategoryName ?? row.category_name,
         quantity,
         amount_cents: amountCents,
+        charge_date: String(row.charge_date ?? row.service_date ?? toEasternDate()),
+        unit_rate: unitRate,
+        total_amount: totalAmount,
+        billable,
+        billing_status: billingStatus,
+        billing_exclusion_reason: row.billing_exclusion_reason ?? (billable ? null : "Marked non-billable"),
+        invoice_id: row.invoice_id ?? null,
         reconciliation_status:
           row.reconciliation_status === "reconciled" || row.reconciliation_status === "void"
             ? row.reconciliation_status
@@ -1368,6 +1573,342 @@ function normalizePersistedState(candidate: PersistedMockRepoState | null | unde
         reconciliation_note: row.reconciliation_note ?? null
       };
     });
+  }
+
+  if (Array.isArray(db.centerBillingSettings)) {
+    db.centerBillingSettings = db.centerBillingSettings
+      .map((row): MockDb["centerBillingSettings"][number] => ({
+        ...row,
+        default_daily_rate: Number.isFinite(row.default_daily_rate) ? Math.max(0, Number(row.default_daily_rate)) : 82,
+        default_extra_day_rate:
+          row.default_extra_day_rate == null || Number.isFinite(row.default_extra_day_rate)
+            ? (row.default_extra_day_rate == null ? null : Math.max(0, Number(row.default_extra_day_rate)))
+            : null,
+        default_transport_one_way_rate: Number.isFinite(row.default_transport_one_way_rate)
+          ? Math.max(0, Number(row.default_transport_one_way_rate))
+          : 10,
+        default_transport_round_trip_rate: Number.isFinite(row.default_transport_round_trip_rate)
+          ? Math.max(0, Number(row.default_transport_round_trip_rate))
+          : 20,
+        billing_cutoff_day: Number.isFinite(row.billing_cutoff_day) ? Math.min(31, Math.max(1, Math.round(Number(row.billing_cutoff_day)))) : 25,
+        default_billing_mode: row.default_billing_mode === "Monthly" ? "Monthly" : "Membership",
+        effective_start_date: String(row.effective_start_date ?? toEasternDate()),
+        effective_end_date: row.effective_end_date ?? null,
+        active: typeof row.active === "boolean" ? row.active : true,
+        created_at: String(row.created_at ?? toEasternISO()),
+        updated_at: String(row.updated_at ?? row.created_at ?? toEasternISO()),
+        updated_by_user_id: row.updated_by_user_id ?? null,
+        updated_by_name: row.updated_by_name ?? null
+      }))
+      .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1));
+  }
+
+  if (Array.isArray(db.centerClosures)) {
+    db.centerClosures = db.centerClosures
+      .map((row) => {
+        const closureType: MockDb["centerClosures"][number]["closure_type"] =
+          row.closure_type === "Weather" ||
+          row.closure_type === "Planned" ||
+          row.closure_type === "Emergency" ||
+          row.closure_type === "Other"
+            ? row.closure_type
+            : "Holiday";
+        return {
+          ...row,
+          closure_date: String(row.closure_date ?? toEasternDate()),
+          closure_name: String(row.closure_name ?? "Center Closure"),
+          closure_type: closureType,
+          billable_override: typeof row.billable_override === "boolean" ? row.billable_override : false,
+          notes: row.notes ?? null,
+          active: typeof row.active === "boolean" ? row.active : true,
+          created_at: String(row.created_at ?? toEasternISO()),
+          updated_at: String(row.updated_at ?? row.created_at ?? toEasternISO()),
+          updated_by_user_id: row.updated_by_user_id ?? null,
+          updated_by_name: row.updated_by_name ?? null
+        };
+      })
+      .sort((left, right) => (left.closure_date < right.closure_date ? 1 : -1));
+  }
+
+  if (Array.isArray(db.payors)) {
+    db.payors = db.payors.map((row) => ({
+      ...row,
+      payor_name: String(row.payor_name ?? "").trim(),
+      payor_type: String(row.payor_type ?? "Private"),
+      billing_contact_name: row.billing_contact_name ?? null,
+      billing_email: row.billing_email ?? null,
+      billing_phone: row.billing_phone ?? null,
+      billing_method:
+        row.billing_method === "ACHDraft" ||
+        row.billing_method === "CardOnFile" ||
+        row.billing_method === "Manual" ||
+        row.billing_method === "External"
+          ? row.billing_method
+          : "InvoiceEmail",
+      auto_draft_enabled: typeof row.auto_draft_enabled === "boolean" ? row.auto_draft_enabled : false,
+      quickbooks_customer_name: row.quickbooks_customer_name ?? null,
+      quickbooks_customer_ref: row.quickbooks_customer_ref ?? null,
+      status: row.status === "inactive" ? "inactive" : "active",
+      notes: row.notes ?? null,
+      created_at: String(row.created_at ?? toEasternISO()),
+      updated_at: String(row.updated_at ?? row.created_at ?? toEasternISO()),
+      updated_by_user_id: row.updated_by_user_id ?? null,
+      updated_by_name: row.updated_by_name ?? null
+    }));
+  }
+
+  if (Array.isArray(db.memberBillingSettings)) {
+    db.memberBillingSettings = db.memberBillingSettings.map((row) => ({
+      ...row,
+      member_id: String(row.member_id ?? ""),
+      payor_id: row.payor_id ?? null,
+      use_center_default_billing_mode:
+        typeof row.use_center_default_billing_mode === "boolean" ? row.use_center_default_billing_mode : true,
+      billing_mode:
+        row.billing_mode === "Membership" || row.billing_mode === "Monthly" || row.billing_mode === "Custom"
+          ? row.billing_mode
+          : null,
+      monthly_billing_basis:
+        row.monthly_billing_basis === "ActualAttendanceMonthBehind"
+          ? "ActualAttendanceMonthBehind"
+          : "ScheduledMonthBehind",
+      use_center_default_rate: typeof row.use_center_default_rate === "boolean" ? row.use_center_default_rate : true,
+      custom_daily_rate:
+        row.custom_daily_rate == null || Number.isFinite(row.custom_daily_rate)
+          ? (row.custom_daily_rate == null ? null : Math.max(0, Number(row.custom_daily_rate)))
+          : null,
+      flat_monthly_rate:
+        row.flat_monthly_rate == null || Number.isFinite(row.flat_monthly_rate)
+          ? (row.flat_monthly_rate == null ? null : Number(row.flat_monthly_rate))
+          : null,
+      bill_extra_days: typeof row.bill_extra_days === "boolean" ? row.bill_extra_days : true,
+      transportation_billing_status:
+        row.transportation_billing_status === "Waived" || row.transportation_billing_status === "IncludedInProgramRate"
+          ? row.transportation_billing_status
+          : "BillNormally",
+      bill_ancillary_arrears: typeof row.bill_ancillary_arrears === "boolean" ? row.bill_ancillary_arrears : true,
+      active: typeof row.active === "boolean" ? row.active : true,
+      effective_start_date: String(row.effective_start_date ?? toEasternDate()),
+      effective_end_date: row.effective_end_date ?? null,
+      billing_notes: row.billing_notes ?? null,
+      created_at: String(row.created_at ?? toEasternISO()),
+      updated_at: String(row.updated_at ?? row.created_at ?? toEasternISO()),
+      updated_by_user_id: row.updated_by_user_id ?? null,
+      updated_by_name: row.updated_by_name ?? null
+    }));
+  }
+
+  if (Array.isArray(db.billingScheduleTemplates)) {
+    db.billingScheduleTemplates = db.billingScheduleTemplates.map((row) => ({
+      ...row,
+      member_id: String(row.member_id ?? ""),
+      effective_start_date: String(row.effective_start_date ?? toEasternDate()),
+      effective_end_date: row.effective_end_date ?? null,
+      monday: Boolean(row.monday),
+      tuesday: Boolean(row.tuesday),
+      wednesday: Boolean(row.wednesday),
+      thursday: Boolean(row.thursday),
+      friday: Boolean(row.friday),
+      saturday: Boolean(row.saturday),
+      sunday: Boolean(row.sunday),
+      active: typeof row.active === "boolean" ? row.active : true,
+      notes: row.notes ?? null,
+      created_at: String(row.created_at ?? toEasternISO()),
+      updated_at: String(row.updated_at ?? row.created_at ?? toEasternISO()),
+      updated_by_user_id: row.updated_by_user_id ?? null,
+      updated_by_name: row.updated_by_name ?? null
+    }));
+  }
+
+  if (Array.isArray(db.billingAdjustments)) {
+    db.billingAdjustments = db.billingAdjustments.map((row) => {
+      const qty = Number.isFinite(row.quantity) && Number(row.quantity) > 0 ? Number(row.quantity) : 1;
+      const unitRate = Number.isFinite(row.unit_rate) ? Number(row.unit_rate) : 0;
+      const amountFromRate = Number((qty * unitRate).toFixed(2));
+      const rawAmount = Number.isFinite(row.amount) ? Number(row.amount) : amountFromRate;
+      const isCreditType =
+        row.adjustment_type === "Credit" ||
+        row.adjustment_type === "Discount" ||
+        row.adjustment_type === "Refund" ||
+        row.adjustment_type === "ManualCredit";
+      const amount = isCreditType ? -Math.abs(rawAmount) : rawAmount;
+      return {
+        ...row,
+        member_id: String(row.member_id ?? ""),
+        payor_id: row.payor_id ?? null,
+        adjustment_date: String(row.adjustment_date ?? toEasternDate()),
+        adjustment_type: row.adjustment_type ?? "Other",
+        description: String(row.description ?? "Billing adjustment"),
+        quantity: qty,
+        unit_rate: unitRate,
+        amount,
+        billing_status: row.billing_status === "Billed" || row.billing_status === "Excluded" ? row.billing_status : "Unbilled",
+        invoice_id: row.invoice_id ?? null,
+        created_by_system: typeof row.created_by_system === "boolean" ? row.created_by_system : false,
+        source_table: row.source_table ?? null,
+        source_record_id: row.source_record_id ?? null,
+        created_at: String(row.created_at ?? toEasternISO()),
+        updated_at: String(row.updated_at ?? row.created_at ?? toEasternISO()),
+        created_by_user_id: row.created_by_user_id ?? null,
+        created_by_name: row.created_by_name ?? null
+      };
+    });
+  }
+
+  if (Array.isArray(db.billingBatches)) {
+    db.billingBatches = db.billingBatches.map((row) => ({
+      ...row,
+      batch_type:
+        row.batch_type === "Membership" || row.batch_type === "Monthly" || row.batch_type === "Custom"
+          ? row.batch_type
+          : "Mixed",
+      billing_month: String(row.billing_month ?? `${toEasternDate().slice(0, 7)}-01`),
+      run_date: String(row.run_date ?? toEasternDate()),
+      run_by_user: String(row.run_by_user ?? "system"),
+      batch_status:
+        row.batch_status === "Reviewed" || row.batch_status === "Finalized" || row.batch_status === "Exported" || row.batch_status === "Closed"
+          ? row.batch_status
+          : "Draft",
+      invoice_count: Number.isFinite(row.invoice_count) ? Math.max(0, Math.round(Number(row.invoice_count))) : 0,
+      total_amount: Number.isFinite(row.total_amount) ? Number(row.total_amount) : 0,
+      exported_at: row.exported_at ?? null,
+      completion_date: row.completion_date ?? null,
+      next_due_date: row.next_due_date ?? null,
+      notes: row.notes ?? null,
+      created_at: String(row.created_at ?? toEasternISO()),
+      updated_at: String(row.updated_at ?? row.created_at ?? toEasternISO())
+    }));
+  }
+
+  if (Array.isArray(db.billingInvoices)) {
+    db.billingInvoices = db.billingInvoices.map((row) => ({
+      ...row,
+      billing_batch_id: String(row.billing_batch_id ?? ""),
+      member_id: String(row.member_id ?? ""),
+      payor_id: row.payor_id ?? null,
+      invoice_number: String(row.invoice_number ?? ""),
+      invoice_date: String(row.invoice_date ?? toEasternDate()),
+      due_date: String(row.due_date ?? toEasternDate()),
+      invoice_month: String(row.invoice_month ?? `${toEasternDate().slice(0, 7)}-01`),
+      invoice_source: row.invoice_source === "Custom" ? "Custom" : "BatchGenerated",
+      billing_mode_snapshot:
+        row.billing_mode_snapshot === "Monthly" || row.billing_mode_snapshot === "Custom"
+          ? row.billing_mode_snapshot
+          : "Membership",
+      monthly_billing_basis_snapshot:
+        row.monthly_billing_basis_snapshot === "ActualAttendanceMonthBehind"
+          ? "ActualAttendanceMonthBehind"
+          : row.monthly_billing_basis_snapshot === "ScheduledMonthBehind"
+            ? "ScheduledMonthBehind"
+            : null,
+      base_period_start: String(row.base_period_start ?? row.invoice_month ?? `${toEasternDate().slice(0, 7)}-01`),
+      base_period_end: String(row.base_period_end ?? row.invoice_month ?? `${toEasternDate().slice(0, 7)}-01`),
+      variable_charge_period_start: String(
+        row.variable_charge_period_start ?? row.base_period_start ?? row.invoice_month ?? `${toEasternDate().slice(0, 7)}-01`
+      ),
+      variable_charge_period_end: String(
+        row.variable_charge_period_end ?? row.base_period_end ?? row.invoice_month ?? `${toEasternDate().slice(0, 7)}-01`
+      ),
+      base_program_billed_days: Number.isFinite(row.base_program_billed_days) ? Math.max(0, Number(row.base_program_billed_days)) : 0,
+      base_program_day_rate:
+        row.base_program_day_rate == null || Number.isFinite(row.base_program_day_rate)
+          ? (row.base_program_day_rate == null ? null : Math.max(0, Number(row.base_program_day_rate)))
+          : null,
+      base_program_closure_excluded_days: Number.isFinite(row.base_program_closure_excluded_days)
+        ? Math.max(0, Number(row.base_program_closure_excluded_days))
+        : 0,
+      base_program_amount: Number.isFinite(row.base_program_amount) ? Number(row.base_program_amount) : 0,
+      transportation_amount: Number.isFinite(row.transportation_amount) ? Number(row.transportation_amount) : 0,
+      ancillary_amount: Number.isFinite(row.ancillary_amount) ? Number(row.ancillary_amount) : 0,
+      adjustment_amount: Number.isFinite(row.adjustment_amount) ? Number(row.adjustment_amount) : 0,
+      prior_balance_amount: Number.isFinite(row.prior_balance_amount) ? Number(row.prior_balance_amount) : 0,
+      discount_amount: Number.isFinite(row.discount_amount) ? Number(row.discount_amount) : 0,
+      total_amount: Number.isFinite(row.total_amount) ? Number(row.total_amount) : 0,
+      invoice_status:
+        row.invoice_status === "Finalized" ||
+        row.invoice_status === "Sent" ||
+        row.invoice_status === "Paid" ||
+        row.invoice_status === "PartiallyPaid" ||
+        row.invoice_status === "Void"
+          ? row.invoice_status
+          : "Draft",
+      export_status: row.export_status === "Exported" ? "Exported" : "NotExported",
+      exported_at: row.exported_at ?? null,
+      billing_summary_text: row.billing_summary_text ?? null,
+      snapshot_member_billing_id: row.snapshot_member_billing_id ?? null,
+      snapshot_schedule_template_id: row.snapshot_schedule_template_id ?? null,
+      snapshot_center_billing_setting_id: row.snapshot_center_billing_setting_id ?? null,
+      frozen_at: row.frozen_at ?? null,
+      created_at: String(row.created_at ?? toEasternISO()),
+      updated_at: String(row.updated_at ?? row.created_at ?? toEasternISO())
+    }));
+  }
+
+  if (Array.isArray(db.billingInvoiceLines)) {
+    db.billingInvoiceLines = db.billingInvoiceLines
+      .map((row): MockDb["billingInvoiceLines"][number] => ({
+        ...row,
+        invoice_id: String(row.invoice_id ?? ""),
+        line_order: Number.isFinite(row.line_order) ? Math.max(1, Math.round(Number(row.line_order))) : 1,
+        line_type:
+          row.line_type === "Transportation" ||
+          row.line_type === "Ancillary" ||
+          row.line_type === "Adjustment" ||
+          row.line_type === "Credit" ||
+          row.line_type === "PriorBalance"
+            ? row.line_type
+            : "BaseProgram",
+        service_period_start: row.service_period_start ?? null,
+        service_period_end: row.service_period_end ?? null,
+        service_date: row.service_date ?? null,
+        description: String(row.description ?? ""),
+        quantity: Number.isFinite(row.quantity) ? Number(row.quantity) : 1,
+        unit_rate: Number.isFinite(row.unit_rate) ? Number(row.unit_rate) : 0,
+        amount: Number.isFinite(row.amount) ? Number(row.amount) : 0,
+        source_table: row.source_table ?? null,
+        source_record_id: row.source_record_id ?? null,
+        created_at: String(row.created_at ?? toEasternISO())
+      }))
+      .filter((row) => row.invoice_id.length > 0);
+  }
+
+  if (Array.isArray(db.billingExportJobs)) {
+    db.billingExportJobs = db.billingExportJobs.map((row) => ({
+      ...row,
+      billing_batch_id: String(row.billing_batch_id ?? ""),
+      export_type:
+        row.export_type === "InternalReviewCSV" || row.export_type === "InvoiceSummaryCSV"
+          ? row.export_type
+          : "QuickBooksCSV",
+      generated_at: String(row.generated_at ?? toEasternISO()),
+      generated_by: String(row.generated_by ?? "system"),
+      file_name: String(row.file_name ?? "billing-export.csv"),
+      status: row.status === "Failed" ? "Failed" : "Success",
+      notes: row.notes ?? null,
+      file_data_url: row.file_data_url ?? null
+    }));
+  }
+
+  if (Array.isArray(db.billingCoverages)) {
+    db.billingCoverages = db.billingCoverages
+      .map((row): MockDb["billingCoverages"][number] => ({
+        ...row,
+        member_id: String(row.member_id ?? ""),
+        coverage_start_date: String(row.coverage_start_date ?? toEasternDate()),
+        coverage_end_date: String(row.coverage_end_date ?? row.coverage_start_date ?? toEasternDate()),
+        coverage_type:
+          row.coverage_type === "Transportation" ||
+          row.coverage_type === "Ancillary" ||
+          row.coverage_type === "Adjustment"
+            ? row.coverage_type
+            : "BaseProgram",
+        source_invoice_id: String(row.source_invoice_id ?? ""),
+        notes: row.notes ?? null,
+        created_at: String(row.created_at ?? toEasternISO()),
+        updated_at: String(row.updated_at ?? row.created_at ?? toEasternISO())
+      }))
+      .filter((row) => row.member_id.length > 0 && row.source_invoice_id.length > 0)
+      .sort((left, right) => (left.coverage_start_date < right.coverage_start_date ? 1 : -1));
   }
 
   const assessmentIds = new Set(db.assessments.map((assessment) => assessment.id));
@@ -1869,6 +2410,39 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
   if (key === "transportationLogs") {
     const member = pickMemberById(String(record.member_id ?? ""), String(record.member_name ?? ""));
     const staff = pickStaffById(String(record.staff_user_id ?? ""), String(record.staff_name ?? ""));
+    const activeCenterSettings =
+      db.centerBillingSettings.find((row) => row.active && !row.effective_end_date) ??
+      db.centerBillingSettings.find((row) => row.active) ??
+      null;
+    const normalizedTransportType = String(record.transport_type ?? "").trim().toLowerCase();
+    const tripType =
+      record.trip_type === "OneWay" || record.trip_type === "RoundTrip" || record.trip_type === "Other"
+        ? record.trip_type
+        : normalizedTransportType.includes("round")
+          ? "RoundTrip"
+          : normalizedTransportType.length > 0
+            ? "OneWay"
+            : "Other";
+    const quantity = Number.isFinite(record.quantity) && Number(record.quantity) > 0 ? Number(record.quantity) : 1;
+    const defaultUnitRate =
+      tripType === "RoundTrip"
+        ? Number(activeCenterSettings?.default_transport_round_trip_rate ?? 20)
+        : Number(activeCenterSettings?.default_transport_one_way_rate ?? 10);
+    const unitRate =
+      Number.isFinite(record.unit_rate) && Number(record.unit_rate) >= 0
+        ? Number(record.unit_rate)
+        : defaultUnitRate;
+    const totalAmount =
+      Number.isFinite(record.total_amount) && Number(record.total_amount) >= 0
+        ? Number(record.total_amount)
+        : Number((unitRate * quantity).toFixed(2));
+    const billable = typeof record.billable === "boolean" ? record.billable : true;
+    const billingStatus =
+      record.billing_status === "Billed" || record.billing_status === "Excluded"
+        ? record.billing_status
+        : billable
+          ? "Unbilled"
+          : "Excluded";
     return {
       timestamp: String(record.timestamp ?? nowIso),
       first_name: String(record.first_name ?? member.display_name.split(" ")[0] ?? "Member"),
@@ -1881,7 +2455,15 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
       staff_user_id: String(record.staff_user_id ?? staff.id),
       staff_name: String(record.staff_name ?? staff.full_name),
       staff_responsible: String(record.staff_responsible ?? staff.full_name),
-      notes: (record.notes as string | null) ?? null
+      notes: (record.notes as string | null) ?? null,
+      trip_type: tripType,
+      quantity,
+      unit_rate: unitRate,
+      total_amount: totalAmount,
+      billable,
+      billing_status: billingStatus,
+      billing_exclusion_reason: (record.billing_exclusion_reason as string | null) ?? (billable ? null : "Non-billable member transport rule"),
+      invoice_id: (record.invoice_id as string | null) ?? null
     };
   }
 
@@ -1924,6 +2506,23 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
     const category = pickCategory(String(record.category_id ?? ""), String(record.category_name ?? ""));
     const qty = Number(record.quantity ?? 1);
     const amount = Number(record.amount_cents ?? category.price_cents * qty);
+    const unitRate =
+      Number.isFinite(record.unit_rate) && Number(record.unit_rate) >= 0
+        ? Number(record.unit_rate)
+        : qty > 0
+          ? Number((amount / qty).toFixed(2))
+          : amount;
+    const totalAmount =
+      Number.isFinite(record.total_amount) && Number(record.total_amount) >= 0
+        ? Number(record.total_amount)
+        : amount;
+    const billable = typeof record.billable === "boolean" ? record.billable : true;
+    const billingStatus =
+      record.billing_status === "Billed" || record.billing_status === "Excluded"
+        ? record.billing_status
+        : billable
+          ? "Unbilled"
+          : "Excluded";
 
     return {
       timestamp: String(record.timestamp ?? nowIso),
@@ -1931,8 +2530,10 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
       member_name: String(record.member_name ?? member.display_name),
       category_id: String(record.category_id ?? category.id),
       category_name: String(record.category_name ?? category.name),
+      charge_type: String(record.charge_type ?? record.category_name ?? category.name),
       amount_cents: amount,
       service_date: String(record.service_date ?? today),
+      charge_date: String(record.charge_date ?? record.service_date ?? today),
       late_pickup_time: (record.late_pickup_time as string | null) ?? null,
       staff_user_id: String(record.staff_user_id ?? staff.id),
       staff_name: String(record.staff_name ?? staff.full_name),
@@ -1941,6 +2542,12 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
       source_entity: (record.source_entity as string | null) ?? null,
       source_entity_id: (record.source_entity_id as string | null) ?? null,
       quantity: qty,
+      unit_rate: unitRate,
+      total_amount: totalAmount,
+      billable,
+      billing_status: billingStatus,
+      billing_exclusion_reason: (record.billing_exclusion_reason as string | null) ?? (billable ? null : "Marked non-billable"),
+      invoice_id: (record.invoice_id as string | null) ?? null,
       created_at: String(record.created_at ?? record.timestamp ?? nowIso),
       reconciliation_status:
         record.reconciliation_status === "reconciled" || record.reconciliation_status === "void"
@@ -1949,6 +2556,328 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
       reconciled_by: (record.reconciled_by as string | null) ?? null,
       reconciled_at: (record.reconciled_at as string | null) ?? null,
       reconciliation_note: (record.reconciliation_note as string | null) ?? null
+    };
+  }
+
+  if (key === "centerBillingSettings") {
+    return {
+      default_daily_rate: Number.isFinite(record.default_daily_rate) ? Number(record.default_daily_rate) : 82,
+      default_extra_day_rate:
+        record.default_extra_day_rate == null || Number.isFinite(record.default_extra_day_rate)
+          ? (record.default_extra_day_rate == null ? null : Number(record.default_extra_day_rate))
+          : null,
+      default_transport_one_way_rate: Number.isFinite(record.default_transport_one_way_rate)
+        ? Number(record.default_transport_one_way_rate)
+        : 10,
+      default_transport_round_trip_rate: Number.isFinite(record.default_transport_round_trip_rate)
+        ? Number(record.default_transport_round_trip_rate)
+        : 20,
+      billing_cutoff_day: Number.isFinite(record.billing_cutoff_day) ? Math.min(31, Math.max(1, Number(record.billing_cutoff_day))) : 25,
+      default_billing_mode: record.default_billing_mode === "Monthly" ? "Monthly" : "Membership",
+      effective_start_date: String(record.effective_start_date ?? today),
+      effective_end_date: (record.effective_end_date as string | null) ?? null,
+      active: typeof record.active === "boolean" ? record.active : true,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? nowIso),
+      updated_by_user_id: (record.updated_by_user_id as string | null) ?? null,
+      updated_by_name: (record.updated_by_name as string | null) ?? null
+    };
+  }
+
+  if (key === "centerClosures") {
+    return {
+      closure_date: String(record.closure_date ?? today),
+      closure_name: String(record.closure_name ?? "Center Closure"),
+      closure_type:
+        record.closure_type === "Weather" ||
+        record.closure_type === "Planned" ||
+        record.closure_type === "Emergency" ||
+        record.closure_type === "Other"
+          ? record.closure_type
+          : "Holiday",
+      billable_override: typeof record.billable_override === "boolean" ? record.billable_override : false,
+      notes: (record.notes as string | null) ?? null,
+      active: typeof record.active === "boolean" ? record.active : true,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? nowIso),
+      updated_by_user_id: (record.updated_by_user_id as string | null) ?? null,
+      updated_by_name: (record.updated_by_name as string | null) ?? null
+    };
+  }
+
+  if (key === "payors") {
+    return {
+      payor_name: String(record.payor_name ?? "Private Pay"),
+      payor_type: String(record.payor_type ?? "Private"),
+      billing_contact_name: (record.billing_contact_name as string | null) ?? null,
+      billing_email: (record.billing_email as string | null) ?? null,
+      billing_phone: (record.billing_phone as string | null) ?? null,
+      billing_method:
+        record.billing_method === "ACHDraft" ||
+        record.billing_method === "CardOnFile" ||
+        record.billing_method === "Manual" ||
+        record.billing_method === "External"
+          ? record.billing_method
+          : "InvoiceEmail",
+      auto_draft_enabled: typeof record.auto_draft_enabled === "boolean" ? record.auto_draft_enabled : false,
+      quickbooks_customer_name: (record.quickbooks_customer_name as string | null) ?? null,
+      quickbooks_customer_ref: (record.quickbooks_customer_ref as string | null) ?? null,
+      status: record.status === "inactive" ? "inactive" : "active",
+      notes: (record.notes as string | null) ?? null,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? nowIso),
+      updated_by_user_id: (record.updated_by_user_id as string | null) ?? null,
+      updated_by_name: (record.updated_by_name as string | null) ?? null
+    };
+  }
+
+  if (key === "memberBillingSettings") {
+    return {
+      member_id: String(record.member_id ?? ""),
+      payor_id: (record.payor_id as string | null) ?? null,
+      use_center_default_billing_mode:
+        typeof record.use_center_default_billing_mode === "boolean" ? record.use_center_default_billing_mode : true,
+      billing_mode:
+        record.billing_mode === "Membership" || record.billing_mode === "Monthly" || record.billing_mode === "Custom"
+          ? record.billing_mode
+          : null,
+      monthly_billing_basis:
+        record.monthly_billing_basis === "ActualAttendanceMonthBehind"
+          ? "ActualAttendanceMonthBehind"
+          : "ScheduledMonthBehind",
+      use_center_default_rate: typeof record.use_center_default_rate === "boolean" ? record.use_center_default_rate : true,
+      custom_daily_rate:
+        record.custom_daily_rate == null || Number.isFinite(record.custom_daily_rate)
+          ? (record.custom_daily_rate == null ? null : Number(record.custom_daily_rate))
+          : null,
+      flat_monthly_rate:
+        record.flat_monthly_rate == null || Number.isFinite(record.flat_monthly_rate)
+          ? (record.flat_monthly_rate == null ? null : Number(record.flat_monthly_rate))
+          : null,
+      bill_extra_days: typeof record.bill_extra_days === "boolean" ? record.bill_extra_days : true,
+      transportation_billing_status:
+        record.transportation_billing_status === "Waived" || record.transportation_billing_status === "IncludedInProgramRate"
+          ? record.transportation_billing_status
+          : "BillNormally",
+      bill_ancillary_arrears: typeof record.bill_ancillary_arrears === "boolean" ? record.bill_ancillary_arrears : true,
+      active: typeof record.active === "boolean" ? record.active : true,
+      effective_start_date: String(record.effective_start_date ?? today),
+      effective_end_date: (record.effective_end_date as string | null) ?? null,
+      billing_notes: (record.billing_notes as string | null) ?? null,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? nowIso),
+      updated_by_user_id: (record.updated_by_user_id as string | null) ?? null,
+      updated_by_name: (record.updated_by_name as string | null) ?? null
+    };
+  }
+
+  if (key === "billingScheduleTemplates") {
+    return {
+      member_id: String(record.member_id ?? ""),
+      effective_start_date: String(record.effective_start_date ?? today),
+      effective_end_date: (record.effective_end_date as string | null) ?? null,
+      monday: Boolean(record.monday),
+      tuesday: Boolean(record.tuesday),
+      wednesday: Boolean(record.wednesday),
+      thursday: Boolean(record.thursday),
+      friday: Boolean(record.friday),
+      saturday: Boolean(record.saturday),
+      sunday: Boolean(record.sunday),
+      active: typeof record.active === "boolean" ? record.active : true,
+      notes: (record.notes as string | null) ?? null,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? nowIso),
+      updated_by_user_id: (record.updated_by_user_id as string | null) ?? null,
+      updated_by_name: (record.updated_by_name as string | null) ?? null
+    };
+  }
+
+  if (key === "billingAdjustments") {
+    const qty = Number.isFinite(record.quantity) && Number(record.quantity) > 0 ? Number(record.quantity) : 1;
+    const unitRate = Number.isFinite(record.unit_rate) ? Number(record.unit_rate) : 0;
+    const rawAmount = Number.isFinite(record.amount) ? Number(record.amount) : Number((qty * unitRate).toFixed(2));
+    const adjustmentType = String(record.adjustment_type ?? "Other");
+    const creditTypes = new Set(["Credit", "Discount", "Refund", "ManualCredit"]);
+    const amount = creditTypes.has(adjustmentType) ? -Math.abs(rawAmount) : rawAmount;
+
+    return {
+      member_id: String(record.member_id ?? ""),
+      payor_id: (record.payor_id as string | null) ?? null,
+      adjustment_date: String(record.adjustment_date ?? today),
+      adjustment_type: adjustmentType,
+      description: String(record.description ?? "Billing adjustment"),
+      quantity: qty,
+      unit_rate: unitRate,
+      amount,
+      billing_status:
+        record.billing_status === "Billed" || record.billing_status === "Excluded"
+          ? record.billing_status
+          : "Unbilled",
+      invoice_id: (record.invoice_id as string | null) ?? null,
+      created_by_system: typeof record.created_by_system === "boolean" ? record.created_by_system : false,
+      source_table: (record.source_table as string | null) ?? null,
+      source_record_id: (record.source_record_id as string | null) ?? null,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? nowIso),
+      created_by_user_id: (record.created_by_user_id as string | null) ?? null,
+      created_by_name: (record.created_by_name as string | null) ?? null
+    };
+  }
+
+  if (key === "billingBatches") {
+    return {
+      batch_type:
+        record.batch_type === "Membership" || record.batch_type === "Monthly" || record.batch_type === "Custom"
+          ? record.batch_type
+          : "Mixed",
+      billing_month: String(record.billing_month ?? `${today.slice(0, 7)}-01`),
+      run_date: String(record.run_date ?? today),
+      run_by_user: String(record.run_by_user ?? "system"),
+      batch_status:
+        record.batch_status === "Reviewed" ||
+        record.batch_status === "Finalized" ||
+        record.batch_status === "Exported" ||
+        record.batch_status === "Closed"
+          ? record.batch_status
+          : "Draft",
+      invoice_count: Number.isFinite(record.invoice_count) ? Number(record.invoice_count) : 0,
+      total_amount: Number.isFinite(record.total_amount) ? Number(record.total_amount) : 0,
+      exported_at: (record.exported_at as string | null) ?? null,
+      completion_date: (record.completion_date as string | null) ?? null,
+      next_due_date: (record.next_due_date as string | null) ?? null,
+      notes: (record.notes as string | null) ?? null,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? nowIso)
+    };
+  }
+
+  if (key === "billingInvoices") {
+    return {
+      billing_batch_id: String(record.billing_batch_id ?? ""),
+      member_id: String(record.member_id ?? ""),
+      payor_id: (record.payor_id as string | null) ?? null,
+      invoice_number: String(record.invoice_number ?? `INV-${Date.now()}`),
+      invoice_date: String(record.invoice_date ?? today),
+      due_date: String(record.due_date ?? today),
+      invoice_month: String(record.invoice_month ?? `${today.slice(0, 7)}-01`),
+      invoice_source: record.invoice_source === "Custom" ? "Custom" : "BatchGenerated",
+      billing_mode_snapshot:
+        record.billing_mode_snapshot === "Monthly" || record.billing_mode_snapshot === "Custom"
+          ? record.billing_mode_snapshot
+          : "Membership",
+      monthly_billing_basis_snapshot:
+        record.monthly_billing_basis_snapshot === "ActualAttendanceMonthBehind"
+          ? "ActualAttendanceMonthBehind"
+          : record.monthly_billing_basis_snapshot === "ScheduledMonthBehind"
+            ? "ScheduledMonthBehind"
+            : null,
+      base_period_start: String(record.base_period_start ?? record.invoice_month ?? `${today.slice(0, 7)}-01`),
+      base_period_end: String(record.base_period_end ?? record.invoice_month ?? `${today.slice(0, 7)}-01`),
+      variable_charge_period_start: String(
+        record.variable_charge_period_start ?? record.base_period_start ?? record.invoice_month ?? `${today.slice(0, 7)}-01`
+      ),
+      variable_charge_period_end: String(
+        record.variable_charge_period_end ?? record.base_period_end ?? record.invoice_month ?? `${today.slice(0, 7)}-01`
+      ),
+      base_program_billed_days: Number.isFinite(record.base_program_billed_days) ? Math.max(0, Number(record.base_program_billed_days)) : 0,
+      base_program_day_rate:
+        record.base_program_day_rate == null || Number.isFinite(record.base_program_day_rate)
+          ? (record.base_program_day_rate == null ? null : Math.max(0, Number(record.base_program_day_rate)))
+          : null,
+      member_daily_rate_snapshot:
+        record.member_daily_rate_snapshot == null || Number.isFinite(record.member_daily_rate_snapshot)
+          ? (record.member_daily_rate_snapshot == null ? null : Math.max(0, Number(record.member_daily_rate_snapshot)))
+          : null,
+      transportation_billing_status_snapshot:
+        record.transportation_billing_status_snapshot === "Waived" || record.transportation_billing_status_snapshot === "IncludedInProgramRate"
+          ? record.transportation_billing_status_snapshot
+          : "BillNormally",
+      base_program_closure_excluded_days: Number.isFinite(record.base_program_closure_excluded_days)
+        ? Math.max(0, Number(record.base_program_closure_excluded_days))
+        : 0,
+      base_program_amount: Number.isFinite(record.base_program_amount) ? Number(record.base_program_amount) : 0,
+      transportation_amount: Number.isFinite(record.transportation_amount) ? Number(record.transportation_amount) : 0,
+      ancillary_amount: Number.isFinite(record.ancillary_amount) ? Number(record.ancillary_amount) : 0,
+      adjustment_amount: Number.isFinite(record.adjustment_amount) ? Number(record.adjustment_amount) : 0,
+      prior_balance_amount: Number.isFinite(record.prior_balance_amount) ? Number(record.prior_balance_amount) : 0,
+      discount_amount: Number.isFinite(record.discount_amount) ? Number(record.discount_amount) : 0,
+      total_amount: Number.isFinite(record.total_amount) ? Number(record.total_amount) : 0,
+      invoice_status:
+        record.invoice_status === "Finalized" ||
+        record.invoice_status === "Sent" ||
+        record.invoice_status === "Paid" ||
+        record.invoice_status === "PartiallyPaid" ||
+        record.invoice_status === "Void"
+          ? record.invoice_status
+          : "Draft",
+      export_status: record.export_status === "Exported" ? "Exported" : "NotExported",
+      exported_at: (record.exported_at as string | null) ?? null,
+      billing_summary_text: (record.billing_summary_text as string | null) ?? null,
+      snapshot_member_billing_id: (record.snapshot_member_billing_id as string | null) ?? null,
+      snapshot_schedule_template_id: (record.snapshot_schedule_template_id as string | null) ?? null,
+      snapshot_center_billing_setting_id: (record.snapshot_center_billing_setting_id as string | null) ?? null,
+      frozen_at: (record.frozen_at as string | null) ?? null,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? nowIso)
+    };
+  }
+
+  if (key === "billingInvoiceLines") {
+    return {
+      invoice_id: String(record.invoice_id ?? ""),
+      line_order: Number.isFinite(record.line_order) ? Number(record.line_order) : 1,
+      line_type:
+        record.line_type === "Transportation" ||
+        record.line_type === "Ancillary" ||
+        record.line_type === "Adjustment" ||
+        record.line_type === "Credit" ||
+        record.line_type === "PriorBalance"
+          ? record.line_type
+          : "BaseProgram",
+      service_period_start: (record.service_period_start as string | null) ?? null,
+      service_period_end: (record.service_period_end as string | null) ?? null,
+      service_date: (record.service_date as string | null) ?? null,
+      description: String(record.description ?? ""),
+      quantity: Number.isFinite(record.quantity) ? Number(record.quantity) : 1,
+      unit_rate: Number.isFinite(record.unit_rate) ? Number(record.unit_rate) : 0,
+      amount: Number.isFinite(record.amount) ? Number(record.amount) : 0,
+      source_table: (record.source_table as string | null) ?? null,
+      source_record_id: (record.source_record_id as string | null) ?? null,
+      created_at: String(record.created_at ?? nowIso)
+    };
+  }
+
+  if (key === "billingExportJobs") {
+    return {
+      billing_batch_id: String(record.billing_batch_id ?? ""),
+      export_type:
+        record.export_type === "InternalReviewCSV" || record.export_type === "InvoiceSummaryCSV"
+          ? record.export_type
+          : "QuickBooksCSV",
+      generated_at: String(record.generated_at ?? nowIso),
+      generated_by: String(record.generated_by ?? "system"),
+      file_name: String(record.file_name ?? `billing-export-${today}.csv`),
+      status: record.status === "Failed" ? "Failed" : "Success",
+      notes: (record.notes as string | null) ?? null,
+      file_data_url: (record.file_data_url as string | null) ?? null
+    };
+  }
+
+  if (key === "billingCoverages") {
+    return {
+      member_id: String(record.member_id ?? ""),
+      coverage_start_date: String(record.coverage_start_date ?? today),
+      coverage_end_date: String(record.coverage_end_date ?? record.coverage_start_date ?? today),
+      coverage_type:
+        record.coverage_type === "Transportation" ||
+        record.coverage_type === "Ancillary" ||
+        record.coverage_type === "Adjustment"
+          ? record.coverage_type
+          : "BaseProgram",
+      source_invoice_id: String(record.source_invoice_id ?? ""),
+      notes: (record.notes as string | null) ?? null,
+      created_at: String(record.created_at ?? nowIso),
+      updated_at: String(record.updated_at ?? nowIso)
     };
   }
 
@@ -1974,6 +2903,7 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
       caregiver_email: (record.caregiver_email as string | null) ?? null,
       caregiver_phone: String(record.caregiver_phone ?? ""),
       member_name: String(record.member_name ?? ""),
+      member_dob: (record.member_dob as string | null) ?? null,
       lead_source: String(record.lead_source ?? "Referral"),
       lead_source_other: (record.lead_source_other as string | null) ?? null,
       referral_name: (record.referral_name as string | null) ?? null,
@@ -2358,6 +3288,24 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
       thursdayPm.busStop ??
       fridayAm.busStop ??
       fridayPm.busStop;
+    const attendanceDaysPerWeek = [monday, tuesday, wednesday, thursday, friday].filter(Boolean).length;
+    const defaultDailyRate =
+      Number.isFinite(record.default_daily_rate) && Number(record.default_daily_rate) > 0
+        ? Number(record.default_daily_rate)
+        : getStandardDailyRateForAttendanceDays(attendanceDaysPerWeek);
+    const useCustomDailyRate = typeof record.use_custom_daily_rate === "boolean" ? record.use_custom_daily_rate : false;
+    const customDailyRate =
+      record.custom_daily_rate == null || (Number.isFinite(record.custom_daily_rate) && Number(record.custom_daily_rate) > 0)
+        ? (record.custom_daily_rate == null ? null : Number(record.custom_daily_rate))
+        : null;
+    const dailyRate =
+      Number.isFinite(record.daily_rate) && Number(record.daily_rate) > 0
+        ? Number(record.daily_rate)
+        : customDailyRate ?? defaultDailyRate;
+    const transportationBillingStatus =
+      record.transportation_billing_status === "Waived" || record.transportation_billing_status === "IncludedInProgramRate"
+        ? record.transportation_billing_status
+        : "BillNormally";
 
     return {
       member_id: String(record.member_id ?? ""),
@@ -2417,6 +3365,14 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
       transport_friday_pm_door_to_door_address: fridayPm.doorToDoorAddress,
       transport_friday_pm_bus_number: fridayPm.busNumber,
       transport_friday_pm_bus_stop: fridayPm.busStop,
+      daily_rate: dailyRate,
+      transportation_billing_status: transportationBillingStatus,
+      billing_rate_effective_date: (record.billing_rate_effective_date as string | null) ?? (record.enrollment_date as string | null) ?? today,
+      billing_notes: (record.billing_notes as string | null) ?? null,
+      attendance_days_per_week: attendanceDaysPerWeek,
+      default_daily_rate: defaultDailyRate,
+      use_custom_daily_rate: useCustomDailyRate,
+      custom_daily_rate: customDailyRate,
       make_up_days_available: typeof record.make_up_days_available === "number" ? record.make_up_days_available : null,
       attendance_notes: (record.attendance_notes as string | null) ?? null,
       updated_by_user_id: (record.updated_by_user_id as string | null) ?? null,
@@ -2443,6 +3399,10 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
       status === "absent" ? (record.absent_reason_other ? String(record.absent_reason_other) : null) : null;
     const createdAt = String(record.created_at ?? nowIso);
     const updatedAt = String(record.updated_at ?? createdAt);
+    const billingStatus =
+      record.billing_status === "Billed" || record.billing_status === "Excluded"
+        ? record.billing_status
+        : "Unbilled";
 
     return {
       member_id: String(record.member_id ?? member.id),
@@ -2453,6 +3413,11 @@ function withDefaults(key: keyof MockDb, record: Record<string, unknown>) {
       check_in_at: checkInAt,
       check_out_at: checkOutAt,
       notes: (record.notes as string | null) ?? null,
+      scheduled_day: typeof record.scheduled_day === "boolean" ? record.scheduled_day : null,
+      unscheduled_day: typeof record.unscheduled_day === "boolean" ? record.unscheduled_day : null,
+      billable_extra_day: typeof record.billable_extra_day === "boolean" ? record.billable_extra_day : null,
+      billing_status: billingStatus,
+      linked_adjustment_id: (record.linked_adjustment_id as string | null) ?? null,
       recorded_by_user_id: String(record.recorded_by_user_id ?? staff.id),
       recorded_by_name: String(record.recorded_by_name ?? staff.full_name),
       created_at: createdAt,

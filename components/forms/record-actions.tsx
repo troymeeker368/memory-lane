@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useState, useTransition } from "react";
+import { type ReactNode, useEffect, useState, useTransition } from "react";
 
 import {
   deleteWorkflowRecordAction,
@@ -113,6 +113,30 @@ export function DocumentationReviewButtons({ staffName, periodLabel }: { staffNa
 
 const TOILET_USE_OPTIONS = TOILET_USE_TYPE_OPTIONS;
 const NO_ACTIVITY_REASONS = PARTICIPATION_MISSING_REASONS;
+type ParticipationMissingReason = "" | (typeof PARTICIPATION_MISSING_REASONS)[number];
+type DailyActivityLevelKey = "a1" | "a2" | "a3" | "a4" | "a5";
+type DailyActivityReasonKey = "r1" | "r2" | "r3" | "r4" | "r5";
+type QuickDailyActivityValues = {
+  a1: number;
+  a2: number;
+  a3: number;
+  a4: number;
+  a5: number;
+  r1: ParticipationMissingReason;
+  r2: ParticipationMissingReason;
+  r3: ParticipationMissingReason;
+  r4: ParticipationMissingReason;
+  r5: ParticipationMissingReason;
+  notes: string;
+};
+const DAILY_ACTIVITY_LEVEL_KEYS = ["a1", "a2", "a3", "a4", "a5"] as const;
+const DAILY_ACTIVITY_REASON_KEYS = ["r1", "r2", "r3", "r4", "r5"] as const;
+
+function toParticipationMissingReason(value: string | null | undefined): ParticipationMissingReason {
+  return NO_ACTIVITY_REASONS.includes(value as (typeof NO_ACTIVITY_REASONS)[number])
+    ? (value as ParticipationMissingReason)
+    : "";
+}
 
 export function QuickEditToilet({ id, useType, briefs, memberSupplied, notes }: { id: string; useType: string; briefs: boolean; memberSupplied?: boolean; notes: string | null }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -123,6 +147,14 @@ export function QuickEditToilet({ id, useType, briefs, memberSupplied, notes }: 
   const [localBriefs, setLocalBriefs] = useState(briefs);
   const [localMemberSupplied, setLocalMemberSupplied] = useState(memberSupplied ?? false);
   const [localNotes, setLocalNotes] = useState(notes ?? "");
+
+  useEffect(() => {
+    setLocalUseType(TOILET_USE_OPTIONS.includes(useType as (typeof TOILET_USE_OPTIONS)[number]) ? useType : "Bladder");
+    setLocalBriefs(briefs);
+    setLocalMemberSupplied(memberSupplied ?? false);
+    setLocalNotes(notes ?? "");
+    setIsOpen(false);
+  }, [id, useType, briefs, memberSupplied, notes]);
 
   return (
     <>
@@ -180,6 +212,14 @@ export function QuickEditShower({ id, laundry, briefs, notes }: { id: string; la
   const [localLaundry, setLocalLaundry] = useState(laundry);
   const [localBriefs, setLocalBriefs] = useState(briefs);
   const [localNotes, setLocalNotes] = useState(notes ?? "");
+
+  useEffect(() => {
+    setLocalLaundry(laundry);
+    setLocalBriefs(briefs);
+    setLocalNotes(notes ?? "");
+    setIsOpen(false);
+  }, [id, laundry, briefs, notes]);
+
   return (
     <>
       <InlineEditActions entity="showerLogs" id={id} onEdit={() => setIsOpen(true)} />
@@ -227,6 +267,16 @@ export function QuickEditTransportation({ id, period, transportType }: { id: str
   const [localType, setLocalType] = useState<TransportOption>(
     TRANSPORT_OPTIONS.includes(transportType as TransportOption) ? (transportType as TransportOption) : TRANSPORT_OPTIONS[0]
   );
+
+  useEffect(() => {
+    setLocalPeriod(period);
+    setLocalType(
+      TRANSPORT_OPTIONS.includes(transportType as TransportOption)
+        ? (transportType as TransportOption)
+        : TRANSPORT_OPTIONS[0]
+    );
+    setIsOpen(false);
+  }, [id, period, transportType]);
 
   return (
     <>
@@ -278,6 +328,13 @@ export function QuickEditBloodSugar({ id, reading, notes }: { id: string; readin
   const [isPending, startTransition] = useTransition();
   const [localReading, setLocalReading] = useState(reading);
   const [localNotes, setLocalNotes] = useState(notes ?? "");
+
+  useEffect(() => {
+    setLocalReading(reading);
+    setLocalNotes(notes ?? "");
+    setIsOpen(false);
+  }, [id, reading, notes]);
+
   return (
     <>
       <InlineEditActions entity="bloodSugarLogs" id={id} onEdit={() => setIsOpen(true)} />
@@ -343,19 +400,36 @@ export function QuickEditDailyActivity({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [vals, setVals] = useState({
+  const [vals, setVals] = useState<QuickDailyActivityValues>({
     a1,
     a2,
     a3,
     a4,
     a5,
-    r1: r1 ?? "",
-    r2: r2 ?? "",
-    r3: r3 ?? "",
-    r4: r4 ?? "",
-    r5: r5 ?? "",
+    r1: toParticipationMissingReason(r1),
+    r2: toParticipationMissingReason(r2),
+    r3: toParticipationMissingReason(r3),
+    r4: toParticipationMissingReason(r4),
+    r5: toParticipationMissingReason(r5),
     notes: notes ?? ""
   });
+
+  useEffect(() => {
+    setVals({
+      a1,
+      a2,
+      a3,
+      a4,
+      a5,
+      r1: toParticipationMissingReason(r1),
+      r2: toParticipationMissingReason(r2),
+      r3: toParticipationMissingReason(r3),
+      r4: toParticipationMissingReason(r4),
+      r5: toParticipationMissingReason(r5),
+      notes: notes ?? ""
+    });
+    setIsOpen(false);
+  }, [id, a1, a2, a3, a4, a5, r1, r2, r3, r4, r5, notes]);
 
   const reasonRequired = [
     vals.a1 === 0 && !vals.r1,
@@ -370,29 +444,34 @@ export function QuickEditDailyActivity({
       <InlineEditActions entity="dailyActivities" id={id} onEdit={() => setIsOpen(true)} />
       <EditModal open={isOpen} title="Edit Participation Log" onClose={() => setIsOpen(false)}>
         <div className="grid gap-3 md:grid-cols-5">
-          {["a1", "a2", "a3", "a4", "a5"].map((k, index) => (
-            <label key={k} className="space-y-1 text-sm">
+          {DAILY_ACTIVITY_LEVEL_KEYS.map((levelKey, index) => (
+            <label key={levelKey} className="space-y-1 text-sm">
               <span className="text-muted">Activity {index + 1}</span>
               <input
                 type="number"
                 min={0}
                 max={100}
                 className="h-10 w-full rounded border border-border px-2 text-sm"
-                value={(vals as Record<string, number | string>)[k] as number}
-                onChange={(e) => setVals((v) => ({ ...v, [k]: Number(e.target.value) }))}
+                value={vals[levelKey]}
+                onChange={(e) => setVals((v) => ({ ...v, [levelKey]: Number(e.target.value) }))}
               />
             </label>
           ))}
         </div>
 
         <div className="grid gap-2 md:grid-cols-5">
-          {[1, 2, 3, 4, 5].map((i) => {
-            const levelKey = `a${i}` as const;
-            const reasonKey = `r${i}` as const;
+          {[1, 2, 3, 4, 5].map((i, index) => {
+            const levelKey: DailyActivityLevelKey = DAILY_ACTIVITY_LEVEL_KEYS[index];
+            const reasonKey: DailyActivityReasonKey = DAILY_ACTIVITY_REASON_KEYS[index];
             const required = vals[levelKey] === 0;
 
             return required ? (
-              <select key={reasonKey} className="h-10 rounded border border-border px-2 text-sm" value={vals[reasonKey]} onChange={(e) => setVals((v) => ({ ...v, [reasonKey]: e.target.value }))}>
+              <select
+                key={reasonKey}
+                className="h-10 rounded border border-border px-2 text-sm"
+                value={vals[reasonKey]}
+                onChange={(e) => setVals((v) => ({ ...v, [reasonKey]: e.target.value as ParticipationMissingReason }))}
+              >
                 <option value="">Reason A{i}</option>
                 {NO_ACTIVITY_REASONS.map((reason) => (
                   <option key={`${reason}-${i}`} value={reason}>
@@ -451,6 +530,12 @@ export function QuickEditAncillary({ id, notes }: { id: string; notes: string | 
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [localNotes, setLocalNotes] = useState(notes ?? "");
+
+  useEffect(() => {
+    setLocalNotes(notes ?? "");
+    setIsOpen(false);
+  }, [id, notes]);
+
   return (
     <>
       <InlineEditActions entity="ancillaryLogs" id={id} onEdit={() => setIsOpen(true)} />
@@ -487,6 +572,14 @@ export function QuickEditLead({ id, stage, status, notes }: { id: string; stage:
   const [localStage, setLocalStage] = useState(stage);
   const [localStatus, setLocalStatus] = useState<(typeof LEAD_STATUS_OPTIONS)[number]>(status);
   const [localNotes, setLocalNotes] = useState(notes ?? "");
+
+  useEffect(() => {
+    setLocalStage(stage);
+    setLocalStatus(status);
+    setLocalNotes(notes ?? "");
+    setIsOpen(false);
+  }, [id, stage, status, notes]);
+
   return (
     <>
       <InlineEditActions entity="leads" id={id} onEdit={() => setIsOpen(true)} />

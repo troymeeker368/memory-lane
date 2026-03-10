@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { saveSalesLeadAction } from "@/app/sales-actions";
+import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
 import {
   LEAD_FOLLOW_UP_TYPES,
@@ -18,13 +19,13 @@ import {
 } from "@/lib/canonical";
 import { toEasternDate } from "@/lib/timezone";
 
-type PartnerLookup = {
+export type PartnerLookup = {
   id: string;
   partner_id: string;
   organization_name: string;
 };
 
-type ReferralSourceLookup = {
+export type ReferralSourceLookup = {
   id: string;
   referral_source_id: string;
   partner_id: string;
@@ -32,7 +33,7 @@ type ReferralSourceLookup = {
   organization_name: string;
 };
 
-type LeadLookup = {
+export type LeadLookup = {
   id: string;
   stage: string;
   status: string;
@@ -42,6 +43,7 @@ type LeadLookup = {
   caregiver_email: string | null;
   caregiver_phone: string;
   member_name: string;
+  member_dob: string | null;
   lead_source: string;
   lead_source_other?: string | null;
   partner_id: string | null;
@@ -57,6 +59,67 @@ type LeadLookup = {
   notes_summary: string | null;
   lost_reason: string | null;
   closed_date?: string | null;
+};
+
+type LeadDuplicateMatch = {
+  leadId: string;
+  leadDisplayId: string;
+  memberName: string;
+  caregiverName: string;
+  caregiverPhone: string | null;
+  caregiverEmail: string | null;
+  memberDob: string | null;
+  stage: string;
+  status: string;
+  inquiryDate: string;
+  score: number;
+  reasons: string[];
+};
+
+type SalesLeadSaveResponse = {
+  ok?: boolean;
+  id?: string;
+  merged?: boolean;
+  mergedIntoLeadId?: string;
+  mergedSourceLeadId?: string | null;
+  error?: string;
+  duplicateRequiresDecision?: boolean;
+  duplicateMatches?: LeadDuplicateMatch[];
+  canKeepSeparate?: boolean;
+};
+
+type SalesLeadFormState = {
+  leadId: string;
+  stage: (typeof LEAD_STAGE_OPTIONS)[number];
+  status: (typeof LEAD_STATUS_OPTIONS)[number];
+  inquiryDate: string;
+  caregiverName: string;
+  caregiverRelationship: string;
+  caregiverEmail: string;
+  caregiverPhone: string;
+  memberName: string;
+  memberDob: string;
+  leadSource: (typeof LEAD_SOURCE_OPTIONS)[number];
+  leadSourceOther: string;
+  partnerId: string;
+  referralSourceId: string;
+  referralName: string;
+  likelihood: (typeof LEAD_LIKELIHOOD_OPTIONS)[number];
+  nextFollowUpDate: string;
+  nextFollowUpType: (typeof LEAD_FOLLOW_UP_TYPES)[number] | "";
+  tourDate: string;
+  tourCompleted: "yes" | "no" | "";
+  discoveryDate: string;
+  memberStartDate: string;
+  notesSummary: string;
+  lostReason: string;
+  lostReasonOther: string;
+  closedDate: string;
+};
+
+type DuplicateReviewState = {
+  matches: LeadDuplicateMatch[];
+  canKeepSeparate: boolean;
 };
 
 function FieldLabel({ children }: { children: string }) {
@@ -92,7 +155,10 @@ export function SalesInquiryForm({
   const router = useRouter();
   const today = useMemo(() => toEasternDate(), []);
   const [isPending, startTransition] = useTransition();
-  const [status, setStatus] = useState<string | null>(null);
+  const syncDeps = [initialLead?.id ?? "", initialPartnerId ?? "", initialReferralSourceId ?? ""];
+  const [status, setStatus] = usePropSyncedStatus(syncDeps, "");
+  const [duplicateReview, setDuplicateReview] = usePropSyncedState<DuplicateReviewState | null>(null, syncDeps);
+  const [mergeTargetLeadId, setMergeTargetLeadId] = usePropSyncedState("", syncDeps);
 
   const defaultPartnerId =
     partners.find((partner) => partner.partner_id === (initialLead?.partner_id ?? initialPartnerId))?.id ?? "";
@@ -108,33 +174,86 @@ export function SalesInquiryForm({
 
   const initialLost = splitLostReason(initialLead?.lost_reason);
 
-  const [form, setForm] = useState({
-    leadId: initialLead?.id ?? "",
-    stage: (initialLead?.stage as (typeof LEAD_STAGE_OPTIONS)[number]) ?? "Inquiry",
-    status: (initialLead?.status as (typeof LEAD_STATUS_OPTIONS)[number]) ?? "Open",
-    inquiryDate: initialLead?.inquiry_date ?? today,
-    caregiverName: initialLead?.caregiver_name ?? "",
-    caregiverRelationship: initialLead?.caregiver_relationship ?? "",
-    caregiverEmail: initialLead?.caregiver_email ?? "",
-    caregiverPhone: initialLead?.caregiver_phone ?? "",
-    memberName: initialLead?.member_name ?? "",
-    leadSource: (initialLead?.lead_source as (typeof LEAD_SOURCE_OPTIONS)[number]) ?? "Referral",
-    leadSourceOther: initialLead?.lead_source_other ?? "",
-    partnerId: defaultPartnerId || fallbackPartnerFromReferralId,
-    referralSourceId: defaultReferralId,
-    referralName: initialLead?.referral_name ?? "",
-    likelihood: (initialLead?.likelihood as (typeof LEAD_LIKELIHOOD_OPTIONS)[number]) ?? "Warm",
-    nextFollowUpDate: initialLead?.next_follow_up_date ?? "",
-    nextFollowUpType: (initialLead?.next_follow_up_type as (typeof LEAD_FOLLOW_UP_TYPES)[number]) ?? "Call",
-    tourDate: initialLead?.tour_date ?? "",
-    tourCompleted: typeof initialLead?.tour_completed === "boolean" ? (initialLead.tour_completed ? "yes" : "no") : "",
-    discoveryDate: initialLead?.discovery_date ?? "",
-    memberStartDate: initialLead?.member_start_date ?? "",
-    notesSummary: initialLead?.notes_summary ?? "",
-    lostReason: initialLost.lostReason,
-    lostReasonOther: initialLost.lostReasonOther,
-    closedDate: initialLead?.closed_date ?? ""
-  });
+  const [form, setForm] = usePropSyncedState<SalesLeadFormState>(
+    () => ({
+      leadId: initialLead?.id ?? "",
+      stage: (initialLead?.stage as (typeof LEAD_STAGE_OPTIONS)[number]) ?? "Inquiry",
+      status: (initialLead?.status as (typeof LEAD_STATUS_OPTIONS)[number]) ?? "Open",
+      inquiryDate: initialLead?.inquiry_date ?? today,
+      caregiverName: initialLead?.caregiver_name ?? "",
+      caregiverRelationship: initialLead?.caregiver_relationship ?? "",
+      caregiverEmail: initialLead?.caregiver_email ?? "",
+      caregiverPhone: initialLead?.caregiver_phone ?? "",
+      memberName: initialLead?.member_name ?? "",
+      memberDob: initialLead?.member_dob ?? "",
+      leadSource: (initialLead?.lead_source as (typeof LEAD_SOURCE_OPTIONS)[number]) ?? "Referral",
+      leadSourceOther: initialLead?.lead_source_other ?? "",
+      partnerId: defaultPartnerId || fallbackPartnerFromReferralId,
+      referralSourceId: defaultReferralId,
+      referralName: initialLead?.referral_name ?? "",
+      likelihood: (initialLead?.likelihood as (typeof LEAD_LIKELIHOOD_OPTIONS)[number]) ?? "Warm",
+      nextFollowUpDate: initialLead?.next_follow_up_date ?? "",
+      nextFollowUpType: (initialLead?.next_follow_up_type as (typeof LEAD_FOLLOW_UP_TYPES)[number]) ?? "Call",
+      tourDate: initialLead?.tour_date ?? "",
+      tourCompleted: typeof initialLead?.tour_completed === "boolean" ? (initialLead.tour_completed ? "yes" : "no") : "",
+      discoveryDate: initialLead?.discovery_date ?? "",
+      memberStartDate: initialLead?.member_start_date ?? "",
+      notesSummary: initialLead?.notes_summary ?? "",
+      lostReason: initialLost.lostReason,
+      lostReasonOther: initialLost.lostReasonOther,
+      closedDate: initialLead?.closed_date ?? ""
+    }),
+    [today, ...syncDeps, defaultPartnerId, defaultReferralId, fallbackPartnerFromReferralId, initialLost.lostReason, initialLost.lostReasonOther]
+  );
+
+  function clearDuplicateReview() {
+    setDuplicateReview(null);
+    setMergeTargetLeadId("");
+  }
+
+  function updateForm(updater: SalesLeadFormState | ((current: SalesLeadFormState) => SalesLeadFormState)) {
+    setForm((current) => (typeof updater === "function" ? updater(current) : updater));
+    if (status) setStatus("");
+    if (duplicateReview) clearDuplicateReview();
+  }
+
+  async function submitLead(options?: { duplicateDecision?: "merge" | "keep-separate"; mergeTargetLeadId?: string }) {
+    const result = (await saveSalesLeadAction({
+      ...form,
+      tourCompleted: showTourCompleted ? form.tourCompleted === "yes" : undefined,
+      closedDate: showLostFields ? form.closedDate : "",
+      duplicateDecision: options?.duplicateDecision ?? "",
+      mergeTargetLeadId: options?.mergeTargetLeadId ?? ""
+    })) as SalesLeadSaveResponse;
+
+    if (result.duplicateRequiresDecision) {
+      const matches = result.duplicateMatches ?? [];
+      setDuplicateReview({
+        matches,
+        canKeepSeparate: Boolean(result.canKeepSeparate)
+      });
+      setMergeTargetLeadId(matches[0]?.leadId ?? "");
+      setStatus("Potential duplicate lead found. Review options below before saving.");
+      return;
+    }
+
+    if (result.error) {
+      setStatus(`Error: ${result.error}`);
+      return;
+    }
+
+    clearDuplicateReview();
+    if (result.merged && result.id) {
+      setStatus("Lead merged into existing record.");
+      router.push(`/sales/leads/${result.id}`);
+      return;
+    }
+
+    setStatus(initialLead ? "Lead updated." : "Inquiry created.");
+    if (result.id) {
+      router.push(`/sales/leads/${result.id}`);
+    }
+  }
 
   const canonicalStage = canonicalLeadStage(form.stage);
   const effectiveStatus = canonicalStage === "Closed - Lost" ? "Lost" : canonicalLeadStatus(form.status, canonicalStage);
@@ -152,33 +271,37 @@ export function SalesInquiryForm({
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-3">
         <div>
           <FieldLabel>Member Name</FieldLabel>
-          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.memberName} onChange={(event) => setForm((current) => ({ ...current, memberName: event.target.value }))} />
+          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.memberName} onChange={(event) => updateForm((current) => ({ ...current, memberName: event.target.value }))} />
+        </div>
+        <div>
+          <FieldLabel>Member DOB</FieldLabel>
+          <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.memberDob} onChange={(event) => updateForm((current) => ({ ...current, memberDob: event.target.value }))} />
         </div>
         <div>
           <FieldLabel>Caregiver Name</FieldLabel>
-          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverName} onChange={(event) => setForm((current) => ({ ...current, caregiverName: event.target.value }))} />
+          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverName} onChange={(event) => updateForm((current) => ({ ...current, caregiverName: event.target.value }))} />
         </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-4">
         <div>
           <FieldLabel>Caregiver Relationship</FieldLabel>
-          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverRelationship} onChange={(event) => setForm((current) => ({ ...current, caregiverRelationship: event.target.value }))} />
+          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverRelationship} onChange={(event) => updateForm((current) => ({ ...current, caregiverRelationship: event.target.value }))} />
         </div>
         <div>
           <FieldLabel>Caregiver Phone</FieldLabel>
-          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverPhone} onChange={(event) => setForm((current) => ({ ...current, caregiverPhone: event.target.value }))} />
+          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverPhone} onChange={(event) => updateForm((current) => ({ ...current, caregiverPhone: event.target.value }))} />
         </div>
         <div>
           <FieldLabel>Caregiver Email</FieldLabel>
-          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverEmail} onChange={(event) => setForm((current) => ({ ...current, caregiverEmail: event.target.value }))} />
+          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverEmail} onChange={(event) => updateForm((current) => ({ ...current, caregiverEmail: event.target.value }))} />
         </div>
         <div>
           <FieldLabel>Inquiry Date</FieldLabel>
-          <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.inquiryDate} onChange={(event) => setForm((current) => ({ ...current, inquiryDate: event.target.value }))} />
+          <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.inquiryDate} onChange={(event) => updateForm((current) => ({ ...current, inquiryDate: event.target.value }))} />
         </div>
       </div>
 
@@ -189,7 +312,7 @@ export function SalesInquiryForm({
             className="h-11 w-full rounded-lg border border-border px-3"
             value={form.stage}
             onChange={(event) =>
-              setForm((current) => {
+              updateForm((current) => {
                 const nextStage = event.target.value as (typeof LEAD_STAGE_OPTIONS)[number];
                 const normalizedStage = canonicalLeadStage(nextStage);
                 const stageDrivenStatus = normalizedStage === "Closed - Lost" ? "Lost" : canonicalLeadStatus("Open", normalizedStage);
@@ -219,7 +342,7 @@ export function SalesInquiryForm({
             className="h-11 w-full rounded-lg border border-border px-3"
             value={effectiveStatus}
             onChange={(event) =>
-              setForm((current) => {
+              updateForm((current) => {
                 const nextStatus = event.target.value as (typeof LEAD_STATUS_OPTIONS)[number];
                 const markLost = nextStatus === "Lost";
                 const markWon = nextStatus === "Won";
@@ -255,7 +378,7 @@ export function SalesInquiryForm({
             className="h-11 w-full rounded-lg border border-border px-3"
             value={form.leadSource}
             onChange={(event) =>
-              setForm((current) => {
+              updateForm((current) => {
                 const nextSource = event.target.value as (typeof LEAD_SOURCE_OPTIONS)[number];
                 return {
                   ...current,
@@ -272,7 +395,7 @@ export function SalesInquiryForm({
         </div>
         <div>
           <FieldLabel>Likelihood</FieldLabel>
-          <select className="h-11 w-full rounded-lg border border-border px-3" value={form.likelihood} onChange={(event) => setForm((current) => ({ ...current, likelihood: event.target.value as (typeof LEAD_LIKELIHOOD_OPTIONS)[number] }))}>{LEAD_LIKELIHOOD_OPTIONS.map((likelihood) => <option key={likelihood} value={likelihood}>{likelihood}</option>)}</select>
+          <select className="h-11 w-full rounded-lg border border-border px-3" value={form.likelihood} onChange={(event) => updateForm((current) => ({ ...current, likelihood: event.target.value as (typeof LEAD_LIKELIHOOD_OPTIONS)[number] }))}>{LEAD_LIKELIHOOD_OPTIONS.map((likelihood) => <option key={likelihood} value={likelihood}>{likelihood}</option>)}</select>
         </div>
       </div>
 
@@ -292,7 +415,7 @@ export function SalesInquiryForm({
                       .map((source) => source.id)
                   )
                 : new Set<string>();
-              setForm((current) => ({
+              updateForm((current) => ({
                 ...current,
                 partnerId: nextPartnerId,
                 referralSourceId: nextPartner && nextReferralIds.has(current.referralSourceId) ? current.referralSourceId : "",
@@ -315,7 +438,7 @@ export function SalesInquiryForm({
               onChange={(event) => {
                 const referralSourceId = event.target.value;
                 const source = referralSources.find((item) => item.id === referralSourceId);
-                setForm((current) => ({
+                updateForm((current) => ({
                   ...current,
                   referralSourceId,
                   referralName: source ? source.contact_name : current.referralName,
@@ -339,7 +462,7 @@ export function SalesInquiryForm({
         <div className="grid gap-3 md:grid-cols-2">
           <div>
             <FieldLabel>Referral Name</FieldLabel>
-            <input className="h-11 w-full rounded-lg border border-border px-3" value={form.referralName} onChange={(event) => setForm((current) => ({ ...current, referralName: event.target.value }))} />
+            <input className="h-11 w-full rounded-lg border border-border px-3" value={form.referralName} onChange={(event) => updateForm((current) => ({ ...current, referralName: event.target.value }))} />
           </div>
           <div className="rounded-lg border border-border px-3 py-2 text-xs text-muted">
             Select existing referral source first when possible.
@@ -354,18 +477,18 @@ export function SalesInquiryForm({
       {showLeadSourceOther ? (
         <div>
           <FieldLabel>Lead Source Other</FieldLabel>
-          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.leadSourceOther} onChange={(event) => setForm((current) => ({ ...current, leadSourceOther: event.target.value }))} />
+          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.leadSourceOther} onChange={(event) => updateForm((current) => ({ ...current, leadSourceOther: event.target.value }))} />
         </div>
       ) : null}
 
       <div className="grid gap-3 md:grid-cols-4">
         <div>
           <FieldLabel>Next Follow-Up Date</FieldLabel>
-          <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.nextFollowUpDate} onChange={(event) => setForm((current) => ({ ...current, nextFollowUpDate: event.target.value }))} />
+          <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.nextFollowUpDate} onChange={(event) => updateForm((current) => ({ ...current, nextFollowUpDate: event.target.value }))} />
         </div>
         <div>
           <FieldLabel>Next Follow-Up Type</FieldLabel>
-          <select className="h-11 w-full rounded-lg border border-border px-3" value={form.nextFollowUpType} onChange={(event) => setForm((current) => ({ ...current, nextFollowUpType: event.target.value as (typeof LEAD_FOLLOW_UP_TYPES)[number] }))}><option value="">Select</option>{LEAD_FOLLOW_UP_TYPES.map((followupType) => <option key={followupType} value={followupType}>{followupType}</option>)}</select>
+          <select className="h-11 w-full rounded-lg border border-border px-3" value={form.nextFollowUpType} onChange={(event) => updateForm((current) => ({ ...current, nextFollowUpType: event.target.value as (typeof LEAD_FOLLOW_UP_TYPES)[number] }))}><option value="">Select</option>{LEAD_FOLLOW_UP_TYPES.map((followupType) => <option key={followupType} value={followupType}>{followupType}</option>)}</select>
         </div>
         <div>
           <FieldLabel>Tour Date</FieldLabel>
@@ -374,7 +497,7 @@ export function SalesInquiryForm({
             className="h-11 w-full rounded-lg border border-border px-3"
             value={form.tourDate}
             onChange={(event) =>
-              setForm((current) => ({
+              updateForm((current) => ({
                 ...current,
                 tourDate: event.target.value,
                 tourCompleted: event.target.value ? current.tourCompleted : ""
@@ -384,14 +507,14 @@ export function SalesInquiryForm({
         </div>
         <div>
           <FieldLabel>Discovery Date</FieldLabel>
-          <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.discoveryDate} onChange={(event) => setForm((current) => ({ ...current, discoveryDate: event.target.value }))} />
+          <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.discoveryDate} onChange={(event) => updateForm((current) => ({ ...current, discoveryDate: event.target.value }))} />
         </div>
       </div>
 
       {showTourCompleted ? (
         <div>
           <FieldLabel>Tour Completed</FieldLabel>
-          <select className="h-11 w-full rounded-lg border border-border px-3 md:max-w-sm" value={form.tourCompleted} onChange={(event) => setForm((current) => ({ ...current, tourCompleted: event.target.value }))}>
+          <select className="h-11 w-full rounded-lg border border-border px-3 md:max-w-sm" value={form.tourCompleted} onChange={(event) => updateForm((current) => ({ ...current, tourCompleted: event.target.value as "yes" | "no" | "" }))}>
             <option value="">Select</option>
             <option value="yes">Yes</option>
             <option value="no">No</option>
@@ -403,7 +526,7 @@ export function SalesInquiryForm({
         {isEipStage ? (
           <div>
             <FieldLabel>Member Start Date</FieldLabel>
-            <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.memberStartDate} onChange={(event) => setForm((current) => ({ ...current, memberStartDate: event.target.value }))} />
+            <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.memberStartDate} onChange={(event) => updateForm((current) => ({ ...current, memberStartDate: event.target.value }))} />
           </div>
         ) : null}
 
@@ -413,7 +536,7 @@ export function SalesInquiryForm({
             <select
               className="h-11 w-full rounded-lg border border-border px-3"
               value={form.lostReason}
-              onChange={(event) => setForm((current) => ({ ...current, lostReason: event.target.value, lostReasonOther: event.target.value === "Other" ? current.lostReasonOther : "" }))}
+              onChange={(event) => updateForm((current) => ({ ...current, lostReason: event.target.value, lostReasonOther: event.target.value === "Other" ? current.lostReasonOther : "" }))}
             >
               <option value="">Select lost reason</option>
               {LEAD_LOST_REASON_OPTIONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
@@ -423,19 +546,93 @@ export function SalesInquiryForm({
                 className="h-11 w-full rounded-lg border border-border px-3"
                 placeholder="Enter lost reason"
                 value={form.lostReasonOther}
-                onChange={(event) => setForm((current) => ({ ...current, lostReasonOther: event.target.value }))}
+                onChange={(event) => updateForm((current) => ({ ...current, lostReasonOther: event.target.value }))}
               />
             ) : null}
             <FieldLabel>Closed Date</FieldLabel>
-            <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.closedDate} onChange={(event) => setForm((current) => ({ ...current, closedDate: event.target.value }))} />
+            <input type="date" className="h-11 w-full rounded-lg border border-border px-3" value={form.closedDate} onChange={(event) => updateForm((current) => ({ ...current, closedDate: event.target.value }))} />
           </div>
         ) : null}
       </div>
 
       <div>
         <FieldLabel>Notes (Summary)</FieldLabel>
-        <textarea className="min-h-24 w-full rounded-lg border border-border p-3" value={form.notesSummary} onChange={(event) => setForm((current) => ({ ...current, notesSummary: event.target.value }))} />
+        <textarea className="min-h-24 w-full rounded-lg border border-border p-3" value={form.notesSummary} onChange={(event) => updateForm((current) => ({ ...current, notesSummary: event.target.value }))} />
       </div>
+
+      {duplicateReview ? (
+        <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+          <p className="text-sm font-semibold text-amber-900">
+            Likely duplicate leads found. Please review before final save.
+          </p>
+          <div className="space-y-2">
+            {duplicateReview.matches.map((match) => (
+              <div key={match.leadId} className="rounded-md border border-amber-200 bg-white p-3 text-sm">
+                <p className="font-semibold text-slate-900">
+                  {match.memberName} ({match.leadDisplayId})
+                </p>
+                <p className="text-xs text-muted">
+                  Stage/Status: {match.stage} / {match.status} | Inquiry Date: {match.inquiryDate}
+                </p>
+                <p className="text-xs text-muted">Caregiver: {match.caregiverName || "-"} | Phone: {match.caregiverPhone || "-"} | Email: {match.caregiverEmail || "-"}</p>
+                <p className="mt-1 text-xs text-slate-700">{match.reasons.join(" ")}</p>
+                <Link className="mt-2 inline-block text-xs font-semibold text-brand" href={`/sales/leads/${match.leadId}`}>
+                  Review Existing Lead
+                </Link>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid gap-2 md:grid-cols-2">
+            <div>
+              <FieldLabel>Merge Into Existing Lead</FieldLabel>
+              <select
+                className="h-11 w-full rounded-lg border border-border px-3"
+                value={mergeTargetLeadId}
+                onChange={(event) => setMergeTargetLeadId(event.target.value)}
+              >
+                <option value="">Select lead to merge into</option>
+                {duplicateReview.matches.map((match) => (
+                  <option key={match.leadId} value={match.leadId}>
+                    {match.memberName} ({match.leadDisplayId}) - {match.stage}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-end gap-2">
+              <Button
+                type="button"
+                disabled={isPending || !mergeTargetLeadId}
+                onClick={() =>
+                  startTransition(async () => {
+                    await submitLead({ duplicateDecision: "merge", mergeTargetLeadId });
+                  })
+                }
+              >
+                Merge Into Existing Lead
+              </Button>
+              {duplicateReview.canKeepSeparate ? (
+                <Button
+                  type="button"
+                  disabled={isPending}
+                  onClick={() =>
+                    startTransition(async () => {
+                      await submitLead({ duplicateDecision: "keep-separate" });
+                    })
+                  }
+                >
+                  Keep Separate
+                </Button>
+              ) : null}
+            </div>
+          </div>
+          {!duplicateReview.canKeepSeparate ? (
+            <p className="text-xs text-amber-900">
+              Only Admin, Manager, or Director can keep likely duplicates as separate leads.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <Button
         type="button"
@@ -450,23 +647,7 @@ export function SalesInquiryForm({
           (showTourCompleted && !form.tourCompleted) ||
           (showLostFields && (!form.lostReason || !form.closedDate || (form.lostReason === "Other" && !form.lostReasonOther.trim())))
         }
-        onClick={() =>
-          startTransition(async () => {
-            const response = await saveSalesLeadAction({
-              ...form,
-              tourCompleted: showTourCompleted ? form.tourCompleted === "yes" : undefined,
-              closedDate: showLostFields ? form.closedDate : ""
-            });
-            if (response.error) {
-              setStatus(`Error: ${response.error}`);
-              return;
-            }
-            setStatus(initialLead ? "Lead updated." : "Inquiry created.");
-            if (response.id) {
-              router.push(`/sales/leads/${response.id}`);
-            }
-          })
-        }
+        onClick={() => startTransition(async () => submitLead())}
       >
         {initialLead ? "Save Lead" : "Save Inquiry"}
       </Button>

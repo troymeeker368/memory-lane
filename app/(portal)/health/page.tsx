@@ -129,17 +129,20 @@ export default async function HealthPage() {
       if (allergyText.length > 0) flags.push("Allergies");
       if ((dietType && dietType !== "regular") || dietaryRestrictions.length > 0) flags.push("Special diet");
       if (codeStatus === "DNR") flags.push("DNR");
-      if ((mcc?.important_alerts ?? "").trim().length > 0) flags.push("Care alert");
-      if ((mhp?.social_behavior_comments ?? "").trim().length > 0) flags.push("Behavior notes");
+      if ((mhp?.important_alerts ?? "").trim().length > 0 || (mcc?.command_center_notes ?? "").trim().length > 0) {
+        flags.push("Care alert");
+      }
+      if ((mhp?.cognitive_behavior_comments ?? "").trim().length > 0) flags.push("Behavior notes");
 
       return {
         memberId: member.id,
         memberName: member.display_name,
         flags,
         summary:
-          (mcc?.important_alerts ?? "").trim() ||
+          (mhp?.important_alerts ?? "").trim() ||
+          (mcc?.command_center_notes ?? "").trim() ||
           dietaryRestrictions ||
-          (mhp?.social_behavior_comments ?? "").trim() ||
+          (mhp?.cognitive_behavior_comments ?? "").trim() ||
           "-"
       };
     })

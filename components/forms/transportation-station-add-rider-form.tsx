@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { copyForwardTransportationDetailsAction } from "@/app/(portal)/operations/transportation-station/actions";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 
 type ShiftOption = "AM" | "PM" | "Both";
 type TransportType = "Door to Door" | "Bus Stop";
@@ -31,15 +32,16 @@ export function TransportationStationAddRiderForm({
   members: MemberPrefillOption[];
   busNumberOptions: string[];
 }) {
-  const [isCopyPending, startCopyTransition] = useTransition();
-  const [memberId, setMemberId] = useState("");
-  const [shift, setShift] = useState<ShiftOption>(defaultShift);
-  const [copySourceDate, setCopySourceDate] = useState(() => {
+  const previousDateDefault = useMemo(() => {
     const parsed = new Date(`${selectedDate}T00:00:00.000Z`);
     if (Number.isNaN(parsed.getTime())) return selectedDate;
     parsed.setUTCDate(parsed.getUTCDate() - 1);
     return parsed.toISOString().slice(0, 10);
-  });
+  }, [selectedDate]);
+  const [isCopyPending, startCopyTransition] = useTransition();
+  const [memberId, setMemberId] = useState("");
+  const [shift, setShift] = usePropSyncedState<ShiftOption>(defaultShift, [defaultShift, selectedDate]);
+  const [copySourceDate, setCopySourceDate] = usePropSyncedState(previousDateDefault, [previousDateDefault]);
   const [transportType, setTransportType] = useState<TransportType>("Door to Door");
   const [busNumber, setBusNumber] = useState<BusNumber>("");
   const [busStopName, setBusStopName] = useState("");
@@ -53,6 +55,16 @@ export function TransportationStationAddRiderForm({
     () => members.find((row) => row.id === memberId) ?? null,
     [members, memberId]
   );
+
+  useEffect(() => {
+    if (!memberId) return;
+    if (members.some((row) => row.id === memberId)) return;
+    setMemberId("");
+  }, [memberId, members]);
+
+  useEffect(() => {
+    setCopyStatus("");
+  }, [selectedDate, defaultShift]);
 
   const setMemberWithPrefills = (nextMemberId: string) => {
     setMemberId(nextMemberId);

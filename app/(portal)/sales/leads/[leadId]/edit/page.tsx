@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 
-import { SalesInquiryForm } from "@/components/forms/sales-inquiry-form";
+import { SalesInquiryForm, type LeadLookup, type PartnerLookup, type ReferralSourceLookup } from "@/components/forms/sales-inquiry-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getLeadDetail } from "@/lib/services/relations";
@@ -19,9 +19,10 @@ export default async function EditLeadPage({ params }: { params: Promise<{ leadI
       <CardTitle>Edit Lead</CardTitle>
       <div className="mt-3">
         <SalesInquiryForm
-          partners={partners as any[]}
-          referralSources={referralSources as any[]}
-          initialLead={detail.lead as any}
+          key={`sales-edit-${leadId}`}
+          partners={partners as PartnerLookup[]}
+          referralSources={referralSources as ReferralSourceLookup[]}
+          initialLead={detail.lead as LeadLookup}
         />
       </div>
     </Card>

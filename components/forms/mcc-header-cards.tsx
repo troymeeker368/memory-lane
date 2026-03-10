@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useEffect } from "react";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 
 export function MccHeaderCards({
   memberId,
@@ -23,9 +25,24 @@ export function MccHeaderCards({
   trackLabel: string;
   trackSource: string;
 }) {
-  const [codeStatus, setCodeStatus] = useState(initialCodeStatus);
-  const [photoConsent, setPhotoConsent] = useState<boolean | null>(initialPhotoConsent);
-  const [transportation, setTransportation] = useState(initialTransportation);
+  const [codeStatus, setCodeStatus] = usePropSyncedState(initialCodeStatus, [
+    memberId,
+    initialCodeStatus,
+    initialPhotoConsent,
+    initialTransportation
+  ]);
+  const [photoConsent, setPhotoConsent] = usePropSyncedState<boolean | null>(initialPhotoConsent, [
+    memberId,
+    initialCodeStatus,
+    initialPhotoConsent,
+    initialTransportation
+  ]);
+  const [transportation, setTransportation] = usePropSyncedState(initialTransportation, [
+    memberId,
+    initialCodeStatus,
+    initialPhotoConsent,
+    initialTransportation
+  ]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -80,14 +97,14 @@ export function MccHeaderCards({
       <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Enrollment</p><p className="font-semibold">{enrollment}</p></div>
       <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Code Status</p><p className="font-semibold" style={codeStatusStyle}>{codeStatus}</p></div>
       <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Photo Consent</p><p className="font-semibold" style={photoConsentStyle}>{photoConsentLabel}</p></div>
-      <a href={lockerHref} className="rounded-lg border border-border p-3 text-center hover:border-brand/50 hover:bg-brand/5">
+      <Link href={lockerHref} className="rounded-lg border border-border p-3 text-center hover:border-brand/50 hover:bg-brand/5">
         <p className="text-xs text-muted">Locker #</p>
         <p className="font-semibold text-brand">{lockerValue}</p>
-      </a>
+      </Link>
       <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Transportation</p><p className="font-semibold" style={transportStyle}>{transportation}</p></div>
       <div className="rounded-lg border border-border p-3 text-center">
         <p className="text-xs text-muted">Track #</p>
-        <p className="font-semibold">{trackLabel}</p>
+        <p className="font-semibold" title={trackSource}>{trackLabel}</p>
       </div>
     </div>
   );

@@ -14,6 +14,7 @@
   canonicalLeadStatus
 } from "@/lib/canonical";
 import { calculateAssessmentTotal, getAssessmentTrack } from "@/lib/assessment";
+import { getStandardDailyRateForAttendanceDays } from "@/lib/services/billing-rate-tiers";
 import { getWeekdayForDate } from "@/lib/services/operations-calendar";
 import { isScheduledWeekday } from "@/lib/services/member-schedule-selectors";
 import fixturesJson from "@/lib/mock/canonical-fixtures.json";
@@ -28,6 +29,15 @@ import type {
   MockAttendanceRecord,
   MockAssessment,
   MockAssessmentResponse,
+  MockBillingAdjustment,
+  MockBillingBatch,
+  MockBillingExportJob,
+  MockBillingCoverage,
+  MockBillingInvoice,
+  MockBillingInvoiceLine,
+  MockBillingScheduleTemplate,
+  MockCenterBillingSetting,
+  MockCenterClosure,
   MockBusStopDirectory,
   MockBloodSugarLog,
   MockDailyActivityLog,
@@ -44,6 +54,8 @@ import type {
   MockMemberMedication,
   MockMemberNote,
   MockMemberProvider,
+  MockMemberBillingSetting,
+  MockPayor,
   MockHospitalPreferenceDirectory,
   MockProviderDirectory,
   MockLead,
@@ -787,7 +799,9 @@ function buildSales(staff: MockStaff[]) {
       caregiver_email: `${slugify(caregiver)}@example.com`,
       caregiver_phone: `839-55${String(2000 + (idx % 7000)).slice(-4)}`,
       member_name: createStablePseudonym(`lead-member:${idx}`, "lead-member"),
+      member_dob: idx % 4 === 0 ? null : addDays(inquiryDate, -(22000 + (idx % 9500))),
       lead_source: source,
+      lead_source_other: source === "Other" ? "Community outreach" : null,
       referral_name: referral?.contact_name ?? null,
       likelihood: pickByIndex(LEAD_LIKELIHOOD_OPTIONS as unknown as string[], idx),
       next_follow_up_date: status === "Open" || status === "Nurture" ? addDays(inquiryDate, 3 + (idx % 14)) : null,
@@ -1293,7 +1307,7 @@ function buildMemberHealthArtifacts(
           createdByName: nurse.full_name
         })),
         ...memberHealthProfiles
-          .map((profile) => profile.hospital_preference?.trim() ?? "")
+          .map((profile) => String((profile as { hospital_preference?: string | null }).hospital_preference ?? "").trim())
           .filter((hospitalName) => hospitalName.length > 0)
           .map((hospitalName) => ({
             hospitalName,
@@ -1463,6 +1477,8 @@ function buildMemberCommandCenterArtifacts(
     const wednesdayEnabled = hasAnyDay ? wednesday : true;
     const thursdayEnabled = hasAnyDay ? thursday : false;
     const fridayEnabled = hasAnyDay ? friday : true;
+    const attendanceDaysPerWeek = [mondayEnabled, tuesdayEnabled, wednesdayEnabled, thursdayEnabled, fridayEnabled].filter(Boolean).length;
+    const defaultDailyRate = getStandardDailyRateForAttendanceDays(attendanceDaysPerWeek);
     const buildDayTransport = (dayKey: string, dayEnabled: boolean) => {
       if (!transportationRequired || !dayEnabled) {
         return {
@@ -1589,6 +1605,14 @@ function buildMemberCommandCenterArtifacts(
       transport_friday_pm_door_to_door_address: fridayTransport.pmDoorToDoorAddress,
       transport_friday_pm_bus_number: fridayTransport.pmBusNumber,
       transport_friday_pm_bus_stop: fridayTransport.pmBusStop,
+      daily_rate: defaultDailyRate,
+      transportation_billing_status: "BillNormally",
+      billing_rate_effective_date: member.enrollment_date ?? toEasternDate(),
+      billing_notes: null,
+      attendance_days_per_week: attendanceDaysPerWeek,
+      default_daily_rate: defaultDailyRate,
+      use_custom_daily_rate: false,
+      custom_daily_rate: null,
       make_up_days_available: idx % 5 === 0 ? 2 : 0,
       attendance_notes: null,
       updated_by_user_id: coordinator.id,
@@ -1850,6 +1874,204 @@ function buildMemberHolds(input: { members: MockMember[]; staff: MockStaff[] }):
   return holds;
 }
 
+function buildBillingFoundation(input: {
+  members: MockMember[];
+  staff: MockStaff[];
+  schedules: MockMemberAttendanceSchedule[];
+  nowIso: string;
+}) {
+  const today = toEasternDate();
+  const yearStart = `${today.slice(0, 4)}-01-01`;
+  const actor =
+    input.staff.find((row) => row.active && (row.role === "coordinator" || row.role === "admin" || row.role === "manager")) ??
+    input.staff.find((row) => row.active) ??
+    input.staff[0];
+  const actorId = actor?.id ?? "system";
+  const actorName = actor?.full_name ?? "System Seed";
+  const scheduleByMemberId = new Map(input.schedules.map((row) => [row.member_id, row] as const));
+
+  const scheduledDaysPerWeek = (memberId: string) => {
+    const schedule = scheduleByMemberId.get(memberId);
+    if (!schedule) return 0;
+    const weekdays = [schedule.monday, schedule.tuesday, schedule.wednesday, schedule.thursday, schedule.friday];
+    return weekdays.filter(Boolean).length;
+  };
+
+  const centerBillingSettings: MockCenterBillingSetting[] = [
+    {
+      id: uuidFromKey("center-billing-setting:default"),
+      default_daily_rate: 180,
+      default_extra_day_rate: 180,
+      default_transport_one_way_rate: 10,
+      default_transport_round_trip_rate: 20,
+      billing_cutoff_day: 25,
+      default_billing_mode: "Membership",
+      effective_start_date: yearStart,
+      effective_end_date: null,
+      active: true,
+      created_at: input.nowIso,
+      updated_at: input.nowIso,
+      updated_by_user_id: actorId,
+      updated_by_name: actorName
+    }
+  ];
+
+  const centerClosures: MockCenterClosure[] = [
+    {
+      id: uuidFromKey(`center-closure:${yearStart.slice(0, 4)}-01-01`),
+      closure_date: `${yearStart.slice(0, 4)}-01-01`,
+      closure_name: "New Year's Day",
+      closure_type: "Holiday",
+      billable_override: false,
+      notes: null,
+      active: true,
+      created_at: input.nowIso,
+      updated_at: input.nowIso,
+      updated_by_user_id: actorId,
+      updated_by_name: actorName
+    },
+    {
+      id: uuidFromKey(`center-closure:${yearStart.slice(0, 4)}-11-27`),
+      closure_date: `${yearStart.slice(0, 4)}-11-27`,
+      closure_name: "Thanksgiving Closure",
+      closure_type: "Holiday",
+      billable_override: false,
+      notes: null,
+      active: true,
+      created_at: input.nowIso,
+      updated_at: input.nowIso,
+      updated_by_user_id: actorId,
+      updated_by_name: actorName
+    },
+    {
+      id: uuidFromKey(`center-closure:${yearStart.slice(0, 4)}-12-25`),
+      closure_date: `${yearStart.slice(0, 4)}-12-25`,
+      closure_name: "Christmas Day",
+      closure_type: "Holiday",
+      billable_override: false,
+      notes: null,
+      active: true,
+      created_at: input.nowIso,
+      updated_at: input.nowIso,
+      updated_by_user_id: actorId,
+      updated_by_name: actorName
+    }
+  ];
+
+  const payors: MockPayor[] = input.members
+    .filter((member) => member.status === "active")
+    .map((member, idx) => {
+      const slug = slugify(member.display_name).replace(/\./g, "");
+      return {
+        id: uuidFromKey(`payor:${member.id}`),
+        payor_name: `${member.display_name} Family`,
+        payor_type: "Private",
+        billing_contact_name: member.display_name,
+        billing_email: `${slug || `member${idx + 1}`}@example.com`,
+        billing_phone: "803-555-0100",
+        billing_method: idx % 8 === 0 ? "Manual" : "InvoiceEmail",
+        auto_draft_enabled: false,
+        quickbooks_customer_name: null,
+        quickbooks_customer_ref: null,
+        status: "active",
+        notes: null,
+        created_at: input.nowIso,
+        updated_at: input.nowIso,
+        updated_by_user_id: actorId,
+        updated_by_name: actorName
+      } satisfies MockPayor;
+    });
+
+  const payorByName = new Map(payors.map((row) => [row.payor_name, row.id] as const));
+
+  const memberBillingSettings: MockMemberBillingSetting[] = input.members
+    .filter((member) => member.status === "active")
+    .map((member) => {
+      const seed = hashString(`member-billing:${member.id}`);
+      const daysPerWeek = scheduledDaysPerWeek(member.id);
+      const tierRate = getStandardDailyRateForAttendanceDays(daysPerWeek);
+      const usesCenterDefaultRate = tierRate === 180;
+      const transportMode =
+        seed % 10 === 0 ? "Waived" : seed % 10 === 1 ? "IncludedInProgramRate" : "BillNormally";
+      const payorId =
+        payors.find((row) => row.payor_name.startsWith(member.display_name))?.id ??
+        payorByName.get(`${member.display_name} Family`) ??
+        null;
+
+      return {
+        id: uuidFromKey(`member-billing-setting:${member.id}`),
+        member_id: member.id,
+        payor_id: payorId,
+        use_center_default_billing_mode: true,
+        billing_mode: null,
+        monthly_billing_basis: seed % 5 === 0 ? "ActualAttendanceMonthBehind" : "ScheduledMonthBehind",
+        use_center_default_rate: usesCenterDefaultRate,
+        custom_daily_rate: usesCenterDefaultRate ? null : tierRate,
+        flat_monthly_rate: null,
+        bill_extra_days: seed % 7 !== 0,
+        transportation_billing_status: transportMode,
+        bill_ancillary_arrears: seed % 11 !== 0,
+        active: true,
+        effective_start_date: yearStart,
+        effective_end_date: null,
+        billing_notes:
+          daysPerWeek <= 0
+            ? "Seeded default tier due to missing weekly schedule."
+            : `Seeded pricing tier: ${daysPerWeek} day(s)/week -> $${tierRate}/day.`,
+        created_at: input.nowIso,
+        updated_at: input.nowIso,
+        updated_by_user_id: actorId,
+        updated_by_name: actorName
+      } satisfies MockMemberBillingSetting;
+    });
+
+  const billingScheduleTemplates: MockBillingScheduleTemplate[] = input.members
+    .filter((member) => member.status === "active")
+    .map((member) => {
+      const schedule = scheduleByMemberId.get(member.id);
+      return {
+        id: uuidFromKey(`billing-schedule-template:${member.id}`),
+        member_id: member.id,
+        effective_start_date: schedule?.enrollment_date ?? yearStart,
+        effective_end_date: null,
+        monday: schedule?.monday ?? false,
+        tuesday: schedule?.tuesday ?? false,
+        wednesday: schedule?.wednesday ?? false,
+        thursday: schedule?.thursday ?? false,
+        friday: schedule?.friday ?? false,
+        saturday: false,
+        sunday: false,
+        active: true,
+        notes: null,
+        created_at: input.nowIso,
+        updated_at: input.nowIso,
+        updated_by_user_id: actorId,
+        updated_by_name: actorName
+      } satisfies MockBillingScheduleTemplate;
+    });
+
+  const billingAdjustments: MockBillingAdjustment[] = [];
+  const billingBatches: MockBillingBatch[] = [];
+  const billingInvoices: MockBillingInvoice[] = [];
+  const billingInvoiceLines: MockBillingInvoiceLine[] = [];
+  const billingExportJobs: MockBillingExportJob[] = [];
+  const billingCoverages: MockBillingCoverage[] = [];
+
+  return {
+    centerBillingSettings,
+    centerClosures,
+    payors,
+    memberBillingSettings,
+    billingScheduleTemplates,
+    billingAdjustments,
+    billingBatches,
+    billingInvoices,
+    billingInvoiceLines,
+    billingExportJobs,
+    billingCoverages
+  };
+}
+
 function buildAuditLogs(): MockAuditLog[] {
   return [];
 }
@@ -1877,6 +2099,12 @@ export function buildSeededMockDb(): MockDb {
   const memberHolds = buildMemberHolds({
     members,
     staff
+  });
+  const billingFoundation = buildBillingFoundation({
+    members,
+    staff,
+    schedules: memberCommandCenterArtifacts.memberAttendanceSchedules,
+    nowIso
   });
   const busStopDirectory: MockBusStopDirectory[] = Array.from(
     new Set(
@@ -1974,6 +2202,17 @@ export function buildSeededMockDb(): MockDb {
     bloodSugarLogs: operational.bloodSugarLogs,
     ancillaryCategories,
     ancillaryLogs: operational.ancillaryLogs,
+    centerBillingSettings: billingFoundation.centerBillingSettings,
+    centerClosures: billingFoundation.centerClosures,
+    payors: billingFoundation.payors,
+    memberBillingSettings: billingFoundation.memberBillingSettings,
+    billingScheduleTemplates: billingFoundation.billingScheduleTemplates,
+    billingAdjustments: billingFoundation.billingAdjustments,
+    billingBatches: billingFoundation.billingBatches,
+    billingInvoices: billingFoundation.billingInvoices,
+    billingInvoiceLines: billingFoundation.billingInvoiceLines,
+    billingExportJobs: billingFoundation.billingExportJobs,
+    billingCoverages: billingFoundation.billingCoverages,
     leads: sales.leads,
     leadActivities: sales.leadActivities,
     partners: sales.partners,

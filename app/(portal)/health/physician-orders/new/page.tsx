@@ -1,15 +1,18 @@
 import { notFound } from "next/navigation";
 
 import { savePhysicianOrderFormAction } from "@/app/(portal)/health/physician-orders/actions";
+import { PofAllergiesEditor } from "@/components/forms/pof-allergies-editor";
+import { PofDiagnosesEditor } from "@/components/forms/pof-diagnoses-editor";
 import { PofMedicationsEditor } from "@/components/forms/pof-medications-editor";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { getMockDb } from "@/lib/mock-repo";
-import { getManagedUserSignatureName } from "@/lib/services/user-management";
+import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
 import {
   POF_LEVEL_OF_CARE_OPTIONS,
   POF_NUTRITION_OPTIONS,
+  POF_STANDING_ORDER_OPTIONS,
   buildNewPhysicianOrderDraft,
   getPhysicianOrderById
 } from "@/lib/services/physician-orders";
@@ -23,15 +26,17 @@ function firstString(value: string | string[] | undefined) {
 function CheckboxField({
   name,
   label,
-  defaultChecked
+  defaultChecked,
+  value
 }: {
   name: string;
   label: string;
   defaultChecked: boolean;
+  value?: string;
 }) {
   return (
     <label className="inline-flex items-center gap-2 text-sm">
-      <input type="checkbox" name={name} defaultChecked={defaultChecked} />
+      <input type="checkbox" name={name} value={value ?? "true"} defaultChecked={defaultChecked} />
       <span>{label}</span>
     </label>
   );
@@ -44,7 +49,7 @@ export default async function NewPhysicianOrderPage({
 }) {
   await requireRoles(["admin", "nurse"]);
   const profile = await getCurrentProfile();
-  const actorDisplayName = getManagedUserSignatureName(profile.id, profile.full_name);
+  const actorDisplayName = getManagedUserSignoffLabel(profile.id, profile.full_name);
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";
   const pofId = firstString(query.pofId) ?? "";
@@ -81,7 +86,14 @@ export default async function NewPhysicianOrderPage({
   }
 
   const editing = pofId ? getPhysicianOrderById(pofId) : null;
-  const draft = editing ?? (memberId ? buildNewPhysicianOrderDraft({ memberId, actor: { id: profile.id, fullName: actorDisplayName } }) : null);
+  const draft =
+    editing ??
+    (memberId
+      ? buildNewPhysicianOrderDraft({
+          memberId,
+          actor: { id: profile.id, fullName: actorDisplayName, signoffName: actorDisplayName }
+        })
+      : null);
   if (!draft) notFound();
 
   return (
@@ -107,7 +119,16 @@ export default async function NewPhysicianOrderPage({
 
         <Card>
           <CardTitle>Identification / Medical Orders</CardTitle>
-          <div className="mt-3 grid gap-3 md:grid-cols-4">
+          <div className="mt-3 grid gap-3 md:grid-cols-5">
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-semibold text-muted">DOB</span>
+              <input
+                type="date"
+                name="memberDob"
+                defaultValue={draft.memberDobSnapshot ?? ""}
+                className="h-10 w-full rounded-lg border border-border px-3"
+              />
+            </label>
             <label className="space-y-1 text-sm">
               <span className="text-xs font-semibold text-muted">Sex</span>
               <select name="sex" defaultValue={draft.sex ?? ""} className="h-10 w-full rounded-lg border border-border px-3">
@@ -152,15 +173,14 @@ export default async function NewPhysicianOrderPage({
             </label>
           </div>
 
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">Diagnoses (one per line)</span>
-              <textarea name="diagnosesText" defaultValue={draft.diagnoses.join("\n")} className="min-h-24 w-full rounded-lg border border-border p-3 text-sm" />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">Allergies (one per line)</span>
-              <textarea name="allergiesText" defaultValue={draft.allergies.join("\n")} className="min-h-24 w-full rounded-lg border border-border p-3 text-sm" />
-            </label>
+          <div className="mt-3">
+            <p className="text-sm font-semibold">Diagnoses</p>
+            <PofDiagnosesEditor initialRows={draft.diagnosisRows} />
+          </div>
+
+          <div className="mt-3">
+            <p className="text-sm font-semibold">Allergies</p>
+            <PofAllergiesEditor initialRows={draft.allergyRows} />
           </div>
 
           <div className="mt-3">
@@ -169,12 +189,18 @@ export default async function NewPhysicianOrderPage({
           </div>
 
           <div className="mt-3 rounded-lg border border-border p-3">
-            <p className="text-sm font-semibold">Standing Orders (Included)</p>
-            <ul className="mt-2 list-disc pl-5 text-sm text-muted">
-              {draft.standingOrders.map((order) => (
-                <li key={order}>{order}</li>
+            <p className="text-sm font-semibold">Standing Orders (check to include on generated POF)</p>
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              {POF_STANDING_ORDER_OPTIONS.map((order) => (
+                <CheckboxField
+                  key={order}
+                  name="standingOrder"
+                  value={order}
+                  label={order}
+                  defaultChecked={draft.standingOrders.includes(order)}
+                />
               ))}
-            </ul>
+            </div>
           </div>
         </Card>
 
@@ -190,12 +216,69 @@ export default async function NewPhysicianOrderPage({
                   <p className="text-sm font-semibold">Disoriented</p>
                   <CheckboxField name="disorientedConstantly" label="Constantly" defaultChecked={draft.careInformation.disorientedConstantly} />
                   <CheckboxField name="disorientedIntermittently" label="Intermittently" defaultChecked={draft.careInformation.disorientedIntermittently} />
+                  <label className="space-y-1 text-sm">
+                    <span className="text-xs font-semibold text-muted">MHP Orientation: DOB</span>
+                    <select
+                      name="orientationDob"
+                      defaultValue={draft.careInformation.orientationProfile.orientationDob ?? ""}
+                      className="h-10 w-full rounded-lg border border-border px-3"
+                    >
+                      <option value="">Not recorded</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="text-xs font-semibold text-muted">MHP Orientation: City</span>
+                    <select
+                      name="orientationCity"
+                      defaultValue={draft.careInformation.orientationProfile.orientationCity ?? ""}
+                      className="h-10 w-full rounded-lg border border-border px-3"
+                    >
+                      <option value="">Not recorded</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </label>
                 </div>
                 <div className="space-y-2">
                   <p className="text-sm font-semibold">Inappropriate Behavior</p>
                   <CheckboxField name="inappropriateBehaviorWanderer" label="Wanderer" defaultChecked={draft.careInformation.inappropriateBehaviorWanderer} />
                   <CheckboxField name="inappropriateBehaviorVerbalAggression" label="Verbal Aggression" defaultChecked={draft.careInformation.inappropriateBehaviorVerbalAggression} />
                   <CheckboxField name="inappropriateBehaviorAggression" label="Aggression" defaultChecked={draft.careInformation.inappropriateBehaviorAggression} />
+                  <label className="space-y-1 text-sm">
+                    <span className="text-xs font-semibold text-muted">MHP Orientation: Current Year</span>
+                    <select
+                      name="orientationCurrentYear"
+                      defaultValue={draft.careInformation.orientationProfile.orientationCurrentYear ?? ""}
+                      className="h-10 w-full rounded-lg border border-border px-3"
+                    >
+                      <option value="">Not recorded</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="text-xs font-semibold text-muted">MHP Orientation: Former Occupation</span>
+                    <select
+                      name="orientationFormerOccupation"
+                      defaultValue={draft.careInformation.orientationProfile.orientationFormerOccupation ?? ""}
+                      className="h-10 w-full rounded-lg border border-border px-3"
+                    >
+                      <option value="">Not recorded</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      name="orientationDisorientation"
+                      value="true"
+                      defaultChecked={draft.careInformation.orientationProfile.disorientation === true}
+                    />
+                    <span>MHP Disorientation</span>
+                  </label>
                 </div>
                 <div className="space-y-2">
                   <p className="text-sm font-semibold">Activities / Social</p>
@@ -203,13 +286,33 @@ export default async function NewPhysicianOrderPage({
                   <CheckboxField name="activitiesActive" label="Active" defaultChecked={draft.careInformation.activitiesActive} />
                   <CheckboxField name="activitiesGroupParticipation" label="Group Participation" defaultChecked={draft.careInformation.activitiesGroupParticipation} />
                   <CheckboxField name="activitiesPrefersAlone" label="Prefers alone time" defaultChecked={draft.careInformation.activitiesPrefersAlone} />
+                  <input
+                    name="orientationMemoryImpairment"
+                    defaultValue={draft.careInformation.orientationProfile.memoryImpairment ?? ""}
+                    placeholder="MHP Memory Impairment"
+                    className="h-10 w-full rounded-lg border border-border px-3 text-sm"
+                  />
                 </div>
                 <div className="space-y-2">
                   <p className="text-sm font-semibold">Stimulation</p>
                   <CheckboxField name="stimulationAfraidLoudNoises" label="Afraid of loud noises" defaultChecked={draft.careInformation.stimulationAfraidLoudNoises} />
                   <CheckboxField name="stimulationEasilyOverwhelmed" label="Easily overwhelmed" defaultChecked={draft.careInformation.stimulationEasilyOverwhelmed} />
                   <CheckboxField name="stimulationAdaptsEasily" label="Adapts easily" defaultChecked={draft.careInformation.stimulationAdaptsEasily} />
+                  <input
+                    name="orientationMemorySeverity"
+                    defaultValue={draft.careInformation.orientationProfile.memorySeverity ?? ""}
+                    placeholder="MHP Memory Severity"
+                    className="h-10 w-full rounded-lg border border-border px-3 text-sm"
+                  />
                 </div>
+                <label className="space-y-1 text-sm md:col-span-2">
+                  <span className="text-xs font-semibold text-muted">MHP Cognitive / Behavioral Comments</span>
+                  <textarea
+                    name="orientationComments"
+                    defaultValue={draft.careInformation.orientationProfile.cognitiveBehaviorComments ?? ""}
+                    className="min-h-20 w-full rounded-lg border border-border p-3 text-sm"
+                  />
+                </label>
               </div>
             </details>
 
@@ -247,6 +350,33 @@ export default async function NewPhysicianOrderPage({
                   <CheckboxField name="functionalLimitationSight" label="Sight" defaultChecked={draft.careInformation.functionalLimitationSight} />
                   <CheckboxField name="functionalLimitationHearing" label="Hearing" defaultChecked={draft.careInformation.functionalLimitationHearing} />
                   <CheckboxField name="functionalLimitationSpeech" label="Speech" defaultChecked={draft.careInformation.functionalLimitationSpeech} />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <p className="text-sm font-semibold">MHP-Aligned ADL Fields (direct sync)</p>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <input name="adlAmbulation" defaultValue={draft.careInformation.adlProfile.ambulation ?? ""} placeholder="Ambulation" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlTransferring" defaultValue={draft.careInformation.adlProfile.transferring ?? ""} placeholder="Transferring" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlBathing" defaultValue={draft.careInformation.adlProfile.bathing ?? ""} placeholder="Bathing" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlDressing" defaultValue={draft.careInformation.adlProfile.dressing ?? ""} placeholder="Dressing" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlEating" defaultValue={draft.careInformation.adlProfile.eating ?? ""} placeholder="Eating" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlBladderContinence" defaultValue={draft.careInformation.adlProfile.bladderContinence ?? ""} placeholder="Bladder Continence" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlBowelContinence" defaultValue={draft.careInformation.adlProfile.bowelContinence ?? ""} placeholder="Bowel Continence" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlToileting" defaultValue={draft.careInformation.adlProfile.toileting ?? ""} placeholder="Toileting" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlToiletingNeeds" defaultValue={draft.careInformation.adlProfile.toiletingNeeds ?? ""} placeholder="Toileting Needs" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlHearing" defaultValue={draft.careInformation.adlProfile.hearing ?? ""} placeholder="Hearing" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlVision" defaultValue={draft.careInformation.adlProfile.vision ?? ""} placeholder="Vision" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlDental" defaultValue={draft.careInformation.adlProfile.dental ?? ""} placeholder="Dental" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlSpeechVerbalStatus" defaultValue={draft.careInformation.adlProfile.speechVerbalStatus ?? ""} placeholder="Speech / Verbal Status" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <input name="adlMedicationManagerName" defaultValue={draft.careInformation.adlProfile.medicationManagerName ?? ""} placeholder="Medication Manager Name" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                    <select name="adlMaySelfMedicate" defaultValue={draft.careInformation.adlProfile.maySelfMedicate == null ? "" : draft.careInformation.adlProfile.maySelfMedicate ? "true" : "false"} className="h-10 rounded-lg border border-border px-3 text-sm">
+                      <option value="">May Self-Medicate (Not set)</option>
+                      <option value="true">May Self-Medicate: Yes</option>
+                      <option value="false">May Self-Medicate: No</option>
+                    </select>
+                  </div>
+                  <textarea name="adlToiletingComments" defaultValue={draft.careInformation.adlProfile.toiletingComments ?? ""} placeholder="Toileting Comments" className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
+                  <textarea name="adlSpeechComments" defaultValue={draft.careInformation.adlProfile.speechComments ?? ""} placeholder="Speech Comments" className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
+                  <textarea name="adlHygieneGrooming" defaultValue={draft.careInformation.adlProfile.hygieneGrooming ?? ""} placeholder="Personal Appearance / Hygiene / Grooming" className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
                 </div>
               </div>
             </details>
@@ -286,6 +416,7 @@ export default async function NewPhysicianOrderPage({
                     <CheckboxField
                       key={option}
                       name="nutritionDiet"
+                      value={option}
                       label={option}
                       defaultChecked={draft.careInformation.nutritionDiets.includes(option)}
                     />

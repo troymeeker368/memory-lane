@@ -88,7 +88,7 @@ export function NewCarePlanForm({
     <div className="space-y-4">
       <div className="space-y-2 rounded-lg border border-border p-3">
         <p className="text-sm font-semibold">Member Information</p>
-        <p className="text-xs text-muted">Enrollment Date auto-fills from member record when available; otherwise today's date is used.</p>
+        <p className="text-xs text-muted">Enrollment Date auto-fills from member record when available; otherwise today&apos;s date is used.</p>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <label className="space-y-1 text-sm">
             <span className="font-semibold">Member</span>

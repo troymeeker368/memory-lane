@@ -58,7 +58,7 @@ export function MhpTrackBannerEditor({
   };
 
   return (
-    <div className="rounded-lg border border-border p-3 text-center">
+    <div className="rounded-lg border border-border p-3 text-center" title={sourceText}>
       <p className="text-xs text-muted">Track #</p>
       {!isEditing ? (
         <div className="mt-1 flex justify-center">

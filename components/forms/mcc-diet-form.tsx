@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useState, useTransition } from "react";
+import { FormEvent, useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import { saveMemberCommandCenterDietAction } from "@/app/(portal)/operations/member-command-center/actions";
 import { MhpMedicalDietFields } from "@/components/forms/mhp-medical-diet-fields";
@@ -34,8 +35,13 @@ export function MccDietForm({
   foodsToOmit: string;
   commandCenterNotes: string;
 }) {
+  const router = useRouter();
   const [status, setStatus] = useState("");
   const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    setStatus("");
+  }, [memberId]);
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -48,6 +54,7 @@ export function MccDietForm({
         return;
       }
       setStatus("Diet / allergies saved.");
+      router.refresh();
     });
   };
 

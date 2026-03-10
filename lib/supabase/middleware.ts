@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import type { SetAllCookies } from "@supabase/ssr";
 
 import { getSupabaseEnv, isMockMode } from "../runtime";
 
@@ -11,15 +12,15 @@ export async function updateSession(request: NextRequest) {
 
   const { url, anonKey } = getSupabaseEnv();
 
-  let response = NextResponse.next({ request });
+  const response = NextResponse.next({ request });
 
   const supabase = createServerClient(url, anonKey, {
     cookies: {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value, options }) => {
+      setAll(cookiesToSet: Parameters<SetAllCookies>[0]) {
+        cookiesToSet.forEach(({ name, value, options }: Parameters<SetAllCookies>[0][number]) => {
           request.cookies.set(name, value);
           response.cookies.set(name, value, options);
         });

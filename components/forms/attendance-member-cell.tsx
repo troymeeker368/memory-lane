@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { saveAttendanceStatusAction } from "@/app/(portal)/operations/attendance/actions";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 import { ATTENDANCE_ABSENCE_REASON_OPTIONS } from "@/lib/canonical";
 
 type ActionMode = "check-in" | "check-out" | "absent" | null;
@@ -57,10 +59,11 @@ export function AttendanceMemberCell({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<ActionMode>(null);
-  const [checkInTime, setCheckInTime] = useState(defaultCheckInTime ?? currentTimeString());
-  const [checkOutTime, setCheckOutTime] = useState(defaultCheckOutTime ?? currentTimeString());
-  const [absentReason, setAbsentReason] = useState(defaultAbsentReason ?? "");
-  const [absentReasonOther, setAbsentReasonOther] = useState(defaultAbsentReasonOther ?? "");
+  const syncDeps = [attendanceDate, defaultAbsentReason, defaultAbsentReasonOther, defaultCheckInTime, defaultCheckOutTime, memberId];
+  const [checkInTime, setCheckInTime] = usePropSyncedState(defaultCheckInTime ?? currentTimeString(), syncDeps);
+  const [checkOutTime, setCheckOutTime] = usePropSyncedState(defaultCheckOutTime ?? currentTimeString(), syncDeps);
+  const [absentReason, setAbsentReason] = usePropSyncedState(defaultAbsentReason ?? "", syncDeps);
+  const [absentReasonOther, setAbsentReasonOther] = usePropSyncedState(defaultAbsentReasonOther ?? "", syncDeps);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -68,6 +71,12 @@ export function AttendanceMemberCell({
     () => `/operations/member-command-center/${memberId}`,
     [memberId]
   );
+
+  useEffect(() => {
+    setOpen(false);
+    setMode(null);
+    setError(null);
+  }, syncDeps);
 
   function runAction() {
     if (!mode) return;
@@ -155,9 +164,9 @@ export function AttendanceMemberCell({
             {memberName}
           </button>
         ) : (
-          <a href={profileHref} className="font-semibold text-brand">
+          <Link href={profileHref} className="font-semibold text-brand">
             {memberName}
-          </a>
+          </Link>
         )}
       </div>
 
@@ -265,9 +274,9 @@ export function AttendanceMemberCell({
             >
               {isPending ? "Saving..." : "Save"}
             </button>
-            <a href={profileHref} className="font-semibold text-brand">
+            <Link href={profileHref} className="font-semibold text-brand">
               Open Member Record
-            </a>
+            </Link>
           </div>
           {error ? <p className="mt-1 text-xs font-semibold text-red-600">{error}</p> : null}
         </div>

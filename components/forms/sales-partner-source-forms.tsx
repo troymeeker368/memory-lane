@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { createCommunityPartnerAction, createReferralSourceAction } from "@/app/sales-actions";
+import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
 import { Button } from "@/components/ui/button";
 import { COMMUNITY_PARTNER_CATEGORY_OPTIONS } from "@/lib/canonical";
+type ReferralSourceCategory = (typeof COMMUNITY_PARTNER_CATEGORY_OPTIONS)[number];
 
 type PartnerLookup = {
   id: string;
@@ -15,7 +17,17 @@ type PartnerLookup = {
 export function NewCommunityPartnerForm() {
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    organizationName: string;
+    referralSourceCategory: ReferralSourceCategory;
+    location: string;
+    primaryPhone: string;
+    secondaryPhone: string;
+    primaryEmail: string;
+    contactName: string;
+    notes: string;
+    active: boolean;
+  }>({
     organizationName: "",
     referralSourceCategory: COMMUNITY_PARTNER_CATEGORY_OPTIONS[0],
     location: "",
@@ -31,7 +43,11 @@ export function NewCommunityPartnerForm() {
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-2">
         <input className="h-11 rounded-lg border border-border px-3" placeholder="Organization Name" value={form.organizationName} onChange={(event) => setForm((current) => ({ ...current, organizationName: event.target.value }))} />
-        <select className="h-11 rounded-lg border border-border px-3" value={form.referralSourceCategory} onChange={(event) => setForm((current) => ({ ...current, referralSourceCategory: event.target.value }))}>
+        <select
+          className="h-11 rounded-lg border border-border px-3"
+          value={form.referralSourceCategory}
+          onChange={(event) => setForm((current) => ({ ...current, referralSourceCategory: event.target.value as ReferralSourceCategory }))}
+        >
           {COMMUNITY_PARTNER_CATEGORY_OPTIONS.map((category) => (
             <option key={category} value={category}>{category}</option>
           ))}
@@ -91,7 +107,13 @@ export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] 
   });
 
   const [showCreateOrgInline, setShowCreateOrgInline] = useState(false);
-  const [orgForm, setOrgForm] = useState({
+  const [orgForm, setOrgForm] = useState<{
+    organizationName: string;
+    referralSourceCategory: ReferralSourceCategory;
+    location: string;
+    primaryPhone: string;
+    primaryEmail: string;
+  }>({
     organizationName: "",
     referralSourceCategory: COMMUNITY_PARTNER_CATEGORY_OPTIONS[0],
     location: "",
@@ -103,6 +125,17 @@ export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] 
     () => partnerOptions.find((partner) => partner.id === form.partnerId) ?? null,
     [partnerOptions, form.partnerId]
   );
+
+  useEffect(() => {
+    setPartnerOptions([...partners].sort((a, b) => a.organization_name.localeCompare(b.organization_name)));
+  }, [partners]);
+
+  useConstrainedSelection({
+    selectedId: form.partnerId,
+    setSelectedId: (nextPartnerId) => setForm((current) => ({ ...current, partnerId: nextPartnerId })),
+    options: partnerOptions,
+    autoSelectSingle: false
+  });
 
   return (
     <div className="space-y-3">
@@ -122,7 +155,13 @@ export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] 
           <p className="text-xs font-semibold uppercase tracking-wide text-muted">Create Organization Inline</p>
           <div className="grid gap-3 md:grid-cols-2">
             <input className="h-11 rounded-lg border border-border px-3" placeholder="Organization Name" value={orgForm.organizationName} onChange={(event) => setOrgForm((current) => ({ ...current, organizationName: event.target.value }))} />
-            <select className="h-11 rounded-lg border border-border px-3" value={orgForm.referralSourceCategory} onChange={(event) => setOrgForm((current) => ({ ...current, referralSourceCategory: event.target.value }))}>
+            <select
+              className="h-11 rounded-lg border border-border px-3"
+              value={orgForm.referralSourceCategory}
+              onChange={(event) =>
+                setOrgForm((current) => ({ ...current, referralSourceCategory: event.target.value as ReferralSourceCategory }))
+              }
+            >
               {COMMUNITY_PARTNER_CATEGORY_OPTIONS.map((category) => <option key={category} value={category}>{category}</option>)}
             </select>
           </div>

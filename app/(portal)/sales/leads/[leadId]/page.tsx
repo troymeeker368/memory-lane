@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { EnrollMemberAction } from "@/components/sales/enroll-member-action";
 import { LeadContactQuickActions } from "@/components/sales/lead-contact-quick-actions";
 import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
 import { requireModuleAccess } from "@/lib/auth";
+import { canonicalLeadStage } from "@/lib/canonical";
 import { getLeadDetail } from "@/lib/services/relations";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
@@ -16,6 +18,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
   if (!detail) notFound();
 
   const lead = detail.lead;
+  const showEnrollMemberAction = canonicalLeadStage(lead.stage) === "Enrollment in Progress";
 
   return (
     <div className="space-y-4">
@@ -32,6 +35,11 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
           {detail.partner ? <Link className="font-semibold text-brand" href={`/sales/community-partners/organizations/${detail.partner.id}`}>View Community Partner</Link> : null}
           {detail.referralSource ? <Link className="font-semibold text-brand" href={`/sales/community-partners/referral-sources/${detail.referralSource.id}`}>View Referral Source</Link> : null}
         </div>
+        {showEnrollMemberAction ? (
+          <div className="mt-3">
+            <EnrollMemberAction leadId={lead.id} />
+          </div>
+        ) : null}
         <div className="mt-3">
           <LeadContactQuickActions
             leadId={lead.id}

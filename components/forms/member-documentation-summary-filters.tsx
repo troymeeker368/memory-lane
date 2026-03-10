@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useTransition } from "react";
+
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 
 type RangePreset = "today" | "last-week" | "last-30-days" | "last-90-days" | "last-year" | "custom";
 
@@ -66,17 +68,11 @@ export function MemberDocumentationSummaryFilters({
   const router = useRouter();
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
-  const [memberId, setMemberId] = useState(initialMemberId);
-  const [range, setRange] = useState<RangePreset>(initialRange);
-  const [from, setFrom] = useState(initialFrom);
-  const [to, setTo] = useState(initialTo);
-
-  useEffect(() => {
-    setMemberId(initialMemberId);
-    setRange(initialRange);
-    setFrom(initialFrom);
-    setTo(initialTo);
-  }, [initialFrom, initialMemberId, initialRange, initialTo]);
+  const syncDeps = [initialFrom, initialMemberId, initialRange, initialTo];
+  const [memberId, setMemberId] = usePropSyncedState(initialMemberId, syncDeps);
+  const [range, setRange] = usePropSyncedState<RangePreset>(initialRange, syncDeps);
+  const [from, setFrom] = usePropSyncedState(initialFrom, syncDeps);
+  const [to, setTo] = usePropSyncedState(initialTo, syncDeps);
 
   const displayFromTo = useMemo(() => {
     if (range === "custom") {

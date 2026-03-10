@@ -167,6 +167,14 @@ export interface MockMemberAttendanceSchedule {
   transport_friday_pm_door_to_door_address: string | null;
   transport_friday_pm_bus_number: string | null;
   transport_friday_pm_bus_stop: string | null;
+  daily_rate: number | null;
+  transportation_billing_status: "BillNormally" | "Waived" | "IncludedInProgramRate";
+  billing_rate_effective_date: string | null;
+  billing_notes: string | null;
+  attendance_days_per_week: number | null;
+  default_daily_rate: number | null;
+  use_custom_daily_rate: boolean;
+  custom_daily_rate: number | null;
   make_up_days_available: number | null;
   attendance_notes: string | null;
   updated_by_user_id: string | null;
@@ -263,6 +271,11 @@ export interface MockAttendanceRecord {
   recorded_by_name: string;
   created_at: string;
   updated_at: string;
+  scheduled_day?: boolean | null;
+  unscheduled_day?: boolean | null;
+  billable_extra_day?: boolean | null;
+  billing_status?: "Unbilled" | "Billed" | "Excluded" | null;
+  linked_adjustment_id?: string | null;
 }
 
 export interface MockTimePunch {
@@ -353,6 +366,14 @@ export interface MockTransportationLog {
   staff_name: string;
   staff_responsible: string;
   notes: string | null;
+  trip_type?: "OneWay" | "RoundTrip" | "Other" | null;
+  quantity?: number;
+  unit_rate?: number | null;
+  total_amount?: number | null;
+  billable?: boolean | null;
+  billing_status?: "Unbilled" | "Billed" | "Excluded" | null;
+  billing_exclusion_reason?: string | null;
+  invoice_id?: string | null;
 }
 
 export interface MockPhotoUpload {
@@ -394,8 +415,10 @@ export interface MockAncillaryLog {
   member_name: string;
   category_id: string;
   category_name: string;
+  charge_type?: string | null;
   amount_cents: number;
   service_date: string;
+  charge_date?: string | null;
   late_pickup_time: string | null;
   staff_user_id: string;
   staff_name: string;
@@ -409,6 +432,232 @@ export interface MockAncillaryLog {
   reconciled_by: string | null;
   reconciled_at: string | null;
   reconciliation_note: string | null;
+  unit_rate?: number | null;
+  total_amount?: number | null;
+  billable?: boolean | null;
+  billing_status?: "Unbilled" | "Billed" | "Excluded" | null;
+  billing_exclusion_reason?: string | null;
+  invoice_id?: string | null;
+}
+
+export interface MockCenterBillingSetting {
+  id: string;
+  default_daily_rate: number;
+  default_extra_day_rate: number | null;
+  default_transport_one_way_rate: number;
+  default_transport_round_trip_rate: number;
+  billing_cutoff_day: number;
+  default_billing_mode: "Membership" | "Monthly";
+  effective_start_date: string;
+  effective_end_date: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+  updated_by_user_id: string | null;
+  updated_by_name: string | null;
+}
+
+export interface MockCenterClosure {
+  id: string;
+  closure_date: string;
+  closure_name: string;
+  closure_type: "Holiday" | "Weather" | "Planned" | "Emergency" | "Other";
+  billable_override: boolean;
+  notes: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+  updated_by_user_id: string | null;
+  updated_by_name: string | null;
+}
+
+export interface MockPayor {
+  id: string;
+  payor_name: string;
+  payor_type: string;
+  billing_contact_name: string | null;
+  billing_email: string | null;
+  billing_phone: string | null;
+  billing_method: "InvoiceEmail" | "ACHDraft" | "CardOnFile" | "Manual" | "External";
+  auto_draft_enabled: boolean;
+  quickbooks_customer_name: string | null;
+  quickbooks_customer_ref: string | null;
+  status: "active" | "inactive";
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  updated_by_user_id: string | null;
+  updated_by_name: string | null;
+}
+
+export interface MockMemberBillingSetting {
+  id: string;
+  member_id: string;
+  payor_id: string | null;
+  use_center_default_billing_mode: boolean;
+  billing_mode: "Membership" | "Monthly" | "Custom" | null;
+  monthly_billing_basis: "ScheduledMonthBehind" | "ActualAttendanceMonthBehind";
+  use_center_default_rate: boolean;
+  custom_daily_rate: number | null;
+  flat_monthly_rate: number | null;
+  bill_extra_days: boolean;
+  transportation_billing_status: "BillNormally" | "Waived" | "IncludedInProgramRate";
+  bill_ancillary_arrears: boolean;
+  active: boolean;
+  effective_start_date: string;
+  effective_end_date: string | null;
+  billing_notes: string | null;
+  created_at: string;
+  updated_at: string;
+  updated_by_user_id: string | null;
+  updated_by_name: string | null;
+}
+
+export interface MockBillingScheduleTemplate {
+  id: string;
+  member_id: string;
+  effective_start_date: string;
+  effective_end_date: string | null;
+  monday: boolean;
+  tuesday: boolean;
+  wednesday: boolean;
+  thursday: boolean;
+  friday: boolean;
+  saturday: boolean;
+  sunday: boolean;
+  active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  updated_by_user_id: string | null;
+  updated_by_name: string | null;
+}
+
+export interface MockBillingAdjustment {
+  id: string;
+  member_id: string;
+  payor_id: string | null;
+  adjustment_date: string;
+  adjustment_type:
+    | "ExtraDay"
+    | "Credit"
+    | "Discount"
+    | "Refund"
+    | "ManualCharge"
+    | "ManualCredit"
+    | "PriorBalance"
+    | "Other";
+  description: string;
+  quantity: number;
+  unit_rate: number;
+  amount: number;
+  billing_status: "Unbilled" | "Billed" | "Excluded";
+  invoice_id: string | null;
+  created_by_system: boolean;
+  source_table: string | null;
+  source_record_id: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by_user_id: string | null;
+  created_by_name: string | null;
+}
+
+export interface MockBillingBatch {
+  id: string;
+  batch_type: "Membership" | "Monthly" | "Mixed" | "Custom";
+  billing_month: string;
+  run_date: string;
+  run_by_user: string;
+  batch_status: "Draft" | "Reviewed" | "Finalized" | "Exported" | "Closed";
+  invoice_count: number;
+  total_amount: number;
+  exported_at: string | null;
+  completion_date: string | null;
+  next_due_date: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MockBillingInvoice {
+  id: string;
+  billing_batch_id: string;
+  member_id: string;
+  payor_id: string | null;
+  invoice_number: string;
+  invoice_date: string;
+  due_date: string;
+  invoice_month: string;
+  invoice_source: "BatchGenerated" | "Custom";
+  billing_mode_snapshot: "Membership" | "Monthly" | "Custom";
+  monthly_billing_basis_snapshot: "ScheduledMonthBehind" | "ActualAttendanceMonthBehind" | null;
+  base_period_start: string;
+  base_period_end: string;
+  variable_charge_period_start: string;
+  variable_charge_period_end: string;
+  base_program_billed_days: number;
+  base_program_day_rate: number | null;
+  member_daily_rate_snapshot: number | null;
+  transportation_billing_status_snapshot: "BillNormally" | "Waived" | "IncludedInProgramRate";
+  base_program_closure_excluded_days: number;
+  base_program_amount: number;
+  transportation_amount: number;
+  ancillary_amount: number;
+  adjustment_amount: number;
+  prior_balance_amount: number;
+  discount_amount: number;
+  total_amount: number;
+  invoice_status: "Draft" | "Finalized" | "Sent" | "Paid" | "PartiallyPaid" | "Void";
+  export_status: "NotExported" | "Exported";
+  exported_at: string | null;
+  billing_summary_text: string | null;
+  snapshot_member_billing_id: string | null;
+  snapshot_schedule_template_id: string | null;
+  snapshot_center_billing_setting_id: string | null;
+  frozen_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MockBillingCoverage {
+  id: string;
+  member_id: string;
+  coverage_start_date: string;
+  coverage_end_date: string;
+  coverage_type: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment";
+  source_invoice_id: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MockBillingInvoiceLine {
+  id: string;
+  invoice_id: string;
+  line_order: number;
+  line_type: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment" | "Credit" | "PriorBalance";
+  service_period_start: string | null;
+  service_period_end: string | null;
+  service_date: string | null;
+  description: string;
+  quantity: number;
+  unit_rate: number;
+  amount: number;
+  source_table: string | null;
+  source_record_id: string | null;
+  created_at: string;
+}
+
+export interface MockBillingExportJob {
+  id: string;
+  billing_batch_id: string;
+  export_type: "QuickBooksCSV" | "InternalReviewCSV" | "InvoiceSummaryCSV";
+  generated_at: string;
+  generated_by: string;
+  file_name: string;
+  status: "Success" | "Failed";
+  notes: string | null;
+  file_data_url: string | null;
 }
 
 export interface MockLead {
@@ -430,6 +679,7 @@ export interface MockLead {
   caregiver_email: string | null;
   caregiver_phone: string;
   member_name: string;
+  member_dob: string | null;
   lead_source: string;
   lead_source_other: string | null;
   referral_name: string | null;
@@ -868,6 +1118,17 @@ export interface MockDb {
   bloodSugarLogs: MockBloodSugarLog[];
   ancillaryCategories: MockAncillaryCategory[];
   ancillaryLogs: MockAncillaryLog[];
+  centerBillingSettings: MockCenterBillingSetting[];
+  centerClosures: MockCenterClosure[];
+  payors: MockPayor[];
+  memberBillingSettings: MockMemberBillingSetting[];
+  billingScheduleTemplates: MockBillingScheduleTemplate[];
+  billingAdjustments: MockBillingAdjustment[];
+  billingBatches: MockBillingBatch[];
+  billingInvoices: MockBillingInvoice[];
+  billingInvoiceLines: MockBillingInvoiceLine[];
+  billingExportJobs: MockBillingExportJob[];
+  billingCoverages: MockBillingCoverage[];
   leads: MockLead[];
   leadActivities: MockLeadActivity[];
   partners: MockPartner[];

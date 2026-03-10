@@ -6,12 +6,21 @@ import { redirect } from "next/navigation";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { syncPhysicianOrderToMemberProfiles } from "@/lib/services/member-profile-sync";
-import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import {
-  POF_LEVEL_OF_CARE_OPTIONS,
+  OTIC_LATERALITY_OPTIONS,
+  OPHTHALMIC_LATERALITY_OPTIONS,
+  POF_DEFAULT_MEDICATION_FORM,
+  POF_DEFAULT_MEDICATION_QUANTITY,
+  POF_DEFAULT_MEDICATION_ROUTE,
+  POF_LEVEL_OF_CARE_OPTIONS
+} from "@/lib/services/physician-order-config";
+import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
+import {
   buildPhysicianOrderPdfDataUrl,
   savePhysicianOrderForm,
+  type PhysicianOrderAllergy,
   type PhysicianOrderCareInformation,
+  type PhysicianOrderDiagnosis,
   type PhysicianOrderMedication,
   type PhysicianOrderOperationalFlags,
   type PhysicianOrderStatus
@@ -31,6 +40,22 @@ function asCheckbox(formData: FormData, key: string) {
   return formData.get(key) === "on" || formData.get(key) === "true";
 }
 
+function asNullableBool(formData: FormData, key: string) {
+  const normalized = String(formData.get(key) ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "true" || normalized === "yes" || normalized === "1") return true;
+  if (normalized === "false" || normalized === "no" || normalized === "0") return false;
+  return null;
+}
+
+function parseOrientationAnswer(value: string | null | undefined): "Yes" | "No" | null {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "yes" || normalized === "true" || normalized === "1") return "Yes";
+  if (normalized === "no" || normalized === "false" || normalized === "0") return "No";
+  return null;
+}
+
 function parseSex(value: string) {
   if (value === "M" || value === "F") return value;
   return null;
@@ -48,34 +73,114 @@ function parseStatusFromIntent(intent: string): PhysicianOrderStatus {
   return "Draft";
 }
 
-function splitTextareaLines(value: string | null) {
-  return (value ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
 function parseMedicationRows(formData: FormData): PhysicianOrderMedication[] {
   const names = formData.getAll("medicationName").map((value) => String(value ?? "").trim());
   const doses = formData.getAll("medicationDose").map((value) => String(value ?? "").trim());
+  const quantities = formData.getAll("medicationQuantity").map((value) => String(value ?? "").trim());
+  const forms = formData.getAll("medicationForm").map((value) => String(value ?? "").trim());
   const routes = formData.getAll("medicationRoute").map((value) => String(value ?? "").trim());
+  const routeLateralities = formData.getAll("medicationRouteLaterality").map((value) => String(value ?? "").trim());
   const frequencies = formData.getAll("medicationFrequency").map((value) => String(value ?? "").trim());
+  const givenAtCenterValues = formData.getAll("medicationGivenAtCenter").map((value) => String(value ?? "").trim());
+  const comments = formData.getAll("medicationComments").map((value) => String(value ?? "").trim());
 
-  const max = Math.max(names.length, doses.length, routes.length, frequencies.length);
+  const max = Math.max(
+    names.length,
+    doses.length,
+    quantities.length,
+    forms.length,
+    routes.length,
+    routeLateralities.length,
+    frequencies.length,
+    givenAtCenterValues.length,
+    comments.length
+  );
   const rows: PhysicianOrderMedication[] = [];
   for (let idx = 0; idx < max; idx += 1) {
     const name = names[idx] ?? "";
     if (!name) continue;
+    const route = routes[idx] ? routes[idx] : POF_DEFAULT_MEDICATION_ROUTE;
+    const normalizedRoute = route.trim().toLowerCase();
+    const laterality = routeLateralities[idx] ? routeLateralities[idx] : null;
+    const validLaterality =
+      normalizedRoute === "ophthalmic"
+        ? laterality && OPHTHALMIC_LATERALITY_OPTIONS.includes(laterality as (typeof OPHTHALMIC_LATERALITY_OPTIONS)[number])
+          ? laterality
+          : null
+        : normalizedRoute === "otic"
+          ? laterality && OTIC_LATERALITY_OPTIONS.includes(laterality as (typeof OTIC_LATERALITY_OPTIONS)[number])
+            ? laterality
+            : null
+          : null;
     rows.push({
       id: `med-input-${idx + 1}`,
       name,
       dose: doses[idx] ? doses[idx] : null,
-      route: routes[idx] ? routes[idx] : null,
-      frequency: frequencies[idx] ? frequencies[idx] : null
+      quantity: quantities[idx] ? quantities[idx] : POF_DEFAULT_MEDICATION_QUANTITY,
+      form: forms[idx] ? forms[idx] : POF_DEFAULT_MEDICATION_FORM,
+      route,
+      routeLaterality: validLaterality,
+      frequency: frequencies[idx] ? frequencies[idx] : null,
+      givenAtCenter: givenAtCenterValues[idx] === "true",
+      comments: comments[idx] ? comments[idx] : null
     });
   }
 
   return rows;
+}
+
+function parseDiagnosisRows(formData: FormData): PhysicianOrderDiagnosis[] {
+  const types = formData.getAll("diagnosisType").map((value) => String(value ?? "").trim());
+  const names = formData.getAll("diagnosisName").map((value) => String(value ?? "").trim());
+  const codes = formData.getAll("diagnosisCode").map((value) => String(value ?? "").trim());
+  const max = Math.max(types.length, names.length, codes.length);
+  const rows: PhysicianOrderDiagnosis[] = [];
+  for (let idx = 0; idx < max; idx += 1) {
+    const diagnosisName = names[idx] ?? "";
+    if (!diagnosisName) continue;
+    const diagnosisType = idx === 0 || types[idx] === "primary" ? "primary" : "secondary";
+    rows.push({
+      id: `diagnosis-input-${idx + 1}`,
+      diagnosisType,
+      diagnosisName,
+      diagnosisCode: codes[idx] ? codes[idx] : null
+    });
+  }
+  return rows;
+}
+
+function parseAllergyRows(formData: FormData): PhysicianOrderAllergy[] {
+  const groups = formData.getAll("allergyGroup").map((value) => String(value ?? "").trim());
+  const names = formData.getAll("allergyName").map((value) => String(value ?? "").trim());
+  const severities = formData.getAll("allergySeverity").map((value) => String(value ?? "").trim());
+  const comments = formData.getAll("allergyComments").map((value) => String(value ?? "").trim());
+  const max = Math.max(groups.length, names.length, severities.length, comments.length);
+  const rows: PhysicianOrderAllergy[] = [];
+
+  for (let idx = 0; idx < max; idx += 1) {
+    const allergyName = names[idx] ?? "";
+    if (!allergyName) continue;
+    const allergyGroupRaw = groups[idx];
+    const allergyGroup =
+      allergyGroupRaw === "food" || allergyGroupRaw === "medication" || allergyGroupRaw === "environmental" || allergyGroupRaw === "other"
+        ? allergyGroupRaw
+        : "medication";
+    rows.push({
+      id: `allergy-input-${idx + 1}`,
+      allergyGroup,
+      allergyName,
+      severity: severities[idx] ? severities[idx] : null,
+      comments: comments[idx] ? comments[idx] : null
+    });
+  }
+  return rows;
+}
+
+function parseStandingOrders(formData: FormData) {
+  return formData
+    .getAll("standingOrder")
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
 }
 
 function parseCareInformation(formData: FormData): PhysicianOrderCareInformation {
@@ -127,7 +232,37 @@ function parseCareInformation(formData: FormData): PhysicianOrderCareInformation
     breathingOxygenLiters: asNullableString(formData, "breathingOxygenLiters"),
     nutritionDiets,
     nutritionDietOther: asNullableString(formData, "nutritionDietOther"),
-    joySparksNotes: asNullableString(formData, "joySparksNotes")
+    joySparksNotes: asNullableString(formData, "joySparksNotes"),
+    adlProfile: {
+      ambulation: asNullableString(formData, "adlAmbulation"),
+      transferring: asNullableString(formData, "adlTransferring"),
+      bathing: asNullableString(formData, "adlBathing"),
+      dressing: asNullableString(formData, "adlDressing"),
+      eating: asNullableString(formData, "adlEating"),
+      bladderContinence: asNullableString(formData, "adlBladderContinence"),
+      bowelContinence: asNullableString(formData, "adlBowelContinence"),
+      toileting: asNullableString(formData, "adlToileting"),
+      toiletingNeeds: asNullableString(formData, "adlToiletingNeeds"),
+      toiletingComments: asNullableString(formData, "adlToiletingComments"),
+      hearing: asNullableString(formData, "adlHearing"),
+      vision: asNullableString(formData, "adlVision"),
+      dental: asNullableString(formData, "adlDental"),
+      speechVerbalStatus: asNullableString(formData, "adlSpeechVerbalStatus"),
+      speechComments: asNullableString(formData, "adlSpeechComments"),
+      hygieneGrooming: asNullableString(formData, "adlHygieneGrooming"),
+      maySelfMedicate: asNullableBool(formData, "adlMaySelfMedicate"),
+      medicationManagerName: asNullableString(formData, "adlMedicationManagerName")
+    },
+    orientationProfile: {
+      orientationDob: parseOrientationAnswer(asNullableString(formData, "orientationDob")),
+      orientationCity: parseOrientationAnswer(asNullableString(formData, "orientationCity")),
+      orientationCurrentYear: parseOrientationAnswer(asNullableString(formData, "orientationCurrentYear")),
+      orientationFormerOccupation: parseOrientationAnswer(asNullableString(formData, "orientationFormerOccupation")),
+      disorientation: asNullableBool(formData, "orientationDisorientation"),
+      memoryImpairment: asNullableString(formData, "orientationMemoryImpairment"),
+      memorySeverity: asNullableString(formData, "orientationMemorySeverity"),
+      cognitiveBehaviorComments: asNullableString(formData, "orientationComments")
+    }
   };
 }
 
@@ -179,7 +314,7 @@ async function savePofPdfToMemberFiles(input: {
 
 export async function savePhysicianOrderFormAction(formData: FormData) {
   const profile = await requireRoles(["admin", "nurse"]);
-  const actorDisplayName = getManagedUserSignatureName(profile.id, profile.full_name);
+  const actorDisplayName = getManagedUserSignoffLabel(profile.id, profile.full_name);
   const memberId = asString(formData, "memberId");
   if (!memberId) throw new Error("Member is required.");
 
@@ -187,13 +322,17 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
   const status = parseStatusFromIntent(saveIntent);
 
   const providerNameFromForm = asNullableString(formData, "providerName");
-  const providerNameResolved = providerNameFromForm ?? (status === "Signed" ? actorDisplayName : null);
+  const providerNameResolved = providerNameFromForm ?? actorDisplayName;
   const providerSignatureDate = asNullableString(formData, "providerSignatureDate");
-  const providerSignature = asNullableString(formData, "providerSignature");
+  const providerSignature = asNullableString(formData, "providerSignature") ?? actorDisplayName;
+  const diagnosisRows = parseDiagnosisRows(formData);
+  const allergyRows = parseAllergyRows(formData);
+  const standingOrders = parseStandingOrders(formData);
 
   const saved = savePhysicianOrderForm({
     id: asNullableString(formData, "pofId"),
     memberId,
+    memberDobSnapshot: asNullableString(formData, "memberDob"),
     sex: parseSex(asString(formData, "sex")),
     levelOfCare: parseLevelOfCare(asString(formData, "levelOfCare")),
     dnrSelected: asCheckbox(formData, "dnrSelected"),
@@ -203,9 +342,12 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
       asNullableString(formData, "vitalsOxygenSaturation") ??
       asNullableString(formData, "vitalsTemperature"),
     vitalsRespiration: asNullableString(formData, "vitalsRespiration"),
-    diagnoses: splitTextareaLines(asNullableString(formData, "diagnosesText")),
-    allergies: splitTextareaLines(asNullableString(formData, "allergiesText")),
+    diagnosisRows,
+    diagnoses: diagnosisRows.map((row) => row.diagnosisName),
+    allergyRows,
+    allergies: allergyRows.map((row) => row.allergyName),
     medications: parseMedicationRows(formData),
+    standingOrders,
     careInformation: parseCareInformation(formData),
     operationalFlags: parseOperationalFlags(formData),
     providerName: providerNameResolved,
@@ -222,15 +364,23 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
     memberId: saved.memberId,
     pof: {
       id: saved.id,
+      memberDobSnapshot: saved.memberDobSnapshot,
       dnrSelected: saved.dnrSelected,
       status: saved.status,
+      diagnosisRows: saved.diagnosisRows,
       diagnoses: saved.diagnoses,
+      allergyRows: saved.allergyRows,
       allergies: saved.allergies,
       medications: saved.medications.map((row) => ({
         name: row.name,
         dose: row.dose,
+        quantity: row.quantity,
+        form: row.form,
         route: row.route,
-        frequency: row.frequency
+        routeLaterality: row.routeLaterality,
+        frequency: row.frequency,
+        givenAtCenter: row.givenAtCenter,
+        comments: row.comments
       })),
       careInformation: {
         nutritionDiets: saved.careInformation.nutritionDiets,
@@ -240,7 +390,9 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
         personalCareToileting: saved.careInformation.personalCareToileting,
         breathingOxygenTank: saved.careInformation.breathingOxygenTank,
         breathingOxygenLiters: saved.careInformation.breathingOxygenLiters,
-        joySparksNotes: saved.careInformation.joySparksNotes
+        joySparksNotes: saved.careInformation.joySparksNotes,
+        adlProfile: saved.careInformation.adlProfile,
+        orientationProfile: saved.careInformation.orientationProfile
       },
       operationalFlags: {
         nutAllergy: saved.operationalFlags.nutAllergy,
@@ -279,7 +431,7 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
 
 export async function generatePhysicianOrderPdfAction(input: { pofId: string }) {
   const profile = await getCurrentProfile();
-  const actorDisplayName = getManagedUserSignatureName(profile.id, profile.full_name);
+  const actorDisplayName = getManagedUserSignoffLabel(profile.id, profile.full_name);
   if (profile.role !== "admin" && profile.role !== "nurse") {
     return { ok: false, error: "You do not have access to generate POF PDFs." } as const;
   }

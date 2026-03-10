@@ -4,6 +4,7 @@ import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import {
   MEMBER_CONTACT_CATEGORY_OPTIONS,
   MEMBER_FILE_CATEGORY_OPTIONS,
@@ -49,6 +50,19 @@ function asCheckbox(formData: FormData, key: string) {
   return formData.get(key) === "on" || formData.get(key) === "true";
 }
 
+function asDateOnly(formData: FormData, key: string, fallback: string) {
+  const value = asString(formData, key).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
+}
+
+function asOptionalPositiveNumber(formData: FormData, key: string) {
+  const raw = asString(formData, key);
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Number(parsed.toFixed(2));
+}
+
 function normalizeLockerInput(raw: string) {
   const normalized = raw.trim();
   if (!normalized) return null;
@@ -83,9 +97,28 @@ async function requireCommandCenterEditor() {
   return profile;
 }
 
+async function requireAttendanceBillingEditor() {
+  const profile = await getCurrentProfile();
+  const role = normalizeRoleKey(profile.role);
+  if (
+    role !== "admin" &&
+    role !== "manager" &&
+    role !== "coordinator" &&
+    !canPerformModuleAction(role, "operations", "canEdit", profile.permissions)
+  ) {
+    throw new Error("Only Admin/Manager/Coordinator can edit attendance billing settings.");
+  }
+  return profile;
+}
+
 function revalidateCommandCenter(memberId: string) {
   revalidatePath("/operations/member-command-center");
   revalidatePath(`/operations/member-command-center/${memberId}`);
+  revalidatePath("/operations/payor");
+  revalidatePath("/operations/payor/billing-agreements");
+  revalidatePath("/operations/payor/schedule-templates");
+  revalidatePath("/operations/payor/variable-charges");
+  revalidatePath("/operations/payor/revenue-dashboard");
   revalidatePath("/operations/attendance");
   revalidatePath("/operations/transportation-station");
   revalidatePath("/operations/transportation-station/print");
@@ -212,7 +245,7 @@ export async function updateMemberCommandCenterPhotoAction(formData: FormData) {
 }
 
 export async function saveMemberCommandCenterAttendanceAction(formData: FormData) {
-  const actor = await requireCommandCenterEditor();
+  const actor = await requireAttendanceBillingEditor();
   const memberId = asString(formData, "memberId");
   if (!memberId) return { ok: false, error: "Member is required." };
 
@@ -236,6 +269,30 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
   const wednesdayAdded = wednesday && !wasWednesday;
   const thursdayAdded = thursday && !wasThursday;
   const fridayAdded = friday && !wasFriday;
+  const attendanceDaysPerWeek = [monday, tuesday, wednesday, thursday, friday].filter(Boolean).length;
+  const dailyRate = asOptionalPositiveNumber(formData, "dailyRate");
+  if (dailyRate == null) {
+    return { ok: false, error: "Daily Rate is required and must be greater than 0." };
+  }
+  const transportationBillingStatusRaw = asString(formData, "transportationBillingStatus");
+  const transportationBillingStatus: "BillNormally" | "Waived" | "IncludedInProgramRate" =
+    transportationBillingStatusRaw === "Waived" || transportationBillingStatusRaw === "IncludedInProgramRate"
+      ? transportationBillingStatusRaw
+      : "BillNormally";
+  const payorId = asNullableString(formData, "payorId");
+  const useCenterDefaultBillingMode = asCheckbox(formData, "useCenterDefaultBillingMode");
+  const billingModeRaw = asString(formData, "billingMode");
+  const billingMode: "Membership" | "Monthly" | "Custom" | null =
+    billingModeRaw === "Monthly" || billingModeRaw === "Custom" || billingModeRaw === "Membership"
+      ? billingModeRaw
+      : null;
+  const monthlyBillingBasisRaw = asString(formData, "monthlyBillingBasis");
+  const monthlyBillingBasis: "ScheduledMonthBehind" | "ActualAttendanceMonthBehind" =
+    monthlyBillingBasisRaw === "ActualAttendanceMonthBehind" ? "ActualAttendanceMonthBehind" : "ScheduledMonthBehind";
+  const billExtraDays = asCheckbox(formData, "billExtraDays");
+  const billAncillaryArrears = asCheckbox(formData, "billAncillaryArrears");
+  const rateEffectiveDate = asDateOnly(formData, "billingRateEffectiveDate", now.slice(0, 10));
+  const billingNotes = asNullableString(formData, "billingNotes");
   const currentMakeupBalance = getMemberMakeupDayBalance(memberId);
   const requestedMakeupBalanceRaw = asString(formData, "makeUpDaysAvailable");
   let resolvedMakeupBalance = currentMakeupBalance;
@@ -524,6 +581,14 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     transport_friday_pm_door_to_door_address: fridayPm.doorToDoorAddress,
     transport_friday_pm_bus_number: fridayPm.busNumber,
     transport_friday_pm_bus_stop: fridayPm.busStop,
+    daily_rate: dailyRate,
+    transportation_billing_status: transportationBillingStatus,
+    billing_rate_effective_date: rateEffectiveDate,
+    billing_notes: billingNotes,
+    attendance_days_per_week: attendanceDaysPerWeek,
+    default_daily_rate: dailyRate,
+    use_custom_daily_rate: false,
+    custom_daily_rate: null,
     make_up_days_available: resolvedMakeupBalance,
     attendance_notes: asNullableString(formData, "attendanceNotes"),
     updated_by_user_id: actor.id,
@@ -532,6 +597,110 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
   });
 
   updateMemberEnrollmentFromSchedule(memberId, enrollmentDate);
+
+  const db = getMockDb();
+  const activeMemberBillingSettings = db.memberBillingSettings
+    .filter((row) => row.member_id === memberId)
+    .filter((row) => row.active)
+    .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1));
+  const existingBillingSetting =
+    activeMemberBillingSettings
+      .filter((row) => row.effective_start_date <= rateEffectiveDate)
+      .filter((row) => !row.effective_end_date || row.effective_end_date >= rateEffectiveDate)[0] ??
+    activeMemberBillingSettings[0] ??
+    null;
+
+  if (existingBillingSetting) {
+    updateMockRecord("memberBillingSettings", existingBillingSetting.id, {
+      payor_id: payorId ?? existingBillingSetting.payor_id,
+      use_center_default_billing_mode: useCenterDefaultBillingMode,
+      billing_mode: useCenterDefaultBillingMode ? null : billingMode ?? existingBillingSetting.billing_mode ?? "Membership",
+      monthly_billing_basis: monthlyBillingBasis,
+      use_center_default_rate: false,
+      custom_daily_rate: dailyRate,
+      bill_extra_days: billExtraDays,
+      transportation_billing_status: transportationBillingStatus,
+      bill_ancillary_arrears: billAncillaryArrears,
+      billing_notes: billingNotes ?? existingBillingSetting.billing_notes,
+      updated_at: now,
+      updated_by_user_id: actor.id,
+      updated_by_name: actor.full_name
+    });
+  } else {
+    const fallbackPayorId =
+      db.memberBillingSettings
+        .filter((row) => row.member_id === memberId)
+        .map((row) => row.payor_id)
+        .find((row): row is string => Boolean(row)) ?? null;
+    addMockRecord("memberBillingSettings", {
+      member_id: memberId,
+      payor_id: payorId ?? fallbackPayorId,
+      use_center_default_billing_mode: useCenterDefaultBillingMode,
+      billing_mode: useCenterDefaultBillingMode ? null : billingMode ?? "Membership",
+      monthly_billing_basis: monthlyBillingBasis,
+      use_center_default_rate: false,
+      custom_daily_rate: dailyRate,
+      flat_monthly_rate: null,
+      bill_extra_days: billExtraDays,
+      transportation_billing_status: transportationBillingStatus,
+      bill_ancillary_arrears: billAncillaryArrears,
+      active: true,
+      effective_start_date: rateEffectiveDate,
+      effective_end_date: null,
+      billing_notes:
+        billingNotes ?? `MCC attendance billing daily rate synced ($${dailyRate.toFixed(2)}).`,
+      created_at: now,
+      updated_at: now,
+      updated_by_user_id: actor.id,
+      updated_by_name: actor.full_name
+    });
+  }
+
+  const activeScheduleTemplates = db.billingScheduleTemplates
+    .filter((row) => row.member_id === memberId)
+    .filter((row) => row.active)
+    .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1));
+  const existingScheduleTemplate =
+    activeScheduleTemplates
+      .filter((row) => row.effective_start_date <= rateEffectiveDate)
+      .filter((row) => !row.effective_end_date || row.effective_end_date >= rateEffectiveDate)[0] ??
+    activeScheduleTemplates[0] ??
+    null;
+
+  if (existingScheduleTemplate) {
+    updateMockRecord("billingScheduleTemplates", existingScheduleTemplate.id, {
+      monday,
+      tuesday,
+      wednesday,
+      thursday,
+      friday,
+      saturday: false,
+      sunday: false,
+      notes: existingScheduleTemplate.notes ?? "Auto-synced from MCC attendance pattern.",
+      updated_at: now,
+      updated_by_user_id: actor.id,
+      updated_by_name: actor.full_name
+    });
+  } else {
+    addMockRecord("billingScheduleTemplates", {
+      member_id: memberId,
+      effective_start_date: enrollmentDate ?? rateEffectiveDate,
+      effective_end_date: null,
+      monday,
+      tuesday,
+      wednesday,
+      thursday,
+      friday,
+      saturday: false,
+      sunday: false,
+      active: true,
+      notes: "Auto-created from MCC attendance pattern.",
+      created_at: now,
+      updated_at: now,
+      updated_by_user_id: actor.id,
+      updated_by_name: actor.full_name
+    });
+  }
 
   revalidateCommandCenter(memberId);
   return { ok: true };

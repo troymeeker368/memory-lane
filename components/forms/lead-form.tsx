@@ -14,6 +14,8 @@ import {
 } from "@/lib/canonical";
 import { toEasternDate } from "@/lib/timezone";
 
+type LeadLostReason = "" | (typeof LEAD_LOST_REASON_OPTIONS)[number];
+
 export function LeadForm() {
   const today = useMemo(() => toEasternDate(), []);
   const [isPending, startTransition] = useTransition();
@@ -33,7 +35,7 @@ export function LeadForm() {
     nextFollowUpDate: "",
     nextFollowUpType: "Call" as (typeof LEAD_FOLLOW_UP_TYPES)[number],
     tourDate: "",
-    lostReason: "",
+    lostReason: "" as LeadLostReason,
     notes: ""
   });
 
@@ -122,7 +124,11 @@ export function LeadForm() {
       {needsLostReason ? (
         <label className="space-y-1 text-sm">
           <span className="font-semibold">Lost Reason (required)</span>
-          <select className="h-11 w-full rounded-lg border border-border px-3" value={form.lostReason} onChange={(e) => setForm((f) => ({ ...f, lostReason: e.target.value }))}>
+          <select
+            className="h-11 w-full rounded-lg border border-border px-3"
+            value={form.lostReason}
+            onChange={(e) => setForm((f) => ({ ...f, lostReason: e.target.value as LeadLostReason }))}
+          >
             <option value="">Select lost reason</option>
             {LEAD_LOST_REASON_OPTIONS.map((lostReason) => <option key={lostReason} value={lostReason}>{lostReason}</option>)}
           </select>

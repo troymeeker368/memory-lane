@@ -23,7 +23,10 @@ export const CANONICAL_ROLE_ORDER: CanonicalAppRole[] = [
 const LEGACY_ROLE_ALIASES: Record<string, CanonicalAppRole> = {
   staff: "program-assistant",
   programassistant: "program-assistant",
-  "program assistant": "program-assistant"
+  "program assistant": "program-assistant",
+  owner: "admin",
+  "admin-owner": "admin",
+  superadmin: "admin"
 };
 
 export const ROLE_LABELS: Record<CanonicalAppRole, string> = {
@@ -180,7 +183,7 @@ export const NAV_ITEMS: AppNavItem[] = [
   { label: "Member Command Center", href: "/operations/member-command-center", group: "Operations", module: "operations" },
   { label: "Additional Charges", href: "/operations/additional-charges", group: "Operations", module: "operations" },
   { label: "Holds", href: "/operations/holds", group: "Operations", module: "operations" },
-  { label: "Payor", href: "/operations/payor", group: "Operations", module: "operations" },
+  { label: "Billing", href: "/operations/payor", group: "Operations", module: "operations", roles: ["admin", "manager", "director", "coordinator"] },
   { label: "Locker Assignments", href: "/operations/locker-assignments", group: "Operations", module: "operations" },
   { label: "Transportation Station", href: "/operations/transportation-station", group: "Operations", module: "operations" },
 

@@ -29,6 +29,8 @@ function asNullableBool(formData: FormData, key: string) {
 
 const OPHTHALMIC_LATERALITY = new Set(["OD", "OS", "OU"]);
 const OTIC_LATERALITY = new Set(["AD", "AS", "AU"]);
+const ALLERGY_GROUP_OPTIONS = ["medication", "food", "environmental"] as const;
+type AllergyGroup = (typeof ALLERGY_GROUP_OPTIONS)[number];
 
 function parseRouteLaterality(route: string | null | undefined, formData: FormData) {
   const normalizedRoute = (route ?? "").trim().toLowerCase();
@@ -49,6 +51,11 @@ function parseRouteLaterality(route: string | null | undefined, formData: FormDa
   }
 
   return { ok: true as const, value: null };
+}
+
+function parseAllergyGroup(formData: FormData, key: string): AllergyGroup {
+  const value = asString(formData, key);
+  return ALLERGY_GROUP_OPTIONS.includes(value as AllergyGroup) ? (value as AllergyGroup) : "medication";
 }
 
 function resolveProviderSpecialty(formData: FormData) {
@@ -599,7 +606,7 @@ export async function addMhpAllergyAction(formData: FormData) {
 
   addMockRecord("memberAllergies", {
     member_id: memberId,
-    allergy_group: asString(formData, "allergyGroup") || "medication",
+    allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: asString(formData, "allergyName"),
     severity: asNullableString(formData, "allergySeverity"),
     comments: asNullableString(formData, "allergyComments"),
@@ -622,7 +629,7 @@ export async function updateMhpAllergyAction(formData: FormData) {
   const now = toEasternISO();
 
   updateMockRecord("memberAllergies", allergyId, {
-    allergy_group: asString(formData, "allergyGroup") || "medication",
+    allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: asString(formData, "allergyName"),
     severity: asNullableString(formData, "allergySeverity"),
     comments: asNullableString(formData, "allergyComments"),
@@ -997,7 +1004,7 @@ export async function addMhpAllergyInlineAction(formData: FormData) {
   const now = toEasternISO();
   const created = addMockRecord("memberAllergies", {
     member_id: memberId,
-    allergy_group: asString(formData, "allergyGroup") || "medication",
+    allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: allergyName,
     severity: asNullableString(formData, "allergySeverity"),
     comments: asNullableString(formData, "allergyComments"),
@@ -1045,7 +1052,7 @@ export async function updateMhpAllergyInlineAction(formData: FormData) {
 
   const now = toEasternISO();
   const updated = updateMockRecord("memberAllergies", allergyId, {
-    allergy_group: asString(formData, "allergyGroup") || "medication",
+    allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: allergyName,
     severity: asNullableString(formData, "allergySeverity"),
     comments: asNullableString(formData, "allergyComments"),

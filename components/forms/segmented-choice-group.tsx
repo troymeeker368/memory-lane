@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 
 type SegmentedChoiceOption = {
   label: string;
@@ -21,7 +23,7 @@ export function SegmentedChoiceGroup({
   selectedClassByValue?: Record<string, string>;
 }) {
   const initialValue = useMemo(() => defaultValue ?? "", [defaultValue]);
-  const [value, setValue] = useState(initialValue);
+  const [value, setValue] = usePropSyncedState(initialValue, [initialValue, name]);
 
   return (
     <fieldset className="space-y-2">

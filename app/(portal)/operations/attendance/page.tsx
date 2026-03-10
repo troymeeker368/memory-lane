@@ -191,36 +191,54 @@ export default async function OperationsAttendancePage({
   );
   const query = firstString(params.q) ?? "";
 
-  const dailyAttendance = getDailyAttendanceView({ selectedDate });
-  const incompleteAttendance = getIncompleteAttendanceSummary({ selectedDate });
-  const weeklyAttendance = getWeeklyAttendanceView({ anchorDate: selectedWeekAnchor });
-  const dailyCensus = getDailyCensusView({ selectedDate });
-  const dailyTracks = getDailyTrackSheetView({ selectedDate });
-  const weeklyCensus = getWeeklyCensusView({ anchorDate: selectedWeekAnchor });
-  const weeklyAttendanceDays = weeklyAttendance.days.filter((day) => OPERATIONAL_WEEKDAYS.has(day.weekday));
-  const weeklyCensusDays = weeklyCensus.days.filter((day) => OPERATIONAL_WEEKDAYS.has(day.weekday));
-  const db = getMockDb();
-  const scheduleByMember = new Map(db.memberAttendanceSchedules.map((row) => [row.member_id, row] as const));
-  const unscheduledMembers = db.members
-    .filter((member) => member.status === "active")
-    .filter((member) => {
-      const schedule = scheduleByMember.get(member.id) ?? null;
-      if (isMemberOnHoldOnDate(member.id, selectedDate)) return false;
-      return !isMemberScheduledForDate(schedule, selectedDate);
-    })
-    .map((member) => ({
-      id: member.id,
-      displayName: member.display_name,
-      makeupBalance: getMemberMakeupDayBalance(member.id, selectedDate)
-    }))
-    .sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: "base" }));
+  const isDailyAttendanceTab = selectedTab === "daily-attendance";
+  const isWeeklyAttendanceTab = selectedTab === "weekly-attendance";
+  const isDailyCensusTab = selectedTab === "daily-census";
+  const isDailyTracksTab = selectedTab === "daily-tracks";
+  const isWeeklyCensusTab = selectedTab === "weekly-census";
 
-  const dailyRows = filterRowsByQuery(dailyAttendance.rows, query);
-  const weeklyDays = weeklyAttendanceDays.map((day) => ({
-    ...day,
-    members: filterMembersByQuery(day.members, query)
-  }));
-  const dailyTrackGroups = filterTrackGroupsByQuery(dailyTracks.groups, query);
+  const dailyAttendance = isDailyAttendanceTab ? getDailyAttendanceView({ selectedDate }) : null;
+  const incompleteAttendance = isDailyAttendanceTab ? getIncompleteAttendanceSummary({ selectedDate }) : null;
+  const weeklyAttendance = isWeeklyAttendanceTab ? getWeeklyAttendanceView({ anchorDate: selectedWeekAnchor }) : null;
+  const dailyCensus = isDailyCensusTab ? getDailyCensusView({ selectedDate }) : null;
+  const dailyTracks = isDailyTracksTab ? getDailyTrackSheetView({ selectedDate }) : null;
+  const weeklyCensus = isWeeklyCensusTab ? getWeeklyCensusView({ anchorDate: selectedWeekAnchor }) : null;
+
+  const unscheduledMembers = isDailyAttendanceTab
+    ? (() => {
+        const db = getMockDb();
+        const scheduleByMember = new Map(db.memberAttendanceSchedules.map((row) => [row.member_id, row] as const));
+        return db.members
+          .filter((member) => member.status === "active")
+          .filter((member) => {
+            const schedule = scheduleByMember.get(member.id) ?? null;
+            if (isMemberOnHoldOnDate(member.id, selectedDate)) return false;
+            return !isMemberScheduledForDate(schedule, selectedDate);
+          })
+          .map((member) => ({
+            id: member.id,
+            displayName: member.display_name,
+            makeupBalance: getMemberMakeupDayBalance(member.id, selectedDate)
+          }))
+          .sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: "base" }));
+      })()
+    : [];
+
+  const dailyRows = isDailyAttendanceTab && dailyAttendance ? filterRowsByQuery(dailyAttendance.rows, query) : [];
+  const weeklyAttendanceDays =
+    isWeeklyAttendanceTab && weeklyAttendance
+      ? weeklyAttendance.days.filter((day) => OPERATIONAL_WEEKDAYS.has(day.weekday))
+      : [];
+  const weeklyDays =
+    isWeeklyAttendanceTab && weeklyAttendance
+      ? weeklyAttendanceDays.map((day) => ({
+          ...day,
+          members: filterMembersByQuery(day.members, query)
+        }))
+      : [];
+  const dailyTrackGroups = isDailyTracksTab && dailyTracks ? filterTrackGroupsByQuery(dailyTracks.groups, query) : [];
+  const weeklyCensusDays =
+    isWeeklyCensusTab && weeklyCensus ? weeklyCensus.days.filter((day) => OPERATIONAL_WEEKDAYS.has(day.weekday)) : [];
 
   return (
     <div className="space-y-4">
@@ -252,7 +270,7 @@ export default async function OperationsAttendancePage({
         </div>
       </Card>
 
-      {selectedTab === "daily-attendance" ? (
+      {selectedTab === "daily-attendance" && dailyAttendance && incompleteAttendance ? (
         <Card className="table-wrap">
           <CardTitle>Daily Attendance</CardTitle>
           <form method="get" className="mt-3 grid gap-2 md:grid-cols-5">
@@ -372,7 +390,7 @@ export default async function OperationsAttendancePage({
         </Card>
       ) : null}
 
-      {selectedTab === "weekly-attendance" ? (
+      {selectedTab === "weekly-attendance" && weeklyAttendance ? (
         <Card className="table-wrap">
           <CardTitle>Weekly Attendance</CardTitle>
           <form method="get" className="mt-3 grid gap-2 md:grid-cols-5">
@@ -455,7 +473,7 @@ export default async function OperationsAttendancePage({
         </Card>
       ) : null}
 
-      {selectedTab === "daily-census" ? (
+      {selectedTab === "daily-census" && dailyCensus ? (
         <Card>
           <CardTitle>Daily Census</CardTitle>
           <form method="get" className="mt-3 grid gap-2 md:grid-cols-4">
@@ -503,7 +521,7 @@ export default async function OperationsAttendancePage({
         </Card>
       ) : null}
 
-      {selectedTab === "daily-tracks" ? (
+      {selectedTab === "daily-tracks" && dailyTracks ? (
         <Card className="table-wrap">
           <CardTitle>Daily Tracks</CardTitle>
           <form method="get" className="mt-3 grid gap-2 md:grid-cols-5">
@@ -600,7 +618,7 @@ export default async function OperationsAttendancePage({
         </Card>
       ) : null}
 
-      {selectedTab === "weekly-census" ? (
+      {selectedTab === "weekly-census" && weeklyCensus ? (
         <Card className="table-wrap">
           <CardTitle>Weekly Census</CardTitle>
           <form method="get" className="mt-3 grid gap-2 md:grid-cols-4">

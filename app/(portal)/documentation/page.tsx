@@ -20,8 +20,10 @@ const STAFF_LOG_OVERVIEW = [
   { type: "Photo Upload", label: "Photo Upload", countKey: "photoUpload" },
   { type: "Assessment", label: "Assessment", countKey: "assessments" }
 ] as const;
+type StaffLogType = (typeof STAFF_LOG_OVERVIEW)[number]["type"];
 
 const STAFF_LOG_TYPES = new Set(STAFF_LOG_OVERVIEW.map((item) => item.type));
+const isStaffLogType = (value: string): value is StaffLogType => STAFF_LOG_TYPES.has(value as StaffLogType);
 const DOCUMENTATION_ENTRY_LINKS = [
   { href: "/documentation/activity", label: "Participation Log" },
   { href: "/documentation/toilet", label: "Toilet Log" },
@@ -45,7 +47,7 @@ export default async function DocumentationPage({
     const from = typeof params.from === "string" ? params.from : undefined;
     const to = typeof params.to === "string" ? params.to : undefined;
     const selectedTypeParam = typeof params.type === "string" ? params.type : "";
-    const selectedType = STAFF_LOG_TYPES.has(selectedTypeParam as (typeof STAFF_LOG_OVERVIEW)[number]["type"])
+    const selectedType = isStaffLogType(selectedTypeParam)
       ? selectedTypeParam
       : "";
     const today = toEasternDate();
@@ -53,12 +55,13 @@ export default async function DocumentationPage({
     const snapshot = await getStaffActivitySnapshot(staffNameToSlug(profile.full_name), from, to);
 
     const overviewRows = STAFF_LOG_OVERVIEW.map((item) => ({
-      logType: item.label,
+      type: item.type,
+      label: item.label,
       count: snapshot.counts[item.countKey]
     }));
 
     const entries = snapshot.activities
-      .filter((activity) => STAFF_LOG_TYPES.has(activity.type))
+      .filter((activity) => isStaffLogType(activity.type))
       .sort((a, b) => {
         const byType = a.type.localeCompare(b.type);
         if (byType !== 0) return byType;
@@ -67,7 +70,7 @@ export default async function DocumentationPage({
       });
     const filteredEntries = selectedType ? entries.filter((entry) => entry.type === selectedType) : entries;
 
-    const buildTypeHref = (type: string) => {
+    const buildTypeHref = (type: StaffLogType) => {
       const query = new URLSearchParams({
         from: snapshot.range.from,
         to: snapshot.range.to,
@@ -149,10 +152,10 @@ export default async function DocumentationPage({
             </thead>
             <tbody>
               {overviewRows.map((row) => (
-                <tr key={row.logType}>
+                <tr key={row.type}>
                   <td>
-                    <Link href={buildTypeHref(row.logType)} className="font-semibold text-brand underline-offset-2 hover:underline">
-                      {row.logType}
+                    <Link href={buildTypeHref(row.type)} className="font-semibold text-brand underline-offset-2 hover:underline">
+                      {row.label}
                     </Link>
                   </td>
                   <td>{row.count}</td>

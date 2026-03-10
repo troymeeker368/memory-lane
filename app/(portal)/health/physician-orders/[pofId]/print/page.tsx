@@ -1,9 +1,11 @@
 import Link from "next/link";
+import Image from "next/image";
 import { notFound } from "next/navigation";
 
 import { PhysicianOrderPdfActions } from "@/components/physician-orders/pof-pdf-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireRoles } from "@/lib/auth";
+import { POF_CENTER_ADDRESS, POF_CENTER_LOGO_PUBLIC_PATH, POF_CENTER_PHONE } from "@/lib/services/physician-order-config";
 import { getPhysicianOrderById } from "@/lib/services/physician-orders";
 import { toEasternISO } from "@/lib/timezone";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
@@ -46,9 +48,16 @@ export default async function PhysicianOrderPrintPage({
       <div className="rounded-lg border border-border bg-white p-4">
         <header className="border-b border-black/20 pb-2">
           <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <Image src={POF_CENTER_LOGO_PUBLIC_PATH} alt="Town Square logo" width={120} height={38} priority />
+              <div>
+                <p className="text-sm font-semibold">Town Square Fort Mill</p>
+                <p className="text-xs">{POF_CENTER_ADDRESS}</p>
+                <p className="text-xs">{POF_CENTER_PHONE}</p>
+              </div>
+            </div>
             <div>
               <p className="text-xl font-bold uppercase tracking-wide">Physician Order & Physical Exam Form</p>
-              <p className="text-sm">Town Square Fort Mill</p>
             </div>
             <div className="text-right text-xs">
               <p>Generated: {formatDateTime(generatedAt)} (ET)</p>
@@ -79,15 +88,53 @@ export default async function PhysicianOrderPrintPage({
           <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
             <div>
               <p className="font-semibold">Diagnoses</p>
-              <ol className="list-decimal pl-5">
-                {form.diagnoses.length === 0 ? <li>-</li> : form.diagnoses.map((diagnosis, idx) => <li key={`${diagnosis}-${idx}`}>{diagnosis}</li>)}
-              </ol>
+              <table className="mt-1">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Diagnosis</th>
+                    <th>Code</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {form.diagnosisRows.length === 0 ? (
+                    <tr><td colSpan={3}>-</td></tr>
+                  ) : (
+                    form.diagnosisRows.map((row) => (
+                      <tr key={row.id}>
+                        <td>{row.diagnosisType}</td>
+                        <td>{row.diagnosisName}</td>
+                        <td>{row.diagnosisCode ?? "-"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
             <div>
               <p className="font-semibold">Allergies</p>
-              <ul className="list-disc pl-5">
-                {form.allergies.length === 0 ? <li>-</li> : form.allergies.map((allergy, idx) => <li key={`${allergy}-${idx}`}>{allergy}</li>)}
-              </ul>
+              <table className="mt-1">
+                <thead>
+                  <tr>
+                    <th>Group</th>
+                    <th>Allergy</th>
+                    <th>Severity</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {form.allergyRows.length === 0 ? (
+                    <tr><td colSpan={3}>-</td></tr>
+                  ) : (
+                    form.allergyRows.map((row) => (
+                      <tr key={row.id}>
+                        <td>{row.allergyGroup}</td>
+                        <td>{row.allergyName}</td>
+                        <td>{row.severity ?? "-"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
 
@@ -97,6 +144,8 @@ export default async function PhysicianOrderPrintPage({
                 <tr>
                   <th>Name</th>
                   <th>Dose</th>
+                  <th>Qty</th>
+                  <th>Form</th>
                   <th>Route</th>
                   <th>Frequency</th>
                 </tr>
@@ -104,14 +153,16 @@ export default async function PhysicianOrderPrintPage({
               <tbody>
                 {form.medications.length === 0 ? (
                   <tr>
-                    <td colSpan={4}>No medications entered.</td>
+                    <td colSpan={6}>No medications entered.</td>
                   </tr>
                 ) : (
                   form.medications.map((medication) => (
                     <tr key={medication.id}>
                       <td>{medication.name}</td>
                       <td>{medication.dose ?? "-"}</td>
-                      <td>{medication.route ?? "-"}</td>
+                      <td>{medication.quantity ?? "-"}</td>
+                      <td>{medication.form ?? "-"}</td>
+                      <td>{medication.routeLaterality ? `${medication.route ?? "-"} (${medication.routeLaterality})` : medication.route ?? "-"}</td>
                       <td>{medication.frequency ?? "-"}</td>
                     </tr>
                   ))
@@ -122,11 +173,15 @@ export default async function PhysicianOrderPrintPage({
 
           <div className="mt-3 text-sm">
             <p className="font-semibold">Standing Orders (as needed medications at center)</p>
-            <ul className="list-disc pl-5">
-              {form.standingOrders.map((order, idx) => (
-                <li key={`${order}-${idx}`}>{order}</li>
-              ))}
-            </ul>
+            {form.standingOrders.length === 0 ? (
+              <p className="text-muted">No standing orders selected.</p>
+            ) : (
+              <ul className="list-disc pl-5">
+                {form.standingOrders.map((order, idx) => (
+                  <li key={`${order}-${idx}`}>{order}</li>
+                ))}
+              </ul>
+            )}
           </div>
         </section>
 

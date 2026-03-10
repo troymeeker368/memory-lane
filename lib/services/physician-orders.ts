@@ -1,6 +1,8 @@
 import "server-only";
 
 import { Buffer } from "node:buffer";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
@@ -8,32 +10,100 @@ import { getMockDb } from "@/lib/mock-repo";
 import { readMockStateJson, writeMockStateJson } from "@/lib/mock-persistence";
 import { getMemberCommandCenterDetail } from "@/lib/services/member-command-center";
 import { getMemberHealthProfileDetail } from "@/lib/services/member-health-profiles";
+import {
+  DEFAULT_PHYSICIAN_ORDER_RULE_SETTINGS,
+  OPHTHALMIC_LATERALITY_OPTIONS,
+  OTIC_LATERALITY_OPTIONS,
+  POF_ALLERGY_GROUP_OPTIONS,
+  POF_CENTER_ADDRESS,
+  POF_CENTER_LOGO_PUBLIC_PATH,
+  POF_CENTER_PHONE,
+  POF_DEFAULT_MEDICATION_FORM,
+  POF_DEFAULT_MEDICATION_QUANTITY,
+  POF_DEFAULT_MEDICATION_ROUTE,
+  POF_LEVEL_OF_CARE_OPTIONS,
+  POF_MEDICATION_FORM_OPTIONS,
+  POF_MEDICATION_ROUTE_OPTIONS,
+  POF_NUTRITION_OPTIONS,
+  POF_STANDING_ORDER_OPTIONS
+} from "@/lib/services/physician-order-config";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
-export const POF_LEVEL_OF_CARE_OPTIONS = ["Home", "SNF", "MCU", "ALF", "ILF"] as const;
-export const POF_NUTRITION_OPTIONS = [
-  "Regular",
-  "Soft",
-  "Cardiac",
-  "Diabetic",
-  "Low sodium",
-  "Renal",
-  "Bland",
-  "Puree",
-  "Low residue",
-  "Consistent Carb",
-  "Other"
-] as const;
+export {
+  OPHTHALMIC_LATERALITY_OPTIONS,
+  OTIC_LATERALITY_OPTIONS,
+  POF_DEFAULT_MEDICATION_FORM,
+  POF_DEFAULT_MEDICATION_QUANTITY,
+  POF_DEFAULT_MEDICATION_ROUTE,
+  POF_LEVEL_OF_CARE_OPTIONS,
+  POF_MEDICATION_FORM_OPTIONS,
+  POF_MEDICATION_ROUTE_OPTIONS,
+  POF_NUTRITION_OPTIONS,
+  POF_STANDING_ORDER_OPTIONS
+};
 
 export type PhysicianOrderStatus = "Draft" | "Completed" | "Signed";
 export type ProviderSignatureStatus = "Pending" | "Signed";
+export type PhysicianOrderRenewalStatus = "Current" | "Due Soon" | "Overdue" | "Missing Completion";
 
 export interface PhysicianOrderMedication {
   id: string;
   name: string;
   dose: string | null;
+  quantity: string | null;
+  form: string | null;
   route: string | null;
+  routeLaterality: string | null;
   frequency: string | null;
+  givenAtCenter: boolean;
+  comments: string | null;
+}
+
+export interface PhysicianOrderDiagnosis {
+  id: string;
+  diagnosisType: "primary" | "secondary";
+  diagnosisName: string;
+  diagnosisCode: string | null;
+}
+
+export interface PhysicianOrderAllergy {
+  id: string;
+  allergyGroup: (typeof POF_ALLERGY_GROUP_OPTIONS)[number];
+  allergyName: string;
+  severity: string | null;
+  comments: string | null;
+}
+
+export interface PhysicianOrderAdlProfile {
+  ambulation: string | null;
+  transferring: string | null;
+  bathing: string | null;
+  dressing: string | null;
+  eating: string | null;
+  bladderContinence: string | null;
+  bowelContinence: string | null;
+  toileting: string | null;
+  toiletingNeeds: string | null;
+  toiletingComments: string | null;
+  hearing: string | null;
+  vision: string | null;
+  dental: string | null;
+  speechVerbalStatus: string | null;
+  speechComments: string | null;
+  hygieneGrooming: string | null;
+  maySelfMedicate: boolean | null;
+  medicationManagerName: string | null;
+}
+
+export interface PhysicianOrderOrientationProfile {
+  orientationDob: "Yes" | "No" | null;
+  orientationCity: "Yes" | "No" | null;
+  orientationCurrentYear: "Yes" | "No" | null;
+  orientationFormerOccupation: "Yes" | "No" | null;
+  disorientation: boolean | null;
+  memoryImpairment: string | null;
+  memorySeverity: string | null;
+  cognitiveBehaviorComments: string | null;
 }
 
 export interface PhysicianOrderCareInformation {
@@ -79,6 +149,8 @@ export interface PhysicianOrderCareInformation {
   nutritionDiets: string[];
   nutritionDietOther: string | null;
   joySparksNotes: string | null;
+  adlProfile: PhysicianOrderAdlProfile;
+  orientationProfile: PhysicianOrderOrientationProfile;
 }
 
 export interface PhysicianOrderOperationalFlags {
@@ -104,7 +176,9 @@ export interface PhysicianOrderForm {
   vitalsPulse: string | null;
   vitalsOxygenSaturation: string | null;
   vitalsRespiration: string | null;
+  diagnosisRows: PhysicianOrderDiagnosis[];
   diagnoses: string[];
+  allergyRows: PhysicianOrderAllergy[];
   allergies: string[];
   medications: PhysicianOrderMedication[];
   standingOrders: string[];
@@ -121,6 +195,7 @@ export interface PhysicianOrderForm {
   completedByUserId: string | null;
   completedByName: string | null;
   completedDate: string | null;
+  nextRenewalDueDate: string | null;
   signedBy: string | null;
   signedDate: string | null;
   updatedByUserId: string | null;
@@ -129,7 +204,7 @@ export interface PhysicianOrderForm {
 }
 
 interface PersistedPhysicianOrderState {
-  version: 1;
+  version: 1 | 2;
   counter: number;
   forms: PhysicianOrderForm[];
 }
@@ -142,6 +217,8 @@ export interface PhysicianOrderIndexRow {
   levelOfCare: string | null;
   providerName: string | null;
   completedDate: string | null;
+  nextRenewalDueDate: string | null;
+  renewalStatus: PhysicianOrderRenewalStatus;
   signedDate: string | null;
   updatedAt: string;
 }
@@ -149,6 +226,7 @@ export interface PhysicianOrderIndexRow {
 export interface PhysicianOrderSaveInput {
   id?: string | null;
   memberId: string;
+  memberDobSnapshot: string | null;
   sex: "M" | "F" | null;
   levelOfCare: (typeof POF_LEVEL_OF_CARE_OPTIONS)[number] | null;
   dnrSelected: boolean;
@@ -156,9 +234,12 @@ export interface PhysicianOrderSaveInput {
   vitalsPulse: string | null;
   vitalsOxygenSaturation: string | null;
   vitalsRespiration: string | null;
+  diagnosisRows: PhysicianOrderDiagnosis[];
   diagnoses: string[];
+  allergyRows: PhysicianOrderAllergy[];
   allergies: string[];
   medications: PhysicianOrderMedication[];
+  standingOrders: string[];
   careInformation: PhysicianOrderCareInformation;
   operationalFlags: PhysicianOrderOperationalFlags;
   providerName: string | null;
@@ -173,20 +254,15 @@ export interface PhysicianOrderSaveInput {
 
 const POF_STATE_FILE = "physician-orders.json";
 
-const STANDARD_STANDING_ORDERS = [
-  "Tylenol 650mg by mouth every 4 hrs for pain/fever",
-  "Ibuprofen 200mg by mouth every 8 hrs for pain",
-  "Mylanta 10mL by mouth every 4 hrs for indigestion",
-  "Benadryl 25mg by mouth every 6 hrs for itching"
-] as const;
+const STANDARD_STANDING_ORDERS: string[] = [...POF_STANDING_ORDER_OPTIONS];
 
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
 }
 
-function sanitizeList(values: Array<string | null | undefined>) {
-  return values.map((value) => clean(value)).filter((value): value is string => Boolean(value));
+function sanitizeList(values: Array<string | null | undefined> | null | undefined) {
+  return (values ?? []).map((value) => clean(value)).filter((value): value is string => Boolean(value));
 }
 
 function safeFileName(value: string) {
@@ -210,6 +286,42 @@ function parseBoolFromFunctional(value: string | null | undefined) {
   const normalized = (value ?? "").trim().toLowerCase();
   if (!normalized) return false;
   return normalized.includes("yes") || normalized.includes("need") || normalized.includes("assist") || normalized.includes("cue");
+}
+
+function parseOrientationAnswer(value: string | null | undefined): "Yes" | "No" | null {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "yes" || normalized === "true" || normalized === "1" || normalized === "verified") return "Yes";
+  if (normalized === "no" || normalized === "false" || normalized === "0" || normalized === "not verified") return "No";
+  return null;
+}
+
+function addYearsToDate(dateOnly: string | null | undefined, years: number) {
+  const normalized = (dateOnly ?? "").trim();
+  if (!normalized) return null;
+  const parsed = new Date(`${normalized}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  parsed.setUTCFullYear(parsed.getUTCFullYear() + years);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function calculateRenewalDueDate(completedDate: string | null | undefined) {
+  return addYearsToDate(completedDate, DEFAULT_PHYSICIAN_ORDER_RULE_SETTINGS.renewalIntervalYears);
+}
+
+function resolveRenewalStatus(nextRenewalDueDate: string | null | undefined): PhysicianOrderRenewalStatus {
+  const dueDate = (nextRenewalDueDate ?? "").trim();
+  if (!dueDate) return "Missing Completion";
+  const today = toEasternDate();
+  if (dueDate < today) return "Overdue";
+
+  const parsedDue = new Date(`${dueDate}T00:00:00.000Z`);
+  const parsedToday = new Date(`${today}T00:00:00.000Z`);
+  if (Number.isNaN(parsedDue.getTime()) || Number.isNaN(parsedToday.getTime())) return "Current";
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const daysUntilDue = Math.ceil((parsedDue.getTime() - parsedToday.getTime()) / msPerDay);
+  if (daysUntilDue <= DEFAULT_PHYSICIAN_ORDER_RULE_SETTINGS.renewalDueSoonDays) return "Due Soon";
+  return "Current";
 }
 
 function defaultCareInformation(): PhysicianOrderCareInformation {
@@ -255,7 +367,45 @@ function defaultCareInformation(): PhysicianOrderCareInformation {
     breathingOxygenLiters: null,
     nutritionDiets: ["Regular"],
     nutritionDietOther: null,
-    joySparksNotes: null
+    joySparksNotes: null,
+    adlProfile: defaultAdlProfile(),
+    orientationProfile: defaultOrientationProfile()
+  };
+}
+
+function defaultAdlProfile(): PhysicianOrderAdlProfile {
+  return {
+    ambulation: null,
+    transferring: null,
+    bathing: null,
+    dressing: null,
+    eating: null,
+    bladderContinence: null,
+    bowelContinence: null,
+    toileting: null,
+    toiletingNeeds: null,
+    toiletingComments: null,
+    hearing: null,
+    vision: null,
+    dental: null,
+    speechVerbalStatus: null,
+    speechComments: null,
+    hygieneGrooming: null,
+    maySelfMedicate: null,
+    medicationManagerName: null
+  };
+}
+
+function defaultOrientationProfile(): PhysicianOrderOrientationProfile {
+  return {
+    orientationDob: null,
+    orientationCity: null,
+    orientationCurrentYear: null,
+    orientationFormerOccupation: null,
+    disorientation: null,
+    memoryImpairment: null,
+    memorySeverity: null,
+    cognitiveBehaviorComments: null
   };
 }
 
@@ -275,8 +425,11 @@ function defaultOperationalFlags(): PhysicianOrderOperationalFlags {
 function buildPrefillFromMember(memberId: string): {
   member: NonNullable<ReturnType<typeof findMemberById>>;
   sex: "M" | "F" | null;
+  memberDob: string | null;
   dnr: boolean;
+  diagnosisRows: PhysicianOrderDiagnosis[];
   diagnoses: string[];
+  allergyRows: PhysicianOrderAllergy[];
   allergies: string[];
   medications: PhysicianOrderMedication[];
   careInformation: PhysicianOrderCareInformation;
@@ -294,10 +447,35 @@ function buildPrefillFromMember(memberId: string): {
   const codeStatus = clean(mcc?.profile.code_status) ?? clean(mhp?.profile.code_status) ?? clean(member.code_status);
   const dnr = codeStatus === "DNR" || mcc?.profile.dnr === true || mhp?.profile.dnr === true;
 
-  const diagnoses = sanitizeList((mhp?.diagnoses ?? []).slice(0, 12).map((row) => row.diagnosis_name));
+  const memberDob = clean(member.dob) ?? clean(mhp?.member.dob) ?? clean(mhp?.profile.orientation_dob);
+  const diagnosisRows: PhysicianOrderDiagnosis[] = (mhp?.diagnoses ?? [])
+    .slice(0, 12)
+    .map((row, idx) => {
+      const diagnosisType: PhysicianOrderDiagnosis["diagnosisType"] = idx === 0 ? "primary" : "secondary";
+      return {
+        id: row.id || `prefill-dx-${memberId}-${idx + 1}`,
+        diagnosisType,
+        diagnosisName: row.diagnosis_name.trim(),
+        diagnosisCode: clean(row.diagnosis_code)
+      };
+    })
+    .filter((row) => row.diagnosisName.length > 0);
+  const diagnoses = diagnosisRows.map((row) => row.diagnosisName);
+
+  const allergyRows: PhysicianOrderAllergy[] = (mhp?.allergies ?? [])
+    .slice(0, 12)
+    .map((row, idx) => ({
+      id: row.id || `prefill-allergy-${memberId}-${idx + 1}`,
+      allergyGroup: row.allergy_group,
+      allergyName: row.allergy_name.trim(),
+      severity: clean(row.severity),
+      comments: clean(row.comments)
+    }))
+    .filter((row) => row.allergyName.length > 0);
+
   const allergiesFromRows = sanitizeList(
-    (mhp?.allergies ?? []).map((row) => {
-      const name = clean(row.allergy_name);
+    allergyRows.map((row) => {
+      const name = clean(row.allergyName);
       if (!name) return null;
       const severity = clean(row.severity);
       return severity ? `${name} (${severity})` : name;
@@ -320,8 +498,13 @@ function buildPrefillFromMember(memberId: string): {
       id: row.id || `prefill-med-${memberId}-${idx + 1}`,
       name: row.medication_name,
       dose: clean(row.dose),
-      route: clean(row.route),
-      frequency: clean(row.frequency)
+      quantity: clean(row.quantity) ?? POF_DEFAULT_MEDICATION_QUANTITY,
+      form: clean(row.form) ?? POF_DEFAULT_MEDICATION_FORM,
+      route: clean(row.route) ?? POF_DEFAULT_MEDICATION_ROUTE,
+      routeLaterality: clean(row.route_laterality),
+      frequency: clean(row.frequency),
+      givenAtCenter: false,
+      comments: clean(row.comments)
     }));
 
   const nutritionSeed = clean(mcc?.profile.diet_type) ?? clean(mhp?.profile.diet_type) ?? "Regular";
@@ -380,7 +563,39 @@ function buildPrefillFromMember(memberId: string): {
     ),
     nutritionDiets,
     nutritionDietOther,
-    joySparksNotes: clean(member.joy_sparks) ?? clean(member.personal_notes)
+    joySparksNotes: clean(member.joy_sparks) ?? clean(member.personal_notes),
+    adlProfile: {
+      ...defaultAdlProfile(),
+      ambulation: clean(mhp?.profile.ambulation),
+      transferring: clean(mhp?.profile.transferring),
+      bathing: clean(mhp?.profile.bathing),
+      dressing: clean(mhp?.profile.dressing),
+      eating: clean(mhp?.profile.eating),
+      bladderContinence: clean(mhp?.profile.bladder_continence),
+      bowelContinence: clean(mhp?.profile.bowel_continence),
+      toileting: clean(mhp?.profile.toileting),
+      toiletingNeeds: clean(mhp?.profile.toileting_needs),
+      toiletingComments: clean(mhp?.profile.toileting_comments),
+      hearing: clean(mhp?.profile.hearing),
+      vision: clean(mhp?.profile.vision),
+      dental: clean(mhp?.profile.dental),
+      speechVerbalStatus: clean(mhp?.profile.speech_verbal_status),
+      speechComments: clean(mhp?.profile.speech_comments),
+      hygieneGrooming: clean(mhp?.profile.personal_appearance_hygiene_grooming),
+      maySelfMedicate: mhp?.profile.may_self_medicate ?? null,
+      medicationManagerName: clean(mhp?.profile.medication_manager_name)
+    },
+    orientationProfile: {
+      ...defaultOrientationProfile(),
+      orientationDob: parseOrientationAnswer(mhp?.profile.orientation_dob),
+      orientationCity: parseOrientationAnswer(mhp?.profile.orientation_city),
+      orientationCurrentYear: parseOrientationAnswer(mhp?.profile.orientation_current_year),
+      orientationFormerOccupation: parseOrientationAnswer(mhp?.profile.orientation_former_occupation),
+      disorientation: mhp?.profile.disorientation ?? null,
+      memoryImpairment: clean(mhp?.profile.memory_impairment),
+      memorySeverity: clean(mhp?.profile.memory_severity),
+      cognitiveBehaviorComments: clean(mhp?.profile.cognitive_behavior_comments)
+    }
   };
 
   const lowerAllergies = allergies.join(" ").toLowerCase();
@@ -404,7 +619,20 @@ function buildPrefillFromMember(memberId: string): {
     careInformation.breathingOxygenLiters = "2";
   }
 
-  return { member, sex, dnr, diagnoses, allergies, medications, careInformation, operationalFlags, levelOfCare: "Home" as const };
+  return {
+    member,
+    sex,
+    memberDob,
+    dnr,
+    diagnosisRows,
+    diagnoses,
+    allergyRows,
+    allergies,
+    medications,
+    careInformation,
+    operationalFlags,
+    levelOfCare: "Home" as const
+  };
 }
 
 function buildSeedForms(): PhysicianOrderForm[] {
@@ -425,7 +653,7 @@ function buildSeedForms(): PhysicianOrderForm[] {
       id: `pof-seed-${idx + 1}`,
       memberId: member.id,
       memberNameSnapshot: member.display_name,
-      memberDobSnapshot: member.dob,
+      memberDobSnapshot: prefill?.memberDob ?? member.dob,
       sex: prefill?.sex ?? null,
       levelOfCare: prefill?.levelOfCare ?? "Home",
       dnrSelected: prefill?.dnr ?? false,
@@ -433,7 +661,9 @@ function buildSeedForms(): PhysicianOrderForm[] {
       vitalsPulse: "72",
       vitalsOxygenSaturation: "98",
       vitalsRespiration: "16",
+      diagnosisRows: prefill?.diagnosisRows ?? [],
       diagnoses: prefill?.diagnoses ?? [],
+      allergyRows: prefill?.allergyRows ?? [],
       allergies: prefill?.allergies ?? [],
       medications: prefill?.medications ?? [],
       standingOrders: [...STANDARD_STANDING_ORDERS],
@@ -450,6 +680,7 @@ function buildSeedForms(): PhysicianOrderForm[] {
       completedByUserId: completedDate ? nurse.id : null,
       completedByName: completedDate ? nurse.full_name : null,
       completedDate,
+      nextRenewalDueDate: calculateRenewalDueDate(completedDate),
       signedBy: signedDate ? nurse.full_name : null,
       signedDate,
       updatedByUserId: nurse.id,
@@ -459,31 +690,192 @@ function buildSeedForms(): PhysicianOrderForm[] {
   });
 }
 
+function normalizeDiagnosisRows(
+  diagnosisRows: Array<Partial<PhysicianOrderDiagnosis>> | null | undefined,
+  fallbackDiagnoses: Array<string | null | undefined>,
+  baseId: string
+) {
+  const fromRows = (diagnosisRows ?? [])
+    .map((row, idx) => {
+      const diagnosisType: PhysicianOrderDiagnosis["diagnosisType"] = idx === 0 ? "primary" : "secondary";
+      return {
+        id: clean(row.id) ?? `${baseId}-dx-${idx + 1}`,
+        diagnosisType,
+        diagnosisName: String(row.diagnosisName ?? "").trim(),
+        diagnosisCode: clean(row.diagnosisCode)
+      };
+    })
+    .filter((row) => row.diagnosisName.length > 0);
+  if (fromRows.length > 0) return fromRows;
+
+  return sanitizeList(fallbackDiagnoses).map((diagnosisName, idx) => {
+    const diagnosisType: PhysicianOrderDiagnosis["diagnosisType"] = idx === 0 ? "primary" : "secondary";
+    return {
+      id: `${baseId}-dx-${idx + 1}`,
+      diagnosisType,
+      diagnosisName,
+      diagnosisCode: null
+    };
+  });
+}
+
+function normalizeAllergyRows(
+  allergyRows: Array<Partial<PhysicianOrderAllergy>> | null | undefined,
+  fallbackAllergies: Array<string | null | undefined>,
+  baseId: string
+) {
+  const fromRows = (allergyRows ?? [])
+    .map((row, idx) => ({
+      id: clean(row.id) ?? `${baseId}-allergy-${idx + 1}`,
+      allergyGroup:
+        row.allergyGroup === "food" || row.allergyGroup === "medication" || row.allergyGroup === "environmental" || row.allergyGroup === "other"
+          ? row.allergyGroup
+          : "medication",
+      allergyName: String(row.allergyName ?? "").trim(),
+      severity: clean(row.severity),
+      comments: clean(row.comments)
+    }))
+    .filter((row) => row.allergyName.length > 0);
+  if (fromRows.length > 0) return fromRows;
+
+  return sanitizeList(fallbackAllergies).map((allergyName, idx) => ({
+    id: `${baseId}-allergy-${idx + 1}`,
+    allergyGroup: "medication" as const,
+    allergyName,
+    severity: null,
+    comments: null
+  }));
+}
+
+function normalizeMedicationRows(
+  medications: Array<Partial<PhysicianOrderMedication>> | null | undefined,
+  baseId: string
+) {
+  return (medications ?? [])
+    .map((row, idx) => {
+      const route = clean(row.route) ?? POF_DEFAULT_MEDICATION_ROUTE;
+      const normalizedRoute = route.toLowerCase();
+      const laterality = clean(row.routeLaterality);
+      const requiresOphthLaterality = normalizedRoute === "ophthalmic";
+      const requiresOticLaterality = normalizedRoute === "otic";
+      const validLaterality =
+        requiresOphthLaterality && laterality && OPHTHALMIC_LATERALITY_OPTIONS.includes(laterality as (typeof OPHTHALMIC_LATERALITY_OPTIONS)[number])
+          ? laterality
+          : requiresOticLaterality && laterality && OTIC_LATERALITY_OPTIONS.includes(laterality as (typeof OTIC_LATERALITY_OPTIONS)[number])
+            ? laterality
+            : null;
+
+      return {
+        id: clean(row.id) ?? `${baseId}-med-${idx + 1}`,
+        name: String(row.name ?? "").trim(),
+        dose: clean(row.dose),
+        quantity: clean(row.quantity) ?? POF_DEFAULT_MEDICATION_QUANTITY,
+        form: clean(row.form) ?? POF_DEFAULT_MEDICATION_FORM,
+        route,
+        routeLaterality: validLaterality,
+        frequency: clean(row.frequency),
+        givenAtCenter: row.givenAtCenter === true,
+        comments: clean(row.comments)
+      } satisfies PhysicianOrderMedication;
+    })
+    .filter((row) => row.name.length > 0);
+}
+
+function normalizeCareInformation(careInformation: Partial<PhysicianOrderCareInformation> | null | undefined) {
+  const base = defaultCareInformation();
+  const incoming = careInformation ?? {};
+
+  return {
+    ...base,
+    ...incoming,
+    nutritionDiets: Array.isArray(incoming.nutritionDiets) && incoming.nutritionDiets.length > 0 ? incoming.nutritionDiets : base.nutritionDiets,
+    nutritionDietOther: clean(incoming.nutritionDietOther),
+    joySparksNotes: clean(incoming.joySparksNotes),
+    mobilityOtherText: clean(incoming.mobilityOtherText),
+    skinOther: clean(incoming.skinOther),
+    breathingOxygenLiters: clean(incoming.breathingOxygenLiters),
+    adlProfile: {
+      ...base.adlProfile,
+      ...(incoming.adlProfile ?? {}),
+      ambulation: clean(incoming.adlProfile?.ambulation),
+      transferring: clean(incoming.adlProfile?.transferring),
+      bathing: clean(incoming.adlProfile?.bathing),
+      dressing: clean(incoming.adlProfile?.dressing),
+      eating: clean(incoming.adlProfile?.eating),
+      bladderContinence: clean(incoming.adlProfile?.bladderContinence),
+      bowelContinence: clean(incoming.adlProfile?.bowelContinence),
+      toileting: clean(incoming.adlProfile?.toileting),
+      toiletingNeeds: clean(incoming.adlProfile?.toiletingNeeds),
+      toiletingComments: clean(incoming.adlProfile?.toiletingComments),
+      hearing: clean(incoming.adlProfile?.hearing),
+      vision: clean(incoming.adlProfile?.vision),
+      dental: clean(incoming.adlProfile?.dental),
+      speechVerbalStatus: clean(incoming.adlProfile?.speechVerbalStatus),
+      speechComments: clean(incoming.adlProfile?.speechComments),
+      hygieneGrooming: clean(incoming.adlProfile?.hygieneGrooming),
+      maySelfMedicate: incoming.adlProfile?.maySelfMedicate ?? null,
+      medicationManagerName: clean(incoming.adlProfile?.medicationManagerName)
+    },
+    orientationProfile: {
+      ...base.orientationProfile,
+      ...(incoming.orientationProfile ?? {}),
+      orientationDob: parseOrientationAnswer(incoming.orientationProfile?.orientationDob),
+      orientationCity: parseOrientationAnswer(incoming.orientationProfile?.orientationCity),
+      orientationCurrentYear: parseOrientationAnswer(incoming.orientationProfile?.orientationCurrentYear),
+      orientationFormerOccupation: parseOrientationAnswer(incoming.orientationProfile?.orientationFormerOccupation),
+      disorientation: incoming.orientationProfile?.disorientation ?? null,
+      memoryImpairment: clean(incoming.orientationProfile?.memoryImpairment),
+      memorySeverity: clean(incoming.orientationProfile?.memorySeverity),
+      cognitiveBehaviorComments: clean(incoming.orientationProfile?.cognitiveBehaviorComments)
+    }
+  } satisfies PhysicianOrderCareInformation;
+}
+
 function readPersistedState(): PersistedPhysicianOrderState {
   const seeded = buildSeedForms();
   const fallback: PersistedPhysicianOrderState = {
-    version: 1,
+    version: 2,
     counter: 9000 + seeded.length,
     forms: seeded
   };
   const candidate = readMockStateJson<PersistedPhysicianOrderState | null>(POF_STATE_FILE, null);
-  if (!candidate || candidate.version !== 1 || !Array.isArray(candidate.forms)) {
+  if (!candidate || !Array.isArray(candidate.forms)) {
     return fallback;
   }
 
   const normalizedForms = candidate.forms.map((row) => {
-    const raw = row as PhysicianOrderForm & { vitalsTemperature?: string | null };
+    const raw = row as PhysicianOrderForm & { vitalsTemperature?: string | null; diagnosisRows?: PhysicianOrderDiagnosis[]; allergyRows?: PhysicianOrderAllergy[] };
+    const baseId = clean(raw.id) ?? `pof-legacy-${Math.random().toString(36).slice(2, 8)}`;
+    const diagnosisRows = normalizeDiagnosisRows(raw.diagnosisRows, raw.diagnoses ?? [], baseId);
+    const diagnoses = diagnosisRows.map((entry) => entry.diagnosisName);
+    const allergyRows = normalizeAllergyRows(raw.allergyRows, raw.allergies ?? [], baseId);
+    const allergies = allergyRows.map((entry) => (entry.severity ? `${entry.allergyName} (${entry.severity})` : entry.allergyName));
+    const completedDate = clean(raw.completedDate);
     return {
       ...row,
+      diagnosisRows,
+      diagnoses,
+      allergyRows,
+      allergies,
+      medications: normalizeMedicationRows(raw.medications, baseId),
+      standingOrders: (
+        sanitizeList(raw.standingOrders).filter((line) => STANDARD_STANDING_ORDERS.includes(line)).length > 0
+          ? sanitizeList(raw.standingOrders).filter((line) => STANDARD_STANDING_ORDERS.includes(line))
+          : [...STANDARD_STANDING_ORDERS]
+      ),
+      careInformation: normalizeCareInformation(raw.careInformation),
+      memberDobSnapshot: clean(raw.memberDobSnapshot),
       vitalsOxygenSaturation:
         clean(raw.vitalsOxygenSaturation) ??
         clean(raw.vitalsTemperature) ??
-        null
+        null,
+      nextRenewalDueDate: clean(raw.nextRenewalDueDate) ?? calculateRenewalDueDate(completedDate),
+      completedDate
     } satisfies PhysicianOrderForm;
   });
 
   return {
-    version: 1,
+    version: 2,
     counter: Number.isFinite(candidate.counter) ? candidate.counter : fallback.counter,
     forms: normalizedForms
   };
@@ -495,7 +887,7 @@ let pofForms: PhysicianOrderForm[] = initialState.forms;
 
 function persistState() {
   writeMockStateJson<PersistedPhysicianOrderState>(POF_STATE_FILE, {
-    version: 1,
+    version: 2,
     counter: pofCounter,
     forms: pofForms
   });
@@ -538,6 +930,8 @@ export function getPhysicianOrders(filters?: {
       levelOfCare: row.levelOfCare,
       providerName: row.providerName,
       completedDate: row.completedDate,
+      nextRenewalDueDate: row.nextRenewalDueDate,
+      renewalStatus: resolveRenewalStatus(row.nextRenewalDueDate),
       signedDate: row.signedDate,
       updatedAt: row.updatedAt
     }));
@@ -555,9 +949,37 @@ export function getPhysicianOrderById(pofId: string) {
   return pofForms.find((row) => row.id === pofId) ?? null;
 }
 
+export interface PhysicianOrderRenewalTrackerRow {
+  memberId: string;
+  memberName: string;
+  pofId: string | null;
+  completedDate: string | null;
+  nextRenewalDueDate: string | null;
+  renewalStatus: PhysicianOrderRenewalStatus;
+}
+
+export function getPhysicianOrderRenewalTracker() {
+  const db = getMockDb();
+  return db.members
+    .filter((member) => member.status === "active")
+    .map((member) => {
+      const latestCompleted = getPhysicianOrdersForMember(member.id).find((row) => row.completedDate);
+      const nextRenewalDueDate = latestCompleted?.nextRenewalDueDate ?? null;
+      return {
+        memberId: member.id,
+        memberName: member.display_name,
+        pofId: latestCompleted?.id ?? null,
+        completedDate: latestCompleted?.completedDate ?? null,
+        nextRenewalDueDate,
+        renewalStatus: resolveRenewalStatus(nextRenewalDueDate)
+      } satisfies PhysicianOrderRenewalTrackerRow;
+    })
+    .sort((left, right) => left.memberName.localeCompare(right.memberName, undefined, { sensitivity: "base" }));
+}
+
 export function buildNewPhysicianOrderDraft(input: {
   memberId: string;
-  actor: { id: string; fullName: string };
+  actor: { id: string; fullName: string; signoffName?: string | null };
 }): PhysicianOrderForm | null {
   const prefill = buildPrefillFromMember(input.memberId);
   if (!prefill) return null;
@@ -568,7 +990,7 @@ export function buildNewPhysicianOrderDraft(input: {
     id: "",
     memberId: prefill.member.id,
     memberNameSnapshot: prefill.member.display_name,
-    memberDobSnapshot: prefill.member.dob,
+    memberDobSnapshot: prefill.memberDob,
     sex: prefill.sex,
     levelOfCare: prefill.levelOfCare,
     dnrSelected: prefill.dnr,
@@ -576,14 +998,16 @@ export function buildNewPhysicianOrderDraft(input: {
     vitalsPulse: null,
     vitalsOxygenSaturation: null,
     vitalsRespiration: null,
+    diagnosisRows: prefill.diagnosisRows,
     diagnoses: prefill.diagnoses,
+    allergyRows: prefill.allergyRows,
     allergies: prefill.allergies,
     medications: prefill.medications,
     standingOrders: [...STANDARD_STANDING_ORDERS],
     careInformation: prefill.careInformation,
     operationalFlags: prefill.operationalFlags,
-    providerName: null,
-    providerSignature: null,
+    providerName: clean(input.actor.signoffName) ?? input.actor.fullName,
+    providerSignature: clean(input.actor.signoffName) ?? input.actor.fullName,
     providerSignatureDate: null,
     status: "Draft",
     providerSignatureStatus: "Pending",
@@ -593,6 +1017,7 @@ export function buildNewPhysicianOrderDraft(input: {
     completedByUserId: null,
     completedByName: null,
     completedDate: null,
+    nextRenewalDueDate: null,
     signedBy: null,
     signedDate: null,
     updatedByUserId: input.actor.id,
@@ -625,7 +1050,9 @@ export function savePhysicianOrderForm(input: PhysicianOrderSaveInput): Physicia
         vitalsPulse: null,
         vitalsOxygenSaturation: null,
         vitalsRespiration: null,
+        diagnosisRows: [],
         diagnoses: [],
+        allergyRows: [],
         allergies: [],
         medications: [],
         standingOrders: [...STANDARD_STANDING_ORDERS],
@@ -642,6 +1069,7 @@ export function savePhysicianOrderForm(input: PhysicianOrderSaveInput): Physicia
         completedByUserId: null,
         completedByName: null,
         completedDate: null,
+        nextRenewalDueDate: null,
         signedBy: null,
         signedDate: null,
         updatedByUserId: null,
@@ -649,19 +1077,14 @@ export function savePhysicianOrderForm(input: PhysicianOrderSaveInput): Physicia
         updatedAt: now
       };
 
-  const normalizedMeds = input.medications
-    .map((row, idx) => ({
-      id: row.id || `${base.id || "pof"}-med-${idx + 1}`,
-      name: row.name.trim(),
-      dose: clean(row.dose),
-      route: clean(row.route),
-      frequency: clean(row.frequency)
-    }))
-    .filter((row) => row.name.length > 0);
+  const diagnosisRows = normalizeDiagnosisRows(input.diagnosisRows, input.diagnoses, base.id || "pof");
+  const allergyRows = normalizeAllergyRows(input.allergyRows, input.allergies, base.id || "pof");
+  const normalizedMeds = normalizeMedicationRows(input.medications, base.id || "pof");
+  const selectedStandingOrders = sanitizeList(input.standingOrders).filter((line) => STANDARD_STANDING_ORDERS.includes(line));
 
   base.memberId = member.id;
   base.memberNameSnapshot = member.display_name;
-  base.memberDobSnapshot = member.dob;
+  base.memberDobSnapshot = clean(input.memberDobSnapshot) ?? clean(member.dob);
   base.sex = input.sex;
   base.levelOfCare = input.levelOfCare;
   base.dnrSelected = input.dnrSelected;
@@ -669,19 +1092,15 @@ export function savePhysicianOrderForm(input: PhysicianOrderSaveInput): Physicia
   base.vitalsPulse = clean(input.vitalsPulse);
   base.vitalsOxygenSaturation = clean(input.vitalsOxygenSaturation);
   base.vitalsRespiration = clean(input.vitalsRespiration);
-  base.diagnoses = sanitizeList(input.diagnoses);
-  base.allergies = sanitizeList(input.allergies);
+  base.diagnosisRows = diagnosisRows;
+  base.diagnoses = diagnosisRows.map((row) => row.diagnosisName);
+  base.allergyRows = allergyRows;
+  base.allergies = allergyRows.map((row) => (row.severity ? `${row.allergyName} (${row.severity})` : row.allergyName));
   base.medications = normalizedMeds;
-  base.standingOrders = [...STANDARD_STANDING_ORDERS];
+  base.standingOrders = selectedStandingOrders;
   base.careInformation = {
-    ...defaultCareInformation(),
-    ...input.careInformation,
-    nutritionDiets: input.careInformation.nutritionDiets.length > 0 ? input.careInformation.nutritionDiets : ["Regular"],
-    nutritionDietOther: clean(input.careInformation.nutritionDietOther),
-    joySparksNotes: clean(input.careInformation.joySparksNotes),
-    mobilityOtherText: clean(input.careInformation.mobilityOtherText),
-    skinOther: clean(input.careInformation.skinOther),
-    breathingOxygenLiters: clean(input.careInformation.breathingOxygenLiters)
+    ...normalizeCareInformation(base.careInformation),
+    ...normalizeCareInformation(input.careInformation)
   };
   base.operationalFlags = {
     ...defaultOperationalFlags(),
@@ -704,6 +1123,7 @@ export function savePhysicianOrderForm(input: PhysicianOrderSaveInput): Physicia
     base.completedByUserId = base.completedByUserId ?? input.actor.id;
     base.completedByName = base.completedByName ?? input.actor.fullName;
     base.completedDate = base.completedDate ?? today;
+    base.nextRenewalDueDate = calculateRenewalDueDate(base.completedDate);
   }
 
   if (input.status === "Signed") {
@@ -713,6 +1133,10 @@ export function savePhysicianOrderForm(input: PhysicianOrderSaveInput): Physicia
   } else if (base.providerSignatureStatus !== "Signed") {
     base.signedBy = null;
     base.signedDate = null;
+  }
+
+  if (input.status === "Draft" && !base.completedDate) {
+    base.nextRenewalDueDate = null;
   }
 
   if (!existing) {
@@ -772,6 +1196,8 @@ function yesNo(value: boolean) {
 function toKeyValueLines(form: PhysicianOrderForm) {
   const care = form.careInformation;
   const flags = form.operationalFlags;
+  const adl = care.adlProfile;
+  const orientation = care.orientationProfile;
   return [
     `Disoriented: Constantly ${yesNo(care.disorientedConstantly)} | Intermittently ${yesNo(care.disorientedIntermittently)}`,
     `Inappropriate Behavior: Wanderer ${yesNo(care.inappropriateBehaviorWanderer)}, Verbal Aggression ${yesNo(care.inappropriateBehaviorVerbalAggression)}, Aggression ${yesNo(care.inappropriateBehaviorAggression)}`,
@@ -788,9 +1214,95 @@ function toKeyValueLines(form: PhysicianOrderForm) {
     `Skin: Normal ${yesNo(care.skinNormal)}${care.skinOther ? ` | Other: ${care.skinOther}` : ""}`,
     `Breathing: Room Air ${yesNo(care.breathingRoomAir)}, Oxygen Tank ${yesNo(care.breathingOxygenTank)}${care.breathingOxygenLiters ? ` (${care.breathingOxygenLiters}L)` : ""}`,
     `Nutrition/Diet: ${(care.nutritionDiets.length > 0 ? care.nutritionDiets.join(", ") : "-")}${care.nutritionDietOther ? ` | Other: ${care.nutritionDietOther}` : ""}`,
+    `MHP-Aligned ADLs: Ambulation ${adl.ambulation ?? "-"}, Transferring ${adl.transferring ?? "-"}, Bathing ${adl.bathing ?? "-"}, Dressing ${adl.dressing ?? "-"}, Eating ${adl.eating ?? "-"}`,
+    `MHP-Aligned ADLs: Bladder ${adl.bladderContinence ?? "-"}, Bowel ${adl.bowelContinence ?? "-"}, Toileting ${adl.toileting ?? "-"}, Toileting Needs ${adl.toiletingNeeds ?? "-"}`,
+    `MHP-Aligned ADLs: Hearing ${adl.hearing ?? "-"}, Vision ${adl.vision ?? "-"}, Dental ${adl.dental ?? "-"}, Speech ${adl.speechVerbalStatus ?? "-"}, Self Medicate ${adl.maySelfMedicate == null ? "-" : yesNo(adl.maySelfMedicate)}`,
+    `Orientation: DOB ${orientation.orientationDob ?? "-"}, City ${orientation.orientationCity ?? "-"}, Year ${orientation.orientationCurrentYear ?? "-"}, Occupation ${orientation.orientationFormerOccupation ?? "-"}, Disorientation ${orientation.disorientation == null ? "-" : yesNo(orientation.disorientation)}`,
     `Operational Flags: Nut ${yesNo(flags.nutAllergy)}, Shellfish ${yesNo(flags.shellfishAllergy)}, Fish ${yesNo(flags.fishAllergy)}, Diabetic/Restricted Sweets ${yesNo(flags.diabeticRestrictedSweets)}, Oxygen ${yesNo(flags.oxygenRequirement)}, DNR ${yesNo(flags.dnr)}, No Photos ${yesNo(flags.noPhotos)}, Bathroom Assistance ${yesNo(flags.bathroomAssistance)}`,
     `Joy Sparks / Additional Notes: ${care.joySparksNotes ?? "-"}`
   ];
+}
+
+function publicAssetPath(publicPath: string) {
+  const normalized = publicPath.startsWith("/") ? publicPath.slice(1) : publicPath;
+  return path.join(process.cwd(), "public", normalized);
+}
+
+async function loadPofLogoImage(pdf: PDFDocument) {
+  try {
+    const bytes = await readFile(publicAssetPath(POF_CENTER_LOGO_PUBLIC_PATH));
+    return await pdf.embedPng(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function drawPofHeader(input: {
+  page: import("pdf-lib").PDFPage;
+  font: import("pdf-lib").PDFFont;
+  fontBold: import("pdf-lib").PDFFont;
+  textColor: ReturnType<typeof rgb>;
+  brandColor: ReturnType<typeof rgb>;
+  logo: import("pdf-lib").PDFImage | null;
+  generatedAt: string;
+}) {
+  const { page, font, fontBold, textColor, brandColor, logo, generatedAt } = input;
+  const pageWidth = page.getWidth();
+  let y = 760;
+
+  if (logo) {
+    const logoHeight = 38;
+    const scaled = logo.scale(logoHeight / logo.height);
+    const logoWidth = Math.min(scaled.width, 160);
+    page.drawImage(logo, {
+      x: 36,
+      y: y - logoHeight + 4,
+      width: logoWidth,
+      height: logoHeight
+    });
+  }
+
+  const centerTitle = "Town Square Fort Mill";
+  const centerX = pageWidth / 2;
+  page.drawText(centerTitle, {
+    x: centerX - fontBold.widthOfTextAtSize(centerTitle, 14) / 2,
+    y,
+    size: 14,
+    font: fontBold,
+    color: brandColor
+  });
+  y -= 14;
+  page.drawText(POF_CENTER_ADDRESS, {
+    x: centerX - font.widthOfTextAtSize(POF_CENTER_ADDRESS, 9.5) / 2,
+    y,
+    size: 9.5,
+    font,
+    color: textColor
+  });
+  y -= 12;
+  page.drawText(POF_CENTER_PHONE, {
+    x: centerX - font.widthOfTextAtSize(POF_CENTER_PHONE, 9.5) / 2,
+    y,
+    size: 9.5,
+    font,
+    color: textColor
+  });
+
+  const generated = `Generated: ${generatedAt} (ET)`;
+  page.drawText(generated, {
+    x: pageWidth - font.widthOfTextAtSize(generated, 8.5) - 36,
+    y: 760,
+    size: 8.5,
+    font,
+    color: textColor
+  });
+  page.drawLine({
+    start: { x: 36, y: 712 },
+    end: { x: pageWidth - 36, y: 712 },
+    color: rgb(0.75, 0.78, 0.84),
+    thickness: 1
+  });
+  return 694;
 }
 
 export async function buildPhysicianOrderPdfDataUrl(pofId: string) {
@@ -808,9 +1320,18 @@ export async function buildPhysicianOrderPdfDataUrl(pofId: string) {
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const text = rgb(0.1, 0.1, 0.1);
   const blue = rgb(0.09, 0.24, 0.55);
+  const logo = await loadPofLogoImage(pdf);
 
   const page1 = pdf.addPage([612, 792]);
-  let y = 754;
+  let y = drawPofHeader({
+    page: page1,
+    font,
+    fontBold,
+    textColor: text,
+    brandColor: blue,
+    logo,
+    generatedAt: now
+  });
   page1.drawText("Physician Order & Physical Exam Form", { x: 36, y, size: 15, font: fontBold, color: blue });
   y -= 20;
   page1.drawText(`Member: ${memberName}`, { x: 36, y, size: 11, font: fontBold, color: text });
@@ -832,22 +1353,56 @@ export async function buildPhysicianOrderPdfDataUrl(pofId: string) {
   y -= 22;
   page1.drawText("Diagnoses", { x: 36, y, size: 11, font: fontBold, color: blue });
   y -= 14;
-  const diagnosesText = form.diagnoses.length > 0 ? form.diagnoses.map((line, idx) => `${idx + 1}. ${line}`).join(" | ") : "-";
-  y = drawWrappedText({ page: page1, text: diagnosesText, x: 36, y, maxWidth: 540, lineHeight: 13, font, size: 10.5, color: text }) ?? y;
+  page1.drawText("Type", { x: 36, y, size: 9.5, font: fontBold, color: text });
+  page1.drawText("Diagnosis", { x: 108, y, size: 9.5, font: fontBold, color: text });
+  page1.drawText("Code", { x: 458, y, size: 9.5, font: fontBold, color: text });
+  y -= 10;
+  page1.drawLine({ start: { x: 36, y }, end: { x: 576, y }, color: rgb(0.75, 0.78, 0.84), thickness: 1 });
+  y -= 10;
+  if (form.diagnosisRows.length === 0) {
+    page1.drawText("No diagnoses entered.", { x: 36, y, size: 9.5, font, color: text });
+    y -= 13;
+  } else {
+    form.diagnosisRows.slice(0, 8).forEach((row) => {
+      page1.drawText(row.diagnosisType, { x: 36, y, size: 9.2, font, color: text, maxWidth: 62 });
+      page1.drawText(row.diagnosisName, { x: 108, y, size: 9.2, font, color: text, maxWidth: 340 });
+      page1.drawText(row.diagnosisCode ?? "-", { x: 458, y, size: 9.2, font, color: text, maxWidth: 116 });
+      y -= 12;
+    });
+  }
 
   y -= 10;
   page1.drawText("Allergies", { x: 36, y, size: 11, font: fontBold, color: blue });
   y -= 14;
-  const allergiesText = form.allergies.length > 0 ? form.allergies.join(" | ") : "-";
-  y = drawWrappedText({ page: page1, text: allergiesText, x: 36, y, maxWidth: 540, lineHeight: 13, font, size: 10.5, color: text }) ?? y;
+  page1.drawText("Group", { x: 36, y, size: 9.5, font: fontBold, color: text });
+  page1.drawText("Allergy", { x: 118, y, size: 9.5, font: fontBold, color: text });
+  page1.drawText("Severity", { x: 376, y, size: 9.5, font: fontBold, color: text });
+  page1.drawText("Comments", { x: 452, y, size: 9.5, font: fontBold, color: text });
+  y -= 10;
+  page1.drawLine({ start: { x: 36, y }, end: { x: 576, y }, color: rgb(0.75, 0.78, 0.84), thickness: 1 });
+  y -= 10;
+  if (form.allergyRows.length === 0) {
+    page1.drawText("No allergies entered.", { x: 36, y, size: 9.5, font, color: text });
+    y -= 13;
+  } else {
+    form.allergyRows.slice(0, 8).forEach((row) => {
+      page1.drawText(row.allergyGroup, { x: 36, y, size: 9.2, font, color: text, maxWidth: 70 });
+      page1.drawText(row.allergyName, { x: 118, y, size: 9.2, font, color: text, maxWidth: 250 });
+      page1.drawText(row.severity ?? "-", { x: 376, y, size: 9.2, font, color: text, maxWidth: 70 });
+      page1.drawText(row.comments ?? "-", { x: 452, y, size: 9.2, font, color: text, maxWidth: 120 });
+      y -= 12;
+    });
+  }
 
   y -= 12;
   page1.drawText("Medications", { x: 36, y, size: 11, font: fontBold, color: blue });
   y -= 14;
   page1.drawText("Name", { x: 36, y, size: 10, font: fontBold, color: text });
-  page1.drawText("Dose", { x: 262, y, size: 10, font: fontBold, color: text });
-  page1.drawText("Route", { x: 360, y, size: 10, font: fontBold, color: text });
-  page1.drawText("Frequency", { x: 450, y, size: 10, font: fontBold, color: text });
+  page1.drawText("Dose", { x: 196, y, size: 10, font: fontBold, color: text });
+  page1.drawText("Qty", { x: 272, y, size: 10, font: fontBold, color: text });
+  page1.drawText("Form", { x: 316, y, size: 10, font: fontBold, color: text });
+  page1.drawText("Route", { x: 388, y, size: 10, font: fontBold, color: text });
+  page1.drawText("Frequency", { x: 468, y, size: 10, font: fontBold, color: text });
   y -= 12;
   page1.drawLine({ start: { x: 36, y }, end: { x: 576, y }, color: rgb(0.75, 0.78, 0.84), thickness: 1 });
   y -= 12;
@@ -857,10 +1412,13 @@ export async function buildPhysicianOrderPdfDataUrl(pofId: string) {
     y -= 14;
   } else {
     form.medications.slice(0, 16).forEach((medication) => {
-      page1.drawText(medication.name, { x: 36, y, size: 9.5, font, color: text, maxWidth: 220 });
-      page1.drawText(medication.dose ?? "-", { x: 262, y, size: 9.5, font, color: text, maxWidth: 90 });
-      page1.drawText(medication.route ?? "-", { x: 360, y, size: 9.5, font, color: text, maxWidth: 80 });
-      page1.drawText(medication.frequency ?? "-", { x: 450, y, size: 9.5, font, color: text, maxWidth: 120 });
+      const routeText = medication.routeLaterality ? `${medication.route ?? "-"} (${medication.routeLaterality})` : (medication.route ?? "-");
+      page1.drawText(medication.name, { x: 36, y, size: 8.9, font, color: text, maxWidth: 156 });
+      page1.drawText(medication.dose ?? "-", { x: 196, y, size: 8.9, font, color: text, maxWidth: 72 });
+      page1.drawText(medication.quantity ?? "-", { x: 272, y, size: 8.9, font, color: text, maxWidth: 40 });
+      page1.drawText(medication.form ?? "-", { x: 316, y, size: 8.9, font, color: text, maxWidth: 68 });
+      page1.drawText(routeText, { x: 388, y, size: 8.9, font, color: text, maxWidth: 76 });
+      page1.drawText(medication.frequency ?? "-", { x: 468, y, size: 8.9, font, color: text, maxWidth: 108 });
       y -= 13;
       if (y < 120) return;
     });
@@ -869,14 +1427,27 @@ export async function buildPhysicianOrderPdfDataUrl(pofId: string) {
   y -= 8;
   page1.drawText("Standing Orders (as needed medications at center)", { x: 36, y, size: 11, font: fontBold, color: blue });
   y -= 14;
-  form.standingOrders.forEach((line, idx) => {
-    const content = `${idx + 1}. ${line}`;
-    y = drawWrappedText({ page: page1, text: content, x: 36, y, maxWidth: 540, lineHeight: 12, font, size: 10, color: text }) ?? y;
-    y -= 2;
-  });
+  if (form.standingOrders.length === 0) {
+    page1.drawText("No standing orders selected.", { x: 36, y, size: 10, font, color: text });
+    y -= 12;
+  } else {
+    form.standingOrders.forEach((line, idx) => {
+      const content = `${idx + 1}. ${line}`;
+      y = drawWrappedText({ page: page1, text: content, x: 36, y, maxWidth: 540, lineHeight: 12, font, size: 10, color: text }) ?? y;
+      y -= 2;
+    });
+  }
 
   const page2 = pdf.addPage([612, 792]);
-  let y2 = 754;
+  let y2 = drawPofHeader({
+    page: page2,
+    font,
+    fontBold,
+    textColor: text,
+    brandColor: blue,
+    logo,
+    generatedAt: now
+  });
   page2.drawText("Member Care Information", { x: 36, y: y2, size: 15, font: fontBold, color: blue });
   y2 -= 22;
   toKeyValueLines(form).forEach((line) => {
@@ -885,7 +1456,15 @@ export async function buildPhysicianOrderPdfDataUrl(pofId: string) {
   });
 
   const page3 = pdf.addPage([612, 792]);
-  let y3 = 754;
+  let y3 = drawPofHeader({
+    page: page3,
+    font,
+    fontBold,
+    textColor: text,
+    brandColor: blue,
+    logo,
+    generatedAt: now
+  });
   page3.drawText("Provider Signature & Audit", { x: 36, y: y3, size: 15, font: fontBold, color: blue });
   y3 -= 22;
   const auditLines = [

@@ -1,8 +1,10 @@
 "use client";
 
-import { FormEvent, useState, useTransition } from "react";
+import { FormEvent, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import { saveMemberCommandCenterTransportationAction } from "@/app/(portal)/operations/member-command-center/actions";
+import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import {
   MEMBER_TRANSPORTATION_SERVICE_OPTIONS
 } from "@/lib/canonical";
@@ -125,22 +127,41 @@ export function MccTransportationForm({
   busStopOptions: string[];
   busNumberOptions: string[];
 }) {
-  const [requiredValue, setRequiredValue] = useState(
-    transportationRequired == null ? "" : transportationRequired ? "true" : "false"
+  const router = useRouter();
+  const syncDeps = [
+    memberId,
+    transportationRequired,
+    transportMondayAmMode,
+    transportMondayPmMode,
+    transportTuesdayAmMode,
+    transportTuesdayPmMode,
+    transportWednesdayAmMode,
+    transportWednesdayPmMode,
+    transportThursdayAmMode,
+    transportThursdayPmMode,
+    transportFridayAmMode,
+    transportFridayPmMode
+  ];
+  const [requiredValue, setRequiredValue] = usePropSyncedState(
+    transportationRequired == null ? "" : transportationRequired ? "true" : "false",
+    syncDeps
   );
-  const [slotModeValues, setSlotModeValues] = useState<Record<SlotKey, string>>({
-    mondayAm: transportMondayAmMode ?? "None",
-    mondayPm: transportMondayPmMode ?? "None",
-    tuesdayAm: transportTuesdayAmMode ?? "None",
-    tuesdayPm: transportTuesdayPmMode ?? "None",
-    wednesdayAm: transportWednesdayAmMode ?? "None",
-    wednesdayPm: transportWednesdayPmMode ?? "None",
-    thursdayAm: transportThursdayAmMode ?? "None",
-    thursdayPm: transportThursdayPmMode ?? "None",
-    fridayAm: transportFridayAmMode ?? "None",
-    fridayPm: transportFridayPmMode ?? "None"
-  });
-  const [status, setStatus] = useState("");
+  const [slotModeValues, setSlotModeValues] = usePropSyncedState<Record<SlotKey, string>>(
+    () => ({
+      mondayAm: transportMondayAmMode ?? "None",
+      mondayPm: transportMondayPmMode ?? "None",
+      tuesdayAm: transportTuesdayAmMode ?? "None",
+      tuesdayPm: transportTuesdayPmMode ?? "None",
+      wednesdayAm: transportWednesdayAmMode ?? "None",
+      wednesdayPm: transportWednesdayPmMode ?? "None",
+      thursdayAm: transportThursdayAmMode ?? "None",
+      thursdayPm: transportThursdayPmMode ?? "None",
+      fridayAm: transportFridayAmMode ?? "None",
+      fridayPm: transportFridayPmMode ?? "None"
+    }),
+    syncDeps
+  );
+  const [status, setStatus] = usePropSyncedStatus(syncDeps);
   const [isPending, startTransition] = useTransition();
 
   const enabled = requiredValue === "true";
@@ -220,6 +241,7 @@ export function MccTransportationForm({
           }
         })
       );
+      router.refresh();
     });
   };
 

@@ -13,7 +13,7 @@ export default async function UnauthorizedPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = searchParams ? await searchParams : {};
-  const module = firstParam(params.module);
+  const requestedModule = firstParam(params.module);
   const action = firstParam(params.action);
 
   return (
@@ -21,7 +21,7 @@ export default async function UnauthorizedPage({
       <CardTitle>Unauthorized</CardTitle>
       <p className="mt-2 text-sm text-muted">
         Your account does not have permission to access this area.
-        {module ? ` Module: ${module}.` : ""}
+        {requestedModule ? ` Module: ${requestedModule}.` : ""}
         {action ? ` Required action: ${action}.` : ""}
       </p>
       <div className="mt-3 flex gap-2">
@@ -32,4 +32,3 @@ export default async function UnauthorizedPage({
     </Card>
   );
 }
-

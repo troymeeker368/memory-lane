@@ -1,9 +1,11 @@
 "use client";
 
-import { FormEvent, useState, useTransition } from "react";
+import { FormEvent, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import { saveMemberCommandCenterDemographicsAction } from "@/app/(portal)/operations/member-command-center/actions";
 import { SegmentedChoiceGroup } from "@/components/forms/segmented-choice-group";
+import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import {
   MEMBER_STATE_OPTIONS,
   MEMBER_ETHNICITY_OPTIONS,
@@ -44,10 +46,12 @@ export function MccDemographicsForm({
   isVeteran: boolean | null;
   veteranBranch: string;
 }) {
-  const [veteranValue, setVeteranValue] = useState(
-    isVeteran == null ? "" : isVeteran ? "true" : "false"
+  const router = useRouter();
+  const [veteranValue, setVeteranValue] = usePropSyncedState(
+    isVeteran == null ? "" : isVeteran ? "true" : "false",
+    [memberId, isVeteran]
   );
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = usePropSyncedStatus([memberId, isVeteran]);
   const [isPending, startTransition] = useTransition();
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -61,6 +65,7 @@ export function MccDemographicsForm({
         return;
       }
       setStatus("Demographics saved.");
+      router.refresh();
     });
   };
 

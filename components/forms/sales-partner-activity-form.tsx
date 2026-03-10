@@ -1,15 +1,17 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 import {
   createCommunityPartnerAction,
   createPartnerActivityAction,
   createReferralSourceAction
 } from "@/app/sales-actions";
+import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
 import { Button } from "@/components/ui/button";
 import { COMMUNITY_PARTNER_CATEGORY_OPTIONS, LEAD_ACTIVITY_TYPES, LEAD_FOLLOW_UP_TYPES } from "@/lib/canonical";
 import { toEasternDateTimeLocal } from "@/lib/timezone";
+type ReferralSourceCategory = (typeof COMMUNITY_PARTNER_CATEGORY_OPTIONS)[number];
 
 type LeadLookup = {
   id: string;
@@ -49,7 +51,9 @@ export function SalesPartnerActivityForm({
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
 
-  const [partnerOptions, setPartnerOptions] = useState(() => [...partners].sort((a, b) => a.organization_name.localeCompare(b.organization_name)));
+  const [partnerOptions, setPartnerOptions] = useState(() =>
+    [...partners].sort((a, b) => a.organization_name.localeCompare(b.organization_name))
+  );
   const [referralOptions, setReferralOptions] = useState(() => [...referralSources]);
 
   const [form, setForm] = useState({
@@ -64,7 +68,13 @@ export function SalesPartnerActivityForm({
   });
 
   const [showCreateOrgInline, setShowCreateOrgInline] = useState(false);
-  const [orgForm, setOrgForm] = useState({
+  const [orgForm, setOrgForm] = useState<{
+    organizationName: string;
+    referralSourceCategory: ReferralSourceCategory;
+    location: string;
+    primaryPhone: string;
+    primaryEmail: string;
+  }>({
     organizationName: "",
     referralSourceCategory: COMMUNITY_PARTNER_CATEGORY_OPTIONS[0],
     location: "",
@@ -81,6 +91,42 @@ export function SalesPartnerActivityForm({
     : [];
 
   const selectedReferral = filteredReferralSources.find((source) => source.id === form.referralSourceId) ?? null;
+
+  useEffect(() => {
+    setPartnerOptions([...partners].sort((a, b) => a.organization_name.localeCompare(b.organization_name)));
+  }, [partners]);
+
+  useEffect(() => {
+    setReferralOptions([...referralSources]);
+  }, [referralSources]);
+
+  useEffect(() => {
+    setForm((current) => ({
+      ...current,
+      partnerId: initialPartnerId ?? "",
+      referralSourceId: initialReferralSourceId ?? "",
+      leadId: initialLeadId ?? ""
+    }));
+    setStatus(null);
+  }, [initialLeadId, initialPartnerId, initialReferralSourceId]);
+
+  useConstrainedSelection({
+    selectedId: form.partnerId,
+    setSelectedId: (nextPartnerId) =>
+      setForm((current) => ({
+        ...current,
+        partnerId: nextPartnerId,
+        referralSourceId: nextPartnerId ? current.referralSourceId : ""
+      })),
+    options: partnerOptions,
+    autoSelectSingle: false
+  });
+  useConstrainedSelection({
+    selectedId: form.referralSourceId,
+    setSelectedId: (nextReferralId) => setForm((current) => ({ ...current, referralSourceId: nextReferralId })),
+    options: filteredReferralSources,
+    autoSelectSingle: Boolean(form.partnerId)
+  });
 
   return (
     <div className="space-y-3">
@@ -110,7 +156,13 @@ export function SalesPartnerActivityForm({
           <p className="text-xs font-semibold uppercase tracking-wide text-muted">Create Organization Inline</p>
           <div className="grid gap-3 md:grid-cols-2">
             <input className="h-11 rounded-lg border border-border px-3" placeholder="Organization Name" value={orgForm.organizationName} onChange={(event) => setOrgForm((current) => ({ ...current, organizationName: event.target.value }))} />
-            <select className="h-11 rounded-lg border border-border px-3" value={orgForm.referralSourceCategory} onChange={(event) => setOrgForm((current) => ({ ...current, referralSourceCategory: event.target.value }))}>
+            <select
+              className="h-11 rounded-lg border border-border px-3"
+              value={orgForm.referralSourceCategory}
+              onChange={(event) =>
+                setOrgForm((current) => ({ ...current, referralSourceCategory: event.target.value as ReferralSourceCategory }))
+              }
+            >
               {COMMUNITY_PARTNER_CATEGORY_OPTIONS.map((category) => <option key={category} value={category}>{category}</option>)}
             </select>
           </div>

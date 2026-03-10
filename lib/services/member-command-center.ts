@@ -1,4 +1,5 @@
 import { addMockRecord, getMemberMakeupDayBalance, getMockDb, listMemberMakeupLedger, updateMockRecord } from "@/lib/mock-repo";
+import { getStandardDailyRateForAttendanceDays } from "@/lib/services/billing-rate-tiers";
 import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans";
 import { isMockMode } from "@/lib/runtime";
 import { toEasternISO } from "@/lib/timezone";
@@ -170,15 +171,21 @@ function defaultCommandCenter(memberId: string) {
 
 function defaultAttendanceSchedule(member: { id: string; enrollment_date: string | null }) {
   const now = toEasternISO();
+  const monday = true;
+  const tuesday = false;
+  const wednesday = true;
+  const thursday = false;
+  const friday = true;
+  const attendanceDaysPerWeek = [monday, tuesday, wednesday, thursday, friday].filter(Boolean).length;
   return {
     id: "",
     member_id: member.id,
     enrollment_date: member.enrollment_date,
-    monday: true,
-    tuesday: false,
-    wednesday: true,
-    thursday: false,
-    friday: true,
+    monday,
+    tuesday,
+    wednesday,
+    thursday,
+    friday,
     full_day: true,
     transportation_required: null,
     transportation_mode: null,
@@ -229,6 +236,14 @@ function defaultAttendanceSchedule(member: { id: string; enrollment_date: string
     transport_friday_pm_door_to_door_address: null,
     transport_friday_pm_bus_number: null,
     transport_friday_pm_bus_stop: null,
+    daily_rate: getStandardDailyRateForAttendanceDays(attendanceDaysPerWeek),
+    transportation_billing_status: "BillNormally" as const,
+    billing_rate_effective_date: member.enrollment_date,
+    billing_notes: null,
+    attendance_days_per_week: attendanceDaysPerWeek,
+    default_daily_rate: getStandardDailyRateForAttendanceDays(attendanceDaysPerWeek),
+    use_custom_daily_rate: false,
+    custom_daily_rate: null,
     make_up_days_available: 0,
     attendance_notes: null,
     updated_by_user_id: null,

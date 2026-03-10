@@ -426,6 +426,13 @@ export function getManagedUserSignatureName(userId: string, fallbackName: string
   return formatNameWithCredentials(fallbackName, managedUser?.credentials ?? null);
 }
 
+export function getManagedUserSignoffLabel(userId: string, fallbackName: string) {
+  const managedUser = getManagedUserById(userId);
+  const signatureName = formatNameWithCredentials(fallbackName, managedUser?.credentials ?? null);
+  const title = normalizeString(managedUser?.title ?? null);
+  return title ? `${signatureName} (${title})` : signatureName;
+}
+
 export function createManagedUser(input: ManagedUserInput): ManagedUser {
   const rows = ensureStore();
   const cleaned = sanitizeManagedUserInput(input);
@@ -579,17 +586,25 @@ export function summarizePermissionSet(permissions: PermissionSet) {
 
 export function getUserManagementMetrics() {
   const rows = ensureStore();
-  const active = rows.filter((row) => row.status === "active").length;
-  const inactive = rows.length - active;
+  const byRole = CANONICAL_ROLE_ORDER.reduce((acc, role) => {
+    acc[role] = 0;
+    return acc;
+  }, {} as Record<string, number>);
+
+  let active = 0;
+  rows.forEach((row) => {
+    if (row.status === "active") {
+      active += 1;
+    }
+    const role = normalizeRoleKey(row.role);
+    byRole[role] = (byRole[role] ?? 0) + 1;
+  });
 
   return {
     total: rows.length,
     active,
-    inactive,
-    byRole: CANONICAL_ROLE_ORDER.reduce((acc, role) => {
-      acc[role] = rows.filter((row) => normalizeRoleKey(row.role) === role).length;
-      return acc;
-    }, {} as Record<string, number>)
+    inactive: rows.length - active,
+    byRole
   };
 }
 

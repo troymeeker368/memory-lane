@@ -1,6 +1,7 @@
 import { addMockRecord, getMockDb, removeMockRecord, updateMockRecord } from "@/lib/mock-repo";
 import { ensureMemberCommandCenterProfile } from "@/lib/services/member-command-center";
 import { ensureMemberHealthProfile } from "@/lib/services/member-health-profiles";
+import { POF_MHP_FIELD_MAPPINGS } from "@/lib/services/pof-mhp-field-mapping";
 import { toEasternISO } from "@/lib/timezone";
 
 type SyncActor = {
@@ -73,11 +74,48 @@ function inferAllergyGroup(name: string): "food" | "medication" | "environmental
   return "medication";
 }
 
+function getValueByPath(source: Record<string, unknown>, dotPath: string) {
+  const segments = dotPath.split(".");
+  let cursor: unknown = source;
+  for (const segment of segments) {
+    if (!cursor || typeof cursor !== "object" || !(segment in (cursor as Record<string, unknown>))) {
+      return undefined;
+    }
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return cursor;
+}
+
+function isMeaningfulSyncValue(value: unknown) {
+  if (value == null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+}
+
 type PofMedicationInput = {
   name: string;
   dose: string | null;
+  quantity: string | null;
+  form: string | null;
   route: string | null;
+  routeLaterality?: string | null;
   frequency: string | null;
+  givenAtCenter?: boolean;
+  comments?: string | null;
+};
+
+type PofDiagnosisInput = {
+  diagnosisType: "primary" | "secondary";
+  diagnosisName: string;
+  diagnosisCode: string | null;
+};
+
+type PofAllergyInput = {
+  allergyGroup: "food" | "medication" | "environmental" | "other";
+  allergyName: string;
+  severity: string | null;
+  comments: string | null;
 };
 
 type PofCareInput = {
@@ -89,6 +127,36 @@ type PofCareInput = {
   breathingOxygenTank: boolean;
   breathingOxygenLiters: string | null;
   joySparksNotes: string | null;
+  adlProfile: {
+    ambulation: string | null;
+    transferring: string | null;
+    bathing: string | null;
+    dressing: string | null;
+    eating: string | null;
+    bladderContinence: string | null;
+    bowelContinence: string | null;
+    toileting: string | null;
+    toiletingNeeds: string | null;
+    toiletingComments: string | null;
+    hearing: string | null;
+    vision: string | null;
+    dental: string | null;
+    speechVerbalStatus: string | null;
+    speechComments: string | null;
+    hygieneGrooming: string | null;
+    maySelfMedicate: boolean | null;
+    medicationManagerName: string | null;
+  };
+  orientationProfile: {
+    orientationDob: "Yes" | "No" | null;
+    orientationCity: "Yes" | "No" | null;
+    orientationCurrentYear: "Yes" | "No" | null;
+    orientationFormerOccupation: "Yes" | "No" | null;
+    disorientation: boolean | null;
+    memoryImpairment: string | null;
+    memorySeverity: string | null;
+    cognitiveBehaviorComments: string | null;
+  };
 };
 
 type PofOperationalFlagsInput = {
@@ -106,9 +174,12 @@ type PofSyncInput = {
   memberId: string;
   pof: {
     id: string;
+    memberDobSnapshot: string | null;
     dnrSelected: boolean;
     status: "Draft" | "Completed" | "Signed";
+    diagnosisRows: PofDiagnosisInput[];
     diagnoses: string[];
+    allergyRows: PofAllergyInput[];
     allergies: string[];
     medications: PofMedicationInput[];
     careInformation: PofCareInput;
@@ -313,7 +384,11 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
   const care = input.pof.careInformation;
   const flags = input.pof.operationalFlags;
   const isCommitted = input.pof.status === "Completed" || input.pof.status === "Signed";
-  const normalizedAllergies = uniqueCaseInsensitive(input.pof.allergies.map((value) => value.trim()).filter(Boolean));
+  const normalizedAllergies = uniqueCaseInsensitive(
+    input.pof.allergyRows.length > 0
+      ? input.pof.allergyRows.map((row) => row.allergyName.trim()).filter(Boolean)
+      : input.pof.allergies.map((value) => value.trim()).filter(Boolean)
+  );
 
   const canonicalDiet = care.nutritionDiets.find((entry) => entry !== "Other") ?? null;
   const customDiet = normalizeString(care.nutritionDietOther);
@@ -336,6 +411,22 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
     source_assessment_id: mhp.source_assessment_id ?? input.pof.id,
     source_assessment_at: mhp.source_assessment_at ?? now
   };
+
+  // Apply normalized direct field mappings so ADL/orientation stay aligned with MHP structures.
+  const directMappingSkips = new Set([
+    "member_dob",
+    "diagnoses",
+    "allergies",
+    "diet_type",
+    "dietary_restrictions",
+    "code_status"
+  ]);
+  POF_MHP_FIELD_MAPPINGS.forEach((mapping) => {
+    if (directMappingSkips.has(mapping.key)) return;
+    const value = getValueByPath(input.pof as unknown as Record<string, unknown>, mapping.pofField);
+    if (!isMeaningfulSyncValue(value)) return;
+    mhpPatch[mapping.mhpField] = value;
+  });
 
   if (shouldSetCodeStatus) {
     mhpPatch.code_status = "DNR";
@@ -390,6 +481,14 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
 
   updateMockRecord("memberHealthProfiles", mhp.id, mhpPatch);
 
+  const memberDob = normalizeString(input.pof.memberDobSnapshot);
+  if (memberDob) {
+    const member = db.members.find((row) => row.id === input.memberId);
+    if (member && (isCommitted || !normalizeString(member.dob))) {
+      updateMockRecord("members", input.memberId, { dob: memberDob });
+    }
+  }
+
   if (shouldSetCodeStatus) {
     updateMockRecord("members", input.memberId, { code_status: "DNR" });
   } else if (isCommitted) {
@@ -397,18 +496,29 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
   }
 
   if (isCommitted) {
-    const cleanedDiagnoses = uniqueCaseInsensitive(
-      input.pof.diagnoses
-        .map((value) => value.trim())
-        .filter(Boolean)
-    );
-    if (cleanedDiagnoses.length > 0) {
-      const firstDiagnosis = cleanedDiagnoses[0];
+    const diagnosisTargets =
+      input.pof.diagnosisRows.length > 0
+        ? input.pof.diagnosisRows
+            .map((row, idx) => ({
+              diagnosisType: idx === 0 ? "primary" : "secondary",
+              diagnosisName: row.diagnosisName.trim(),
+              diagnosisCode: normalizeString(row.diagnosisCode)
+            }))
+            .filter((row) => row.diagnosisName.length > 0)
+        : uniqueCaseInsensitive(input.pof.diagnoses.map((value) => value.trim()).filter(Boolean)).map((diagnosisName, idx) => ({
+            diagnosisType: idx === 0 ? "primary" : "secondary",
+            diagnosisName,
+            diagnosisCode: null
+          }));
+
+    if (diagnosisTargets.length > 0) {
+      const firstDiagnosis = diagnosisTargets[0]?.diagnosisName ?? null;
       const existingDiagnoses = db.memberDiagnoses.filter((row) => row.member_id === input.memberId);
 
       existingDiagnoses.forEach((row) => {
         if (
           row.diagnosis_type === "primary" &&
+          firstDiagnosis &&
           row.diagnosis_name.trim().toLowerCase() !== firstDiagnosis.toLowerCase()
         ) {
           updateMockRecord("memberDiagnoses", row.id, {
@@ -418,17 +528,18 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
         }
       });
 
-      cleanedDiagnoses.forEach((diagnosisName, idx) => {
+      diagnosisTargets.forEach((target, idx) => {
         const diagnosisType = idx === 0 ? "primary" : "secondary";
         const existing = db.memberDiagnoses.find(
           (row) =>
             row.member_id === input.memberId &&
-            row.diagnosis_name.trim().toLowerCase() === diagnosisName.toLowerCase()
+            row.diagnosis_name.trim().toLowerCase() === target.diagnosisName.toLowerCase()
         );
 
         if (existing) {
           updateMockRecord("memberDiagnoses", existing.id, {
             diagnosis_type: diagnosisType,
+            diagnosis_code: target.diagnosisCode,
             date_added: existing.date_added ?? now.slice(0, 10),
             updated_at: now
           });
@@ -438,8 +549,8 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
         addMockRecord("memberDiagnoses", {
           member_id: input.memberId,
           diagnosis_type: diagnosisType,
-          diagnosis_name: diagnosisName,
-          diagnosis_code: null,
+          diagnosis_name: target.diagnosisName,
+          diagnosis_code: target.diagnosisCode,
           date_added: now.slice(0, 10),
           comments: "Synced from Physician Order Form.",
           created_by_user_id: resolvedActor.id ?? "system",
@@ -451,21 +562,50 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
     }
   }
 
-  const allergyTargets: Array<{ group: "food" | "medication" | "environmental"; name: string }> = normalizedAllergies.map(
-    (name) => ({
-      group: inferAllergyGroup(name),
-      name
-    })
-  );
-  if (flags.nutAllergy) allergyTargets.push({ group: "food", name: "Nut allergy" });
-  if (flags.shellfishAllergy) allergyTargets.push({ group: "food", name: "Shellfish allergy" });
-  if (flags.fishAllergy) allergyTargets.push({ group: "food", name: "Fish allergy" });
+  const allergyTargets: Array<{
+    group: "food" | "medication" | "environmental";
+    name: string;
+    severity: string | null;
+    comments: string | null;
+  }> =
+    input.pof.allergyRows.length > 0
+      ? input.pof.allergyRows
+          .map((row) => ({
+            group:
+              row.allergyGroup === "food" || row.allergyGroup === "medication" || row.allergyGroup === "environmental"
+                ? row.allergyGroup
+                : inferAllergyGroup(row.allergyName),
+            name: row.allergyName.trim(),
+            severity: normalizeString(row.severity),
+            comments: normalizeString(row.comments)
+          }))
+          .filter((row) => row.name.length > 0)
+      : normalizedAllergies.map((name) => ({
+          group: inferAllergyGroup(name),
+          name,
+          severity: null,
+          comments: null
+        }));
+  if (flags.nutAllergy) allergyTargets.push({ group: "food", name: "Nut allergy", severity: null, comments: null });
+  if (flags.shellfishAllergy) allergyTargets.push({ group: "food", name: "Shellfish allergy", severity: null, comments: null });
+  if (flags.fishAllergy) allergyTargets.push({ group: "food", name: "Fish allergy", severity: null, comments: null });
 
-  uniqueCaseInsensitive(allergyTargets.map((row) => `${row.group}::${row.name}`)).forEach((entry) => {
-    const [groupRaw, nameRaw] = entry.split("::");
-    const group = groupRaw as "food" | "medication" | "environmental";
-    const name = nameRaw?.trim();
-    if (!name) return;
+  const dedupedAllergyTargets = uniqueCaseInsensitive(allergyTargets.map((row) => `${row.group}::${row.name}`))
+    .map((entry) => {
+      const [groupRaw, nameRaw] = entry.split("::");
+      const source = allergyTargets.find((row) => `${row.group}::${row.name}`.toLowerCase() === entry.toLowerCase());
+      return {
+        group: groupRaw as "food" | "medication" | "environmental",
+        name: nameRaw?.trim() ?? "",
+        severity: source?.severity ?? null,
+        comments: source?.comments ?? null
+      };
+    })
+    .filter((row) => row.name.length > 0);
+
+  dedupedAllergyTargets.forEach((target) => {
+    const group = target.group;
+    const name = target.name;
 
     const existing = db.memberAllergies.find(
       (row) =>
@@ -475,6 +615,8 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
     );
     if (existing) {
       updateMockRecord("memberAllergies", existing.id, {
+        severity: target.severity ?? existing.severity,
+        comments: target.comments ?? existing.comments,
         updated_at: now
       });
       return;
@@ -484,8 +626,8 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
       member_id: input.memberId,
       allergy_group: group,
       allergy_name: name,
-      severity: null,
-      comments: "Synced from Physician Order Form.",
+      severity: target.severity,
+      comments: target.comments ?? "Synced from Physician Order Form.",
       created_by_user_id: resolvedActor.id ?? "system",
       created_by_name: resolvedActor.fullName ?? "System",
       created_at: now,
@@ -497,8 +639,13 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
     .map((row) => ({
       name: row.name.trim(),
       dose: normalizeString(row.dose),
+      quantity: normalizeString(row.quantity),
+      form: normalizeString(row.form),
       route: normalizeString(row.route),
-      frequency: normalizeString(row.frequency)
+      routeLaterality: normalizeString(row.routeLaterality),
+      frequency: normalizeString(row.frequency),
+      givenAtCenter: row.givenAtCenter === true,
+      comments: normalizeString(row.comments)
     }))
     .filter((row) => row.name.length > 0)
     .forEach((medication) => {
@@ -511,8 +658,14 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
           medication_status: "active",
           inactivated_at: null,
           dose: medication.dose ?? existing.dose,
+          quantity: medication.quantity ?? existing.quantity,
+          form: medication.form ?? existing.form,
           route: medication.route ?? existing.route,
+          route_laterality: medication.routeLaterality ?? existing.route_laterality ?? null,
           frequency: medication.frequency ?? existing.frequency,
+          comments:
+            medication.comments ??
+            (medication.givenAtCenter ? "Given at center (from POF)." : existing.comments ?? null),
           updated_at: now
         });
         return;
@@ -525,12 +678,12 @@ export function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
         medication_status: "active",
         inactivated_at: null,
         dose: medication.dose,
-        quantity: null,
-        form: null,
+        quantity: medication.quantity,
+        form: medication.form,
         frequency: medication.frequency,
         route: medication.route,
-        route_laterality: null,
-        comments: "Synced from Physician Order Form.",
+        route_laterality: medication.routeLaterality,
+        comments: medication.comments ?? (medication.givenAtCenter ? "Given at center (from POF)." : "Synced from Physician Order Form."),
         created_by_user_id: resolvedActor.id ?? "system",
         created_by_name: resolvedActor.fullName ?? "System",
         created_at: now,

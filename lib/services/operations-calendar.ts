@@ -34,11 +34,18 @@ function parseDateOnlyToUtc(value: string) {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
+function formatUtcDateOnly(date: Date): string {
+  const year = String(date.getUTCFullYear());
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function addDays(dateOnly: string, days: number): string {
   const parsed = parseDateOnlyToUtc(dateOnly);
   if (!parsed) return dateOnly;
   parsed.setUTCDate(parsed.getUTCDate() + days);
-  return toEasternDate(parsed);
+  return formatUtcDateOnly(parsed);
 }
 
 export function normalizeOperationalDateOnly(value?: string | null): string {
@@ -56,7 +63,7 @@ export function getFirstDayOfNextMonth(dateInput?: string | null): string {
   const parsed = parseDateOnlyToUtc(baseDateOnly);
   if (!parsed) return baseDateOnly;
   parsed.setUTCMonth(parsed.getUTCMonth() + 1, 1);
-  return toEasternDate(parsed);
+  return formatUtcDateOnly(parsed);
 }
 
 export function getWeekdayForDate(dateOnlyInput: string): OperationsWeekdayKey {
@@ -81,11 +88,11 @@ export function coerceToOperationalWeekday(dateOnlyInput: string): string {
   const day = parsed.getUTCDay();
   if (day === 6) {
     parsed.setUTCDate(parsed.getUTCDate() + 2);
-    return toEasternDate(parsed);
+    return formatUtcDateOnly(parsed);
   }
   if (day === 0) {
     parsed.setUTCDate(parsed.getUTCDate() + 1);
-    return toEasternDate(parsed);
+    return formatUtcDateOnly(parsed);
   }
   return dateOnly;
 }
@@ -98,7 +105,7 @@ function getMondayForDate(dateOnlyInput: string): string {
   const day = parsed.getUTCDay();
   const offsetToMonday = day === 0 ? -6 : 1 - day;
   parsed.setUTCDate(parsed.getUTCDate() + offsetToMonday);
-  return toEasternDate(parsed);
+  return formatUtcDateOnly(parsed);
 }
 
 export function getWeekRangeFromDate(dateOnlyInput: string): OperationsWeekRange {

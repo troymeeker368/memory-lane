@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getMemberCommandCenterIndex } from "@/lib/services/member-command-center";
@@ -30,8 +32,15 @@ export default async function MemberCommandCenterIndexPage({
   return (
     <div className="space-y-4">
       <Card>
-        <CardTitle>Member Command Center</CardTitle>
-        <p className="mt-1 text-sm text-muted">Center Coordinator member master record hub for operations, enrollment, contacts, legal, diet/allergies, and files.</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <CardTitle>Member Command Center</CardTitle>
+            <p className="mt-1 text-sm text-muted">Center Coordinator member master record hub for operations, enrollment, contacts, legal, diet/allergies, and files.</p>
+          </div>
+          <Link href="/operations/member-command-center/attendance-billing" className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-brand">
+            Attendance/Billing Settings
+          </Link>
+        </div>
       </Card>
 
       <Card className="table-wrap">
@@ -43,7 +52,7 @@ export default async function MemberCommandCenterIndexPage({
             <option value="inactive">Inactive</option>
           </select>
           <button type="submit" className="h-10 rounded-lg bg-brand px-3 text-sm font-semibold text-white">Apply</button>
-          <a href="/operations/member-command-center" className="h-10 rounded-lg border border-border px-3 text-center text-sm font-semibold leading-10">Clear</a>
+          <Link href="/operations/member-command-center" className="h-10 rounded-lg border border-border px-3 text-center text-sm font-semibold leading-10">Clear</Link>
         </form>
 
         <p className="mt-2 text-xs text-muted">Total: {rows.length}</p>
@@ -81,25 +90,25 @@ export default async function MemberCommandCenterIndexPage({
                     <td>
                       <div className="flex items-center gap-2">
                         {row.profile.profile_image_url ? (
-                          <a href={`/operations/member-command-center/${row.member.id}`} aria-label={`Open ${row.member.display_name} command center`}>
+                          <Link href={`/operations/member-command-center/${row.member.id}`} aria-label={`Open ${row.member.display_name} command center`}>
                             <img
                               src={row.profile.profile_image_url}
                               alt={`${row.member.display_name} profile`}
                               className="h-10 w-10 rounded-full border border-border object-cover"
                             />
-                          </a>
+                          </Link>
                         ) : (
-                          <a
+                          <Link
                             href={`/operations/member-command-center/${row.member.id}`}
                             aria-label={`Open ${row.member.display_name} command center`}
                             className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-slate-100 text-[11px] font-semibold text-primary-text"
                           >
                             {initials(row.member.display_name)}
-                          </a>
+                          </Link>
                         )}
-                        <a href={`/operations/member-command-center/${row.member.id}`} className="font-semibold text-brand">
+                        <Link href={`/operations/member-command-center/${row.member.id}`} className="font-semibold text-brand">
                           {row.member.display_name}
-                        </a>
+                        </Link>
                       </div>
                     </td>
                     <td>{row.member.locker_number ?? "-"}</td>

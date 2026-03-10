@@ -8,6 +8,27 @@ import { PARTICIPATION_LEVEL_OPTIONS, PARTICIPATION_MISSING_REASONS } from "@/li
 import { toEasternDate } from "@/lib/timezone";
 import type { SelectMember } from "@/types/data";
 
+type ParticipationMissingReason = "" | (typeof PARTICIPATION_MISSING_REASONS)[number];
+type ActivityFieldKey = "activity1" | "activity2" | "activity3" | "activity4" | "activity5";
+type ReasonFieldKey = "reasonMissing1" | "reasonMissing2" | "reasonMissing3" | "reasonMissing4" | "reasonMissing5";
+type DailyActivityFormState = {
+  memberId: string;
+  activityDate: string;
+  activity1: number;
+  activity2: number;
+  activity3: number;
+  activity4: number;
+  activity5: number;
+  reasonMissing1: ParticipationMissingReason;
+  reasonMissing2: ParticipationMissingReason;
+  reasonMissing3: ParticipationMissingReason;
+  reasonMissing4: ParticipationMissingReason;
+  reasonMissing5: ParticipationMissingReason;
+  notes: string;
+};
+const ACTIVITY_FIELD_KEYS = ["activity1", "activity2", "activity3", "activity4", "activity5"] as const;
+const REASON_FIELD_KEYS = ["reasonMissing1", "reasonMissing2", "reasonMissing3", "reasonMissing4", "reasonMissing5"] as const;
+
 function useTodayDate() {
   return useMemo(() => toEasternDate(), []);
 }
@@ -16,7 +37,7 @@ export function DailyActivityForm({ members }: { members: SelectMember[] }) {
   const today = useTodayDate();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<DailyActivityFormState>({
     memberId: members[0]?.id ?? "",
     activityDate: today,
     activity1: 100,
@@ -32,7 +53,7 @@ export function DailyActivityForm({ members }: { members: SelectMember[] }) {
     notes: ""
   });
 
-  function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
+  function update<K extends keyof DailyActivityFormState>(key: K, value: DailyActivityFormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
@@ -70,9 +91,9 @@ export function DailyActivityForm({ members }: { members: SelectMember[] }) {
       </div>
 
       <div className="grid gap-3 md:grid-cols-5">
-        {[1, 2, 3, 4, 5].map((i) => {
-          const levelKey = `activity${i}` as const;
-          const reasonKey = `reasonMissing${i}` as const;
+        {[1, 2, 3, 4, 5].map((i, index) => {
+          const levelKey: ActivityFieldKey = ACTIVITY_FIELD_KEYS[index];
+          const reasonKey: ReasonFieldKey = REASON_FIELD_KEYS[index];
           const needsReason = form[levelKey] === 0;
 
           return (
@@ -82,7 +103,7 @@ export function DailyActivityForm({ members }: { members: SelectMember[] }) {
                 <select
                   className="h-11 w-full rounded-lg border border-border bg-white px-3"
                   value={String(form[levelKey])}
-                  onChange={(e) => update(levelKey, Number(e.target.value) as never)}
+                  onChange={(e) => update(levelKey, Number(e.target.value))}
                 >
                   {PARTICIPATION_LEVEL_OPTIONS.map((level) => (
                     <option key={level} value={level}>{level}%</option>
@@ -93,7 +114,11 @@ export function DailyActivityForm({ members }: { members: SelectMember[] }) {
               {needsReason ? (
                 <label className="space-y-1 text-sm">
                   <span className="font-semibold">Reason (required)</span>
-                  <select className="h-11 w-full rounded-lg border border-border bg-white px-3" value={form[reasonKey]} onChange={(e) => update(reasonKey, e.target.value as never)}>
+                  <select
+                    className="h-11 w-full rounded-lg border border-border bg-white px-3"
+                    value={form[reasonKey]}
+                    onChange={(e) => update(reasonKey, e.target.value as ParticipationMissingReason)}
+                  >
                     <option value="">Select reason</option>
                     {PARTICIPATION_MISSING_REASONS.map((r) => (
                       <option key={r} value={r}>{r}</option>

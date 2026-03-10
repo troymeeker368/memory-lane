@@ -1,8 +1,10 @@
 "use client";
 
-import { FormEvent, useEffect, useState, useTransition } from "react";
+import { FormEvent, useEffect, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import { saveMemberCommandCenterLegalAction } from "@/app/(portal)/operations/member-command-center/actions";
+import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 
 function boolToSelectValue(value: boolean | null | undefined) {
   if (value == null) return "";
@@ -30,9 +32,10 @@ export function MccLegalForm({
   powerOfAttorney: string;
   legalComments: string;
 }) {
-  const [codeStatusValue, setCodeStatusValue] = useState(codeStatus);
-  const [dnrValue, setDnrValue] = useState(boolToSelectValue(dnr));
-  const [status, setStatus] = useState("");
+  const router = useRouter();
+  const [codeStatusValue, setCodeStatusValue] = usePropSyncedState(codeStatus, [memberId, codeStatus, dnr]);
+  const [dnrValue, setDnrValue] = usePropSyncedState(boolToSelectValue(dnr), [memberId, codeStatus, dnr]);
+  const [status, setStatus] = usePropSyncedStatus([memberId, codeStatus, dnr]);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -68,6 +71,7 @@ export function MccLegalForm({
         return;
       }
       setStatus("Legal information saved.");
+      router.refresh();
     });
   };
 

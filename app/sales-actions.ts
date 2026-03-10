@@ -17,6 +17,11 @@ import {
   canonicalLeadStatus
 } from "@/lib/canonical";
 import { addAuditLogEvent, addLeadStageHistoryEntry, addMockRecord, getMockDb, updateMockRecord, upsertMemberFromLead } from "@/lib/mock-repo";
+import { normalizeRoleKey } from "@/lib/permissions";
+import { findLikelyLeadDuplicates } from "@/lib/services/lead-duplicates";
+import { ensureMemberCommandCenterProfile, prefillMemberCommandCenterFromAssessment } from "@/lib/services/member-command-center";
+import { ensureMemberHealthProfile, prefillMemberHealthProfileFromAssessment } from "@/lib/services/member-health-profiles";
+import { syncCommandCenterToMhp, syncMhpToCommandCenter } from "@/lib/services/member-profile-sync";
 import { isMockMode } from "@/lib/runtime";
 import { toEasternDate, toEasternDateTimeLocal, toEasternISO } from "@/lib/timezone";
 
@@ -41,7 +46,8 @@ function revalidateSalesLeadViews(leadId?: string) {
     "/sales/pipeline/closed-won",
     "/sales/pipeline/closed-lost",
     "/sales/pipeline-table",
-    "/sales/pipeline-by-stage"
+    "/sales/pipeline-by-stage",
+    "/sales/summary"
   ];
 
   basePaths.forEach((path) => revalidatePath(path));
@@ -55,6 +61,18 @@ function revalidateSalesLeadViews(leadId?: string) {
 
 function normalizePhone(phone: string | undefined) {
   return (phone ?? "").trim();
+}
+
+function normalizePhoneDigits(phone: string | null | undefined) {
+  const digits = String(phone ?? "").replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return digits.slice(1);
+  }
+  return digits;
+}
+
+function normalizeText(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase();
 }
 
 function makeShortId(prefix: string) {
@@ -97,6 +115,9 @@ function touchPartnerAndSource(
 }
 
 function syncLeadEnrollmentToMembers(lead: ReturnType<typeof getMockDb>["leads"][number]) {
+  const shouldConvert = canonicalLeadStatus(lead.status, lead.stage) === "Won";
+  if (!shouldConvert) return;
+
   const member = upsertMemberFromLead(lead.member_name, {
     stage: lead.stage,
     status: lead.status,
@@ -110,6 +131,180 @@ function syncLeadEnrollmentToMembers(lead: ReturnType<typeof getMockDb>["leads"]
   }
 }
 
+interface SalesLeadPatch {
+  stage: string;
+  status: (typeof LEAD_STATUS_OPTIONS)[number];
+  stage_updated_at: string;
+  inquiry_date: string;
+  tour_date: string | null;
+  tour_completed: boolean;
+  discovery_date: string | null;
+  member_start_date: string | null;
+  caregiver_name: string;
+  caregiver_relationship: string | null;
+  caregiver_email: string | null;
+  caregiver_phone: string;
+  member_name: string;
+  member_dob: string | null;
+  lead_source: string;
+  lead_source_other: string | null;
+  partner_id: string | null;
+  referral_source_id: string | null;
+  referral_name: string | null;
+  likelihood: string | null;
+  next_follow_up_date: string | null;
+  next_follow_up_type: string | null;
+  notes_summary: string | null;
+  lost_reason: string | null;
+  closed_date: string | null;
+}
+
+function chooseIfEmpty(current: string | null | undefined, next: string | null | undefined) {
+  const normalizedCurrent = (current ?? "").trim();
+  if (normalizedCurrent.length > 0) return current ?? null;
+  const normalizedNext = (next ?? "").trim();
+  return normalizedNext.length > 0 ? next ?? null : null;
+}
+
+function earliestDate(current: string | null | undefined, incoming: string | null | undefined) {
+  if (!current) return incoming ?? null;
+  if (!incoming) return current ?? null;
+  return current <= incoming ? current : incoming;
+}
+
+function mergeLeadPatch(
+  target: ReturnType<typeof getMockDb>["leads"][number],
+  incoming: SalesLeadPatch,
+  sourceLeadDisplayId: string | null
+) {
+  const mergeNote = sourceLeadDisplayId
+    ? `Merged duplicate lead ${sourceLeadDisplayId} on ${toEasternDate()}.`
+    : `Merged duplicate inquiry on ${toEasternDate()}.`;
+
+  return {
+    stage: target.stage,
+    status: target.status,
+    stage_updated_at: toEasternISO(),
+    inquiry_date: earliestDate(target.inquiry_date, incoming.inquiry_date) ?? target.inquiry_date,
+    tour_date: earliestDate(target.tour_date, incoming.tour_date),
+    tour_completed: target.tour_completed || incoming.tour_completed,
+    discovery_date: earliestDate(target.discovery_date, incoming.discovery_date),
+    member_start_date: earliestDate(target.member_start_date, incoming.member_start_date),
+    caregiver_name: chooseIfEmpty(target.caregiver_name, incoming.caregiver_name) ?? target.caregiver_name,
+    caregiver_relationship: chooseIfEmpty(target.caregiver_relationship, incoming.caregiver_relationship),
+    caregiver_email: chooseIfEmpty(target.caregiver_email, incoming.caregiver_email),
+    caregiver_phone: chooseIfEmpty(target.caregiver_phone, incoming.caregiver_phone) ?? target.caregiver_phone,
+    member_name: chooseIfEmpty(target.member_name, incoming.member_name) ?? target.member_name,
+    member_dob: chooseIfEmpty(target.member_dob, incoming.member_dob),
+    lead_source: chooseIfEmpty(target.lead_source, incoming.lead_source) ?? target.lead_source,
+    lead_source_other: chooseIfEmpty(target.lead_source_other, incoming.lead_source_other),
+    partner_id: chooseIfEmpty(target.partner_id, incoming.partner_id),
+    referral_source_id: chooseIfEmpty(target.referral_source_id, incoming.referral_source_id),
+    referral_name: chooseIfEmpty(target.referral_name, incoming.referral_name),
+    likelihood: chooseIfEmpty(target.likelihood, incoming.likelihood),
+    next_follow_up_date: chooseIfEmpty(target.next_follow_up_date, incoming.next_follow_up_date),
+    next_follow_up_type: chooseIfEmpty(target.next_follow_up_type, incoming.next_follow_up_type),
+    notes_summary: appendUniqueNote(target.notes_summary, mergeNote),
+    lost_reason: target.lost_reason,
+    closed_date: target.closed_date
+  } satisfies SalesLeadPatch;
+}
+
+function copyLeadHistoryToTarget(input: {
+  db: ReturnType<typeof getMockDb>;
+  sourceLead: ReturnType<typeof getMockDb>["leads"][number];
+  targetLead: ReturnType<typeof getMockDb>["leads"][number];
+}) {
+  const sourceActivities = input.db.leadActivities.filter((row) => row.lead_id === input.sourceLead.id);
+  sourceActivities.forEach((activity) => {
+    addMockRecord("leadActivities", {
+      activity_id: `${activity.activity_id}-MERGED`,
+      lead_id: input.targetLead.id,
+      member_name: input.targetLead.member_name,
+      activity_at: activity.activity_at,
+      activity_type: activity.activity_type,
+      outcome: activity.outcome,
+      lost_reason: activity.lost_reason,
+      notes: appendUniqueNote(
+        activity.notes,
+        `Merged from ${input.sourceLead.lead_id} on ${toEasternDate()}.`
+      ),
+      next_follow_up_date: activity.next_follow_up_date,
+      next_follow_up_type: activity.next_follow_up_type,
+      completed_by_user_id: activity.completed_by_user_id,
+      completed_by_name: activity.completed_by_name,
+      partner_id: activity.partner_id ?? null,
+      referral_source_id: activity.referral_source_id ?? null
+    });
+  });
+
+  const sourceStageHistory = input.db.leadStageHistory.filter((row) => row.lead_id === input.sourceLead.id);
+  sourceStageHistory.forEach((history) => {
+    addLeadStageHistoryEntry({
+      leadId: input.targetLead.id,
+      fromStage: history.from_stage,
+      toStage: history.to_stage,
+      fromStatus: history.from_status,
+      toStatus: history.to_status,
+      changedByUserId: history.changed_by_user_id,
+      changedByName: history.changed_by_name,
+      reason: appendUniqueNote(history.reason, `Merged history copied from ${input.sourceLead.lead_id}.`),
+      source: "merge-copy",
+      changedAt: history.changed_at
+    });
+  });
+}
+
+function closeMergedSourceLead(input: {
+  sourceLead: ReturnType<typeof getMockDb>["leads"][number];
+  targetLead: ReturnType<typeof getMockDb>["leads"][number];
+  actor: { id: string; fullName: string; role: Parameters<typeof addAuditLogEvent>[0]["actorRole"] };
+}) {
+  const beforeStage = input.sourceLead.stage;
+  const beforeStatus = input.sourceLead.status;
+  const now = toEasternISO();
+  const mergedNote = appendUniqueNote(
+    input.sourceLead.notes_summary,
+    `Merged into ${input.targetLead.lead_id} on ${toEasternDate()}.`
+  );
+
+  updateMockRecord("leads", input.sourceLead.id, {
+    stage: "Closed - Lost",
+    status: "Lost",
+    stage_updated_at: now,
+    lost_reason: `Merged into ${input.targetLead.lead_id}`,
+    closed_date: toEasternDate(),
+    next_follow_up_date: null,
+    next_follow_up_type: null,
+    notes_summary: mergedNote
+  });
+
+  addLeadStageHistoryEntry({
+    leadId: input.sourceLead.id,
+    fromStage: beforeStage,
+    toStage: "Closed - Lost",
+    fromStatus: beforeStatus,
+    toStatus: "Lost",
+    changedByUserId: input.actor.id,
+    changedByName: input.actor.fullName,
+    reason: `Merged into ${input.targetLead.lead_id}`,
+    source: "merge-lead"
+  });
+
+  addAuditLogEvent({
+    actorUserId: input.actor.id,
+    actorName: input.actor.fullName,
+    actorRole: input.actor.role,
+    action: "update_lead",
+    entityType: "lead",
+    entityId: input.sourceLead.id,
+    details: {
+      operation: "merge-source-closed",
+      mergedIntoLeadId: input.targetLead.id
+    }
+  });
+}
+
 const salesLeadSchema = z
   .object({
     leadId: optionalString,
@@ -121,6 +316,7 @@ const salesLeadSchema = z
     caregiverEmail: optionalString,
     caregiverPhone: z.string().min(7),
     memberName: z.string().min(1),
+    memberDob: optionalString,
     leadSource: z.enum(LEAD_SOURCE_OPTIONS),
     leadSourceOther: optionalString,
     partnerId: optionalString,
@@ -136,7 +332,9 @@ const salesLeadSchema = z
     notesSummary: optionalString,
     lostReason: optionalString,
     lostReasonOther: optionalString,
-    closedDate: optionalString
+    closedDate: optionalString,
+    duplicateDecision: z.enum(["keep-separate", "merge"]).optional().or(z.literal("")),
+    mergeTargetLeadId: optionalString
   })
   .superRefine((val, ctx) => {
     const stage = canonicalLeadStage(val.stage);
@@ -219,6 +417,22 @@ const salesLeadSchema = z
         });
       }
     }
+
+    if (val.memberDob?.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(val.memberDob.trim())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["memberDob"],
+        message: "Date of birth must be in YYYY-MM-DD format."
+      });
+    }
+
+    if (val.duplicateDecision === "merge" && !val.mergeTargetLeadId?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["mergeTargetLeadId"],
+        message: "Select a lead to merge into."
+      });
+    }
   });
 
 export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) {
@@ -257,7 +471,7 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
   const resolvedReferralSourceId = selectedReferralSource?.referral_source_id ?? null;
   const resolvedReferralName = payload.data.referralName?.trim() || selectedReferralSource?.contact_name || null;
 
-  const commonPatch = {
+  const commonPatch: SalesLeadPatch = {
     stage,
     status,
     stage_updated_at: toEasternISO(),
@@ -271,6 +485,7 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
     caregiver_email: payload.data.caregiverEmail?.trim() || null,
     caregiver_phone: normalizePhone(payload.data.caregiverPhone),
     member_name: payload.data.memberName.trim(),
+    member_dob: payload.data.memberDob?.trim() || null,
     lead_source: payload.data.leadSource,
     lead_source_other: payload.data.leadSource === "Other" ? payload.data.leadSourceOther?.trim() || null : null,
     partner_id: resolvedPartnerId,
@@ -283,6 +498,117 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
     lost_reason: resolvedLostReason,
     closed_date: isLostStatus ? payload.data.closedDate?.trim() || toEasternDate() : status === "Won" ? toEasternDate() : null
   };
+
+  const duplicateMatches = findLikelyLeadDuplicates(db, {
+    leadId: payload.data.leadId?.trim() || null,
+    memberName: commonPatch.member_name,
+    caregiverName: commonPatch.caregiver_name,
+    caregiverPhone: commonPatch.caregiver_phone,
+    caregiverEmail: commonPatch.caregiver_email,
+    memberDob: commonPatch.member_dob
+  });
+  const duplicateDecision = payload.data.duplicateDecision?.trim() || "";
+  const canKeepSeparate = canKeepDuplicateAsSeparate(profile.role);
+
+  if (duplicateMatches.length > 0) {
+    if (duplicateDecision !== "keep-separate" && duplicateDecision !== "merge") {
+      return {
+        error: "Potential duplicate leads found. Review matches before saving.",
+        duplicateRequiresDecision: true,
+        duplicateMatches,
+        canKeepSeparate
+      };
+    }
+
+    if (duplicateDecision === "keep-separate" && !canKeepSeparate) {
+      return {
+        error: "Only Admin, Manager, or Director can keep possible duplicates as separate leads.",
+        duplicateRequiresDecision: true,
+        duplicateMatches,
+        canKeepSeparate
+      };
+    }
+
+    if (duplicateDecision === "merge") {
+      const mergeTargetLeadId = payload.data.mergeTargetLeadId?.trim() || duplicateMatches[0]?.leadId || "";
+      const targetLead = db.leads.find((row) => row.id === mergeTargetLeadId) ?? null;
+      if (!targetLead) {
+        return {
+          error: "Select a valid lead to merge into.",
+          duplicateRequiresDecision: true,
+          duplicateMatches,
+          canKeepSeparate
+        };
+      }
+
+      if (payload.data.leadId?.trim() && payload.data.leadId.trim() === targetLead.id) {
+        return {
+          error: "Cannot merge a lead into itself.",
+          duplicateRequiresDecision: true,
+          duplicateMatches,
+          canKeepSeparate
+        };
+      }
+
+      const sourceLead = payload.data.leadId?.trim()
+        ? db.leads.find((row) => row.id === payload.data.leadId?.trim()) ?? null
+        : null;
+
+      const mergedPatch = mergeLeadPatch(targetLead, commonPatch, sourceLead?.lead_id ?? null);
+      const mergedTarget = updateMockRecord("leads", targetLead.id, mergedPatch);
+      if (!mergedTarget) {
+        return { error: "Unable to merge into selected lead." };
+      }
+
+      if (payload.data.leadSource === "Referral") {
+        touchPartnerAndSource(db, selectedPartner, selectedReferralSource);
+      }
+
+      if (sourceLead && sourceLead.id !== mergedTarget.id) {
+        copyLeadHistoryToTarget({
+          db,
+          sourceLead,
+          targetLead: mergedTarget
+        });
+        closeMergedSourceLead({
+          sourceLead,
+          targetLead: mergedTarget,
+          actor: {
+            id: profile.id,
+            fullName: profile.full_name,
+            role: profile.role
+          }
+        });
+      }
+
+      addAuditLogEvent({
+        actorUserId: profile.id,
+        actorName: profile.full_name,
+        actorRole: profile.role,
+        action: "update_lead",
+        entityType: "lead",
+        entityId: mergedTarget.id,
+        details: {
+          operation: "merge-duplicate",
+          mergedSourceLeadId: sourceLead?.id ?? null,
+          mergedSourceLeadDisplayId: sourceLead?.lead_id ?? null
+        }
+      });
+
+      revalidateSalesLeadViews(mergedTarget.id);
+      if (sourceLead) {
+        revalidateSalesLeadViews(sourceLead.id);
+      }
+      revalidatePath("/sales/new-entries/new-inquiry");
+      return {
+        ok: true,
+        id: mergedTarget.id,
+        merged: true,
+        mergedIntoLeadId: mergedTarget.id,
+        mergedSourceLeadId: sourceLead?.id ?? null
+      };
+    }
+  }
 
   if (payload.data.leadId) {
     const existingLead = db.leads.find((row) => row.id === payload.data.leadId) ?? null;
@@ -369,6 +695,216 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
   revalidateSalesLeadViews(created.id);
   revalidatePath("/sales/new-entries/new-inquiry");
   return { ok: true, id: created.id };
+}
+
+function appendUniqueNote(existing: string | null | undefined, entry: string) {
+  const normalizedExisting = (existing ?? "").trim();
+  if (!normalizedExisting) return entry;
+  if (normalizedExisting.toLowerCase().includes(entry.toLowerCase())) return normalizedExisting;
+  return `${normalizedExisting}\n\n${entry}`;
+}
+
+function canKeepDuplicateAsSeparate(role: string) {
+  const normalized = normalizeRoleKey(role);
+  return normalized === "admin" || normalized === "manager" || normalized === "director";
+}
+
+const enrollLeadSchema = z.object({
+  leadId: z.string().min(1)
+});
+
+function ensureLeadCaregiverContact(input: {
+  db: ReturnType<typeof getMockDb>;
+  memberId: string;
+  lead: ReturnType<typeof getMockDb>["leads"][number];
+  actor: { id: string; fullName: string };
+  now: string;
+}) {
+  const targetPhone = normalizePhoneDigits(input.lead.caregiver_phone);
+  const existing = input.db.memberContacts.find((contact) => {
+    if (contact.member_id !== input.memberId) return false;
+    const sameName = normalizeText(contact.contact_name) === normalizeText(input.lead.caregiver_name);
+    const contactPhone = normalizePhoneDigits(
+      contact.cellular_number ?? contact.work_number ?? contact.home_number
+    );
+    return sameName && targetPhone.length > 0 && contactPhone === targetPhone;
+  });
+
+  if (existing) return existing;
+
+  return addMockRecord("memberContacts", {
+    member_id: input.memberId,
+    contact_name: input.lead.caregiver_name,
+    relationship_to_member: input.lead.caregiver_relationship ?? "Responsible Party",
+    category: "Responsible Party",
+    category_other: null,
+    email: input.lead.caregiver_email ?? null,
+    cellular_number: input.lead.caregiver_phone ?? null,
+    work_number: null,
+    home_number: null,
+    street_address: null,
+    city: null,
+    state: null,
+    zip: null,
+    created_by_user_id: input.actor.id,
+    created_by_name: input.actor.fullName,
+    created_at: input.now,
+    updated_at: input.now
+  });
+}
+
+export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadSchema>) {
+  await requireSalesRoles();
+  const payload = enrollLeadSchema.safeParse(raw);
+  if (!payload.success) {
+    return { error: "Invalid lead conversion request." };
+  }
+
+  if (!isMockMode()) {
+    // TODO(backend): Convert lead to member in one transaction once backend is connected.
+    return { error: "Lead enrollment backend integration pending." };
+  }
+
+  const db = getMockDb();
+  const profile = await getCurrentProfile();
+  const lead = db.leads.find((row) => row.id === payload.data.leadId) ?? null;
+  if (!lead) {
+    return { error: "Lead not found." };
+  }
+
+  const canonicalStage = canonicalLeadStage(lead.stage);
+  if (canonicalStage !== "Enrollment in Progress") {
+    return { error: "Enroll Member is only available for leads in Enrollment in Progress." };
+  }
+
+  const now = toEasternISO();
+  const enrollmentDate = lead.member_start_date?.trim() || toEasternDate();
+  const member =
+    upsertMemberFromLead(lead.member_name, {
+      leadId: lead.id,
+      stage: "Enrollment in Progress",
+      status: "Won",
+      enrollmentDate
+    }) ?? null;
+
+  if (!member) {
+    return { error: "Unable to create or locate member record for this lead." };
+  }
+
+  updateMockRecord("members", member.id, {
+    status: "active",
+    enrollment_date: member.enrollment_date ?? enrollmentDate,
+    dob: member.dob ?? lead.member_dob ?? null
+  });
+
+  const commandCenter = ensureMemberCommandCenterProfile(member.id);
+  updateMockRecord("memberCommandCenters", commandCenter.id, {
+    original_referral_source: commandCenter.original_referral_source ?? lead.lead_source,
+    updated_by_user_id: profile.id,
+    updated_by_name: profile.full_name,
+    updated_at: now
+  });
+
+  const healthProfile = ensureMemberHealthProfile(member.id);
+  updateMockRecord("memberHealthProfiles", healthProfile.id, {
+    original_referral_source: healthProfile.original_referral_source ?? lead.lead_source,
+    updated_by_user_id: profile.id,
+    updated_by_name: profile.full_name,
+    updated_at: now
+  });
+
+  const latestAssessment = [...db.assessments]
+    .filter((assessment) => assessment.lead_id === lead.id)
+    .sort((left, right) => (left.created_at < right.created_at ? 1 : -1))[0];
+  if (latestAssessment) {
+    prefillMemberHealthProfileFromAssessment({
+      memberId: member.id,
+      assessment: latestAssessment,
+      actor: { id: profile.id, fullName: profile.full_name }
+    });
+    prefillMemberCommandCenterFromAssessment({
+      memberId: member.id,
+      assessment: latestAssessment,
+      actor: { id: profile.id, fullName: profile.full_name }
+    });
+  }
+
+  ensureLeadCaregiverContact({
+    db,
+    memberId: member.id,
+    lead,
+    actor: { id: profile.id, fullName: profile.full_name },
+    now
+  });
+
+  syncMhpToCommandCenter(member.id, { id: profile.id, fullName: profile.full_name }, now);
+  syncCommandCenterToMhp(
+    member.id,
+    { id: profile.id, fullName: profile.full_name },
+    now,
+    { syncAllergies: true }
+  );
+
+  const beforeStage = lead.stage;
+  const beforeStatus = lead.status;
+  const convertedLead = updateMockRecord("leads", lead.id, {
+    stage: "Closed - Won",
+    status: "Won",
+    stage_updated_at: now,
+    member_start_date: enrollmentDate,
+    closed_date: toEasternDate(),
+    lost_reason: null,
+    notes_summary: appendUniqueNote(
+      lead.notes_summary,
+      `Converted to active member ${member.display_name} on ${toEasternDate()}.`
+    )
+  });
+
+  if (!convertedLead) {
+    return { error: "Lead conversion failed while updating lead status." };
+  }
+
+  if (beforeStage !== convertedLead.stage || beforeStatus !== convertedLead.status) {
+    addLeadStageHistoryEntry({
+      leadId: convertedLead.id,
+      fromStage: beforeStage,
+      toStage: convertedLead.stage,
+      fromStatus: beforeStatus,
+      toStatus: convertedLead.status,
+      changedByUserId: profile.id,
+      changedByName: profile.full_name,
+      reason: "Converted to active member",
+      source: "enrollMemberFromLeadAction"
+    });
+  }
+
+  addAuditLogEvent({
+    actorUserId: profile.id,
+    actorName: profile.full_name,
+    actorRole: profile.role,
+    action: "manager_review",
+    entityType: "lead",
+    entityId: convertedLead.id,
+    details: {
+      operation: "enroll-member",
+      convertedMemberId: member.id,
+      convertedMemberName: member.display_name
+    }
+  });
+
+  revalidateSalesLeadViews(lead.id);
+  revalidatePath("/members");
+  revalidatePath(`/members/${member.id}`);
+  revalidatePath("/operations/member-command-center");
+  revalidatePath(`/operations/member-command-center/${member.id}`);
+  revalidatePath("/health/member-health-profiles");
+  revalidatePath(`/health/member-health-profiles/${member.id}`);
+
+  return {
+    ok: true,
+    leadId: convertedLead.id,
+    memberId: member.id
+  };
 }
 
 const leadActivitySchema = z

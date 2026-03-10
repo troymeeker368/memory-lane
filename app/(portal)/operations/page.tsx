@@ -8,7 +8,7 @@ const SECTIONS = [
   { href: "/operations/member-command-center", label: "Member Command Center", description: "Coordinator-focused member master record and linked operations." },
   { href: "/operations/additional-charges", label: "Additional Charges", description: "Quick bridge into ancillary/additional charges oversight." },
   { href: "/operations/holds", label: "Holds", description: "Date-aware hold management that feeds attendance, census, and transportation manifests." },
-  { href: "/operations/payor", label: "Payor", description: "Reserved for future payor administration workflows." },
+  { href: "/operations/payor", label: "Billing", description: "Hybrid billing module for agreements, schedule-based prebilling, arrears, batch review, and exports." },
   { href: "/operations/locker-assignments", label: "Locker Assignments", description: "Manage controlled locker resources and member assignments with conflict checks." },
   { href: "/operations/transportation-station", label: "Transportation Station", description: "Generate daily AM/PM manifests grouped by bus with one-day add/exclude overrides." }
 ] as const;

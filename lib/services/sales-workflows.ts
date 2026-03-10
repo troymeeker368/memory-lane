@@ -68,21 +68,40 @@ export async function getSalesWorkflows() {
   if (isMockMode()) {
     ensureSalesStageCoverage(db);
 
-    const leads = db.leads.map((lead) => ({
-      ...lead,
-      stage: canonicalLeadStage(lead.stage),
-      status: canonicalLeadStatus(lead.status, lead.stage)
-    }));
+    const openLeads: typeof db.leads = [];
+    const wonLeads: typeof db.leads = [];
+    const lostLeads: typeof db.leads = [];
+    const inquiryLeads: typeof db.leads = [];
+    const tourLeads: typeof db.leads = [];
+    const eipLeads: typeof db.leads = [];
+    const nurtureLeads: typeof db.leads = [];
+    const referralOnlyLeads: typeof db.leads = [];
 
-    const openLeads = leads.filter((lead) => isOpenLeadStatus(lead.status));
-    const wonLeads = leads.filter((lead) => canonicalLeadStatus(lead.status, lead.stage) === "Won");
-    const lostLeads = leads.filter((lead) => canonicalLeadStatus(lead.status, lead.stage) === "Lost");
+    db.leads.forEach((lead) => {
+      const stage = canonicalLeadStage(lead.stage);
+      const status = canonicalLeadStatus(lead.status, stage);
+      const normalizedLead = {
+        ...lead,
+        stage,
+        status
+      };
 
-    const inquiryLeads = openLeads.filter((lead) => hasStage(lead.stage, CANONICAL_STAGE_GROUPS.inquiry));
-    const tourLeads = openLeads.filter((lead) => hasStage(lead.stage, CANONICAL_STAGE_GROUPS.tour));
-    const eipLeads = openLeads.filter((lead) => hasStage(lead.stage, CANONICAL_STAGE_GROUPS.eip));
-    const nurtureLeads = openLeads.filter((lead) => hasStage(lead.stage, CANONICAL_STAGE_GROUPS.nurture));
-    const referralOnlyLeads = openLeads.filter((lead) => normalize(lead.lead_source).includes("referral"));
+      if (isOpenLeadStatus(status)) {
+        openLeads.push(normalizedLead);
+        if (hasStage(stage, CANONICAL_STAGE_GROUPS.inquiry)) inquiryLeads.push(normalizedLead);
+        if (hasStage(stage, CANONICAL_STAGE_GROUPS.tour)) tourLeads.push(normalizedLead);
+        if (hasStage(stage, CANONICAL_STAGE_GROUPS.eip)) eipLeads.push(normalizedLead);
+        if (hasStage(stage, CANONICAL_STAGE_GROUPS.nurture)) nurtureLeads.push(normalizedLead);
+        if (normalize(lead.lead_source).includes("referral")) referralOnlyLeads.push(normalizedLead);
+        return;
+      }
+
+      if (status === "Won") {
+        wonLeads.push(normalizedLead);
+      } else if (status === "Lost") {
+        lostLeads.push(normalizedLead);
+      }
+    });
 
     const stageCounts = [
       { stage: "Inquiry", count: inquiryLeads.length },

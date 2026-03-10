@@ -105,6 +105,8 @@ export default async function PhysicianOrdersIndexPage({
               <th>Level of Care</th>
               <th>Provider</th>
               <th>Completed</th>
+              <th>Next Renewal Due</th>
+              <th>Renewal Status</th>
               <th>Signed</th>
               <th>Updated</th>
               <th>Open</th>
@@ -114,7 +116,7 @@ export default async function PhysicianOrdersIndexPage({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                  <td colSpan={9} className="text-sm text-muted">
+                  <td colSpan={11} className="text-sm text-muted">
                     No physician orders found for current filters.
                   </td>
                 </tr>
@@ -126,6 +128,8 @@ export default async function PhysicianOrdersIndexPage({
                   <td>{row.levelOfCare ?? "-"}</td>
                   <td>{row.providerName ?? "-"}</td>
                   <td>{row.completedDate ? formatDate(row.completedDate) : "-"}</td>
+                  <td>{row.nextRenewalDueDate ? formatDate(row.nextRenewalDueDate) : "-"}</td>
+                  <td>{row.renewalStatus}</td>
                   <td>{row.signedDate ? formatDate(row.signedDate) : "-"}</td>
                   <td>{formatDateTime(row.updatedAt)}</td>
                   <td>

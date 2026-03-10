@@ -16,6 +16,8 @@ import { MccPhotoUploader } from "@/components/forms/mcc-photo-uploader";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { getMockDb } from "@/lib/mock-repo";
+import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import {
   calculateMonthsEnrolled,
   getAvailableLockerNumbersForMember,
@@ -23,6 +25,7 @@ import {
 } from "@/lib/services/member-command-center";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders";
+import { toEasternDate } from "@/lib/timezone";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 const DIET_TYPE_OPTIONS = ["Regular", "Diabetic", "Low Sodium", "Pureed", "Renal", "Heart Healthy", "Other"] as const;
@@ -125,18 +128,37 @@ export default async function MemberCommandCenterDetailPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const profile = await requireModuleAccess("operations");
-  const canEdit = profile.role === "admin" || profile.role === "manager";
-  const canViewMhpFromMcc = profile.role === "admin" || profile.role === "nurse";
-  const canViewFaceSheet = profile.role === "admin" || profile.role === "manager" || profile.role === "nurse";
-  const canViewNameBadge = profile.role === "admin" || profile.role === "manager" || profile.role === "nurse";
-  const canViewPhysicianOrders = profile.role === "admin" || profile.role === "nurse";
-  const canCreatePhysicianOrders = profile.role === "admin" || profile.role === "nurse";
+  const role = normalizeRoleKey(profile.role);
+  const canEdit = role === "admin" || role === "manager";
+  const canEditAttendanceBilling =
+    role === "admin" ||
+    role === "manager" ||
+    role === "coordinator" ||
+    canPerformModuleAction(role, "operations", "canEdit", profile.permissions);
+  const canViewMhpFromMcc = role === "admin" || role === "nurse";
+  const canViewFaceSheet = role === "admin" || role === "manager" || role === "nurse";
+  const canViewNameBadge = role === "admin" || role === "manager" || role === "nurse";
+  const canViewPhysicianOrders = role === "admin" || role === "nurse";
+  const canCreatePhysicianOrders = role === "admin" || role === "nurse";
   const { memberId } = await params;
   const query = await searchParams;
   const tab = resolveTab(firstString(query.tab));
 
   const detail = getMemberCommandCenterDetail(memberId);
   if (!detail) notFound();
+  const db = getMockDb();
+  const billingDate = toEasternDate();
+  const activeMemberBillingSetting =
+    db.memberBillingSettings
+      .filter((row) => row.member_id === detail.member.id)
+      .filter((row) => row.active)
+      .filter((row) => row.effective_start_date <= billingDate)
+      .filter((row) => !row.effective_end_date || row.effective_end_date >= billingDate)
+      .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1))[0] ?? null;
+  const activePayorOptions = db.payors
+    .filter((row) => row.status === "active")
+    .sort((left, right) => left.payor_name.localeCompare(right.payor_name, undefined, { sensitivity: "base" }))
+    .map((row) => ({ id: row.id, name: row.payor_name }));
   const lockerOptions = getAvailableLockerNumbersForMember(memberId);
   const busNumberOptions = getConfiguredBusNumbers();
 
@@ -214,6 +236,7 @@ export default async function MemberCommandCenterDetailPage({
       <Card>
         <div className="mb-4 flex flex-col items-center gap-2">
           <MccPhotoUploader
+            key={`mcc-photo-${detail.member.id}-${profileUpdatedAt ?? "na"}`}
             memberId={detail.member.id}
             returnTo={`/operations/member-command-center/${detail.member.id}?tab=${tab}`}
             profileImageUrl={detail.profile.profile_image_url ?? null}
@@ -280,6 +303,7 @@ export default async function MemberCommandCenterDetailPage({
           </div>
         ) : null}
         <MccHeaderCards
+          key={`mcc-header-${detail.member.id}-${profileUpdatedAt ?? "na"}-${scheduleUpdatedAt ?? "na"}`}
           memberId={detail.member.id}
           lockerNumber={detail.member.locker_number ?? null}
           dob={formatOptionalDate(detail.member.dob)}
@@ -320,6 +344,7 @@ export default async function MemberCommandCenterDetailPage({
 
           {canEdit ? (
             <MccSummaryForm
+              key={`mcc-summary-${detail.member.id}-${profileUpdatedAt ?? "na"}`}
               memberId={detail.member.id}
               lockerNumber={detail.member.locker_number ?? ""}
               lockerOptions={lockerOptions}
@@ -341,12 +366,24 @@ export default async function MemberCommandCenterDetailPage({
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Transportation</p><p className="font-semibold">{transportationSummary}</p></div>
           </div>
 
-          {canEdit && detail.schedule ? (
+          {canEditAttendanceBilling && detail.schedule ? (
             <MccAttendanceForm
+              key={`mcc-attendance-${detail.member.id}-${scheduleUpdatedAt ?? "na"}`}
               memberId={detail.member.id}
               enrollmentDate={detail.schedule.enrollment_date ?? ""}
               makeUpDaysAvailable={detail.schedule.make_up_days_available}
               attendanceNotes={detail.schedule.attendance_notes}
+              dailyRate={detail.schedule.daily_rate}
+              transportationBillingStatus={detail.schedule.transportation_billing_status}
+              payorId={activeMemberBillingSetting?.payor_id ?? null}
+              payorOptions={activePayorOptions}
+              useCenterDefaultBillingMode={activeMemberBillingSetting?.use_center_default_billing_mode ?? true}
+              billingMode={activeMemberBillingSetting?.billing_mode ?? null}
+              monthlyBillingBasis={activeMemberBillingSetting?.monthly_billing_basis ?? "ScheduledMonthBehind"}
+              billExtraDays={activeMemberBillingSetting?.bill_extra_days ?? true}
+              billAncillaryArrears={activeMemberBillingSetting?.bill_ancillary_arrears ?? true}
+              billingRateEffectiveDate={detail.schedule.billing_rate_effective_date}
+              billingNotes={detail.schedule.billing_notes}
               monday={detail.schedule.monday}
               tuesday={detail.schedule.tuesday}
               wednesday={detail.schedule.wednesday}
@@ -450,6 +487,7 @@ export default async function MemberCommandCenterDetailPage({
 
           {canEdit && detail.schedule ? (
             <MccTransportationForm
+              key={`mcc-transport-${detail.member.id}-${scheduleUpdatedAt ?? "na"}`}
               memberId={detail.member.id}
               transportationRequired={detail.schedule.transportation_required}
               defaultDoorToDoorAddress={defaultDoorToDoorAddress}
@@ -511,6 +549,7 @@ export default async function MemberCommandCenterDetailPage({
             <SectionHeading title="Demographics" lastUpdatedAt={profileUpdatedAt} lastUpdatedBy={profileUpdatedBy} />
             {canEdit ? (
               <MccDemographicsForm
+                key={`mcc-demographics-${detail.member.id}-${profileUpdatedAt ?? "na"}`}
                 memberId={detail.member.id}
                 memberDisplayName={detail.member.display_name}
                 memberDob={detail.member.dob ?? ""}
@@ -547,7 +586,12 @@ export default async function MemberCommandCenterDetailPage({
           <Card id="contacts">
             <SectionHeading title="Contacts" lastUpdatedAt={contactsUpdatedAt} lastUpdatedBy={contactsUpdatedBy} />
             <div className="mt-3">
-              <MemberCommandCenterContactManager memberId={detail.member.id} rows={detail.contacts} canEdit={canEdit} />
+              <MemberCommandCenterContactManager
+                key={`mcc-contacts-${detail.member.id}-${contactsUpdatedAt ?? "na"}`}
+                memberId={detail.member.id}
+                rows={detail.contacts}
+                canEdit={canEdit}
+              />
             </div>
           </Card>
         </div>
@@ -558,6 +602,7 @@ export default async function MemberCommandCenterDetailPage({
           <SectionHeading title="Legal" lastUpdatedAt={profileUpdatedAt} lastUpdatedBy={profileUpdatedBy} />
           {canEdit ? (
             <MccLegalForm
+              key={`mcc-legal-${detail.member.id}-${profileUpdatedAt ?? "na"}`}
               memberId={detail.member.id}
               codeStatus={detail.profile.code_status ?? ""}
               dnr={detail.profile.dnr}
@@ -588,6 +633,7 @@ export default async function MemberCommandCenterDetailPage({
           <SectionHeading title="Diet / Allergies" lastUpdatedAt={profileUpdatedAt} lastUpdatedBy={profileUpdatedBy} />
           {canEdit ? (
             <MccDietForm
+              key={`mcc-diet-${detail.member.id}-${profileUpdatedAt ?? "na"}`}
               memberId={detail.member.id}
               dietCardHref={`/members/${detail.member.id}/diet-card?from=mcc`}
               dietTypeDefault={dietTypeDefault}
@@ -630,6 +676,7 @@ export default async function MemberCommandCenterDetailPage({
             <SectionHeading title="Allergies" lastUpdatedAt={allergiesUpdatedAt} lastUpdatedBy={allergiesUpdatedBy} />
           </div>
           <MccAllergiesSection
+            key={`mcc-allergies-${detail.member.id}-${allergiesUpdatedAt ?? "na"}`}
             memberId={detail.member.id}
             canEdit={canEdit}
             initialRows={detail.mhpAllergies.map((row) => ({
@@ -647,7 +694,12 @@ export default async function MemberCommandCenterDetailPage({
       <Card id="files-documents">
         <SectionHeading title="Files / Documents" lastUpdatedAt={filesUpdatedAt} lastUpdatedBy={filesUpdatedBy} />
         <div className="mt-3">
-          <MemberCommandCenterFileManager memberId={detail.member.id} rows={detail.files} canEdit={canEdit} />
+          <MemberCommandCenterFileManager
+            key={`mcc-files-${detail.member.id}-${filesUpdatedAt ?? "na"}`}
+            memberId={detail.member.id}
+            rows={detail.files}
+            canEdit={canEdit}
+          />
         </div>
       </Card>
 

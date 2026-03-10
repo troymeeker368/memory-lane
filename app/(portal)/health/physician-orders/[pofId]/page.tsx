@@ -66,6 +66,7 @@ export default async function PhysicianOrderDetailPage({
           <p>Status: <span className="font-semibold text-primary-text">{form.status}</span></p>
           <p>Provider Signature Status: <span className="font-semibold text-primary-text">{form.providerSignatureStatus}</span></p>
           <p>Completed: <span className="font-semibold text-primary-text">{form.completedDate ? formatDate(form.completedDate) : "-"}</span></p>
+          <p>Next Renewal Due: <span className="font-semibold text-primary-text">{form.nextRenewalDueDate ? formatDate(form.nextRenewalDueDate) : "-"}</span></p>
           <p>Signed: <span className="font-semibold text-primary-text">{form.signedDate ? formatDate(form.signedDate) : "-"}</span></p>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
@@ -106,26 +107,54 @@ export default async function PhysicianOrderDetailPage({
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <div>
             <p className="text-sm font-semibold">Diagnoses</p>
-            {form.diagnoses.length === 0 ? (
+            {form.diagnosisRows.length === 0 ? (
               <p className="text-sm text-muted">No diagnoses entered.</p>
             ) : (
-              <ol className="list-decimal pl-5 text-sm">
-                {form.diagnoses.map((diagnosis, idx) => (
-                  <li key={`${diagnosis}-${idx}`}>{diagnosis}</li>
-                ))}
-              </ol>
+              <table className="mt-2 text-sm">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Diagnosis</th>
+                    <th>Code</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {form.diagnosisRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.diagnosisType}</td>
+                      <td>{row.diagnosisName}</td>
+                      <td>{row.diagnosisCode ?? "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
           <div>
             <p className="text-sm font-semibold">Allergies</p>
-            {form.allergies.length === 0 ? (
+            {form.allergyRows.length === 0 ? (
               <p className="text-sm text-muted">No allergies entered.</p>
             ) : (
-              <ul className="list-disc pl-5 text-sm">
-                {form.allergies.map((allergy, idx) => (
-                  <li key={`${allergy}-${idx}`}>{allergy}</li>
-                ))}
-              </ul>
+              <table className="mt-2 text-sm">
+                <thead>
+                  <tr>
+                    <th>Group</th>
+                    <th>Allergy</th>
+                    <th>Severity</th>
+                    <th>Comments</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {form.allergyRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.allergyGroup}</td>
+                      <td>{row.allergyName}</td>
+                      <td>{row.severity ?? "-"}</td>
+                      <td>{row.comments ?? "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </div>
@@ -137,6 +166,8 @@ export default async function PhysicianOrderDetailPage({
               <tr>
                 <th>Name</th>
                 <th>Dose</th>
+                <th>Qty</th>
+                <th>Form</th>
                 <th>Route</th>
                 <th>Frequency</th>
               </tr>
@@ -144,7 +175,7 @@ export default async function PhysicianOrderDetailPage({
             <tbody>
               {form.medications.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="text-sm text-muted">
+                  <td colSpan={6} className="text-sm text-muted">
                     No medications entered.
                   </td>
                 </tr>
@@ -153,7 +184,9 @@ export default async function PhysicianOrderDetailPage({
                   <tr key={medication.id}>
                     <td>{medication.name}</td>
                     <td>{medication.dose ?? "-"}</td>
-                    <td>{medication.route ?? "-"}</td>
+                    <td>{medication.quantity ?? "-"}</td>
+                    <td>{medication.form ?? "-"}</td>
+                    <td>{medication.routeLaterality ? `${medication.route ?? "-"} (${medication.routeLaterality})` : medication.route ?? "-"}</td>
                     <td>{medication.frequency ?? "-"}</td>
                   </tr>
                 ))
@@ -164,11 +197,15 @@ export default async function PhysicianOrderDetailPage({
 
         <div className="mt-3">
           <p className="text-sm font-semibold">Standing Orders</p>
-          <ul className="list-disc pl-5 text-sm">
-            {form.standingOrders.map((order, idx) => (
-              <li key={`${order}-${idx}`}>{order}</li>
-            ))}
-          </ul>
+          {form.standingOrders.length === 0 ? (
+            <p className="text-sm text-muted">No standing orders selected.</p>
+          ) : (
+            <ul className="list-disc pl-5 text-sm">
+              {form.standingOrders.map((order, idx) => (
+                <li key={`${order}-${idx}`}>{order}</li>
+              ))}
+            </ul>
+          )}
         </div>
       </Card>
 

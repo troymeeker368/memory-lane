@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { MEMBER_FILE_CATEGORY_OPTIONS } from "@/lib/canonical";
@@ -36,6 +36,13 @@ export function MemberCommandCenterFileManager({
   const router = useRouter();
 
   const showCustomCategory = useMemo(() => category === "Other", [category]);
+
+  useEffect(() => {
+    setStatus(null);
+    setSelectedFile(null);
+    setCategory("Health Unit");
+    setCategoryOther("");
+  }, [memberId]);
 
   function clearSelection() {
     setSelectedFile(null);

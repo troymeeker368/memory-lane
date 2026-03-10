@@ -40,13 +40,34 @@ function revalidateLockerViews(memberId?: string | null) {
   }
 }
 
+function redirectParamsFromForm(formData: FormData) {
+  const params = new URLSearchParams();
+  const query = asString(formData, "q");
+  const status = asString(formData, "status");
+  const page = asString(formData, "page");
+  const locker = normalizeLockerInput(asString(formData, "locker"));
+  const memberId = asString(formData, "memberId");
+
+  if (query) params.set("q", query);
+  if (status && status !== "all") params.set("status", status);
+  if (page && Number.isFinite(Number(page)) && Number(page) > 1) {
+    params.set("page", String(Math.floor(Number(page))));
+  }
+  if (locker) params.set("locker", locker);
+  if (memberId) params.set("memberId", memberId);
+  return params;
+}
+
 export async function assignLockerAction(formData: FormData) {
   try {
     await requireLockerEditor();
     const memberId = asString(formData, "memberId");
     const lockerNumber = normalizeLockerInput(asString(formData, "lockerNumber"));
     const redirectWith = (params: Record<string, string>) => {
-      const qs = new URLSearchParams(params);
+      const qs = redirectParamsFromForm(formData);
+      Object.entries(params).forEach(([key, value]) => {
+        qs.set(key, value);
+      });
       redirect(`/operations/locker-assignments?${qs.toString()}`);
     };
     if (!memberId) {
@@ -101,7 +122,11 @@ export async function assignLockerAction(formData: FormData) {
     }
 
     revalidateLockerViews(memberId);
-    redirectWith({ success: `Locker ${lockerNumber} assigned to ${member.display_name}.` });
+    redirectWith({
+      success: `Locker ${lockerNumber} assigned to ${member.display_name}.`,
+      locker: lockerNumber,
+      memberId
+    });
   } catch (error) {
     console.error("[Locker] assignLockerAction failed", {
       message: error instanceof Error ? error.message : "Unknown error",
@@ -116,15 +141,22 @@ export async function clearLockerAction(formData: FormData) {
   try {
     await requireLockerEditor();
     const memberId = asString(formData, "memberId");
+    const redirectWith = (params: Record<string, string>) => {
+      const qs = redirectParamsFromForm(formData);
+      Object.entries(params).forEach(([key, value]) => {
+        qs.set(key, value);
+      });
+      redirect(`/operations/locker-assignments?${qs.toString()}`);
+    };
     if (!memberId) {
-      redirect("/operations/locker-assignments?error=Member%20is%20required.");
+      redirectWith({ error: "Member is required." });
       return;
     }
 
     const db = getMockDb();
     const member = db.members.find((row) => row.id === memberId);
     if (!member) {
-      redirect("/operations/locker-assignments?error=Member%20not%20found.");
+      redirectWith({ error: "Member not found." });
       return;
     }
 
@@ -140,12 +172,12 @@ export async function clearLockerAction(formData: FormData) {
 
     const updated = updateMockRecord("members", memberId, { locker_number: null });
     if (!updated) {
-      redirect("/operations/locker-assignments?error=Unable%20to%20clear%20locker.");
+      redirectWith({ error: "Unable to clear locker." });
       return;
     }
 
     revalidateLockerViews(memberId);
-    redirect(`/operations/locker-assignments?success=${encodeURIComponent(`Locker cleared for ${member.display_name}.`)}`);
+    redirectWith({ success: `Locker cleared for ${member.display_name}.` });
   } catch (error) {
     console.error("[Locker] clearLockerAction failed", {
       message: error instanceof Error ? error.message : "Unknown error",

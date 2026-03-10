@@ -42,6 +42,7 @@ import { prefillMemberHealthProfileFromAssessment } from "@/lib/services/member-
 import { prefillMemberCommandCenterFromAssessment } from "@/lib/services/member-command-center";
 import { syncCommandCenterToMhp, syncMhpToCommandCenter } from "@/lib/services/member-profile-sync";
 import { calculateLatePickupFee, getOperationalSettings, parseBusNumbersInput, updateOperationalSettings } from "@/lib/services/operations-settings";
+import { getActiveCenterBillingSetting, getActiveMemberBillingSetting, getMemberAttendanceBillingSetting } from "@/lib/services/billing";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { isMockMode } from "@/lib/runtime";
@@ -113,6 +114,17 @@ function syncLeadToMemberList(lead: {
     revalidatePath("/members");
     revalidatePath(`/members/${member.id}`);
   }
+}
+
+function leadProgressRank(stage: string, status: string) {
+  const normalizedStage = canonicalLeadStage(stage);
+  const normalizedStatus = canonicalLeadStatus(status, normalizedStage);
+
+  if (normalizedStatus === "Won" || normalizedStatus === "Lost") return 5;
+  if (normalizedStage === "Enrollment in Progress") return 4;
+  if (normalizedStage === "Nurture") return 3;
+  if (normalizedStage === "Tour") return 2;
+  return 1;
 }
 
 function buildAssessmentResponseRows(input: {
@@ -584,14 +596,19 @@ export async function createAncillaryChargeAction(raw: z.infer<typeof ancillaryS
       return { error: "Duplicate ancillary charge detected for this member/date/category/source." };
     }
 
+    const quantity = 1;
+    const unitRate = Number((amountCents / 100).toFixed(2));
+    const totalAmount = Number((unitRate * quantity).toFixed(2));
     const created = addMockRecord("ancillaryLogs", {
       timestamp: toEasternISO(),
       member_id: payload.data.memberId,
       member_name: getMemberName(payload.data.memberId),
       category_id: payload.data.categoryId,
       category_name: category?.name ?? "Unknown",
+      charge_type: category?.name ?? "Ancillary Charge",
       amount_cents: amountCents,
       service_date: payload.data.serviceDate,
+      charge_date: payload.data.serviceDate,
       late_pickup_time: latePickupTime,
       staff_user_id: profile.id,
       staff_name: profile.full_name,
@@ -599,7 +616,13 @@ export async function createAncillaryChargeAction(raw: z.infer<typeof ancillaryS
       notes: payload.data.notes ?? null,
       source_entity: payload.data.sourceEntity ?? null,
       source_entity_id: payload.data.sourceEntityId ?? null,
-      quantity: 1,
+      quantity,
+      unit_rate: unitRate,
+      total_amount: totalAmount,
+      billable: true,
+      billing_status: "Unbilled",
+      billing_exclusion_reason: null,
+      invoice_id: null,
       created_at: toEasternISO()
     });
 
@@ -800,8 +823,10 @@ export async function createToiletLogAction(raw: z.infer<typeof toiletSchema>) {
       member_name: getMemberName(payload.data.memberId),
       category_id: briefsCategory.id,
       category_name: briefsCategory.name,
+      charge_type: briefsCategory.name,
       amount_cents: briefsCategory.price_cents,
       service_date: payload.data.eventAt.slice(0, 10),
+      charge_date: payload.data.eventAt.slice(0, 10),
       late_pickup_time: null,
       staff_user_id: profile.id,
       staff_name: profile.full_name,
@@ -810,6 +835,12 @@ export async function createToiletLogAction(raw: z.infer<typeof toiletSchema>) {
       source_entity: "toiletLogs",
       source_entity_id: created.id,
       quantity: 1,
+      unit_rate: Number((briefsCategory.price_cents / 100).toFixed(2)),
+      total_amount: Number((briefsCategory.price_cents / 100).toFixed(2)),
+      billable: true,
+      billing_status: "Unbilled",
+      billing_exclusion_reason: null,
+      invoice_id: null,
       created_at: toEasternISO()
     });
 
@@ -884,6 +915,18 @@ export async function createTransportationLogAction(raw: z.infer<typeof transpor
   }
 
   const profile = await getCurrentProfile();
+  const memberSetting = getActiveMemberBillingSetting(payload.data.memberId, payload.data.serviceDate);
+  const attendanceBillingSetting = getMemberAttendanceBillingSetting(payload.data.memberId);
+  const centerSetting = getActiveCenterBillingSetting(payload.data.serviceDate);
+  const transportStatus = attendanceBillingSetting?.transportationBillingStatus ?? memberSetting?.transportation_billing_status ?? "BillNormally";
+  const isBillable = transportStatus === "BillNormally";
+  const tripType = payload.data.transportType.toLowerCase().includes("round") ? "RoundTrip" : "OneWay";
+  const unitRate =
+    tripType === "RoundTrip"
+      ? Number(centerSetting?.default_transport_round_trip_rate ?? 0)
+      : Number(centerSetting?.default_transport_one_way_rate ?? 0);
+  const totalAmount = Number((unitRate * 1).toFixed(2));
+
   addMockRecord("transportationLogs", {
     timestamp: toEasternISO(),
     first_name: getMemberName(payload.data.memberId).split(" ")[0] ?? "",
@@ -896,7 +939,20 @@ export async function createTransportationLogAction(raw: z.infer<typeof transpor
     staff_user_id: profile.id,
     staff_name: profile.full_name,
     staff_responsible: profile.full_name,
-    notes: null
+    notes: null,
+    trip_type: tripType,
+    quantity: 1,
+    unit_rate: unitRate,
+    total_amount: totalAmount,
+    billable: isBillable,
+    billing_status: isBillable ? "Unbilled" : "Excluded",
+    billing_exclusion_reason:
+      transportStatus === "Waived"
+        ? "Waived in MCC attendance billing"
+        : transportStatus === "IncludedInProgramRate"
+          ? "Included in program rate (MCC attendance billing)"
+          : null,
+    invoice_id: null
   });
 
   revalidatePath("/documentation/transportation");
@@ -1257,6 +1313,56 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       { syncAllergies: true }
     );
 
+    const shouldAutoAdvanceLeadToEip =
+      payload.data.complete &&
+      leadProgressRank(lead.stage, lead.status) < leadProgressRank("Enrollment in Progress", "Open");
+
+    if (shouldAutoAdvanceLeadToEip) {
+      const transitionedLead = updateMockRecord("leads", lead.id, {
+        stage: "Enrollment in Progress",
+        status: "Open",
+        stage_updated_at: toEasternISO(),
+        member_start_date: lead.member_start_date ?? payload.data.assessmentDate
+      });
+
+      if (transitionedLead) {
+        addLeadStageHistoryEntry({
+          leadId: transitionedLead.id,
+          fromStage: lead.stage,
+          toStage: transitionedLead.stage,
+          fromStatus: lead.status,
+          toStatus: transitionedLead.status,
+          changedByUserId: profile.id,
+          changedByName: profile.full_name,
+          reason: "Intake assessment marked complete",
+          source: "createAssessmentAction:auto-eip"
+        });
+
+        addAuditLogEvent({
+          actorUserId: profile.id,
+          actorName: profile.full_name,
+          actorRole: profile.role,
+          action: "update_lead",
+          entityType: "lead",
+          entityId: transitionedLead.id,
+          details: {
+            operation: "assessment-complete-auto-stage",
+            assessmentId: created.id,
+            fromStage: lead.stage,
+            toStage: transitionedLead.stage,
+            fromStatus: lead.status,
+            toStatus: transitionedLead.status
+          }
+        });
+
+        revalidatePath("/sales");
+        revalidatePath("/sales/pipeline");
+        revalidatePath("/sales/pipeline/tour");
+        revalidatePath("/sales/pipeline/eip");
+        revalidatePath(`/sales/leads/${transitionedLead.id}`);
+      }
+    }
+
     revalidatePath("/health");
     revalidatePath("/health/assessment");
     revalidatePath(`/health/assessment/${created.id}`);
@@ -1536,8 +1642,10 @@ export async function updateToiletLogAction(raw: z.infer<typeof updateSimpleSche
       member_name: updated.member_name,
       category_id: briefsCategory.id,
       category_name: briefsCategory.name,
+      charge_type: briefsCategory.name,
       amount_cents: briefsCategory.price_cents,
       service_date: updated.event_date,
+      charge_date: updated.event_date,
       late_pickup_time: null,
       staff_user_id: profile.id,
       staff_name: profile.full_name,
@@ -1546,6 +1654,12 @@ export async function updateToiletLogAction(raw: z.infer<typeof updateSimpleSche
       source_entity: "toiletLogs",
       source_entity_id: updated.id,
       quantity: 1,
+      unit_rate: Number((briefsCategory.price_cents / 100).toFixed(2)),
+      total_amount: Number((briefsCategory.price_cents / 100).toFixed(2)),
+      billable: true,
+      billing_status: "Unbilled",
+      billing_exclusion_reason: null,
+      invoice_id: null,
       created_at: toEasternISO()
     });
 

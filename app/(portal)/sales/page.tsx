@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { Building2, CirclePlus, Clock3, GitBranch } from "lucide-react";
+import { BarChart3, Building2, CirclePlus, Clock3, GitBranch } from "lucide-react";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 
 function SalesMenuCard({ href, label, subtitle, icon }: { href: string; label: string; subtitle: string; icon: ReactNode }) {
@@ -16,7 +17,8 @@ function SalesMenuCard({ href, label, subtitle, icon }: { href: string; label: s
 }
 
 export default async function SalesPage() {
-  await requireModuleAccess("sales");
+  const profile = await requireModuleAccess("sales");
+  const isAdmin = normalizeRoleKey(profile.role) === "admin";
   const { openLeads, activities, partners, referralSources, partnerActivities } = await getSalesWorkflows();
 
   return (
@@ -29,6 +31,9 @@ export default async function SalesPage() {
           <SalesMenuCard href="/sales/new-entries" label="New Entries" subtitle="New Inquiry, Log Lead Activity, Log Partner Activities, and setup forms" icon={<CirclePlus className="h-4 w-4" />} />
           <SalesMenuCard href="/sales/community-partners" label="Community Partners" subtitle={`${partners.length} organizations, ${referralSources.length} referral sources`} icon={<Building2 className="h-4 w-4" />} />
           <SalesMenuCard href="/sales/activities" label="Recent Lead Activity" subtitle={`${activities.length} lead + ${partnerActivities.length} partner activities`} icon={<Clock3 className="h-4 w-4" />} />
+          {isAdmin ? (
+            <SalesMenuCard href="/sales/summary" label="Sales Summary" subtitle="Admin foundation dashboard for lead totals, stages, EIP, and inquiry activity" icon={<BarChart3 className="h-4 w-4" />} />
+          ) : null}
         </div>
       </Card>
     </div>

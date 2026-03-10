@@ -99,54 +99,58 @@ export default async function TransportationStationPage({
 
   const csv = buildTransportationManifestCsv(manifest);
   const csvHref = `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
-  const db = getMockDb();
-  const activeMembers = [
-    ...new Map(
-      db.members
-        .filter((member) => member.status === "active")
-        .map((member) => [member.id, member])
-    ).values()
-  ]
-    .sort((left, right) => left.display_name.localeCompare(right.display_name, undefined, { sensitivity: "base" }));
-  const commandCenterByMember = new Map(db.memberCommandCenters.map((row) => [row.member_id, row] as const));
-  const sortedContacts = [...db.memberContacts].sort((left, right) => {
-    const memberCompare = left.member_id.localeCompare(right.member_id);
-    if (memberCompare !== 0) return memberCompare;
-    const categoryCompare = contactPriority(left.category) - contactPriority(right.category);
-    if (categoryCompare !== 0) return categoryCompare;
-    if (left.updated_at === right.updated_at) return 0;
-    return left.updated_at > right.updated_at ? -1 : 1;
-  });
-  const preferredContactByMember = new Map<string, (typeof db.memberContacts)[number]>();
-  sortedContacts.forEach((contact) => {
-    if (!preferredContactByMember.has(contact.member_id)) {
-      preferredContactByMember.set(contact.member_id, contact);
-    }
-  });
-  const addRiderMemberOptions = activeMembers.map((member) => {
-    const commandCenter = commandCenterByMember.get(member.id);
-    const preferredContact = preferredContactByMember.get(member.id);
-    return {
-      id: member.id,
-      displayName: member.display_name,
-      defaultDoorToDoorAddress: joinAddress([
-        commandCenter?.street_address ?? null,
-        commandCenter?.city ?? null,
-        commandCenter?.state ?? null,
-        commandCenter?.zip ?? null
-      ]),
-      defaultContactId: preferredContact?.id ?? null,
-      defaultContactName: preferredContact?.contact_name ?? null,
-      defaultContactPhone:
-        preferredContact?.cellular_number ?? preferredContact?.home_number ?? preferredContact?.work_number ?? null,
-      defaultContactAddress: joinAddress([
-        preferredContact?.street_address ?? null,
-        preferredContact?.city ?? null,
-        preferredContact?.state ?? null,
-        preferredContact?.zip ?? null
-      ])
-    };
-  });
+  const addRiderMemberOptions = canEdit
+    ? (() => {
+        const db = getMockDb();
+        const activeMembers = [
+          ...new Map(
+            db.members
+              .filter((member) => member.status === "active")
+              .map((member) => [member.id, member])
+          ).values()
+        ].sort((left, right) => left.display_name.localeCompare(right.display_name, undefined, { sensitivity: "base" }));
+        const commandCenterByMember = new Map(db.memberCommandCenters.map((row) => [row.member_id, row] as const));
+        const sortedContacts = [...db.memberContacts].sort((left, right) => {
+          const memberCompare = left.member_id.localeCompare(right.member_id);
+          if (memberCompare !== 0) return memberCompare;
+          const categoryCompare = contactPriority(left.category) - contactPriority(right.category);
+          if (categoryCompare !== 0) return categoryCompare;
+          if (left.updated_at === right.updated_at) return 0;
+          return left.updated_at > right.updated_at ? -1 : 1;
+        });
+        const preferredContactByMember = new Map<string, (typeof db.memberContacts)[number]>();
+        sortedContacts.forEach((contact) => {
+          if (!preferredContactByMember.has(contact.member_id)) {
+            preferredContactByMember.set(contact.member_id, contact);
+          }
+        });
+
+        return activeMembers.map((member) => {
+          const commandCenter = commandCenterByMember.get(member.id);
+          const preferredContact = preferredContactByMember.get(member.id);
+          return {
+            id: member.id,
+            displayName: member.display_name,
+            defaultDoorToDoorAddress: joinAddress([
+              commandCenter?.street_address ?? null,
+              commandCenter?.city ?? null,
+              commandCenter?.state ?? null,
+              commandCenter?.zip ?? null
+            ]),
+            defaultContactId: preferredContact?.id ?? null,
+            defaultContactName: preferredContact?.contact_name ?? null,
+            defaultContactPhone:
+              preferredContact?.cellular_number ?? preferredContact?.home_number ?? preferredContact?.work_number ?? null,
+            defaultContactAddress: joinAddress([
+              preferredContact?.street_address ?? null,
+              preferredContact?.city ?? null,
+              preferredContact?.state ?? null,
+              preferredContact?.zip ?? null
+            ])
+          };
+        });
+      })()
+    : [];
   const shiftDisplayOrder: Array<"AM" | "PM"> = selectedShift === "Both" ? ["AM", "PM"] : [selectedShift];
   const weekdayLabel = WEEKDAY_LABELS[manifest.weekday] ?? manifest.weekday;
   const groupedByShiftAndDay = shiftDisplayOrder

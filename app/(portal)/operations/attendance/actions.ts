@@ -14,6 +14,7 @@ import {
   updateMockRecord
 } from "@/lib/mock-repo";
 import { isMemberOnHoldOnDate } from "@/lib/services/holds";
+import { syncAttendanceBillingForDate } from "@/lib/services/billing";
 import { isMemberScheduledForDate } from "@/lib/services/member-schedule-selectors";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { easternDateTimeLocalToISO, toEasternISO } from "@/lib/timezone";
@@ -130,6 +131,13 @@ export async function saveAttendanceStatusAction(formData: FormData) {
     const existingStatus = existing?.status ?? null;
 
     if (requestedStatus === "clear") {
+      if (existing?.linked_adjustment_id) {
+        updateMockRecord("billingAdjustments", existing.linked_adjustment_id, {
+          billing_status: "Excluded",
+          invoice_id: null,
+          updated_at: toEasternISO()
+        });
+      }
       if (existingStatus === "absent") {
         applyScheduledAbsenceMakeupDelta({
           memberId,
@@ -214,6 +222,12 @@ export async function saveAttendanceStatusAction(formData: FormData) {
         });
       }
 
+      syncAttendanceBillingForDate({
+        memberId,
+        attendanceDate,
+        actorName: actor.full_name
+      });
+
       revalidateAttendanceViews();
       return { ok: true as const };
     }
@@ -263,6 +277,12 @@ export async function saveAttendanceStatusAction(formData: FormData) {
           reason: `Reversed scheduled absence makeup accrual (${attendanceDate})`
         });
       }
+
+      syncAttendanceBillingForDate({
+        memberId,
+        attendanceDate,
+        actorName: actor.full_name
+      });
 
       revalidateAttendanceViews();
       return { ok: true as const };
@@ -330,6 +350,12 @@ export async function saveAttendanceStatusAction(formData: FormData) {
         reason: `Reversed scheduled absence makeup accrual (${attendanceDate})`
       });
     }
+
+    syncAttendanceBillingForDate({
+      memberId,
+      attendanceDate,
+      actorName: actor.full_name
+    });
 
     revalidateAttendanceViews();
     return { ok: true as const };
@@ -448,6 +474,11 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
     }
 
     syncScheduleMakeupBalance(memberId, attendanceDate);
+    syncAttendanceBillingForDate({
+      memberId,
+      attendanceDate,
+      actorName: actor.full_name
+    });
     revalidateAttendanceViews();
     return { ok: true as const };
   } catch (error) {

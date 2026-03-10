@@ -1,8 +1,10 @@
 "use client";
 
-import { FormEvent, useEffect, useState, useTransition } from "react";
+import { FormEvent, useEffect, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import { saveMemberCommandCenterSummaryAction } from "@/app/(portal)/operations/member-command-center/actions";
+import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 
 export function MccSummaryForm({
   memberId,
@@ -19,10 +21,13 @@ export function MccSummaryForm({
   originalReferralSource: string;
   photoConsent: boolean | null;
 }) {
-  const [photoConsentValue, setPhotoConsentValue] = useState(
+  const router = useRouter();
+  const [photoConsentValue, setPhotoConsentValue] = usePropSyncedState(
     photoConsent == null ? "" : photoConsent ? "true" : "false"
+    ,
+    [memberId, photoConsent]
   );
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = usePropSyncedStatus([memberId, photoConsent]);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -47,6 +52,7 @@ export function MccSummaryForm({
         return;
       }
       setStatus("Member summary saved.");
+      router.refresh();
     });
   };
 
