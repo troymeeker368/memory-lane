@@ -7,6 +7,7 @@ import {
   createCarePlanAction,
   reviewCarePlanAction
 } from "@/app/care-plan-actions";
+import { CarePlanSignatureBlock } from "@/components/care-plans/care-plan-signature-block";
 import { Button } from "@/components/ui/button";
 import {
   CARE_PLAN_LONG_TERM_LABEL,
@@ -80,7 +81,8 @@ export function NewCarePlanForm({
     modificationsDescription: "",
     careTeamNotes: "",
     caregiverName: "",
-    caregiverEmail: ""
+    caregiverEmail: "",
+    signatureAttested: false
   });
 
   return (
@@ -218,8 +220,23 @@ export function NewCarePlanForm({
 
       <div className="space-y-1 rounded-lg border border-border p-3">
         <p className="text-sm font-semibold">Signoff</p>
-        <p className="text-sm">Completed By (Nurse Name): {signerNameDefault}</p>
-        <p className="text-sm">Date of Completion: {form.reviewDate}</p>
+        <CarePlanSignatureBlock
+          completedBy={signerNameDefault}
+          dateOfCompletion={form.reviewDate}
+          responsiblePartySignature={null}
+          responsiblePartySignatureDate={null}
+          administratorSignature={signerNameDefault}
+          administratorSignatureDate={form.reviewDate}
+        />
+        <label className="mt-3 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.signatureAttested}
+            onChange={(event) => setForm((current) => ({ ...current, signatureAttested: event.target.checked }))}
+          />
+          <span>I attest this is my electronic signature and I am the authorized clinical signer for this Care Plan.</span>
+        </label>
+        <p className="text-xs text-muted">Signer identity is resolved server-side from the active authenticated nurse/admin session.</p>
       </div>
 
       <Button
@@ -231,6 +248,7 @@ export function NewCarePlanForm({
           !form.reviewDate ||
           !form.caregiverName.trim() ||
           !form.caregiverEmail.trim() ||
+          !form.signatureAttested ||
           (!form.noChangesNeeded && !form.modificationsRequired) ||
           (form.modificationsRequired && !form.modificationsDescription.trim())
         }
@@ -246,7 +264,8 @@ export function NewCarePlanForm({
               modificationsDescription: form.modificationsDescription,
               careTeamNotes: form.careTeamNotes,
               caregiverName: form.caregiverName,
-              caregiverEmail: form.caregiverEmail
+              caregiverEmail: form.caregiverEmail,
+              signatureAttested: form.signatureAttested
             });
             if (response.error) {
               setStatus(`Error: ${response.error}`);
@@ -293,7 +312,8 @@ export function CarePlanReviewForm({
     modificationsDescription: "",
     careTeamNotes,
     caregiverName: caregiverName ?? "",
-    caregiverEmail: caregiverEmail ?? ""
+    caregiverEmail: caregiverEmail ?? "",
+    signatureAttested: false
   });
 
   return (
@@ -309,7 +329,7 @@ export function CarePlanReviewForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="font-semibold">Completed By (Nurse Name)</span>
+          <span className="font-semibold">Authenticated Clinical Signer</span>
           <input className="h-11 w-full rounded-lg border border-border px-3" value={reviewedByDefault} readOnly />
         </label>
       </div>
@@ -385,6 +405,27 @@ export function CarePlanReviewForm({
         </div>
       </div>
 
+      <div className="space-y-1 rounded-lg border border-border p-3">
+        <p className="text-sm font-semibold">Signoff</p>
+        <CarePlanSignatureBlock
+          completedBy={reviewedByDefault}
+          dateOfCompletion={form.reviewDate}
+          responsiblePartySignature={null}
+          responsiblePartySignatureDate={null}
+          administratorSignature={reviewedByDefault}
+          administratorSignatureDate={form.reviewDate}
+        />
+        <label className="mt-3 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.signatureAttested}
+            onChange={(event) => setForm((current) => ({ ...current, signatureAttested: event.target.checked }))}
+          />
+          <span>I attest this is my electronic signature and I am the authorized clinical signer for this Care Plan review.</span>
+        </label>
+        <p className="text-xs text-muted">Signer identity is resolved server-side from the active authenticated nurse/admin session.</p>
+      </div>
+
       <Button
         type="button"
         disabled={
@@ -392,6 +433,7 @@ export function CarePlanReviewForm({
           !form.reviewDate ||
           !form.caregiverName.trim() ||
           !form.caregiverEmail.trim() ||
+          !form.signatureAttested ||
           (!form.noChangesNeeded && !form.modificationsRequired) ||
           (form.modificationsRequired && !form.modificationsDescription.trim())
         }
@@ -405,7 +447,8 @@ export function CarePlanReviewForm({
               modificationsDescription: form.modificationsDescription,
               careTeamNotes: form.careTeamNotes,
               caregiverName: form.caregiverName,
-              caregiverEmail: form.caregiverEmail
+              caregiverEmail: form.caregiverEmail,
+              signatureAttested: form.signatureAttested
             });
             if (response.error) {
               setStatus(`Error: ${response.error}`);

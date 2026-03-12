@@ -26,6 +26,14 @@ export const CARE_PLAN_SIGNATURE_LINE_TEMPLATES = {
   administratorDesignee:
     "Administrator/Designee Signature: _______________________________                                              Date: ______________"
 } as const;
+export const CARE_PLAN_SIGNATURE_LABELS = {
+  completedBy: "Completed By (Nurse Name):",
+  completedByDate: "Date of Completion:",
+  responsibleParty: "Responsible Party Signature:",
+  responsiblePartyDate: "Date:",
+  administratorDesignee: "Administrator/Designee Signature:",
+  administratorDesigneeDate: "Date:"
+} as const;
 
 export type CarePlanTrackSectionDefinition = {
   sectionType: CarePlanSectionType;

@@ -18,6 +18,31 @@ export function resolvePublicCaregiverLinkState(input: {
 }
 
 export function canSendCaregiverSignatureByNurseSignedAt(nurseSignedAt: string | null) {
+  return canSendCaregiverSignatureByNurseSignatureState({
+    nurseSignatureStatus: nurseSignedAt ? "signed" : "unsigned",
+    nurseSignedAt
+  });
+}
+
+export function canSendCaregiverSignatureByNurseSignatureState(input: {
+  nurseSignatureStatus: string | null | undefined;
+  nurseSignedAt: string | null;
+}) {
+  if (input.nurseSignatureStatus !== "signed" || !input.nurseSignedAt) {
+    return { allowed: false, reason: "Care plan must be signed by Nurse/Admin before caregiver send." } as const;
+  }
+  return { allowed: true } as const;
+}
+
+export function hasCanonicalNurseSignature(input: {
+  nurseSignatureStatus: string | null | undefined;
+  nurseSignedByUserId: string | null;
+  nurseSignedAt: string | null;
+}) {
+  return input.nurseSignatureStatus === "signed" && Boolean(input.nurseSignedByUserId) && Boolean(input.nurseSignedAt);
+}
+
+export function canSendCaregiverSignatureByNurseSignedAtLegacyCompatible(nurseSignedAt: string | null) {
   if (!nurseSignedAt) {
     return { allowed: false, reason: "Care plan must be signed by Nurse/Admin before caregiver send." } as const;
   }

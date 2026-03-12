@@ -148,6 +148,11 @@ function toGoalItems(value: string) {
     .filter(Boolean);
 }
 
+function withFallback(value: string | null | undefined) {
+  const normalized = (value ?? "").trim();
+  return normalized.length > 0 ? normalized : "-";
+}
+
 export async function buildCarePlanPdfDataUrl(carePlanId: string, options?: { serviceRole?: boolean }) {
   const detail = await getCarePlanById(carePlanId, { serviceRole: Boolean(options?.serviceRole) });
   if (!detail) {
@@ -190,6 +195,8 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string, options?: { se
     `Last Completed: ${carePlan.lastCompletedDate ?? "-"}`,
     `Next Due: ${carePlan.nextDueDate}`,
     `Status: ${carePlan.status}`,
+    `Nurse/Admin E-Sign Status: ${carePlan.nurseSignatureStatus}`,
+    `Nurse/Admin Signed By: ${carePlan.nurseSignedByName ?? "-"}`,
     `Nurse/Admin Signed At: ${carePlan.nurseSignedAt ?? "-"}`
   ];
 
@@ -304,7 +311,7 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string, options?: { se
   y -= 14;
   y = drawWrappedText({
     page,
-    text: carePlan.noChangesNeeded ? "☑ No changes needed" : "☐ No changes needed",
+    text: (carePlan.noChangesNeeded ? "[x]" : "[ ]") + " " + blueprint.labels.reviewOptions[0],
     x: 36,
     y,
     maxWidth: 540,
@@ -316,7 +323,7 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string, options?: { se
   y -= 2;
   y = drawWrappedText({
     page,
-    text: carePlan.modificationsRequired ? "☑ Modifications required (describe below)" : "☐ Modifications required (describe below)",
+    text: (carePlan.modificationsRequired ? "[x]" : "[ ]") + " " + blueprint.labels.reviewOptions[1],
     x: 36,
     y,
     maxWidth: 540,
@@ -356,9 +363,20 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string, options?: { se
   });
 
   y -= 12;
+  const canonicalNurseSignerName =
+    carePlan.nurseSignedByName ?? carePlan.completedBy ?? carePlan.administratorSignature ?? carePlan.nurseDesigneeName;
+  const canonicalNurseSignedAt =
+    carePlan.nurseSignedAt ?? carePlan.dateOfCompletion ?? carePlan.administratorSignatureDate;
   y = drawWrappedText({
     page,
-    text: `Completed By (Nurse Name): ${carePlan.completedBy ?? "-"}    Date of Completion: ${carePlan.dateOfCompletion ?? "-"}`,
+    text:
+      blueprint.labels.signatureLabels.completedBy +
+      " " +
+      withFallback(canonicalNurseSignerName) +
+      "    " +
+      blueprint.labels.signatureLabels.completedByDate +
+      " " +
+      withFallback(canonicalNurseSignedAt),
     x: 36,
     y,
     maxWidth: 540,
@@ -370,7 +388,7 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string, options?: { se
   y -= 2;
   y = drawWrappedText({
     page,
-    text: `Responsible Party Signature: ${carePlan.responsiblePartySignature ?? carePlan.caregiverSignedName ?? "-"}    Date: ${carePlan.responsiblePartySignatureDate ?? carePlan.caregiverSignedAt ?? "-"}`,
+    text: blueprint.labels.signatureLabels.responsibleParty + " " + withFallback(carePlan.responsiblePartySignature ?? carePlan.caregiverSignedName) + "    " + blueprint.labels.signatureLabels.responsiblePartyDate + " " + withFallback(carePlan.responsiblePartySignatureDate ?? carePlan.caregiverSignedAt),
     x: 36,
     y,
     maxWidth: 540,
@@ -382,7 +400,14 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string, options?: { se
   y -= 2;
   drawWrappedText({
     page,
-    text: `Administrator/Designee Signature: ${carePlan.administratorSignature ?? carePlan.nurseDesigneeName ?? "-"}    Date: ${carePlan.administratorSignatureDate ?? "-"}`,
+    text:
+      blueprint.labels.signatureLabels.administratorDesignee +
+      " " +
+      withFallback(canonicalNurseSignerName) +
+      "    " +
+      blueprint.labels.signatureLabels.administratorDesigneeDate +
+      " " +
+      withFallback(canonicalNurseSignedAt),
     x: 36,
     y,
     maxWidth: 540,
@@ -400,3 +425,5 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string, options?: { se
     generatedAt
   };
 }
+
+

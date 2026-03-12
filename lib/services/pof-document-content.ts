@@ -30,6 +30,13 @@ function joinedOrDash(values: string[] | null | undefined) {
   return normalized.length > 0 ? normalized.join(", ") : "-";
 }
 
+function normalizeNutritionDiets(values: string[] | null | undefined) {
+  const normalized = (values ?? []).map((value) => value.trim()).filter(Boolean);
+  const hasNonRegular = normalized.some((value) => value.toLowerCase() !== "regular");
+  if (!hasNonRegular) return normalized;
+  return normalized.filter((value) => value.toLowerCase() !== "regular");
+}
+
 export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentSection[] {
   const care = form.careInformation;
   const flags = form.operationalFlags;
@@ -136,7 +143,9 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
         { label: "Mobility - Wheelchair", value: yesNo(care.mobilityWheelchair) },
         { label: "Mobility - Scooter", value: yesNo(care.mobilityScooter) },
         { label: "Mobility - Other", value: yesNo(care.mobilityOther) },
-        { label: "Mobility Other Detail", value: valueOrDash(care.mobilityOtherText) },
+        ...(care.mobilityOther
+          ? [{ label: "Mobility Other Detail", value: valueOrDash(care.mobilityOtherText) }]
+          : []),
         { label: "Functional Limitation - Sight", value: yesNo(care.functionalLimitationSight) },
         { label: "Functional Limitation - Hearing", value: yesNo(care.functionalLimitationHearing) },
         { label: "Functional Limitation - Speech", value: yesNo(care.functionalLimitationSpeech) },
@@ -156,31 +165,23 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
         { label: "ADL Speech / Verbal Status", value: valueOrDash(adl.speechVerbalStatus) },
         { label: "ADL Speech Comments", value: valueOrDash(adl.speechComments) },
         { label: "ADL Hygiene / Grooming", value: valueOrDash(adl.hygieneGrooming) },
-        { label: "ADL May Self-Medicate", value: yesNo(adl.maySelfMedicate) },
-        { label: "ADL Medication Manager Name", value: valueOrDash(adl.medicationManagerName) }
+        { label: "ADL May Self-Medicate", value: yesNo(adl.maySelfMedicate) }
       ]
     },
     {
       title: "Clinical Support",
       rows: [
-        { label: "Neurological Convulsions / Seizures", value: yesNo(care.neurologicalConvulsionsSeizures) },
-        { label: "Medication Administration - Self", value: yesNo(care.medAdministrationSelf) },
-        { label: "Medication Administration - Nurse", value: yesNo(care.medAdministrationNurse) },
-        { label: "Bladder - Continent", value: yesNo(care.bladderContinent) },
-        { label: "Bladder - Incontinent", value: yesNo(care.bladderIncontinent) },
-        { label: "Bowel - Continent", value: yesNo(care.bowelContinent) },
-        { label: "Bowel - Incontinent", value: yesNo(care.bowelIncontinent) },
-        { label: "Skin Normal", value: yesNo(care.skinNormal) },
-        { label: "Skin Other", value: valueOrDash(care.skinOther) },
         { label: "Breathing - Room Air", value: yesNo(care.breathingRoomAir) },
         { label: "Breathing - O2 Needs", value: yesNo(care.breathingOxygenTank) },
-        { label: "Breathing O2 Liters", value: valueOrDash(care.breathingOxygenLiters) }
+        ...(care.breathingOxygenTank
+          ? [{ label: "Breathing O2 Liters", value: valueOrDash(care.breathingOxygenLiters) }]
+          : [])
       ]
     },
     {
       title: "Nutrition & Joy Sparks",
       rows: [
-        { label: "Nutrition / Diet", value: joinedOrDash(care.nutritionDiets) },
+        { label: "Nutrition / Diet", value: joinedOrDash(normalizeNutritionDiets(care.nutritionDiets)) },
         { label: "Nutrition Diet Other", value: valueOrDash(care.nutritionDietOther) },
         { label: "Additional Information to Help Spark Joy", value: valueOrDash(care.joySparksNotes) }
       ]

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { CarePlanCaregiverEsignActions } from "@/components/care-plans/care-plan-caregiver-esign-actions";
 import { CarePlanPdfActions } from "@/components/care-plans/care-plan-pdf-actions";
+import { CarePlanSignatureBlock } from "@/components/care-plans/care-plan-signature-block";
 import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { CarePlanReviewForm } from "@/components/forms/care-plan-forms";
 import { Card, CardTitle } from "@/components/ui/card";
@@ -115,8 +116,8 @@ export default async function CarePlanDetailPage({
 
       <Card>
         <CardTitle>{CARE_PLAN_REVIEW_UPDATES_LABEL}</CardTitle>
-        <p className="text-sm">{detail.carePlan.noChangesNeeded ? "☑" : "☐"} {CARE_PLAN_REVIEW_OPTIONS[0].replace(/^☐\s*/, "")}</p>
-        <p className="text-sm">{detail.carePlan.modificationsRequired ? "☑" : "☐"} {CARE_PLAN_REVIEW_OPTIONS[1].replace(/^☐\s*/, "")}</p>
+        <p className="text-sm">{detail.carePlan.noChangesNeeded ? "[x]" : "[ ]"} {CARE_PLAN_REVIEW_OPTIONS[0]}</p>
+        <p className="text-sm">{detail.carePlan.modificationsRequired ? "[x]" : "[ ]"} {CARE_PLAN_REVIEW_OPTIONS[1]}</p>
         <p className="text-sm">Modifications description: {detail.carePlan.modificationsDescription || "-"}</p>
       </Card>
 
@@ -127,12 +128,21 @@ export default async function CarePlanDetailPage({
 
       <Card className="space-y-1">
         <CardTitle>Signoff</CardTitle>
-        <p className="text-sm">Completed By (Nurse Name): {detail.carePlan.completedBy ?? "-"}</p>
-        <p className="text-sm">Date of Completion: {formatOptionalDate(detail.carePlan.dateOfCompletion)}</p>
-        <p className="text-sm">Responsible Party Signature: {detail.carePlan.responsiblePartySignature ?? detail.carePlan.caregiverSignedName ?? "-"}</p>
-        <p className="text-sm">Date: {formatOptionalDate(detail.carePlan.responsiblePartySignatureDate ?? detail.carePlan.caregiverSignedAt)}</p>
-        <p className="text-sm">Administrator/Designee Signature: {detail.carePlan.administratorSignature ?? detail.carePlan.nurseDesigneeName ?? "-"}</p>
-        <p className="text-sm">Date: {formatOptionalDate(detail.carePlan.administratorSignatureDate)}</p>
+        <CarePlanSignatureBlock
+          completedBy={detail.carePlan.completedBy}
+          dateOfCompletion={detail.carePlan.dateOfCompletion}
+          responsiblePartySignature={detail.carePlan.responsiblePartySignature ?? detail.carePlan.caregiverSignedName}
+          responsiblePartySignatureDate={detail.carePlan.responsiblePartySignatureDate ?? detail.carePlan.caregiverSignedAt}
+          administratorSignature={detail.carePlan.administratorSignature ?? detail.carePlan.nurseDesigneeName}
+          administratorSignatureDate={detail.carePlan.administratorSignatureDate}
+          nurseSignatureStatus={detail.carePlan.nurseSignatureStatus}
+          nurseSignedByName={detail.carePlan.nurseSignedByName}
+          nurseSignedAt={detail.carePlan.nurseSignedAt}
+          caregiverSignatureStatus={detail.carePlan.caregiverSignatureStatus}
+          caregiverSentAt={detail.carePlan.caregiverSentAt}
+          caregiverViewedAt={detail.carePlan.caregiverViewedAt}
+          caregiverSignedAt={detail.carePlan.caregiverSignedAt}
+        />
       </Card>
 
       <Card>
@@ -201,3 +211,4 @@ export default async function CarePlanDetailPage({
     </div>
   );
 }
+

@@ -1,12 +1,18 @@
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import {
+  parseCarePlanNurseSignatureStatus,
+  type CarePlanNurseSignatureStatus
+} from "@/lib/services/care-plan-nurse-esign-core";
+import { signCarePlanNurseEsign } from "@/lib/services/care-plan-nurse-esign";
+import {
   CARE_PLAN_CARE_TEAM_NOTES_LABEL,
   CARE_PLAN_LONG_TERM_LABEL,
   CARE_PLAN_REVIEW_OPTIONS,
   CARE_PLAN_REVIEW_UPDATES_LABEL,
   CARE_PLAN_SECTION_TYPES,
   CARE_PLAN_SEPARATOR_LINE,
+  CARE_PLAN_SIGNATURE_LABELS,
   CARE_PLAN_SHORT_TERM_LABEL,
   CARE_PLAN_SIGNATURE_LINE_TEMPLATES,
   type CarePlanSectionType,
@@ -26,6 +32,7 @@ export {
   CARE_PLAN_REVIEW_UPDATES_LABEL,
   CARE_PLAN_SECTION_TYPES,
   CARE_PLAN_SEPARATOR_LINE,
+  CARE_PLAN_SIGNATURE_LABELS,
   CARE_PLAN_SHORT_TERM_LABEL,
   CARE_PLAN_SIGNATURE_LINE_TEMPLATES,
   getCarePlanTracks,
@@ -69,6 +76,12 @@ export interface CarePlan {
   nurseDesigneeUserId: string | null;
   nurseDesigneeName: string | null;
   nurseSignedAt: string | null;
+  nurseSignatureStatus: CarePlanNurseSignatureStatus;
+  nurseSignedByUserId: string | null;
+  nurseSignedByName: string | null;
+  nurseSignatureArtifactStoragePath: string | null;
+  nurseSignatureArtifactMemberFileId: string | null;
+  nurseSignatureMetadata: Record<string, unknown>;
   caregiverName: string | null;
   caregiverEmail: string | null;
   caregiverSignatureStatus: CaregiverSignatureStatus;
@@ -190,6 +203,12 @@ type DbCarePlan = {
   nurse_designee_user_id: string | null;
   nurse_designee_name: string | null;
   nurse_signed_at: string | null;
+  nurse_signature_status: string | null;
+  nurse_signed_by_user_id: string | null;
+  nurse_signed_by_name: string | null;
+  nurse_signature_artifact_storage_path: string | null;
+  nurse_signature_artifact_member_file_id: string | null;
+  nurse_signature_metadata: Record<string, unknown> | null;
   caregiver_name: string | null;
   caregiver_email: string | null;
   caregiver_signature_status: string | null;
@@ -205,7 +224,6 @@ type DbCarePlan = {
   created_at: string;
   updated_at: string;
   member: { display_name: string } | null;
-  nurse_designee: { id: string; role: string | null; active: boolean | null } | null;
 };
 
 type DbCarePlanVersion = {
@@ -263,11 +281,18 @@ function toCarePlan(row: DbCarePlan): CarePlan {
   if (!row.member?.display_name) {
     throw new Error(`Care plan ${row.id} is missing required member linkage.`);
   }
-  const nurseRole = row.nurse_designee?.role ?? null;
-  const designeeLinkValid =
-    Boolean(row.nurse_designee?.id) &&
-    (nurseRole === "admin" || nurseRole === "nurse") &&
-    row.nurse_designee?.active !== false;
+  const nurseSignatureStatus = parseCarePlanNurseSignatureStatus(row.nurse_signature_status);
+  const nurseSignedByUserId = clean(row.nurse_signed_by_user_id) ?? clean(row.nurse_designee_user_id);
+  const nurseSignedByName =
+    clean(row.nurse_signed_by_name) ??
+    clean(row.nurse_designee_name) ??
+    clean(row.administrator_signature) ??
+    clean(row.completed_by);
+  const nurseSignatureMetadata =
+    row.nurse_signature_metadata && typeof row.nurse_signature_metadata === "object"
+      ? (row.nurse_signature_metadata as Record<string, unknown>)
+      : {};
+  const designeeLinkValid = nurseSignatureStatus !== "signed" || Boolean(nurseSignedByUserId);
   return {
     id: row.id,
     memberId: row.member_id,
@@ -278,19 +303,26 @@ function toCarePlan(row: DbCarePlan): CarePlan {
     lastCompletedDate: row.last_completed_date,
     nextDueDate: row.next_due_date,
     status: computeCarePlanStatus(row.next_due_date),
-    completedBy: clean(row.completed_by),
-    dateOfCompletion: row.date_of_completion,
+    completedBy: clean(row.completed_by) ?? nurseSignedByName,
+    dateOfCompletion: row.date_of_completion ?? (row.nurse_signed_at ? toEasternDate(row.nurse_signed_at) : null),
     responsiblePartySignature: clean(row.responsible_party_signature),
     responsiblePartySignatureDate: row.responsible_party_signature_date,
-    administratorSignature: clean(row.administrator_signature),
-    administratorSignatureDate: row.administrator_signature_date,
+    administratorSignature: clean(row.administrator_signature) ?? nurseSignedByName,
+    administratorSignatureDate:
+      row.administrator_signature_date ?? (row.nurse_signed_at ? toEasternDate(row.nurse_signed_at) : null),
     careTeamNotes: row.care_team_notes ?? "",
     noChangesNeeded: Boolean(row.no_changes_needed),
     modificationsRequired: Boolean(row.modifications_required),
     modificationsDescription: row.modifications_description ?? "",
-    nurseDesigneeUserId: row.nurse_designee_user_id,
-    nurseDesigneeName: clean(row.nurse_designee_name),
+    nurseDesigneeUserId: row.nurse_designee_user_id ?? nurseSignedByUserId,
+    nurseDesigneeName: clean(row.nurse_designee_name) ?? nurseSignedByName,
     nurseSignedAt: row.nurse_signed_at,
+    nurseSignatureStatus,
+    nurseSignedByUserId,
+    nurseSignedByName,
+    nurseSignatureArtifactStoragePath: clean(row.nurse_signature_artifact_storage_path),
+    nurseSignatureArtifactMemberFileId: clean(row.nurse_signature_artifact_member_file_id),
+    nurseSignatureMetadata,
     caregiverName: clean(row.caregiver_name),
     caregiverEmail: clean(row.caregiver_email),
     caregiverSignatureStatus: toCaregiverSignatureStatus(row.caregiver_signature_status),
@@ -658,7 +690,8 @@ export async function createCarePlan(input: {
   modificationsDescription?: string;
   caregiverName?: string | null;
   caregiverEmail?: string | null;
-  actor: { id: string; fullName: string; signatureName: string };
+  signatureAttested: boolean;
+  actor: { id: string; fullName: string; signatureName: string; role: string };
 }) {
   const supabase = await createClient();
   const now = toEasternISO();
@@ -677,22 +710,28 @@ export async function createCarePlan(input: {
       last_completed_date: completionDate,
       next_due_date: nextDueDate,
       status: computeCarePlanStatus(nextDueDate),
-      completed_by: input.actor.signatureName,
-      date_of_completion: completionDate,
+      completed_by: null,
+      date_of_completion: null,
       responsible_party_signature: null,
       responsible_party_signature_date: null,
-      administrator_signature: input.actor.signatureName,
-      administrator_signature_date: completionDate,
+      administrator_signature: null,
+      administrator_signature_date: null,
       care_team_notes: input.careTeamNotes,
       no_changes_needed: Boolean(input.noChangesNeeded),
       modifications_required: Boolean(input.modificationsRequired),
       modifications_description: input.modificationsDescription ?? "",
-      nurse_designee_user_id: input.actor.id,
-      nurse_designee_name: input.actor.signatureName,
-      nurse_signed_at: now,
+      nurse_designee_user_id: null,
+      nurse_designee_name: null,
+      nurse_signed_at: null,
+      nurse_signature_status: "unsigned",
+      nurse_signed_by_user_id: null,
+      nurse_signed_by_name: null,
+      nurse_signature_artifact_storage_path: null,
+      nurse_signature_artifact_member_file_id: null,
+      nurse_signature_metadata: {},
       caregiver_name: caregiverName,
       caregiver_email: caregiverEmail,
-      caregiver_signature_status: "ready_to_send",
+      caregiver_signature_status: "not_requested",
       caregiver_sent_at: null,
       caregiver_sent_by_user_id: null,
       caregiver_viewed_at: null,
@@ -717,13 +756,42 @@ export async function createCarePlan(input: {
     .single();
   if (error) throw new Error(error.message);
 
-  await syncCarePlanSectionsToCanonical(String(data.id), input.track);
+  const createdCarePlanId = String(data.id);
+  await syncCarePlanSectionsToCanonical(createdCarePlanId, input.track);
+
+  let signedState: Awaited<ReturnType<typeof signCarePlanNurseEsign>>;
+  try {
+    signedState = await signCarePlanNurseEsign({
+      carePlanId: createdCarePlanId,
+      actor: {
+        id: input.actor.id,
+        fullName: input.actor.fullName,
+        role: input.actor.role,
+        signoffName: input.actor.signatureName
+      },
+      attested: input.signatureAttested,
+      metadata: {
+        module: "care-plan",
+        signedFrom: "createCarePlan"
+      }
+    });
+  } catch (error) {
+    const { error: rollbackError } = await supabase.from("care_plans").delete().eq("id", createdCarePlanId);
+    if (rollbackError) {
+      const signError = error instanceof Error ? error.message : "Unknown signature persistence error.";
+      throw new Error(
+        `Unable to persist Care Plan nurse e-signature (${signError}). Rollback failed: ${rollbackError.message}`
+      );
+    }
+    throw error;
+  }
+
   await createCarePlanVersionSnapshot({
-    carePlanId: String(data.id),
+    carePlanId: createdCarePlanId,
     track: input.track,
     snapshotType: "initial",
     snapshotDate: input.reviewDate,
-    reviewedBy: input.actor.signatureName,
+    reviewedBy: signedState.signedByName ?? input.actor.signatureName,
     status: computeCarePlanStatus(nextDueDate),
     nextDueDate,
     noChangesNeeded: Boolean(input.noChangesNeeded),
@@ -732,7 +800,10 @@ export async function createCarePlan(input: {
     careTeamNotes: input.careTeamNotes
   });
 
-  return toCarePlan(data as DbCarePlan);
+  const refreshed = await listCarePlanRows({ carePlanId: createdCarePlanId });
+  const signedCarePlan = refreshed[0];
+  if (!signedCarePlan) throw new Error("Care plan could not be reloaded after signature.");
+  return signedCarePlan;
 }
 
 export async function reviewCarePlan(input: {
@@ -744,7 +815,8 @@ export async function reviewCarePlan(input: {
   careTeamNotes: string;
   caregiverName?: string | null;
   caregiverEmail?: string | null;
-  actor: { id: string; fullName: string; signatureName: string };
+  signatureAttested: boolean;
+  actor: { id: string; fullName: string; signatureName: string; role: string };
 }) {
   const supabase = await createClient();
   const { data: existing, error: existingError } = await supabase
@@ -762,27 +834,33 @@ export async function reviewCarePlan(input: {
   const caregiverName = sanitizeCaregiverName(input.caregiverName);
   const caregiverEmail = sanitizeCaregiverEmail(input.caregiverEmail);
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from("care_plans")
     .update({
       review_date: input.reviewDate,
       last_completed_date: input.reviewDate,
       next_due_date: nextDueDate,
       status: computeCarePlanStatus(nextDueDate),
-      completed_by: input.actor.signatureName,
-      date_of_completion: input.reviewDate,
+      completed_by: null,
+      date_of_completion: null,
       no_changes_needed: input.noChangesNeeded,
       modifications_required: input.modificationsRequired,
       modifications_description: input.modificationsDescription,
       care_team_notes: input.careTeamNotes,
-      administrator_signature: input.actor.signatureName,
-      administrator_signature_date: input.reviewDate,
-      nurse_designee_user_id: input.actor.id,
-      nurse_designee_name: input.actor.signatureName,
-      nurse_signed_at: now,
+      administrator_signature: null,
+      administrator_signature_date: null,
+      nurse_designee_user_id: null,
+      nurse_designee_name: null,
+      nurse_signed_at: null,
+      nurse_signature_status: "unsigned",
+      nurse_signed_by_user_id: null,
+      nurse_signed_by_name: null,
+      nurse_signature_artifact_storage_path: null,
+      nurse_signature_artifact_member_file_id: null,
+      nurse_signature_metadata: {},
       caregiver_name: caregiverName,
       caregiver_email: caregiverEmail,
-      caregiver_signature_status: "ready_to_send",
+      caregiver_signature_status: "not_requested",
       caregiver_sent_at: null,
       caregiver_sent_by_user_id: null,
       caregiver_viewed_at: null,
@@ -803,16 +881,31 @@ export async function reviewCarePlan(input: {
       updated_at: now
     })
     .eq("id", input.carePlanId)
-    .select("*, member:members!care_plans_member_id_fkey(display_name)")
+    .select("id")
     .single();
   if (error) throw new Error(error.message);
+
+  const signedState = await signCarePlanNurseEsign({
+    carePlanId: input.carePlanId,
+    actor: {
+      id: input.actor.id,
+      fullName: input.actor.fullName,
+      role: input.actor.role,
+      signoffName: input.actor.signatureName
+    },
+    attested: input.signatureAttested,
+    metadata: {
+      module: "care-plan",
+      signedFrom: "reviewCarePlan"
+    }
+  });
 
   const snapshot = await createCarePlanVersionSnapshot({
     carePlanId: input.carePlanId,
     track,
     snapshotType: "review",
     snapshotDate: input.reviewDate,
-    reviewedBy: input.actor.signatureName,
+    reviewedBy: signedState.signedByName ?? input.actor.signatureName,
     status: computeCarePlanStatus(nextDueDate),
     nextDueDate,
     noChangesNeeded: input.noChangesNeeded,
@@ -823,7 +916,7 @@ export async function reviewCarePlan(input: {
   const { error: historyError } = await supabase.from("care_plan_review_history").insert({
     care_plan_id: input.carePlanId,
     review_date: input.reviewDate,
-    reviewed_by: input.actor.signatureName,
+    reviewed_by: signedState.signedByName ?? input.actor.signatureName,
     summary: input.modificationsRequired
       ? input.modificationsDescription || "Reviewed with modifications."
       : "Reviewed without required modifications.",
@@ -833,37 +926,49 @@ export async function reviewCarePlan(input: {
     created_at: now
   });
   if (historyError) throw new Error(historyError.message);
-  return toCarePlan(data as DbCarePlan);
+
+  const refreshed = await listCarePlanRows({ carePlanId: input.carePlanId });
+  const signedCarePlan = refreshed[0];
+  if (!signedCarePlan) throw new Error("Care plan could not be reloaded after review signature.");
+  return signedCarePlan;
 }
 
 export async function signCarePlanAsNurseAdmin(input: {
   carePlanId: string;
-  actor: { id: string; fullName: string; signatureName: string };
+  actor: { id: string; fullName: string; signatureName: string; role: string };
+  attested: boolean;
 }) {
   const supabase = await createClient();
+  await signCarePlanNurseEsign({
+    carePlanId: input.carePlanId,
+    actor: {
+      id: input.actor.id,
+      fullName: input.actor.fullName,
+      role: input.actor.role,
+      signoffName: input.actor.signatureName
+    },
+    attested: input.attested,
+    metadata: {
+      module: "care-plan",
+      signedFrom: "signCarePlanAsNurseAdmin"
+    }
+  });
+
   const now = toEasternISO();
-  const today = toEasternDate(now);
-  const { data, error } = await supabase
+  const { error: touchError } = await supabase
     .from("care_plans")
     .update({
-      completed_by: input.actor.signatureName,
-      date_of_completion: today,
-      administrator_signature: input.actor.signatureName,
-      administrator_signature_date: today,
-      nurse_designee_user_id: input.actor.id,
-      nurse_designee_name: input.actor.signatureName,
-      nurse_signed_at: now,
-      caregiver_signature_status: "ready_to_send",
-      legacy_cleanup_flag: false,
       updated_by_user_id: input.actor.id,
       updated_by_name: input.actor.fullName,
       updated_at: now
     })
-    .eq("id", input.carePlanId)
-    .select("*, member:members!care_plans_member_id_fkey(display_name)")
-    .single();
-  if (error) throw new Error(error.message);
-  return toCarePlan(data as DbCarePlan);
+    .eq("id", input.carePlanId);
+  if (touchError) throw new Error(touchError.message);
+
+  const refreshed = await listCarePlanRows({ carePlanId: input.carePlanId });
+  const signedCarePlan = refreshed[0];
+  if (!signedCarePlan) throw new Error("Care plan could not be reloaded after nurse/admin signature.");
+  return signedCarePlan;
 }
 
 export async function updateCarePlanCaregiverContact(input: {
@@ -904,6 +1009,7 @@ export function getCarePlanDocumentBlueprint(track: CarePlanTrack) {
       reviewOptions: [...CARE_PLAN_REVIEW_OPTIONS],
       careTeamNotes: CARE_PLAN_CARE_TEAM_NOTES_LABEL,
       separatorLine: CARE_PLAN_SEPARATOR_LINE,
+      signatureLabels: CARE_PLAN_SIGNATURE_LABELS,
       signatures: CARE_PLAN_SIGNATURE_LINE_TEMPLATES
     }
   };

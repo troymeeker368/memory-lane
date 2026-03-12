@@ -34,6 +34,7 @@ export function CarePlanCaregiverEsignActions({
   const today = useMemo(() => toEasternDate(), []);
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
+  const [nurseAttested, setNurseAttested] = useState(false);
   const [form, setForm] = useState({
     caregiverName: caregiverName ?? "",
     caregiverEmail: caregiverEmail ?? "",
@@ -49,23 +50,33 @@ export function CarePlanCaregiverEsignActions({
       <p className="text-xs text-muted">Sent At: {caregiverSentAt ?? "-"} | Signed At: {caregiverSignedAt ?? "-"}</p>
 
       {!nurseSignedAt ? (
-        <button
-          type="button"
-          className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
-          disabled={isPending}
-          onClick={() =>
-            startTransition(async () => {
-              const result = await signCarePlanAction({ carePlanId });
-              if (!result.ok) {
-                setStatus(result.error);
-                return;
-              }
-              setStatus("Care plan signed by Nurse/Admin.");
-            })
-          }
-        >
-          {isPending ? "Signing..." : "Sign as Administrator/Designee"}
-        </button>
+        <div className="space-y-2">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={nurseAttested}
+              onChange={(event) => setNurseAttested(event.target.checked)}
+            />
+            <span>I attest this is my electronic signature and I am the authorized clinical signer for this Care Plan.</span>
+          </label>
+          <button
+            type="button"
+            className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
+            disabled={isPending || !nurseAttested}
+            onClick={() =>
+              startTransition(async () => {
+                const result = await signCarePlanAction({ carePlanId, attested: nurseAttested });
+                if (!result.ok) {
+                  setStatus(result.error);
+                  return;
+                }
+                setStatus("Care plan signed by Nurse/Admin.");
+              })
+            }
+          >
+            {isPending ? "Signing..." : "Sign as Administrator/Designee"}
+          </button>
+        </div>
       ) : (
         <p className="text-sm">Nurse/Admin signature completed at: {nurseSignedAt}</p>
       )}

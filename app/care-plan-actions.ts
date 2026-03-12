@@ -18,7 +18,8 @@ const createCarePlanSchema = z
     modificationsDescription: z.string().optional().or(z.literal("")),
     careTeamNotes: z.string().default(""),
     caregiverName: z.string().min(1),
-    caregiverEmail: z.string().email()
+    caregiverEmail: z.string().email(),
+    signatureAttested: z.boolean()
   })
   .superRefine((value, ctx) => {
     if (!value.noChangesNeeded && !value.modificationsRequired) {
@@ -33,6 +34,13 @@ const createCarePlanSchema = z
         code: z.ZodIssueCode.custom,
         path: ["modificationsDescription"],
         message: "Modification description is required when modifications are marked required."
+      });
+    }
+    if (!value.signatureAttested) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["signatureAttested"],
+        message: "Electronic signature attestation is required."
       });
     }
   });
@@ -53,10 +61,12 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
     careTeamNotes: payload.data.careTeamNotes,
     caregiverName: payload.data.caregiverName,
     caregiverEmail: payload.data.caregiverEmail,
+    signatureAttested: payload.data.signatureAttested,
     actor: {
       id: user.userId,
       fullName: user.fullName,
-      signatureName: user.signatureName
+      signatureName: user.signatureName,
+      role: user.role
     }
   });
 
@@ -77,7 +87,8 @@ const reviewCarePlanSchema = z
     modificationsDescription: z.string().optional().or(z.literal("")),
     careTeamNotes: z.string().default(""),
     caregiverName: z.string().min(1),
-    caregiverEmail: z.string().email()
+    caregiverEmail: z.string().email(),
+    signatureAttested: z.boolean()
   })
   .superRefine((value, ctx) => {
     if (!value.noChangesNeeded && !value.modificationsRequired) {
@@ -92,6 +103,13 @@ const reviewCarePlanSchema = z
         code: z.ZodIssueCode.custom,
         path: ["modificationsDescription"],
         message: "Modification description is required when modifications are marked required."
+      });
+    }
+    if (!value.signatureAttested) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["signatureAttested"],
+        message: "Electronic signature attestation is required."
       });
     }
   });
@@ -110,10 +128,12 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
     careTeamNotes: payload.data.careTeamNotes,
     caregiverName: payload.data.caregiverName,
     caregiverEmail: payload.data.caregiverEmail,
+    signatureAttested: payload.data.signatureAttested,
     actor: {
       id: user.userId,
       fullName: user.fullName,
-      signatureName: user.signatureName
+      signatureName: user.signatureName,
+      role: user.role
     }
   });
 
@@ -127,7 +147,8 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
 }
 
 const signCarePlanSchema = z.object({
-  carePlanId: z.string().min(1)
+  carePlanId: z.string().min(1),
+  attested: z.boolean()
 });
 
 export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>) {
@@ -139,8 +160,10 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
     actor: {
       id: user.userId,
       fullName: user.fullName,
-      signatureName: user.signatureName
-    }
+      signatureName: user.signatureName,
+      role: user.role
+    },
+    attested: payload.data.attested
   });
   revalidatePath(`/health/care-plans/${updated.id}`);
   revalidatePath(`/members/${updated.memberId}`);

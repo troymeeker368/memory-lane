@@ -405,6 +405,11 @@ export function MemberCommandCenterPofSection({
               <Link href={`/health/physician-orders/${modalState.physicianOrderId}/print`} target="_blank" className="mt-2 inline-block text-xs font-semibold text-brand">
                 Open print preview
               </Link>
+              <iframe
+                src={`/health/physician-orders/${modalState.physicianOrderId}/print`}
+                title="POF print preview"
+                className="mt-2 h-[320px] w-full rounded-lg border border-border bg-white"
+              />
             </div>
 
             <div className="mt-4 flex justify-end gap-2">

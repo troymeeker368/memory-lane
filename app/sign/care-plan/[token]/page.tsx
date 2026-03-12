@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 
+import { CarePlanSignatureBlock } from "@/components/care-plans/care-plan-signature-block";
 import { CarePlanPublicSignForm } from "@/components/care-plans/care-plan-public-sign-form";
 import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { Card, CardTitle } from "@/components/ui/card";
@@ -113,6 +114,24 @@ export default async function PublicCarePlanSigningPage({
               </div>
             </div>
           ))}
+        </div>
+
+        <div className="mt-4 rounded-lg border border-border p-3">
+          <p className="text-sm font-semibold">Signoff</p>
+          <div className="mt-2">
+            <CarePlanSignatureBlock
+              completedBy={detail.carePlan.completedBy}
+              dateOfCompletion={detail.carePlan.dateOfCompletion}
+              responsiblePartySignature={detail.carePlan.responsiblePartySignature ?? detail.carePlan.caregiverSignedName}
+              responsiblePartySignatureDate={detail.carePlan.responsiblePartySignatureDate ?? detail.carePlan.caregiverSignedAt}
+              administratorSignature={detail.carePlan.administratorSignature ?? detail.carePlan.nurseDesigneeName}
+              administratorSignatureDate={detail.carePlan.administratorSignatureDate}
+              caregiverSignatureStatus={detail.carePlan.caregiverSignatureStatus}
+              caregiverSentAt={detail.carePlan.caregiverSentAt}
+              caregiverViewedAt={detail.carePlan.caregiverViewedAt}
+              caregiverSignedAt={detail.carePlan.caregiverSignedAt}
+            />
+          </div>
         </div>
       </Card>
 

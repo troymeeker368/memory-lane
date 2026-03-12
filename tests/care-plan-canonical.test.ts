@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   CARE_PLAN_LONG_TERM_LABEL,
   CARE_PLAN_REVIEW_OPTIONS,
+  CARE_PLAN_SIGNATURE_LABELS,
   CARE_PLAN_SHORT_TERM_LABEL,
   getCarePlanTrackDefinition
 } from "@/lib/services/care-plan-track-definitions";
@@ -29,6 +30,12 @@ test("track wording matches canonical source for Track 1/2/3", () => {
   assert.equal(CARE_PLAN_SHORT_TERM_LABEL, "Short-Term Goals (within 60 days):");
   assert.equal(CARE_PLAN_LONG_TERM_LABEL, "Long-Term Goals (within 6 months):");
   assert.deepEqual(CARE_PLAN_REVIEW_OPTIONS, ["No changes needed", "Modifications required (describe below)"]);
+  assert.equal(CARE_PLAN_SIGNATURE_LABELS.completedBy, "Completed By (Nurse Name):");
+  assert.equal(CARE_PLAN_SIGNATURE_LABELS.completedByDate, "Date of Completion:");
+  assert.equal(CARE_PLAN_SIGNATURE_LABELS.responsibleParty, "Responsible Party Signature:");
+  assert.equal(CARE_PLAN_SIGNATURE_LABELS.responsiblePartyDate, "Date:");
+  assert.equal(CARE_PLAN_SIGNATURE_LABELS.administratorDesignee, "Administrator/Designee Signature:");
+  assert.equal(CARE_PLAN_SIGNATURE_LABELS.administratorDesigneeDate, "Date:");
 });
 
 test("care-plan access is Nurse/Admin only", () => {

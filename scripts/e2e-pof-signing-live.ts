@@ -41,6 +41,12 @@ function clean(value: string | null | undefined) {
   return normalized.length > 0 ? normalized : null;
 }
 
+function parseResendTestingRecipient(errorMessage: string) {
+  const match = /own email address \(([^)]+)\)/i.exec(errorMessage);
+  if (!match) return null;
+  return clean(match[1]);
+}
+
 function addDays(dateOnly: string, days: number) {
   const parsed = new Date(`${dateOnly}T00:00:00.000Z`);
   parsed.setUTCDate(parsed.getUTCDate() + days);
@@ -91,8 +97,10 @@ async function main() {
   const forcedOrderId = clean(process.env.POF_E2E_POF_ID);
   const forcedMemberId = clean(process.env.POF_E2E_MEMBER_ID);
   const providerName = clean(process.env.POF_E2E_PROVIDER_NAME) ?? "POF E2E Provider";
-  const providerEmail = clean(process.env.POF_E2E_PROVIDER_EMAIL) ?? clean(actor.email) ?? senderEmail;
-  if (!providerEmail) throw new Error("No provider email is available for E2E.");
+  const providerEmailCandidates = Array.from(
+    new Set([clean(process.env.POF_E2E_PROVIDER_EMAIL), senderEmail, clean(actor.email)].filter((value): value is string => Boolean(value)))
+  );
+  if (providerEmailCandidates.length === 0) throw new Error("No provider email is available for E2E.");
 
   const { data: candidateOrders, error: orderError } = await admin
     .from("physician_orders")
@@ -122,41 +130,65 @@ async function main() {
         id: string;
         physicianOrderId: string;
         memberId: string;
+        providerEmail: string;
         signatureRequestUrl: string;
       }
     | null = null;
   let sendFailure: string | null = null;
 
   for (const order of scopedOrders) {
-    try {
-      const request = await sendNewPofSignatureRequest({
-        physicianOrderId: order.id,
-        memberId: order.member_id,
-        providerName,
-        providerEmail,
-        nurseName: actorName,
-        fromEmail: senderEmail,
-        optionalMessage,
-        expiresOnDate,
-        actor: {
-          id: actor.id,
-          fullName: actorName
-        }
-      });
-      createdRequest = {
-        id: request.id,
-        physicianOrderId: request.physicianOrderId,
-        memberId: request.memberId,
-        signatureRequestUrl: request.signatureRequestUrl
-      };
-      break;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown send error";
-      if (message.includes("An active signature request already exists")) {
+    let orderBlockedByActiveRequest = false;
+    let orderFailure: string | null = null;
+    const providerQueue = [...providerEmailCandidates];
+    const attemptedProviders = new Set<string>();
+
+    while (providerQueue.length > 0) {
+      const providerEmail = providerQueue.shift();
+      if (!providerEmail || attemptedProviders.has(providerEmail)) continue;
+      attemptedProviders.add(providerEmail);
+      try {
+        const request = await sendNewPofSignatureRequest({
+          physicianOrderId: order.id,
+          memberId: order.member_id,
+          providerName,
+          providerEmail,
+          nurseName: actorName,
+          fromEmail: senderEmail,
+          optionalMessage,
+          expiresOnDate,
+          actor: {
+            id: actor.id,
+            fullName: actorName
+          }
+        });
+        createdRequest = {
+          id: request.id,
+          physicianOrderId: request.physicianOrderId,
+          memberId: request.memberId,
+          providerEmail,
+          signatureRequestUrl: request.signatureRequestUrl
+        };
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown send error";
+        orderFailure = message;
         sendFailure = message;
-        continue;
+        if (message.includes("An active signature request already exists")) {
+          orderBlockedByActiveRequest = true;
+          break;
+        }
+        const resendTestingRecipient = parseResendTestingRecipient(message);
+        if (resendTestingRecipient && !attemptedProviders.has(resendTestingRecipient)) {
+          providerQueue.unshift(resendTestingRecipient);
+          continue;
+        }
       }
-      throw error;
+    }
+
+    if (createdRequest) break;
+    if (orderBlockedByActiveRequest) continue;
+    if (orderFailure) {
+      throw new Error(orderFailure);
     }
   }
 
@@ -227,6 +259,7 @@ async function main() {
         physicianOrderId: createdRequest.physicianOrderId,
         memberId: createdRequest.memberId,
         requestStatus: requestRow?.status ?? null,
+        providerEmail: createdRequest.providerEmail,
         signedAt: requestRow?.signed_at ?? null,
         memberFileId: requestRow?.member_file_id ?? null,
         signedPdfStored: Boolean(requestRow?.signed_pdf_url),
