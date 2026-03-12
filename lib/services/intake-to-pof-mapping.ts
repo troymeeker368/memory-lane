@@ -19,34 +19,34 @@ function includesWord(values: string[], pattern: RegExp) {
 export interface IntakeAssessmentForPofPrefill {
   id: string;
   member_id: string;
-  vitals_bp: string;
-  vitals_hr: number;
-  vitals_o2_percent: number;
-  vitals_rr: number;
-  allergies: string;
-  code_status: string;
-  diet_type: string;
-  diet_other: string;
-  diet_restrictions_notes: string;
-  mobility_steadiness: string;
-  mobility_aids: string;
-  assistive_devices: string;
-  medication_management_status: string;
-  dressing_support_status: string;
-  incontinence_products: string;
-  orientation_dob_verified: boolean;
-  orientation_city_verified: boolean;
-  orientation_year_verified: boolean;
-  orientation_occupation_verified: boolean;
-  overwhelmed_by_noise: boolean;
-  social_triggers: string;
-  emotional_wellness_notes: string;
-  transport_assistance_level: string;
-  transport_mobility_aid: string;
-  transport_behavior_concern: string;
-  transport_notes: string;
-  joy_sparks: string;
-  personal_notes: string;
+  vitals_bp: string | null;
+  vitals_hr: number | null;
+  vitals_o2_percent: number | null;
+  vitals_rr: number | null;
+  allergies: string | null;
+  code_status: string | null;
+  diet_type: string | null;
+  diet_other: string | null;
+  diet_restrictions_notes: string | null;
+  mobility_steadiness: string | null;
+  mobility_aids: string | null;
+  assistive_devices: string | null;
+  medication_management_status: string | null;
+  dressing_support_status: string | null;
+  incontinence_products: string | null;
+  orientation_dob_verified: boolean | null;
+  orientation_city_verified: boolean | null;
+  orientation_year_verified: boolean | null;
+  orientation_occupation_verified: boolean | null;
+  overwhelmed_by_noise: boolean | null;
+  social_triggers: string | null;
+  emotional_wellness_notes: string | null;
+  transport_assistance_level: string | null;
+  transport_mobility_aid: string | null;
+  transport_behavior_concern: string | null;
+  transport_notes: string | null;
+  joy_sparks: string | null;
+  personal_notes: string | null;
 }
 
 export interface IntakeToPofPrefill {
@@ -128,6 +128,10 @@ export function mapIntakeAssessmentToPofPrefill(assessment: IntakeAssessmentForP
   const diet = canonicalDietSelection(assessment.diet_type, assessment.diet_other);
   const dnrSelected = mapCodeStatusToDnr(assessment.code_status);
   const toiletingNeeds = clean(assessment.incontinence_products);
+  const dressingSupportStatus = (assessment.dressing_support_status ?? "").toLowerCase();
+  const medicationManagementStatus = (assessment.medication_management_status ?? "").toLowerCase();
+  const socialTriggers = assessment.social_triggers ?? "";
+  const dietContext = [assessment.diet_type, assessment.diet_restrictions_notes].filter(Boolean).join(" ");
   const behaviorCombined = clean([assessment.social_triggers, assessment.emotional_wellness_notes].filter(Boolean).join(" | "));
 
   return {
@@ -144,8 +148,8 @@ export function mapIntakeAssessmentToPofPrefill(assessment: IntakeAssessmentForP
       mobilityWheelchair: includesWord(mobilityItems, /wheelchair/),
       mobilityOther: includesWord(mobilityItems, /other|cane|gait|scooter/),
       mobilityOtherText: nonStandardMobilityItems.length > 0 ? nonStandardMobilityItems.join(", ") : null,
-      personalCareDressing: !assessment.dressing_support_status.toLowerCase().includes("independent"),
-      personalCareMedication: !assessment.medication_management_status.toLowerCase().includes("independent"),
+      personalCareDressing: !dressingSupportStatus.includes("independent"),
+      personalCareMedication: !medicationManagementStatus.includes("independent"),
       personalCareToileting: Boolean(toiletingNeeds),
       medAdministrationSelf: medSupport.medAdministrationSelf,
       medAdministrationNurse: medSupport.medAdministrationNurse,
@@ -156,8 +160,8 @@ export function mapIntakeAssessmentToPofPrefill(assessment: IntakeAssessmentForP
       nutritionDiets: diet.diets,
       nutritionDietOther: diet.other ?? clean(assessment.diet_restrictions_notes),
       joySparksNotes: clean([assessment.joy_sparks, assessment.personal_notes].filter(Boolean).join(" | ")),
-      stimulationAfraidLoudNoises: assessment.overwhelmed_by_noise || /noise/i.test(assessment.social_triggers),
-      stimulationEasilyOverwhelmed: assessment.overwhelmed_by_noise || /overwhelm/i.test(assessment.social_triggers),
+      stimulationAfraidLoudNoises: Boolean(assessment.overwhelmed_by_noise) || /noise/i.test(socialTriggers),
+      stimulationEasilyOverwhelmed: Boolean(assessment.overwhelmed_by_noise) || /overwhelm/i.test(socialTriggers),
       orientationProfile: {
         orientationDob: mapOrientationBoolToAnswer(assessment.orientation_dob_verified),
         orientationCity: mapOrientationBoolToAnswer(assessment.orientation_city_verified),
@@ -181,7 +185,7 @@ export function mapIntakeAssessmentToPofPrefill(assessment: IntakeAssessmentForP
     },
     operationalFlags: {
       dnr: dnrSelected,
-      diabeticRestrictedSweets: /diabet|restricted sweets/i.test(`${assessment.diet_type} ${assessment.diet_restrictions_notes}`),
+      diabeticRestrictedSweets: /diabet|restricted sweets/i.test(dietContext),
       bathroomAssistance: Boolean(toiletingNeeds)
     }
   };

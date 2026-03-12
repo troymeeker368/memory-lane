@@ -37,6 +37,13 @@ function lateralityOptionsForRoute(route: string) {
   return [];
 }
 
+function lateralityLabelForRoute(route: string) {
+  const normalized = route.trim().toLowerCase();
+  if (normalized === "ophthalmic") return "Eye";
+  if (normalized === "otic") return "Ear";
+  return null;
+}
+
 function buildInitialRows(
   initialRows: Array<{
     id: string;
@@ -152,7 +159,7 @@ export function PofMedicationsEditor({
               <th>Qty</th>
               <th>Form</th>
               <th>Route</th>
-              <th>Eye/Ear</th>
+              <th>Side</th>
               <th>Frequency</th>
               <th>Given at Center</th>
               <th>Comments</th>
@@ -215,14 +222,14 @@ export function PofMedicationsEditor({
                   </select>
                 </td>
                 <td>
-                  {requiresRouteLaterality(medication.route) ? (
+                  {requiresRouteLaterality(medication.route) && lateralityLabelForRoute(medication.route) ? (
                     <select
                       name="medicationRouteLaterality"
                       value={medication.routeLaterality}
                       onChange={(event) => updateRow(medication.id, "routeLaterality", event.target.value)}
-                      className="h-9 w-[88px] rounded border border-border px-2 text-sm"
+                      className="h-9 w-[110px] rounded border border-border px-2 text-sm"
                     >
-                      <option value="">Select</option>
+                      <option value="">Select {lateralityLabelForRoute(medication.route)?.toLowerCase()}</option>
                       {lateralityOptionsForRoute(medication.route).map((option) => (
                         <option key={option} value={option}>
                           {option}
@@ -232,7 +239,6 @@ export function PofMedicationsEditor({
                   ) : (
                     <>
                       <input type="hidden" name="medicationRouteLaterality" value="" />
-                      <span className="text-xs text-muted">N/A</span>
                     </>
                   )}
                 </td>

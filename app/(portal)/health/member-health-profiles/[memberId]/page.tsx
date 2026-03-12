@@ -24,6 +24,19 @@ import {
   type MhpTab,
   getMemberHealthProfileDetailSupabase
 } from "@/lib/services/member-health-profiles-supabase";
+import {
+  MHP_AMBULATION_OPTIONS,
+  MHP_BLADDER_CONTINENCE_OPTIONS,
+  MHP_BOWEL_CONTINENCE_OPTIONS,
+  MHP_DENTAL_OPTIONS,
+  MHP_DRESSING_OPTIONS,
+  MHP_HEARING_OPTIONS,
+  MHP_SELF_MEDICATE_OPTIONS,
+  MHP_SPEECH_STATUS_OPTIONS,
+  MHP_TOILETING_OPTIONS,
+  MHP_TRANSFER_SUPPORT_OPTIONS,
+  MHP_VISION_OPTIONS
+} from "@/lib/services/mhp-functional-options";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 import {
   saveMhpCognitiveBehaviorAction,
@@ -500,80 +513,49 @@ export default async function MemberHealthProfileDetailPage({
               label="Ambulation"
               name="ambulation"
               defaultValue={profile.ambulation ?? ""}
-              options={[
-                { label: "Steady", value: "Steady" },
-                { label: "Occasionally unsteady", value: "Occasionally unsteady" },
-                { label: "Frequent falls", value: "Frequent falls" }
-              ]}
+              options={MHP_AMBULATION_OPTIONS}
             />
             <SegmentedChoiceGroup
               label="Transferring"
               name="transferring"
               defaultValue={profile.transferring ?? ""}
-              options={[
-                { label: "Independent", value: "Independent" },
-                { label: "Needs help", value: "Needs help" },
-                { label: "Cueing/reminders", value: "Cueing/reminders" }
-              ]}
+              options={MHP_TRANSFER_SUPPORT_OPTIONS}
             />
             <SegmentedChoiceGroup
               label="Bathing"
               name="bathing"
               defaultValue={profile.bathing ?? ""}
-              options={[
-                { label: "Independent", value: "Independent" },
-                { label: "Needs help", value: "Needs help" },
-                { label: "Cueing/reminders", value: "Cueing/reminders" }
-              ]}
+              options={MHP_TRANSFER_SUPPORT_OPTIONS}
             />
             <SegmentedChoiceGroup
               label="Dressing"
               name="dressing"
               defaultValue={profile.dressing ?? ""}
-              options={[
-                { label: "Independent", value: "Independent" },
-                { label: "Needs help", value: "Needs help" }
-              ]}
+              options={MHP_DRESSING_OPTIONS}
             />
             <SegmentedChoiceGroup
               label="Eating"
               name="eating"
               defaultValue={profile.eating ?? ""}
-              options={[
-                { label: "Independent", value: "Independent" },
-                { label: "Needs help", value: "Needs help" },
-                { label: "Cueing/reminders", value: "Cueing/reminders" }
-              ]}
+              options={MHP_TRANSFER_SUPPORT_OPTIONS}
             />
             <SegmentedChoiceGroup
               label="Bladder Continence"
               name="bladderContinence"
               defaultValue={profile.bladder_continence ?? ""}
-              options={[
-                { label: "Continent", value: "Continent" },
-                { label: "Incontinent", value: "Incontinent" },
-                { label: "Uses products", value: "Uses products" }
-              ]}
+              options={MHP_BLADDER_CONTINENCE_OPTIONS}
             />
             <SegmentedChoiceGroup
               label="Bowel Continence"
               name="bowelContinence"
               defaultValue={profile.bowel_continence ?? ""}
-              options={[
-                { label: "Continent", value: "Continent" },
-                { label: "Incontinent", value: "Incontinent" },
-                { label: "Needs monitoring", value: "Needs monitoring" }
-              ]}
+              options={MHP_BOWEL_CONTINENCE_OPTIONS}
             />
             <SegmentedChoiceGroup
               label="Toileting"
               name="toileting"
               defaultValue={profile.toileting ?? ""}
-              options={[
-                { label: "Yes", value: "Yes" },
-                { label: "No", value: "No" },
-                { label: "Cueing/reminders", value: "Cueing/reminders" }
-              ]}
+              options={MHP_TOILETING_OPTIONS}
             />
             <Field label="Toileting Needs" name="toiletingNeeds" defaultValue={profile.toileting_needs ?? ""} />
             <Area label="Toileting Comments" name="toiletingComments" defaultValue={profile.toileting_comments ?? ""} />
@@ -581,41 +563,25 @@ export default async function MemberHealthProfileDetailPage({
               label="Hearing"
               name="hearing"
               defaultValue={profile.hearing ?? ""}
-              options={[
-                { label: "Intact", value: "Intact" },
-                { label: "Hard of hearing", value: "Hard of hearing" },
-                { label: "Hearing aids", value: "Hearing aids" }
-              ]}
+              options={MHP_HEARING_OPTIONS}
             />
             <SegmentedChoiceGroup
               label="Vision"
               name="vision"
               defaultValue={profile.vision ?? ""}
-              options={[
-                { label: "Intact", value: "Intact" },
-                { label: "Glasses", value: "Glasses" },
-                { label: "Impaired", value: "Impaired" }
-              ]}
+              options={MHP_VISION_OPTIONS}
             />
             <SegmentedChoiceGroup
               label="Dental"
               name="dental"
               defaultValue={profile.dental ?? ""}
-              options={[
-                { label: "Intact", value: "Intact" },
-                { label: "Dentures", value: "Dentures" },
-                { label: "Needs follow-up", value: "Needs follow-up" }
-              ]}
+              options={MHP_DENTAL_OPTIONS}
             />
             <SegmentedChoiceGroup
               label="Speech / Verbal Status"
               name="speechVerbalStatus"
               defaultValue={profile.speech_verbal_status ?? ""}
-              options={[
-                { label: "Clear", value: "Clear" },
-                { label: "Limited verbal", value: "Limited verbal" },
-                { label: "Non-verbal", value: "Non-verbal" }
-              ]}
+              options={MHP_SPEECH_STATUS_OPTIONS}
             />
             <Area label="Speech Comments" name="speechComments" defaultValue={profile.speech_comments ?? ""} />
             <Area label="Personal Appearance / Hygiene / Grooming" name="hygieneGrooming" defaultValue={profile.personal_appearance_hygiene_grooming ?? ""} />
@@ -623,10 +589,7 @@ export default async function MemberHealthProfileDetailPage({
               label="May Self-Medicate"
               name="maySelfMedicate"
               defaultValue={profile.may_self_medicate == null ? "" : profile.may_self_medicate ? "true" : "false"}
-              options={[
-                { label: "Yes", value: "true" },
-                { label: "No", value: "false" }
-              ]}
+              options={MHP_SELF_MEDICATE_OPTIONS}
             />
             <Field label="Medication Manager" name="medicationManagerName" defaultValue={profile.medication_manager_name ?? ""} />
             <div className="md:col-span-2"><button type="submit" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">Save Functional</button></div>

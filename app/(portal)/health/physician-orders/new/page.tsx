@@ -4,9 +4,23 @@ import { savePhysicianOrderFormAction } from "@/app/(portal)/health/physician-or
 import { PofAllergiesEditor } from "@/components/forms/pof-allergies-editor";
 import { PofDiagnosesEditor } from "@/components/forms/pof-diagnoses-editor";
 import { PofMedicationsEditor } from "@/components/forms/pof-medications-editor";
+import { SegmentedChoiceGroup } from "@/components/forms/segmented-choice-group";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
+import {
+  MHP_AMBULATION_OPTIONS,
+  MHP_BLADDER_CONTINENCE_OPTIONS,
+  MHP_BOWEL_CONTINENCE_OPTIONS,
+  MHP_DENTAL_OPTIONS,
+  MHP_DRESSING_OPTIONS,
+  MHP_HEARING_OPTIONS,
+  MHP_SELF_MEDICATE_OPTIONS,
+  MHP_SPEECH_STATUS_OPTIONS,
+  MHP_TOILETING_OPTIONS,
+  MHP_TRANSFER_SUPPORT_OPTIONS,
+  MHP_VISION_OPTIONS
+} from "@/lib/services/mhp-functional-options";
 import { createClient } from "@/lib/supabase/server";
 import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
 import {
@@ -229,69 +243,12 @@ export default async function NewPhysicianOrderPage({
                   <p className="text-sm font-semibold">Disoriented</p>
                   <CheckboxField name="disorientedConstantly" label="Constantly" defaultChecked={draft.careInformation.disorientedConstantly} />
                   <CheckboxField name="disorientedIntermittently" label="Intermittently" defaultChecked={draft.careInformation.disorientedIntermittently} />
-                  <label className="space-y-1 text-sm">
-                    <span className="text-xs font-semibold text-muted">MHP Orientation: DOB</span>
-                    <select
-                      name="orientationDob"
-                      defaultValue={draft.careInformation.orientationProfile.orientationDob ?? ""}
-                      className="h-10 w-full rounded-lg border border-border px-3"
-                    >
-                      <option value="">Not recorded</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
-                    </select>
-                  </label>
-                  <label className="space-y-1 text-sm">
-                    <span className="text-xs font-semibold text-muted">MHP Orientation: City</span>
-                    <select
-                      name="orientationCity"
-                      defaultValue={draft.careInformation.orientationProfile.orientationCity ?? ""}
-                      className="h-10 w-full rounded-lg border border-border px-3"
-                    >
-                      <option value="">Not recorded</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
-                    </select>
-                  </label>
                 </div>
                 <div className="space-y-2">
                   <p className="text-sm font-semibold">Inappropriate Behavior</p>
                   <CheckboxField name="inappropriateBehaviorWanderer" label="Wanderer" defaultChecked={draft.careInformation.inappropriateBehaviorWanderer} />
                   <CheckboxField name="inappropriateBehaviorVerbalAggression" label="Verbal Aggression" defaultChecked={draft.careInformation.inappropriateBehaviorVerbalAggression} />
                   <CheckboxField name="inappropriateBehaviorAggression" label="Aggression" defaultChecked={draft.careInformation.inappropriateBehaviorAggression} />
-                  <label className="space-y-1 text-sm">
-                    <span className="text-xs font-semibold text-muted">MHP Orientation: Current Year</span>
-                    <select
-                      name="orientationCurrentYear"
-                      defaultValue={draft.careInformation.orientationProfile.orientationCurrentYear ?? ""}
-                      className="h-10 w-full rounded-lg border border-border px-3"
-                    >
-                      <option value="">Not recorded</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
-                    </select>
-                  </label>
-                  <label className="space-y-1 text-sm">
-                    <span className="text-xs font-semibold text-muted">MHP Orientation: Former Occupation</span>
-                    <select
-                      name="orientationFormerOccupation"
-                      defaultValue={draft.careInformation.orientationProfile.orientationFormerOccupation ?? ""}
-                      className="h-10 w-full rounded-lg border border-border px-3"
-                    >
-                      <option value="">Not recorded</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
-                    </select>
-                  </label>
-                  <label className="inline-flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      name="orientationDisorientation"
-                      value="true"
-                      defaultChecked={draft.careInformation.orientationProfile.disorientation === true}
-                    />
-                    <span>MHP Disorientation</span>
-                  </label>
                 </div>
                 <div className="space-y-2">
                   <p className="text-sm font-semibold">Activities / Social</p>
@@ -299,34 +256,52 @@ export default async function NewPhysicianOrderPage({
                   <CheckboxField name="activitiesActive" label="Active" defaultChecked={draft.careInformation.activitiesActive} />
                   <CheckboxField name="activitiesGroupParticipation" label="Group Participation" defaultChecked={draft.careInformation.activitiesGroupParticipation} />
                   <CheckboxField name="activitiesPrefersAlone" label="Prefers alone time" defaultChecked={draft.careInformation.activitiesPrefersAlone} />
-                  <input
-                    name="orientationMemoryImpairment"
-                    defaultValue={draft.careInformation.orientationProfile.memoryImpairment ?? ""}
-                    placeholder="MHP Memory Impairment"
-                    className="h-10 w-full rounded-lg border border-border px-3 text-sm"
-                  />
                 </div>
                 <div className="space-y-2">
                   <p className="text-sm font-semibold">Stimulation</p>
                   <CheckboxField name="stimulationAfraidLoudNoises" label="Afraid of loud noises" defaultChecked={draft.careInformation.stimulationAfraidLoudNoises} />
                   <CheckboxField name="stimulationEasilyOverwhelmed" label="Easily overwhelmed" defaultChecked={draft.careInformation.stimulationEasilyOverwhelmed} />
                   <CheckboxField name="stimulationAdaptsEasily" label="Adapts easily" defaultChecked={draft.careInformation.stimulationAdaptsEasily} />
-                  <input
-                    name="orientationMemorySeverity"
-                    defaultValue={draft.careInformation.orientationProfile.memorySeverity ?? ""}
-                    placeholder="MHP Memory Severity"
-                    className="h-10 w-full rounded-lg border border-border px-3 text-sm"
-                  />
                 </div>
-                <label className="space-y-1 text-sm md:col-span-2">
-                  <span className="text-xs font-semibold text-muted">MHP Cognitive / Behavioral Comments</span>
-                  <textarea
-                    name="orientationComments"
-                    defaultValue={draft.careInformation.orientationProfile.cognitiveBehaviorComments ?? ""}
-                    className="min-h-20 w-full rounded-lg border border-border p-3 text-sm"
-                  />
-                </label>
               </div>
+              <input type="hidden" name="orientationDob" defaultValue={draft.careInformation.orientationProfile.orientationDob ?? ""} />
+              <input type="hidden" name="orientationCity" defaultValue={draft.careInformation.orientationProfile.orientationCity ?? ""} />
+              <input
+                type="hidden"
+                name="orientationCurrentYear"
+                defaultValue={draft.careInformation.orientationProfile.orientationCurrentYear ?? ""}
+              />
+              <input
+                type="hidden"
+                name="orientationFormerOccupation"
+                defaultValue={draft.careInformation.orientationProfile.orientationFormerOccupation ?? ""}
+              />
+              <input
+                type="hidden"
+                name="orientationDisorientation"
+                defaultValue={
+                  draft.careInformation.orientationProfile.disorientation == null
+                    ? ""
+                    : draft.careInformation.orientationProfile.disorientation
+                      ? "true"
+                      : "false"
+                }
+              />
+              <input
+                type="hidden"
+                name="orientationMemoryImpairment"
+                defaultValue={draft.careInformation.orientationProfile.memoryImpairment ?? ""}
+              />
+              <input
+                type="hidden"
+                name="orientationMemorySeverity"
+                defaultValue={draft.careInformation.orientationProfile.memorySeverity ?? ""}
+              />
+              <input
+                type="hidden"
+                name="orientationComments"
+                defaultValue={draft.careInformation.orientationProfile.cognitiveBehaviorComments ?? ""}
+              />
             </details>
 
             <details className="rounded-lg border border-border p-3" open>
@@ -366,26 +341,107 @@ export default async function NewPhysicianOrderPage({
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <p className="text-sm font-semibold">MHP-Aligned ADL Fields (direct sync)</p>
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <input name="adlAmbulation" defaultValue={draft.careInformation.adlProfile.ambulation ?? ""} placeholder="Ambulation" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlTransferring" defaultValue={draft.careInformation.adlProfile.transferring ?? ""} placeholder="Transferring" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlBathing" defaultValue={draft.careInformation.adlProfile.bathing ?? ""} placeholder="Bathing" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlDressing" defaultValue={draft.careInformation.adlProfile.dressing ?? ""} placeholder="Dressing" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlEating" defaultValue={draft.careInformation.adlProfile.eating ?? ""} placeholder="Eating" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlBladderContinence" defaultValue={draft.careInformation.adlProfile.bladderContinence ?? ""} placeholder="Bladder Continence" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlBowelContinence" defaultValue={draft.careInformation.adlProfile.bowelContinence ?? ""} placeholder="Bowel Continence" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlToileting" defaultValue={draft.careInformation.adlProfile.toileting ?? ""} placeholder="Toileting" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlToiletingNeeds" defaultValue={draft.careInformation.adlProfile.toiletingNeeds ?? ""} placeholder="Toileting Needs" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlHearing" defaultValue={draft.careInformation.adlProfile.hearing ?? ""} placeholder="Hearing" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlVision" defaultValue={draft.careInformation.adlProfile.vision ?? ""} placeholder="Vision" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlDental" defaultValue={draft.careInformation.adlProfile.dental ?? ""} placeholder="Dental" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlSpeechVerbalStatus" defaultValue={draft.careInformation.adlProfile.speechVerbalStatus ?? ""} placeholder="Speech / Verbal Status" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <input name="adlMedicationManagerName" defaultValue={draft.careInformation.adlProfile.medicationManagerName ?? ""} placeholder="Medication Manager Name" className="h-10 rounded-lg border border-border px-3 text-sm" />
-                    <select name="adlMaySelfMedicate" defaultValue={draft.careInformation.adlProfile.maySelfMedicate == null ? "" : draft.careInformation.adlProfile.maySelfMedicate ? "true" : "false"} className="h-10 rounded-lg border border-border px-3 text-sm">
-                      <option value="">May Self-Medicate (Not set)</option>
-                      <option value="true">May Self-Medicate: Yes</option>
-                      <option value="false">May Self-Medicate: No</option>
-                    </select>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <SegmentedChoiceGroup
+                      label="Ambulation"
+                      name="adlAmbulation"
+                      defaultValue={draft.careInformation.adlProfile.ambulation ?? ""}
+                      options={MHP_AMBULATION_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="Transferring"
+                      name="adlTransferring"
+                      defaultValue={draft.careInformation.adlProfile.transferring ?? ""}
+                      options={MHP_TRANSFER_SUPPORT_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="Bathing"
+                      name="adlBathing"
+                      defaultValue={draft.careInformation.adlProfile.bathing ?? ""}
+                      options={MHP_TRANSFER_SUPPORT_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="Dressing"
+                      name="adlDressing"
+                      defaultValue={draft.careInformation.adlProfile.dressing ?? ""}
+                      options={MHP_DRESSING_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="Eating"
+                      name="adlEating"
+                      defaultValue={draft.careInformation.adlProfile.eating ?? ""}
+                      options={MHP_TRANSFER_SUPPORT_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="Bladder Continence"
+                      name="adlBladderContinence"
+                      defaultValue={draft.careInformation.adlProfile.bladderContinence ?? ""}
+                      options={MHP_BLADDER_CONTINENCE_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="Bowel Continence"
+                      name="adlBowelContinence"
+                      defaultValue={draft.careInformation.adlProfile.bowelContinence ?? ""}
+                      options={MHP_BOWEL_CONTINENCE_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="Toileting"
+                      name="adlToileting"
+                      defaultValue={draft.careInformation.adlProfile.toileting ?? ""}
+                      options={MHP_TOILETING_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="Hearing"
+                      name="adlHearing"
+                      defaultValue={draft.careInformation.adlProfile.hearing ?? ""}
+                      options={MHP_HEARING_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="Vision"
+                      name="adlVision"
+                      defaultValue={draft.careInformation.adlProfile.vision ?? ""}
+                      options={MHP_VISION_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="Dental"
+                      name="adlDental"
+                      defaultValue={draft.careInformation.adlProfile.dental ?? ""}
+                      options={MHP_DENTAL_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="Speech / Verbal Status"
+                      name="adlSpeechVerbalStatus"
+                      defaultValue={draft.careInformation.adlProfile.speechVerbalStatus ?? ""}
+                      options={MHP_SPEECH_STATUS_OPTIONS}
+                    />
+                    <SegmentedChoiceGroup
+                      label="May Self-Medicate"
+                      name="adlMaySelfMedicate"
+                      defaultValue={
+                        draft.careInformation.adlProfile.maySelfMedicate == null
+                          ? ""
+                          : draft.careInformation.adlProfile.maySelfMedicate
+                            ? "true"
+                            : "false"
+                      }
+                      options={MHP_SELF_MEDICATE_OPTIONS}
+                    />
+                    <label className="space-y-1 text-sm">
+                      <span className="text-xs font-semibold text-muted">Toileting Needs</span>
+                      <input
+                        name="adlToiletingNeeds"
+                        defaultValue={draft.careInformation.adlProfile.toiletingNeeds ?? ""}
+                        className="h-10 w-full rounded-lg border border-border px-3 text-sm"
+                      />
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-xs font-semibold text-muted">Medication Manager Name</span>
+                      <input
+                        name="adlMedicationManagerName"
+                        defaultValue={draft.careInformation.adlProfile.medicationManagerName ?? ""}
+                        className="h-10 w-full rounded-lg border border-border px-3 text-sm"
+                      />
+                    </label>
                   </div>
                   <textarea name="adlToiletingComments" defaultValue={draft.careInformation.adlProfile.toiletingComments ?? ""} placeholder="Toileting Comments" className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
                   <textarea name="adlSpeechComments" defaultValue={draft.careInformation.adlProfile.speechComments ?? ""} placeholder="Speech Comments" className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />

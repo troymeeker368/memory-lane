@@ -97,7 +97,6 @@ export function PofDiagnosesEditor({
             <tr>
               <th>Type</th>
               <th>Diagnosis</th>
-              <th>Code</th>
               <th />
             </tr>
           </thead>
@@ -109,21 +108,13 @@ export function PofDiagnosesEditor({
                   <span className="text-xs font-semibold capitalize">{idx === 0 ? "primary" : "secondary"}</span>
                 </td>
                 <td>
+                  <input type="hidden" name="diagnosisCode" defaultValue={row.diagnosisCode} />
                   <input
                     name="diagnosisName"
                     value={row.diagnosisName}
                     onChange={(event) => updateRow(row.id, { diagnosisName: event.target.value })}
                     className="h-9 w-full rounded border border-border px-2 text-sm"
                     placeholder="Diagnosis name"
-                  />
-                </td>
-                <td>
-                  <input
-                    name="diagnosisCode"
-                    value={row.diagnosisCode}
-                    onChange={(event) => updateRow(row.id, { diagnosisCode: event.target.value })}
-                    className="h-9 w-full rounded border border-border px-2 text-sm"
-                    placeholder="ICD-10 (optional)"
                   />
                 </td>
                 <td>
