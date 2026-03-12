@@ -147,6 +147,28 @@ type DbCarePlan = {
   member: { display_name: string } | null;
 };
 
+type DbCarePlanVersion = {
+  id: string;
+  care_plan_id: string;
+  version_number: number;
+  snapshot_type: "initial" | "review";
+  snapshot_date: string;
+  reviewed_by: string | null;
+  status: CarePlanStatus;
+  next_due_date: string;
+  no_changes_needed: boolean;
+  modifications_required: boolean;
+  modifications_description: string | null;
+  care_team_notes: string | null;
+  sections_snapshot: Array<{
+    sectionType?: string;
+    shortTermGoals?: string;
+    longTermGoals?: string;
+    displayOrder?: number;
+  }> | null;
+  created_at: string;
+};
+
 const GOAL_PREFIX_PATTERN = /^\s*(?:\d+[\.\)]|[-*])\s+/;
 
 function normalizeSectionType(value: string): CarePlanSectionType {
@@ -225,6 +247,65 @@ function toCarePlan(row: DbCarePlan): CarePlan {
   };
 }
 
+function toCarePlanVersion(row: DbCarePlanVersion): CarePlanVersion {
+  return {
+    id: row.id,
+    carePlanId: row.care_plan_id,
+    versionNumber: row.version_number,
+    snapshotType: row.snapshot_type,
+    snapshotDate: row.snapshot_date,
+    reviewedBy: row.reviewed_by,
+    status: row.status,
+    nextDueDate: row.next_due_date,
+    noChangesNeeded: Boolean(row.no_changes_needed),
+    modificationsRequired: Boolean(row.modifications_required),
+    modificationsDescription: row.modifications_description ?? "",
+    careTeamNotes: row.care_team_notes ?? "",
+    sections: (row.sections_snapshot ?? []).map((section) => ({
+      sectionType: normalizeSectionType(String(section.sectionType ?? "")),
+      shortTermGoals: normalizeGoalList(String(section.shortTermGoals ?? "")),
+      longTermGoals: normalizeGoalList(String(section.longTermGoals ?? "")),
+      displayOrder: Number(section.displayOrder ?? 1)
+    })),
+    createdAt: row.created_at
+  };
+}
+
+function applyCurrentVersionToCarePlan(plan: CarePlan, currentVersion: CarePlanVersion | null) {
+  if (!currentVersion) return plan;
+  return {
+    ...plan,
+    reviewDate: currentVersion.snapshotDate,
+    lastCompletedDate: currentVersion.snapshotDate,
+    nextDueDate: currentVersion.nextDueDate,
+    status: currentVersion.status,
+    completedBy: currentVersion.reviewedBy,
+    dateOfCompletion: currentVersion.snapshotDate,
+    careTeamNotes: currentVersion.careTeamNotes,
+    noChangesNeeded: currentVersion.noChangesNeeded,
+    modificationsRequired: currentVersion.modificationsRequired,
+    modificationsDescription: currentVersion.modificationsDescription
+  } satisfies CarePlan;
+}
+
+async function getLatestCarePlanVersionMap(carePlanIds: string[]) {
+  if (carePlanIds.length === 0) return new Map<string, CarePlanVersion>();
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("care_plan_versions")
+    .select("*")
+    .in("care_plan_id", carePlanIds)
+    .order("care_plan_id", { ascending: true })
+    .order("version_number", { ascending: false });
+  if (error) throw new Error(error.message);
+  const latestByPlan = new Map<string, CarePlanVersion>();
+  ((data ?? []) as DbCarePlanVersion[]).forEach((row) => {
+    if (latestByPlan.has(row.care_plan_id)) return;
+    latestByPlan.set(row.care_plan_id, toCarePlanVersion(row));
+  });
+  return latestByPlan;
+}
+
 function defaultGoalsForSection(track: CarePlanTrack, sectionType: CarePlanSectionType) {
   const intensity = track === "Track 1" ? "minimal cueing" : track === "Track 2" ? "structured prompts" : "hands-on support";
   return {
@@ -252,6 +333,79 @@ export function getCarePlanTemplates(track?: CarePlanTrack) {
 
 export function getCarePlanTracks(): CarePlanTrack[] {
   return ["Track 1", "Track 2", "Track 3"];
+}
+
+function serializeSectionsSnapshot(
+  sections: Array<{
+    sectionType: CarePlanSectionType;
+    shortTermGoals: string;
+    longTermGoals: string;
+    displayOrder: number;
+  }>
+) {
+  return sections.map((section) => ({
+    sectionType: normalizeSectionType(section.sectionType),
+    shortTermGoals: normalizeGoalList(section.shortTermGoals),
+    longTermGoals: normalizeGoalList(section.longTermGoals),
+    displayOrder: Number(section.displayOrder)
+  }));
+}
+
+async function getNextCarePlanVersionNumber(carePlanId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("care_plan_versions")
+    .select("version_number")
+    .eq("care_plan_id", carePlanId)
+    .order("version_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const current = Number(data?.version_number ?? 0);
+  return Number.isFinite(current) && current > 0 ? current + 1 : 1;
+}
+
+async function createCarePlanVersionSnapshot(input: {
+  carePlanId: string;
+  snapshotType: "initial" | "review";
+  snapshotDate: string;
+  reviewedBy: string | null;
+  status: CarePlanStatus;
+  nextDueDate: string;
+  noChangesNeeded: boolean;
+  modificationsRequired: boolean;
+  modificationsDescription: string;
+  careTeamNotes: string;
+  sections: Array<{
+    sectionType: CarePlanSectionType;
+    shortTermGoals: string;
+    longTermGoals: string;
+    displayOrder: number;
+  }>;
+}) {
+  const supabase = await createClient();
+  const versionNumber = await getNextCarePlanVersionNumber(input.carePlanId);
+  const { data, error } = await supabase
+    .from("care_plan_versions")
+    .insert({
+      care_plan_id: input.carePlanId,
+      version_number: versionNumber,
+      snapshot_type: input.snapshotType,
+      snapshot_date: input.snapshotDate,
+      reviewed_by: input.reviewedBy,
+      status: input.status,
+      next_due_date: input.nextDueDate,
+      no_changes_needed: input.noChangesNeeded,
+      modifications_required: input.modificationsRequired,
+      modifications_description: input.modificationsDescription,
+      care_team_notes: input.careTeamNotes,
+      sections_snapshot: serializeSectionsSnapshot(input.sections),
+      created_at: toEasternISO()
+    })
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+  return { versionId: String(data.id), versionNumber };
 }
 
 export async function getCarePlanParticipationSummary(memberId: string): Promise<CarePlanParticipationSummary> {
@@ -283,8 +437,12 @@ export async function getCarePlans(filters?: { memberId?: string; track?: string
   const { data: plans, error } = await query;
   if (error) throw new Error(error.message);
 
-  const rows: CarePlanListRow[] = ((plans ?? []) as DbCarePlan[]).map((row) => {
-    const plan = toCarePlan(row);
+  const planRows = (plans ?? []) as DbCarePlan[];
+  const latestVersionByPlan = await getLatestCarePlanVersionMap(planRows.map((row) => row.id));
+
+  const rows: CarePlanListRow[] = planRows.map((row) => {
+    const basePlan = toCarePlan(row);
+    const plan = applyCurrentVersionToCarePlan(basePlan, latestVersionByPlan.get(basePlan.id) ?? null);
     return {
       id: plan.id,
       memberId: plan.memberId,
@@ -321,12 +479,13 @@ export async function getCarePlanById(id: string) {
   if (historyError) throw new Error(historyError.message);
   if (versionsError) throw new Error(versionsError.message);
   if (!plan) return null;
-  const carePlan = toCarePlan(plan as DbCarePlan);
+  const mappedVersions = ((versions ?? []) as DbCarePlanVersion[]).map((row) => toCarePlanVersion(row));
+  const carePlan = applyCurrentVersionToCarePlan(toCarePlan(plan as DbCarePlan), mappedVersions[0] ?? null);
   return {
     carePlan,
     sections: (sections ?? []).map((row: any) => ({ id: row.id, carePlanId: row.care_plan_id, sectionType: normalizeSectionType(row.section_type), shortTermGoals: normalizeGoalList(row.short_term_goals), longTermGoals: normalizeGoalList(row.long_term_goals), displayOrder: row.display_order } satisfies CarePlanSection)),
     history: (history ?? []).map((row: any) => ({ id: row.id, carePlanId: row.care_plan_id, reviewDate: row.review_date, reviewedBy: row.reviewed_by, summary: row.summary, changesMade: Boolean(row.changes_made), nextDueDate: row.next_due_date, versionId: row.version_id ?? null } satisfies CarePlanReviewHistory)),
-    versions: (versions ?? []).map((row: any) => ({ id: row.id, carePlanId: row.care_plan_id, versionNumber: row.version_number, snapshotType: row.snapshot_type, snapshotDate: row.snapshot_date, reviewedBy: row.reviewed_by, status: row.status, nextDueDate: row.next_due_date, noChangesNeeded: Boolean(row.no_changes_needed), modificationsRequired: Boolean(row.modifications_required), modificationsDescription: row.modifications_description ?? "", careTeamNotes: row.care_team_notes ?? "", sections: (row.sections_snapshot ?? []).map((section: any) => ({ sectionType: normalizeSectionType(section.sectionType), shortTermGoals: normalizeGoalList(String(section.shortTermGoals ?? "")), longTermGoals: normalizeGoalList(String(section.longTermGoals ?? "")), displayOrder: Number(section.displayOrder ?? 1) })), createdAt: row.created_at } satisfies CarePlanVersion)),
+    versions: mappedVersions,
     participationSummary: await getCarePlanParticipationSummary(carePlan.memberId)
   };
 }
@@ -375,9 +534,19 @@ export async function getCarePlansForMember(memberId: string) {
 
 export async function getLatestCarePlanForMember(memberId: string) {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("care_plans").select("*, member:members!care_plans_member_id_fkey(display_name)").eq("member_id", memberId).order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  const { data, error } = await supabase
+    .from("care_plans")
+    .select("*, member:members!care_plans_member_id_fkey(display_name)")
+    .eq("member_id", memberId)
+    .order("review_date", { ascending: false })
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
   if (error) throw new Error(error.message);
-  return data ? toCarePlan(data as DbCarePlan) : null;
+  if (!data) return null;
+  const basePlan = toCarePlan(data as DbCarePlan);
+  const latestVersionByPlan = await getLatestCarePlanVersionMap([basePlan.id]);
+  return applyCurrentVersionToCarePlan(basePlan, latestVersionByPlan.get(basePlan.id) ?? null);
 }
 
 export async function getMemberCarePlanSummary(memberId: string): Promise<MemberCarePlanSummary> {
@@ -395,7 +564,11 @@ export async function getCarePlanVersionById(carePlanId: string, versionId: stri
   if (planError) throw new Error(planError.message);
   if (versionError) throw new Error(versionError.message);
   if (!plan || !version) return null;
-  return { carePlan: toCarePlan(plan as DbCarePlan), version: { id: version.id, carePlanId: version.care_plan_id, versionNumber: version.version_number, snapshotType: version.snapshot_type, snapshotDate: version.snapshot_date, reviewedBy: version.reviewed_by, status: version.status, nextDueDate: version.next_due_date, noChangesNeeded: Boolean(version.no_changes_needed), modificationsRequired: Boolean(version.modifications_required), modificationsDescription: version.modifications_description ?? "", careTeamNotes: version.care_team_notes ?? "", sections: (version.sections_snapshot ?? []), createdAt: version.created_at } as CarePlanVersion };
+  const mappedVersion = toCarePlanVersion(version as DbCarePlanVersion);
+  return {
+    carePlan: applyCurrentVersionToCarePlan(toCarePlan(plan as DbCarePlan), mappedVersion),
+    version: mappedVersion
+  };
 }
 
 export async function createCarePlan(input: {
@@ -443,6 +616,19 @@ export async function createCarePlan(input: {
   if (error) throw new Error(error.message);
   const { error: sectionsError } = await supabase.from("care_plan_sections").insert(input.sections.map((section) => ({ care_plan_id: data.id, section_type: section.sectionType, short_term_goals: normalizeGoalList(section.shortTermGoals), long_term_goals: normalizeGoalList(section.longTermGoals), display_order: section.displayOrder, created_at: toEasternISO(), updated_at: toEasternISO() })));
   if (sectionsError) throw new Error(sectionsError.message);
+  await createCarePlanVersionSnapshot({
+    carePlanId: data.id,
+    snapshotType: "initial",
+    snapshotDate: input.reviewDate,
+    reviewedBy: input.completedBy ?? null,
+    status: computeCarePlanStatus(nextDueDate),
+    nextDueDate,
+    noChangesNeeded: Boolean(input.noChangesNeeded),
+    modificationsRequired: Boolean(input.modificationsRequired),
+    modificationsDescription: input.modificationsDescription ?? "",
+    careTeamNotes: input.careTeamNotes,
+    sections: input.sections
+  });
   return toCarePlan(data as DbCarePlan);
 }
 
@@ -461,9 +647,29 @@ export async function reviewCarePlan(input: {
   administratorSignatureDate?: string;
 }) {
   const supabase = await createClient();
+  const updatedSectionsSnapshot: Array<{
+    sectionType: CarePlanSectionType;
+    shortTermGoals: string;
+    longTermGoals: string;
+    displayOrder: number;
+  }> = [];
   for (const section of input.sections) {
+    const { data: updatedSection, error: sectionLookupError } = await supabase
+      .from("care_plan_sections")
+      .select("id, section_type, display_order")
+      .eq("id", section.id)
+      .eq("care_plan_id", input.carePlanId)
+      .maybeSingle();
+    if (sectionLookupError) throw new Error(sectionLookupError.message);
+    if (!updatedSection) throw new Error("Care plan section not found.");
     const { error } = await supabase.from("care_plan_sections").update({ short_term_goals: normalizeGoalList(section.shortTermGoals), long_term_goals: normalizeGoalList(section.longTermGoals), updated_at: toEasternISO() }).eq("id", section.id).eq("care_plan_id", input.carePlanId);
     if (error) throw new Error(error.message);
+    updatedSectionsSnapshot.push({
+      sectionType: normalizeSectionType(String(updatedSection.section_type ?? "")),
+      shortTermGoals: section.shortTermGoals,
+      longTermGoals: section.longTermGoals,
+      displayOrder: Number(updatedSection.display_order ?? 1)
+    });
   }
   const nextDueDate = computeNextReviewDueDate(input.reviewDate);
   const { data, error } = await supabase.from("care_plans").update({
@@ -485,5 +691,31 @@ export async function reviewCarePlan(input: {
     updated_at: toEasternISO()
   }).eq("id", input.carePlanId).select("*, member:members!care_plans_member_id_fkey(display_name)").single();
   if (error) throw new Error(error.message);
+  const snapshot = await createCarePlanVersionSnapshot({
+    carePlanId: input.carePlanId,
+    snapshotType: "review",
+    snapshotDate: input.reviewDate,
+    reviewedBy: input.reviewedBy,
+    status: computeCarePlanStatus(nextDueDate),
+    nextDueDate,
+    noChangesNeeded: input.noChangesNeeded,
+    modificationsRequired: input.modificationsRequired,
+    modificationsDescription: input.modificationsDescription,
+    careTeamNotes: input.careTeamNotes,
+    sections: updatedSectionsSnapshot
+  });
+  const { error: historyError } = await supabase.from("care_plan_review_history").insert({
+    care_plan_id: input.carePlanId,
+    review_date: input.reviewDate,
+    reviewed_by: input.reviewedBy,
+    summary: input.modificationsRequired
+      ? input.modificationsDescription || "Reviewed with modifications."
+      : "Reviewed without required modifications.",
+    changes_made: input.modificationsRequired,
+    next_due_date: nextDueDate,
+    version_id: snapshot.versionId,
+    created_at: toEasternISO()
+  });
+  if (historyError) throw new Error(historyError.message);
   return toCarePlan(data as DbCarePlan);
 }

@@ -146,6 +146,19 @@ export async function createScheduleChangeAction(formData: FormData) {
     redirect(failureHref("Reason is required."));
   }
 
+  let originalDays = submittedOriginalDays;
+  try {
+    const memberSchedule = await ensureMemberAttendanceScheduleSupabase(memberId);
+    if (!memberSchedule) {
+      redirect(failureHref("Unable to load member schedule from MCC."));
+    }
+    const mccOriginalDays = getMccScheduleDays(memberSchedule);
+    originalDays = mccOriginalDays.length > 0 ? mccOriginalDays : submittedOriginalDays;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to load member schedule from MCC.";
+    redirect(failureHref(message));
+  }
+
   let effectiveEndDate = effectiveEndDateRaw ? normalizeOperationalDateOnly(effectiveEndDateRaw) : null;
   if (changeType === "Permanent Schedule Change") {
     effectiveEndDate = null;
@@ -174,13 +187,6 @@ export async function createScheduleChangeAction(formData: FormData) {
   }
 
   try {
-    const memberSchedule = await ensureMemberAttendanceScheduleSupabase(memberId);
-    if (!memberSchedule) {
-      redirect(failureHref("Unable to load member schedule from MCC."));
-    }
-    const mccOriginalDays = getMccScheduleDays(memberSchedule);
-    const originalDays = mccOriginalDays.length > 0 ? mccOriginalDays : submittedOriginalDays;
-
     await createScheduleChangeSupabase({
       memberId,
       changeType,

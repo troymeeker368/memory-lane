@@ -1,4 +1,3 @@
-import type { MockMemberAttendanceSchedule } from "@/lib/mock/types";
 import {
   getWeekdayForDate,
   type OperationsWeekdayKey
@@ -8,6 +7,55 @@ export type ScheduleWeekdayKey = "monday" | "tuesday" | "wednesday" | "thursday"
 export type TransportShift = "AM" | "PM";
 export type TransportMode = "Door to Door" | "Bus Stop";
 export type TransportBusNumber = string;
+
+export interface MemberAttendanceScheduleLike {
+  monday: boolean;
+  tuesday: boolean;
+  wednesday: boolean;
+  thursday: boolean;
+  friday: boolean;
+  transportation_required: boolean | null;
+  transport_monday_am_mode: TransportMode | null;
+  transport_monday_am_bus_number: string | null;
+  transport_monday_am_bus_stop: string | null;
+  transport_monday_am_door_to_door_address: string | null;
+  transport_monday_pm_mode: TransportMode | null;
+  transport_monday_pm_bus_number: string | null;
+  transport_monday_pm_bus_stop: string | null;
+  transport_monday_pm_door_to_door_address: string | null;
+  transport_tuesday_am_mode: TransportMode | null;
+  transport_tuesday_am_bus_number: string | null;
+  transport_tuesday_am_bus_stop: string | null;
+  transport_tuesday_am_door_to_door_address: string | null;
+  transport_tuesday_pm_mode: TransportMode | null;
+  transport_tuesday_pm_bus_number: string | null;
+  transport_tuesday_pm_bus_stop: string | null;
+  transport_tuesday_pm_door_to_door_address: string | null;
+  transport_wednesday_am_mode: TransportMode | null;
+  transport_wednesday_am_bus_number: string | null;
+  transport_wednesday_am_bus_stop: string | null;
+  transport_wednesday_am_door_to_door_address: string | null;
+  transport_wednesday_pm_mode: TransportMode | null;
+  transport_wednesday_pm_bus_number: string | null;
+  transport_wednesday_pm_bus_stop: string | null;
+  transport_wednesday_pm_door_to_door_address: string | null;
+  transport_thursday_am_mode: TransportMode | null;
+  transport_thursday_am_bus_number: string | null;
+  transport_thursday_am_bus_stop: string | null;
+  transport_thursday_am_door_to_door_address: string | null;
+  transport_thursday_pm_mode: TransportMode | null;
+  transport_thursday_pm_bus_number: string | null;
+  transport_thursday_pm_bus_stop: string | null;
+  transport_thursday_pm_door_to_door_address: string | null;
+  transport_friday_am_mode: TransportMode | null;
+  transport_friday_am_bus_number: string | null;
+  transport_friday_am_bus_stop: string | null;
+  transport_friday_am_door_to_door_address: string | null;
+  transport_friday_pm_mode: TransportMode | null;
+  transport_friday_pm_bus_number: string | null;
+  transport_friday_pm_bus_stop: string | null;
+  transport_friday_pm_door_to_door_address: string | null;
+}
 
 export interface MemberTransportSlot {
   mode: TransportMode | null;
@@ -40,7 +88,7 @@ function toScheduleWeekdayKey(weekday: OperationsWeekdayKey): ScheduleWeekdayKey
 }
 
 export function isScheduledWeekday(
-  schedule: MockMemberAttendanceSchedule | null | undefined,
+  schedule: MemberAttendanceScheduleLike | null | undefined,
   weekday: OperationsWeekdayKey
 ): boolean {
   if (!schedule) return false;
@@ -50,14 +98,14 @@ export function isScheduledWeekday(
 }
 
 export function isMemberScheduledForDate(
-  schedule: MockMemberAttendanceSchedule | null | undefined,
+  schedule: MemberAttendanceScheduleLike | null | undefined,
   dateOnly: string
 ): boolean {
   return isScheduledWeekday(schedule, getWeekdayForDate(dateOnly));
 }
 
 export function getScheduledDayAbbreviations(
-  schedule: MockMemberAttendanceSchedule | null | undefined
+  schedule: MemberAttendanceScheduleLike | null | undefined
 ): string {
   if (!schedule) return "-";
 
@@ -69,7 +117,7 @@ export function getScheduledDayAbbreviations(
 }
 
 export function getTransportSlotForScheduleDay(
-  schedule: MockMemberAttendanceSchedule,
+  schedule: MemberAttendanceScheduleLike,
   weekday: ScheduleWeekdayKey,
   shift: TransportShift
 ): MemberTransportSlot {
@@ -154,7 +202,7 @@ export function getTransportSlotForScheduleDay(
 }
 
 export function getTransportSlotForDate(
-  schedule: MockMemberAttendanceSchedule | null | undefined,
+  schedule: MemberAttendanceScheduleLike | null | undefined,
   dateOnly: string,
   shift: TransportShift
 ): MemberTransportSlot {
@@ -181,7 +229,7 @@ export function getTransportSlotForDate(
 }
 
 export function getPrimaryTransportSnapshotForDate(
-  schedule: MockMemberAttendanceSchedule | null | undefined,
+  schedule: MemberAttendanceScheduleLike | null | undefined,
   dateOnly: string
 ): MemberTransportSnapshot {
   if (!schedule || !schedule.transportation_required) {

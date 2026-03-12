@@ -131,8 +131,7 @@ export async function listScheduleChangesSupabase(input?: {
   const { data, error } = await query;
   if (error) {
     if (isMissingScheduleChangesTableError(error)) {
-      console.warn("[schedule-changes] public.schedule_changes missing from schema cache. Returning empty list.");
-      return [] as ScheduleChangeRow[];
+      throw scheduleChangesStorageRequiredError();
     }
     throw new Error(error.message);
   }
@@ -168,8 +167,7 @@ export async function listActiveScheduleChangesForMembersSupabase(input: {
 
   if (error) {
     if (isMissingScheduleChangesTableError(error)) {
-      console.warn("[schedule-changes] public.schedule_changes missing from schema cache. Returning empty active list.");
-      return [] as ScheduleChangeRow[];
+      throw scheduleChangesStorageRequiredError();
     }
     throw new Error(error.message);
   }

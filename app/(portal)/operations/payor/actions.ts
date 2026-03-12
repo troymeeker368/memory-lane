@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 
 import { getCurrentProfile } from "@/lib/auth";
 import {
@@ -486,6 +487,9 @@ export async function generateBillingBatchAction(formData: FormData) {
     }
     redirect(`/operations/payor/billing-batches?${successParams.toString()}`);
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     redirectWithError("/operations/payor/billing-batches", error instanceof Error ? error.message : "Unable to generate billing batch.");
   }
 }
@@ -506,6 +510,9 @@ export async function finalizeBillingBatchAction(formData: FormData) {
     }
     revalidateBillingPaths();
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     redirectWithError(returnPath, error instanceof Error ? error.message : "Unable to finalize billing batch.");
   }
 }
@@ -526,6 +533,9 @@ export async function reopenBillingBatchAction(formData: FormData) {
     }
     revalidateBillingPaths();
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     redirectWithError(returnPath, error instanceof Error ? error.message : "Unable to reopen billing batch.");
   }
 }
@@ -546,6 +556,9 @@ export async function finalizeInvoiceAction(formData: FormData) {
     }
     revalidateBillingPaths();
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     redirectWithError(returnPath, error instanceof Error ? error.message : "Unable to finalize invoice.");
   }
 }
@@ -587,6 +600,9 @@ export async function createBillingExportAction(formData: FormData) {
     }
     revalidateBillingPaths();
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     redirectWithError(returnPath, error instanceof Error ? error.message : "Unable to create export.");
   }
 }
@@ -658,6 +674,9 @@ export async function createCustomInvoiceAction(formData: FormData) {
     }
     revalidateBillingPaths();
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     redirectWithError(returnPath, error instanceof Error ? error.message : "Unable to create custom invoice.");
   }
 }
@@ -683,6 +702,9 @@ export async function createEnrollmentInvoiceAction(formData: FormData) {
     }
     revalidateBillingPaths();
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     redirectWithError(returnPath, error instanceof Error ? error.message : "Unable to create enrollment invoice.");
   }
 }

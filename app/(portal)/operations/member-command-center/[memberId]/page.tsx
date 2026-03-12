@@ -24,6 +24,8 @@ import {
   listMemberBillingSettingsSupabase
 } from "@/lib/services/member-command-center-supabase";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
+import { resolveExpectedAttendanceForDate } from "@/lib/services/expected-attendance";
+import { listScheduleChangesSupabase, SCHEDULE_WEEKDAY_KEYS } from "@/lib/services/schedule-changes-supabase";
 import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-supabase";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
@@ -49,6 +51,14 @@ const TAB_LABELS: Record<MccTab, string> = {
   "demographics-contacts": "Demographics & Contacts",
   legal: "Legal",
   "diet-allergies": "Diet / Allergies"
+};
+
+const WEEKDAY_LABELS: Record<(typeof SCHEDULE_WEEKDAY_KEYS)[number], string> = {
+  monday: "Mon",
+  tuesday: "Tue",
+  wednesday: "Wed",
+  thursday: "Thu",
+  friday: "Fri"
 };
 
 function firstString(value: string | string[] | undefined) {
@@ -147,14 +157,23 @@ export default async function MemberCommandCenterDetailPage({
   const detail = await getMemberCommandCenterDetailSupabase(memberId);
   if (!detail) notFound();
   const billingDate = toEasternDate();
-  const memberBillingSettings = await listMemberBillingSettingsSupabase(detail.member.id).catch((error) => {
-    console.warn(
-      `[member-command-center] Unable to load member billing settings for ${detail.member.id}. Continuing with empty settings. ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-    return [];
+  const activeScheduleChangesForToday = await listScheduleChangesSupabase({
+    memberId: detail.member.id,
+    status: "active",
+    effectiveDate: billingDate,
+    limit: 25
   });
+  const effectiveScheduleToday = resolveExpectedAttendanceForDate({
+    date: billingDate,
+    baseSchedule: detail.schedule,
+    scheduleChanges: activeScheduleChangesForToday
+  });
+  const effectiveScheduleTodayLabel =
+    effectiveScheduleToday.effectiveDays.length > 0
+      ? effectiveScheduleToday.effectiveDays.map((day) => WEEKDAY_LABELS[day] ?? day).join(", ")
+      : "-";
+  const activeOverrideCount = activeScheduleChangesForToday.length;
+  const memberBillingSettings = await listMemberBillingSettingsSupabase(detail.member.id);
   const activeMemberBillingSetting =
     memberBillingSettings
       .filter((row) => row.member_id === detail.member.id)
@@ -162,25 +181,11 @@ export default async function MemberCommandCenterDetailPage({
       .filter((row) => row.effective_start_date <= billingDate)
       .filter((row) => !row.effective_end_date || row.effective_end_date >= billingDate)
       .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1))[0] ?? null;
-  const activePayorOptions = (await listActivePayorsSupabase().catch((error) => {
-    console.warn(
-      `[member-command-center] Unable to load active payors. Continuing with empty payor options. ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-    return [];
-  }))
+  const activePayorOptions = (await listActivePayorsSupabase())
     .filter((row) => row.status === "active")
     .sort((left, right) => left.payor_name.localeCompare(right.payor_name, undefined, { sensitivity: "base" }))
     .map((row) => ({ id: row.id, name: row.payor_name }));
-  const lockerOptions = await getAvailableLockerNumbersForMemberSupabase(memberId).catch((error) => {
-    console.warn(
-      `[member-command-center] Unable to load locker options for ${memberId}. Continuing with empty locker options. ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-    return [];
-  });
+  const lockerOptions = await getAvailableLockerNumbersForMemberSupabase(memberId);
   const busNumberOptions = await getConfiguredBusNumbers();
 
   const scheduleDays = [
@@ -248,14 +253,7 @@ export default async function MemberCommandCenterDetailPage({
   const filesUpdatedBy = latestUpdatedBy(detail.files, (row) => row.updated_at, (row) => row.uploaded_by_name);
   const allergiesUpdatedAt = latestTimestamp(detail.mhpAllergies.map((row) => row.updated_at));
   const allergiesUpdatedBy = latestUpdatedBy(detail.mhpAllergies, (row) => row.updated_at, (row) => row.created_by_name);
-  const physicianOrders = await getPhysicianOrdersForMember(detail.member.id).catch((error) => {
-    console.warn(
-      `[member-command-center] Unable to load physician orders for ${detail.member.id}. Continuing with empty list. ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-    return [];
-  });
+  const physicianOrders = await getPhysicianOrdersForMember(detail.member.id);
   const physicianOrdersUpdatedAt = latestTimestamp(physicianOrders.map((row) => row.updatedAt));
   const physicianOrdersUpdatedBy = latestUpdatedBy(physicianOrders, (row) => row.updatedAt, (row) => row.updatedByName);
 
@@ -387,11 +385,16 @@ export default async function MemberCommandCenterDetailPage({
       {tab === "attendance-enrollment" ? (
         <Card id="attendance-enrollment">
           <SectionHeading title="Attendance / Enrollment" lastUpdatedAt={scheduleUpdatedAt} lastUpdatedBy={scheduleUpdatedBy} />
-          <div className="mt-3 grid gap-3 md:grid-cols-4">
+          <div className="mt-3 grid gap-3 md:grid-cols-5">
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Enrollment Date</p><p className="font-semibold">{formatOptionalDate(detail.schedule?.enrollment_date ?? detail.member.enrollment_date)}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Months Enrolled</p><p className="font-semibold">{monthsEnrolled ?? "-"}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Scheduled Days</p><p className="font-semibold">{scheduleDays.length > 0 ? scheduleDays.join(", ") : "-"}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Transportation</p><p className="font-semibold">{transportationSummary}</p></div>
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-muted">Effective Days (Today)</p>
+              <p className="font-semibold">{effectiveScheduleTodayLabel}</p>
+              <p className="text-[11px] text-muted">Active schedule changes: {activeOverrideCount}</p>
+            </div>
           </div>
 
           {canEditAttendanceBilling && detail.schedule ? (

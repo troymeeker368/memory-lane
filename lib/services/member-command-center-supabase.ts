@@ -303,16 +303,19 @@ function isMissingAnyColumnError(error: PostgrestErrorLike | null | undefined, t
   return text.includes("column") && text.includes("does not exist") && text.includes(table);
 }
 
-function isMissingTableRuntimeError(error: unknown, tableName: string) {
-  const text = (error instanceof Error ? error.message : String(error ?? ""))
-    .trim()
-    .toLowerCase();
-  if (!text) return false;
-  const table = tableName.trim().toLowerCase();
-  if (!table) return false;
-  return (
-    text.includes(table) &&
-    (text.includes("schema cache") || text.includes("does not exist") || text.includes("relation"))
+function missingMccStorageError(input: {
+  objectName:
+    | "member_command_centers"
+    | "member_attendance_schedules"
+    | "member_contacts"
+    | "member_files"
+    | "bus_stop_directory"
+    | "member_allergies"
+    | "intake_assessments";
+  migration: string;
+}) {
+  return new Error(
+    `Missing Supabase schema object public.${input.objectName}. Apply migration ${input.migration} (and any earlier unapplied migrations), then restart Supabase/PostgREST to refresh schema cache.`
   );
 }
 
@@ -748,10 +751,10 @@ export async function ensureMemberCommandCenterProfileSupabase(memberId: string)
     .limit(1);
   if (error) {
     if (isMissingTableError(error, "member_command_centers")) {
-      console.warn(
-        "[member-command-center] public.member_command_centers missing while ensuring profile. Using non-persistent default profile."
-      );
-      return defaultCommandCenter(memberId);
+      throw missingMccStorageError({
+        objectName: "member_command_centers",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
     }
     throw new Error(error.message);
   }
@@ -766,10 +769,10 @@ export async function ensureMemberCommandCenterProfileSupabase(memberId: string)
     .single();
   if (insertError) {
     if (isMissingTableError(insertError, "member_command_centers")) {
-      console.warn(
-        "[member-command-center] public.member_command_centers missing while creating profile. Using non-persistent default profile."
-      );
-      return created;
+      throw missingMccStorageError({
+        objectName: "member_command_centers",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
     }
     if (isUniqueConstraintError(insertError)) {
       const { data: recovered, error: recoverError } = await supabase
@@ -778,7 +781,12 @@ export async function ensureMemberCommandCenterProfileSupabase(memberId: string)
         .eq("member_id", memberId)
         .limit(1);
       if (recoverError) {
-        if (isMissingTableError(recoverError, "member_command_centers")) return created;
+        if (isMissingTableError(recoverError, "member_command_centers")) {
+          throw missingMccStorageError({
+            objectName: "member_command_centers",
+            migration: "0011_member_command_center_aux_schema.sql"
+          });
+        }
         throw new Error(recoverError.message);
       }
       const recoveredRow = Array.isArray(recovered) ? recovered[0] : null;
@@ -790,13 +798,18 @@ export async function ensureMemberCommandCenterProfileSupabase(memberId: string)
         .eq("id", created.id)
         .limit(1);
       if (recoverByIdError) {
-        if (isMissingTableError(recoverByIdError, "member_command_centers")) return created;
+        if (isMissingTableError(recoverByIdError, "member_command_centers")) {
+          throw missingMccStorageError({
+            objectName: "member_command_centers",
+            migration: "0011_member_command_center_aux_schema.sql"
+          });
+        }
         throw new Error(recoverByIdError.message);
       }
       const recoveredByIdRow = Array.isArray(recoveredById) ? recoveredById[0] : null;
       if (recoveredByIdRow) return recoveredByIdRow as MemberCommandCenterRow;
     }
-    return created;
+    throw new Error(insertError.message);
   }
   return inserted as MemberCommandCenterRow;
 }
@@ -813,10 +826,10 @@ export async function ensureMemberAttendanceScheduleSupabase(memberId: string) {
     .limit(1);
   if (error) {
     if (isMissingTableError(error, "member_attendance_schedules")) {
-      console.warn(
-        "[member-command-center] public.member_attendance_schedules missing while ensuring schedule. Using non-persistent default schedule."
-      );
-      return fallbackSchedule;
+      throw missingMccStorageError({
+        objectName: "member_attendance_schedules",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
     }
     throw new Error(error.message);
   }
@@ -831,10 +844,10 @@ export async function ensureMemberAttendanceScheduleSupabase(memberId: string) {
     .single();
   if (insertError) {
     if (isMissingTableError(insertError, "member_attendance_schedules")) {
-      console.warn(
-        "[member-command-center] public.member_attendance_schedules missing while creating schedule. Using non-persistent default schedule."
-      );
-      return created;
+      throw missingMccStorageError({
+        objectName: "member_attendance_schedules",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
     }
     if (isUniqueConstraintError(insertError)) {
       const { data: recovered, error: recoverError } = await supabase
@@ -843,7 +856,12 @@ export async function ensureMemberAttendanceScheduleSupabase(memberId: string) {
         .eq("member_id", memberId)
         .limit(1);
       if (recoverError) {
-        if (isMissingTableError(recoverError, "member_attendance_schedules")) return created;
+        if (isMissingTableError(recoverError, "member_attendance_schedules")) {
+          throw missingMccStorageError({
+            objectName: "member_attendance_schedules",
+            migration: "0011_member_command_center_aux_schema.sql"
+          });
+        }
         throw new Error(recoverError.message);
       }
       const recoveredRow = Array.isArray(recovered) ? recovered[0] : null;
@@ -855,13 +873,18 @@ export async function ensureMemberAttendanceScheduleSupabase(memberId: string) {
         .eq("id", created.id)
         .limit(1);
       if (recoverByIdError) {
-        if (isMissingTableError(recoverByIdError, "member_attendance_schedules")) return created;
+        if (isMissingTableError(recoverByIdError, "member_attendance_schedules")) {
+          throw missingMccStorageError({
+            objectName: "member_attendance_schedules",
+            migration: "0011_member_command_center_aux_schema.sql"
+          });
+        }
         throw new Error(recoverByIdError.message);
       }
       const recoveredByIdRow = Array.isArray(recoveredById) ? recoveredById[0] : null;
       if (recoveredByIdRow) return recoveredByIdRow as MemberAttendanceScheduleRow;
     }
-    return created;
+    throw new Error(insertError.message);
   }
   return inserted as MemberAttendanceScheduleRow;
 }
@@ -1113,20 +1136,20 @@ export async function getMemberCommandCenterIndexSupabase(filters?: { q?: string
   const profiles = (() => {
     if (!profilesError) return (profilesData ?? []) as MemberCommandCenterRow[];
     if (isMissingTableError(profilesError, "member_command_centers")) {
-      console.warn(
-        "[member-command-center] public.member_command_centers missing from schema cache. Falling back to default profile cards."
-      );
-      return [] as MemberCommandCenterRow[];
+      throw missingMccStorageError({
+        objectName: "member_command_centers",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
     }
     throw new Error(profilesError.message);
   })();
   const schedules = (() => {
     if (!schedulesError) return (schedulesData ?? []) as MemberAttendanceScheduleRow[];
     if (isMissingTableError(schedulesError, "member_attendance_schedules")) {
-      console.warn(
-        "[member-command-center] public.member_attendance_schedules missing from schema cache. Falling back to default attendance schedules."
-      );
-      return [] as MemberAttendanceScheduleRow[];
+      throw missingMccStorageError({
+        objectName: "member_attendance_schedules",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
     }
     throw new Error(schedulesError.message);
   })();
@@ -1154,62 +1177,28 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
   const member = await getMemberSupabase(memberId);
   if (!member) return null;
   const [profile, schedule, contacts, files, busStopDirectory, mhpAllergies] = await Promise.all([
-    ensureMemberCommandCenterProfileSupabase(memberId).catch((error) => {
-      console.warn(
-        `[member-command-center] Failed to load command center profile for ${memberId}. Using default profile. ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      return defaultCommandCenter(memberId);
-    }),
-    ensureMemberAttendanceScheduleSupabase(memberId).catch((error) => {
-      console.warn(
-        `[member-command-center] Failed to load attendance schedule for ${memberId}. Using default schedule. ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      return defaultAttendanceSchedule(member);
-    }),
-    listMemberContactsSupabase(memberId).catch((error) => {
-      if (!isMissingTableRuntimeError(error, "member_contacts")) throw error;
-      console.warn(
-        `[member-command-center] public.member_contacts unavailable for ${memberId}. Returning empty contact list.`
-      );
-      return [] as MemberContactRow[];
-    }),
-    listMemberFilesSupabase(memberId).catch((error) => {
-      if (!isMissingTableRuntimeError(error, "member_files")) throw error;
-      console.warn(
-        `[member-command-center] public.member_files unavailable for ${memberId}. Returning empty file list.`
-      );
-      return [] as MemberFileRow[];
-    }),
-    listBusStopDirectorySupabase().catch((error) => {
-      if (!isMissingTableRuntimeError(error, "bus_stop_directory")) throw error;
-      console.warn("[member-command-center] public.bus_stop_directory unavailable. Returning empty list.");
-      return [] as BusStopDirectoryRow[];
-    }),
-    listMemberAllergiesSupabase(memberId).catch((error) => {
-      if (!isMissingTableRuntimeError(error, "member_allergies")) throw error;
-      console.warn(
-        `[member-command-center] public.member_allergies unavailable for ${memberId}. Returning empty allergy list.`
-      );
-      return [] as MemberAllergyRow[];
-    })
+    ensureMemberCommandCenterProfileSupabase(memberId),
+    ensureMemberAttendanceScheduleSupabase(memberId),
+    listMemberContactsSupabase(memberId),
+    listMemberFilesSupabase(memberId),
+    listBusStopDirectorySupabase(),
+    listMemberAllergiesSupabase(memberId)
   ]);
   const supabase = await createClient();
   const { count, error } = await supabase
     .from("intake_assessments")
     .select("id", { count: "exact", head: true })
     .eq("member_id", memberId);
-  const safeAssessmentsCount = (() => {
-    if (!error) return count ?? 0;
+  if (error) {
     if (isMissingTableError(error, "intake_assessments")) {
-      console.warn("[member-command-center] public.intake_assessments unavailable. Using 0 assessments.");
-      return 0;
+      throw missingMccStorageError({
+        objectName: "intake_assessments",
+        migration: "0006_intake_pof_mhp_supabase.sql"
+      });
     }
     throw new Error(error.message);
-  })();
+  }
+  const safeAssessmentsCount = count ?? 0;
 
   return {
     member,
@@ -1260,10 +1249,10 @@ export async function getTransportationAddRiderMemberOptionsSupabase() {
   const commandCenters = (() => {
     if (!commandCentersResult.error) return (commandCentersResult.data ?? []) as MemberCommandCenterRow[];
     if (isMissingTableError(commandCentersResult.error, "member_command_centers")) {
-      console.warn(
-        "[member-command-center] public.member_command_centers missing from schema cache. Returning rider options without default addresses."
-      );
-      return [] as MemberCommandCenterRow[];
+      throw missingMccStorageError({
+        objectName: "member_command_centers",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
     }
     throw new Error(commandCentersResult.error.message);
   })();
@@ -1271,10 +1260,10 @@ export async function getTransportationAddRiderMemberOptionsSupabase() {
   const contacts = (() => {
     if (!contactsResult.error) return (contactsResult.data ?? []) as MemberContactRow[];
     if (isMissingTableError(contactsResult.error, "member_contacts")) {
-      console.warn(
-        "[member-command-center] public.member_contacts missing from schema cache. Returning rider options without default contacts."
-      );
-      return [] as MemberContactRow[];
+      throw missingMccStorageError({
+        objectName: "member_contacts",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
     }
     throw new Error(contactsResult.error.message);
   })();

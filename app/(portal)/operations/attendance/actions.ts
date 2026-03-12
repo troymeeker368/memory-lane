@@ -5,9 +5,11 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/auth";
 import { ATTENDANCE_ABSENCE_REASON_OPTIONS } from "@/lib/canonical";
 import { syncAttendanceBillingForDate } from "@/lib/services/billing-supabase";
-import { resolveExpectedAttendanceForDate } from "@/lib/services/expected-attendance";
+import {
+  loadExpectedAttendanceSupabaseContext,
+  resolveExpectedAttendanceFromSupabaseContext
+} from "@/lib/services/expected-attendance-supabase";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
-import { listActiveScheduleChangesForMembersSupabase } from "@/lib/services/schedule-changes-supabase";
 import { createClient } from "@/lib/supabase/server";
 import { easternDateTimeLocalToISO, toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
@@ -99,57 +101,28 @@ async function getMemberAttendanceSchedule(memberId: string) {
   return (data as AttendanceScheduleRow | null) ?? null;
 }
 
-async function isMemberOnHoldOnDate(memberId: string, attendanceDate: string) {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("member_holds")
-    .select("id")
-    .eq("member_id", memberId)
-    .eq("status", "active")
-    .lte("start_date", attendanceDate)
-    .or(`end_date.is.null,end_date.gte.${attendanceDate}`)
-    .limit(1);
-  if (error) throw new Error(error.message);
-  return (data ?? []).length > 0;
-}
-
-async function isCenterClosedOnDate(attendanceDate: string) {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("center_closures")
-    .select("closure_date")
-    .eq("closure_date", attendanceDate)
-    .limit(1);
-  if (error) throw new Error(error.message);
-  return (data ?? []).length > 0;
-}
-
 async function resolveMemberExpectedAttendanceForDate(input: {
   memberId: string;
   attendanceDate: string;
   hasUnscheduledAttendanceAddition?: boolean;
 }) {
-  const [schedule, onHold, centerClosed, scheduleChanges] = await Promise.all([
+  const [schedule, context] = await Promise.all([
     getMemberAttendanceSchedule(input.memberId),
-    isMemberOnHoldOnDate(input.memberId, input.attendanceDate),
-    isCenterClosedOnDate(input.attendanceDate),
-    listActiveScheduleChangesForMembersSupabase({
+    loadExpectedAttendanceSupabaseContext({
       memberIds: [input.memberId],
       startDate: input.attendanceDate,
-      endDate: input.attendanceDate
+      endDate: input.attendanceDate,
+      includeAttendanceRecords: false
     })
   ]);
 
   return {
     schedule,
-    resolution: resolveExpectedAttendanceForDate({
+    resolution: resolveExpectedAttendanceFromSupabaseContext({
+      context,
+      memberId: input.memberId,
       date: input.attendanceDate,
-      baseSchedule: schedule,
-      scheduleChanges,
-      holds: onHold
-        ? [{ start_date: input.attendanceDate, end_date: input.attendanceDate, status: "active" }]
-        : [],
-      centerClosures: centerClosed ? [{ closure_date: input.attendanceDate }] : [],
+      baseScheduleOverride: schedule,
       hasUnscheduledAttendanceAddition: input.hasUnscheduledAttendanceAddition
     })
   };

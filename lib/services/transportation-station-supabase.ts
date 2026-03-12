@@ -4,8 +4,11 @@ import { createClient } from "@/lib/supabase/server";
 import { normalizeOperationalDateOnly, getWeekdayForDate, type OperationsWeekdayKey } from "@/lib/services/operations-calendar";
 import { getTransportSlotForScheduleDay } from "@/lib/services/member-schedule-selectors";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
-import { resolveExpectedAttendanceForDate } from "@/lib/services/expected-attendance";
-import { listActiveScheduleChangesForMembersSupabase, type ScheduleWeekdayKey } from "@/lib/services/schedule-changes-supabase";
+import {
+  loadExpectedAttendanceSupabaseContext,
+  resolveExpectedAttendanceFromSupabaseContext
+} from "@/lib/services/expected-attendance-supabase";
+import type { ScheduleWeekdayKey } from "@/lib/services/schedule-changes-supabase";
 import {
   type MemberAttendanceScheduleRow,
   type MemberContactRow
@@ -188,8 +191,7 @@ async function listPreferredContactsByMember(memberIds: string[]) {
   const { data, error } = await supabase.from("member_contacts").select("*").in("member_id", memberIds);
   if (error) {
     if (isMissingTableError(error, "member_contacts")) {
-      console.warn("[transportation-station] public.member_contacts missing from schema cache. Using no contact defaults.");
-      return { rows: [] as MemberContactRow[], preferred: new Map<string, MemberContactRow>() };
+      throw transportationManifestStorageRequiredError();
     }
     throw new Error(error.message);
   }
@@ -220,7 +222,9 @@ export async function resolvePreferredMemberContactSupabase(memberId: string, ex
       .eq("member_id", memberId)
       .maybeSingle();
     if (error) {
-      if (isMissingTableError(error, "member_contacts")) return null;
+      if (isMissingTableError(error, "member_contacts")) {
+        throw transportationManifestStorageRequiredError();
+      }
       throw new Error(error.message);
     }
     if (data) return data as MemberContactRow;
@@ -374,16 +378,19 @@ export async function getTransportationManifestSupabase(input?: {
   const schedules: MemberAttendanceScheduleRow[] = (() => {
     if (!scheduleError) return (schedulesData ?? []) as MemberAttendanceScheduleRow[];
     if (isMissingTableError(scheduleError, "member_attendance_schedules")) {
-      console.warn(
-        "[transportation-station] public.member_attendance_schedules missing from schema cache. Returning manifest with no scheduled riders."
-      );
-      return [];
+      throw transportationManifestStorageRequiredError();
     }
     throw new Error(scheduleError.message);
   })();
   const memberIds = Array.from(new Set(schedules.map((row) => row.member_id)));
+  const expectedAttendanceContext = await loadExpectedAttendanceSupabaseContext({
+    memberIds,
+    startDate: selectedDate,
+    endDate: selectedDate,
+    includeAttendanceRecords: false
+  });
 
-  const [membersData, { preferred: preferredContactByMember }, adjustmentsResult, holdsResult, centerClosuresResult, scheduleChanges] = await Promise.all([
+  const [membersData, { preferred: preferredContactByMember }, adjustmentsResult] = await Promise.all([
     memberIds.length > 0
       ? supabase.from("members").select("id, display_name, status").in("id", memberIds)
       : Promise.resolve({ data: [], error: null }),
@@ -392,62 +399,21 @@ export async function getTransportationManifestSupabase(input?: {
       .from("transportation_manifest_adjustments")
       .select("*")
       .eq("selected_date", selectedDate)
-      .in("shift", selectedShifts),
-    supabase.from("member_holds").select("member_id, start_date, end_date, status"),
-    supabase.from("center_closures").select("closure_date").eq("closure_date", selectedDate),
-    listActiveScheduleChangesForMembersSupabase({
-      memberIds,
-      startDate: selectedDate,
-      endDate: selectedDate
-    })
+      .in("shift", selectedShifts)
   ]);
   if (membersData.error) throw new Error(membersData.error.message);
 
   const adjustments: TransportationManifestAdjustmentRow[] = (() => {
     if (!adjustmentsResult.error) return (adjustmentsResult.data ?? []) as TransportationManifestAdjustmentRow[];
     if (isMissingTableError(adjustmentsResult.error, "transportation_manifest_adjustments")) {
-      console.warn(
-        "[transportation-station] public.transportation_manifest_adjustments missing from schema cache. Returning manifest without one-day adjustments."
-      );
-      return [];
+      throw transportationManifestStorageRequiredError();
     }
     throw new Error(adjustmentsResult.error.message);
-  })();
-
-  const holdRows: Array<{ member_id: string; start_date: string; end_date: string | null; status: string }> = (() => {
-    if (!holdsResult.error) {
-      return (holdsResult.data ?? []) as Array<{ member_id: string; start_date: string; end_date: string | null; status: string }>;
-    }
-    if (isMissingTableError(holdsResult.error, "member_holds")) {
-      console.warn("[transportation-station] public.member_holds missing from schema cache. Continuing without hold exclusions.");
-      return [];
-    }
-    throw new Error(holdsResult.error.message);
-  })();
-  const centerClosures: Array<{ closure_date: string }> = (() => {
-    if (!centerClosuresResult.error) return (centerClosuresResult.data ?? []) as Array<{ closure_date: string }>;
-    if (isMissingTableError(centerClosuresResult.error, "center_closures")) {
-      console.warn("[transportation-station] public.center_closures missing from schema cache. Continuing without closure exclusions.");
-      return [];
-    }
-    throw new Error(centerClosuresResult.error.message);
   })();
 
   const memberById = new Map(
     ((membersData.data ?? []) as Array<{ id: string; display_name: string; status: string }>).map((row) => [row.id, row] as const)
   );
-  const holdsByMember = new Map<string, Array<{ member_id: string; start_date: string; end_date: string | null; status: string }>>();
-  holdRows.forEach((row) => {
-    const existing = holdsByMember.get(row.member_id) ?? [];
-    existing.push(row);
-    holdsByMember.set(row.member_id, existing);
-  });
-  const scheduleChangesByMember = new Map<string, typeof scheduleChanges>();
-  scheduleChanges.forEach((row) => {
-    const existing = scheduleChangesByMember.get(row.member_id) ?? [];
-    existing.push(row);
-    scheduleChangesByMember.set(row.member_id, existing);
-  });
 
   const scheduledRiders: TransportationManifestRider[] = [];
   const holdExcludedScheduledRiders: TransportationManifestRider[] = [];
@@ -455,12 +421,11 @@ export async function getTransportationManifestSupabase(input?: {
   schedules.forEach((schedule) => {
     const member = memberById.get(schedule.member_id);
     if (!member || member.status !== "active") return;
-    const resolution = resolveExpectedAttendanceForDate({
+    const resolution = resolveExpectedAttendanceFromSupabaseContext({
+      context: expectedAttendanceContext,
+      memberId: schedule.member_id,
       date: selectedDate,
-      baseSchedule: schedule,
-      scheduleChanges: scheduleChangesByMember.get(schedule.member_id) ?? [],
-      holds: holdsByMember.get(schedule.member_id) ?? [],
-      centerClosures
+      baseScheduleOverride: schedule
     });
     if (!resolution.scheduledFromSchedule) return;
     const contact = preferredContactByMember.get(schedule.member_id) ?? null;

@@ -2,8 +2,15 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { generateClosureDatesFromRules, type ClosureRuleLike } from "@/lib/services/closure-rules";
-import { resolveExpectedAttendanceForDate } from "@/lib/services/expected-attendance";
-import { listActiveScheduleChangesForMembersSupabase } from "@/lib/services/schedule-changes-supabase";
+import {
+  loadExpectedAttendanceSupabaseContext,
+  resolveExpectedAttendanceFromSupabaseContext
+} from "@/lib/services/expected-attendance-supabase";
+import {
+  resolveExpectedAttendanceForDate,
+  type MemberHoldLike
+} from "@/lib/services/expected-attendance";
+import type { ScheduleChangeRow } from "@/lib/services/schedule-changes-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export type BillingModuleRole = "admin" | "manager" | "director" | "coordinator";
@@ -301,6 +308,88 @@ function attendanceSettingIncludesDate(attendanceSetting: AttendanceSettingWeekd
   if (day === "thursday") return Boolean(attendanceSetting.thursday);
   if (day === "friday") return Boolean(attendanceSetting.friday);
   return false;
+}
+
+function isHoldActiveForDate(holds: MemberHoldLike[], dateOnly: string) {
+  return holds.some((hold) => {
+    if (String(hold.status).trim().toLowerCase() !== "active") return false;
+    const start = normalizeDateOnly(hold.start_date);
+    const end = hold.end_date ? normalizeDateOnly(hold.end_date) : null;
+    if (dateOnly < start) return false;
+    if (end && dateOnly > end) return false;
+    return true;
+  });
+}
+
+function toWeekdayOnlyBaseSchedule(input: AttendanceSettingWeekdays | ScheduleTemplateRow | null | undefined) {
+  if (!input) return null;
+  return {
+    monday: Boolean(input.monday),
+    tuesday: Boolean(input.tuesday),
+    wednesday: Boolean(input.wednesday),
+    thursday: Boolean(input.thursday),
+    friday: Boolean(input.friday)
+  };
+}
+
+function isCanonicalScheduledForBillingDate(input: {
+  dateOnly: string;
+  includeBySchedule: boolean;
+  baseSchedule: AttendanceSettingWeekdays | ScheduleTemplateRow | null | undefined;
+  holds: MemberHoldLike[];
+  scheduleChanges: ScheduleChangeRow[];
+  nonBillableClosures: Set<string>;
+}) {
+  if (!input.includeBySchedule) return false;
+  if (input.nonBillableClosures.has(input.dateOnly)) return false;
+
+  const day = weekdayKey(input.dateOnly);
+  if (day === "saturday" || day === "sunday") {
+    return !isHoldActiveForDate(input.holds, input.dateOnly);
+  }
+
+  const resolution = resolveExpectedAttendanceForDate({
+    date: input.dateOnly,
+    baseSchedule: toWeekdayOnlyBaseSchedule(input.baseSchedule),
+    scheduleChanges: input.scheduleChanges,
+    holds: input.holds,
+    centerClosures: input.nonBillableClosures.has(input.dateOnly) ? [{ closure_date: input.dateOnly }] : []
+  });
+  return resolution.isScheduled;
+}
+
+function collectBillingEligibleBaseDates(input: {
+  range: DateRange;
+  schedule: ScheduleTemplateRow | null;
+  attendanceSetting: AttendanceSettingWeekdays | null;
+  includeAllWhenNoSchedule: boolean;
+  holds: MemberHoldLike[];
+  scheduleChanges: ScheduleChangeRow[];
+  nonBillableClosures: Set<string>;
+}) {
+  const dates = new Set<string>();
+  let cursor = input.range.start;
+  while (cursor <= input.range.end) {
+    const includeBySchedule = input.includeAllWhenNoSchedule
+      ? true
+      : input.schedule
+        ? scheduleIncludesDate(input.schedule, cursor)
+        : attendanceSettingIncludesDate(input.attendanceSetting, cursor);
+    if (
+      isCanonicalScheduledForBillingDate({
+        dateOnly: cursor,
+        includeBySchedule,
+        baseSchedule: input.schedule ?? input.attendanceSetting,
+        holds: input.holds,
+        scheduleChanges: input.scheduleChanges,
+        nonBillableClosures: input.nonBillableClosures
+      })
+    ) {
+      dates.add(cursor);
+    }
+    cursor = addDays(cursor, 1);
+  }
+  return dates;
 }
 
 function normalizeYear(value: number) {
@@ -1192,12 +1281,8 @@ function handleNonCriticalMissingSchemaError(
   input: { objectName: string; migration: string; fallbackLabel: string }
 ) {
   if (!isMissingSchemaObjectError(error)) return false;
-  if (process.env.NODE_ENV !== "production") {
-    const original = String(error?.message ?? "Unknown schema error");
-    throw new Error(`${buildMissingSchemaMessage(input)} Original error: ${original}`);
-  }
-  console.warn(`${buildMissingSchemaMessage(input)} Returning fallback: ${input.fallbackLabel}.`);
-  return true;
+  const original = String(error?.message ?? "Unknown schema error");
+  throw new Error(`${buildMissingSchemaMessage(input)} Original error: ${original}`);
 }
 
 async function getBillingPreviewRows(input: {
@@ -1265,6 +1350,14 @@ async function getBillingPreviewRows(input: {
   const ancillaryRows = ((ancillaryError ? [] : ancillaryData) ?? []) as Array<any>;
   const categoryById = new Map((((categoryError ? [] : categoryData) ?? []) as Array<any>).map((row: any) => [String(row.id), row] as const));
   const adjustmentRows = ((adjustmentError ? [] : adjustmentData) ?? []) as Array<any>;
+  const expectedAttendanceContext = await loadExpectedAttendanceSupabaseContext({
+    memberIds: activeMembers.map((member) => member.id),
+    startDate: minDate,
+    endDate: maxDate,
+    includeAttendanceRecords: false
+  });
+  const centerSetting = await getActiveCenterSettingForDate(invoiceMonthStart);
+  const nonBillableClosureSetsByRange = new Map<string, Set<string>>();
 
   const previewRows: BillingPreviewRow[] = [];
   for (const member of activeMembers) {
@@ -1277,7 +1370,6 @@ async function getBillingPreviewRows(input: {
         .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1))[0] ?? null;
     if (!memberSetting) continue;
 
-    const centerSetting = await getActiveCenterSettingForDate(invoiceMonthStart);
     const mode = getEffectiveBillingMode({ memberSetting, centerSetting });
     if (!shouldProcessModeInBatch({ mode, batchType: input.batchType })) continue;
 
@@ -1286,7 +1378,12 @@ async function getBillingPreviewRows(input: {
       batchType: input.batchType,
       invoiceMonthStart
     });
-    const nonBillableClosures = await getNonBillableCenterClosureSet(periods.baseRange);
+    const nonBillableClosureRangeKey = `${periods.baseRange.start}:${periods.baseRange.end}`;
+    let nonBillableClosures = nonBillableClosureSetsByRange.get(nonBillableClosureRangeKey);
+    if (!nonBillableClosures) {
+      nonBillableClosures = await getNonBillableCenterClosureSet(periods.baseRange);
+      nonBillableClosureSetsByRange.set(nonBillableClosureRangeKey, nonBillableClosures);
+    }
     const schedule =
       scheduleRows
         .filter((row) => row.member_id === member.id)
@@ -1304,15 +1401,17 @@ async function getBillingPreviewRows(input: {
         .filter((row) => isWithin(String(row.attendance_date), periods.baseRange))
         .length;
     } else {
-      let cursor = periods.baseRange.start;
-      while (cursor <= periods.baseRange.end) {
-        const includeBySchedule =
-          schedule != null
-            ? scheduleIncludesDate(schedule, cursor)
-              : attendanceSettingIncludesDate(attendanceSetting, cursor);
-        if (includeBySchedule && !nonBillableClosures.has(cursor)) billedDays += 1;
-        cursor = addDays(cursor, 1);
-      }
+      const memberHolds = expectedAttendanceContext.holdsByMember.get(member.id) ?? [];
+      const memberScheduleChanges = expectedAttendanceContext.scheduleChangesByMember.get(member.id) ?? [];
+      billedDays = collectBillingEligibleBaseDates({
+        range: periods.baseRange,
+        schedule,
+        attendanceSetting,
+        includeAllWhenNoSchedule: false,
+        holds: memberHolds,
+        scheduleChanges: memberScheduleChanges,
+        nonBillableClosures
+      }).size;
     }
 
     const resolvedDailyRate = await resolveDailyRate({
@@ -1446,52 +1545,16 @@ export async function syncAttendanceBillingForDate(input: { memberId: string; at
   if (attendanceError) throw new Error(attendanceError.message);
   if (!attendance) return;
 
-  const [attendanceScheduleResult, holdsResult, centerClosuresResult, scheduleChanges] = await Promise.all([
-    supabase
-      .from("member_attendance_schedules")
-      .select("member_id, monday, tuesday, wednesday, thursday, friday")
-      .eq("member_id", input.memberId)
-      .maybeSingle(),
-    supabase
-      .from("member_holds")
-      .select("start_date, end_date, status")
-      .eq("member_id", input.memberId)
-      .eq("status", "active")
-      .lte("start_date", attendanceDate)
-      .or(`end_date.is.null,end_date.gte.${attendanceDate}`),
-    supabase.from("center_closures").select("closure_date").eq("closure_date", attendanceDate),
-    listActiveScheduleChangesForMembersSupabase({
-      memberIds: [input.memberId],
-      startDate: attendanceDate,
-      endDate: attendanceDate
-    })
-  ]);
-  if (attendanceScheduleResult.error && !isMissingSchemaObjectError(attendanceScheduleResult.error)) {
-    throw new Error(attendanceScheduleResult.error.message);
-  }
-  if (holdsResult.error && !isMissingSchemaObjectError(holdsResult.error)) {
-    throw new Error(holdsResult.error.message);
-  }
-  if (centerClosuresResult.error && !isMissingSchemaObjectError(centerClosuresResult.error)) {
-    throw new Error(centerClosuresResult.error.message);
-  }
-
-  const attendanceSchedule = (attendanceScheduleResult.error ? null : attendanceScheduleResult.data) as
-    | {
-        member_id: string;
-        monday: boolean;
-        tuesday: boolean;
-        wednesday: boolean;
-        thursday: boolean;
-        friday: boolean;
-      }
-    | null;
-  const isScheduledDay = resolveExpectedAttendanceForDate({
-    date: attendanceDate,
-    baseSchedule: attendanceSchedule,
-    scheduleChanges,
-    holds: (holdsResult.error ? [] : holdsResult.data ?? []) as Array<{ start_date: string; end_date: string | null; status: string }>,
-    centerClosures: (centerClosuresResult.error ? [] : centerClosuresResult.data ?? []) as Array<{ closure_date: string }>
+  const expectedContext = await loadExpectedAttendanceSupabaseContext({
+    memberIds: [input.memberId],
+    startDate: attendanceDate,
+    endDate: attendanceDate,
+    includeAttendanceRecords: false
+  });
+  const isScheduledDay = resolveExpectedAttendanceFromSupabaseContext({
+    context: expectedContext,
+    memberId: input.memberId,
+    date: attendanceDate
   }).isScheduled;
   const memberSetting = await getActiveMemberBillingSetting(input.memberId, attendanceDate);
   const centerSetting = await getActiveCenterBillingSetting(attendanceDate);
@@ -2032,17 +2095,25 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
 
     const nonBillableClosures = await getNonBillableCenterClosureSet(period);
     const schedule = input.useScheduleTemplate ? await getActiveBillingScheduleTemplate(input.memberId, period.start) : null;
+    const expectedAttendanceContext = await loadExpectedAttendanceSupabaseContext({
+      memberIds: [input.memberId],
+      startDate: period.start,
+      endDate: period.end,
+      includeAttendanceRecords: false
+    });
+    const memberHolds = expectedAttendanceContext.holdsByMember.get(input.memberId) ?? [];
+    const memberScheduleChanges = expectedAttendanceContext.scheduleChangesByMember.get(input.memberId) ?? [];
     const manualIncludeDates = (input.manualIncludeDates ?? []).map((value) => normalizeDateOnly(value, "")).filter(Boolean);
     const manualExcludeDates = new Set((input.manualExcludeDates ?? []).map((value) => normalizeDateOnly(value, "")).filter(Boolean));
-    const baseDates = new Set<string>();
-    let cursor = period.start;
-    while (cursor <= period.end) {
-      const includeBySchedule = schedule ? scheduleIncludesDate(schedule as ScheduleTemplateRow, cursor) : true;
-      if (includeBySchedule && !nonBillableClosures.has(cursor)) {
-        baseDates.add(cursor);
-      }
-      cursor = addDays(cursor, 1);
-    }
+    const baseDates = collectBillingEligibleBaseDates({
+      range: period,
+      schedule: schedule as ScheduleTemplateRow | null,
+      attendanceSetting: null,
+      includeAllWhenNoSchedule: !schedule,
+      holds: memberHolds,
+      scheduleChanges: memberScheduleChanges,
+      nonBillableClosures
+    });
     manualIncludeDates.forEach((dateOnly) => {
       if (!nonBillableClosures.has(dateOnly)) baseDates.add(dateOnly);
     });

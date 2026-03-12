@@ -251,3 +251,67 @@ workflows operate end‑to‑end
 - Keep migration filenames unique and ordered using ####_description.sql; do not reuse numeric prefixes.
 - Do not commit temporary capture artifacts (.tmp-*, screenshots, html dumps, test-results, tsbuildinfo).
 
+## Canonicality Enforcement Rules
+
+When modifying Memory Lane, always preserve or improve canonicality.
+
+Definitions:
+- A canonical source of truth is the single authoritative table/service/write path for a business concept.
+- A canonicality gap exists when multiple modules compute or persist the same concept differently.
+
+Required behavior:
+1. Before editing, identify the canonical:
+   - table(s)
+   - read/resolution service
+   - write action/service
+   - downstream consumers
+2. Do not add a new parallel resolver if one already exists.
+3. Do not patch only the UI if the business rule belongs in a shared service.
+4. Do not allow downstream modules to reimplement shared business logic.
+5. If multiple modules calculate the same rule differently, consolidate them into one shared canonical resolver.
+6. Runtime code must not use mock-era repositories, seed-only objects, or file-backed persistence.
+7. If code and database disagree, repair the schema/code relationship with forward-only migrations and aligned services.
+8. Derived operational outputs must be computed from canonical facts, not from duplicated derived state unless explicitly architected.
+
+Priority order for fixes:
+1. schema correctness
+2. canonical service/resolver correctness
+3. write path correctness
+4. downstream consumer alignment
+5. UI wiring
+
+Refusal rules:
+- Do not introduce new duplicate business logic.
+- Do not keep mixed mock + Supabase runtime behavior.
+- Do not add temporary fallback logic that bypasses the canonical path in production.
+
+## Supabase-Only Runtime Rule
+
+All runtime application behavior must be fully Supabase-backed.
+
+The following are forbidden in production/runtime code:
+- mock-repo imports
+- getMockDb usage
+- file-backed persistence
+- synthetic default records returned when writes fail
+- fallback objects returned when tables/columns are missing
+- silent catch branches that mask failed persistence
+- schema-masking empty results used as if they were persisted state
+
+A write is only successful if the record is actually persisted in Supabase.
+If a required schema object is missing, the correct fix is a migration or service repair, not a fallback branch.
+
+## Shared Resolver Rule
+
+All derived business logic must be implemented through shared resolvers/services and reused across the codebase.
+
+A shared resolver is the single canonical implementation of a domain rule.  
+Pages, server actions, reports, dashboards, and downstream services must not independently reimplement the same rule.
+
+Requirements:
+- If a rule is derived from multiple tables or conditions, it must live in a shared resolver.
+- If multiple modules need the same answer, they must call the same resolver.
+- Raw table reads are allowed only for simple persistence access, not for recomputing shared business rules.
+- When a shared resolver exists, new code must use it rather than duplicating logic.
+- If duplicate logic is discovered, it must be consolidated into the shared resolver and removed from consumers.
+

@@ -1413,24 +1413,34 @@ export async function updateLeadStatusAction(raw: z.infer<typeof leadStatusSchem
   );
 }
 
-export async function getMockStaffLookup() {
+export async function getStaffLookup() {
   const supabase = await createClient();
   const { data, error } = await supabase.from("profiles").select("id, full_name, role").order("full_name");
-  if (error) return [];
+  if (error) throw new Error(error.message);
   return (data ?? []).map((row) => ({ id: row.id, full_name: row.full_name, role: row.role }));
 }
 
-export async function getMockMemberLookup() {
+export async function getMemberLookup() {
   const supabase = await createClient();
   const { data, error } = await supabase.from("members").select("id, display_name, status").eq("status", "active");
-  if (error) return [];
+  if (error) throw new Error(error.message);
   return (data ?? []).map((row) => ({ id: row.id, display_name: row.display_name }));
+}
+
+// Backward-compatible aliases kept to avoid breaking older imports.
+export async function getMockStaffLookup() {
+  return getStaffLookup();
+}
+
+// Backward-compatible aliases kept to avoid breaking older imports.
+export async function getMockMemberLookup() {
+  return getMemberLookup();
 }
 
 export async function resolveStaffName(staffId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase.from("profiles").select("full_name").eq("id", staffId).maybeSingle();
-  if (error) return null;
+  if (error) throw new Error(error.message);
   return data?.full_name ?? null;
 }
 

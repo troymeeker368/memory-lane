@@ -17,6 +17,7 @@ import {
   canonicalLeadStatus
 } from "@/lib/canonical";
 import { normalizeRoleKey } from "@/lib/permissions";
+import { applyLeadStageTransitionSupabase } from "@/lib/services/sales-lead-stage-supabase";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternDateTimeLocal, toEasternISO } from "@/lib/timezone";
 
@@ -301,8 +302,20 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
 
     let leadId = payload.data.leadId?.trim() || "";
     if (leadId) {
-      const { error } = await supabase.from("leads").update(leadPatch).eq("id", leadId);
-      if (error) return { error: error.message };
+      try {
+        await applyLeadStageTransitionSupabase({
+          leadId,
+          requestedStage: stage,
+          requestedStatus: status,
+          actorUserId: profile.id,
+          actorName: profile.full_name,
+          source: "saveSalesLeadAction",
+          reason: "Lead updated from sales intake form.",
+          additionalLeadPatch: leadPatch
+        });
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Unable to update lead." };
+      }
     } else {
       const { data, error } = await supabase
         .from("leads")
@@ -423,20 +436,22 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
       memberId = insertedMember.id;
     }
 
-    const now = toEasternISO();
-    const { error: leadUpdateError } = await supabase
-      .from("leads")
-      .update({
-        stage: "Closed - Won",
-        status: "won",
-        stage_updated_at: now,
-        member_start_date: enrollmentDate,
-        closed_date: toEasternDate(),
-        lost_reason: null,
-        updated_at: now
-      })
-      .eq("id", lead.id);
-    if (leadUpdateError) return { error: leadUpdateError.message };
+    try {
+      await applyLeadStageTransitionSupabase({
+        leadId: lead.id,
+        requestedStage: "Closed - Won",
+        requestedStatus: "Won",
+        actorUserId: profile.id,
+        actorName: profile.full_name,
+        source: "enrollMemberFromLeadAction",
+        reason: "Enrollment in progress lead converted to member.",
+        additionalLeadPatch: {
+          member_start_date: enrollmentDate
+        }
+      });
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Unable to transition lead to Closed - Won." };
+    }
 
     await supabase.from("audit_logs").insert({
       actor_user_id: profile.id,
@@ -520,36 +535,40 @@ export async function createSalesLeadActivityAction(raw: z.infer<typeof leadActi
     if (insertError) return { error: insertError.message };
 
     if (payload.data.outcome === "Not a fit") {
-      const { error: leadUpdateError } = await supabase
-        .from("leads")
-        .update({
-          status: "lost",
-          stage: "Closed - Lost",
-          stage_updated_at: toEasternISO(),
-          closed_date: toEasternDate(),
-          lost_reason: payload.data.lostReason || null,
-          next_follow_up_date: null,
-          next_follow_up_type: null,
-          updated_at: toEasternISO()
-        })
-        .eq("id", lead.id);
-      if (leadUpdateError) return { error: leadUpdateError.message };
+      try {
+        await applyLeadStageTransitionSupabase({
+          leadId: lead.id,
+          requestedStage: "Closed - Lost",
+          requestedStatus: "Lost",
+          actorUserId: profile.id,
+          actorName: profile.full_name,
+          source: "createSalesLeadActivityAction",
+          reason: "Lead activity outcome marked as Not a fit.",
+          additionalLeadPatch: {
+            lost_reason: payload.data.lostReason || null,
+            next_follow_up_date: null,
+            next_follow_up_type: null
+          }
+        });
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Unable to transition lead to Closed - Lost." };
+      }
     }
 
     if (payload.data.outcome === "Enrollment completed" || payload.data.outcome === "Member start confirmed") {
-      const now = toEasternISO();
-      const { error: wonUpdateError } = await supabase
-        .from("leads")
-        .update({
-          status: "won",
-          stage: "Closed - Won",
-          stage_updated_at: now,
-          closed_date: toEasternDate(),
-          lost_reason: null,
-          updated_at: now
-        })
-        .eq("id", lead.id);
-      if (wonUpdateError) return { error: wonUpdateError.message };
+      try {
+        await applyLeadStageTransitionSupabase({
+          leadId: lead.id,
+          requestedStage: "Closed - Won",
+          requestedStatus: "Won",
+          actorUserId: profile.id,
+          actorName: profile.full_name,
+          source: "createSalesLeadActivityAction",
+          reason: `Lead activity outcome: ${payload.data.outcome}.`
+        });
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Unable to transition lead to Closed - Won." };
+      }
     }
 
     await supabase.from("audit_logs").insert({

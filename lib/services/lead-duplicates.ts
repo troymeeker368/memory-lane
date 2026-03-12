@@ -1,4 +1,19 @@
-import type { MockDb } from "@/lib/mock/types";
+export interface LeadDuplicateLeadRow {
+  id: string;
+  lead_id: string;
+  member_name: string;
+  caregiver_name: string;
+  caregiver_phone: string | null;
+  caregiver_email: string | null;
+  member_dob: string | null;
+  stage: string;
+  status: string;
+  inquiry_date: string;
+}
+
+export interface LeadDuplicateDbLike {
+  leads: LeadDuplicateLeadRow[];
+}
 
 function normalizeName(value: string | null | undefined) {
   return (value ?? "")
@@ -66,7 +81,7 @@ export interface LeadDuplicateMatch {
 
 function scoreLeadDuplicate(
   input: LeadDuplicateSearchInput,
-  lead: MockDb["leads"][number]
+  lead: LeadDuplicateLeadRow
 ): LeadDuplicateMatch | null {
   const inputMemberName = normalizeName(input.memberName);
   const inputCaregiverName = normalizeName(input.caregiverName);
@@ -136,7 +151,7 @@ function scoreLeadDuplicate(
 }
 
 export function findLikelyLeadDuplicates(
-  db: Pick<MockDb, "leads">,
+  db: LeadDuplicateDbLike,
   input: LeadDuplicateSearchInput
 ): LeadDuplicateMatch[] {
   const currentLeadId = (input.leadId ?? "").trim();
@@ -171,7 +186,7 @@ export interface LeadDuplicateQueueItem {
 }
 
 export function buildLeadDuplicateReviewQueue(
-  db: Pick<MockDb, "leads">
+  db: LeadDuplicateDbLike
 ): LeadDuplicateQueueItem[] {
   const queue: LeadDuplicateQueueItem[] = [];
 
