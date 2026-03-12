@@ -1,4 +1,4 @@
-import type { ReportDateRange } from "@/lib/services/admin-reports";
+import type { ReportDateRange } from "@/lib/services/report-date-range";
 import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
@@ -758,7 +758,7 @@ export type AttendanceSummaryBillingModeFilter =
 export type AttendanceSummaryMemberStatusFilter =
   (typeof ATTENDANCE_SUMMARY_MEMBER_STATUS_OPTIONS)[number]["value"];
 export type AttendanceSummaryRevenueBasis =
-  (typeof ATTENDANCE_SUMMARY_REVENUE_BASIS_OPTIONS)[number]["value"] | "ProjectedRevenueFallback";
+  (typeof ATTENDANCE_SUMMARY_REVENUE_BASIS_OPTIONS)[number]["value"];
 export type AttendanceSummaryAttendanceBasis = "ActualAttendance";
 
 export interface AttendanceSummaryInput extends ReportDateRange {
@@ -906,29 +906,25 @@ export async function getAttendanceSummaryReport(input: AttendanceSummaryInput):
   let revenueModeApplied: AttendanceSummaryRevenueBasis = input.revenueBasis;
   const finalizedRevenueByMember = new Map<string, number>();
   if (input.revenueBasis === "FinalizedRevenue") {
-    try {
-      const supabase = await createClient();
-      const { data, error } = await supabase
-        .from("billing_invoices")
-        .select("member_id, total_amount, invoice_status, invoice_source, invoice_date")
-        .gte("invoice_date", normalizedRange.from)
-        .lte("invoice_date", normalizedRange.to);
-      if (error) throw new Error(error.message);
-      (data ?? []).forEach((row: any) => {
-        const memberId = String(row.member_id ?? "");
-        if (!selectedMemberIds.has(memberId)) return;
-        const invoiceStatus = String(row.invoice_status ?? "");
-        if (invoiceStatus === "Draft" || invoiceStatus === "Void") return;
-        if (!input.includeCustomInvoices && String(row.invoice_source ?? "") === "Custom") return;
-        const amount = Number(row.total_amount ?? 0);
-        finalizedRevenueByMember.set(
-          memberId,
-          toAmount((finalizedRevenueByMember.get(memberId) ?? 0) + amount)
-        );
-      });
-    } catch (_error) {
-      revenueModeApplied = "ProjectedRevenueFallback";
-    }
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("billing_invoices")
+      .select("member_id, total_amount, invoice_status, invoice_source, invoice_date")
+      .gte("invoice_date", normalizedRange.from)
+      .lte("invoice_date", normalizedRange.to);
+    if (error) throw new Error(error.message);
+    (data ?? []).forEach((row: any) => {
+      const memberId = String(row.member_id ?? "");
+      if (!selectedMemberIds.has(memberId)) return;
+      const invoiceStatus = String(row.invoice_status ?? "");
+      if (invoiceStatus === "Draft" || invoiceStatus === "Void") return;
+      if (!input.includeCustomInvoices && String(row.invoice_source ?? "") === "Custom") return;
+      const amount = Number(row.total_amount ?? 0);
+      finalizedRevenueByMember.set(
+        memberId,
+        toAmount((finalizedRevenueByMember.get(memberId) ?? 0) + amount)
+      );
+    });
   }
 
   const revenueByMember =

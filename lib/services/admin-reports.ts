@@ -121,22 +121,104 @@ export async function getAdminReportLookups() {
 }
 
 export async function getAdminStaffProductivity(filters: BaseReportFilters) {
-  // TODO(schema): Replace with SQL aggregate view for staff productivity.
+  const supabase = await createClient();
   const lookups = await getAdminReportLookups();
-  return lookups.staff
-    .filter((row) => !filters.staff || row.id === filters.staff)
-    .map((row) => ({
-      staff_id: row.id,
-      staff_name: row.name,
-      daily: 0,
-      toilet: 0,
-      shower: 0,
-      transportation: 0,
-      blood_sugar: 0,
-      photos: 0,
-      assessments: 0,
-      total: 0
-    }));
+  const staffRows = lookups.staff.filter((row) => !filters.staff || row.id === filters.staff);
+  if (staffRows.length === 0) return [];
+
+  const [dailyRows, toiletRows, showerRows, transportationRows, bloodSugarRows, photoRows, assessmentRows] =
+    await Promise.all([
+      supabase
+        .from("daily_activity_logs")
+        .select("staff_user_id")
+        .gte("activity_date", filters.from)
+        .lte("activity_date", filters.to),
+      supabase
+        .from("toilet_logs")
+        .select("staff_user_id")
+        .gte("event_at", `${filters.from}T00:00:00.000Z`)
+        .lte("event_at", `${filters.to}T23:59:59.999Z`),
+      supabase
+        .from("shower_logs")
+        .select("staff_user_id")
+        .gte("event_at", `${filters.from}T00:00:00.000Z`)
+        .lte("event_at", `${filters.to}T23:59:59.999Z`),
+      supabase
+        .from("transportation_logs")
+        .select("staff_user_id")
+        .gte("service_date", filters.from)
+        .lte("service_date", filters.to),
+      supabase
+        .from("blood_sugar_logs")
+        .select("nurse_user_id")
+        .gte("checked_at", `${filters.from}T00:00:00.000Z`)
+        .lte("checked_at", `${filters.to}T23:59:59.999Z`),
+      supabase
+        .from("member_photo_uploads")
+        .select("uploaded_by")
+        .gte("uploaded_at", `${filters.from}T00:00:00.000Z`)
+        .lte("uploaded_at", `${filters.to}T23:59:59.999Z`),
+      supabase
+        .from("intake_assessments")
+        .select("completed_by_user_id")
+        .gte("assessment_date", filters.from)
+        .lte("assessment_date", filters.to)
+    ]);
+
+  const responseErrors = [
+    dailyRows.error,
+    toiletRows.error,
+    showerRows.error,
+    transportationRows.error,
+    bloodSugarRows.error,
+    photoRows.error,
+    assessmentRows.error
+  ].filter(Boolean);
+  if (responseErrors.length > 0) {
+    throw new Error(String((responseErrors[0] as any).message ?? "Unable to load staff productivity."));
+  }
+
+  const toCountMap = (rows: any[], key: string) => {
+    const out = new Map<string, number>();
+    rows.forEach((row) => {
+      const id = String(row?.[key] ?? "");
+      if (!id) return;
+      out.set(id, (out.get(id) ?? 0) + 1);
+    });
+    return out;
+  };
+
+  const dailyByStaff = toCountMap((dailyRows.data ?? []) as any[], "staff_user_id");
+  const toiletByStaff = toCountMap((toiletRows.data ?? []) as any[], "staff_user_id");
+  const showerByStaff = toCountMap((showerRows.data ?? []) as any[], "staff_user_id");
+  const transportByStaff = toCountMap((transportationRows.data ?? []) as any[], "staff_user_id");
+  const bloodSugarByStaff = toCountMap((bloodSugarRows.data ?? []) as any[], "nurse_user_id");
+  const photosByStaff = toCountMap((photoRows.data ?? []) as any[], "uploaded_by");
+  const assessmentsByStaff = toCountMap((assessmentRows.data ?? []) as any[], "completed_by_user_id");
+
+  return staffRows
+    .map((row) => {
+      const daily = dailyByStaff.get(row.id) ?? 0;
+      const toilet = toiletByStaff.get(row.id) ?? 0;
+      const shower = showerByStaff.get(row.id) ?? 0;
+      const transportation = transportByStaff.get(row.id) ?? 0;
+      const blood_sugar = bloodSugarByStaff.get(row.id) ?? 0;
+      const photos = photosByStaff.get(row.id) ?? 0;
+      const assessments = assessmentsByStaff.get(row.id) ?? 0;
+      return {
+        staff_id: row.id,
+        staff_name: row.name,
+        daily,
+        toilet,
+        shower,
+        transportation,
+        blood_sugar,
+        photos,
+        assessments,
+        total: daily + toilet + shower + transportation + blood_sugar + photos + assessments
+      };
+    })
+    .sort((left, right) => right.total - left.total || left.staff_name.localeCompare(right.staff_name));
 }
 
 export async function getAdminTimelyDocumentation(filters: BaseReportFilters) {
@@ -261,8 +343,18 @@ export async function getAdminTimelyDocumentation(filters: BaseReportFilters) {
 }
 
 export async function getAdminAncillaryAudit(filters: BaseReportFilters) {
-  // TODO(schema): Migrate to dedicated ancillary reconciliation reporting view.
-  return [] as Array<Record<string, unknown>>;
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("v_ancillary_charge_logs_detailed")
+    .select("id, member_id, member_name, category_name, amount_cents, service_date, staff_user_id, staff_name, reconciliation_status, created_at")
+    .gte("service_date", filters.from)
+    .lte("service_date", filters.to)
+    .order("service_date", { ascending: false })
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? [])
+    .filter((row: any) => !filters.member || row.member_id === filters.member)
+    .filter((row: any) => !filters.staff || row.staff_user_id === filters.staff);
 }
 
 export async function getAdminPayPeriodReview() {
@@ -322,8 +414,91 @@ export async function getAdminPunchExceptions(filters: ReportDateRange & { staff
 }
 
 export async function getAdminDocumentationByMember(filters: BaseReportFilters) {
-  // TODO(schema): Replace with member-documentation aggregate materialized view.
-  return [] as Array<Record<string, unknown>>;
+  const supabase = await createClient();
+  const [dailyRows, toiletRows, showerRows, transportationRows, bloodSugarRows] = await Promise.all([
+    supabase
+      .from("daily_activity_logs")
+      .select("member_id, members!daily_activity_logs_member_id_fkey(display_name), activity_date")
+      .gte("activity_date", filters.from)
+      .lte("activity_date", filters.to),
+    supabase
+      .from("toilet_logs")
+      .select("member_id, members!toilet_logs_member_id_fkey(display_name), event_at")
+      .gte("event_at", `${filters.from}T00:00:00.000Z`)
+      .lte("event_at", `${filters.to}T23:59:59.999Z`),
+    supabase
+      .from("shower_logs")
+      .select("member_id, members!shower_logs_member_id_fkey(display_name), event_at")
+      .gte("event_at", `${filters.from}T00:00:00.000Z`)
+      .lte("event_at", `${filters.to}T23:59:59.999Z`),
+    supabase
+      .from("transportation_logs")
+      .select("member_id, members!transportation_logs_member_id_fkey(display_name), service_date")
+      .gte("service_date", filters.from)
+      .lte("service_date", filters.to),
+    supabase
+      .from("blood_sugar_logs")
+      .select("member_id, members!blood_sugar_logs_member_id_fkey(display_name), checked_at")
+      .gte("checked_at", `${filters.from}T00:00:00.000Z`)
+      .lte("checked_at", `${filters.to}T23:59:59.999Z`)
+  ]);
+  const responseErrors = [dailyRows.error, toiletRows.error, showerRows.error, transportationRows.error, bloodSugarRows.error].filter(Boolean);
+  if (responseErrors.length > 0) {
+    throw new Error(String((responseErrors[0] as any).message ?? "Unable to load member documentation."));
+  }
+
+  const totalsByMember = new Map<string, {
+    member_id: string;
+    member_name: string;
+    participation_logs: number;
+    toileting_logs: number;
+    shower_logs: number;
+    transportation_logs: number;
+    blood_sugar_logs: number;
+    total: number;
+  }>();
+  const touch = (memberId: string, memberName: string) => {
+    const current = totalsByMember.get(memberId) ?? {
+      member_id: memberId,
+      member_name: memberName,
+      participation_logs: 0,
+      toileting_logs: 0,
+      shower_logs: 0,
+      transportation_logs: 0,
+      blood_sugar_logs: 0,
+      total: 0
+    };
+    totalsByMember.set(memberId, current);
+    return current;
+  };
+  (dailyRows.data ?? []).forEach((row: any) => {
+    const current = touch(String(row.member_id), String(row.members?.display_name ?? "Unknown Member"));
+    current.participation_logs += 1;
+    current.total += 1;
+  });
+  (toiletRows.data ?? []).forEach((row: any) => {
+    const current = touch(String(row.member_id), String(row.members?.display_name ?? "Unknown Member"));
+    current.toileting_logs += 1;
+    current.total += 1;
+  });
+  (showerRows.data ?? []).forEach((row: any) => {
+    const current = touch(String(row.member_id), String(row.members?.display_name ?? "Unknown Member"));
+    current.shower_logs += 1;
+    current.total += 1;
+  });
+  (transportationRows.data ?? []).forEach((row: any) => {
+    const current = touch(String(row.member_id), String(row.members?.display_name ?? "Unknown Member"));
+    current.transportation_logs += 1;
+    current.total += 1;
+  });
+  (bloodSugarRows.data ?? []).forEach((row: any) => {
+    const current = touch(String(row.member_id), String(row.members?.display_name ?? "Unknown Member"));
+    current.blood_sugar_logs += 1;
+    current.total += 1;
+  });
+  return Array.from(totalsByMember.values())
+    .filter((row) => !filters.member || row.member_id === filters.member)
+    .sort((left, right) => right.total - left.total || left.member_name.localeCompare(right.member_name));
 }
 
 export async function getAdminLastToileted() {
@@ -349,8 +524,52 @@ export async function getAdminLastToileted() {
 }
 
 export async function getAdminCareTracker() {
-  // TODO(schema): Add public.v_admin_care_tracker with toileting windows and care gaps.
-  return [] as Array<Record<string, unknown>>;
+  const supabase = await createClient();
+  const [membersResult, toiletResult, showerResult] = await Promise.all([
+    supabase.from("members").select("id, display_name, status").eq("status", "active"),
+    supabase.from("toilet_logs").select("member_id, event_at, profiles(full_name)").order("event_at", { ascending: false }),
+    supabase.from("shower_logs").select("member_id, event_at, profiles(full_name)").order("event_at", { ascending: false })
+  ]);
+  if (membersResult.error) throw new Error(membersResult.error.message);
+  if (toiletResult.error) throw new Error(toiletResult.error.message);
+  if (showerResult.error) throw new Error(showerResult.error.message);
+
+  const latestToiletByMember = new Map<string, { event_at: string; staff_name: string | null }>();
+  const latestShowerByMember = new Map<string, { event_at: string; staff_name: string | null }>();
+  (toiletResult.data ?? []).forEach((row: any) => {
+    const memberId = String(row.member_id ?? "");
+    if (!memberId || latestToiletByMember.has(memberId)) return;
+    latestToiletByMember.set(memberId, {
+      event_at: String(row.event_at),
+      staff_name: row.profiles?.full_name ?? null
+    });
+  });
+  (showerResult.data ?? []).forEach((row: any) => {
+    const memberId = String(row.member_id ?? "");
+    if (!memberId || latestShowerByMember.has(memberId)) return;
+    latestShowerByMember.set(memberId, {
+      event_at: String(row.event_at),
+      staff_name: row.profiles?.full_name ?? null
+    });
+  });
+
+  const now = new Date();
+  return (membersResult.data ?? []).map((member: any) => {
+    const lastToilet = latestToiletByMember.get(String(member.id)) ?? null;
+    const lastShower = latestShowerByMember.get(String(member.id)) ?? null;
+    const hoursSinceLastToilet = lastToilet
+      ? Math.max((now.getTime() - new Date(lastToilet.event_at).getTime()) / 3600000, 0)
+      : null;
+    return {
+      member_id: member.id,
+      member_name: member.display_name,
+      last_toilet_event_at: lastToilet?.event_at ?? null,
+      last_toilet_staff_name: lastToilet?.staff_name ?? null,
+      last_shower_event_at: lastShower?.event_at ?? null,
+      last_shower_staff_name: lastShower?.staff_name ?? null,
+      hours_since_last_toilet: hoursSinceLastToilet == null ? null : Number(hoursSinceLastToilet.toFixed(2))
+    };
+  });
 }
 
 export async function getAdminSalesPipelineSummary(filters: ReportDateRange) {
@@ -374,8 +593,59 @@ export async function getAdminSalesPipelineSummary(filters: ReportDateRange) {
 }
 
 export async function getAdminCommunityPartnerPerformance(filters: ReportDateRange) {
-  // TODO(schema): Add aggregate for partner touches, referrals, and won conversions by range.
-  return [] as Array<Record<string, unknown>>;
+  const supabase = await createClient();
+  const [partnersResult, activitiesResult, leadsResult] = await Promise.all([
+    supabase
+      .from("community_partner_organizations")
+      .select("id, partner_id, organization_name")
+      .eq("active", true),
+    supabase
+      .from("partner_activities")
+      .select("partner_id, activity_at")
+      .gte("activity_at", `${filters.from}T00:00:00.000Z`)
+      .lte("activity_at", `${filters.to}T23:59:59.999Z`),
+    supabase
+      .from("leads")
+      .select("partner_id, status, created_at")
+      .gte("created_at", `${filters.from}T00:00:00.000Z`)
+      .lte("created_at", `${filters.to}T23:59:59.999Z`)
+  ]);
+  if (partnersResult.error) throw new Error(partnersResult.error.message);
+  if (activitiesResult.error) throw new Error(activitiesResult.error.message);
+  if (leadsResult.error) throw new Error(leadsResult.error.message);
+
+  const touchCountByPartner = new Map<string, number>();
+  (activitiesResult.data ?? []).forEach((row: any) => {
+    const partnerId = String(row.partner_id ?? "");
+    if (!partnerId) return;
+    touchCountByPartner.set(partnerId, (touchCountByPartner.get(partnerId) ?? 0) + 1);
+  });
+  const referralsByPartner = new Map<string, number>();
+  const wonByPartner = new Map<string, number>();
+  (leadsResult.data ?? []).forEach((row: any) => {
+    const partnerId = String(row.partner_id ?? "");
+    if (!partnerId) return;
+    referralsByPartner.set(partnerId, (referralsByPartner.get(partnerId) ?? 0) + 1);
+    if (String(row.status ?? "").toLowerCase() === "won") {
+      wonByPartner.set(partnerId, (wonByPartner.get(partnerId) ?? 0) + 1);
+    }
+  });
+
+  return (partnersResult.data ?? []).map((row: any) => {
+    const partnerCode = String(row.partner_id ?? "");
+    const touches = touchCountByPartner.get(String(row.id)) ?? 0;
+    const referrals = referralsByPartner.get(partnerCode) ?? 0;
+    const won = wonByPartner.get(partnerCode) ?? 0;
+    return {
+      partner_id: row.id,
+      partner_code: partnerCode,
+      organization_name: row.organization_name,
+      touches,
+      referrals,
+      won,
+      conversion_rate: referrals > 0 ? Number((won / referrals).toFixed(4)) : null
+    };
+  }).sort((left, right) => right.referrals - left.referrals || left.organization_name.localeCompare(right.organization_name));
 }
 
 export async function getAdminLeadActivityReport(filters: ReportDateRange & { staff?: string; partner?: string; lead?: string }) {
@@ -417,17 +687,107 @@ export async function getAdminAssessmentStatus(filters: BaseReportFilters) {
 }
 
 export async function getAdminMemberServiceUtilization(filters: BaseReportFilters) {
-  // TODO(schema): Build service utilization view keyed by member/date/documentation types.
   const days = buildDays(filters);
-  return days.map((day) => ({
-    date: day,
-    total_members: 0,
-    participation_logs: 0,
-    toileting_logs: 0,
-    shower_logs: 0,
-    transportation_logs: 0,
-    blood_sugar_logs: 0
-  }));
+  const supabase = await createClient();
+  const [dailyRows, toiletRows, showerRows, transportationRows, bloodSugarRows] = await Promise.all([
+    supabase
+      .from("daily_activity_logs")
+      .select("member_id, activity_date")
+      .gte("activity_date", filters.from)
+      .lte("activity_date", filters.to),
+    supabase
+      .from("toilet_logs")
+      .select("member_id, event_at")
+      .gte("event_at", `${filters.from}T00:00:00.000Z`)
+      .lte("event_at", `${filters.to}T23:59:59.999Z`),
+    supabase
+      .from("shower_logs")
+      .select("member_id, event_at")
+      .gte("event_at", `${filters.from}T00:00:00.000Z`)
+      .lte("event_at", `${filters.to}T23:59:59.999Z`),
+    supabase
+      .from("transportation_logs")
+      .select("member_id, service_date")
+      .gte("service_date", filters.from)
+      .lte("service_date", filters.to),
+    supabase
+      .from("blood_sugar_logs")
+      .select("member_id, checked_at")
+      .gte("checked_at", `${filters.from}T00:00:00.000Z`)
+      .lte("checked_at", `${filters.to}T23:59:59.999Z`)
+  ]);
+  const responseErrors = [dailyRows.error, toiletRows.error, showerRows.error, transportationRows.error, bloodSugarRows.error].filter(Boolean);
+  if (responseErrors.length > 0) {
+    throw new Error(String((responseErrors[0] as any).message ?? "Unable to load service utilization."));
+  }
+  const usage = new Map<string, {
+    members: Set<string>;
+    participation_logs: number;
+    toileting_logs: number;
+    shower_logs: number;
+    transportation_logs: number;
+    blood_sugar_logs: number;
+  }>();
+  const ensureDay = (day: string) => {
+    const current = usage.get(day) ?? {
+      members: new Set<string>(),
+      participation_logs: 0,
+      toileting_logs: 0,
+      shower_logs: 0,
+      transportation_logs: 0,
+      blood_sugar_logs: 0
+    };
+    usage.set(day, current);
+    return current;
+  };
+  (dailyRows.data ?? []).forEach((row: any) => {
+    const day = String(row.activity_date ?? "").slice(0, 10);
+    if (!day) return;
+    const current = ensureDay(day);
+    current.members.add(String(row.member_id ?? ""));
+    current.participation_logs += 1;
+  });
+  (toiletRows.data ?? []).forEach((row: any) => {
+    const day = String(row.event_at ?? "").slice(0, 10);
+    if (!day) return;
+    const current = ensureDay(day);
+    current.members.add(String(row.member_id ?? ""));
+    current.toileting_logs += 1;
+  });
+  (showerRows.data ?? []).forEach((row: any) => {
+    const day = String(row.event_at ?? "").slice(0, 10);
+    if (!day) return;
+    const current = ensureDay(day);
+    current.members.add(String(row.member_id ?? ""));
+    current.shower_logs += 1;
+  });
+  (transportationRows.data ?? []).forEach((row: any) => {
+    const day = String(row.service_date ?? "").slice(0, 10);
+    if (!day) return;
+    const current = ensureDay(day);
+    current.members.add(String(row.member_id ?? ""));
+    current.transportation_logs += 1;
+  });
+  (bloodSugarRows.data ?? []).forEach((row: any) => {
+    const day = String(row.checked_at ?? "").slice(0, 10);
+    if (!day) return;
+    const current = ensureDay(day);
+    current.members.add(String(row.member_id ?? ""));
+    current.blood_sugar_logs += 1;
+  });
+
+  return days.map((day) => {
+    const current = usage.get(day);
+    return {
+      date: day,
+      total_members: current?.members.size ?? 0,
+      participation_logs: current?.participation_logs ?? 0,
+      toileting_logs: current?.toileting_logs ?? 0,
+      shower_logs: current?.shower_logs ?? 0,
+      transportation_logs: current?.transportation_logs ?? 0,
+      blood_sugar_logs: current?.blood_sugar_logs ?? 0
+    };
+  });
 }
 
 export async function getAdminReportGeneratedAt() {

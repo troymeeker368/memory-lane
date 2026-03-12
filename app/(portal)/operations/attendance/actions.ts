@@ -9,6 +9,7 @@ import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
+import { ensureMemberAttendanceScheduleSupabase } from "@/lib/services/member-command-center-supabase";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { createClient } from "@/lib/supabase/server";
 import { easternDateTimeLocalToISO, toEasternISO } from "@/lib/timezone";
@@ -91,14 +92,20 @@ async function getAttendanceRecord(memberId: string, attendanceDate: string) {
 }
 
 async function getMemberAttendanceSchedule(memberId: string) {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("member_attendance_schedules")
-    .select("id, member_id, monday, tuesday, wednesday, thursday, friday, make_up_days_available")
-    .eq("member_id", memberId)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  return (data as AttendanceScheduleRow | null) ?? null;
+  const schedule = await ensureMemberAttendanceScheduleSupabase(memberId);
+  if (!schedule) {
+    throw new Error(`Unable to resolve attendance schedule for member ${memberId}.`);
+  }
+  return {
+    id: schedule.id,
+    member_id: schedule.member_id,
+    monday: Boolean(schedule.monday),
+    tuesday: Boolean(schedule.tuesday),
+    wednesday: Boolean(schedule.wednesday),
+    thursday: Boolean(schedule.thursday),
+    friday: Boolean(schedule.friday),
+    make_up_days_available: schedule.make_up_days_available ?? 0
+  } satisfies AttendanceScheduleRow;
 }
 
 async function resolveMemberExpectedAttendanceForDate(input: {
@@ -169,7 +176,7 @@ async function applyScheduledAbsenceMakeupDelta(input: {
     memberId: input.memberId,
     attendanceDate: input.attendanceDate
   });
-  if (!schedule || !resolution.isScheduled) return;
+  if (!resolution.isScheduled) return;
 
   const currentBalance = Math.max(0, Number(schedule.make_up_days_available ?? 0));
   const nextBalance = Math.max(0, currentBalance + input.deltaDays);
@@ -527,10 +534,6 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
     });
 
     if (useMakeupDay) {
-      if (!schedule) {
-        throw new Error("No attendance schedule found to apply makeup day balance.");
-      }
-
       const currentBalance = Math.max(0, Number(schedule.make_up_days_available ?? 0));
       if (currentBalance < 1) {
         throw new Error("No makeup days are currently available for this member.");

@@ -25,6 +25,27 @@ import {
 import { getManagedUserById } from "@/lib/services/user-management";
 import { createClient } from "@/lib/supabase/server";
 
+function extractPostgrestErrorText(error: unknown) {
+  if (!error || typeof error !== "object") return "";
+  const err = error as { message?: string; details?: string; hint?: string };
+  return [err.message, err.details, err.hint].filter(Boolean).join(" ").toLowerCase();
+}
+
+function isMissingSchemaObjectError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = String((error as { code?: string }).code ?? "");
+  const text = extractPostgrestErrorText(error);
+  return (
+    code === "PGRST205" ||
+    code === "PGRST116" ||
+    code === "42P01" ||
+    code === "42703" ||
+    text.includes("schema cache") ||
+    text.includes("does not exist") ||
+    text.includes("could not find the table")
+  );
+}
+
 export async function getSession() {
   const supabase = await createClient();
   const {
@@ -132,30 +153,34 @@ export async function getCurrentProfile(): Promise<UserProfile> {
   let hasCustomPermissions = false;
   let customPermissions = null;
 
-  try {
-    const { data: rows, error: permissionsError } = await supabase
-      .from("user_permissions")
-      .select("module_key, can_view, can_create, can_edit, can_admin")
-      .eq("user_id", user.id);
-
-    if (!permissionsError && Array.isArray(rows) && rows.length > 0) {
-      hasCustomPermissions = true;
-      customPermissions = rows.reduce((acc, row) => {
-        const moduleKey = String(row.module_key) as PermissionModuleKey;
-        if (!PERMISSION_MODULES.includes(moduleKey)) {
-          return acc;
-        }
-        acc[moduleKey] = {
-          canView: Boolean(row.can_view),
-          canCreate: Boolean(row.can_create),
-          canEdit: Boolean(row.can_edit),
-          canAdmin: Boolean(row.can_admin)
-        };
-        return acc;
-      }, {} as UserProfile["permissions"]);
+  const { data: rows, error: permissionsError } = await supabase
+    .from("user_permissions")
+    .select("module_key, can_view, can_create, can_edit, can_admin")
+    .eq("user_id", user.id);
+  if (permissionsError) {
+    if (isMissingSchemaObjectError(permissionsError)) {
+      throw new Error(
+        "Missing Supabase schema object public.user_permissions. Apply migration 0002_rbac_roles_permissions.sql (and any earlier unapplied migrations), then restart Supabase/PostgREST to refresh schema cache."
+      );
     }
-  } catch {
-    // Non-fatal fallback until RBAC schema is available in all environments.
+    throw new Error(`Failed to load user permissions: ${permissionsError.message}`);
+  }
+
+  if (Array.isArray(rows) && rows.length > 0) {
+    hasCustomPermissions = true;
+    customPermissions = rows.reduce((acc, row) => {
+      const moduleKey = String(row.module_key) as PermissionModuleKey;
+      if (!PERMISSION_MODULES.includes(moduleKey)) {
+        return acc;
+      }
+      acc[moduleKey] = {
+        canView: Boolean(row.can_view),
+        canCreate: Boolean(row.can_create),
+        canEdit: Boolean(row.can_edit),
+        canAdmin: Boolean(row.can_admin)
+      };
+      return acc;
+    }, {} as UserProfile["permissions"]);
   }
 
   const effectiveHasCustomPermissions = devRoleOverride ? false : hasCustomPermissions;

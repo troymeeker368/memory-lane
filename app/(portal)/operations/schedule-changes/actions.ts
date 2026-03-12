@@ -98,7 +98,9 @@ async function applyPermanentBaseScheduleChange(input: {
   actorName: string;
 }) {
   const schedule = await ensureMemberAttendanceScheduleSupabase(input.memberId);
-  if (!schedule) return;
+  if (!schedule) {
+    throw new Error(`Unable to resolve attendance schedule for member ${input.memberId}.`);
+  }
 
   const daySet = new Set(input.newDays);
   const attendanceDaysPerWeek = SCHEDULE_WEEKDAY_KEYS.filter((day) => daySet.has(day)).length;
@@ -115,7 +117,9 @@ async function applyPermanentBaseScheduleChange(input: {
 }
 
 function getMccScheduleDays(schedule: MemberAttendanceScheduleRow | null | undefined) {
-  if (!schedule) return [] as (typeof SCHEDULE_WEEKDAY_KEYS)[number][];
+  if (!schedule) {
+    throw new Error("Unable to load member schedule from MCC.");
+  }
   return SCHEDULE_WEEKDAY_KEYS.filter((day) => Boolean(schedule[day]));
 }
 

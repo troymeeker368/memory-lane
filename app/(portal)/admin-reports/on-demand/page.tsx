@@ -1,5 +1,5 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { resolveDateRange } from "@/lib/services/admin-reports";
+import { resolveDateRange } from "@/lib/services/report-date-range";
 import {
   buildOnDemandReportCsv,
   formatOnDemandCellValue,

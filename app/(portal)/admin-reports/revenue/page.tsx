@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { resolveDateRange } from "@/lib/services/admin-reports";
+import { resolveDateRange } from "@/lib/services/report-date-range";
 import { getAdminRevenueSummary } from "@/lib/services/admin-reporting-foundation";
 
 function firstString(value: string | string[] | undefined) {

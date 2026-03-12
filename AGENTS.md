@@ -315,3 +315,99 @@ Requirements:
 - When a shared resolver exists, new code must use it rather than duplicating logic.
 - If duplicate logic is discovered, it must be consolidated into the shared resolver and removed from consumers.
 
+# Memory Lane Engineering Rules
+
+## Production Readiness Goal
+All runtime behavior must be production-ready, fully Supabase-backed, migration-defined, and canonically resolved through shared business-rule resolvers.
+
+## Supabase-Only Runtime Rule
+Production/runtime code must not use:
+- mock-repo
+- getMockDb
+- file-backed persistence
+- fabricated fallback records
+- synthetic default records returned after failed writes
+- schema-masking fallbacks when tables/columns are missing
+
+A write is only successful if it actually persisted in Supabase.
+
+If schema is missing, the correct fix is:
+1. migration repair
+2. service/repository alignment
+3. validation
+
+Not fallback logic.
+
+## Canonical Source of Truth Rule
+Every business concept must have:
+- canonical Supabase table(s)
+- canonical write path
+- canonical shared resolver/service for derived rules
+- downstream consumers that use the canonical resolver/service
+
+No feature may introduce:
+- parallel persistence
+- parallel rule resolution
+- mixed runtime data sources
+- competing implementations of the same business rule
+
+## Shared Resolver Rule
+All derived business logic must be implemented through shared canonical resolvers and reused across the codebase.
+
+Required shared-resolver domains include:
+- expected attendance
+- effective member schedule
+- billing eligibility
+- member command center state
+- current care plan resolution
+- lead/pipeline state resolution
+- admin/reporting rollups where business rules are derived
+
+Pages, actions, reports, and dashboards must not independently recompute those rules.
+
+## Schema Drift Rule
+Assume schema drift is possible whenever:
+- code references tables/columns/views/functions
+- triggers/functions assume columns like created_at or updated_at
+- seed scripts insert into operational tables
+- migrations have evolved recently
+
+Fix schema drift with forward-only migrations and aligned code.
+Do not patch over drift with try/catch skips or fabricated return objects.
+
+## Required Workflow For Any Task
+1. Identify the business domain.
+2. Identify the canonical tables.
+3. Identify the canonical write path.
+4. Identify the canonical shared resolver.
+5. Identify downstream consumers.
+6. Audit for:
+   - Supabase backing gaps
+   - schema drift
+   - mock-era runtime paths
+   - duplicate business-rule logic
+   - fallback branches masking failed persistence
+7. Fix the canonical layer first.
+8. Update downstream consumers to use the canonical layer.
+9. Validate with:
+   - build
+   - reseed
+   - banned-pattern search
+10. Report:
+   - root cause
+   - files changed
+   - migrations added
+   - remaining blockers
+   - whether the feature is now canonical and Supabase-backed
+
+## Banned Patterns
+Do not leave or introduce:
+- mock runtime imports
+- fabricated fallback records
+- default object returns after failed writes
+- duplicate attendance logic
+- duplicate billing eligibility logic
+- duplicate care plan current-version logic
+- reporting logic that bypasses canonical domain resolvers
+- UI-only patches for shared business rules
+

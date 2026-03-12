@@ -7,6 +7,32 @@ interface AncillaryScope {
   staffUserId?: string | null;
 }
 
+function isMissingSchemaObjectError(error: any) {
+  const code = String(error?.code ?? "");
+  const message = [
+    error?.message,
+    error?.details,
+    error?.hint
+  ]
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    code === "PGRST205" ||
+    code === "PGRST116" ||
+    code === "42P01" ||
+    code === "42703" ||
+    message.includes("schema cache") ||
+    message.includes("does not exist") ||
+    message.includes("could not find the table")
+  );
+}
+
+function buildMissingSchemaMessage(input: { objectName: string; migration: string }) {
+  return `Missing Supabase schema object public.${input.objectName}. Apply migration ${input.migration} (and any earlier unapplied migrations), then restart Supabase/PostgREST to refresh schema cache.`;
+}
+
 export async function getAncillarySummary(monthKey?: string, scope?: AncillaryScope) {
   const supabase = await createClient();
 
@@ -21,41 +47,23 @@ export async function getAncillarySummary(monthKey?: string, scope?: AncillarySc
     logsQuery = logsQuery.eq("staff_user_id", scope.staffUserId);
   }
 
-  let logsResult: { data: any[] | null; error?: unknown } | null = null;
-  try {
-    const result = await logsQuery;
-    logsResult = { data: (result.data as any[] | null) ?? null, error: result.error };
-  } catch {
-    logsResult = null;
-  }
-
-  // Fallback for backend views that do not yet expose reconciliation columns.
-  if (!logsResult || logsResult.error) {
-    let fallbackLogsQuery = supabase
-      .from("v_ancillary_charge_logs_detailed")
-      .select("id, service_date, member_name, category_name, amount_cents, staff_name, quantity, source_entity, source_entity_id")
-      .order("service_date", { ascending: false })
-      .limit(100);
-
-    if (scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && scope.staffUserId) {
-      fallbackLogsQuery = fallbackLogsQuery.eq("staff_user_id", scope.staffUserId);
+  const { data: logsData, error: logsError } = await logsQuery;
+  if (logsError) {
+    if (isMissingSchemaObjectError(logsError)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "v_ancillary_charge_logs_detailed",
+          migration: "0018_runtime_mock_dependency_cleanup.sql"
+        })
+      );
     }
-
-    const fallbackResult = await fallbackLogsQuery;
-    logsResult = {
-      ...fallbackResult,
-      data:
-        fallbackResult.data?.map((row) => ({
-          ...row,
-          reconciliation_status: "open",
-          reconciled_by: null,
-          reconciled_at: null,
-          reconciliation_note: null
-        })) ?? null
-    };
+    throw new Error(logsError.message);
   }
 
-  const [{ data: categories }, { data: monthly }] = await Promise.all([
+  const [
+    { data: categories, error: categoriesError },
+    { data: monthly, error: monthlyError }
+  ] = await Promise.all([
     supabase.from("ancillary_charge_categories").select("id, name, price_cents").order("name"),
     supabase
       .from("v_monthly_ancillary_summary")
@@ -63,10 +71,32 @@ export async function getAncillarySummary(monthKey?: string, scope?: AncillarySc
       .order("month_label", { ascending: false })
       .limit(100)
   ]);
+  if (categoriesError) {
+    if (isMissingSchemaObjectError(categoriesError)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "ancillary_charge_categories",
+          migration: "0001_initial_schema.sql"
+        })
+      );
+    }
+    throw new Error(categoriesError.message);
+  }
+  if (monthlyError) {
+    if (isMissingSchemaObjectError(monthlyError)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "v_monthly_ancillary_summary",
+          migration: "0001_initial_schema.sql"
+        })
+      );
+    }
+    throw new Error(monthlyError.message);
+  }
 
   return {
     categories: categories ?? [],
-    logs: logsResult?.data ?? [],
+    logs: logsData ?? [],
     monthly: monthly ?? [],
     availableMonths: [],
     selectedMonth: monthKey ?? "",

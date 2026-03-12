@@ -479,15 +479,10 @@ async function getNonBillableCenterClosureSet(range: DateRange) {
     .gte("closure_date", range.start)
     .lte("closure_date", range.end);
   if (error) {
-    if (
-      handleNonCriticalMissingSchemaError(error, {
-        objectName: "center_closures",
-        migration: "0012_legacy_operational_health_alignment.sql",
-        fallbackLabel: "empty non-billable closure set"
-      })
-    ) {
-      return new Set<string>();
-    }
+    handleNonCriticalMissingSchemaError(error, {
+      objectName: "center_closures",
+      migration: "0012_legacy_operational_health_alignment.sql"
+    });
     throw new Error(error.message);
   }
   return new Set((data ?? []).map((row: any) => normalizeDateOnly(row.closure_date)));
@@ -511,15 +506,10 @@ export async function listClosureRules() {
   const supabase = await createClient();
   const { data, error } = await supabase.from("closure_rules").select("*").order("name", { ascending: true });
   if (error) {
-    if (
-      handleNonCriticalMissingSchemaError(error, {
-        objectName: "closure_rules",
-        migration: "0012_legacy_operational_health_alignment.sql",
-        fallbackLabel: "empty closure rules"
-      })
-    ) {
-      return [];
-    }
+    handleNonCriticalMissingSchemaError(error, {
+      objectName: "closure_rules",
+      migration: "0012_legacy_operational_health_alignment.sql"
+    });
     throw new Error(error.message);
   }
   return (data ?? []) as Array<any>;
@@ -533,15 +523,10 @@ export async function generateClosuresForYear(year: number, input?: { generatedB
     .select("*")
     .eq("active", true);
   if (ruleError) {
-    if (
-      handleNonCriticalMissingSchemaError(ruleError, {
-        objectName: "closure_rules",
-        migration: "0012_legacy_operational_health_alignment.sql",
-        fallbackLabel: "no generated closures"
-      })
-    ) {
-      return { year: targetYear, generatedCount: 0, insertedCount: 0 };
-    }
+    handleNonCriticalMissingSchemaError(ruleError, {
+      objectName: "closure_rules",
+      migration: "0012_legacy_operational_health_alignment.sql"
+    });
     throw new Error(ruleError.message);
   }
   const rules = (rulesData ?? []) as Array<ClosureRuleLike & { id: string }>;
@@ -553,15 +538,10 @@ export async function generateClosuresForYear(year: number, input?: { generatedB
     .gte("closure_date", `${targetYear}-01-01`)
     .lte("closure_date", `${targetYear}-12-31`);
   if (existingError) {
-    if (
-      handleNonCriticalMissingSchemaError(existingError, {
-        objectName: "center_closures",
-        migration: "0012_legacy_operational_health_alignment.sql",
-        fallbackLabel: "no generated closures"
-      })
-    ) {
-      return { year: targetYear, generatedCount: 0, insertedCount: 0 };
-    }
+    handleNonCriticalMissingSchemaError(existingError, {
+      objectName: "center_closures",
+      migration: "0012_legacy_operational_health_alignment.sql"
+    });
     throw new Error(existingError.message);
   }
 
@@ -586,15 +566,10 @@ export async function generateClosuresForYear(year: number, input?: { generatedB
       updated_by_name: input?.generatedByName ?? "System"
     });
     if (insertError) {
-      if (
-        handleNonCriticalMissingSchemaError(insertError, {
-          objectName: "center_closures",
-          migration: "0012_legacy_operational_health_alignment.sql",
-          fallbackLabel: "no generated closures"
-        })
-      ) {
-        return { year: targetYear, generatedCount: 0, insertedCount: 0 };
-      }
+      handleNonCriticalMissingSchemaError(insertError, {
+        objectName: "center_closures",
+        migration: "0012_legacy_operational_health_alignment.sql"
+      });
       throw new Error(insertError.message);
     }
     insertedCount += 1;
@@ -736,15 +711,10 @@ export async function listCenterClosures(input?: { includeInactive?: boolean }) 
   }
   const { data, error } = await query;
   if (error) {
-    if (
-      handleNonCriticalMissingSchemaError(error, {
-        objectName: "center_closures",
-        migration: "0012_legacy_operational_health_alignment.sql",
-        fallbackLabel: "empty center closures list"
-      })
-    ) {
-      return [];
-    }
+    handleNonCriticalMissingSchemaError(error, {
+      objectName: "center_closures",
+      migration: "0012_legacy_operational_health_alignment.sql"
+    });
     throw new Error(error.message);
   }
   return (data ?? []) as Array<any>;
@@ -1278,9 +1248,9 @@ function buildMissingSchemaMessage(input: { objectName: string; migration: strin
 
 function handleNonCriticalMissingSchemaError(
   error: any,
-  input: { objectName: string; migration: string; fallbackLabel: string }
+  input: { objectName: string; migration: string }
 ) {
-  if (!isMissingSchemaObjectError(error)) return false;
+  if (!isMissingSchemaObjectError(error)) return;
   const original = String(error?.message ?? "Unknown schema error");
   throw new Error(`${buildMissingSchemaMessage(input)} Original error: ${original}`);
 }
@@ -1330,26 +1300,71 @@ async function getBillingPreviewRows(input: {
       .lte("adjustment_date", maxDate)
   ]);
   if (membersError) throw new Error(membersError.message);
-  if (memberSettingsError && !isMissingSchemaObjectError(memberSettingsError)) throw new Error(memberSettingsError.message);
-  if (payorsError && !isMissingSchemaObjectError(payorsError)) throw new Error(payorsError.message);
-  if (attendanceSettingsError && !isMissingSchemaObjectError(attendanceSettingsError)) throw new Error(attendanceSettingsError.message);
-  if (attendanceError && !isMissingSchemaObjectError(attendanceError)) throw new Error(attendanceError.message);
-  if (scheduleError && !isMissingSchemaObjectError(scheduleError)) throw new Error(scheduleError.message);
-  if (transportError && !isMissingSchemaObjectError(transportError)) throw new Error(transportError.message);
-  if (ancillaryError && !isMissingSchemaObjectError(ancillaryError)) throw new Error(ancillaryError.message);
-  if (categoryError && !isMissingSchemaObjectError(categoryError)) throw new Error(categoryError.message);
-  if (adjustmentError && !isMissingSchemaObjectError(adjustmentError)) throw new Error(adjustmentError.message);
+  if (memberSettingsError) {
+    if (isMissingSchemaObjectError(memberSettingsError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "member_billing_settings", migration: "0013_care_plans_and_billing_execution.sql" }));
+    }
+    throw new Error(memberSettingsError.message);
+  }
+  if (payorsError) {
+    if (isMissingSchemaObjectError(payorsError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "payors", migration: "0001_initial_schema.sql" }));
+    }
+    throw new Error(payorsError.message);
+  }
+  if (attendanceSettingsError) {
+    if (isMissingSchemaObjectError(attendanceSettingsError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "member_attendance_schedules", migration: "0011_member_command_center_aux_schema.sql" }));
+    }
+    throw new Error(attendanceSettingsError.message);
+  }
+  if (attendanceError) {
+    if (isMissingSchemaObjectError(attendanceError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "attendance_records", migration: "0012_legacy_operational_health_alignment.sql" }));
+    }
+    throw new Error(attendanceError.message);
+  }
+  if (scheduleError) {
+    if (isMissingSchemaObjectError(scheduleError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "billing_schedule_templates", migration: "0011_member_command_center_aux_schema.sql" }));
+    }
+    throw new Error(scheduleError.message);
+  }
+  if (transportError) {
+    if (isMissingSchemaObjectError(transportError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "transportation_logs", migration: "0001_initial_schema.sql" }));
+    }
+    throw new Error(transportError.message);
+  }
+  if (ancillaryError) {
+    if (isMissingSchemaObjectError(ancillaryError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "ancillary_charge_logs", migration: "0001_initial_schema.sql" }));
+    }
+    throw new Error(ancillaryError.message);
+  }
+  if (categoryError) {
+    if (isMissingSchemaObjectError(categoryError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "ancillary_charge_categories", migration: "0001_initial_schema.sql" }));
+    }
+    throw new Error(categoryError.message);
+  }
+  if (adjustmentError) {
+    if (isMissingSchemaObjectError(adjustmentError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "billing_adjustments", migration: "0013_care_plans_and_billing_execution.sql" }));
+    }
+    throw new Error(adjustmentError.message);
+  }
 
   const activeMembers = (membersData ?? []) as Array<{ id: string; display_name: string; status: string }>;
-  const memberSettings = ((memberSettingsError ? [] : memberSettingsData) ?? []) as BillingSettingRow[];
-  const payorsById = new Map(((payorsError ? [] : payorsData) ?? []).map((row: any) => [String(row.id), row] as const));
-  const attendanceSettingByMemberId = new Map((((attendanceSettingsError ? [] : attendanceSettingsData) ?? []) as Array<any>).map((row: any) => [String(row.member_id), row] as const));
-  const attendanceRows = ((attendanceError ? [] : attendanceData) ?? []) as Array<any>;
-  const scheduleRows = ((scheduleError ? [] : scheduleData) ?? []) as ScheduleTemplateRow[];
-  const transportationRows = ((transportError ? [] : transportData) ?? []) as Array<any>;
-  const ancillaryRows = ((ancillaryError ? [] : ancillaryData) ?? []) as Array<any>;
-  const categoryById = new Map((((categoryError ? [] : categoryData) ?? []) as Array<any>).map((row: any) => [String(row.id), row] as const));
-  const adjustmentRows = ((adjustmentError ? [] : adjustmentData) ?? []) as Array<any>;
+  const memberSettings = (memberSettingsData ?? []) as BillingSettingRow[];
+  const payorsById = new Map((payorsData ?? []).map((row: any) => [String(row.id), row] as const));
+  const attendanceSettingByMemberId = new Map(((attendanceSettingsData ?? []) as Array<any>).map((row: any) => [String(row.member_id), row] as const));
+  const attendanceRows = (attendanceData ?? []) as Array<any>;
+  const scheduleRows = (scheduleData ?? []) as ScheduleTemplateRow[];
+  const transportationRows = (transportData ?? []) as Array<any>;
+  const ancillaryRows = (ancillaryData ?? []) as Array<any>;
+  const categoryById = new Map(((categoryData ?? []) as Array<any>).map((row: any) => [String(row.id), row] as const));
+  const adjustmentRows = (adjustmentData ?? []) as Array<any>;
   const expectedAttendanceContext = await loadExpectedAttendanceSupabaseContext({
     memberIds: activeMembers.map((member) => member.id),
     startDate: minDate,
@@ -1672,13 +1687,7 @@ export async function getBillingGenerationPreview(input: {
 }) {
   const batchType =
     input.batchType && BILLING_BATCH_TYPE_OPTIONS.includes(input.batchType) ? input.batchType : "Mixed";
-  let rows: BillingPreviewRow[] = [];
-  try {
-    rows = await getBillingPreviewRows({ billingMonth: input.billingMonth, batchType });
-  } catch (error) {
-    if (!isMissingSchemaObjectError(error)) throw error;
-    rows = [];
-  }
+  const rows = await getBillingPreviewRows({ billingMonth: input.billingMonth, batchType });
   return {
     rows,
     totalAmount: toAmount(rows.reduce((sum, row) => sum + row.totalAmount, 0))
@@ -2443,27 +2452,29 @@ export async function createEnrollmentProratedInvoice(input: {
 }
 
 export async function getBillingBatches() {
-  try {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("billing_batches")
-      .select("*")
-      .order("billing_month", { ascending: false })
-      .order("created_at", { ascending: false });
-    if (error) {
-      if (isMissingSchemaObjectError(error)) return [];
-      throw new Error(error.message);
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("billing_batches")
+    .select("*")
+    .order("billing_month", { ascending: false })
+    .order("created_at", { ascending: false });
+  if (error) {
+    if (isMissingSchemaObjectError(error)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "billing_batches",
+          migration: "0015_schema_compatibility_backfill.sql"
+        })
+      );
     }
-    return (data ?? []).map((row: any) => ({
-      ...row,
-      invoice_count: asNumber(row.invoice_count),
-      total_amount: toAmount(asNumber(row.total_amount)),
-      dueState: computeDueState(row.next_due_date ?? null, row.completion_date ?? null)
-    }));
-  } catch (error) {
-    if (isMissingSchemaObjectError(error)) return [];
-    throw error;
+    throw new Error(error.message);
   }
+  return (data ?? []).map((row: any) => ({
+    ...row,
+    invoice_count: asNumber(row.invoice_count),
+    total_amount: toAmount(asNumber(row.total_amount)),
+    dueState: computeDueState(row.next_due_date ?? null, row.completion_date ?? null)
+  }));
 }
 
 export async function getDraftInvoices() {
@@ -2475,7 +2486,14 @@ export async function getDraftInvoices() {
     .order("invoice_month", { ascending: false })
     .order("created_at", { ascending: false });
   if (error) {
-    if (isMissingSchemaObjectError(error)) return [];
+    if (isMissingSchemaObjectError(error)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "billing_invoices",
+          migration: "0015_schema_compatibility_backfill.sql"
+        })
+      );
+    }
     throw new Error(error.message);
   }
   return (data ?? []).map(normalizeInvoiceRow);
@@ -2490,7 +2508,14 @@ export async function getFinalizedInvoices() {
     .order("invoice_month", { ascending: false })
     .order("created_at", { ascending: false });
   if (error) {
-    if (isMissingSchemaObjectError(error)) return [];
+    if (isMissingSchemaObjectError(error)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "billing_invoices",
+          migration: "0015_schema_compatibility_backfill.sql"
+        })
+      );
+    }
     throw new Error(error.message);
   }
   return (data ?? []).map(normalizeInvoiceRow);
@@ -2508,7 +2533,14 @@ export async function getCustomInvoices(input?: { status?: "Draft" | "Finalized"
   if (input?.status === "Finalized") query = query.eq("invoice_status", "Finalized");
   const { data, error } = await query;
   if (error) {
-    if (isMissingSchemaObjectError(error)) return [];
+    if (isMissingSchemaObjectError(error)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "billing_invoices",
+          migration: "0015_schema_compatibility_backfill.sql"
+        })
+      );
+    }
     throw new Error(error.message);
   }
   return (data ?? []).map(normalizeInvoiceRow);
@@ -2522,7 +2554,14 @@ export async function getBillingBatchReviewRows(billingBatchId: string) {
     supabase.from("payors").select("id, payor_name, billing_method")
   ]);
   if (invoiceError) {
-    if (isMissingSchemaObjectError(invoiceError)) return [];
+    if (isMissingSchemaObjectError(invoiceError)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "billing_invoices",
+          migration: "0015_schema_compatibility_backfill.sql"
+        })
+      );
+    }
     throw new Error(invoiceError.message);
   }
   const memberNameById = new Map((members ?? []).map((row: any) => [String(row.id), String(row.display_name)] as const));
@@ -2587,14 +2626,34 @@ export async function getVariableChargesQueue(input: { month: string }) {
     supabase.from("members").select("id, display_name"),
     supabase.from("ancillary_charge_categories").select("id, name, price_cents")
   ]);
-  if (transportError && !isMissingSchemaObjectError(transportError)) throw new Error(transportError.message);
-  if (ancillaryError && !isMissingSchemaObjectError(ancillaryError)) throw new Error(ancillaryError.message);
-  if (adjustmentError && !isMissingSchemaObjectError(adjustmentError)) throw new Error(adjustmentError.message);
+  if (transportError) {
+    if (isMissingSchemaObjectError(transportError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "transportation_logs", migration: "0001_initial_schema.sql" }));
+    }
+    throw new Error(transportError.message);
+  }
+  if (ancillaryError) {
+    if (isMissingSchemaObjectError(ancillaryError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "ancillary_charge_logs", migration: "0001_initial_schema.sql" }));
+    }
+    throw new Error(ancillaryError.message);
+  }
+  if (adjustmentError) {
+    if (isMissingSchemaObjectError(adjustmentError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "billing_adjustments", migration: "0013_care_plans_and_billing_execution.sql" }));
+    }
+    throw new Error(adjustmentError.message);
+  }
   if (membersError) throw new Error(membersError.message);
-  if (categoryError && !isMissingSchemaObjectError(categoryError)) throw new Error(categoryError.message);
+  if (categoryError) {
+    if (isMissingSchemaObjectError(categoryError)) {
+      throw new Error(buildMissingSchemaMessage({ objectName: "ancillary_charge_categories", migration: "0001_initial_schema.sql" }));
+    }
+    throw new Error(categoryError.message);
+  }
 
   const memberNameById = new Map((membersData ?? []).map((row: any) => [String(row.id), String(row.display_name)] as const));
-  const categoryById = new Map((((categoryError ? [] : categoryData) ?? []) as Array<any>).map((row: any) => [String(row.id), row] as const));
+  const categoryById = new Map(((categoryData ?? []) as Array<any>).map((row: any) => [String(row.id), row] as const));
   const rows: Array<{
     type: "Transportation" | "Ancillary" | "Adjustment";
     id: string;
@@ -2606,7 +2665,7 @@ export async function getVariableChargesQueue(input: { month: string }) {
     exclusionReason: string | null;
   }> = [];
 
-  ((transportError ? [] : transportData) ?? [])
+  (transportData ?? [])
     .filter((row: any) => String(row.billing_status ?? "Unbilled") !== "Billed")
     .filter((row: any) => row.billable !== false)
     .forEach((row: any) => {
@@ -2627,7 +2686,7 @@ export async function getVariableChargesQueue(input: { month: string }) {
       });
     });
 
-  ((ancillaryError ? [] : ancillaryData) ?? [])
+  (ancillaryData ?? [])
     .filter((row: any) => String(row.billing_status ?? "Unbilled") !== "Billed")
     .forEach((row: any) => {
       const category = categoryById.get(String(row.category_id));
@@ -2646,7 +2705,7 @@ export async function getVariableChargesQueue(input: { month: string }) {
       });
     });
 
-  ((adjustmentError ? [] : adjustmentData) ?? [])
+  (adjustmentData ?? [])
     .filter((row: any) => String(row.billing_status ?? "Unbilled") !== "Billed")
     .forEach((row: any) => {
       rows.push({
@@ -2797,7 +2856,14 @@ export async function getBillingExports() {
     .order("generated_at", { ascending: false })
     .order("created_at", { ascending: false });
   if (error) {
-    if (isMissingSchemaObjectError(error)) return [];
+    if (isMissingSchemaObjectError(error)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "billing_export_jobs",
+          migration: "0015_schema_compatibility_backfill.sql"
+        })
+      );
+    }
     throw new Error(error.message);
   }
   return (data ?? []) as Array<any>;
@@ -2816,25 +2882,11 @@ export async function getBillingDashboardSummary(): Promise<BillingDashboardSumm
   const nextMonth = addMonths(startOfMonth(today), 1);
   const previousMonthStart = previousMonth(startOfMonth(today));
 
-  let preview: Awaited<ReturnType<typeof getBillingGenerationPreview>> = { rows: [], totalAmount: 0 };
-  let queue: Awaited<ReturnType<typeof getVariableChargesQueue>> = [];
-  let batches: Awaited<ReturnType<typeof getBillingBatches>> = [];
-  try {
-    [preview, queue, batches] = await Promise.all([
-      getBillingGenerationPreview({ billingMonth: nextMonth, batchType: "Mixed" }),
-      getVariableChargesQueue({ month: previousMonthStart }),
-      getBillingBatches()
-    ]);
-  } catch (error) {
-    if (!isMissingSchemaObjectError(error)) throw error;
-    return {
-      projectedNextMonthBaseRevenue: 0,
-      priorMonthTransportationWaiting: 0,
-      priorMonthAncillaryWaiting: 0,
-      currentDraftBatchTotal: 0,
-      finalizedBatchTotalsByMonth: []
-    };
-  }
+  const [preview, queue, batches] = await Promise.all([
+    getBillingGenerationPreview({ billingMonth: nextMonth, batchType: "Mixed" }),
+    getVariableChargesQueue({ month: previousMonthStart }),
+    getBillingBatches()
+  ]);
   const projectedNextMonthBaseRevenue = toAmount(
     preview.rows.reduce((sum, row) => sum + row.baseProgramAmount, 0)
   );
@@ -2871,47 +2923,20 @@ export async function getBillingDashboardSummary(): Promise<BillingDashboardSumm
 
 export async function getBillingModuleIndex() {
   const supabase = await createClient();
-  let payorCount = 0;
-  let memberBillingSettingCount = 0;
-  let scheduleTemplateCount = 0;
-  let dashboard: BillingDashboardSummary = {
-    projectedNextMonthBaseRevenue: 0,
-    priorMonthTransportationWaiting: 0,
-    priorMonthAncillaryWaiting: 0,
-    currentDraftBatchTotal: 0,
-    finalizedBatchTotalsByMonth: []
-  };
-  let batches: Awaited<ReturnType<typeof getBillingBatches>> = [];
+  const [payorResponse, memberSettingResponse, scheduleTemplateResponse, dashboard, batches] = await Promise.all([
+    supabase.from("payors").select("id", { count: "exact", head: true }).eq("status", "active"),
+    supabase.from("member_billing_settings").select("id", { count: "exact", head: true }).eq("active", true),
+    supabase.from("billing_schedule_templates").select("id", { count: "exact", head: true }).eq("active", true),
+    getBillingDashboardSummary(),
+    getBillingBatches()
+  ]);
 
-  try {
-    const [payorResponse, memberSettingResponse, scheduleTemplateResponse, dashboardResponse, batchesResponse] = await Promise.all([
-      supabase.from("payors").select("id", { count: "exact", head: true }).eq("status", "active"),
-      supabase.from("member_billing_settings").select("id", { count: "exact", head: true }).eq("active", true),
-      supabase.from("billing_schedule_templates").select("id", { count: "exact", head: true }).eq("active", true),
-      getBillingDashboardSummary(),
-      getBillingBatches()
-    ]);
-
-    if (payorResponse.error) {
-      if (!isMissingSchemaObjectError(payorResponse.error)) throw new Error(payorResponse.error.message);
-    } else {
-      payorCount = payorResponse.count ?? 0;
-    }
-    if (memberSettingResponse.error) {
-      if (!isMissingSchemaObjectError(memberSettingResponse.error)) throw new Error(memberSettingResponse.error.message);
-    } else {
-      memberBillingSettingCount = memberSettingResponse.count ?? 0;
-    }
-    if (scheduleTemplateResponse.error) {
-      if (!isMissingSchemaObjectError(scheduleTemplateResponse.error)) throw new Error(scheduleTemplateResponse.error.message);
-    } else {
-      scheduleTemplateCount = scheduleTemplateResponse.count ?? 0;
-    }
-    dashboard = dashboardResponse;
-    batches = batchesResponse;
-  } catch (error) {
-    if (!isMissingSchemaObjectError(error)) throw error;
-  }
+  if (payorResponse.error) throw new Error(payorResponse.error.message);
+  if (memberSettingResponse.error) throw new Error(memberSettingResponse.error.message);
+  if (scheduleTemplateResponse.error) throw new Error(scheduleTemplateResponse.error.message);
+  const payorCount = payorResponse.count ?? 0;
+  const memberBillingSettingCount = memberSettingResponse.count ?? 0;
+  const scheduleTemplateCount = scheduleTemplateResponse.count ?? 0;
 
   return {
     payorCount,

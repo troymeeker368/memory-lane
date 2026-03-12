@@ -491,8 +491,7 @@ export async function getPhysicianOrders(filters?: {
   const { data, error } = await query;
   if (error) {
     if (isMissingPhysicianOrdersTableError(error)) {
-      console.warn("[physician-orders] public.physician_orders missing from schema cache. Returning empty list.");
-      return [];
+      throw physicianOrdersTableRequiredError();
     }
     throw new Error(error.message);
   }
@@ -531,8 +530,7 @@ export async function getPhysicianOrdersForMember(memberId: string) {
     .order("updated_at", { ascending: false });
   if (error) {
     if (isMissingPhysicianOrdersTableError(error)) {
-      console.warn("[physician-orders] public.physician_orders missing from schema cache. Returning empty list.");
-      return [];
+      throw physicianOrdersTableRequiredError();
     }
     throw new Error(error.message);
   }
@@ -548,7 +546,7 @@ export async function getActivePhysicianOrderForMember(memberId: string) {
     .eq("is_active_signed", true)
     .maybeSingle();
   if (error) {
-    if (isMissingPhysicianOrdersTableError(error)) return null;
+    if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
     throw new Error(error.message);
   }
   return data ? rowToForm(data) : null;
@@ -562,7 +560,7 @@ export async function getPhysicianOrderById(pofId: string) {
     .eq("id", pofId)
     .maybeSingle();
   if (error) {
-    if (isMissingPhysicianOrdersTableError(error)) return null;
+    if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
     throw new Error(error.message);
   }
   return data ? rowToForm(data) : null;

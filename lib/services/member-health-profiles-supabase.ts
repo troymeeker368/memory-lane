@@ -263,83 +263,6 @@ function sortByLastName(a: string, b: string) {
   return toKey(a).localeCompare(toKey(b));
 }
 
-function defaultHealthProfile(memberId: string): MemberHealthProfileRow {
-  const now = toEasternISO();
-  return {
-    id: "",
-    member_id: memberId,
-    gender: null,
-    payor: null,
-    original_referral_source: null,
-    photo_consent: null,
-    profile_image_url: null,
-    primary_caregiver_name: null,
-    primary_caregiver_phone: null,
-    responsible_party_name: null,
-    responsible_party_phone: null,
-    provider_name: null,
-    provider_phone: null,
-    important_alerts: null,
-    diet_type: null,
-    dietary_restrictions: null,
-    swallowing_difficulty: null,
-    diet_texture: null,
-    supplements: null,
-    foods_to_omit: null,
-    ambulation: null,
-    transferring: null,
-    bathing: null,
-    dressing: null,
-    eating: null,
-    bladder_continence: null,
-    bowel_continence: null,
-    toileting: null,
-    toileting_needs: null,
-    toileting_comments: null,
-    hearing: null,
-    vision: null,
-    dental: null,
-    speech_verbal_status: null,
-    speech_comments: null,
-    personal_appearance_hygiene_grooming: null,
-    may_self_medicate: null,
-    medication_manager_name: null,
-    orientation_dob: null,
-    orientation_city: null,
-    orientation_current_year: null,
-    orientation_former_occupation: null,
-    memory_impairment: null,
-    memory_severity: null,
-    wandering: null,
-    combative_disruptive: null,
-    sleep_issues: null,
-    self_harm_unsafe: null,
-    impaired_judgement: null,
-    delirium: null,
-    disorientation: null,
-    agitation_resistive: null,
-    screaming_loud_noises: null,
-    exhibitionism_disrobing: null,
-    exit_seeking: null,
-    cognitive_behavior_comments: null,
-    code_status: null,
-    dnr: null,
-    dni: null,
-    polst_molst_colst: null,
-    hospice: null,
-    advanced_directives_obtained: null,
-    power_of_attorney: null,
-    hospital_preference: null,
-    legal_comments: null,
-    source_assessment_id: null,
-    source_assessment_at: null,
-    updated_by_user_id: null,
-    updated_by_name: null,
-    created_at: now,
-    updated_at: now
-  };
-}
-
 export async function ensureMemberHealthProfileSupabase(memberId: string) {
   const supabase = await createClient();
   const { data: existing, error: existingError } = await supabase
@@ -401,6 +324,18 @@ export async function getMemberHealthProfileIndexSupabase(filters?: { q?: string
   const profileByMemberId = new Map((profilesResult.data ?? []).map((row: any) => [String(row.member_id), row as MemberHealthProfileRow] as const));
   const mccPhotoByMemberId = new Map((mccResult.data ?? []).map((row: any) => [String(row.member_id), (row.profile_image_url as string | null) ?? null] as const));
 
+  const missingProfileMemberIds = members
+    .map((member) => member.id)
+    .filter((memberId) => !profileByMemberId.has(memberId));
+  if (missingProfileMemberIds.length > 0) {
+    const ensuredProfiles = await Promise.all(
+      missingProfileMemberIds.map((memberId) => ensureMemberHealthProfileSupabase(memberId))
+    );
+    ensuredProfiles.forEach((profile) => {
+      profileByMemberId.set(profile.member_id, profile);
+    });
+  }
+
   const latestAssessmentByMemberId = new Map<string, IntakeAssessmentRow>();
   ((assessmentsResult.data ?? []) as IntakeAssessmentRow[]).forEach((row) => {
     if (!latestAssessmentByMemberId.has(row.member_id)) {
@@ -410,7 +345,10 @@ export async function getMemberHealthProfileIndexSupabase(filters?: { q?: string
 
   return members
     .map((member) => {
-      const profile = profileByMemberId.get(member.id) ?? defaultHealthProfile(member.id);
+      const profile = profileByMemberId.get(member.id);
+      if (!profile) {
+        throw new Error(`Missing member health profile for member ${member.id}.`);
+      }
       const latestAssessment = latestAssessmentByMemberId.get(member.id) ?? null;
       const effectiveProfile = {
         ...profile,

@@ -818,7 +818,7 @@ export async function ensureMemberAttendanceScheduleSupabase(memberId: string) {
   const supabase = await createClient();
   const member = await getMemberSupabase(memberId);
   if (!member) return null;
-  const fallbackSchedule = defaultAttendanceSchedule(member);
+  const scheduleSeed = defaultAttendanceSchedule(member);
   const { data, error } = await supabase
     .from("member_attendance_schedules")
     .select("*")
@@ -836,7 +836,7 @@ export async function ensureMemberAttendanceScheduleSupabase(memberId: string) {
   const existing = Array.isArray(data) ? data[0] : null;
   if (existing) return existing as MemberAttendanceScheduleRow;
 
-  const created = fallbackSchedule;
+  const created = scheduleSeed;
   const { data: inserted, error: insertError } = await supabase
     .from("member_attendance_schedules")
     .insert(created)
@@ -1127,6 +1127,7 @@ export async function getAvailableLockerNumbersForMemberSupabase(memberId: strin
 
 export async function getMemberCommandCenterIndexSupabase(filters?: { q?: string; status?: "all" | "active" | "inactive" }) {
   const members = await listMembersSupabase(filters);
+  if (members.length === 0) return [];
   const supabase = await createClient();
   const memberIds = members.map((row) => row.id);
   const [{ data: profilesData, error: profilesError }, { data: schedulesData, error: schedulesError }] = await Promise.all([
@@ -1157,10 +1158,46 @@ export async function getMemberCommandCenterIndexSupabase(filters?: { q?: string
   const profileByMember = new Map(profiles.map((row) => [row.member_id, row] as const));
   const scheduleByMember = new Map(schedules.map((row) => [row.member_id, row] as const));
 
+  const missingProfileMemberIds = members
+    .map((member) => member.id)
+    .filter((memberId) => !profileByMember.has(memberId));
+  if (missingProfileMemberIds.length > 0) {
+    const ensuredProfiles = await Promise.all(
+      missingProfileMemberIds.map((memberId) => ensureMemberCommandCenterProfileSupabase(memberId))
+    );
+    ensuredProfiles.forEach((profile) => {
+      if (!profile) return;
+      profileByMember.set(profile.member_id, profile);
+    });
+  }
+
+  const missingScheduleMemberIds = members
+    .map((member) => member.id)
+    .filter((memberId) => !scheduleByMember.has(memberId));
+  if (missingScheduleMemberIds.length > 0) {
+    const ensuredSchedules = await Promise.all(
+      missingScheduleMemberIds.map((memberId) => ensureMemberAttendanceScheduleSupabase(memberId))
+    );
+    ensuredSchedules.forEach((schedule, index) => {
+      if (!schedule) {
+        throw new Error(
+          `Unable to ensure attendance schedule for member ${missingScheduleMemberIds[index]}.`
+        );
+      }
+      scheduleByMember.set(schedule.member_id, schedule);
+    });
+  }
+
   return members
     .map((member) => {
-      const profile = profileByMember.get(member.id) ?? defaultCommandCenter(member.id);
-      const schedule = scheduleByMember.get(member.id) ?? defaultAttendanceSchedule(member);
+      const profile = profileByMember.get(member.id);
+      if (!profile) {
+        throw new Error(`Missing member command center profile for member ${member.id}.`);
+      }
+      const schedule = scheduleByMember.get(member.id);
+      if (!schedule) {
+        throw new Error(`Missing member attendance schedule for member ${member.id}.`);
+      }
       return {
         member,
         profile,

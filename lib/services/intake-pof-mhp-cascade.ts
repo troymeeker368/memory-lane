@@ -15,7 +15,7 @@ import { toEasternISO } from "@/lib/timezone";
 export async function createIntakeAssessment(input: {
   payload: {
     memberId: string;
-    leadId: string;
+    leadId?: string | null;
     assessmentDate: string;
     complete: boolean;
     feelingToday: string;
@@ -79,7 +79,7 @@ export async function createIntakeAssessment(input: {
 
   const insertPayload = {
     member_id: input.payload.memberId,
-    lead_id: input.payload.leadId,
+    lead_id: input.payload.leadId ?? null,
     assessment_date: input.payload.assessmentDate,
     status: input.payload.complete ? "completed" : "draft",
     completed_by_user_id: input.actor.id,

@@ -23,9 +23,11 @@ import {
   canonicalLeadStage,
   canonicalLeadStatus
 } from "@/lib/canonical";
-import { calculateAssessmentTotal, getAssessmentTrack } from "@/lib/assessment";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
-import { createDraftPhysicianOrderFromAssessment } from "@/lib/services/physician-orders-supabase";
+import {
+  autoCreateDraftPhysicianOrderFromIntake,
+  createIntakeAssessment
+} from "@/lib/services/intake-pof-mhp-cascade";
 import { buildIntakeAssessmentPdfDataUrl } from "@/lib/services/intake-assessment-pdf";
 import { calculateLatePickupFee, getOperationalSettings, parseBusNumbersInput, updateOperationalSettings } from "@/lib/services/operations-settings";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
@@ -1146,15 +1148,6 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
   const signerName = await getManagedUserSignatureName(profile.id, profile.full_name);
   const supabase = await createClient();
 
-  const totalScore = calculateAssessmentTotal({
-    orientationGeneralHealth: payload.data.scoreOrientationGeneralHealth,
-    dailyRoutinesIndependence: payload.data.scoreDailyRoutinesIndependence,
-    nutritionDietaryNeeds: payload.data.scoreNutritionDietaryNeeds,
-    mobilitySafety: payload.data.scoreMobilitySafety,
-    socialEmotionalWellness: payload.data.scoreSocialEmotionalWellness
-  });
-  const { recommendedTrack, admissionReviewRequired } = getAssessmentTrack(totalScore);
-
   const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const candidateMemberId = payload.data.memberId?.trim() || payload.data.leadId.trim();
   if (!candidateMemberId || !uuidPattern.test(candidateMemberId)) {
@@ -1182,76 +1175,68 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     leadStatus = leadRow?.status ?? payload.data.leadStatus ?? null;
   }
 
-  const nowIso = toEasternISO();
-  const assessmentInsert = {
-    member_id: effectiveMemberId,
-    lead_id: leadId,
-    assessment_date: payload.data.assessmentDate,
-    status: payload.data.complete ? "completed" : "draft",
-    completed_by_user_id: profile.id,
-    completed_by: signerName,
-    signed_by: signerName,
-    complete: payload.data.complete,
-    feeling_today: payload.data.feelingToday,
-    health_lately: payload.data.healthLately,
-    allergies: payload.data.allergies,
-    code_status: payload.data.codeStatus || "",
-    orientation_dob_verified: payload.data.orientationDobVerified,
-    orientation_city_verified: payload.data.orientationCityVerified,
-    orientation_year_verified: payload.data.orientationYearVerified,
-    orientation_occupation_verified: payload.data.orientationOccupationVerified,
-    orientation_notes: payload.data.orientationNotes || "",
-    medication_management_status: payload.data.medicationManagementStatus,
-    dressing_support_status: payload.data.dressingSupportStatus,
-    assistive_devices: payload.data.assistiveDevices || "",
-    incontinence_products: payload.data.incontinenceProducts || "",
-    on_site_medication_use: payload.data.onSiteMedicationUse || "",
-    on_site_medication_list: payload.data.onSiteMedicationList?.trim() || "",
-    independence_notes: payload.data.independenceNotes || "",
-    diet_type: payload.data.dietType,
-    diet_other: payload.data.dietOther || "",
-    diet_restrictions_notes: payload.data.dietRestrictionsNotes || "",
-    mobility_steadiness: payload.data.mobilitySteadiness,
-    falls_history: payload.data.fallsHistory || "",
-    mobility_aids: payload.data.mobilityAids || "",
-    mobility_safety_notes: payload.data.mobilitySafetyNotes || "",
-    overwhelmed_by_noise: payload.data.overwhelmedByNoise,
-    social_triggers: payload.data.socialTriggers || "",
-    emotional_wellness_notes: payload.data.emotionalWellnessNotes || "",
-    joy_sparks: payload.data.joySparks || "",
-    personal_notes: payload.data.personalNotes || "",
-    score_orientation_general_health: payload.data.scoreOrientationGeneralHealth,
-    score_daily_routines_independence: payload.data.scoreDailyRoutinesIndependence,
-    score_nutrition_dietary_needs: payload.data.scoreNutritionDietaryNeeds,
-    score_mobility_safety: payload.data.scoreMobilitySafety,
-    score_social_emotional_wellness: payload.data.scoreSocialEmotionalWellness,
-    total_score: totalScore,
-    recommended_track: recommendedTrack,
-    admission_review_required: admissionReviewRequired,
-    transport_can_enter_exit_vehicle: payload.data.transportCanEnterExitVehicle,
-    transport_assistance_level: payload.data.transportAssistanceLevel,
-    transport_mobility_aid: payload.data.transportMobilityAid || "",
-    transport_can_remain_seated_buckled: payload.data.transportCanRemainSeatedBuckled,
-    transport_behavior_concern: payload.data.transportBehaviorConcern || "",
-    transport_appropriate: payload.data.transportAppropriate,
-    transport_notes: payload.data.transportNotes || "",
-    vitals_hr: payload.data.vitalsHr,
-    vitals_bp: payload.data.vitalsBp.trim(),
-    vitals_o2_percent: payload.data.vitalsO2Percent,
-    vitals_rr: payload.data.vitalsRr,
-    notes: payload.data.notes || "",
-    created_at: nowIso,
-    updated_at: nowIso
-  };
-
-  const { data: created, error: createError } = await supabase
-    .from("intake_assessments")
-    .insert(assessmentInsert)
-    .select("*")
-    .single();
-  if (createError || !created) {
-    return { error: createError?.message ?? "Unable to save intake assessment." };
+  let created: any = null;
+  try {
+    created = await createIntakeAssessment({
+      payload: {
+        memberId: effectiveMemberId,
+        leadId,
+        assessmentDate: payload.data.assessmentDate,
+        complete: payload.data.complete,
+        feelingToday: payload.data.feelingToday,
+        healthLately: payload.data.healthLately,
+        allergies: payload.data.allergies,
+        codeStatus: payload.data.codeStatus || "",
+        orientationDobVerified: payload.data.orientationDobVerified,
+        orientationCityVerified: payload.data.orientationCityVerified,
+        orientationYearVerified: payload.data.orientationYearVerified,
+        orientationOccupationVerified: payload.data.orientationOccupationVerified,
+        orientationNotes: payload.data.orientationNotes || "",
+        medicationManagementStatus: payload.data.medicationManagementStatus,
+        dressingSupportStatus: payload.data.dressingSupportStatus,
+        assistiveDevices: payload.data.assistiveDevices || "",
+        incontinenceProducts: payload.data.incontinenceProducts || "",
+        onSiteMedicationUse: payload.data.onSiteMedicationUse || "",
+        onSiteMedicationList: payload.data.onSiteMedicationList?.trim() || "",
+        independenceNotes: payload.data.independenceNotes || "",
+        dietType: payload.data.dietType,
+        dietOther: payload.data.dietOther || "",
+        dietRestrictionsNotes: payload.data.dietRestrictionsNotes || "",
+        mobilitySteadiness: payload.data.mobilitySteadiness,
+        fallsHistory: payload.data.fallsHistory || "",
+        mobilityAids: payload.data.mobilityAids || "",
+        mobilitySafetyNotes: payload.data.mobilitySafetyNotes || "",
+        overwhelmedByNoise: payload.data.overwhelmedByNoise,
+        socialTriggers: payload.data.socialTriggers || "",
+        emotionalWellnessNotes: payload.data.emotionalWellnessNotes || "",
+        joySparks: payload.data.joySparks || "",
+        personalNotes: payload.data.personalNotes || "",
+        scoreOrientationGeneralHealth: payload.data.scoreOrientationGeneralHealth,
+        scoreDailyRoutinesIndependence: payload.data.scoreDailyRoutinesIndependence,
+        scoreNutritionDietaryNeeds: payload.data.scoreNutritionDietaryNeeds,
+        scoreMobilitySafety: payload.data.scoreMobilitySafety,
+        scoreSocialEmotionalWellness: payload.data.scoreSocialEmotionalWellness,
+        transportCanEnterExitVehicle: payload.data.transportCanEnterExitVehicle,
+        transportAssistanceLevel: payload.data.transportAssistanceLevel,
+        transportMobilityAid: payload.data.transportMobilityAid || "",
+        transportCanRemainSeatedBuckled: payload.data.transportCanRemainSeatedBuckled,
+        transportBehaviorConcern: payload.data.transportBehaviorConcern || "",
+        transportAppropriate: payload.data.transportAppropriate,
+        transportNotes: payload.data.transportNotes || "",
+        vitalsHr: payload.data.vitalsHr,
+        vitalsBp: payload.data.vitalsBp.trim(),
+        vitalsO2Percent: payload.data.vitalsO2Percent,
+        vitalsRr: payload.data.vitalsRr,
+        notes: payload.data.notes || ""
+      },
+      actor: { id: profile.id, fullName: profile.full_name, signoffName: signerName }
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to save intake assessment." };
   }
+  const totalScore = Number(created.total_score ?? 0);
+  const recommendedTrack = String(created.recommended_track ?? "");
+  const admissionReviewRequired = Boolean(created.admission_review_required);
 
   const responseRows = buildAssessmentResponseRows({
     assessmentId: created.id,
@@ -1282,7 +1267,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     }
   }
 
-  await createDraftPhysicianOrderFromAssessment({
+  await autoCreateDraftPhysicianOrderFromIntake({
     assessment: created,
     actor: { id: profile.id, fullName: profile.full_name, signoffName: signerName }
   });
