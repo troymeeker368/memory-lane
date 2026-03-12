@@ -19,6 +19,7 @@ const CARE_PLAN_SECTION_TYPES = [
   "Medical & Medication Management"
 ] as const;
 const WEEKDAY_OPTIONS = ["monday", "tuesday", "wednesday", "thursday", "friday"] as const;
+const LEGACY_DEPENDENCY_TABLES = new Set(["pay_periods", "time_punches"]);
 
 type SeededDb = ReturnType<typeof buildSeededMockDb>;
 
@@ -1825,16 +1826,11 @@ async function main() {
     const inModuleScope = entry.module === "core" || parsed.modules.includes(entry.module);
     if (!inModuleScope) return false;
     if (!parsed.legacyOnly) return true;
-    return entry.module === "core" || entry.legacy === true;
+    return entry.module === "core" || entry.legacy === true || LEGACY_DEPENDENCY_TABLES.has(entry.table);
   });
   const tableCounts = new Map<string, number>();
   const moduleCounts = new Map<string, number>();
-  const skippedByDependency = new Set<string>();
   for (const item of selected) {
-    if (skippedByDependency.has(item.table)) {
-      tableCounts.set(item.table, 0);
-      continue;
-    }
     let inserted = 0;
     try {
       inserted = await upsertRows(supabase, item.table, item.rows, existingTables);
@@ -1842,19 +1838,14 @@ async function main() {
       const message = error instanceof Error ? error.message : String(error);
       const triggerConflictMessage = "no unique or exclusion constraint matching the ON CONFLICT specification";
       if (item.table === "time_punches" && message.includes(triggerConflictMessage)) {
-        console.log(
-          "Skipping time_punches/time_punch_exceptions because payroll trigger prerequisites are missing (apply migration 0009_payroll_canonical_sync.sql)."
+        throw new Error(
+          "Seeding time_punches failed because payroll canonical sync prerequisites are missing. Apply migrations 0009_payroll_canonical_sync.sql and 0017_reseed_schema_alignment.sql, then rerun seed."
         );
-        skippedByDependency.add("time_punch_exceptions");
-        tableCounts.set(item.table, 0);
-        continue;
       }
       if (message.includes('record "new" has no field "created_at"')) {
-        console.log(
-          `Skipping ${item.table} because documentation trigger expects a created_at column that is not present in this database revision.`
+        throw new Error(
+          `Seeding ${item.table} failed because the documentation trigger expects created_at. Apply migration 0017_reseed_schema_alignment.sql and rerun seed.`
         );
-        tableCounts.set(item.table, 0);
-        continue;
       }
       throw error;
     }

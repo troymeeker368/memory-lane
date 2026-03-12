@@ -399,7 +399,7 @@ export async function getAdminAssessmentStatus(filters: BaseReportFilters) {
   const supabase = await createClient();
   const { data } = await supabase
     .from("intake_assessments")
-    .select("id, member_id, members(display_name), assessment_date, total_score, completed_by, created_at")
+    .select("id, member_id, members!intake_assessments_member_id_fkey(display_name), assessment_date, total_score, completed_by, created_at")
     .gte("assessment_date", filters.from)
     .lte("assessment_date", filters.to)
     .order("assessment_date", { ascending: false });
@@ -437,4 +437,3 @@ export async function getAdminReportGeneratedAt() {
 export async function isDateInCurrentPayPeriod(dateOnly: string) {
   return isDateInPayPeriod(`${dateOnly}T12:00:00.000Z`, getCurrentPayPeriod());
 }
-

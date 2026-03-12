@@ -5,8 +5,9 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/auth";
 import { ATTENDANCE_ABSENCE_REASON_OPTIONS } from "@/lib/canonical";
 import { syncAttendanceBillingForDate } from "@/lib/services/billing-supabase";
-import { isMemberScheduledForDate } from "@/lib/services/member-schedule-selectors";
+import { resolveExpectedAttendanceForDate } from "@/lib/services/expected-attendance";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
+import { listActiveScheduleChangesForMembersSupabase } from "@/lib/services/schedule-changes-supabase";
 import { createClient } from "@/lib/supabase/server";
 import { easternDateTimeLocalToISO, toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
@@ -112,6 +113,48 @@ async function isMemberOnHoldOnDate(memberId: string, attendanceDate: string) {
   return (data ?? []).length > 0;
 }
 
+async function isCenterClosedOnDate(attendanceDate: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("center_closures")
+    .select("closure_date")
+    .eq("closure_date", attendanceDate)
+    .limit(1);
+  if (error) throw new Error(error.message);
+  return (data ?? []).length > 0;
+}
+
+async function resolveMemberExpectedAttendanceForDate(input: {
+  memberId: string;
+  attendanceDate: string;
+  hasUnscheduledAttendanceAddition?: boolean;
+}) {
+  const [schedule, onHold, centerClosed, scheduleChanges] = await Promise.all([
+    getMemberAttendanceSchedule(input.memberId),
+    isMemberOnHoldOnDate(input.memberId, input.attendanceDate),
+    isCenterClosedOnDate(input.attendanceDate),
+    listActiveScheduleChangesForMembersSupabase({
+      memberIds: [input.memberId],
+      startDate: input.attendanceDate,
+      endDate: input.attendanceDate
+    })
+  ]);
+
+  return {
+    schedule,
+    resolution: resolveExpectedAttendanceForDate({
+      date: input.attendanceDate,
+      baseSchedule: schedule,
+      scheduleChanges,
+      holds: onHold
+        ? [{ start_date: input.attendanceDate, end_date: input.attendanceDate, status: "active" }]
+        : [],
+      centerClosures: centerClosed ? [{ closure_date: input.attendanceDate }] : [],
+      hasUnscheduledAttendanceAddition: input.hasUnscheduledAttendanceAddition
+    })
+  };
+}
+
 async function recordMakeupAuditLog(input: {
   memberId: string;
   attendanceDate: string;
@@ -149,9 +192,11 @@ async function applyScheduledAbsenceMakeupDelta(input: {
   actor: { id: string; full_name: string; role: AppRole };
   source: string;
 }) {
-  const schedule = await getMemberAttendanceSchedule(input.memberId);
-  if (!schedule || !isMemberScheduledForDate(schedule as any, input.attendanceDate)) return;
-  if (await isMemberOnHoldOnDate(input.memberId, input.attendanceDate)) return;
+  const { schedule, resolution } = await resolveMemberExpectedAttendanceForDate({
+    memberId: input.memberId,
+    attendanceDate: input.attendanceDate
+  });
+  if (!schedule || !resolution.isScheduled) return;
 
   const currentBalance = Math.max(0, Number(schedule.make_up_days_available ?? 0));
   const nextBalance = Math.max(0, currentBalance + input.deltaDays);
@@ -471,12 +516,17 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
       throw new Error("Active member not found.");
     }
 
-    if (await isMemberOnHoldOnDate(memberId, attendanceDate)) {
+    const { schedule, resolution } = await resolveMemberExpectedAttendanceForDate({
+      memberId,
+      attendanceDate
+    });
+    if (resolution.blockedBy === "member-hold") {
       throw new Error("Member is on hold for this date.");
     }
-
-    const schedule = await getMemberAttendanceSchedule(memberId);
-    if (schedule && isMemberScheduledForDate(schedule as any, attendanceDate)) {
+    if (resolution.blockedBy === "center-closure") {
+      throw new Error("Center is closed for this date.");
+    }
+    if (resolution.isScheduled) {
       throw new Error("Member is already scheduled on this date. Use the Daily Attendance roster.");
     }
 

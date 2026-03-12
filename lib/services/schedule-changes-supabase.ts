@@ -139,6 +139,44 @@ export async function listScheduleChangesSupabase(input?: {
   return (data ?? []).map(toRow);
 }
 
+export async function listActiveScheduleChangesForMembersSupabase(input: {
+  memberIds: Array<string | null | undefined>;
+  startDate: string;
+  endDate: string;
+}) {
+  const memberIds = Array.from(
+    new Set(
+      input.memberIds
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+  if (memberIds.length === 0) return [] as ScheduleChangeRow[];
+
+  const startDate = normalizeOperationalDateOnly(input.startDate);
+  const endDate = normalizeOperationalDateOnly(input.endDate);
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("schedule_changes")
+    .select("*")
+    .in("member_id", memberIds)
+    .eq("status", "active")
+    .lte("effective_start_date", endDate)
+    .or(`effective_end_date.is.null,effective_end_date.gte.${startDate}`)
+    .order("effective_start_date", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    if (isMissingScheduleChangesTableError(error)) {
+      console.warn("[schedule-changes] public.schedule_changes missing from schema cache. Returning empty active list.");
+      return [] as ScheduleChangeRow[];
+    }
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map(toRow);
+}
+
 export async function createScheduleChangeSupabase(input: {
   memberId: string;
   changeType: ScheduleChangeType;

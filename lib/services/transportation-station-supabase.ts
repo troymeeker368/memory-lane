@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { normalizeOperationalDateOnly, getWeekdayForDate, type OperationsWeekdayKey } from "@/lib/services/operations-calendar";
-import { getTransportSlotForDate, isScheduledWeekday } from "@/lib/services/member-schedule-selectors";
+import { getTransportSlotForScheduleDay } from "@/lib/services/member-schedule-selectors";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
+import { resolveExpectedAttendanceForDate } from "@/lib/services/expected-attendance";
+import { listActiveScheduleChangesForMembersSupabase, type ScheduleWeekdayKey } from "@/lib/services/schedule-changes-supabase";
 import {
   type MemberAttendanceScheduleRow,
   type MemberContactRow
@@ -99,6 +101,19 @@ function shiftsForSelection(selection: TransportationStationShift): Shift[] {
   return [selection];
 }
 
+function toScheduleWeekday(weekday: OperationsWeekdayKey): ScheduleWeekdayKey | null {
+  if (
+    weekday === "monday" ||
+    weekday === "tuesday" ||
+    weekday === "wednesday" ||
+    weekday === "thursday" ||
+    weekday === "friday"
+  ) {
+    return weekday;
+  }
+  return null;
+}
+
 function contactPriority(category: string | null | undefined): number {
   const normalized = (category ?? "").trim().toLowerCase();
   if (normalized === "responsible party") return 1;
@@ -141,16 +156,6 @@ function sortGroups(left: TransportationManifestGroup, right: TransportationMani
   if (leftIsNumber) return -1;
   if (rightIsNumber) return 1;
   return left.busNumber.localeCompare(right.busNumber, undefined, { sensitivity: "base" });
-}
-
-function isHoldActiveForDate(
-  hold: { start_date: string; end_date: string | null; status: string },
-  dateOnly: string
-) {
-  if (hold.status !== "active") return false;
-  if (dateOnly < hold.start_date) return false;
-  if (hold.end_date && dateOnly > hold.end_date) return false;
-  return true;
 }
 
 function extractErrorText(error: PostgrestErrorLike | null | undefined) {
@@ -378,7 +383,7 @@ export async function getTransportationManifestSupabase(input?: {
   })();
   const memberIds = Array.from(new Set(schedules.map((row) => row.member_id)));
 
-  const [membersData, { preferred: preferredContactByMember }, adjustmentsResult, holdsResult] = await Promise.all([
+  const [membersData, { preferred: preferredContactByMember }, adjustmentsResult, holdsResult, centerClosuresResult, scheduleChanges] = await Promise.all([
     memberIds.length > 0
       ? supabase.from("members").select("id, display_name, status").in("id", memberIds)
       : Promise.resolve({ data: [], error: null }),
@@ -388,7 +393,13 @@ export async function getTransportationManifestSupabase(input?: {
       .select("*")
       .eq("selected_date", selectedDate)
       .in("shift", selectedShifts),
-    supabase.from("member_holds").select("member_id, start_date, end_date, status")
+    supabase.from("member_holds").select("member_id, start_date, end_date, status"),
+    supabase.from("center_closures").select("closure_date").eq("closure_date", selectedDate),
+    listActiveScheduleChangesForMembersSupabase({
+      memberIds,
+      startDate: selectedDate,
+      endDate: selectedDate
+    })
   ]);
   if (membersData.error) throw new Error(membersData.error.message);
 
@@ -413,25 +424,49 @@ export async function getTransportationManifestSupabase(input?: {
     }
     throw new Error(holdsResult.error.message);
   })();
+  const centerClosures: Array<{ closure_date: string }> = (() => {
+    if (!centerClosuresResult.error) return (centerClosuresResult.data ?? []) as Array<{ closure_date: string }>;
+    if (isMissingTableError(centerClosuresResult.error, "center_closures")) {
+      console.warn("[transportation-station] public.center_closures missing from schema cache. Continuing without closure exclusions.");
+      return [];
+    }
+    throw new Error(centerClosuresResult.error.message);
+  })();
 
   const memberById = new Map(
     ((membersData.data ?? []) as Array<{ id: string; display_name: string; status: string }>).map((row) => [row.id, row] as const)
   );
-  const onHoldMemberIds = new Set(
-    holdRows
-      .filter((row) => isHoldActiveForDate(row, selectedDate))
-      .map((row) => row.member_id)
-  );
+  const holdsByMember = new Map<string, Array<{ member_id: string; start_date: string; end_date: string | null; status: string }>>();
+  holdRows.forEach((row) => {
+    const existing = holdsByMember.get(row.member_id) ?? [];
+    existing.push(row);
+    holdsByMember.set(row.member_id, existing);
+  });
+  const scheduleChangesByMember = new Map<string, typeof scheduleChanges>();
+  scheduleChanges.forEach((row) => {
+    const existing = scheduleChangesByMember.get(row.member_id) ?? [];
+    existing.push(row);
+    scheduleChangesByMember.set(row.member_id, existing);
+  });
 
   const scheduledRiders: TransportationManifestRider[] = [];
   const holdExcludedScheduledRiders: TransportationManifestRider[] = [];
+  const scheduleWeekday = toScheduleWeekday(weekday);
   schedules.forEach((schedule) => {
-    if (!isScheduledWeekday(schedule, weekday)) return;
     const member = memberById.get(schedule.member_id);
     if (!member || member.status !== "active") return;
+    const resolution = resolveExpectedAttendanceForDate({
+      date: selectedDate,
+      baseSchedule: schedule,
+      scheduleChanges: scheduleChangesByMember.get(schedule.member_id) ?? [],
+      holds: holdsByMember.get(schedule.member_id) ?? [],
+      centerClosures
+    });
+    if (!resolution.scheduledFromSchedule) return;
     const contact = preferredContactByMember.get(schedule.member_id) ?? null;
     selectedShifts.forEach((shift) => {
-      const slot = getTransportSlotForDate(schedule, selectedDate, shift);
+      if (!scheduleWeekday) return;
+      const slot = getTransportSlotForScheduleDay(schedule as any, scheduleWeekday, shift);
       if (slot.mode !== "Bus Stop" && slot.mode !== "Door to Door") return;
       const rider: TransportationManifestRider = {
         key: `${member.id}:${shift}`,
@@ -460,8 +495,10 @@ export async function getTransportationManifestSupabase(input?: {
         notes: null,
         source: "schedule"
       };
-      if (onHoldMemberIds.has(member.id)) {
+      if (resolution.blockedBy === "member-hold") {
         holdExcludedScheduledRiders.push(rider);
+      } else if (!resolution.isScheduled) {
+        return;
       } else {
         scheduledRiders.push(rider);
       }

@@ -9,10 +9,17 @@ import {
   type OperationsWeekdayKey
 } from "@/lib/services/operations-calendar";
 import {
-  getPrimaryTransportSnapshotForDate,
-  getScheduledDayAbbreviations,
-  isMemberScheduledForDate
+  getTransportSlotForScheduleDay
 } from "@/lib/services/member-schedule-selectors";
+import {
+  resolveExpectedAttendanceForDate,
+  type CenterClosureLike
+} from "@/lib/services/expected-attendance";
+import {
+  listActiveScheduleChangesForMembersSupabase,
+  type ScheduleChangeRow,
+  type ScheduleWeekdayKey
+} from "@/lib/services/schedule-changes-supabase";
 
 
 type AttendanceStatusLabel = "Present" | "Checked Out" | "Absent" | "Not Checked In Yet" | "Not Scheduled";
@@ -102,6 +109,18 @@ type HoldRow = {
   start_date: string;
   end_date: string | null;
   status: "active" | "ended";
+};
+
+type CenterClosureRow = {
+  closure_date: string;
+};
+
+const WEEKDAY_ABBREVIATIONS: Record<ScheduleWeekdayKey, string> = {
+  monday: "M",
+  tuesday: "Tu",
+  wednesday: "W",
+  thursday: "Th",
+  friday: "F"
 };
 
 export interface DailyAttendanceRow {
@@ -299,11 +318,59 @@ function buildAttendanceRecordMap(records: AttendanceRecordRow[]) {
   return map;
 }
 
-function isHoldActiveForDate(hold: HoldRow, dateOnly: string) {
-  if (hold.status !== "active") return false;
-  if (dateOnly < hold.start_date) return false;
-  if (hold.end_date && dateOnly > hold.end_date) return false;
-  return true;
+function formatScheduledDays(days: ScheduleWeekdayKey[]) {
+  if (days.length === 0) return "-";
+  return days.map((day) => WEEKDAY_ABBREVIATIONS[day]).join(", ");
+}
+
+function toScheduleWeekday(weekday: OperationsWeekdayKey): ScheduleWeekdayKey | null {
+  if (
+    weekday === "monday" ||
+    weekday === "tuesday" ||
+    weekday === "wednesday" ||
+    weekday === "thursday" ||
+    weekday === "friday"
+  ) {
+    return weekday;
+  }
+  return null;
+}
+
+function getTransportSnapshotForWeekday(input: {
+  schedule: AttendanceScheduleRow | null;
+  weekday: OperationsWeekdayKey;
+}) {
+  if (!input.schedule || input.schedule.transportation_required !== true) {
+    return {
+      required: false,
+      mode: null as "Bus Stop" | "Door to Door" | null,
+      busNumber: null as string | null,
+      busStop: null as string | null,
+      doorToDoorAddress: null as string | null
+    };
+  }
+
+  const weekday = toScheduleWeekday(input.weekday);
+  if (!weekday) {
+    return {
+      required: false,
+      mode: null as "Bus Stop" | "Door to Door" | null,
+      busNumber: null as string | null,
+      busStop: null as string | null,
+      doorToDoorAddress: null as string | null
+    };
+  }
+
+  const amSlot = getTransportSlotForScheduleDay(input.schedule as any, weekday, "AM");
+  const pmSlot = getTransportSlotForScheduleDay(input.schedule as any, weekday, "PM");
+  const mode = amSlot.mode ?? pmSlot.mode;
+  return {
+    required: Boolean(mode),
+    mode,
+    busNumber: amSlot.busNumber ?? pmSlot.busNumber,
+    busStop: amSlot.busStop ?? pmSlot.busStop,
+    doorToDoorAddress: amSlot.doorToDoorAddress ?? pmSlot.doorToDoorAddress
+  };
 }
 
 async function loadAttendanceBaseData(input: { startDate: string; endDate: string }) {
@@ -324,13 +391,15 @@ async function loadAttendanceBaseData(input: { startDate: string; endDate: strin
       schedules: [] as AttendanceScheduleRow[],
       attendanceRecords: [] as AttendanceRecordRow[],
       holds: [] as HoldRow[],
+      scheduleChanges: [] as ScheduleChangeRow[],
+      centerClosures: [] as CenterClosureRow[],
       mccPhotos: new Map<string, string | null>(),
       mhpPhotos: new Map<string, string | null>()
     };
   }
 
   const holdsFilter = `end_date.is.null,end_date.gte.${input.startDate}`;
-  const [scheduleResult, attendanceResult, holdsResult, mccResult, mhpResult] = await Promise.all([
+  const [scheduleResult, attendanceResult, holdsResult, centerClosuresResult, scheduleChanges, mccResult, mhpResult] = await Promise.all([
     supabase.from("member_attendance_schedules").select("*").in("member_id", memberIds),
     supabase
       .from("attendance_records")
@@ -345,6 +414,16 @@ async function loadAttendanceBaseData(input: { startDate: string; endDate: strin
       .eq("status", "active")
       .lte("start_date", input.endDate)
       .or(holdsFilter),
+    supabase
+      .from("center_closures")
+      .select("closure_date")
+      .gte("closure_date", input.startDate)
+      .lte("closure_date", input.endDate),
+    listActiveScheduleChangesForMembersSupabase({
+      memberIds,
+      startDate: input.startDate,
+      endDate: input.endDate
+    }),
     supabase.from("member_command_centers").select("member_id, profile_image_url").in("member_id", memberIds),
     supabase.from("member_health_profiles").select("member_id, profile_image_url").in("member_id", memberIds)
   ]);
@@ -353,6 +432,9 @@ async function loadAttendanceBaseData(input: { startDate: string; endDate: strin
   if (attendanceResult.error) throw new Error(attendanceResult.error.message);
   if (holdsResult.error && !isMissingSchemaObjectError(holdsResult.error)) {
     throw new Error(holdsResult.error.message);
+  }
+  if (centerClosuresResult.error && !isMissingSchemaObjectError(centerClosuresResult.error)) {
+    throw new Error(centerClosuresResult.error.message);
   }
   if (mccResult.error && !isMissingSchemaObjectError(mccResult.error)) {
     throw new Error(mccResult.error.message);
@@ -379,6 +461,8 @@ async function loadAttendanceBaseData(input: { startDate: string; endDate: strin
     schedules: (scheduleResult.data ?? []) as AttendanceScheduleRow[],
     attendanceRecords: (attendanceResult.data ?? []) as AttendanceRecordRow[],
     holds: (holdsResult.error ? [] : holdsResult.data ?? []) as HoldRow[],
+    scheduleChanges,
+    centerClosures: (centerClosuresResult.error ? [] : centerClosuresResult.data ?? []) as CenterClosureRow[],
     mccPhotos,
     mhpPhotos
   };
@@ -390,16 +474,24 @@ function buildDailyRows(input: {
   schedules: AttendanceScheduleRow[];
   attendanceRecords: AttendanceRecordRow[];
   holds: HoldRow[];
+  scheduleChanges: ScheduleChangeRow[];
+  centerClosures: CenterClosureLike[];
   mccPhotos: Map<string, string | null>;
   mhpPhotos: Map<string, string | null>;
 }) {
   const recordMap = buildAttendanceRecordMap(input.attendanceRecords);
   const scheduleByMember = new Map(input.schedules.map((row) => [row.member_id, row] as const));
   const holdsByMember = new Map<string, HoldRow[]>();
+  const scheduleChangesByMember = new Map<string, ScheduleChangeRow[]>();
   input.holds.forEach((hold) => {
     const existing = holdsByMember.get(hold.member_id) ?? [];
     existing.push(hold);
     holdsByMember.set(hold.member_id, existing);
+  });
+  input.scheduleChanges.forEach((change) => {
+    const existing = scheduleChangesByMember.get(change.member_id) ?? [];
+    existing.push(change);
+    scheduleChangesByMember.set(change.member_id, existing);
   });
 
   const weekday = getWeekdayForDate(input.selectedDate);
@@ -408,17 +500,29 @@ function buildDailyRows(input: {
   const rows = input.members
     .map((member) => {
       const schedule = scheduleByMember.get(member.id) ?? null;
-      const scheduledForDate = isMemberScheduledForDate(schedule as any, input.selectedDate);
-      if (!scheduledForDate) return null;
-
+      const attendanceRecord = recordMap.get(`${member.id}:${input.selectedDate}`) ?? null;
       const holdRows = holdsByMember.get(member.id) ?? [];
-      if (holdRows.some((hold) => isHoldActiveForDate(hold, input.selectedDate))) {
+      const memberScheduleChanges = scheduleChangesByMember.get(member.id) ?? [];
+      const resolution = resolveExpectedAttendanceForDate({
+        date: input.selectedDate,
+        baseSchedule: schedule,
+        scheduleChanges: memberScheduleChanges,
+        holds: holdRows,
+        centerClosures: input.centerClosures,
+        hasUnscheduledAttendanceAddition: Boolean(attendanceRecord)
+      });
+
+      if (resolution.blockedBy === "member-hold" && resolution.scheduledFromSchedule) {
         onHoldExcludedMembers += 1;
+      }
+      if (!resolution.isScheduled) {
         return null;
       }
 
-      const attendanceRecord = recordMap.get(`${member.id}:${input.selectedDate}`) ?? null;
-      const transportSnapshot = getPrimaryTransportSnapshotForDate(schedule as any, input.selectedDate);
+      const transportSnapshot = getTransportSnapshotForWeekday({
+        schedule,
+        weekday: resolution.weekday
+      });
 
       return {
         memberId: member.id,
@@ -426,7 +530,7 @@ function buildDailyRows(input: {
         photoUrl: input.mccPhotos.get(member.id) ?? input.mhpPhotos.get(member.id) ?? null,
         lockerNumber: member.locker_number,
         trackLabel: normalizeTrackLabel(member.latest_assessment_track),
-        scheduledDays: getScheduledDayAbbreviations(schedule as any),
+        scheduledDays: formatScheduledDays(resolution.effectiveDays),
         attendanceRecordId: attendanceRecord?.id ?? null,
         attendanceStatus: getStatusLabel({
           status: attendanceRecord?.status ?? null,
@@ -491,6 +595,8 @@ export async function getDailyAttendanceView(input?: { selectedDate?: string | n
     schedules: base.schedules,
     attendanceRecords: base.attendanceRecords,
     holds: base.holds,
+    scheduleChanges: base.scheduleChanges,
+    centerClosures: base.centerClosures,
     mccPhotos: base.mccPhotos,
     mhpPhotos: base.mhpPhotos
   });
@@ -508,22 +614,39 @@ export async function getUnscheduledAttendanceMemberOptions(input?: {
 }): Promise<UnscheduledAttendanceMemberOption[]> {
   const selectedDate = normalizeOperationalDateOnly(input?.selectedDate ?? getOperationsTodayDate());
   const base = await loadAttendanceBaseData({ startDate: selectedDate, endDate: selectedDate });
+  const dateIsCenterClosed = base.centerClosures.some((closure) => closure.closure_date === selectedDate);
+  if (dateIsCenterClosed) return [];
+
   const scheduleByMember = new Map(base.schedules.map((row) => [row.member_id, row] as const));
   const holdsByMember = new Map<string, HoldRow[]>();
+  const scheduleChangesByMember = new Map<string, ScheduleChangeRow[]>();
+  const recordMap = buildAttendanceRecordMap(base.attendanceRecords);
   base.holds.forEach((hold) => {
     const existing = holdsByMember.get(hold.member_id) ?? [];
     existing.push(hold);
     holdsByMember.set(hold.member_id, existing);
   });
+  base.scheduleChanges.forEach((change) => {
+    const existing = scheduleChangesByMember.get(change.member_id) ?? [];
+    existing.push(change);
+    scheduleChangesByMember.set(change.member_id, existing);
+  });
 
   return base.members
     .filter((member) => {
       const schedule = scheduleByMember.get(member.id) ?? null;
-      if (schedule && isMemberScheduledForDate(schedule as any, selectedDate)) {
-        return false;
-      }
+      const attendanceRecord = recordMap.get(`${member.id}:${selectedDate}`) ?? null;
       const holdRows = holdsByMember.get(member.id) ?? [];
-      if (holdRows.some((hold) => isHoldActiveForDate(hold, selectedDate))) {
+      const memberScheduleChanges = scheduleChangesByMember.get(member.id) ?? [];
+      const resolution = resolveExpectedAttendanceForDate({
+        date: selectedDate,
+        baseSchedule: schedule,
+        scheduleChanges: memberScheduleChanges,
+        holds: holdRows,
+        centerClosures: base.centerClosures,
+        hasUnscheduledAttendanceAddition: Boolean(attendanceRecord)
+      });
+      if (resolution.isScheduled || resolution.blockedBy === "member-hold") {
         return false;
       }
       return true;
@@ -549,6 +672,8 @@ export async function getWeeklyAttendanceView(input?: { anchorDate?: string | nu
       schedules: base.schedules,
       attendanceRecords: base.attendanceRecords,
       holds: base.holds,
+      scheduleChanges: base.scheduleChanges,
+      centerClosures: base.centerClosures,
       mccPhotos: base.mccPhotos,
       mhpPhotos: base.mhpPhotos
     });

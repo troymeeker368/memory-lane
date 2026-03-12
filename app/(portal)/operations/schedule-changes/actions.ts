@@ -74,12 +74,21 @@ function buildScheduleChangesHref(input?: {
   return `/operations/schedule-changes?${params.toString()}`;
 }
 
-function revalidateScheduleChangeWorkflows() {
+function revalidateScheduleChangeWorkflows(memberId?: string) {
+  revalidatePath("/");
+  revalidatePath("/operations");
   revalidatePath("/operations/schedule-changes");
   revalidatePath("/operations/attendance");
+  revalidatePath("/operations/attendance?tab=daily-attendance");
+  revalidatePath("/operations/attendance?tab=weekly-attendance");
+  revalidatePath("/operations/attendance?tab=daily-census");
+  revalidatePath("/operations/attendance?tab=weekly-census");
   revalidatePath("/operations/transportation-station");
   revalidatePath("/operations/transportation-station/print");
   revalidatePath("/operations/member-command-center");
+  if (memberId) {
+    revalidatePath(`/operations/member-command-center/${memberId}`);
+  }
 }
 
 async function applyPermanentBaseScheduleChange(input: {
@@ -137,13 +146,6 @@ export async function createScheduleChangeAction(formData: FormData) {
     redirect(failureHref("Reason is required."));
   }
 
-  const memberSchedule = await ensureMemberAttendanceScheduleSupabase(memberId);
-  if (!memberSchedule) {
-    redirect(failureHref("Unable to load member schedule from MCC."));
-  }
-  const mccOriginalDays = getMccScheduleDays(memberSchedule);
-  const originalDays = mccOriginalDays.length > 0 ? mccOriginalDays : submittedOriginalDays;
-
   let effectiveEndDate = effectiveEndDateRaw ? normalizeOperationalDateOnly(effectiveEndDateRaw) : null;
   if (changeType === "Permanent Schedule Change") {
     effectiveEndDate = null;
@@ -172,6 +174,13 @@ export async function createScheduleChangeAction(formData: FormData) {
   }
 
   try {
+    const memberSchedule = await ensureMemberAttendanceScheduleSupabase(memberId);
+    if (!memberSchedule) {
+      redirect(failureHref("Unable to load member schedule from MCC."));
+    }
+    const mccOriginalDays = getMccScheduleDays(memberSchedule);
+    const originalDays = mccOriginalDays.length > 0 ? mccOriginalDays : submittedOriginalDays;
+
     await createScheduleChangeSupabase({
       memberId,
       changeType,
@@ -199,7 +208,7 @@ export async function createScheduleChangeAction(formData: FormData) {
     redirect(failureHref(message));
   }
 
-  revalidateScheduleChangeWorkflows();
+  revalidateScheduleChangeWorkflows(memberId);
   redirect(
     buildScheduleChangesHref({
       success: "Schedule change saved."
@@ -244,7 +253,7 @@ export async function setScheduleChangeStatusAction(formData: FormData) {
     );
   }
 
-  revalidateScheduleChangeWorkflows();
+  revalidateScheduleChangeWorkflows(updated.member_id);
   redirect(
     buildScheduleChangesHref({
       success: `Schedule change marked as ${status}.`

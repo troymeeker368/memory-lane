@@ -114,7 +114,7 @@ export default async function HealthPage() {
 
   const supabase = await createClient();
   const [{ data: memberRows }, { data: mccRows }, { data: mhpRows }] = await Promise.all([
-    supabase.from("members").select("id, display_name, status, allergies, code_status"),
+    supabase.from("members").select("id, display_name, status, code_status"),
     supabase.from("member_command_centers").select("*"),
     supabase.from("member_health_profiles").select("*")
   ]);
@@ -126,7 +126,7 @@ export default async function HealthPage() {
       const mcc = mccByMember.get(member.id);
       const mhp = mhpByMember.get(member.id);
       const flags: string[] = [];
-      const allergyText = `${member.allergies ?? ""} ${mcc?.food_allergies ?? ""} ${mcc?.medication_allergies ?? ""} ${mcc?.environmental_allergies ?? ""}`.trim();
+      const allergyText = `${mcc?.food_allergies ?? ""} ${mcc?.medication_allergies ?? ""} ${mcc?.environmental_allergies ?? ""}`.trim();
       const dietType = (mcc?.diet_type ?? mhp?.diet_type ?? "").trim().toLowerCase();
       const dietaryRestrictions = `${mcc?.dietary_preferences_restrictions ?? ""} ${mhp?.dietary_restrictions ?? ""}`.trim();
       const codeStatus = (mcc?.code_status ?? mhp?.code_status ?? member.code_status ?? "").trim();

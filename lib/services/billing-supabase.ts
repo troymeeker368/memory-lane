@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { generateClosureDatesFromRules, type ClosureRuleLike } from "@/lib/services/closure-rules";
+import { resolveExpectedAttendanceForDate } from "@/lib/services/expected-attendance";
+import { listActiveScheduleChangesForMembersSupabase } from "@/lib/services/schedule-changes-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export type BillingModuleRole = "admin" | "manager" | "director" | "coordinator";
@@ -87,6 +89,14 @@ type ScheduleTemplateRow = {
   updated_at: string;
   updated_by_user_id: string | null;
   updated_by_name: string | null;
+};
+
+type AttendanceSettingWeekdays = {
+  monday: boolean;
+  tuesday: boolean;
+  wednesday: boolean;
+  thursday: boolean;
+  friday: boolean;
 };
 
 type BillingPreviewRow = {
@@ -280,6 +290,17 @@ function scheduleIncludesDate(schedule: ScheduleTemplateRow | null | undefined, 
   if (day === "friday") return schedule.friday;
   if (day === "saturday") return schedule.saturday;
   return schedule.sunday;
+}
+
+function attendanceSettingIncludesDate(attendanceSetting: AttendanceSettingWeekdays | null | undefined, dateOnly: string) {
+  if (!attendanceSetting) return false;
+  const day = weekdayKey(dateOnly);
+  if (day === "monday") return Boolean(attendanceSetting.monday);
+  if (day === "tuesday") return Boolean(attendanceSetting.tuesday);
+  if (day === "wednesday") return Boolean(attendanceSetting.wednesday);
+  if (day === "thursday") return Boolean(attendanceSetting.thursday);
+  if (day === "friday") return Boolean(attendanceSetting.friday);
+  return false;
 }
 
 function normalizeYear(value: number) {
@@ -1203,7 +1224,7 @@ async function getBillingPreviewRows(input: {
     supabase.from("members").select("id, display_name, status").eq("status", "active").order("display_name", { ascending: true }),
     supabase.from("member_billing_settings").select("*"),
     supabase.from("payors").select("id, payor_name, billing_method"),
-    supabase.from("member_attendance_schedules").select("member_id, daily_rate, custom_daily_rate, default_daily_rate, transportation_billing_status, monday, tuesday, wednesday, thursday, friday, saturday, sunday"),
+    supabase.from("member_attendance_schedules").select("member_id, daily_rate, custom_daily_rate, default_daily_rate, transportation_billing_status, monday, tuesday, wednesday, thursday, friday"),
     supabase.from("attendance_records").select("member_id, attendance_date, status").gte("attendance_date", minDate).lte("attendance_date", maxDate),
     supabase.from("billing_schedule_templates").select("*"),
     supabase
@@ -1288,21 +1309,7 @@ async function getBillingPreviewRows(input: {
         const includeBySchedule =
           schedule != null
             ? scheduleIncludesDate(schedule, cursor)
-            : attendanceSetting
-              ? weekdayKey(cursor) === "monday"
-                ? Boolean(attendanceSetting.monday)
-                : weekdayKey(cursor) === "tuesday"
-                  ? Boolean(attendanceSetting.tuesday)
-                  : weekdayKey(cursor) === "wednesday"
-                    ? Boolean(attendanceSetting.wednesday)
-                    : weekdayKey(cursor) === "thursday"
-                      ? Boolean(attendanceSetting.thursday)
-                      : weekdayKey(cursor) === "friday"
-                        ? Boolean(attendanceSetting.friday)
-                        : weekdayKey(cursor) === "saturday"
-                          ? Boolean(attendanceSetting.saturday)
-                          : Boolean(attendanceSetting.sunday)
-              : false;
+              : attendanceSettingIncludesDate(attendanceSetting, cursor);
         if (includeBySchedule && !nonBillableClosures.has(cursor)) billedDays += 1;
         cursor = addDays(cursor, 1);
       }
@@ -1439,8 +1446,53 @@ export async function syncAttendanceBillingForDate(input: { memberId: string; at
   if (attendanceError) throw new Error(attendanceError.message);
   if (!attendance) return;
 
-  const scheduledTemplate = await getActiveBillingScheduleTemplate(input.memberId, attendanceDate);
-  const isScheduledDay = scheduleIncludesDate(scheduledTemplate as ScheduleTemplateRow | null, attendanceDate);
+  const [attendanceScheduleResult, holdsResult, centerClosuresResult, scheduleChanges] = await Promise.all([
+    supabase
+      .from("member_attendance_schedules")
+      .select("member_id, monday, tuesday, wednesday, thursday, friday")
+      .eq("member_id", input.memberId)
+      .maybeSingle(),
+    supabase
+      .from("member_holds")
+      .select("start_date, end_date, status")
+      .eq("member_id", input.memberId)
+      .eq("status", "active")
+      .lte("start_date", attendanceDate)
+      .or(`end_date.is.null,end_date.gte.${attendanceDate}`),
+    supabase.from("center_closures").select("closure_date").eq("closure_date", attendanceDate),
+    listActiveScheduleChangesForMembersSupabase({
+      memberIds: [input.memberId],
+      startDate: attendanceDate,
+      endDate: attendanceDate
+    })
+  ]);
+  if (attendanceScheduleResult.error && !isMissingSchemaObjectError(attendanceScheduleResult.error)) {
+    throw new Error(attendanceScheduleResult.error.message);
+  }
+  if (holdsResult.error && !isMissingSchemaObjectError(holdsResult.error)) {
+    throw new Error(holdsResult.error.message);
+  }
+  if (centerClosuresResult.error && !isMissingSchemaObjectError(centerClosuresResult.error)) {
+    throw new Error(centerClosuresResult.error.message);
+  }
+
+  const attendanceSchedule = (attendanceScheduleResult.error ? null : attendanceScheduleResult.data) as
+    | {
+        member_id: string;
+        monday: boolean;
+        tuesday: boolean;
+        wednesday: boolean;
+        thursday: boolean;
+        friday: boolean;
+      }
+    | null;
+  const isScheduledDay = resolveExpectedAttendanceForDate({
+    date: attendanceDate,
+    baseSchedule: attendanceSchedule,
+    scheduleChanges,
+    holds: (holdsResult.error ? [] : holdsResult.data ?? []) as Array<{ start_date: string; end_date: string | null; status: string }>,
+    centerClosures: (centerClosuresResult.error ? [] : centerClosuresResult.data ?? []) as Array<{ closure_date: string }>
+  }).isScheduled;
   const memberSetting = await getActiveMemberBillingSetting(input.memberId, attendanceDate);
   const centerSetting = await getActiveCenterBillingSetting(attendanceDate);
   const extraDayRate = await resolveExtraDayRate({
