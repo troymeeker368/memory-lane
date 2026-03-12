@@ -166,9 +166,11 @@ export interface MemberFileRow {
   file_name: string;
   file_type: string;
   file_data_url: string | null;
+  storage_object_path?: string | null;
   category: string;
   category_other: string | null;
   document_source: string | null;
+  pof_request_id?: string | null;
   uploaded_by_user_id: string | null;
   uploaded_by_name: string | null;
   uploaded_at: string;

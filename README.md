@@ -1,127 +1,148 @@
 # Memory Lane
 
-Memory Lane Operations Portal
+Memory Lane is a production operations and clinical platform for Adult Day Centers.
 
-Production-ready internal operations app for adult day center workflows, replacing AppSheet with a role-secure, mobile-first web portal.
+## Production Runtime Contract
 
-## Tech Stack
+Memory Lane runtime is Supabase-only.
 
-- Next.js (App Router) + React + TypeScript
-- Supabase Auth + PostgreSQL
-- Tailwind CSS
-- Server Actions + Server Components
+Non-negotiable rules:
+- Supabase is the only operational backend.
+- All persisted state must read/write through Supabase tables defined by migrations.
+- UI components must not write directly to Supabase.
+- Route handlers and server actions must not bypass canonical service-layer writes.
+- Runtime mock stores, local JSON stores, file-backed stores, and in-memory persistence are forbidden.
+- Synthetic fallback records are forbidden.
+- A write is successful only when persisted in Supabase.
 
-## Implemented Modules
+If required data is missing, canonical services must either:
+- create the missing row in Supabase, or
+- throw an explicit error.
 
-- Dashboard / Home
-- Time Card (clock in/out, history, exceptions, manager biweekly review)
-- Documentation (participation log + tracker dashboards)
-- Health Unit (MAR and blood sugar views)
-- Ancillary Charges
-- Sales Activities (lead intake, stage pipeline, referral source views)
-- Reports (timely docs, care tracker, last toileted)
-- PTO Request (external PrismHR link)
+## Canonical Write Path
 
-## Local Setup
+`UI -> Server Action -> Service Layer -> Supabase`
 
-1. Install Node.js 20+.
-2. Install dependencies:
-   - `npm install`
-3. Copy env template:
-   - `cp .env.example .env.local`
-4. Start app:
-   - `npm run dev`
+Canonical business writes belong in `lib/services/*`.
 
-## Local Dev Performance Modes
+## Canonical Clinical Cascade
 
+Canonical lifecycle:
+
+`Intake Assessment -> Physician Orders (POF) -> Member Health Profile (MHP) -> Member Command Center (MCC)`
+
+Enforcement:
+- Intake assessment is the root clinical intake source.
+- POF is the canonical physician authorization.
+- MHP is normalized clinical state derived from intake + active signed POF.
+- MCC is aggregated operational state derived from upstream canonical records.
+
+## Shared Resolver and Service Rules
+
+Derived state and cross-module resolution must be centralized in shared services.
+
+Required shared resolver/service domains:
+- members and cross-module detail resolution (`lib/services/relations.ts`)
+- physician orders and MHP sync (`lib/services/physician-orders-supabase.ts`)
+- intake-to-POF cascade (`lib/services/intake-pof-mhp-cascade.ts`)
+- intake e-sign state (`lib/services/intake-assessment-esign.ts`)
+- member command center aggregate state (`lib/services/member-command-center-supabase.ts`)
+- billing and payor execution flows (`lib/services/billing-supabase.ts`)
+
+Do not duplicate derived rule logic in pages, actions, reports, or exports.
+
+## Role and Permission Enforcement
+
+Canonical role keys:
+- `program-assistant`
+- `coordinator`
+- `nurse`
+- `sales`
+- `manager`
+- `director`
+- `admin`
+
+Permission and role resolution are canonical in:
+- `lib/permissions.ts`
+- `lib/auth.ts`
+
+Route/module enforcement must use:
+- `requireModuleAccess`
+- `requireModuleAction`
+- `requireNavItemAccess`
+- `requireRoles`
+
+Do not introduce ad hoc permission maps outside canonical auth/permission utilities.
+
+## Public E-Sign Architecture
+
+Implemented e-sign flows:
+- POF public e-sign route: `/sign/pof/[token]`
+- Intake assessment signed-state persistence (internal authenticated workflow)
+
+Canonical Supabase objects:
+- `pof_requests`
+- `pof_signatures`
+- `document_events`
+- `intake_assessment_signatures`
+- `member_files` (`pof_request_id`, `storage_object_path`)
+
+Operational dependencies:
+- migrations: `0019_pof_esign_workflow.sql`, `0020_intake_assessment_esign.sql`
+- storage bucket: `member-documents`
+- email provider API key: `RESEND_API_KEY`
+- sender config: `CLINICAL_SENDER_EMAIL` (fallbacks: `DEFAULT_CLINICAL_SENDER_EMAIL`, `RESEND_FROM_EMAIL`)
+- app URL for signed links: `NEXT_PUBLIC_APP_URL` (fallback chain handled in service)
+
+Security and integrity guarantees:
+- public tokens are stored hashed (`sha256`) and rotated after signing
+- link lifecycle is persisted (`draft/sent/opened/signed/declined/expired`)
+- signing events are written to `document_events`
+- signed artifacts are stored and linked to canonical member files
+
+## Migration Discipline and Drift Prevention
+
+Supabase migrations are the schema contract.
+
+Required:
+- add forward-only migrations in `supabase/migrations`
+- use unique ordered filenames: `####_description.sql`
+- never patch schema drift with runtime fallback branches
+- align services/actions with migration-defined objects
+- fail explicitly when schema objects are missing
+
+Legacy note:
+- mock-named migration/seed compatibility assets remain for historical transition tooling only
+- they are not valid runtime data paths
+
+## Development Rules
+
+- Run local app on `http://localhost:3001`.
+- If port `3001` is occupied, free it before starting.
+- Before edits: `git status`
+- After edits: `npm run typecheck`
+- After significant edits: `npm run build`
+- After major stabilization: `npm run quality:gates`
+
+Helpful scripts:
 - `npm run dev`
-  - Fast default local mode using Turbopack.
-- `npm run dev:webpack`
-  - Webpack fallback if Turbopack is not desirable for a specific debugging case.
-- `npm run dev:mem`
-  - Webpack dev with increased Node memory (`--max-old-space-size=4096`).
-- `npm run dev:mem:turbo`
-  - Turbopack dev with increased Node memory (`--max-old-space-size=4096`).
+- `npm run dev:clean`
 
-Notes:
-- `next.config.ts` includes development watch ignores for heavy/non-source paths (`.mock-state`, spreadsheet/PDF/Doc files, `.next`, `.git`, `node_modules`) to reduce watch overhead.
-- TODO: If future spreadsheet/PDF ingestion is added into the repo, keep raw imports under a non-source folder (for example `data-imports/`) so they stay outside hot-reload watch scope.
+## Definition Of Done (New Modules)
 
-## Quality Gates
+A module is done only when all are true:
+- UI route works end-to-end.
+- Writes persist in Supabase through canonical services.
+- Permissions are enforced in code with canonical auth/permission utilities.
+- Shared resolver/service usage is canonical (no duplicated derived logic).
+- Required migrations are added and applied cleanly.
+- Downstream workflows (reports/exports/integrations) run against canonical records.
+- `npm run typecheck` and `npm run build` pass.
 
-- Run `npm run quality:gates` before merging stabilization work.
-- Current gates cover:
-  - permission/access regression checks for key role boundaries
-  - payroll/time calculation regression checks (`lib/services/timecard-workflow.ts`)
-  - critical route availability checks for stabilized portal paths
-  - migration naming/order hygiene checks
-- Migration files in `supabase/migrations` must use `####_description.sql` and unique numeric prefixes.
+## Do-Not Rules
 
-## Run Modes
-
-### Local mock mode (no Supabase required)
-
-1. Set `NEXT_PUBLIC_USE_MOCK_DATA=true` in `.env.local`.
-2. Leave Supabase URL/key empty.
-3. Run `npm run dev`.
-
-### Real backend mode (future)
-
-1. Set `NEXT_PUBLIC_USE_MOCK_DATA=false` in `.env.local`.
-2. Set required Supabase values:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-3. Run `npm run dev`.
-
-## Environment Variables
-
-See `.env.example`:
-
-- `NEXT_PUBLIC_USE_MOCK_DATA`
-- `NEXT_PUBLIC_MOCK_ROLE`
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `NEXT_PUBLIC_PTO_URL`
-
-## Folder Structure
-
-```text
-/app
-  /(auth)/login
-  /(portal)
-    /documentation
-      /activity
-      /toilet
-      /shower
-      /transportation
-      /blood-sugar
-    /time-card
-    /health
-    /ancillary
-    /sales
-    /reports
-    /pto
-  /api/health
-/components
-  /forms
-  /ui
-/lib
-  /services
-  /supabase
-/supabase
-  /migrations
-/docs
-```
-
-
-
-## Town Square Brand Theme
-- Primary Blue: #8099B6`r
-- Dark Blue: #1B3E93`r
-- Light Blue: #D4EEFC`r
-- Grey Text: #4E4E4E`r
-- Accent Green: #99CC33`r
-- Typography: Avenir (Black/Medium/Book fallbacks configured in portal theme overrides)
-
-
+- Do not import runtime data from `lib/mock*` in production code paths.
+- Do not add direct Supabase writes in UI components.
+- Do not bypass canonical services for business writes.
+- Do not fabricate fallback entities after failed reads/writes.
+- Do not add parallel resolver implementations for the same business rule.

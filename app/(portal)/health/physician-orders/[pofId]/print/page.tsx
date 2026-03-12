@@ -66,7 +66,7 @@ export default async function PhysicianOrderPrintPage({
           <div className="mt-2 grid gap-1 text-sm sm:grid-cols-4">
             <p><span className="font-semibold">BP:</span> {form.vitalsBloodPressure ?? "-"}</p>
             <p><span className="font-semibold">Pulse:</span> {form.vitalsPulse ?? "-"}</p>
-          <p><span className="font-semibold">O2 %:</span> {form.vitalsOxygenSaturation ?? "-"}</p>
+            <p><span className="font-semibold">O2 %:</span> {form.vitalsOxygenSaturation ?? "-"}</p>
             <p><span className="font-semibold">Respiration:</span> {form.vitalsRespiration ?? "-"}</p>
           </div>
 
@@ -133,12 +133,13 @@ export default async function PhysicianOrderPrintPage({
                   <th>Form</th>
                   <th>Route</th>
                   <th>Frequency</th>
+                  <th>Given at Center</th>
                 </tr>
               </thead>
               <tbody>
                 {form.medications.length === 0 ? (
                   <tr>
-                    <td colSpan={6}>No medications entered.</td>
+                    <td colSpan={7}>No medications entered.</td>
                   </tr>
                 ) : (
                   form.medications.map((medication) => (
@@ -149,6 +150,7 @@ export default async function PhysicianOrderPrintPage({
                       <td>{medication.form ?? "-"}</td>
                       <td>{medication.routeLaterality ? `${medication.route ?? "-"} (${medication.routeLaterality})` : medication.route ?? "-"}</td>
                       <td>{medication.frequency ?? "-"}</td>
+                      <td>{medication.givenAtCenter ? medication.givenAtCenterTime24h ?? "Yes" : "-"}</td>
                     </tr>
                   ))
                 )}
@@ -180,13 +182,8 @@ export default async function PhysicianOrderPrintPage({
             <p><span className="font-semibold">Mobility:</span> {selectedList([{ label: "Independent", value: care.mobilityIndependent }, { label: "Walker", value: care.mobilityWalker }, { label: "Wheelchair", value: care.mobilityWheelchair }, { label: "Scooter", value: care.mobilityScooter }, { label: "Other", value: care.mobilityOther }])}{care.mobilityOtherText ? ` (${care.mobilityOtherText})` : ""}</p>
             <p><span className="font-semibold">Functional Limitations:</span> {selectedList([{ label: "Sight", value: care.functionalLimitationSight }, { label: "Hearing", value: care.functionalLimitationHearing }, { label: "Speech", value: care.functionalLimitationSpeech }])}</p>
             <p><span className="font-semibold">Activities / Social:</span> {selectedList([{ label: "Passive", value: care.activitiesPassive }, { label: "Active", value: care.activitiesActive }, { label: "Group Participation", value: care.activitiesGroupParticipation }, { label: "Prefers alone time", value: care.activitiesPrefersAlone }])}</p>
-            <p><span className="font-semibold">Neurological:</span> {care.neurologicalConvulsionsSeizures ? "Convulsions / seizures" : "-"}</p>
             <p><span className="font-semibold">Stimulation:</span> {selectedList([{ label: "Afraid of loud noises", value: care.stimulationAfraidLoudNoises }, { label: "Easily overwhelmed", value: care.stimulationEasilyOverwhelmed }, { label: "Adapts easily", value: care.stimulationAdaptsEasily }])}</p>
-            <p><span className="font-semibold">Medication Administration:</span> {selectedList([{ label: "Self administration", value: care.medAdministrationSelf }, { label: "Nurse administration", value: care.medAdministrationNurse }])}</p>
-            <p><span className="font-semibold">Bladder:</span> {selectedList([{ label: "Continent", value: care.bladderContinent }, { label: "Incontinent", value: care.bladderIncontinent }])}</p>
-            <p><span className="font-semibold">Bowel:</span> {selectedList([{ label: "Continent", value: care.bowelContinent }, { label: "Incontinent", value: care.bowelIncontinent }])}</p>
-            <p><span className="font-semibold">Skin:</span> {care.skinNormal ? "Normal" : "Other"}{care.skinOther ? ` (${care.skinOther})` : ""}</p>
-            <p><span className="font-semibold">Breathing:</span> {selectedList([{ label: "Room Air", value: care.breathingRoomAir }, { label: "Oxygen tank", value: care.breathingOxygenTank }])}{care.breathingOxygenLiters ? ` (${care.breathingOxygenLiters}L)` : ""}</p>
+            <p><span className="font-semibold">Breathing:</span> {selectedList([{ label: "Room Air", value: care.breathingRoomAir }, { label: "O2 Needs", value: care.breathingOxygenTank }])}{care.breathingOxygenLiters ? ` (${care.breathingOxygenLiters}L)` : ""}</p>
             <p className="sm:col-span-2"><span className="font-semibold">Nutrition / Diet:</span> {care.nutritionDiets.length > 0 ? care.nutritionDiets.join(", ") : "-"}{care.nutritionDietOther ? ` | Other: ${care.nutritionDietOther}` : ""}</p>
             <p className="sm:col-span-2"><span className="font-semibold">Additional information to help spark joy:</span> {care.joySparksNotes ?? "-"}</p>
           </div>

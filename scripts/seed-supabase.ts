@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { getCanonicalTrackSections } from "../lib/services/care-plan-track-definitions";
 import { buildSeededMockDb } from "../lib/mock/seed";
 import { createSupabaseAdminClient } from "../lib/supabase/admin";
 
@@ -11,13 +12,6 @@ const VALID_MODULES: SeedModule[] = ["sales", "intake", "attendance"];
 const SITE_ID = "11111111-1111-4111-8111-111111111111";
 const BATCH_SIZE = 250;
 const TARGET_MEMBER_COUNT = 16;
-const CARE_PLAN_SECTION_TYPES = [
-  "Activities of Daily Living (ADLs) Assistance",
-  "Cognitive & Memory Support",
-  "Socialization & Emotional Well-Being",
-  "Safety & Fall Prevention",
-  "Medical & Medication Management"
-] as const;
 const WEEKDAY_OPTIONS = ["monday", "tuesday", "wednesday", "thursday", "friday"] as const;
 const LEGACY_DEPENDENCY_TABLES = new Set(["pay_periods", "time_punches"]);
 
@@ -522,8 +516,7 @@ function buildScheduleChanges(db: SeededDb, staffMap: Map<string, string>) {
 function buildCarePlanRows(db: SeededDb, staffMap: Map<string, string>) {
   const actor =
     db.staff.find((row) => row.role === "nurse" && row.active) ??
-    db.staff.find((row) => row.role === "manager" && row.active) ??
-    db.staff.find((row) => row.role === "director" && row.active) ??
+    db.staff.find((row) => row.role === "admin" && row.active) ??
     db.staff[0];
   const actorUserId = actor ? staffMap.get(actor.id) ?? null : null;
   const actorName = actor?.full_name ?? "Clinical Lead";
@@ -549,6 +542,9 @@ function buildCarePlanRows(db: SeededDb, staffMap: Map<string, string>) {
       ? "Adjusted socialization interventions and transfer support prompts."
       : "";
 
+    const caregiverName = `Caregiver ${idx + 1}`;
+    const caregiverEmail = `caregiver${idx + 1}@example.com`;
+
     carePlans.push({
       id: planId,
       member_id: member.id,
@@ -568,6 +564,26 @@ function buildCarePlanRows(db: SeededDb, staffMap: Map<string, string>) {
       no_changes_needed: !modificationsRequired,
       modifications_required: modificationsRequired,
       modifications_description: modificationsDescription,
+      nurse_designee_user_id: actorUserId,
+      nurse_designee_name: actorName,
+      nurse_signed_at: dateOfCompletion ? toIsoAt(dateOfCompletion, 12, 0) : null,
+      caregiver_name: caregiverName,
+      caregiver_email: caregiverEmail,
+      caregiver_signature_status: dateOfCompletion ? "ready_to_send" : "not_requested",
+      caregiver_sent_at: null,
+      caregiver_sent_by_user_id: null,
+      caregiver_viewed_at: null,
+      caregiver_signed_at: null,
+      caregiver_signature_request_token: null,
+      caregiver_signature_expires_at: null,
+      caregiver_signature_request_url: null,
+      caregiver_signed_name: null,
+      caregiver_signature_image_url: null,
+      caregiver_signature_ip: null,
+      caregiver_signature_user_agent: null,
+      caregiver_signature_error: null,
+      final_member_file_id: null,
+      legacy_cleanup_flag: false,
       created_by_user_id: actorUserId,
       created_by_name: actorName,
       updated_by_user_id: actorUserId,
@@ -576,24 +592,24 @@ function buildCarePlanRows(db: SeededDb, staffMap: Map<string, string>) {
       updated_at: toIsoAt(today, 9, 10)
     });
 
-    const sectionsSnapshot = CARE_PLAN_SECTION_TYPES.map((sectionType, sectionIndex) => {
-      const shortTermGoals = `${sectionIndex + 1}. Maintain engagement in ${sectionType.toLowerCase()} interventions.\n2. Document response in weekly team rounds.`;
-      const longTermGoals = `${sectionIndex + 1}. Sustain or improve baseline goals over six months.\n2. Reassess strategies at next review.`;
+    const sectionsSnapshot = getCanonicalTrackSections(track).map((section) => {
+      const shortTermGoals = section.shortTermGoals;
+      const longTermGoals = section.longTermGoals;
       carePlanSections.push({
-        id: stableUuid(`care-plan-section:${planId}:${sectionType}`),
+        id: stableUuid(`care-plan-section:${planId}:${section.sectionType}`),
         care_plan_id: planId,
-        section_type: sectionType,
+        section_type: section.sectionType,
         short_term_goals: shortTermGoals,
         long_term_goals: longTermGoals,
-        display_order: sectionIndex + 1,
+        display_order: section.displayOrder,
         created_at: toIsoAt(addDays(enrollmentDate, 2), 11, 0),
         updated_at: toIsoAt(today, 8, 45)
       });
       return {
-        sectionType,
+        sectionType: section.sectionType,
         shortTermGoals,
         longTermGoals,
-        displayOrder: sectionIndex + 1
+        displayOrder: section.displayOrder
       };
     });
 

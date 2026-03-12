@@ -1,4 +1,5 @@
 import { normalizeRoleKey } from "@/lib/permissions";
+import { listIntakeAssessmentSignatureStatesByAssessmentIds } from "@/lib/services/intake-assessment-esign";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";
 
@@ -154,14 +155,21 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
     assessments: await (async () => {
       const assessmentsQuery = supabase
         .from("intake_assessments")
-        .select("id, assessment_date, total_score, recommended_track, admission_review_required, transport_appropriate, complete, completed_by, created_at, member:members!intake_assessments_member_id_fkey(display_name)")
+        .select("id, assessment_date, total_score, recommended_track, admission_review_required, transport_appropriate, complete, completed_by, signature_status, signed_by, signed_at, created_at, member:members!intake_assessments_member_id_fkey(display_name)")
         .order("created_at", { ascending: false })
         .limit(50);
       const filteredAssessmentsQuery = staffScoped
         ? assessmentsQuery.eq("completed_by_user_id", staffUserId as string)
         : assessmentsQuery;
       const { data: assessmentRows } = await filteredAssessmentsQuery;
-      return (assessmentRows ?? []).map((row: any) => ({
+      const rows = assessmentRows ?? [];
+      const signatureByAssessmentId = await listIntakeAssessmentSignatureStatesByAssessmentIds(
+        rows.map((row: any) => String(row.id))
+      );
+
+      return rows.map((row: any) => {
+        const signature = signatureByAssessmentId[String(row.id)] ?? null;
+        return {
         id: row.id,
         assessment_date: row.assessment_date,
         total_score: row.total_score,
@@ -170,9 +178,13 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
         transport_appropriate: row.transport_appropriate,
         complete: Boolean(row.complete),
         completed_by: row.completed_by,
+        signature_status: signature?.status ?? "unsigned",
+        signed_by: signature?.signedByName ?? null,
+        signed_at: signature?.signedAt ?? null,
         member_name: relationDisplayName(row.member, "Unknown Member"),
         created_at: row.created_at
-      }));
+      };
+      });
     })()
   };
 }

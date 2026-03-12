@@ -1,19 +1,20 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireNavItemAccess } from "@/lib/auth";
+import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { CARE_PLAN_LONG_TERM_LABEL, CARE_PLAN_SHORT_TERM_LABEL, getCarePlanVersionById, getGoalListItems } from "@/lib/services/care-plans";
 import { formatDate } from "@/lib/utils";
 
 function GoalList({ value }: { value: string }) {
   const items = getGoalListItems(value);
   return (
-    <ol className="list-decimal space-y-1 pl-5">
+    <div className="space-y-1">
       {items.map((item, idx) => (
-        <li key={`${idx}-${item}`}>{item}</li>
+        <p key={`${idx}-${item}`} className="text-sm">{item}</p>
       ))}
-    </ol>
+    </div>
   );
 }
 
@@ -22,7 +23,7 @@ export default async function CarePlanVersionDetailPage({
 }: {
   params: Promise<{ carePlanId: string; versionId: string }>;
 }) {
-  await requireNavItemAccess("/health/care-plans");
+  await requireCarePlanAuthorizedUser();
   const { carePlanId, versionId } = await params;
   const detail = await getCarePlanVersionById(carePlanId, versionId);
   if (!detail) notFound();
@@ -30,7 +31,14 @@ export default async function CarePlanVersionDetailPage({
   return (
     <div className="space-y-4">
       <Card>
-        <CardTitle>Care Plan Version Snapshot</CardTitle>
+        <DocumentBrandHeader
+          title={`Member Care Plan: ${detail.carePlan.track}`}
+          metaLines={[
+            `Member: ${detail.carePlan.memberName}`,
+            `Snapshot Date: ${formatDate(detail.version.snapshotDate)}`
+          ]}
+        />
+        <CardTitle className="mt-4">Care Plan Version Snapshot</CardTitle>
         <div className="mt-3 grid gap-3 md:grid-cols-4">
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted">Member</p>

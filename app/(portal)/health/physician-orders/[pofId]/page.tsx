@@ -5,6 +5,7 @@ import { PhysicianOrderPdfActions } from "@/components/physician-orders/pof-pdf-
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
+import { listPofTimelineForPhysicianOrder } from "@/lib/services/pof-esign";
 import {
   getPhysicianOrderById,
   getPhysicianOrdersForMember
@@ -43,6 +44,7 @@ export default async function PhysicianOrderDetailPage({
   if (!form) notFound();
 
   const history = await getPhysicianOrdersForMember(form.memberId);
+  const pofTimeline = await listPofTimelineForPhysicianOrder(form.id);
   const backHref =
     source === "mhp"
       ? `/health/member-health-profiles/${form.memberId}`
@@ -184,12 +186,13 @@ export default async function PhysicianOrderDetailPage({
                 <th>Form</th>
                 <th>Route</th>
                 <th>Frequency</th>
+                <th>Given at Center</th>
               </tr>
             </thead>
             <tbody>
               {form.medications.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-sm text-muted">
+                  <td colSpan={7} className="text-sm text-muted">
                     No medications entered.
                   </td>
                 </tr>
@@ -202,6 +205,7 @@ export default async function PhysicianOrderDetailPage({
                     <td>{medication.form ?? "-"}</td>
                     <td>{medication.routeLaterality ? `${medication.route ?? "-"} (${medication.routeLaterality})` : medication.route ?? "-"}</td>
                     <td>{medication.frequency ?? "-"}</td>
+                    <td>{medication.givenAtCenter ? medication.givenAtCenterTime24h ?? "Yes" : "-"}</td>
                   </tr>
                 ))
               )}
@@ -244,12 +248,7 @@ export default async function PhysicianOrderDetailPage({
 
           <div className="rounded-lg border border-border p-3 text-sm">
             <p className="font-semibold">Clinical Support</p>
-            <p className="mt-2"><span className="font-semibold">Neurological:</span> {care.neurologicalConvulsionsSeizures ? "Convulsions / Seizures" : "-"}</p>
-            <p><span className="font-semibold">Medication Administration:</span> {selectedList([{ label: "Self administration", value: care.medAdministrationSelf }, { label: "Nurse administration", value: care.medAdministrationNurse }])}</p>
-            <p><span className="font-semibold">Bladder:</span> {selectedList([{ label: "Continent", value: care.bladderContinent }, { label: "Incontinent", value: care.bladderIncontinent }])}</p>
-            <p><span className="font-semibold">Bowel:</span> {selectedList([{ label: "Continent", value: care.bowelContinent }, { label: "Incontinent", value: care.bowelIncontinent }])}</p>
-            <p><span className="font-semibold">Skin:</span> {care.skinNormal ? "Normal" : "Other"}{care.skinOther ? ` (${care.skinOther})` : ""}</p>
-            <p><span className="font-semibold">Breathing:</span> {selectedList([{ label: "Room Air", value: care.breathingRoomAir }, { label: "Oxygen tank", value: care.breathingOxygenTank }])}{care.breathingOxygenLiters ? ` (${care.breathingOxygenLiters}L)` : ""}</p>
+            <p className="mt-2"><span className="font-semibold">Breathing:</span> {selectedList([{ label: "Room Air", value: care.breathingRoomAir }, { label: "O2 Needs", value: care.breathingOxygenTank }])}{care.breathingOxygenLiters ? ` (${care.breathingOxygenLiters}L)` : ""}</p>
           </div>
 
           <div className="rounded-lg border border-border p-3 text-sm">
@@ -306,6 +305,72 @@ export default async function PhysicianOrderDetailPage({
                 </td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card className="table-wrap">
+        <CardTitle>POF E-Sign Timeline</CardTitle>
+        <table className="mt-3">
+          <thead>
+            <tr>
+              <th>Request</th>
+              <th>Status</th>
+              <th>Provider</th>
+              <th>Expires</th>
+              <th>Signed File</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pofTimeline.requests.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="text-sm text-muted">
+                  No e-sign requests have been sent for this POF yet.
+                </td>
+              </tr>
+            ) : (
+              pofTimeline.requests.map((request) => (
+                <tr key={request.id}>
+                  <td className="text-xs">{request.id}</td>
+                  <td>{request.status}</td>
+                  <td>{request.providerName}</td>
+                  <td>{formatDateTime(request.expiresAt)}</td>
+                  <td>{request.memberFileId ?? "-"}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+
+        <CardTitle className="mt-4">Document Events</CardTitle>
+        <table className="mt-3">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Request</th>
+              <th>Event</th>
+              <th>Actor</th>
+              <th>IP</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pofTimeline.events.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="text-sm text-muted">
+                  No document events recorded yet.
+                </td>
+              </tr>
+            ) : (
+              pofTimeline.events.map((event) => (
+                <tr key={event.id}>
+                  <td>{formatDateTime(event.createdAt)}</td>
+                  <td className="text-xs">{event.documentId}</td>
+                  <td>{event.eventType}</td>
+                  <td>{event.actorName ?? event.actorType}</td>
+                  <td>{event.actorIp ?? "-"}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </Card>

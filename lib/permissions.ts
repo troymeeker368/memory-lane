@@ -210,7 +210,7 @@ export const NAV_ITEMS: AppNavItem[] = [
   { label: "Blood Sugar", href: "/documentation/blood-sugar", group: "Health Unit", module: "health" },
   { label: "New Intake Assessment", href: "/health/assessment", group: "Health Unit", module: "health" },
   { label: "Physician Orders", href: "/health/physician-orders", group: "Health Unit", module: "health", roles: ["admin", "nurse"] },
-  { label: "Care Plans", href: "/health/care-plans", group: "Health Unit", module: "health", roles: ["admin", "manager", "nurse"] }
+  { label: "Care Plans", href: "/health/care-plans", group: "Health Unit", module: "health", roles: ["admin", "nurse"] }
 ];
 
 function normalizeNavHref(href: string): string {

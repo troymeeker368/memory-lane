@@ -29,6 +29,10 @@ import {
   createIntakeAssessmentWithResponses
 } from "@/lib/services/intake-pof-mhp-cascade";
 import { buildIntakeAssessmentPdfDataUrl } from "@/lib/services/intake-assessment-pdf";
+import {
+  isAuthorizedIntakeAssessmentSignerRole,
+  signIntakeAssessment
+} from "@/lib/services/intake-assessment-esign";
 import { calculateLatePickupFee, getOperationalSettings, parseBusNumbersInput, updateOperationalSettings } from "@/lib/services/operations-settings";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { normalizeRoleKey } from "@/lib/permissions";
@@ -991,7 +995,7 @@ const assessmentSchema = z
     leadStatus: z.string().optional().or(z.literal("")),
     assessmentDate: z.string(),
     completedBy: z.string().min(1),
-    signedBy: z.string().min(1),
+    signatureAttested: z.boolean(),
     complete: z.boolean(),
 
     feelingToday: z.string().min(1),
@@ -1049,6 +1053,14 @@ const assessmentSchema = z
     notes: z.string().max(2000).optional().or(z.literal(""))
   })
   .superRefine((val, ctx) => {
+    if (!val.signatureAttested) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["signatureAttested"],
+        message: "Electronic signature attestation is required."
+      });
+    }
+
     if (val.onSiteMedicationUse === "Yes" && !val.onSiteMedicationList?.trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1073,6 +1085,9 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
   }
 
   const profile = await getCurrentProfile();
+  if (!isAuthorizedIntakeAssessmentSignerRole(profile.role)) {
+    return { error: "Only nurse or admin users may electronically sign Intake Assessments." };
+  }
   const signerName = await getManagedUserSignatureName(profile.id, profile.full_name);
   const supabase = await createClient();
 
@@ -1165,6 +1180,34 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     });
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save intake assessment." };
+  }
+
+  try {
+    await signIntakeAssessment({
+      assessmentId: created.id,
+      actor: {
+        id: profile.id,
+        fullName: profile.full_name,
+        role: profile.role,
+        signoffName: signerName
+      },
+      attested: payload.data.signatureAttested,
+      metadata: {
+        module: "intake-assessment",
+        signedFrom: "createAssessmentAction"
+      }
+    });
+  } catch (error) {
+    const { error: rollbackError } = await supabase.from("intake_assessments").delete().eq("id", created.id);
+    if (rollbackError) {
+      const signatureError = error instanceof Error ? error.message : "Unknown signature persistence error.";
+      return {
+        error: `Unable to persist Intake Assessment e-signature (${signatureError}). Rollback failed: ${rollbackError.message}`
+      };
+    }
+    return {
+      error: error instanceof Error ? error.message : "Unable to persist Intake Assessment e-signature."
+    };
   }
 
   await autoCreateDraftPhysicianOrderFromIntake({

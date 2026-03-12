@@ -6,6 +6,8 @@ import { requireModuleAccess } from "@/lib/auth";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
+export const dynamic = "force-dynamic";
+
 export default async function LogPartnerActivityPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   await requireModuleAccess("sales");
   const params = await searchParams;

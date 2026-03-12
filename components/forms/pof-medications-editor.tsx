@@ -3,8 +3,6 @@
 import { useState } from "react";
 
 import {
-  OTIC_LATERALITY_OPTIONS,
-  OPHTHALMIC_LATERALITY_OPTIONS,
   POF_DEFAULT_MEDICATION_FORM,
   POF_DEFAULT_MEDICATION_QUANTITY,
   POF_DEFAULT_MEDICATION_ROUTE,
@@ -22,26 +20,13 @@ type MedicationRow = {
   routeLaterality: string;
   frequency: string;
   givenAtCenter: boolean;
+  givenAtCenterTime24h: string;
   comments: string;
 };
 
 function requiresRouteLaterality(route: string) {
   const normalized = route.trim().toLowerCase();
   return normalized === "ophthalmic" || normalized === "otic";
-}
-
-function lateralityOptionsForRoute(route: string) {
-  const normalized = route.trim().toLowerCase();
-  if (normalized === "ophthalmic") return OPHTHALMIC_LATERALITY_OPTIONS;
-  if (normalized === "otic") return OTIC_LATERALITY_OPTIONS;
-  return [];
-}
-
-function lateralityLabelForRoute(route: string) {
-  const normalized = route.trim().toLowerCase();
-  if (normalized === "ophthalmic") return "Eye";
-  if (normalized === "otic") return "Ear";
-  return null;
 }
 
 function buildInitialRows(
@@ -55,6 +40,7 @@ function buildInitialRows(
     routeLaterality: string | null;
     frequency: string | null;
     givenAtCenter: boolean;
+    givenAtCenterTime24h: string | null;
     comments: string | null;
   }>
 ) {
@@ -68,6 +54,7 @@ function buildInitialRows(
     routeLaterality: row.routeLaterality ?? "",
     frequency: row.frequency ?? "",
     givenAtCenter: row.givenAtCenter === true,
+    givenAtCenterTime24h: row.givenAtCenterTime24h ?? "",
     comments: row.comments ?? ""
   }));
 
@@ -82,6 +69,7 @@ function buildInitialRows(
       routeLaterality: "",
       frequency: "",
       givenAtCenter: false,
+      givenAtCenterTime24h: "",
       comments: ""
     });
   }
@@ -102,6 +90,7 @@ export function PofMedicationsEditor({
     routeLaterality: string | null;
     frequency: string | null;
     givenAtCenter: boolean;
+    givenAtCenterTime24h: string | null;
     comments: string | null;
   }>;
 }) {
@@ -136,6 +125,7 @@ export function PofMedicationsEditor({
         routeLaterality: "",
         frequency: "",
         givenAtCenter: false,
+        givenAtCenterTime24h: "",
         comments: ""
       }
     ]);
@@ -154,12 +144,11 @@ export function PofMedicationsEditor({
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Dose</th>
-              <th>Qty</th>
+              <th className="min-w-[260px]">Name</th>
+              <th className="min-w-[150px]">Dose</th>
+              <th className="min-w-[64px]">Qty</th>
               <th>Form</th>
-              <th>Route</th>
-              <th>Side</th>
+              <th className="min-w-[92px]">Route</th>
               <th>Frequency</th>
               <th>Given at Center</th>
               <th>Comments</th>
@@ -174,7 +163,7 @@ export function PofMedicationsEditor({
                     name="medicationName"
                     value={medication.name}
                     onChange={(event) => updateRow(medication.id, "name", event.target.value)}
-                    className="h-9 w-full rounded border border-border px-2 text-sm"
+                    className="h-9 w-[280px] rounded border border-border px-2 text-sm"
                   />
                 </td>
                 <td>
@@ -182,7 +171,7 @@ export function PofMedicationsEditor({
                     name="medicationDose"
                     value={medication.dose}
                     onChange={(event) => updateRow(medication.id, "dose", event.target.value)}
-                    className="h-9 w-full rounded border border-border px-2 text-sm"
+                    className="h-9 w-[160px] rounded border border-border px-2 text-sm"
                   />
                 </td>
                 <td>
@@ -190,7 +179,7 @@ export function PofMedicationsEditor({
                     name="medicationQuantity"
                     value={medication.quantity}
                     onChange={(event) => updateRow(medication.id, "quantity", event.target.value)}
-                    className="h-9 w-[74px] rounded border border-border px-2 text-sm"
+                    className="h-9 w-[58px] rounded border border-border px-2 text-sm"
                   />
                 </td>
                 <td>
@@ -212,7 +201,7 @@ export function PofMedicationsEditor({
                     name="medicationRoute"
                     value={medication.route}
                     onChange={(event) => updateRow(medication.id, "route", event.target.value)}
-                    className="h-9 w-[116px] rounded border border-border px-2 text-sm"
+                    className="h-9 w-[82px] rounded border border-border px-2 text-sm"
                   >
                     {POF_MEDICATION_ROUTE_OPTIONS.map((option) => (
                       <option key={option} value={option}>
@@ -220,27 +209,7 @@ export function PofMedicationsEditor({
                       </option>
                     ))}
                   </select>
-                </td>
-                <td>
-                  {requiresRouteLaterality(medication.route) && lateralityLabelForRoute(medication.route) ? (
-                    <select
-                      name="medicationRouteLaterality"
-                      value={medication.routeLaterality}
-                      onChange={(event) => updateRow(medication.id, "routeLaterality", event.target.value)}
-                      className="h-9 w-[110px] rounded border border-border px-2 text-sm"
-                    >
-                      <option value="">Select {lateralityLabelForRoute(medication.route)?.toLowerCase()}</option>
-                      {lateralityOptionsForRoute(medication.route).map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <>
-                      <input type="hidden" name="medicationRouteLaterality" value="" />
-                    </>
-                  )}
+                  <input type="hidden" name="medicationRouteLaterality" value={medication.routeLaterality} />
                 </td>
                 <td>
                   <input
@@ -252,14 +221,32 @@ export function PofMedicationsEditor({
                 </td>
                 <td>
                   <input type="hidden" name="medicationGivenAtCenter" value={medication.givenAtCenter ? "true" : "false"} />
-                  <label className="inline-flex items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={medication.givenAtCenter}
-                      onChange={(event) => updateRow(medication.id, "givenAtCenter", event.target.checked)}
-                    />
-                    <span>Yes</span>
-                  </label>
+                  <div className="flex min-w-[168px] flex-col gap-1">
+                    <label className="inline-flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={medication.givenAtCenter}
+                        onChange={(event) => {
+                          updateRow(medication.id, "givenAtCenter", event.target.checked);
+                          if (!event.target.checked) {
+                            updateRow(medication.id, "givenAtCenterTime24h", "");
+                          }
+                        }}
+                      />
+                      <span>Yes</span>
+                    </label>
+                    {medication.givenAtCenter ? (
+                      <input
+                        type="time"
+                        name="medicationGivenAtCenterTime24h"
+                        value={medication.givenAtCenterTime24h}
+                        onChange={(event) => updateRow(medication.id, "givenAtCenterTime24h", event.target.value)}
+                        className="h-9 w-[118px] rounded border border-border px-2 text-sm"
+                      />
+                    ) : (
+                      <input type="hidden" name="medicationGivenAtCenterTime24h" value="" />
+                    )}
+                  </div>
                 </td>
                 <td>
                   <input

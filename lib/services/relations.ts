@@ -1,5 +1,7 @@
 import { normalizeRoleKey } from "@/lib/permissions";
+import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
 import { getCarePlansForMember } from "@/lib/services/care-plans";
+import { getIntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPayPeriod, isDateInPayPeriod } from "@/lib/pay-period";
 import type { AppRole } from "@/types/app";
@@ -52,7 +54,9 @@ export async function getMemberDetail(
   if (error) throw new Error(error.message);
   if (!member) return null;
 
-  const isStaffViewer = Boolean(scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && !!scope.staffUserId);
+  const normalizedRole = scope?.role ? normalizeRoleKey(scope.role) : null;
+  const isStaffViewer = Boolean(normalizedRole === "program-assistant" && !!scope?.staffUserId);
+  const canViewCarePlans = canAccessCarePlansForRole(normalizedRole);
   const staffUserId = scope?.staffUserId ?? null;
 
   const [
@@ -96,7 +100,7 @@ export async function getMemberDetail(
   const assessments = filterByStaff(assessmentsResult.data ?? [], "created_by_user_id");
   const photos = filterByStaff(photosResult.data ?? [], "uploaded_by");
 
-  const carePlans = isStaffViewer ? [] : await getCarePlansForMember(memberId);
+  const carePlans = isStaffViewer || !canViewCarePlans ? [] : await getCarePlansForMember(memberId);
   const latestCarePlan = [...carePlans].sort((a, b) => {
     if (a.updatedAt !== b.updatedAt) return a.updatedAt < b.updatedAt ? 1 : -1;
     return a.reviewDate < b.reviewDate ? 1 : -1;
@@ -331,6 +335,7 @@ export async function getAssessmentDetail(assessmentId: string) {
     .eq("id", assessmentId)
     .maybeSingle();
   if (!assessmentError && assessment) {
+    const signature = await getIntakeAssessmentSignatureState(assessmentId);
     const { data: responses } = await supabase
       .from("assessment_responses")
       .select("*")
@@ -341,10 +346,18 @@ export async function getAssessmentDetail(assessmentId: string) {
     return {
       assessment: {
         ...assessment,
+        signed_by: signature.signedByName,
+        signed_by_user_id: signature.signedByUserId,
+        signed_at: signature.signedAt,
+        signature_status: signature.status,
+        signature_metadata: signature.signatureMetadata,
+        signature_artifact_storage_path: signature.signatureArtifactStoragePath,
+        signature_artifact_member_file_id: signature.signatureArtifactMemberFileId,
         member_name: assessment.member?.display_name ?? "Unknown Member"
       },
       member: assessment.member ?? null,
-      responses: responses ?? []
+      responses: responses ?? [],
+      signature
     };
   }
 

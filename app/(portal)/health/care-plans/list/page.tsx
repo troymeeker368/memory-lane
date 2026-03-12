@@ -1,7 +1,7 @@
 ﻿import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireNavItemAccess } from "@/lib/auth";
+import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { getCarePlanTracks, getCarePlans } from "@/lib/services/care-plans";
 import { getMembers } from "@/lib/services/documentation";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
@@ -23,7 +23,7 @@ export default async function CarePlansListPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireNavItemAccess("/health/care-plans");
+  await requireCarePlanAuthorizedUser();
 
   const params = await searchParams;
   const status = typeof params.status === "string" ? params.status : "All";

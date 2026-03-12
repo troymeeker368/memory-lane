@@ -1,11 +1,23 @@
-﻿# Admin Guide
+# Admin Guide
 
-## Managing Staff Roles
+## Scope
 
-1. Create user in Supabase Auth (email/password).
-2. Insert or update matching row in `public.profiles` with same `id` as `auth.users.id`.
-3. Set `role` to one of: `admin`, `manager`, `nurse`, `staff`.
-4. Set `active = true` to allow access.
+This guide documents production admin operations that must remain Supabase-canonical.
+
+## Manage Staff Roles
+
+1. Create user in Supabase Auth (`auth.users`).
+2. Insert/update matching row in `public.profiles` with the same `id`.
+3. Set `role` to a canonical role key:
+   - `program-assistant`
+   - `coordinator`
+   - `nurse`
+   - `sales`
+   - `manager`
+   - `director`
+   - `admin`
+4. Set `active = true` to permit access.
+5. Add `public.user_permissions` overrides only when custom overrides are intentionally required.
 
 Example:
 
@@ -15,11 +27,17 @@ set role = 'manager', active = true
 where email = 'manager@example.com';
 ```
 
-## Managing Lookup Data
+## Role/Permission Enforcement Expectations
 
-- Use `public.lookup_lists` for dropdown values.
-- `list_name` examples: `lead_stage`, `lead_source`, `follow_up_type`.
-- Set `active = false` to retire a value without deleting history.
+- Role normalization and permission resolution are canonical in `lib/permissions.ts`.
+- Route/action access checks are canonical in `lib/auth.ts`.
+- Sensitive actions must enforce access in code, not only in UI affordances.
+- Do not introduce alternate permission maps outside canonical auth/permission services.
+
+## Manage Lookup Data
+
+- Use `public.lookup_lists` for dropdown and controlled-value lists.
+- Set `active = false` to retire values without deleting historical records.
 
 Example:
 
@@ -29,7 +47,7 @@ values ('lead_source', 'Hospital Partner', 6)
 on conflict (list_name, value) do nothing;
 ```
 
-## Managing Ancillary Categories
+## Manage Ancillary Categories
 
 ```sql
 insert into public.ancillary_charge_categories (name, price_cents)
@@ -37,8 +55,30 @@ values ('Special Transport', 3000)
 on conflict (name) do update set price_cents = excluded.price_cents;
 ```
 
-## Audit and Email Logs
+## Public E-Sign Operational Dependencies
 
-- Audit rows are in `public.audit_logs`.
-- Outbound lead communication rows should be written to `public.email_logs`.
-- Recommended retention: minimum 24 months for compliance traceability.
+POF e-sign relies on:
+- `public.pof_requests`
+- `public.pof_signatures`
+- `public.document_events`
+- `public.member_files` linkage fields added by migration
+- storage bucket `member-documents`
+- configured outbound sender email and `RESEND_API_KEY`
+
+Intake assessment e-sign relies on:
+- `public.intake_assessment_signatures`
+- signed-state fields on `public.intake_assessments`
+
+Do not bypass canonical e-sign services when creating, signing, or voiding requests.
+
+## Migration Discipline
+
+- Apply forward-only migrations in numeric order.
+- Do not manually patch production tables without corresponding migration files.
+- Resolve schema drift by migrations plus service alignment, never fallback logic.
+
+## Audit And Retention
+
+- `public.audit_logs` stores privileged action traceability.
+- `public.document_events` stores POF e-sign lifecycle traceability.
+- Keep retention and export controls aligned with compliance requirements.

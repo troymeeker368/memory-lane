@@ -3,6 +3,7 @@ import Link from "next/link";
 import { BloodSugarForm } from "@/components/forms/workflow-forms";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
 import { getCarePlanDashboard } from "@/lib/services/care-plans";
 import { getMembers } from "@/lib/services/documentation";
 import { getHealthSnapshot } from "@/lib/services/health-workflows";
@@ -65,12 +66,21 @@ function toBloodSugarRows(rows: unknown[]): BloodSugarRow[] {
 }
 
 export default async function HealthPage() {
-  await requireModuleAccess("health");
+  const profile = await requireModuleAccess("health");
+  const canViewCarePlans = canAccessCarePlansForRole(profile.role);
+  const emptyCarePlanDashboard = {
+    summary: { total: 0, dueSoon: 0, dueNow: 0, overdue: 0, completedRecently: 0 },
+    dueSoon: [],
+    dueNow: [],
+    overdue: [],
+    recentlyCompleted: [],
+    plans: []
+  };
   const [{ mar, bloodSugar }, members, snapshot, carePlans] = await Promise.all([
     getClinicalOverview(),
     getMembers(),
     getHealthSnapshot(),
-    getCarePlanDashboard()
+    canViewCarePlans ? getCarePlanDashboard() : Promise.resolve(emptyCarePlanDashboard)
   ]);
 
   const marRows = toMarRows(mar as unknown[]);
@@ -165,8 +175,12 @@ export default async function HealthPage() {
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Medication Alerts</p><p className="text-base font-semibold">{overdueMedicationRows.length}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Recent Health Docs</p><p className="text-base font-semibold">{recentHealthDocs.length}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Members w/ Alerts</p><p className="text-base font-semibold">{careAlerts.length}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Care Plans Due Soon</p><p className="text-base font-semibold">{carePlans.summary.dueSoon}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Care Plans Overdue</p><p className="text-base font-semibold">{carePlans.summary.overdue}</p></div>
+          {canViewCarePlans ? (
+            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Care Plans Due Soon</p><p className="text-base font-semibold">{carePlans.summary.dueSoon}</p></div>
+          ) : null}
+          {canViewCarePlans ? (
+            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Care Plans Overdue</p><p className="text-base font-semibold">{carePlans.summary.overdue}</p></div>
+          ) : null}
         </div>
       </Card>
 
@@ -285,7 +299,7 @@ export default async function HealthPage() {
           <Link href="/health/assessment" className="font-semibold text-brand">New Intake Assessment</Link>
           <Link href="/health/physician-orders" className="font-semibold text-brand">Physician Orders / POF</Link>
           <Link href="/health/member-health-profiles" className="font-semibold text-brand">Member Health Profiles</Link>
-          <Link href="/health/care-plans" className="font-semibold text-brand">Care Plans</Link>
+          {canViewCarePlans ? <Link href="/health/care-plans" className="font-semibold text-brand">Care Plans</Link> : null}
         </div>
       </Card>
 

@@ -2,13 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 
-import { requireNavItemAccess } from "@/lib/auth";
+import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { buildCarePlanPdfDataUrl } from "@/lib/services/care-plan-pdf";
 import { toEasternISO } from "@/lib/timezone";
 
 export async function generateCarePlanPdfAction(input: { carePlanId: string }) {
-  const profile = await requireNavItemAccess("/health/care-plans");
+  const user = await requireCarePlanAuthorizedUser();
   const carePlanId = String(input.carePlanId ?? "").trim();
   if (!carePlanId) {
     return { ok: false, error: "Care plan is required." } as const;
@@ -24,9 +24,10 @@ export async function generateCarePlanPdfAction(input: { carePlanId: string }) {
       category: "Care Plan",
       dataUrl: generated.dataUrl,
       uploadedBy: {
-        id: profile.id,
-        name: profile.full_name
+        id: user.userId,
+        name: user.signatureName
       },
+      carePlanId: generated.carePlan.id,
       generatedAtIso: toEasternISO(),
       replaceExistingByDocumentSource: true
     });

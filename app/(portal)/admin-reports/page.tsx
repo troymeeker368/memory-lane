@@ -16,7 +16,6 @@ export default function AdminReportsHomePage() {
           <Link href="/sales/summary" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Sales Summary</Link>
           <Link href="/reports" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Open Reports</Link>
           <Link href="/reports/monthly-ancillary" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Monthly Ancillary</Link>
-          <Link href="/health/care-plans/due-report" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Care Plan Due Report</Link>
           <Link href="/reports/staff" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Staff Activity</Link>
           <Link href="/admin-reports/audit-trail" className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">Audit Trail</Link>
         </div>

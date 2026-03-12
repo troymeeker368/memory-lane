@@ -81,6 +81,7 @@ function parseMedicationRows(formData: FormData): PhysicianOrderMedication[] {
   const routeLateralities = formData.getAll("medicationRouteLaterality").map((value) => String(value ?? "").trim());
   const frequencies = formData.getAll("medicationFrequency").map((value) => String(value ?? "").trim());
   const givenAtCenterValues = formData.getAll("medicationGivenAtCenter").map((value) => String(value ?? "").trim());
+  const givenAtCenterTimes = formData.getAll("medicationGivenAtCenterTime24h").map((value) => String(value ?? "").trim());
   const comments = formData.getAll("medicationComments").map((value) => String(value ?? "").trim());
 
   const max = Math.max(
@@ -92,6 +93,7 @@ function parseMedicationRows(formData: FormData): PhysicianOrderMedication[] {
     routeLateralities.length,
     frequencies.length,
     givenAtCenterValues.length,
+    givenAtCenterTimes.length,
     comments.length
   );
   const rows: PhysicianOrderMedication[] = [];
@@ -111,6 +113,9 @@ function parseMedicationRows(formData: FormData): PhysicianOrderMedication[] {
             ? laterality
             : null
           : null;
+    const givenAtCenter = givenAtCenterValues[idx] === "true";
+    const rawGivenAtCenterTime = givenAtCenterTimes[idx] ?? "";
+    const givenAtCenterTime24h = givenAtCenter && /^\d{2}:\d{2}$/.test(rawGivenAtCenterTime) ? rawGivenAtCenterTime : null;
     rows.push({
       id: `med-input-${idx + 1}`,
       name,
@@ -120,7 +125,8 @@ function parseMedicationRows(formData: FormData): PhysicianOrderMedication[] {
       route,
       routeLaterality: validLaterality,
       frequency: frequencies[idx] ? frequencies[idx] : null,
-      givenAtCenter: givenAtCenterValues[idx] === "true",
+      givenAtCenter,
+      givenAtCenterTime24h,
       comments: comments[idx] ? comments[idx] : null
     });
   }
@@ -183,7 +189,14 @@ function parseStandingOrders(formData: FormData) {
 }
 
 function parseCareInformation(formData: FormData): PhysicianOrderCareInformation {
-  const nutritionDiets = formData.getAll("nutritionDiet").map((value) => String(value ?? "").trim()).filter(Boolean);
+  const nutritionDietsRaw = formData.getAll("nutritionDiet").map((value) => String(value ?? "").trim()).filter(Boolean);
+  const uniqueNutritionDiets = Array.from(new Set(nutritionDietsRaw));
+  const nutritionDietsFiltered =
+    uniqueNutritionDiets.some((value) => value !== "Regular")
+      ? uniqueNutritionDiets.filter((value) => value !== "Regular")
+      : uniqueNutritionDiets;
+  const nutritionDiets = nutritionDietsFiltered.length > 0 ? nutritionDietsFiltered : ["Regular"];
+  const mobilityOther = asCheckbox(formData, "mobilityOther");
 
   return {
     disorientedConstantly: asCheckbox(formData, "disorientedConstantly"),
@@ -205,8 +218,8 @@ function parseCareInformation(formData: FormData): PhysicianOrderCareInformation
     mobilityWalker: asCheckbox(formData, "mobilityWalker"),
     mobilityWheelchair: asCheckbox(formData, "mobilityWheelchair"),
     mobilityScooter: asCheckbox(formData, "mobilityScooter"),
-    mobilityOther: asCheckbox(formData, "mobilityOther"),
-    mobilityOtherText: asNullableString(formData, "mobilityOtherText"),
+    mobilityOther,
+    mobilityOtherText: mobilityOther ? asNullableString(formData, "mobilityOtherText") : null,
     functionalLimitationSight: asCheckbox(formData, "functionalLimitationSight"),
     functionalLimitationHearing: asCheckbox(formData, "functionalLimitationHearing"),
     functionalLimitationSpeech: asCheckbox(formData, "functionalLimitationSpeech"),

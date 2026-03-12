@@ -21,6 +21,7 @@
     "seed:sales": "tsx scripts/seed-supabase.ts --module sales",
     "seed:attendance": "tsx scripts/seed-supabase.ts --module attendance",
     "seed:health": "tsx scripts/seed-supabase.ts --module intake --module attendance",
+    "e2e:pof-sign:live": "node -r ./scripts/shim-server-only.cjs ./node_modules/tsx/dist/cli.mjs scripts/e2e-pof-signing-live.ts",
     "migrate:mock-to-supabase": "tsx scripts/seed-supabase.ts --legacy-only",
     "migrate:mock-to-supabase:reset": "tsx scripts/seed-supabase.ts --legacy-only --reset"
   },
@@ -35,6 +36,7 @@
     "postgres": "^3.4.8",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "server-only": "^0.0.1",
     "zod": "^3.24.4"
   },
   "devDependencies": {

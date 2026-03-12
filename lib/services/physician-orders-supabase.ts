@@ -1,5 +1,3 @@
-import "server-only";
-
 import { Buffer } from "node:buffer";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
@@ -19,6 +17,7 @@ import {
   POF_STANDING_ORDER_OPTIONS
 } from "@/lib/services/physician-order-config";
 import { type IntakeAssessmentForPofPrefill, mapIntakeAssessmentToPofPrefill } from "@/lib/services/intake-to-pof-mapping";
+import type { IntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export {
@@ -48,6 +47,7 @@ export interface PhysicianOrderMedication {
   routeLaterality: string | null;
   frequency: string | null;
   givenAtCenter: boolean;
+  givenAtCenterTime24h: string | null;
   comments: string | null;
 }
 
@@ -552,8 +552,13 @@ export async function getActivePhysicianOrderForMember(memberId: string) {
   return data ? rowToForm(data) : null;
 }
 
-export async function getPhysicianOrderById(pofId: string) {
-  const supabase = await createClient();
+export async function getPhysicianOrderById(
+  pofId: string,
+  options?: {
+    serviceRole?: boolean;
+  }
+) {
+  const supabase = await createClient({ serviceRole: options?.serviceRole });
   const { data, error } = await supabase
     .from("physician_orders")
     .select("*, members!physician_orders_member_id_fkey(display_name)")
@@ -651,6 +656,7 @@ async function nextVersionNumber(memberId: string) {
 export async function createDraftPhysicianOrderFromAssessment(input: {
   assessment: IntakeAssessmentForPofPrefill;
   actor: { id: string; fullName: string; signoffName?: string | null };
+  intakeSignature?: IntakeAssessmentSignatureState;
 }) {
   const supabase = await createClient();
   const { data: existing, error: existingError } = await supabase
@@ -724,6 +730,16 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
     operational_flags: mapped.operationalFlags,
     provider_name: clean(input.actor.signoffName) ?? input.actor.fullName,
     provider_signature: clean(input.actor.signoffName) ?? input.actor.fullName,
+    signature_metadata: input.intakeSignature
+      ? {
+          sourceIntakeAssessmentSignature: {
+            status: input.intakeSignature.status,
+            signedByUserId: input.intakeSignature.signedByUserId,
+            signedByName: input.intakeSignature.signedByName,
+            signedAt: input.intakeSignature.signedAt
+          }
+        }
+      : {},
     created_by_user_id: input.actor.id,
     created_by_name: input.actor.fullName,
     updated_by_user_id: input.actor.id,
@@ -752,16 +768,20 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
   const member = await getMember(input.memberId);
   if (!member) throw new Error("Member not found.");
 
+  const wantsSigned = input.status === "Signed";
+  // Avoid tripping uniq_physician_orders_active_signed before we supersede old active orders.
+  // We persist as Sent first, then finalize signed state in signPhysicianOrder.
+  const persistedStatus: PhysicianOrderStatus = wantsSigned ? "Sent" : input.status;
   const now = toEasternISO();
-  const sentAt = input.status === "Sent" || input.status === "Signed" ? now : null;
-  const signedAt = input.status === "Signed" ? now : null;
+  const sentAt = persistedStatus === "Sent" ? now : null;
+  const signedAt = null;
   const nextRenewalDueDate = sentAt ? calculateRenewalDueDate(sentAt.slice(0, 10)) : null;
 
   const payload = {
     member_id: input.memberId,
     intake_assessment_id: clean(input.intakeAssessmentId),
-    status: fromStatus(input.status),
-    is_active_signed: input.status === "Signed",
+    status: fromStatus(persistedStatus),
+    is_active_signed: false,
     member_name_snapshot: member.display_name,
     member_dob_snapshot: clean(input.memberDobSnapshot),
     sex: input.sex,
@@ -807,7 +827,7 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
     provider_signature_date: clean(input.providerSignatureDate),
     sent_at: sentAt,
     signed_at: signedAt,
-    signed_by_name: input.status === "Signed" ? clean(input.providerName) ?? input.actor.fullName : null,
+    signed_by_name: null,
     next_renewal_due_date: nextRenewalDueDate,
     updated_by_user_id: input.actor.id,
     updated_by_name: input.actor.fullName,
@@ -820,7 +840,7 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
       if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
       throw new Error(error.message);
     }
-    if (input.status === "Signed") {
+    if (wantsSigned) {
       await signPhysicianOrder(existing.id, input.actor);
     }
     const saved = await getPhysicianOrderById(existing.id);
@@ -845,7 +865,7 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
     if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
     throw new Error(error.message);
   }
-  if (input.status === "Signed") {
+  if (wantsSigned) {
     await signPhysicianOrder(data.id, input.actor);
   }
   const saved = await getPhysicianOrderById(data.id);
@@ -853,12 +873,19 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
   return saved;
 }
 
-export async function signPhysicianOrder(pofId: string, actor: { id: string; fullName: string }) {
-  const supabase = await createClient();
-  const row = await getPhysicianOrderById(pofId);
+export async function signPhysicianOrder(
+  pofId: string,
+  actor: { id: string; fullName: string },
+  options?: {
+    serviceRole?: boolean;
+    signedAtIso?: string;
+  }
+) {
+  const supabase = await createClient({ serviceRole: options?.serviceRole });
+  const row = await getPhysicianOrderById(pofId, { serviceRole: options?.serviceRole });
   if (!row) throw new Error("Physician order not found.");
 
-  const now = toEasternISO();
+  const now = options?.signedAtIso ?? toEasternISO();
   const { error: supersedeError } = await supabase
     .from("physician_orders")
     .update({
@@ -899,12 +926,17 @@ export async function signPhysicianOrder(pofId: string, actor: { id: string; ful
     throw new Error(signError.message);
   }
 
-  await syncMemberHealthProfileFromSignedPhysicianOrder(pofId);
+  await syncMemberHealthProfileFromSignedPhysicianOrder(pofId, { serviceRole: options?.serviceRole });
 }
 
-export async function syncMemberHealthProfileFromSignedPhysicianOrder(pofId: string) {
-  const supabase = await createClient();
-  const form = await getPhysicianOrderById(pofId);
+export async function syncMemberHealthProfileFromSignedPhysicianOrder(
+  pofId: string,
+  options?: {
+    serviceRole?: boolean;
+  }
+) {
+  const supabase = await createClient({ serviceRole: options?.serviceRole });
+  const form = await getPhysicianOrderById(pofId, { serviceRole: options?.serviceRole });
   if (!form) throw new Error("Physician order not found for sync.");
   if (form.status !== "Signed") return null;
 
@@ -960,8 +992,13 @@ export async function savePhysicianOrderForm(input: PhysicianOrderSaveInput) {
   return updatePhysicianOrder(input);
 }
 
-export async function buildPhysicianOrderPdfDataUrl(pofId: string) {
-  const form = await getPhysicianOrderById(pofId);
+export async function buildPhysicianOrderPdfDataUrl(
+  pofId: string,
+  options?: {
+    serviceRole?: boolean;
+  }
+) {
+  const form = await getPhysicianOrderById(pofId, { serviceRole: options?.serviceRole });
   if (!form) throw new Error("Physician Order Form not found.");
 
   const now = toEasternISO();

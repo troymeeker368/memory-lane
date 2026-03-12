@@ -13,6 +13,7 @@ import {
   DOCUMENT_CENTER_NAME,
   DOCUMENT_CENTER_PHONE
 } from "@/lib/services/document-branding";
+import { getIntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 type AssessmentSection = {
@@ -181,6 +182,7 @@ export async function buildIntakeAssessmentPdfDataUrl(assessmentId: string) {
   if (!assessment) {
     throw new Error("Intake assessment not found.");
   }
+  const signature = await getIntakeAssessmentSignatureState(assessmentId);
 
   const generatedAt = toEasternISO();
   const sections = await groupedAssessmentSections(assessmentId);
@@ -218,7 +220,9 @@ export async function buildIntakeAssessmentPdfDataUrl(assessmentId: string) {
     `Admission Review Required: ${assessment.admission_review_required ? "Yes" : "No"}`,
     `Completed: ${assessment.complete ? "Yes" : "No"}`,
     `Completed By: ${assessment.completed_by ?? "-"}`,
-    `Signed By: ${assessment.signed_by ?? "-"}`,
+    `E-Sign Status: ${signature.status}`,
+    `Signed By: ${signature.signedByName ?? "-"}`,
+    `Signed At: ${signature.signedAt ?? "-"}`,
     `Created By: ${assessment.completed_by ?? "-"}`,
     `Created At: ${assessment.created_at}`
   ];
@@ -282,7 +286,7 @@ export async function buildIntakeAssessmentPdfDataUrl(assessmentId: string) {
 
   const bytes = await pdf.save();
   const dataUrl = `data:application/pdf;base64,${Buffer.from(bytes).toString("base64")}`;
-  const fileName = `Intake Assessment - ${safeFileName(assessment.member_name)} - ${toEasternDate(generatedAt)}.pdf`;
+  const fileName = `Intake Assessment - ${safeFileName(assessment.member?.display_name ?? "Unknown Member")} - ${toEasternDate(generatedAt)}.pdf`;
 
   return {
     assessment,

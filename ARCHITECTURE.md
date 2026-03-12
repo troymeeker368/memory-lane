@@ -1,249 +1,185 @@
-Memory Lane System Architecture
-
-1. Application Overview
-   Memory Lane is an operations and clinical management platform designed for Adult Day Centers.
-   The application supports daily operational workflows including member management, attendance tracking,
-   clinical documentation, staff management, transportation coordination, billing, and operational reporting.
-2. User Roles
-   Primary roles in the system include:
-
-* Staff
-* Coordinator
-* Nurse
-* Manager
-* Director
-* Admin
-* Sales
-
-Each role has different levels of access to operational modules and permissions.
-Sensitive operations such as payroll approval, billing exports, and clinical edits require elevated roles.
-3. Core Operational Modules
-The system is organized into operational modules:
-
-Members
-Central participant records used by all modules.
-
-Health / Nursing
-Clinical documentation such as medication tracking, vitals, incidents, behavior monitoring, and nursing notes.
-
-Attendance / Census
-Daily attendance tracking and census views.
-
-Time Clock
-Staff punch in/out system with meal deductions, timecard approvals, PTO, and payroll exports.
-
-Billing / Revenue
-Ancillary charge tracking, attendance-driven billing, invoices, and revenue reporting.
-
-Transportation
-Route management, driver logs, pickup/drop tracking, and transport manifests.
-
-Member Intake \& Assessments
-Onboarding workflows, demographic capture, health history, dietary needs, and care needs.
-
-Sales / Marketing
-Lead tracking, referral sources, community partners, and pipeline management.
-
-Reporting \& Analytics
-Operational dashboards, census reports, payroll summaries, billing reports, and exception monitoring.
-4. Data Model Overview
-Primary data entities include:
-
-Members
-Staff
-Attendance Records
-Punches
-Daily Timecards
-PTO Entries
-Transportation Logs
-Ancillary Charges
-Leads
-Community Partners
-Assessments
+# Memory Lane Architecture
 
-Most operational data references either Members or Staff.
-5. Shared Services
-Business logic should be centralized in shared services such as:
+## Architecture Contract
 
-attendanceService
-timecardService
-billingService
-reportingService
-transportService
-permissionsService
+Memory Lane is a Supabase-backed production system.
+Supabase migrations define the runtime schema contract.
 
-UI components should not contain operational calculations.
-6. Cross Module Workflows
-Modules interact with each other through operational workflows.
+Runtime storage alternatives are not allowed:
+- no runtime mock repository
+- no local JSON store
+- no file-backed runtime persistence
+- no in-memory persistence as source of truth
 
-Examples:
-Attendance affects billing totals.
-Transportation logs affect billing and attendance verification.
-PTO affects payroll summaries.
-Forgotten punches affect daily timecards.
-Intake updates affect member summaries.
-Health alerts surface in member summary views.
-7. Navigation Structure
-Navigation follows a hierarchy:
+## Canonical Layers
 
-Menu → Route → Page → Data Source
+Only these layers are valid for business writes:
 
-Examples:
-/members
-/members/\[id]
-/attendance
-/time-clock
-/director/timecards
-/billing
-/sales/pipeline
-8. Mobile vs Desktop Design
-Mobile-first modules:
-Time clock
-Attendance logging
-Activity logs
-Transportation logs
-Nursing documentation
+1. UI
+2. Server Action
+3. Service Layer (`lib/services/*`)
+4. Supabase
 
-Desktop-first modules:
-Payroll dashboards
-Billing reports
-Sales pipelines
-Operational analytics
-9. Export and Reporting
-Exports supported by the system include:
+Canonical write path:
 
-CSV exports
-Printable reports
-PDF generation where required
+`UI -> Server Action -> Service Layer -> Supabase`
 
-Examples:
-Payroll summaries
-Transportation manifests
-Billing summaries
-Attendance reports
-Member summaries
-10. System Constraints
-Important architectural constraints:
+## Layer Responsibilities
 
-Do not duplicate calculations across modules.
-Do not hide permission restrictions only in UI.
-Maintain audit trails for operational and clinical records.
-Avoid dead routes or navigation links.
-Use shared services for calculations and data transformations.
+### UI
 
+- Collect input and render output.
+- Call server actions.
+- Never write directly to Supabase.
+- Never host canonical derived-rule logic.
 
+### Server Actions
 
-\## Canonical Data Architecture
+- Validate request context and role/permission access.
+- Call canonical service functions.
+- Revalidate paths and return user-safe outcomes.
+- Must not bypass canonical service-layer write paths.
 
+### Service Layer
 
+- Canonical location for domain writes and derived business rules.
+- Canonical resolver location for cross-module shared state.
+- Canonical place for schema-aware error handling and integrity checks.
+- Must not fabricate non-persistent fallback records.
 
-Memory Lane must use a canonical architecture for each business domain. Every domain must have:
+### Supabase
 
+- Canonical persistence for operational entities.
+- Migration-defined tables/views/functions only.
+- RLS/policies/triggers and constraints are part of architecture contract.
 
-
-1\. A canonical persistence layer (table(s) in Supabase)
-
-2\. A canonical resolver/service for business logic
-
-3\. A canonical mutation path for writes
-
-4\. Downstream consumers that read only from the canonical resolver or canonical tables as appropriate
-
-
-
-No feature may maintain parallel business logic in multiple services.
-
-
-
-\### Attendance Domain
-
-Canonical tables:
-
-\- member\_attendance\_schedules
-
-\- schedule\_changes
-
-\- member\_holds
-
-\- center\_closures
-
-\- attendance\_records
-
-
-
-Canonical resolver:
-
-\- expected attendance must be resolved through a shared attendance resolution service
-
-
-
-Canonical write paths:
-
-\- recurring schedule updates write to member\_attendance\_schedules
-
-\- temporary schedule overrides write to schedule\_changes
-
-\- actual attendance writes to attendance\_records
-
-\- holds write to member\_holds
-
-\- closure management writes to center\_closures / closure\_rules
-
-
-
-Downstream consumers:
-
-\- attendance views
-
-\- census
-
-\- transportation manifests
-
-\- billing eligibility
-
-\- member command center attendance summaries
-
-
+## Canonical Source Of Truth
 
 Rules:
+- Every business entity has one canonical table.
+- Every derived business rule has one canonical shared resolver/service.
+- Views/aggregates support read use cases but are not source of truth.
+- Duplicated rule calculations across pages/actions/reports are architectural violations.
 
-\- downstream modules must not calculate expected attendance independently
+## Shared Resolver/Service Requirements
 
-\- schedule changes override base recurring schedule for their effective period
+Shared canonical services must be reused for:
+- member detail and cross-domain relation resolution
+- physician orders and health profile derivation
+- intake assessment signature state
+- member command center aggregate state
+- attendance-derived operational state
+- transportation-derived operational state
+- billing eligibility and execution state
 
-\- holds and closures must be applied in the shared resolver, not reimplemented per module
+When duplicate logic is discovered, consolidate into the shared service and migrate all consumers.
 
+## Canonical Clinical Data Cascade
 
+Canonical lifecycle:
 
-\### Billing Domain
+`Intake Assessment -> Physician Orders (POF) -> Member Health Profile (MHP) -> Member Command Center (MCC)`
 
-Canonical tables:
+Interpretation:
+- Intake Assessment is the clinical root source.
+- POF is canonical physician authorization.
+- MHP is normalized clinical state from intake + active signed physician orders.
+- MCC is operational aggregate state derived from upstream canonical clinical/operational records.
 
-\- billing\_batches
+## Role And Permission Architecture
 
-\- billing\_invoices
+Canonical role keys:
+- `program-assistant`
+- `coordinator`
+- `nurse`
+- `sales`
+- `manager`
+- `director`
+- `admin`
 
-\- billing\_invoice\_lines
+Canonical permission/auth services:
+- `lib/permissions.ts`
+- `lib/auth.ts`
 
-\- billing\_adjustments
+Required enforcement entry points:
+- `requireModuleAccess`
+- `requireModuleAction`
+- `requireNavItemAccess`
+- `requireRoles`
 
-\- billing\_coverages
+Permissions must be enforced both:
+- at route/module access boundaries
+- at sensitive business action/write boundaries
 
-\- member\_billing\_settings
+## Public E-Sign Architecture
 
-\- center\_billing\_settings
+Status:
+- implemented for public POF signing and intake-assessment signed-state persistence
 
+Canonical POF e-sign flow:
 
+1. staff user creates request in canonical service
+2. hashed token persisted in `pof_requests`
+3. email sent with public link `/sign/pof/[token]`
+4. provider opens link; request transitions (`sent -> opened`)
+5. provider signs with attestation
+6. canonical services persist signature, signed PDF, and audit events
+7. physician order canonical signed state and downstream sync are updated
 
-Canonical resolver:
+Canonical POF e-sign tables:
+- `pof_requests`
+- `pof_signatures`
+- `document_events`
+- `member_files` linkage (`pof_request_id`, storage path fields)
 
-\- billing eligibility and invoice generation must use shared billing services and canonical attendance resolution inputs
+Canonical intake signature tables:
+- `intake_assessment_signatures`
+- mirrored signed-state fields on `intake_assessments`
 
+Operational dependencies:
+- migration `0019_pof_esign_workflow.sql`
+- migration `0020_intake_assessment_esign.sql`
+- Supabase storage bucket `member-documents`
+- email provider API key `RESEND_API_KEY`
+- configured sender email (`CLINICAL_SENDER_EMAIL` fallback chain)
+- application base URL for public signature links
 
+Security/integrity expectations:
+- tokens are stored hashed and rotated after use
+- expiration state is enforced in persistence
+- IP/user-agent metadata is captured in canonical event records
+- signed artifacts must link to canonical member file records
 
-Rules:
+## Schema Governance
 
-\- billing must not independently reinterpret schedule/attendance logic
+Required:
+- forward-only migrations
+- unique ordered migration names (`####_description.sql`)
+- migration-defined schema usage only
+- explicit failures when required schema objects are missing
 
-\- billing consumes canonical attendance outcomes rather than recomputing them separately
+Forbidden:
+- assuming schema objects that are absent from migrations
+- patching schema drift with runtime fallback behavior
+- introducing table/column dependencies without migration updates
 
+## Definition Of Done For New Modules
+
+A module is complete only when all are true:
+- route/UI works end-to-end
+- writes persist through canonical services into Supabase
+- permission enforcement is present in code
+- shared resolver/service usage is canonical
+- migration updates are applied for new schema requirements
+- downstream reports/exports/integrations consume canonical records
+- `npm run typecheck` passes
+- `npm run build` passes
+
+## Architecture Do-Not Rules
+
+- Do not add direct Supabase writes in UI components.
+- Do not bypass canonical service-layer writes from actions/routes.
+- Do not add parallel resolver implementations for the same rule.
+- Do not fabricate fallback records after failed persistence.
+- Do not import `lib/mock*` in runtime production paths.
+- Do not rely on compatibility APIs containing `mock` naming as runtime architecture.

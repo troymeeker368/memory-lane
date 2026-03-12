@@ -78,7 +78,9 @@ export default async function HealthAssessmentDetailPage({
         </div>
         <div className="mt-2 grid gap-3 md:grid-cols-2">
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Completed By</p><p className="font-semibold">{assessment.completed_by ?? assessment.reviewer_name ?? "-"}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">E-Sign Status</p><p className="font-semibold">{assessment.signature_status ?? "unsigned"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed By</p><p className="font-semibold">{assessment.signed_by ?? "-"}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed At</p><p className="font-semibold">{assessment.signed_at ? formatDateTime(assessment.signed_at) : "-"}</p></div>
         </div>
       </Card>
 

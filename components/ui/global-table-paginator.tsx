@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 
 const PAGE_SIZE = 25;
 
@@ -125,8 +125,6 @@ function applyTablePagination() {
 
 export function GlobalTablePaginator() {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const searchKey = searchParams.toString();
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -167,9 +165,10 @@ export function GlobalTablePaginator() {
         clearTimeout(timer);
       }
     };
-  }, [pathname, searchKey]);
+  }, [pathname]);
 
   return null;
 }
+
 
 

@@ -56,6 +56,12 @@ function CheckboxField({
   );
 }
 
+const ADL_TOILETING_NEEDS_OPTIONS = [
+  { label: "Needs Assistance", value: "Needs Assistance" },
+  { label: "Needs Reminders", value: "Needs Reminders" },
+  { label: "Independent", value: "Independent" }
+] as const;
+
 export default async function NewPhysicianOrderPage({
   searchParams
 }: {
@@ -330,8 +336,27 @@ export default async function NewPhysicianOrderPage({
                   <CheckboxField name="mobilityWalker" label="Walker" defaultChecked={draft.careInformation.mobilityWalker} />
                   <CheckboxField name="mobilityWheelchair" label="Wheelchair" defaultChecked={draft.careInformation.mobilityWheelchair} />
                   <CheckboxField name="mobilityScooter" label="Scooter" defaultChecked={draft.careInformation.mobilityScooter} />
-                  <CheckboxField name="mobilityOther" label="Other" defaultChecked={draft.careInformation.mobilityOther} />
-                  <input name="mobilityOtherText" defaultValue={draft.careInformation.mobilityOtherText ?? ""} placeholder="Mobility other detail" className="h-10 w-full rounded-lg border border-border px-3 text-sm" />
+                  <div className="space-y-2">
+                    <input
+                      id="mobility-other-toggle"
+                      className="peer h-4 w-4"
+                      type="checkbox"
+                      name="mobilityOther"
+                      value="true"
+                      defaultChecked={draft.careInformation.mobilityOther}
+                    />
+                    <label htmlFor="mobility-other-toggle" className="ml-2 inline-flex items-center gap-2 text-sm">
+                      <span>Other</span>
+                    </label>
+                    <div className="hidden peer-checked:block">
+                      <input
+                        name="mobilityOtherText"
+                        defaultValue={draft.careInformation.mobilityOtherText ?? ""}
+                        placeholder="Mobility other detail"
+                        className="h-10 w-full rounded-lg border border-border px-3 text-sm"
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <p className="text-sm font-semibold">Functional Limitations</p>
@@ -426,22 +451,17 @@ export default async function NewPhysicianOrderPage({
                       }
                       options={MHP_SELF_MEDICATE_OPTIONS}
                     />
-                    <label className="space-y-1 text-sm">
-                      <span className="text-xs font-semibold text-muted">Toileting Needs</span>
-                      <input
-                        name="adlToiletingNeeds"
-                        defaultValue={draft.careInformation.adlProfile.toiletingNeeds ?? ""}
-                        className="h-10 w-full rounded-lg border border-border px-3 text-sm"
-                      />
-                    </label>
-                    <label className="space-y-1 text-sm">
-                      <span className="text-xs font-semibold text-muted">Medication Manager Name</span>
-                      <input
-                        name="adlMedicationManagerName"
-                        defaultValue={draft.careInformation.adlProfile.medicationManagerName ?? ""}
-                        className="h-10 w-full rounded-lg border border-border px-3 text-sm"
-                      />
-                    </label>
+                    <SegmentedChoiceGroup
+                      label="Toileting Needs"
+                      name="adlToiletingNeeds"
+                      defaultValue={draft.careInformation.adlProfile.toiletingNeeds ?? ""}
+                      options={ADL_TOILETING_NEEDS_OPTIONS}
+                    />
+                    <input
+                      type="hidden"
+                      name="adlMedicationManagerName"
+                      defaultValue={draft.careInformation.adlProfile.medicationManagerName ?? ""}
+                    />
                   </div>
                   <textarea name="adlToiletingComments" defaultValue={draft.careInformation.adlProfile.toiletingComments ?? ""} placeholder="Toileting Comments" className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
                   <textarea name="adlSpeechComments" defaultValue={draft.careInformation.adlProfile.speechComments ?? ""} placeholder="Speech Comments" className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
@@ -452,28 +472,29 @@ export default async function NewPhysicianOrderPage({
 
             <details className="rounded-lg border border-border p-3" open>
               <summary className="cursor-pointer text-sm font-semibold">Clinical Support</summary>
-              <div className="mt-3 grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <p className="text-sm font-semibold">Medication Administration</p>
-                  <CheckboxField name="medAdministrationSelf" label="Self administration" defaultChecked={draft.careInformation.medAdministrationSelf} />
-                  <CheckboxField name="medAdministrationNurse" label="Nurse administration" defaultChecked={draft.careInformation.medAdministrationNurse} />
-                </div>
-                <div className="space-y-2">
-                  <p className="text-sm font-semibold">Neurological</p>
-                  <CheckboxField name="neurologicalConvulsionsSeizures" label="Convulsions/Seizures" defaultChecked={draft.careInformation.neurologicalConvulsionsSeizures} />
-                </div>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-4">
-                <CheckboxField name="bladderContinent" label="Bladder Continent" defaultChecked={draft.careInformation.bladderContinent} />
-                <CheckboxField name="bladderIncontinent" label="Bladder Incontinent" defaultChecked={draft.careInformation.bladderIncontinent} />
-                <CheckboxField name="bowelContinent" label="Bowel Continent" defaultChecked={draft.careInformation.bowelContinent} />
-                <CheckboxField name="bowelIncontinent" label="Bowel Incontinent" defaultChecked={draft.careInformation.bowelIncontinent} />
-                <CheckboxField name="skinNormal" label="Skin Normal" defaultChecked={draft.careInformation.skinNormal} />
-                <input name="skinOther" defaultValue={draft.careInformation.skinOther ?? ""} placeholder="Skin other" className="h-10 rounded-lg border border-border px-3 text-sm" />
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
                 <CheckboxField name="breathingRoomAir" label="Room Air" defaultChecked={draft.careInformation.breathingRoomAir} />
-                <CheckboxField name="breathingOxygenTank" label="Oxygen Tank" defaultChecked={draft.careInformation.breathingOxygenTank} />
-                <input name="breathingOxygenLiters" defaultValue={draft.careInformation.breathingOxygenLiters ?? ""} placeholder="Oxygen liters (L)" className="h-10 rounded-lg border border-border px-3 text-sm" />
+                <CheckboxField name="breathingOxygenTank" label="O2 Needs" defaultChecked={draft.careInformation.breathingOxygenTank} />
+                <input
+                  name="breathingOxygenLiters"
+                  defaultValue={draft.careInformation.breathingOxygenLiters ?? ""}
+                  placeholder="Oxygen liters (L)"
+                  className="h-10 rounded-lg border border-border px-3 text-sm"
+                />
               </div>
+              <input type="hidden" name="medAdministrationSelf" value={draft.careInformation.medAdministrationSelf ? "true" : "false"} />
+              <input type="hidden" name="medAdministrationNurse" value={draft.careInformation.medAdministrationNurse ? "true" : "false"} />
+              <input
+                type="hidden"
+                name="neurologicalConvulsionsSeizures"
+                value={draft.careInformation.neurologicalConvulsionsSeizures ? "true" : "false"}
+              />
+              <input type="hidden" name="bladderContinent" value={draft.careInformation.bladderContinent ? "true" : "false"} />
+              <input type="hidden" name="bladderIncontinent" value={draft.careInformation.bladderIncontinent ? "true" : "false"} />
+              <input type="hidden" name="bowelContinent" value={draft.careInformation.bowelContinent ? "true" : "false"} />
+              <input type="hidden" name="bowelIncontinent" value={draft.careInformation.bowelIncontinent ? "true" : "false"} />
+              <input type="hidden" name="skinNormal" value={draft.careInformation.skinNormal ? "true" : "false"} />
+              <input type="hidden" name="skinOther" defaultValue={draft.careInformation.skinOther ?? ""} />
             </details>
 
             <details className="rounded-lg border border-border p-3" open>

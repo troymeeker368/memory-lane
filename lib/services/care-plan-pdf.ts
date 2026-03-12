@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 
-import { getCarePlanById } from "@/lib/services/care-plans";
+import { getCarePlanById, getCarePlanDocumentBlueprint } from "@/lib/services/care-plans";
 import {
   DOCUMENT_CENTER_ADDRESS,
   DOCUMENT_CENTER_LOGO_PUBLIC_PATH,
@@ -148,8 +148,8 @@ function toGoalItems(value: string) {
     .filter(Boolean);
 }
 
-export async function buildCarePlanPdfDataUrl(carePlanId: string) {
-  const detail = await getCarePlanById(carePlanId);
+export async function buildCarePlanPdfDataUrl(carePlanId: string, options?: { serviceRole?: boolean }) {
+  const detail = await getCarePlanById(carePlanId, { serviceRole: Boolean(options?.serviceRole) });
   if (!detail) {
     throw new Error("Care plan not found.");
   }
@@ -178,23 +178,19 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string) {
 
   let { page, y } = newPage();
   const carePlan = detail.carePlan;
+  const blueprint = getCarePlanDocumentBlueprint(carePlan.track);
 
-  page.drawText("Member Care Plan", { x: 36, y, size: 15, font: fontBold, color: blue });
+  page.drawText(blueprint.definition.title, { x: 36, y, size: 15, font: fontBold, color: blue });
   y -= 20;
   const summaryLines = [
-    `Member: ${carePlan.memberName}`,
+    `${blueprint.definition.memberNameLabel} ${carePlan.memberName}`,
+    `${blueprint.definition.enrollmentDateLabel} ${carePlan.enrollmentDate}`,
+    `${blueprint.definition.reviewDateLabel} ${carePlan.reviewDate}`,
     `Track: ${carePlan.track}`,
-    `Enrollment Date: ${carePlan.enrollmentDate}`,
-    `Review Date: ${carePlan.reviewDate}`,
     `Last Completed: ${carePlan.lastCompletedDate ?? "-"}`,
     `Next Due: ${carePlan.nextDueDate}`,
     `Status: ${carePlan.status}`,
-    `Completed By: ${carePlan.completedBy ?? "-"}`,
-    `Date of Completion: ${carePlan.dateOfCompletion ?? "-"}`,
-    `Responsible Party Signature: ${carePlan.responsiblePartySignature ?? "-"}`,
-    `Responsible Party Signature Date: ${carePlan.responsiblePartySignatureDate ?? "-"}`,
-    `Administrator Signature: ${carePlan.administratorSignature ?? "-"}`,
-    `Administrator Signature Date: ${carePlan.administratorSignatureDate ?? "-"}`
+    `Nurse/Admin Signed At: ${carePlan.nurseSignedAt ?? "-"}`
   ];
 
   summaryLines.forEach((line) => {
@@ -235,7 +231,7 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string) {
 
     y = drawWrappedText({
       page,
-      text: "Short-Term Goals",
+      text: blueprint.labels.shortTerm,
       x: 36,
       y,
       maxWidth: 540,
@@ -253,7 +249,7 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string) {
       }
       y = drawWrappedText({
         page,
-        text: `- ${goal}`,
+        text: goal,
         x: 42,
         y,
         maxWidth: 534,
@@ -267,7 +263,7 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string) {
 
     y = drawWrappedText({
       page,
-      text: "Long-Term Goals",
+      text: blueprint.labels.longTerm,
       x: 36,
       y,
       maxWidth: 540,
@@ -285,7 +281,7 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string) {
       }
       y = drawWrappedText({
         page,
-        text: `- ${goal}`,
+        text: goal,
         x: 42,
         y,
         maxWidth: 534,
@@ -304,7 +300,48 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string) {
     y = next.y;
   }
 
-  page.drawText("Care Team Notes", { x: 36, y, size: 11, font: fontBold, color: blue });
+  page.drawText(blueprint.labels.reviewUpdates, { x: 36, y, size: 11, font: fontBold, color: blue });
+  y -= 14;
+  y = drawWrappedText({
+    page,
+    text: carePlan.noChangesNeeded ? "☑ No changes needed" : "☐ No changes needed",
+    x: 36,
+    y,
+    maxWidth: 540,
+    lineHeight: 12,
+    font,
+    size: 10,
+    color: text
+  });
+  y -= 2;
+  y = drawWrappedText({
+    page,
+    text: carePlan.modificationsRequired ? "☑ Modifications required (describe below)" : "☐ Modifications required (describe below)",
+    x: 36,
+    y,
+    maxWidth: 540,
+    lineHeight: 12,
+    font,
+    size: 10,
+    color: text
+  });
+  if (carePlan.modificationsDescription.trim()) {
+    y -= 2;
+    y = drawWrappedText({
+      page,
+      text: carePlan.modificationsDescription.trim(),
+      x: 36,
+      y,
+      maxWidth: 540,
+      lineHeight: 12,
+      font,
+      size: 10,
+      color: text
+    });
+  }
+
+  y -= 10;
+  page.drawText(blueprint.labels.careTeamNotes, { x: 36, y, size: 11, font: fontBold, color: blue });
   y -= 14;
   y = drawWrappedText({
     page,
@@ -315,6 +352,43 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string) {
     lineHeight: 12,
     font,
     size: 10,
+    color: text
+  });
+
+  y -= 12;
+  y = drawWrappedText({
+    page,
+    text: `Completed By (Nurse Name): ${carePlan.completedBy ?? "-"}    Date of Completion: ${carePlan.dateOfCompletion ?? "-"}`,
+    x: 36,
+    y,
+    maxWidth: 540,
+    lineHeight: 12,
+    font,
+    size: 9.5,
+    color: text
+  });
+  y -= 2;
+  y = drawWrappedText({
+    page,
+    text: `Responsible Party Signature: ${carePlan.responsiblePartySignature ?? carePlan.caregiverSignedName ?? "-"}    Date: ${carePlan.responsiblePartySignatureDate ?? carePlan.caregiverSignedAt ?? "-"}`,
+    x: 36,
+    y,
+    maxWidth: 540,
+    lineHeight: 12,
+    font,
+    size: 9.5,
+    color: text
+  });
+  y -= 2;
+  drawWrappedText({
+    page,
+    text: `Administrator/Designee Signature: ${carePlan.administratorSignature ?? carePlan.nurseDesigneeName ?? "-"}    Date: ${carePlan.administratorSignatureDate ?? "-"}`,
+    x: 36,
+    y,
+    maxWidth: 540,
+    lineHeight: 12,
+    font,
+    size: 9.5,
     color: text
   });
 

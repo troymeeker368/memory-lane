@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { requireNavItemAccess } from "@/lib/auth";
+import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { getLatestCarePlanForMember } from "@/lib/services/care-plans";
 
 export default async function LatestMemberCarePlanPage({
@@ -8,7 +8,7 @@ export default async function LatestMemberCarePlanPage({
 }: {
   params: Promise<{ memberId: string }>;
 }) {
-  await requireNavItemAccess("/health/care-plans");
+  await requireCarePlanAuthorizedUser();
   const { memberId } = await params;
 
   const latest = await getLatestCarePlanForMember(memberId);

@@ -5,6 +5,7 @@ import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
 import { requireModuleAccess } from "@/lib/auth";
+import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
 import { getMemberDetail } from "@/lib/services/relations";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
@@ -12,6 +13,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
   const profile = await requireModuleAccess("documentation");
   const canManage = profile.role === "admin" || profile.role === "manager";
   const canViewMhp = profile.role === "admin" || profile.role === "nurse";
+  const canViewCarePlans = canAccessCarePlansForRole(profile.role);
   const { memberId } = await params;
   const detail = await getMemberDetail(memberId, { role: profile.role, staffUserId: profile.id });
 
@@ -32,7 +34,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Status</p><p className="font-semibold">{detail.member.status}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Discharge Date</p><p className="font-semibold">{formatOptionalDate(detail.member.discharge_date)}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Participation Log Entries</p><p className="font-semibold">{detail.dailyActivities.length}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Health Entries</p><p className="font-semibold">{detail.bloodSugar.length + detail.marToday.length + detail.carePlans.length}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Health Entries</p><p className="font-semibold">{detail.bloodSugar.length + detail.marToday.length + (canViewCarePlans ? detail.carePlans.length : 0)}</p></div>
         </div>
         {detail.member.status === "inactive" ? (
           <div className="mt-3 rounded-lg border border-border bg-brandPale p-3 text-sm">
@@ -143,6 +145,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
         </div>
       </RelatedSection>
 
+      {canViewCarePlans ? (
       <RelatedSection title="Care Plans" count={detail.carePlans.length} viewAllHref="/health/care-plans/list" addHref={`/health/care-plans/new?memberId=${detail.member.id}`}>
         <div className="space-y-2">
           {detail.latestCarePlan ? (
@@ -170,6 +173,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
           ))}
         </div>
       </RelatedSection>
+      ) : null}
 
       <RelatedSection title="Photos / Documents" count={detail.photos.length} viewAllHref="/documentation/photo-upload" addHref="/documentation/photo-upload">
         <div className="space-y-2">

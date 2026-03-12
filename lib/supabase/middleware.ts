@@ -31,8 +31,11 @@ export async function updateSession(request: NextRequest) {
   const {
     data: { user }
   } = await supabase.auth.getUser();
+  const isPublicSigningRoute =
+    request.nextUrl.pathname.startsWith("/sign/pof/") ||
+    request.nextUrl.pathname.startsWith("/sign/care-plan/");
 
-  if (!user && !request.nextUrl.pathname.startsWith("/login")) {
+  if (!user && !request.nextUrl.pathname.startsWith("/login") && !isPublicSigningRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

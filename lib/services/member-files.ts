@@ -19,6 +19,7 @@ type SaveGeneratedMemberPdfInput = {
   memberName: string;
   documentLabel: string;
   documentSource: string;
+  carePlanId?: string | null;
   category: MemberFileCategory;
   categoryOther?: string | null;
   dataUrl: string;
@@ -78,6 +79,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
           file_name: defaultName,
           file_type: "application/pdf",
           file_data_url: input.dataUrl,
+          care_plan_id: input.carePlanId ?? null,
           category: input.category,
           category_other: categoryOther,
           document_source: input.documentSource,
@@ -125,6 +127,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
       file_name: fileName,
       file_type: "application/pdf",
       file_data_url: input.dataUrl,
+      care_plan_id: input.carePlanId ?? null,
       category: input.category,
       category_other: categoryOther,
       document_source: input.documentSource,

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { MemberCommandCenterContactManager } from "@/components/forms/member-command-center-contact-manager";
 import { MemberCommandCenterFileManager } from "@/components/forms/member-command-center-file-manager";
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
+import { MemberCommandCenterPofSection } from "@/components/forms/member-command-center-pof-section";
 import { MccDemographicsForm } from "@/components/forms/mcc-demographics-form";
 import { MccAttendanceForm } from "@/components/forms/mcc-attendance-form";
 import { MccTransportationForm } from "@/components/forms/mcc-transportation-form";
@@ -24,9 +25,14 @@ import {
   listMemberBillingSettingsSupabase
 } from "@/lib/services/member-command-center-supabase";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
-import { resolveExpectedAttendanceForDate } from "@/lib/services/expected-attendance";
+import { getConfiguredClinicalSenderEmail, listPofRequestsByPhysicianOrderIds } from "@/lib/services/pof-esign";
+import {
+  loadExpectedAttendanceSupabaseContext,
+  resolveExpectedAttendanceFromSupabaseContext
+} from "@/lib/services/expected-attendance-supabase";
 import { listScheduleChangesSupabase, SCHEDULE_WEEKDAY_KEYS } from "@/lib/services/schedule-changes-supabase";
 import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-supabase";
+import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
@@ -163,10 +169,18 @@ export default async function MemberCommandCenterDetailPage({
     effectiveDate: billingDate,
     limit: 25
   });
-  const effectiveScheduleToday = resolveExpectedAttendanceForDate({
+  const expectedAttendanceContext = await loadExpectedAttendanceSupabaseContext({
+    memberIds: [detail.member.id],
+    startDate: billingDate,
+    endDate: billingDate,
+    includeAttendanceRecords: false
+  });
+  const effectiveScheduleToday = resolveExpectedAttendanceFromSupabaseContext({
+    context: expectedAttendanceContext,
+    memberId: detail.member.id,
     date: billingDate,
-    baseSchedule: detail.schedule,
-    scheduleChanges: activeScheduleChangesForToday
+    baseScheduleOverride: detail.schedule,
+    scheduleChangesOverride: activeScheduleChangesForToday
   });
   const effectiveScheduleTodayLabel =
     effectiveScheduleToday.effectiveDays.length > 0
@@ -254,6 +268,12 @@ export default async function MemberCommandCenterDetailPage({
   const allergiesUpdatedAt = latestTimestamp(detail.mhpAllergies.map((row) => row.updated_at));
   const allergiesUpdatedBy = latestUpdatedBy(detail.mhpAllergies, (row) => row.updated_at, (row) => row.created_by_name);
   const physicianOrders = await getPhysicianOrdersForMember(detail.member.id);
+  const pofRequests = await listPofRequestsByPhysicianOrderIds(
+    detail.member.id,
+    physicianOrders.map((row) => row.id)
+  );
+  const defaultNurseName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
+  const defaultFromEmail = getConfiguredClinicalSenderEmail();
   const physicianOrdersUpdatedAt = latestTimestamp(physicianOrders.map((row) => row.updatedAt));
   const physicianOrdersUpdatedBy = latestUpdatedBy(physicianOrders, (row) => row.updatedAt, (row) => row.updatedByName);
 
@@ -741,52 +761,16 @@ export default async function MemberCommandCenterDetailPage({
             lastUpdatedAt={physicianOrdersUpdatedAt}
             lastUpdatedBy={physicianOrdersUpdatedBy}
           />
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Link href={`/health/physician-orders?memberId=${detail.member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
-              Open Full POF List
-            </Link>
-            {canCreatePhysicianOrders ? (
-              <Link href={`/health/physician-orders/new?memberId=${detail.member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
-                New Physician Order
-              </Link>
-            ) : null}
+          <div className="mt-3">
+            <MemberCommandCenterPofSection
+              memberId={detail.member.id}
+              physicianOrders={physicianOrders}
+              requests={pofRequests}
+              defaultNurseName={defaultNurseName}
+              defaultFromEmail={defaultFromEmail}
+              canCreatePhysicianOrders={canCreatePhysicianOrders}
+            />
           </div>
-          <table className="mt-3">
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Provider</th>
-                <th>Sent</th>
-                <th>Signed</th>
-                <th>Updated</th>
-                <th>Open</th>
-              </tr>
-            </thead>
-            <tbody>
-              {physicianOrders.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="text-sm text-muted">
-                    No physician orders saved for this member yet.
-                  </td>
-                </tr>
-              ) : (
-                physicianOrders.slice(0, 25).map((row) => (
-                  <tr key={row.id}>
-                    <td>{row.status}</td>
-                    <td>{row.providerName ?? "-"}</td>
-                    <td>{row.completedDate ? formatOptionalDate(row.completedDate) : "-"}</td>
-                    <td>{row.signedDate ? formatOptionalDate(row.signedDate) : "-"}</td>
-                    <td>{formatDateTime(row.updatedAt)}</td>
-                    <td>
-                      <Link href={`/health/physician-orders/${row.id}?from=mcc`} className="font-semibold text-brand">
-                        Open
-                      </Link>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
         </Card>
       ) : null}
 
@@ -808,3 +792,4 @@ export default async function MemberCommandCenterDetailPage({
     </div>
   );
 }
+

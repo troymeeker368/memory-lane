@@ -1,7 +1,7 @@
 ﻿import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireNavItemAccess } from "@/lib/auth";
+import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { getCarePlanDashboard } from "@/lib/services/care-plans";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
 
@@ -18,7 +18,7 @@ function StatusLink({ status, href }: { status: string; href: string }) {
 }
 
 export default async function CarePlansDashboardPage() {
-  await requireNavItemAccess("/health/care-plans");
+  await requireCarePlanAuthorizedUser();
   const dashboard = await getCarePlanDashboard();
 
   return (

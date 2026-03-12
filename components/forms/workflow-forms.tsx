@@ -388,7 +388,7 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
     leadStatus: selectedInitialMember?.lead_status ?? "",
     assessmentDate: today,
     completedBy: initialStaffName ?? "",
-    signedBy: initialStaffName ?? "",
+    signatureAttested: false,
     complete: true,
 
     feelingToday: "",
@@ -458,8 +458,7 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
     if (!initialStaffName?.trim()) return;
     setForm((current) => ({
       ...current,
-      completedBy: initialStaffName,
-      signedBy: initialStaffName
+      completedBy: initialStaffName
     }));
   }, [initialStaffName]);
 
@@ -589,7 +588,7 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
     const errors: string[] = [];
     if (!form.leadId) errors.push("Linked Lead (Tour/EIP)");
     if (!form.completedBy.trim()) errors.push("Completed By");
-    if (!form.signedBy.trim()) errors.push("Nurse Signature");
+    if (!form.signatureAttested) errors.push("Nurse E-Sign Attestation");
     if (!form.assessmentDate.trim()) errors.push("Assessment Date");
     if (!form.feelingToday.trim()) errors.push("How member is feeling today");
     if (!form.healthLately.trim()) errors.push("Health lately");
@@ -898,17 +897,27 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
 
       {textareaField("Overall Notes", "notes")}
       <div className="rounded-lg border border-border p-3">
-        <p className="mb-2 text-sm font-semibold">Signature</p>
+        <p className="mb-2 text-sm font-semibold">Nurse E-Signature</p>
         <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Nurse Signature</span>
+          <span className="text-xs font-semibold text-muted">Authenticated Clinical Signer</span>
           <input
-            className="h-11 rounded-lg border border-border px-3"
-            value={form.signedBy}
-            onChange={(event) => setForm((current) => ({ ...current, signedBy: event.target.value }))}
-            placeholder="Type full legal name"
+            className="h-11 rounded-lg border border-border bg-slate-50 px-3"
+            value={initialStaffName ?? "Resolved from signed-in nurse/admin session"}
+            readOnly
+            aria-readonly="true"
           />
         </label>
-        <p className="mt-2 text-xs text-muted">TODO: Replace typed signature with e-signature workflow when PDF/e-sign integration is added.</p>
+        <label className="mt-3 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.signatureAttested}
+            onChange={(event) => setForm((current) => ({ ...current, signatureAttested: event.target.checked }))}
+          />
+          <span>
+            I attest this is my electronic signature and I am the authorized clinical signer for this Intake Assessment.
+          </span>
+        </label>
+        <p className="mt-2 text-xs text-muted">Signer identity is resolved server-side from the active authenticated nurse/admin session.</p>
       </div>
 
       <Button
@@ -931,7 +940,7 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
               leadStatus: form.leadStatus,
               assessmentDate: form.assessmentDate,
               completedBy: form.completedBy,
-              signedBy: form.signedBy,
+              signatureAttested: form.signatureAttested,
               complete: form.complete,
               feelingToday: form.feelingToday,
               healthLately: form.healthLately,

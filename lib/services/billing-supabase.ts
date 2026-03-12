@@ -1969,26 +1969,34 @@ export async function reopenBillingBatch(input: ReopenBatchInput) {
         const sourceRecordId = String((line as any).source_record_id ?? "");
         if (!sourceTable || !sourceRecordId) continue;
         if (sourceTable === "transportation_logs") {
-          await supabase
+          const { error: sourceUpdateError } = await supabase
             .from("transportation_logs")
             .update({ billing_status: "Unbilled", invoice_id: null, updated_at: now })
             .eq("id", sourceRecordId);
+          if (sourceUpdateError) throw new Error(sourceUpdateError.message);
         } else if (sourceTable === "ancillary_charge_logs") {
-          await supabase
+          const { error: sourceUpdateError } = await supabase
             .from("ancillary_charge_logs")
             .update({ billing_status: "Unbilled", invoice_id: null, updated_at: now })
             .eq("id", sourceRecordId);
+          if (sourceUpdateError) throw new Error(sourceUpdateError.message);
         } else if (sourceTable === "billing_adjustments") {
-          await supabase
+          const { error: sourceUpdateError } = await supabase
             .from("billing_adjustments")
             .update({ billing_status: "Unbilled", invoice_id: null, updated_at: now })
             .eq("id", sourceRecordId);
+          if (sourceUpdateError) throw new Error(sourceUpdateError.message);
         }
       }
 
-      await supabase.from("billing_coverages").delete().in("source_invoice_id", invoiceIds);
-      await supabase.from("billing_invoice_lines").update({ billing_status: "Unbilled", updated_at: now }).in("invoice_id", invoiceIds);
-      await supabase
+      const { error: coverageDeleteError } = await supabase.from("billing_coverages").delete().in("source_invoice_id", invoiceIds);
+      if (coverageDeleteError) throw new Error(coverageDeleteError.message);
+      const { error: invoiceLineResetError } = await supabase
+        .from("billing_invoice_lines")
+        .update({ billing_status: "Unbilled", updated_at: now })
+        .in("invoice_id", invoiceIds);
+      if (invoiceLineResetError) throw new Error(invoiceLineResetError.message);
+      const { error: invoiceResetError } = await supabase
         .from("billing_invoices")
         .update({
           invoice_status: "Draft",
@@ -1998,6 +2006,7 @@ export async function reopenBillingBatch(input: ReopenBatchInput) {
           updated_at: now
         })
         .in("id", invoiceIds);
+      if (invoiceResetError) throw new Error(invoiceResetError.message);
     }
 
     const { error: batchUpdateError } = await supabase
@@ -2830,14 +2839,16 @@ export async function createBillingExport(input: {
       .single();
     if (exportError) throw new Error(exportError.message);
 
-    await supabase
+    const { error: batchExportUpdateError } = await supabase
       .from("billing_batches")
       .update({ batch_status: "Exported", updated_at: now })
       .eq("id", input.billingBatchId);
-    await supabase
+    if (batchExportUpdateError) throw new Error(batchExportUpdateError.message);
+    const { error: invoiceExportUpdateError } = await supabase
       .from("billing_invoices")
       .update({ export_status: "Exported", updated_at: now })
       .in("id", invoiceIds);
+    if (invoiceExportUpdateError) throw new Error(invoiceExportUpdateError.message);
 
     return { ok: true as const, billingExportId: String(exportRow.id) };
   } catch (error) {
@@ -2996,3 +3007,4 @@ export async function setVariableChargeBillingStatus(input: {
   if (error) throw new Error(error.message);
   return data;
 }
+

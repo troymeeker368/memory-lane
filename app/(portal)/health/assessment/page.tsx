@@ -49,6 +49,8 @@ export default async function HealthAssessmentPage({
               <th>Admission Review</th>
               <th>Transport Appropriate</th>
               <th>Completed By</th>
+              <th>E-Sign Status</th>
+              <th>Signed By</th>
               <th>Complete</th>
               <th>Open</th>
             </tr>
@@ -63,6 +65,8 @@ export default async function HealthAssessmentPage({
                 <td>{row.admission_review_required ? "Required" : "No"}</td>
                 <td>{row.transport_appropriate == null ? "-" : row.transport_appropriate ? "Yes" : "No"}</td>
                 <td>{row.completed_by ?? row.reviewer_name ?? row.created_by_name ?? "-"}</td>
+                <td>{row.signature_status ?? "unsigned"}</td>
+                <td>{row.signed_by ?? "-"}</td>
                 <td>{row.complete ? "Yes" : "No"}</td>
                 <td>
                   <Link className="font-semibold text-brand" href={`/health/assessment/${row.id}`}>
@@ -76,9 +80,9 @@ export default async function HealthAssessmentPage({
       </Card>
 
       <Card>
-        <CardTitle>Future Backend TODO</CardTitle>
+        <CardTitle>Workflow Status</CardTitle>
         <p className="text-sm text-muted">
-          TODO: Add locked revision workflow and e-signature validation when backend document storage is fully connected.
+          Intake Assessment signatures are captured through the canonical authenticated nurse/admin e-sign workflow and stored in Supabase.
         </p>
       </Card>
     </div>

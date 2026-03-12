@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 export async function getLeadsSnapshot() {
   const supabase = await createClient();
 
-  const [{ data: leads }, { data: stages }, { data: activities }] = await Promise.all([
+  const [{ data: leads, error: leadsError }, { data: stages, error: stagesError }, { data: activities, error: activitiesError }] = await Promise.all([
     supabase
       .from("leads")
       .select("id, stage, status, member_name, caregiver_name, inquiry_date, next_follow_up_date, lead_source, likelihood, closed_date")
@@ -17,6 +17,10 @@ export async function getLeadsSnapshot() {
       .limit(30)
   ]);
 
+  if (leadsError) throw new Error(leadsError.message);
+  if (stagesError) throw new Error(stagesError.message);
+  if (activitiesError) throw new Error(activitiesError.message);
+
   return {
     leads: leads ?? [],
     stages: stages ?? [],
@@ -26,10 +30,12 @@ export async function getLeadsSnapshot() {
 
 export async function getReferralSources() {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("referral_sources")
     .select("id, organization_name, contact_name, primary_phone, primary_email, active")
     .eq("active", true)
     .order("organization_name");
+  if (error) throw new Error(error.message);
   return data ?? [];
 }
+

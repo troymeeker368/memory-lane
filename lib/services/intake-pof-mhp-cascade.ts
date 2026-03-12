@@ -10,6 +10,7 @@ import {
   syncMemberHealthProfileFromSignedPhysicianOrder,
   updatePhysicianOrder
 } from "@/lib/services/physician-orders-supabase";
+import { requireSignedIntakeAssessment } from "@/lib/services/intake-assessment-esign";
 import { toEasternISO } from "@/lib/timezone";
 
 export type CreateIntakeAssessmentPayload = {
@@ -158,7 +159,11 @@ export async function createIntakeAssessment(input: {
     status: input.payload.complete ? "completed" : "draft",
     completed_by_user_id: input.actor.id,
     completed_by: input.actor.signoffName,
-    signed_by: input.actor.signoffName,
+    signed_by: null,
+    signed_by_user_id: null,
+    signed_at: null,
+    signature_status: "unsigned",
+    signature_metadata: {},
     complete: input.payload.complete,
     feeling_today: input.payload.feelingToday,
     health_lately: input.payload.healthLately,
@@ -275,7 +280,11 @@ export async function autoCreateDraftPhysicianOrderFromIntake(input: {
   assessment: IntakeAssessmentForPofPrefill;
   actor: { id: string; fullName: string; signoffName?: string | null };
 }) {
-  return createDraftPhysicianOrderFromAssessment(input);
+  const intakeSignature = await requireSignedIntakeAssessment(input.assessment.id);
+  return createDraftPhysicianOrderFromAssessment({
+    ...input,
+    intakeSignature
+  });
 }
 
 export { updatePhysicianOrder, signPhysicianOrder, syncMemberHealthProfileFromSignedPhysicianOrder, getActivePhysicianOrderForMember, getMemberHealthProfile };
