@@ -1,12 +1,11 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { getFinalizedInvoices } from "@/lib/services/billing";
-import { getMockDb } from "@/lib/mock-repo";
+import { getBillingMemberPayorLookups, getFinalizedInvoices } from "@/lib/services/billing-supabase";
 
 export default async function FinalizedInvoicesPage() {
-  const invoices = getFinalizedInvoices();
-  const db = getMockDb();
-  const memberName = new Map(db.members.map((row) => [row.id, row.display_name] as const));
-  const payorName = new Map(db.payors.map((row) => [row.id, row.payor_name] as const));
+  const invoices = await getFinalizedInvoices();
+  const lookups = await getBillingMemberPayorLookups();
+  const memberName = new Map(lookups.members.map((row) => [row.id, row.displayName] as const));
+  const payorName = new Map(lookups.payors.map((row) => [row.id, row.payorName] as const));
 
   return (
     <Card className="table-wrap">

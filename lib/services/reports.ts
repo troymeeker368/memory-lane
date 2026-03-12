@@ -1,13 +1,6 @@
-import { getMockReportingSnapshot } from "@/lib/mock-data";
-import { isMockMode } from "@/lib/runtime";
 import { createClient } from "@/lib/supabase/server";
 
 export async function getReportingSnapshot() {
-  if (isMockMode()) {
-    // TODO(backend): Remove mock branch when reports are loaded from Supabase in local/dev.
-    return getMockReportingSnapshot();
-  }
-
   const supabase = await createClient();
 
   const [{ data: timelyDocs }, { data: careTracker }, { data: toileted }] = await Promise.all([

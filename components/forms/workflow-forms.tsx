@@ -23,6 +23,12 @@ import {
   TRANSPORT_TYPE_OPTIONS
 } from "@/lib/canonical";
 import { ASSESSMENT_SCORE_OPTIONS, calculateAssessmentTotal, getAssessmentTrack } from "@/lib/assessment";
+import {
+  SHARED_ASSISTIVE_DEVICE_OPTIONS,
+  SHARED_DIET_OPTIONS,
+  SHARED_MEDICATION_ASSIST_OPTIONS,
+  SHARED_TRANSFER_ASSIST_OPTIONS
+} from "@/lib/services/intake-pof-shared";
 
 type MemberOption = {
   id: string;
@@ -349,20 +355,29 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
   const [status, setStatus] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const selectedInitialMemberId =
-    initialMemberId && members.some((member) => member.id === initialMemberId || member.lead_id === initialMemberId)
-      ? members.find((member) => member.id === initialMemberId || member.lead_id === initialMemberId)?.id ?? members[0]?.id ?? ""
+    initialMemberId &&
+    members.some(
+      (member) =>
+        member.id === initialMemberId || member.lead_id === initialMemberId || member.linked_member_id === initialMemberId
+    )
+      ? members.find(
+          (member) =>
+            member.id === initialMemberId ||
+            member.lead_id === initialMemberId ||
+            member.linked_member_id === initialMemberId
+        )?.id ?? members[0]?.id ?? ""
       : members[0]?.id ?? "";
   const selectedInitialMember = members.find((member) => member.id === selectedInitialMemberId);
 
   const CODE_STATUS_OPTIONS = ["Full Code", "DNR"] as const;
-  const MEDICATION_MANAGEMENT_OPTIONS = ["Independent", "Needs reminders", "Needs cueing", "Needs full assistance"] as const;
+  const MEDICATION_MANAGEMENT_OPTIONS = SHARED_MEDICATION_ASSIST_OPTIONS;
   const DRESSING_SUPPORT_OPTIONS = ["Independent", "Setup only", "Needs partial assistance", "Needs full assistance"] as const;
-  const ASSISTIVE_DEVICE_OPTIONS = ["Walker", "Cane", "Wheelchair", "Gait Belt", "None", "Other"] as const;
+  const ASSISTIVE_DEVICE_OPTIONS = SHARED_ASSISTIVE_DEVICE_OPTIONS;
   const INCONTINENCE_PRODUCT_OPTIONS = ["Briefs", "Pads", "None", "Other"] as const;
-  const DIET_OPTIONS = ["Regular", "Diabetic", "Low Sodium", "Pureed", "Mechanical Soft", "Other"] as const;
+  const DIET_OPTIONS = SHARED_DIET_OPTIONS;
   const MOBILITY_AID_OPTIONS = ["Walker", "Cane", "Wheelchair", "None", "Other"] as const;
   const TRANSPORT_ENTER_EXIT_OPTIONS = ["Independent", "Standby Assist", "1-Person Assist", "2-Person Assist", "Wheelchair Transfer"] as const;
-  const TRANSPORT_ASSISTANCE_OPTIONS = ["Independent", "Standby", "1:1 Assist", "2:1 Assist", "Lift Required"] as const;
+  const TRANSPORT_ASSISTANCE_OPTIONS = SHARED_TRANSFER_ASSIST_OPTIONS;
   const TRANSPORT_AID_OPTIONS = ["Walker", "Cane", "Wheelchair", "Gait Belt", "None", "Other"] as const;
   const TRANSPORT_BEHAVIOR_OPTIONS = ["None", "Unbuckles seatbelt", "Exit-seeking", "Agitation", "Verbal aggression", "Other"] as const;
 

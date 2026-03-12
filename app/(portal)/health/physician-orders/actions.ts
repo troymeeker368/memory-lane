@@ -5,7 +5,6 @@ import { redirect } from "next/navigation";
 
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
-import { syncPhysicianOrderToMemberProfiles } from "@/lib/services/member-profile-sync";
 import {
   OTIC_LATERALITY_OPTIONS,
   OPHTHALMIC_LATERALITY_OPTIONS,
@@ -24,7 +23,7 @@ import {
   type PhysicianOrderMedication,
   type PhysicianOrderOperationalFlags,
   type PhysicianOrderStatus
-} from "@/lib/services/physician-orders";
+} from "@/lib/services/physician-orders-supabase";
 import { toEasternISO } from "@/lib/timezone";
 
 function asString(formData: FormData, key: string) {
@@ -69,7 +68,7 @@ function parseLevelOfCare(value: string) {
 
 function parseStatusFromIntent(intent: string): PhysicianOrderStatus {
   if (intent === "signed") return "Signed";
-  if (intent === "completed") return "Completed";
+  if (intent === "sent" || intent === "completed") return "Sent";
   return "Draft";
 }
 
@@ -297,7 +296,7 @@ async function savePofPdfToMemberFiles(input: {
   dataUrl: string;
   uploadedBy: { id: string; name: string };
 }) {
-  saveGeneratedMemberPdfToFiles({
+  await saveGeneratedMemberPdfToFiles({
     memberId: input.memberId,
     memberName: input.memberName,
     documentLabel: "POF",
@@ -314,7 +313,7 @@ async function savePofPdfToMemberFiles(input: {
 
 export async function savePhysicianOrderFormAction(formData: FormData) {
   const profile = await requireRoles(["admin", "nurse"]);
-  const actorDisplayName = getManagedUserSignoffLabel(profile.id, profile.full_name);
+  const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
   const memberId = asString(formData, "memberId");
   if (!memberId) throw new Error("Member is required.");
 
@@ -329,9 +328,10 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
   const allergyRows = parseAllergyRows(formData);
   const standingOrders = parseStandingOrders(formData);
 
-  const saved = savePhysicianOrderForm({
+  const saved = await savePhysicianOrderForm({
     id: asNullableString(formData, "pofId"),
     memberId,
+    intakeAssessmentId: asNullableString(formData, "intakeAssessmentId"),
     memberDobSnapshot: asNullableString(formData, "memberDob"),
     sex: parseSex(asString(formData, "sex")),
     levelOfCare: parseLevelOfCare(asString(formData, "levelOfCare")),
@@ -360,60 +360,8 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
     }
   });
 
-  syncPhysicianOrderToMemberProfiles({
-    memberId: saved.memberId,
-    pof: {
-      id: saved.id,
-      memberDobSnapshot: saved.memberDobSnapshot,
-      dnrSelected: saved.dnrSelected,
-      status: saved.status,
-      diagnosisRows: saved.diagnosisRows,
-      diagnoses: saved.diagnoses,
-      allergyRows: saved.allergyRows,
-      allergies: saved.allergies,
-      medications: saved.medications.map((row) => ({
-        name: row.name,
-        dose: row.dose,
-        quantity: row.quantity,
-        form: row.form,
-        route: row.route,
-        routeLaterality: row.routeLaterality,
-        frequency: row.frequency,
-        givenAtCenter: row.givenAtCenter,
-        comments: row.comments
-      })),
-      careInformation: {
-        nutritionDiets: saved.careInformation.nutritionDiets,
-        nutritionDietOther: saved.careInformation.nutritionDietOther,
-        medAdministrationSelf: saved.careInformation.medAdministrationSelf,
-        medAdministrationNurse: saved.careInformation.medAdministrationNurse,
-        personalCareToileting: saved.careInformation.personalCareToileting,
-        breathingOxygenTank: saved.careInformation.breathingOxygenTank,
-        breathingOxygenLiters: saved.careInformation.breathingOxygenLiters,
-        joySparksNotes: saved.careInformation.joySparksNotes,
-        adlProfile: saved.careInformation.adlProfile,
-        orientationProfile: saved.careInformation.orientationProfile
-      },
-      operationalFlags: {
-        nutAllergy: saved.operationalFlags.nutAllergy,
-        shellfishAllergy: saved.operationalFlags.shellfishAllergy,
-        fishAllergy: saved.operationalFlags.fishAllergy,
-        diabeticRestrictedSweets: saved.operationalFlags.diabeticRestrictedSweets,
-        oxygenRequirement: saved.operationalFlags.oxygenRequirement,
-        dnr: saved.operationalFlags.dnr,
-        noPhotos: saved.operationalFlags.noPhotos,
-        bathroomAssistance: saved.operationalFlags.bathroomAssistance
-      }
-    },
-    actor: {
-      id: profile.id,
-      fullName: actorDisplayName
-    },
-    at: saved.updatedAt
-  });
-
   let pdfSaveFailed = false;
-  if (status === "Completed" || status === "Signed") {
+  if (status === "Sent" || status === "Signed") {
     try {
       const generated = await buildPhysicianOrderPdfDataUrl(saved.id);
       await savePofPdfToMemberFiles({
@@ -436,7 +384,7 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
 
 export async function generatePhysicianOrderPdfAction(input: { pofId: string }) {
   const profile = await getCurrentProfile();
-  const actorDisplayName = getManagedUserSignoffLabel(profile.id, profile.full_name);
+  const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
   if (profile.role !== "admin" && profile.role !== "nurse") {
     return { ok: false, error: "You do not have access to generate POF PDFs." } as const;
   }
@@ -468,3 +416,4 @@ export async function generatePhysicianOrderPdfAction(input: { pofId: string }) 
     } as const;
   }
 }
+

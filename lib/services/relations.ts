@@ -1,9 +1,7 @@
-import { getMockDb } from "@/lib/mock-repo";
 import { normalizeRoleKey } from "@/lib/permissions";
-import { isMockMode } from "@/lib/runtime";
 import { getCarePlansForMember } from "@/lib/services/care-plans";
+import { createClient } from "@/lib/supabase/server";
 import { getCurrentPayPeriod, isDateInPayPeriod } from "@/lib/pay-period";
-import { toEasternDate } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
 
 function sortDesc<T>(rows: T[], getValue: (row: T) => string) {
@@ -29,9 +27,7 @@ function summarizePunches(punches: { punch_type: "in" | "out"; punch_at: string 
       if (hours > 12) {
         exceptions.push(`Long shift (${hours.toFixed(2)}h) on ${current.punch_at.slice(0, 10)}`);
       }
-      if (hours > 0) {
-        total += hours;
-      }
+      if (hours > 0) total += hours;
     }
   }
 
@@ -51,52 +47,56 @@ export async function getMemberDetail(
     staffUserId?: string | null;
   }
 ) {
-  if (!isMockMode()) {
-    // TODO(backend): replace with joined member + related logs query set.
-    // TODO(backend): apply strict staff-only authored-entry visibility for staff role.
-    return null;
-  }
-
-  const db = getMockDb();
-  const member = db.members.find((m) => m.id === memberId);
+  const supabase = await createClient();
+  const { data: member, error } = await supabase.from("members").select("*").eq("id", memberId).maybeSingle();
+  if (error) throw new Error(error.message);
   if (!member) return null;
 
   const isStaffViewer = Boolean(scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && !!scope.staffUserId);
   const staffUserId = scope?.staffUserId ?? null;
 
-  const dailyActivities = sortDesc(
-    db.dailyActivities.filter((r) => r.member_id === memberId && (!isStaffViewer || r.staff_user_id === staffUserId)),
-    (r) => r.created_at
-  );
-  const toilets = sortDesc(
-    db.toiletLogs.filter((r) => r.member_id === memberId && (!isStaffViewer || r.staff_user_id === staffUserId)),
-    (r) => r.event_at
-  );
-  const showers = sortDesc(
-    db.showerLogs.filter((r) => r.member_id === memberId && (!isStaffViewer || r.staff_user_id === staffUserId)),
-    (r) => r.event_at
-  );
-  const transportation = sortDesc(
-    db.transportationLogs.filter((r) => r.member_id === memberId && (!isStaffViewer || r.staff_user_id === staffUserId)),
-    (r) => `${r.service_date}T00:00:00.000Z`
-  );
-  const bloodSugar = sortDesc(
-    db.bloodSugarLogs.filter((r) => r.member_id === memberId && (!isStaffViewer || r.nurse_user_id === staffUserId)),
-    (r) => r.checked_at
-  );
-  const ancillary = sortDesc(
-    db.ancillaryLogs.filter((r) => r.member_id === memberId && (!isStaffViewer || r.staff_user_id === staffUserId)),
-    (r) => r.created_at
-  );
-  const assessments = sortDesc(
-    db.assessments.filter((r) => r.member_id === memberId && (!isStaffViewer || r.created_by_user_id === staffUserId)),
-    (r) => r.created_at
-  );
-  const photos = sortDesc(
-    db.photoUploads.filter((r) => r.member_id === memberId && (!isStaffViewer || r.uploaded_by === staffUserId)),
-    (r) => r.uploaded_at
-  );
-  const carePlans = isStaffViewer ? [] : getCarePlansForMember(memberId);
+  const [
+    dailyActivitiesResult,
+    toiletsResult,
+    showersResult,
+    transportationResult,
+    bloodSugarResult,
+    ancillaryResult,
+    assessmentsResult,
+    photosResult
+  ] = await Promise.all([
+    supabase.from("daily_activity_logs").select("*").eq("member_id", memberId).order("created_at", { ascending: false }),
+    supabase.from("toilet_logs").select("*").eq("member_id", memberId).order("event_at", { ascending: false }),
+    supabase.from("shower_logs").select("*").eq("member_id", memberId).order("event_at", { ascending: false }),
+    supabase.from("transportation_logs").select("*").eq("member_id", memberId).order("service_date", { ascending: false }),
+    supabase.from("blood_sugar_logs").select("*").eq("member_id", memberId).order("checked_at", { ascending: false }),
+    supabase.from("ancillary_charge_logs").select("*").eq("member_id", memberId).order("created_at", { ascending: false }),
+    supabase.from("intake_assessments").select("*").eq("member_id", memberId).order("created_at", { ascending: false }),
+    supabase.from("member_photo_uploads").select("*").eq("member_id", memberId).order("uploaded_at", { ascending: false })
+  ]);
+
+  if (dailyActivitiesResult.error) throw new Error(dailyActivitiesResult.error.message);
+  if (toiletsResult.error) throw new Error(toiletsResult.error.message);
+  if (showersResult.error) throw new Error(showersResult.error.message);
+  if (transportationResult.error) throw new Error(transportationResult.error.message);
+  if (bloodSugarResult.error) throw new Error(bloodSugarResult.error.message);
+  if (ancillaryResult.error) throw new Error(ancillaryResult.error.message);
+  if (assessmentsResult.error) throw new Error(assessmentsResult.error.message);
+  if (photosResult.error) throw new Error(photosResult.error.message);
+
+  const filterByStaff = <T extends Record<string, unknown>>(rows: T[], field: string) =>
+    !isStaffViewer || !staffUserId ? rows : rows.filter((row) => String(row[field] ?? "") === staffUserId);
+
+  const dailyActivities = filterByStaff(dailyActivitiesResult.data ?? [], "staff_user_id");
+  const toilets = filterByStaff(toiletsResult.data ?? [], "staff_user_id");
+  const showers = filterByStaff(showersResult.data ?? [], "staff_user_id");
+  const transportation = filterByStaff(transportationResult.data ?? [], "staff_user_id");
+  const bloodSugar = filterByStaff(bloodSugarResult.data ?? [], "nurse_user_id");
+  const ancillary = filterByStaff(ancillaryResult.data ?? [], "staff_user_id");
+  const assessments = filterByStaff(assessmentsResult.data ?? [], "created_by_user_id");
+  const photos = filterByStaff(photosResult.data ?? [], "uploaded_by");
+
+  const carePlans = isStaffViewer ? [] : await getCarePlansForMember(memberId);
   const latestCarePlan = [...carePlans].sort((a, b) => {
     if (a.updatedAt !== b.updatedAt) return a.updatedAt < b.updatedAt ? 1 : -1;
     return a.reviewDate < b.reviewDate ? 1 : -1;
@@ -114,223 +114,311 @@ export async function getMemberDetail(
     photos,
     carePlans,
     latestCarePlan,
-    marToday: isStaffViewer
-      ? []
-      : [
-          {
-            id: `mar-${member.id}`,
-            date: toEasternDate(),
-            medication: "Donepezil",
-            dose: "10mg",
-            route: "PO",
-            frequency: "Daily",
-            scheduled_time: "09:00",
-            action: "Given",
-            staff: "Nina Nurse"
-          }
-        ]
-  };
-}
-
-export async function getStaffDetail(staffId: string) {
-  if (!isMockMode()) {
-    // TODO(backend): replace with staff-centric operational joins.
-    return null;
-  }
-
-  const db = getMockDb();
-  const staff = db.staff.find((s) => s.id === staffId);
-  if (!staff) return null;
-
-  const punches = sortDesc(db.timePunches.filter((r) => r.staff_user_id === staffId), (r) => r.punch_at);
-  const dailyActivities = sortDesc(db.dailyActivities.filter((r) => r.staff_user_id === staffId), (r) => r.created_at);
-  const toilets = sortDesc(db.toiletLogs.filter((r) => r.staff_user_id === staffId), (r) => r.event_at);
-  const showers = sortDesc(db.showerLogs.filter((r) => r.staff_user_id === staffId), (r) => r.event_at);
-  const transportation = sortDesc(db.transportationLogs.filter((r) => r.staff_user_id === staffId), (r) => `${r.service_date}T00:00:00.000Z`);
-  const ancillary = sortDesc(db.ancillaryLogs.filter((r) => r.staff_user_id === staffId), (r) => r.created_at);
-  const leadActivities = sortDesc(db.leadActivities.filter((r) => r.completed_by_user_id === staffId), (r) => r.activity_at);
-  const assessments = sortDesc(db.assessments.filter((r) => r.created_by_user_id === staffId), (r) => r.created_at);
-
-  return {
-    staff,
-    punches,
-    dailyActivities,
-    toilets,
-    showers,
-    transportation,
-    ancillary,
-    leadActivities,
-    assessments,
-    punchSummary: summarizePunches(punches)
+    marToday: [] as Array<{
+      id: string;
+      date: string;
+      medication: string;
+      dose: string;
+      route: string;
+      frequency: string;
+      scheduled_time: string;
+      action: string;
+      staff: string;
+    }>
   };
 }
 
 export async function getLeadDetail(leadId: string) {
-  if (!isMockMode()) {
-    // TODO(backend): replace with lead + activities + partner/referral/partner-activity joins.
-    return null;
-  }
-
-  const db = getMockDb();
-  const lead = db.leads.find((l) => l.id === leadId);
+  const supabase = await createClient();
+  const { data: lead, error: leadError } = await supabase.from("leads").select("*").eq("id", leadId).maybeSingle();
+  if (leadError) throw new Error(leadError.message);
   if (!lead) return null;
 
-  const partner = lead.partner_id ? db.partners.find((p) => p.partner_id === lead.partner_id) ?? null : null;
-  const referralSource = lead.referral_source_id
-    ? db.referralSources.find((source) => source.referral_source_id === lead.referral_source_id || source.id === lead.referral_source_id) ?? null
-    : lead.referral_name
-      ? db.referralSources.find((source) => source.contact_name === lead.referral_name || source.organization_name === lead.referral_name) ?? null
-      : null;
+  const partnerId = String(lead.partner_id ?? "").trim();
+  const referralSourceId = String(lead.referral_source_id ?? "").trim();
+  const referralName = String(lead.referral_name ?? "").trim();
 
-  const activities = sortDesc(db.leadActivities.filter((activity) => activity.lead_id === leadId), (activity) => activity.activity_at);
-  const stageHistory = sortDesc(
-    db.leadStageHistory.filter((history) => history.lead_id === leadId),
-    (history) => history.changed_at
-  );
-  const partnerActivities = sortDesc(
-    db.partnerActivities.filter((activity) => {
-      if (activity.lead_id === lead.id) return true;
-      if (lead.partner_id && activity.partner_id === lead.partner_id) return true;
-      if (referralSource && activity.referral_source_id === referralSource.referral_source_id) return true;
-      return false;
-    }),
-    (activity) => activity.activity_at
-  );
+  const partnerPromise = partnerId
+    ? supabase
+        .from("community_partner_organizations")
+        .select("*")
+        .or(`id.eq.${partnerId},partner_id.eq.${partnerId}`)
+        .maybeSingle()
+    : Promise.resolve({ data: null, error: null } as const);
+
+  const referralSourcePromise = referralSourceId
+    ? supabase
+        .from("referral_sources")
+        .select("*")
+        .or(`id.eq.${referralSourceId},referral_source_id.eq.${referralSourceId}`)
+        .maybeSingle()
+    : referralName
+      ? supabase
+          .from("referral_sources")
+          .select("*")
+          .or(`contact_name.eq.${referralName},organization_name.eq.${referralName}`)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null } as const);
+
+  const [activitiesResult, stageHistoryResult, partnerResult, referralSourceResult] = await Promise.all([
+    supabase.from("lead_activities").select("*").eq("lead_id", leadId).order("activity_at", { ascending: false }),
+    supabase.from("lead_stage_history").select("*").eq("lead_id", leadId).order("changed_at", { ascending: false }),
+    partnerPromise,
+    referralSourcePromise
+  ]);
+
+  if (activitiesResult.error) throw new Error(activitiesResult.error.message);
+  if (stageHistoryResult.error) throw new Error(stageHistoryResult.error.message);
+  if (partnerResult.error) throw new Error(partnerResult.error.message);
+  if (referralSourceResult.error) throw new Error(referralSourceResult.error.message);
+
+  const partner = partnerResult.data ?? null;
+  const referralSource = referralSourceResult.data ?? null;
+
+  let partnerActivitiesQuery = supabase.from("partner_activities").select("*").order("activity_at", { ascending: false }).limit(200);
+  const partnerFilters = [
+    `lead_id.eq.${lead.id}`,
+    partner?.partner_id ? `partner_id.eq.${partner.partner_id}` : null,
+    referralSource?.referral_source_id ? `referral_source_id.eq.${referralSource.referral_source_id}` : null
+  ].filter(Boolean);
+  if (partnerFilters.length > 0) {
+    partnerActivitiesQuery = partnerActivitiesQuery.or(partnerFilters.join(","));
+  }
+
+  const { data: partnerActivities, error: partnerActivitiesError } = await partnerActivitiesQuery;
+  if (partnerActivitiesError) throw new Error(partnerActivitiesError.message);
 
   return {
     lead,
-    activities,
-    stageHistory,
+    activities: activitiesResult.data ?? [],
+    stageHistory: stageHistoryResult.data ?? [],
     partner,
     referralSource,
-    partnerActivities
+    partnerActivities: partnerActivities ?? []
   };
 }
 
 export async function getPartnerDetail(partnerId: string) {
-  if (!isMockMode()) {
-    // TODO(backend): replace with partner + referral source + lead joins.
-    return null;
-  }
-
-  const db = getMockDb();
-  const partner = db.partners.find((p) => p.id === partnerId || p.partner_id === partnerId);
+  const supabase = await createClient();
+  const { data: partner, error: partnerError } = await supabase
+    .from("community_partner_organizations")
+    .select("*")
+    .or(`id.eq.${partnerId},partner_id.eq.${partnerId}`)
+    .maybeSingle();
+  if (partnerError) throw new Error(partnerError.message);
   if (!partner) return null;
 
-  const referralSources = db.referralSources.filter((source) => source.partner_id === partner.partner_id);
-  const referralSourceIds = new Set(referralSources.map((source) => source.referral_source_id));
+  const partnerKey = String(partner.partner_id ?? partner.id);
+  const { data: referralSources, error: referralError } = await supabase
+    .from("referral_sources")
+    .select("*")
+    .eq("partner_id", partnerKey)
+    .order("organization_name", { ascending: true });
+  if (referralError) throw new Error(referralError.message);
 
-  const leads = sortDesc(
-    db.leads.filter((lead) => lead.partner_id === partner.partner_id || (lead.referral_source_id ? referralSourceIds.has(lead.referral_source_id) : false)),
-    (lead) => lead.created_at
-  );
+  const sourceIds = (referralSources ?? []).map((source: any) => String(source.referral_source_id ?? source.id));
 
-  const leadIds = new Set(leads.map((lead) => lead.id));
-  const leadActivities = sortDesc(db.leadActivities.filter((activity) => leadIds.has(activity.lead_id)), (activity) => activity.activity_at);
-  const partnerActivities = sortDesc(
-    db.partnerActivities.filter((activity) => activity.partner_id === partner.partner_id || (activity.referral_source_id ? referralSourceIds.has(activity.referral_source_id) : false)),
-    (activity) => activity.activity_at
-  );
+  let leadsQuery = supabase.from("leads").select("*").order("created_at", { ascending: false }).limit(200);
+  const leadFilters = [
+    `partner_id.eq.${partnerKey}`,
+    ...sourceIds.map((id) => `referral_source_id.eq.${id}`)
+  ];
+  if (leadFilters.length > 0) {
+    leadsQuery = leadsQuery.or(leadFilters.join(","));
+  }
+  const { data: leads, error: leadsError } = await leadsQuery;
+  if (leadsError) throw new Error(leadsError.message);
+
+  const leadIds = (leads ?? []).map((lead: any) => String(lead.id));
+
+  let leadActivitiesQuery = supabase.from("lead_activities").select("*").order("activity_at", { ascending: false }).limit(200);
+  if (leadIds.length > 0) {
+    leadActivitiesQuery = leadActivitiesQuery.in("lead_id", leadIds);
+  } else {
+    leadActivitiesQuery = leadActivitiesQuery.eq("lead_id", "__none__");
+  }
+  const { data: leadActivities, error: leadActivitiesError } = await leadActivitiesQuery;
+  if (leadActivitiesError) throw new Error(leadActivitiesError.message);
+
+  const partnerActivityFilters = [
+    `partner_id.eq.${partnerKey}`,
+    ...sourceIds.map((id) => `referral_source_id.eq.${id}`)
+  ];
+  let partnerActivitiesQuery = supabase.from("partner_activities").select("*").order("activity_at", { ascending: false }).limit(200);
+  if (partnerActivityFilters.length > 0) {
+    partnerActivitiesQuery = partnerActivitiesQuery.or(partnerActivityFilters.join(","));
+  }
+  const { data: partnerActivities, error: partnerActivitiesError } = await partnerActivitiesQuery;
+  if (partnerActivitiesError) throw new Error(partnerActivitiesError.message);
 
   return {
     partner,
-    referralSources,
-    leads,
-    leadActivities,
-    partnerActivities
+    referralSources: referralSources ?? [],
+    leads: leads ?? [],
+    leadActivities: leadActivities ?? [],
+    partnerActivities: partnerActivities ?? []
   };
 }
 
 export async function getReferralSourceDetail(sourceId: string) {
-  if (!isMockMode()) {
-    // TODO(backend): replace with referral source + partner + linked lead/activity joins.
-    return null;
-  }
-
-  const db = getMockDb();
-  const referralSource = db.referralSources.find((source) => source.id === sourceId || source.referral_source_id === sourceId);
+  const supabase = await createClient();
+  const { data: referralSource, error: referralError } = await supabase
+    .from("referral_sources")
+    .select("*")
+    .or(`id.eq.${sourceId},referral_source_id.eq.${sourceId}`)
+    .maybeSingle();
+  if (referralError) throw new Error(referralError.message);
   if (!referralSource) return null;
 
-  const partner = db.partners.find((item) => item.partner_id === referralSource.partner_id) ?? null;
+  const sourceKey = String(referralSource.referral_source_id ?? referralSource.id);
+  const partnerKey = String(referralSource.partner_id ?? "");
 
-  const leads = sortDesc(
-    db.leads.filter((lead) => {
-      if (lead.referral_source_id && lead.referral_source_id === referralSource.referral_source_id) return true;
-      if (lead.referral_name === referralSource.contact_name || lead.referral_name === referralSource.organization_name) return true;
-      if (lead.partner_id && lead.partner_id === referralSource.partner_id) return true;
-      return false;
-    }),
-    (lead) => lead.created_at
-  );
+  const partnerPromise = partnerKey
+    ? supabase
+        .from("community_partner_organizations")
+        .select("*")
+        .or(`id.eq.${partnerKey},partner_id.eq.${partnerKey}`)
+        .maybeSingle()
+    : Promise.resolve({ data: null, error: null } as const);
 
-  const leadIds = new Set(leads.map((lead) => lead.id));
-  const leadActivities = sortDesc(
-    db.leadActivities.filter((activity) => {
-      if (leadIds.has(activity.lead_id)) return true;
-      if (activity.referral_source_id && activity.referral_source_id === referralSource.referral_source_id) return true;
-      return false;
-    }),
-    (activity) => activity.activity_at
-  );
+  const leadsQuery = supabase
+    .from("leads")
+    .select("*")
+    .or(`referral_source_id.eq.${sourceKey},partner_id.eq.${partnerKey}`)
+    .order("created_at", { ascending: false })
+    .limit(200);
 
-  const partnerActivities = sortDesc(
-    db.partnerActivities.filter((activity) => {
-      if (activity.referral_source_id && activity.referral_source_id === referralSource.referral_source_id) return true;
-      if (activity.partner_id === referralSource.partner_id) return true;
-      return false;
-    }),
-    (activity) => activity.activity_at
-  );
+  const leadActivitiesQuery = supabase
+    .from("lead_activities")
+    .select("*")
+    .or(`referral_source_id.eq.${sourceKey}`)
+    .order("activity_at", { ascending: false })
+    .limit(200);
+
+  const partnerActivitiesQuery = supabase
+    .from("partner_activities")
+    .select("*")
+    .or(`referral_source_id.eq.${sourceKey},partner_id.eq.${partnerKey}`)
+    .order("activity_at", { ascending: false })
+    .limit(200);
+
+  const [partnerResult, leadsResult, leadActivitiesResult, partnerActivitiesResult] = await Promise.all([
+    partnerPromise,
+    leadsQuery,
+    leadActivitiesQuery,
+    partnerActivitiesQuery
+  ]);
+
+  if (partnerResult.error) throw new Error(partnerResult.error.message);
+  if (leadsResult.error) throw new Error(leadsResult.error.message);
+  if (leadActivitiesResult.error) throw new Error(leadActivitiesResult.error.message);
+  if (partnerActivitiesResult.error) throw new Error(partnerActivitiesResult.error.message);
 
   return {
     referralSource,
-    partner,
-    leads,
-    leadActivities,
-    partnerActivities
+    partner: partnerResult.data ?? null,
+    leads: leadsResult.data ?? [],
+    leadActivities: leadActivitiesResult.data ?? [],
+    partnerActivities: partnerActivitiesResult.data ?? []
   };
 }
 
 export async function getAssessmentDetail(assessmentId: string) {
-  if (!isMockMode()) {
-    // TODO(backend): replace with assessment + member + reviewer relation query.
-    return null;
+  const supabase = await createClient();
+  const { data: assessment, error: assessmentError } = await supabase
+    .from("intake_assessments")
+    .select("*, member:members!intake_assessments_member_id_fkey(*)")
+    .eq("id", assessmentId)
+    .maybeSingle();
+  if (!assessmentError && assessment) {
+    const { data: responses } = await supabase
+      .from("assessment_responses")
+      .select("*")
+      .eq("assessment_id", assessmentId)
+      .order("section_type", { ascending: true })
+      .order("field_label", { ascending: true });
+
+    return {
+      assessment: {
+        ...assessment,
+        member_name: assessment.member?.display_name ?? "Unknown Member"
+      },
+      member: assessment.member ?? null,
+      responses: responses ?? []
+    };
   }
 
-  const db = getMockDb();
-  const assessment = db.assessments.find((a) => a.id === assessmentId);
-  if (!assessment) return null;
-
-  const member = db.members.find((m) => m.id === assessment.member_id) ?? null;
-  const responses = db.assessmentResponses
-    .filter((response) => response.assessment_id === assessmentId)
-    .sort((a, b) => {
-      if (a.section_type === b.section_type) return a.field_label.localeCompare(b.field_label);
-      return a.section_type.localeCompare(b.section_type);
-    });
-  return { assessment, member, responses };
+  return null;
 }
 
-export async function getTimeReviewDetail(staffId: string) {
-  if (!isMockMode()) {
-    // TODO(backend): replace with pay-period rollup and punch exception query.
-    return null;
-  }
-
-  const db = getMockDb();
-  const staff = db.staff.find((s) => s.id === staffId);
+export async function getStaffDetail(staffId: string) {
+  const supabase = await createClient();
+  const { data: staff, error: staffError } = await supabase.from("profiles").select("*").eq("id", staffId).maybeSingle();
+  if (staffError) throw new Error(staffError.message);
   if (!staff) return null;
 
-  const period = getCurrentPayPeriod();
-  const punches = sortDesc(
-    db.timePunches.filter((p) => p.staff_user_id === staffId).filter((p) => isDateInPayPeriod(p.punch_at, period)),
-    (p) => p.punch_at
-  );
-  const summary = summarizePunches(punches);
+  const [punchesResult, dailyActivitiesResult, toiletsResult, showersResult, transportationResult, ancillaryResult, leadActivitiesResult, assessmentsResult] =
+    await Promise.all([
+      supabase.from("time_punches").select("*").eq("staff_user_id", staffId).order("punch_at", { ascending: false }),
+      supabase.from("daily_activity_logs").select("*").eq("staff_user_id", staffId).order("created_at", { ascending: false }),
+      supabase.from("toilet_logs").select("*").eq("staff_user_id", staffId).order("event_at", { ascending: false }),
+      supabase.from("shower_logs").select("*").eq("staff_user_id", staffId).order("event_at", { ascending: false }),
+      supabase.from("transportation_logs").select("*").eq("staff_user_id", staffId).order("service_date", { ascending: false }),
+      supabase.from("ancillary_charge_logs").select("*").eq("staff_user_id", staffId).order("created_at", { ascending: false }),
+      supabase.from("lead_activities").select("*").eq("completed_by_user_id", staffId).order("activity_at", { ascending: false }),
+      supabase.from("intake_assessments").select("*").eq("created_by_user_id", staffId).order("created_at", { ascending: false })
+    ]);
+
+  if (punchesResult.error) throw new Error(punchesResult.error.message);
+  if (dailyActivitiesResult.error) throw new Error(dailyActivitiesResult.error.message);
+  if (toiletsResult.error) throw new Error(toiletsResult.error.message);
+  if (showersResult.error) throw new Error(showersResult.error.message);
+  if (transportationResult.error) throw new Error(transportationResult.error.message);
+  if (ancillaryResult.error) throw new Error(ancillaryResult.error.message);
+  if (leadActivitiesResult.error) throw new Error(leadActivitiesResult.error.message);
+  if (assessmentsResult.error) throw new Error(assessmentsResult.error.message);
+
+  const punches = sortDesc((punchesResult.data ?? []) as Array<{ punch_at: string }>, (r) => r.punch_at);
 
   return {
     staff,
     punches,
+    dailyActivities: dailyActivitiesResult.data ?? [],
+    toilets: toiletsResult.data ?? [],
+    showers: showersResult.data ?? [],
+    transportation: transportationResult.data ?? [],
+    ancillary: ancillaryResult.data ?? [],
+    leadActivities: leadActivitiesResult.data ?? [],
+    assessments: assessmentsResult.data ?? [],
+    punchSummary: summarizePunches(
+      punches.map((row: any) => ({
+        punch_type: row.punch_type,
+        punch_at: row.punch_at
+      }))
+    )
+  };
+}
+
+export async function getTimeReviewDetail(staffId: string) {
+  const supabase = await createClient();
+  const { data: staff, error: staffError } = await supabase.from("profiles").select("*").eq("id", staffId).maybeSingle();
+  if (staffError) throw new Error(staffError.message);
+  if (!staff) return null;
+
+  const period = getCurrentPayPeriod();
+  const { data: punches, error: punchesError } = await supabase
+    .from("time_punches")
+    .select("punch_type, punch_at")
+    .eq("staff_user_id", staffId)
+    .order("punch_at", { ascending: false });
+  if (punchesError) throw new Error(punchesError.message);
+
+  const periodPunches = (punches ?? []).filter((p: any) => isDateInPayPeriod(p.punch_at, period));
+  const summary = summarizePunches(periodPunches as Array<{ punch_type: "in" | "out"; punch_at: string }>);
+
+  return {
+    staff,
+    punches: periodPunches,
     payPeriod: period.label,
     ...summary
   };

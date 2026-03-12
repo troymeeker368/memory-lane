@@ -80,9 +80,11 @@ function categorizeAllergies(
   return groups;
 }
 
-export function getMemberFaceSheet(memberId: string) {
-  const mcc = getMemberCommandCenterDetail(memberId);
-  const mhp = getMemberHealthProfileDetail(memberId);
+export async function getMemberFaceSheet(memberId: string) {
+  const [mcc, mhp] = await Promise.all([
+    getMemberCommandCenterDetail(memberId),
+    getMemberHealthProfileDetail(memberId)
+  ]);
   if (!mcc || !mhp) return null;
 
   const member = mcc.member;

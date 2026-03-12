@@ -1,13 +1,6 @@
-import { getMockClinicalOverview } from "@/lib/mock-data";
-import { isMockMode } from "@/lib/runtime";
 import { createClient } from "@/lib/supabase/server";
 
 export async function getClinicalOverview() {
-  if (isMockMode()) {
-    // TODO(backend): Remove mock branch when clinical data is loaded from Supabase in local/dev.
-    return getMockClinicalOverview();
-  }
-
   const supabase = await createClient();
 
   const [{ data: mar }, { data: bloodSugar }] = await Promise.all([

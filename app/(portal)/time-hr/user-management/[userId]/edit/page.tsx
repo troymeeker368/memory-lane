@@ -10,7 +10,7 @@ import { getManagedUserById } from "@/lib/services/user-management";
 export default async function EditManagedUserPage({ params }: { params: Promise<{ userId: string }> }) {
   await requireModuleAccess("user-management");
   const { userId } = await params;
-  const user = getManagedUserById(userId);
+  const user = await getManagedUserById(userId);
 
   if (!user) {
     notFound();

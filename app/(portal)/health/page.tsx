@@ -3,11 +3,11 @@ import Link from "next/link";
 import { BloodSugarForm } from "@/components/forms/workflow-forms";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getMockDb } from "@/lib/mock-repo";
 import { getCarePlanDashboard } from "@/lib/services/care-plans";
 import { getMembers } from "@/lib/services/documentation";
 import { getHealthSnapshot } from "@/lib/services/health-workflows";
 import { getClinicalOverview } from "@/lib/services/health";
+import { createClient } from "@/lib/supabase/server";
 import { formatDateTime, formatOptionalDateTime } from "@/lib/utils";
 
 interface MarRow {
@@ -70,7 +70,7 @@ export default async function HealthPage() {
     getClinicalOverview(),
     getMembers(),
     getHealthSnapshot(),
-    Promise.resolve(getCarePlanDashboard())
+    getCarePlanDashboard()
   ]);
 
   const marRows = toMarRows(mar as unknown[]);
@@ -112,10 +112,15 @@ export default async function HealthPage() {
       }))
   ].sort((left, right) => (left.when < right.when ? 1 : -1));
 
-  const db = getMockDb();
-  const mccByMember = new Map(db.memberCommandCenters.map((row) => [row.member_id, row] as const));
-  const mhpByMember = new Map(db.memberHealthProfiles.map((row) => [row.member_id, row] as const));
-  const careAlerts = db.members
+  const supabase = await createClient();
+  const [{ data: memberRows }, { data: mccRows }, { data: mhpRows }] = await Promise.all([
+    supabase.from("members").select("id, display_name, status, allergies, code_status"),
+    supabase.from("member_command_centers").select("*"),
+    supabase.from("member_health_profiles").select("*")
+  ]);
+  const mccByMember = new Map((mccRows ?? []).map((row: any) => [row.member_id, row] as const));
+  const mhpByMember = new Map((mhpRows ?? []).map((row: any) => [row.member_id, row] as const));
+  const careAlerts = (memberRows ?? [])
     .filter((member) => member.status === "active")
     .map((member) => {
       const mcc = mccByMember.get(member.id);

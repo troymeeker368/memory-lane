@@ -1,4 +1,4 @@
-﻿create extension if not exists pgcrypto;
+create extension if not exists pgcrypto;
 
 create type app_role as enum ('admin', 'director', 'manager', 'sales', 'nurse', 'coordinator', 'program-assistant', 'staff');
 create type lead_status as enum ('open', 'won', 'lost');

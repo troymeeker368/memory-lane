@@ -149,7 +149,7 @@ function toGoalItems(value: string) {
 }
 
 export async function buildCarePlanPdfDataUrl(carePlanId: string) {
-  const detail = getCarePlanById(carePlanId);
+  const detail = await getCarePlanById(carePlanId);
   if (!detail) {
     throw new Error("Care plan not found.");
   }

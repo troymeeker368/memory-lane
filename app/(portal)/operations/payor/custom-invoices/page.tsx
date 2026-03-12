@@ -1,7 +1,12 @@
 import { Card, CardTitle } from "@/components/ui/card";
 import { BillingCustomInvoiceForms } from "@/components/forms/billing-custom-invoice-forms";
-import { getMockDb } from "@/lib/mock-repo";
-import { getCustomInvoices } from "@/lib/services/billing";
+import {
+  getBillingMemberPayorLookups,
+  getCustomInvoices,
+  listMemberBillingSettings,
+  listPayors
+} from "@/lib/services/billing-supabase";
+import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
 
 import { finalizeInvoiceAction } from "@/app/(portal)/operations/payor/actions";
 
@@ -22,37 +27,28 @@ export default async function CustomInvoicesPage({
 }) {
   const query = await searchParams;
   const errorMessage = Array.isArray(query.error) ? query.error[0] : query.error;
-  const db = getMockDb();
-  const members = db.members.filter((row) => row.status === "active");
-  const payors = db.payors.filter((row) => row.status === "active");
+  const [lookups, draftInvoices, finalizedInvoices, members, payors, settings] = await Promise.all([
+    getBillingMemberPayorLookups(),
+    getCustomInvoices({ status: "Draft" }),
+    getCustomInvoices({ status: "Finalized" }),
+    listMembersSupabase({ status: "active" }),
+    listPayors(),
+    listMemberBillingSettings()
+  ]);
+  const memberName = new Map(members.map((row) => [row.id, row.display_name] as const));
+  const payorName = new Map(payors.map((row) => [row.id, row.payor_name] as const));
   const memberPayorIdsByMember = members.reduce<Record<string, string[]>>((acc, member) => {
     const activePayorIds = Array.from(
       new Set(
-        db.memberBillingSettings
-          .filter((row) => row.member_id === member.id)
-          .filter((row) => row.active)
-          .map((row) => row.payor_id)
-          .filter((row): row is string => Boolean(row))
+        settings
+          .filter((row: any) => row.member_id === member.id && row.active)
+          .map((row: any) => row.payor_id)
+          .filter((row: string | null | undefined): row is string => Boolean(row))
       )
     );
-    const fallbackPayorIds =
-      activePayorIds.length > 0
-        ? activePayorIds
-        : Array.from(
-            new Set(
-              db.memberBillingSettings
-                .filter((row) => row.member_id === member.id)
-                .map((row) => row.payor_id)
-                .filter((row): row is string => Boolean(row))
-            )
-          );
-    acc[member.id] = fallbackPayorIds;
+    acc[member.id] = activePayorIds.length > 0 ? activePayorIds : lookups.memberPayorIdsByMember[member.id] ?? [];
     return acc;
   }, {});
-  const draftInvoices = getCustomInvoices({ status: "Draft" });
-  const finalizedInvoices = getCustomInvoices({ status: "Finalized" });
-  const memberName = new Map(db.members.map((row) => [row.id, row.display_name] as const));
-  const payorName = new Map(db.payors.map((row) => [row.id, row.payor_name] as const));
 
   return (
     <div className="space-y-4">

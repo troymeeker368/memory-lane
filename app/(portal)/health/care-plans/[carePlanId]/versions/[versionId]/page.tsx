@@ -24,7 +24,7 @@ export default async function CarePlanVersionDetailPage({
 }) {
   await requireNavItemAccess("/health/care-plans");
   const { carePlanId, versionId } = await params;
-  const detail = getCarePlanVersionById(carePlanId, versionId);
+  const detail = await getCarePlanVersionById(carePlanId, versionId);
   if (!detail) notFound();
 
   return (

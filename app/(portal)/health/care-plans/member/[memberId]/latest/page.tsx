@@ -11,7 +11,7 @@ export default async function LatestMemberCarePlanPage({
   await requireNavItemAccess("/health/care-plans");
   const { memberId } = await params;
 
-  const latest = getLatestCarePlanForMember(memberId);
+  const latest = await getLatestCarePlanForMember(memberId);
   if (!latest) {
     redirect(`/health/care-plans/new?memberId=${memberId}`);
   }

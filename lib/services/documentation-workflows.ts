@@ -1,6 +1,5 @@
-import { getMockDb } from "@/lib/mock-repo";
 import { normalizeRoleKey } from "@/lib/permissions";
-import { isMockMode } from "@/lib/runtime";
+import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";
 
 interface DocumentationWorkflowScope {
@@ -8,64 +7,172 @@ interface DocumentationWorkflowScope {
   staffUserId?: string | null;
 }
 
+function relationDisplayName(value: unknown, fallback: string) {
+  if (Array.isArray(value)) {
+    const first = value[0] as { display_name?: string; full_name?: string } | undefined;
+    return first?.display_name ?? first?.full_name ?? fallback;
+  }
+  const row = value as { display_name?: string; full_name?: string } | null;
+  return row?.display_name ?? row?.full_name ?? fallback;
+}
+
 function isStaffScoped(scope?: DocumentationWorkflowScope) {
   return Boolean(scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && !!scope.staffUserId);
 }
 
 export async function getDocumentationWorkflows(scope?: DocumentationWorkflowScope) {
-  const db = getMockDb();
   const staffUserId = scope?.staffUserId ?? null;
 
-  if (isMockMode()) {
-    // TODO(backend): replace with query composition from persistent storage.
-    const dailyActivities = [...db.dailyActivities]
-      .filter((row) => (isStaffScoped(scope) ? row.staff_user_id === staffUserId : true))
-      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-      .slice(0, 50);
-    const toilets = [...db.toiletLogs]
-      .filter((row) => (isStaffScoped(scope) ? row.staff_user_id === staffUserId : true))
-      .sort((a, b) => (a.event_at < b.event_at ? 1 : -1))
-      .slice(0, 50);
-    const showers = [...db.showerLogs]
-      .filter((row) => (isStaffScoped(scope) ? row.staff_user_id === staffUserId : true))
-      .sort((a, b) => (a.event_at < b.event_at ? 1 : -1))
-      .slice(0, 50);
-    const transportation = [...db.transportationLogs]
-      .filter((row) => (isStaffScoped(scope) ? row.staff_user_id === staffUserId : true))
-      .sort((a, b) => (a.service_date < b.service_date ? 1 : -1))
-      .slice(0, 50);
-    const photos = [...db.photoUploads]
-      .filter((row) => (isStaffScoped(scope) ? row.uploaded_by === staffUserId : true))
-      .sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1))
-      .slice(0, 50);
-    const ancillary = [...db.ancillaryLogs]
-      .filter((row) => (isStaffScoped(scope) ? row.staff_user_id === staffUserId : true))
-      .sort((a, b) => (a.service_date < b.service_date ? 1 : -1))
-      .slice(0, 50);
-    const assessments = [...db.assessments]
-      .filter((row) => (isStaffScoped(scope) ? row.created_by_user_id === staffUserId : true))
-      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-      .slice(0, 50);
+  const supabase = await createClient();
+  const staffScoped = isStaffScoped(scope);
 
+  const dailyQuery = supabase
+    .from("daily_activity_logs")
+    .select("id, activity_date, created_at, activity_1_level, activity_2_level, activity_3_level, activity_4_level, activity_5_level, missing_reason_1, missing_reason_2, missing_reason_3, missing_reason_4, missing_reason_5, notes, member:members!daily_activity_logs_member_id_fkey(display_name), staff:profiles!daily_activity_logs_staff_user_id_fkey(full_name)")
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const toiletsQuery = supabase
+    .from("toilet_logs")
+    .select("id, event_at, briefs, member_supplied, use_type, notes, member:members!toilet_logs_member_id_fkey(display_name), staff:profiles!toilet_logs_staff_user_id_fkey(full_name)")
+    .order("event_at", { ascending: false })
+    .limit(50);
+  const showersQuery = supabase
+    .from("shower_logs")
+    .select("id, event_at, laundry, briefs, member:members!shower_logs_member_id_fkey(display_name), staff:profiles!shower_logs_staff_user_id_fkey(full_name)")
+    .order("event_at", { ascending: false })
+    .limit(50);
+  const transportationQuery = supabase
+    .from("transportation_logs")
+    .select("id, service_date, period, transport_type, member:members!transportation_logs_member_id_fkey(display_name), staff:profiles!transportation_logs_staff_user_id_fkey(full_name)")
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const photosQuery = supabase
+    .from("member_photo_uploads")
+    .select("id, uploaded_at, photo_url, uploaded_by, member:members!member_photo_uploads_member_id_fkey(display_name), uploader:profiles!member_photo_uploads_uploaded_by_fkey(full_name)")
+    .order("uploaded_at", { ascending: false })
+    .limit(50);
+
+  const filteredDailyQuery = staffScoped ? dailyQuery.eq("staff_user_id", staffUserId as string) : dailyQuery;
+  const filteredToiletsQuery = staffScoped ? toiletsQuery.eq("staff_user_id", staffUserId as string) : toiletsQuery;
+  const filteredShowersQuery = staffScoped ? showersQuery.eq("staff_user_id", staffUserId as string) : showersQuery;
+  const filteredTransportationQuery = staffScoped ? transportationQuery.eq("staff_user_id", staffUserId as string) : transportationQuery;
+  const filteredPhotosQuery = staffScoped ? photosQuery.eq("uploaded_by", staffUserId as string) : photosQuery;
+
+  const [{ data: dailyRows }, { data: toiletRows }, { data: showerRows }, { data: transportRows }, { data: photoRows }] =
+    await Promise.all([
+      filteredDailyQuery,
+      filteredToiletsQuery,
+      filteredShowersQuery,
+      filteredTransportationQuery,
+      filteredPhotosQuery
+    ]);
+
+  const dailyActivities = (dailyRows ?? []).map((row: any) => {
+    const participation = Math.round(
+      ((Number(row.activity_1_level ?? 0) +
+        Number(row.activity_2_level ?? 0) +
+        Number(row.activity_3_level ?? 0) +
+        Number(row.activity_4_level ?? 0) +
+        Number(row.activity_5_level ?? 0)) /
+        5)
+    );
     return {
-      dailyActivities,
-      toilets,
-      showers,
-      transportation,
-      photos,
-      ancillary,
-      assessments
+      id: row.id,
+      activity_date: row.activity_date,
+      created_at: row.created_at,
+      member_name: relationDisplayName(row.member, "Unknown Member"),
+      staff_name: relationDisplayName(row.staff, "Unknown Staff"),
+      participation,
+      activity_1_level: row.activity_1_level,
+      activity_2_level: row.activity_2_level,
+      activity_3_level: row.activity_3_level,
+      activity_4_level: row.activity_4_level,
+      activity_5_level: row.activity_5_level,
+      reason_missing_activity_1: row.missing_reason_1,
+      reason_missing_activity_2: row.missing_reason_2,
+      reason_missing_activity_3: row.missing_reason_3,
+      reason_missing_activity_4: row.missing_reason_4,
+      reason_missing_activity_5: row.missing_reason_5,
+      notes: row.notes ?? null
     };
-  }
+  });
 
-  // TODO(backend): apply role-aware staff scoping to Supabase queries (staff sees only self-authored entries).
+  const toilets = (toiletRows ?? []).map((row: any) => ({
+    id: row.id,
+    event_at: row.event_at,
+    member_name: relationDisplayName(row.member, "Unknown Member"),
+    staff_name: relationDisplayName(row.staff, "Unknown Staff"),
+    use_type: row.use_type,
+    briefs: Boolean(row.briefs),
+    member_supplied: Boolean(row.member_supplied),
+    notes: row.notes ?? null
+  }));
+
+  const showers = (showerRows ?? []).map((row: any) => ({
+    id: row.id,
+    event_at: row.event_at,
+    member_name: relationDisplayName(row.member, "Unknown Member"),
+    staff_name: relationDisplayName(row.staff, "Unknown Staff"),
+    laundry: Boolean(row.laundry),
+    briefs: Boolean(row.briefs),
+    notes: null
+  }));
+
+  const transportation = (transportRows ?? []).map((row: any) => ({
+    id: row.id,
+    service_date: row.service_date,
+    period: row.period,
+    transport_type: row.transport_type,
+    member_name: relationDisplayName(row.member, "Unknown Member"),
+    staff_name: relationDisplayName(row.staff, "Unknown Staff")
+  }));
+
+  const photos = (photoRows ?? []).map((row: any) => {
+    const mime =
+      typeof row.photo_url === "string" && row.photo_url.startsWith("data:")
+        ? row.photo_url.slice(5, row.photo_url.indexOf(";")) || "image/*"
+        : "image/*";
+    const uploadedAt = String(row.uploaded_at ?? "");
+    const generatedName = uploadedAt ? `Photo Upload - ${uploadedAt.slice(0, 10)}.img` : "Photo Upload";
+    return {
+      id: row.id,
+      uploaded_at: row.uploaded_at,
+      uploaded_by_name: relationDisplayName(row.uploader, "Unknown Staff"),
+      file_name: generatedName,
+      file_type: mime,
+      photo_url: row.photo_url
+    };
+  });
+
   return {
-    dailyActivities: [],
-    toilets: [],
-    showers: [],
-    transportation: [],
-    photos: [],
+    dailyActivities,
+    toilets,
+    showers,
+    transportation,
+    photos,
     ancillary: [],
-    assessments: []
+    assessments: await (async () => {
+      const assessmentsQuery = supabase
+        .from("intake_assessments")
+        .select("id, assessment_date, total_score, recommended_track, admission_review_required, transport_appropriate, complete, completed_by, created_at, member:members!intake_assessments_member_id_fkey(display_name)")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      const filteredAssessmentsQuery = staffScoped
+        ? assessmentsQuery.eq("completed_by_user_id", staffUserId as string)
+        : assessmentsQuery;
+      const { data: assessmentRows } = await filteredAssessmentsQuery;
+      return (assessmentRows ?? []).map((row: any) => ({
+        id: row.id,
+        assessment_date: row.assessment_date,
+        total_score: row.total_score,
+        recommended_track: row.recommended_track,
+        admission_review_required: Boolean(row.admission_review_required),
+        transport_appropriate: row.transport_appropriate,
+        complete: Boolean(row.complete),
+        completed_by: row.completed_by,
+        member_name: relationDisplayName(row.member, "Unknown Member"),
+        created_at: row.created_at
+      }));
+    })()
   };
 }

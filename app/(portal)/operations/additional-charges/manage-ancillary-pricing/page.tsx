@@ -11,7 +11,7 @@ import { getOperationalSettings } from "@/lib/services/operations-settings";
 export default async function ManageAncillaryPricingPage() {
   await requireRoles(["admin"]);
   const summary = await getAncillarySummary();
-  const operationalSettings = getOperationalSettings();
+  const operationalSettings = await getOperationalSettings();
 
   return (
     <div className="space-y-4">

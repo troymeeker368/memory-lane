@@ -1,7 +1,4 @@
-import { getMockDocumentationTracker } from "@/lib/mock-data";
-import { getMockDb } from "@/lib/mock-repo";
-import { isMockMode } from "@/lib/runtime";
-import { canonicalLeadStatus } from "@/lib/canonical";
+import { createClient } from "@/lib/supabase/server";
 import { staffNameToSlug } from "@/lib/services/activity-snapshots";
 import { getCurrentPayPeriod, isDateInPayPeriod } from "@/lib/pay-period";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -69,11 +66,8 @@ function realTimeStatus(occurrenceAt: string, enteredAt: string | null): { statu
   if (!enteredAt) {
     return { status: "Missing", lateHours: 0 };
   }
-
   const diff = hoursBetween(occurrenceAt, enteredAt);
-  if (diff > 1) {
-    return { status: "Late", lateHours: diff };
-  }
+  if (diff > 1) return { status: "Late", lateHours: diff };
   return { status: "On Time", lateHours: Math.max(diff, 0) };
 }
 
@@ -81,11 +75,8 @@ function dailyStatus(occurrenceAt: string, enteredAt: string | null): { status: 
   if (!enteredAt) {
     return { status: "Missing", lateHours: 0 };
   }
-
   const diff = hoursBetween(occurrenceAt, enteredAt);
-  if (diff > 48) {
-    return { status: "Late", lateHours: diff - 48 };
-  }
+  if (diff > 48) return { status: "Late", lateHours: diff - 48 };
   return { status: "On Time", lateHours: Math.max(diff, 0) };
 }
 
@@ -116,65 +107,41 @@ function buildDays(range: ReportDateRange) {
 }
 
 export async function getAdminReportLookups() {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with lookup tables/views.
-    return { staff: [], members: [], documentationTypes: [] as string[] };
-  }
+  const supabase = await createClient();
+  const [{ data: staffRows }, { data: memberRows }] = await Promise.all([
+    supabase.from("profiles").select("id, full_name").eq("active", true).order("full_name"),
+    supabase.from("members").select("id, display_name").order("display_name")
+  ]);
 
-  const db = getMockDb();
   return {
-    staff: db.staff.map((s) => ({ id: s.id, name: s.full_name })),
-    members: db.members.map((m) => ({ id: m.id, name: m.display_name })),
+    staff: (staffRows ?? []).map((s: any) => ({ id: s.id, name: s.full_name })),
+    members: (memberRows ?? []).map((m: any) => ({ id: m.id, name: m.display_name })),
     documentationTypes: ["Participation Log", "Toilet", "Shower", "Transportation", "Blood Sugar", "Photo Upload", "Assessment"]
   };
 }
 
 export async function getAdminStaffProductivity(filters: BaseReportFilters) {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with SQL aggregate views.
-    return [];
-  }
-
-  const db = getMockDb();
-  const rows = db.staff.map((staff) => {
-    const daily = db.dailyActivities.filter((r) => r.staff_user_id === staff.id && inDateRange(r.created_at, filters));
-    const toilet = db.toiletLogs.filter((r) => r.staff_user_id === staff.id && inDateRange(r.event_at, filters));
-    const shower = db.showerLogs.filter((r) => r.staff_user_id === staff.id && inDateRange(r.event_at, filters));
-    const transport = db.transportationLogs.filter((r) => inDateRange(`${r.service_date}T00:00:00.000Z`, filters) && r.staff_user_id === staff.id);
-    const bloodSugar = db.bloodSugarLogs.filter((r) => r.nurse_user_id === staff.id && inDateRange(r.checked_at, filters));
-    const photos = db.photoUploads.filter((r) => r.uploaded_by === staff.id && inDateRange(r.uploaded_at, filters));
-    const assessments = db.assessments.filter((r) => r.created_by_user_id === staff.id && inDateRange(r.created_at, filters));
-
-    const total = daily.length + toilet.length + shower.length + transport.length + bloodSugar.length + photos.length + assessments.length;
-
-    return {
-      staff_id: staff.id,
-      staff_name: staff.full_name,
-      daily: daily.length,
-      toilet: toilet.length,
-      shower: shower.length,
-      transportation: transport.length,
-      blood_sugar: bloodSugar.length,
-      photos: photos.length,
-      assessments: assessments.length,
-      total
-    };
-  });
-
-  return rows
-    .filter((row) => (!filters.staff || row.staff_id === filters.staff) && row.total > 0)
-    .sort((a, b) => (a.total < b.total ? 1 : -1));
+  // TODO(schema): Replace with SQL aggregate view for staff productivity.
+  const lookups = await getAdminReportLookups();
+  return lookups.staff
+    .filter((row) => !filters.staff || row.id === filters.staff)
+    .map((row) => ({
+      staff_id: row.id,
+      staff_name: row.name,
+      daily: 0,
+      toilet: 0,
+      shower: 0,
+      transportation: 0,
+      blood_sugar: 0,
+      photos: 0,
+      assessments: 0,
+      total: 0
+    }));
 }
 
 export async function getAdminTimelyDocumentation(filters: BaseReportFilters) {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with docs timeliness computation over persisted logs.
-    return [];
-  }
-
-  const db = getMockDb();
+  const supabase = await createClient();
   const docTypeFilter = normalizeDocTypeFilter(filters.documentationType);
-
   const rows: Array<{
     id: string;
     member_id: string;
@@ -189,571 +156,285 @@ export async function getAdminTimelyDocumentation(filters: BaseReportFilters) {
     drill_href: string;
   }> = [];
 
-  db.dailyActivities.forEach((row) => {
-    const occurrenceAt = `${row.activity_date}T12:00:00.000Z`;
-    const enteredAt = row.timestamp || row.created_at || null;
-    const result = dailyStatus(occurrenceAt, enteredAt);
+  const [{ data: dailyRows }, { data: toiletRows }, { data: showerRows }, { data: transportationRows }] = await Promise.all([
+    supabase
+      .from("daily_activity_logs")
+      .select("id, member_id, members(display_name), activity_date, created_at, staff_user_id, profiles(full_name)")
+      .gte("activity_date", filters.from)
+      .lte("activity_date", filters.to),
+    supabase
+      .from("toilet_logs")
+      .select("id, member_id, members(display_name), event_at, staff_user_id, profiles(full_name)")
+      .gte("event_at", `${filters.from}T00:00:00.000Z`)
+      .lte("event_at", `${filters.to}T23:59:59.999Z`),
+    supabase
+      .from("shower_logs")
+      .select("id, member_id, members(display_name), event_at, created_at, staff_user_id, profiles(full_name)")
+      .gte("event_at", `${filters.from}T00:00:00.000Z`)
+      .lte("event_at", `${filters.to}T23:59:59.999Z`),
+    supabase
+      .from("transportation_logs")
+      .select("id, member_id, members(display_name), service_date, created_at, staff_user_id, profiles(full_name), period")
+      .gte("service_date", filters.from)
+      .lte("service_date", filters.to)
+  ]);
 
+  (dailyRows ?? []).forEach((row: any) => {
+    const occurrenceAt = `${row.activity_date}T12:00:00.000Z`;
+    const enteredAt = row.created_at ?? null;
+    const result = dailyStatus(occurrenceAt, enteredAt);
     rows.push({
       id: `daily-${row.id}`,
       member_id: row.member_id,
-      member_name: row.member_name,
+      member_name: row.members?.display_name ?? "Unknown Member",
       documentation_type: "Participation Log",
       occurrence_at: occurrenceAt,
       entered_at: enteredAt,
-      staff_id: row.staff_user_id,
-      staff_name: row.staff_name,
+      staff_id: row.staff_user_id ?? null,
+      staff_name: row.profiles?.full_name ?? null,
       status: result.status,
       late_hours: Number(result.lateHours.toFixed(2)),
       drill_href: "/documentation/activity"
     });
   });
 
-  db.toiletLogs.forEach((row) => {
-    const result = realTimeStatus(row.event_at, row.event_at || null);
+  (toiletRows ?? []).forEach((row: any) => {
+    const result = realTimeStatus(row.event_at, row.event_at ?? null);
     rows.push({
       id: `toilet-${row.id}`,
       member_id: row.member_id,
-      member_name: row.member_name,
+      member_name: row.members?.display_name ?? "Unknown Member",
       documentation_type: "Toilet",
       occurrence_at: row.event_at,
       entered_at: row.event_at,
-      staff_id: row.staff_user_id,
-      staff_name: row.staff_name,
+      staff_id: row.staff_user_id ?? null,
+      staff_name: row.profiles?.full_name ?? null,
       status: result.status,
       late_hours: Number(result.lateHours.toFixed(2)),
       drill_href: "/documentation/toilet"
     });
   });
 
-  db.showerLogs.forEach((row) => {
-    const result = realTimeStatus(row.event_at, row.timestamp || row.event_at);
+  (showerRows ?? []).forEach((row: any) => {
+    const enteredAt = row.created_at ?? row.event_at ?? null;
+    const result = realTimeStatus(row.event_at, enteredAt);
     rows.push({
       id: `shower-${row.id}`,
       member_id: row.member_id,
-      member_name: row.member_name,
+      member_name: row.members?.display_name ?? "Unknown Member",
       documentation_type: "Shower",
       occurrence_at: row.event_at,
-      entered_at: row.timestamp || row.event_at,
-      staff_id: row.staff_user_id,
-      staff_name: row.staff_name,
+      entered_at: enteredAt,
+      staff_id: row.staff_user_id ?? null,
+      staff_name: row.profiles?.full_name ?? null,
       status: result.status,
       late_hours: Number(result.lateHours.toFixed(2)),
       drill_href: "/documentation/shower"
     });
   });
 
-  db.transportationLogs.forEach((row) => {
+  (transportationRows ?? []).forEach((row: any) => {
     const occurrenceAt = `${row.service_date}T${row.period === "AM" ? "08" : "16"}:00:00.000Z`;
-    const enteredAt = row.timestamp || null;
+    const enteredAt = row.created_at ?? null;
     const result = realTimeStatus(occurrenceAt, enteredAt);
     rows.push({
       id: `transport-${row.id}`,
       member_id: row.member_id,
-      member_name: row.member_name,
+      member_name: row.members?.display_name ?? "Unknown Member",
       documentation_type: "Transportation",
       occurrence_at: occurrenceAt,
       entered_at: enteredAt,
-      staff_id: row.staff_user_id,
-      staff_name: row.staff_name,
+      staff_id: row.staff_user_id ?? null,
+      staff_name: row.profiles?.full_name ?? null,
       status: result.status,
       late_hours: Number(result.lateHours.toFixed(2)),
       drill_href: "/documentation/transportation"
     });
   });
 
-  db.bloodSugarLogs.forEach((row) => {
-    const result = realTimeStatus(row.checked_at, row.checked_at);
-    rows.push({
-      id: `blood-${row.id}`,
-      member_id: row.member_id,
-      member_name: row.member_name,
-      documentation_type: "Blood Sugar",
-      occurrence_at: row.checked_at,
-      entered_at: row.checked_at,
-      staff_id: row.nurse_user_id,
-      staff_name: row.nurse_name,
-      status: result.status,
-      late_hours: Number(result.lateHours.toFixed(2)),
-      drill_href: "/documentation/blood-sugar"
-    });
-  });
-
-  db.photoUploads.forEach((row) => {
-    const occurrenceAt = `${row.upload_date}T12:00:00.000Z`;
-    const result = realTimeStatus(occurrenceAt, row.uploaded_at);
-    rows.push({
-      id: `photo-${row.id}`,
-      member_id: row.member_id,
-      member_name: row.member_name,
-      documentation_type: "Photo Upload",
-      occurrence_at: occurrenceAt,
-      entered_at: row.uploaded_at,
-      staff_id: row.uploaded_by,
-      staff_name: row.uploaded_by_name,
-      status: result.status,
-      late_hours: Number(result.lateHours.toFixed(2)),
-      drill_href: "/documentation/photo-upload"
-    });
-  });
-
-  db.assessments.forEach((row) => {
-    const occurrenceAt = `${row.assessment_date}T12:00:00.000Z`;
-    const result = realTimeStatus(occurrenceAt, row.created_at);
-    rows.push({
-      id: `assessment-${row.id}`,
-      member_id: row.member_id,
-      member_name: row.member_name,
-      documentation_type: "Assessment",
-      occurrence_at: occurrenceAt,
-      entered_at: row.created_at,
-      staff_id: row.created_by_user_id,
-      staff_name: row.created_by_name,
-      status: result.status,
-      late_hours: Number(result.lateHours.toFixed(2)),
-      drill_href: "/health/assessment"
-    });
-  });
-
-  // Missing expectation model for Participation Log: one log per active member/day in selected range.
-  const days = buildDays(filters);
-  const seenDaily = new Set(rows.filter((r) => r.documentation_type === "Participation Log").map((r) => `${r.member_id}|${r.occurrence_at.slice(0, 10)}`));
-
-  db.members
-    .filter((member) => member.status === "active")
-    .forEach((member) => {
-      days.forEach((day) => {
-        const key = `${member.id}|${day}`;
-        if (seenDaily.has(key)) return;
-        rows.push({
-          id: `daily-missing-${member.id}-${day}`,
-          member_id: member.id,
-          member_name: member.display_name,
-          documentation_type: "Participation Log",
-          occurrence_at: `${day}T12:00:00.000Z`,
-          entered_at: null,
-          staff_id: null,
-          staff_name: null,
-          status: "Missing",
-          late_hours: 0,
-          drill_href: "/documentation/activity"
-        });
-      });
-    });
-
   return rows
     .filter((row) => inDateRange(row.occurrence_at, filters))
-    .filter((row) => (!filters.member || row.member_id === filters.member))
-    .filter((row) => (!filters.staff || row.staff_id === filters.staff))
-    .filter((row) => (!docTypeFilter || row.documentation_type === docTypeFilter))
+    .filter((row) => (!filters.member || row.member_id === filters.member) && (!filters.staff || row.staff_id === filters.staff))
     .filter((row) => statusPass(row.status, filters.status))
+    .filter((row) => (!docTypeFilter || row.documentation_type === docTypeFilter))
     .sort((a, b) => (a.occurrence_at < b.occurrence_at ? 1 : -1));
 }
 
 export async function getAdminAncillaryAudit(filters: BaseReportFilters) {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with ancillary audit view.
-    return [];
-  }
-
-  const db = getMockDb();
-  return db.ancillaryLogs
-    .filter((row) => inDateRange(`${row.service_date}T00:00:00.000Z`, filters))
-    .filter((row) => (!filters.member || row.member_id === filters.member))
-    .map((row) => {
-      const quantity = row.quantity ?? 1;
-      const unitPrice = quantity > 0 ? Math.round(row.amount_cents / quantity) : row.amount_cents;
-      return {
-        ...row,
-        quantity,
-        unit_price_cents: unitPrice,
-        total_amount_cents: row.amount_cents,
-        source_type: row.source_entity ? "Auto" : "Manual",
-        reconciliation_status: row.reconciliation_status ?? "open",
-        reconciled_by: row.reconciled_by ?? null,
-        reconciled_at: row.reconciled_at ?? null,
-        member_href: `/members/${row.member_id}`
-      };
-    })
-    .sort((a, b) => (a.service_date < b.service_date ? 1 : -1));
+  // TODO(schema): Migrate to dedicated ancillary reconciliation reporting view.
+  return [] as Array<Record<string, unknown>>;
 }
 
 export async function getAdminPayPeriodReview() {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with pay-period report view.
-    return [];
-  }
-
-  const db = getMockDb();
   const period = getCurrentPayPeriod();
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("daily_timecards")
+    .select("employee_name, worked_hours, meal_deduction_hours, status")
+    .gte("work_date", period.startDate)
+    .lte("work_date", period.endDate);
 
-  const byStaff = new Map<string, typeof db.timePunches>();
-  db.timePunches
-    .filter((p) => isDateInPayPeriod(p.punch_at, period))
-    .forEach((p) => {
-      const rows = byStaff.get(p.staff_user_id) ?? [];
-      rows.push(p);
-      byStaff.set(p.staff_user_id, rows);
-    });
-
-  return db.staff.map((staff) => {
-    const rows = [...(byStaff.get(staff.id) ?? [])].sort((a, b) => (a.punch_at > b.punch_at ? 1 : -1));
-    let totalHours = 0;
-    let missingPunches = 0;
-    let longShift = 0;
-
-    for (let i = 0; i < rows.length; i += 1) {
-      const current = rows[i];
-      if (current.punch_type !== "in") continue;
-      const out = rows[i + 1];
-      if (!out || out.punch_type !== "out") {
-        missingPunches += 1;
-        continue;
-      }
-
-      const hours = hoursBetween(current.punch_at, out.punch_at);
-      if (hours > 12) longShift += 1;
-      if (hours > 0) totalHours += hours;
-    }
-
-    const mealDeduction = totalHours >= 6 ? 0.5 : 0;
-    return {
-      staff_id: staff.id,
-      staff_name: staff.full_name,
-      pay_period: period.label,
-      total_hours_worked: Number(totalHours.toFixed(2)),
-      meal_deduction_applied: mealDeduction,
-      adjusted_hours: Number((totalHours - mealDeduction).toFixed(2)),
-      missing_punches: missingPunches,
-      long_shift_flags: longShift,
-      approval_status: missingPunches > 0 || longShift > 0 ? "Needs Follow-up" : "Reviewed",
-      staff_href: staffReportHref(staff.full_name)
-    };
+  const grouped = new Map<string, { total_hours_worked: number; meal_deduction_applied: number; statuses: Set<string> }>();
+  (data ?? []).forEach((row: any) => {
+    const key = row.employee_name ?? "Unknown";
+    const current = grouped.get(key) ?? { total_hours_worked: 0, meal_deduction_applied: 0, statuses: new Set<string>() };
+    current.total_hours_worked += Number(row.worked_hours ?? 0);
+    current.meal_deduction_applied += Number(row.meal_deduction_hours ?? 0);
+    current.statuses.add(String(row.status ?? "pending"));
+    grouped.set(key, current);
   });
+
+  return [...grouped.entries()].map(([staff_name, value]) => ({
+    staff_name,
+    pay_period: period.label,
+    total_hours_worked: Number(value.total_hours_worked.toFixed(2)),
+    meal_deduction_applied: Number(value.meal_deduction_applied.toFixed(2)),
+    adjusted_hours: Number((value.total_hours_worked - value.meal_deduction_applied).toFixed(2)),
+    exception_notes: "-",
+    approval_status: value.statuses.has("pending") || value.statuses.has("needs_review") ? "Needs Follow-up" : "Reviewed",
+    reviewed_by: null,
+    reviewed_at: null
+  }));
 }
 
 export async function getAdminPunchExceptions(filters: ReportDateRange & { staff?: string }) {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with punch exceptions view.
-    return [];
-  }
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("time_punches")
+    .select("id, staff_user_id, profiles(full_name), punch_at, punch_type, within_fence, distance_meters, note")
+    .eq("within_fence", false)
+    .gte("punch_at", `${filters.from}T00:00:00.000Z`)
+    .lte("punch_at", `${filters.to}T23:59:59.999Z`);
 
-  const db = getMockDb();
-  const items: Array<{
-    id: string;
-    staff_id: string;
-    staff_name: string;
-    exception_type: string;
-    detail: string;
-    when: string;
-    staff_href: string;
-  }> = [];
-
-  db.staff.forEach((staff) => {
-    if (filters.staff && staff.id !== filters.staff) return;
-    const punches = db.timePunches
-      .filter((p) => p.staff_user_id === staff.id)
-      .filter((p) => inDateRange(p.punch_at, filters))
-      .sort((a, b) => (a.punch_at > b.punch_at ? 1 : -1));
-
-    for (let i = 0; i < punches.length; i += 1) {
-      const current = punches[i];
-      const next = punches[i + 1];
-      if (current.punch_type === "in") {
-        if (!next || next.punch_type !== "out") {
-          items.push({
-            id: `missing-out-${current.id}`,
-            staff_id: staff.id,
-            staff_name: staff.full_name,
-            exception_type: "Missing clock out",
-            detail: `No matching clock-out for ${current.punch_at}`,
-            when: current.punch_at,
-            staff_href: staffReportHref(staff.full_name)
-          });
-        } else {
-          const duration = hoursBetween(current.punch_at, next.punch_at);
-          if (duration > 12) {
-            items.push({
-              id: `long-shift-${current.id}`,
-              staff_id: staff.id,
-              staff_name: staff.full_name,
-              exception_type: "Long shift",
-              detail: `${duration.toFixed(2)}h shift between punches`,
-              when: current.punch_at,
-              staff_href: staffReportHref(staff.full_name)
-            });
-          }
-        }
-      }
-
-      if (next && current.punch_type === next.punch_type) {
-        items.push({
-          id: `duplicate-${current.id}`,
-          staff_id: staff.id,
-          staff_name: staff.full_name,
-          exception_type: "Duplicate pattern",
-          detail: `Back-to-back ${current.punch_type.toUpperCase()} punches`,
-          when: current.punch_at,
-          staff_href: staffReportHref(staff.full_name)
-        });
-      }
-    }
-  });
-
-  return items.sort((a, b) => (a.when < b.when ? 1 : -1));
+  return (data ?? [])
+    .filter((row: any) => !filters.staff || row.staff_user_id === filters.staff)
+    .map((row: any) => ({
+      id: row.id,
+      staff_id: row.staff_user_id,
+      staff_name: row.profiles?.full_name ?? "Unknown",
+      occurred_at: row.punch_at,
+      punch_type: row.punch_type,
+      within_fence: row.within_fence,
+      distance_meters: row.distance_meters,
+      note: row.note ?? null
+    }))
+    .sort((a, b) => (a.occurred_at < b.occurred_at ? 1 : -1));
 }
 
 export async function getAdminDocumentationByMember(filters: BaseReportFilters) {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with member docs aggregate view.
-    return [];
-  }
-
-  const db = getMockDb();
-
-  return db.members
-    .filter((member) => !filters.member || member.id === filters.member)
-    .map((member) => {
-      const daily = db.dailyActivities.filter((r) => r.member_id === member.id && inDateRange(r.created_at, filters));
-      const toilet = db.toiletLogs.filter((r) => r.member_id === member.id && inDateRange(r.event_at, filters));
-      const shower = db.showerLogs.filter((r) => r.member_id === member.id && inDateRange(r.event_at, filters));
-      const transport = db.transportationLogs.filter((r) => r.member_id === member.id && inDateRange(`${r.service_date}T00:00:00.000Z`, filters));
-      const blood = db.bloodSugarLogs.filter((r) => r.member_id === member.id && inDateRange(r.checked_at, filters));
-      const photos = db.photoUploads.filter((r) => r.member_id === member.id && inDateRange(r.uploaded_at, filters));
-      const assessments = db.assessments.filter((r) => r.member_id === member.id && inDateRange(r.created_at, filters));
-
-      const total = daily.length + toilet.length + shower.length + transport.length + blood.length + photos.length + assessments.length;
-      const lastDocumented = [
-        daily[0]?.created_at,
-        toilet[0]?.event_at,
-        shower[0]?.event_at,
-        transport[0] ? `${transport[0].service_date}T00:00:00.000Z` : undefined,
-        blood[0]?.checked_at,
-        photos[0]?.uploaded_at,
-        assessments[0]?.created_at
-      ]
-        .filter(Boolean)
-        .sort()
-        .at(-1) ?? null;
-
-      return {
-        member_id: member.id,
-        member_name: member.display_name,
-        daily: daily.length,
-        toilet: toilet.length,
-        shower: shower.length,
-        transportation: transport.length,
-        blood_sugar: blood.length,
-        photos: photos.length,
-        assessments: assessments.length,
-        total,
-        last_documented_at: lastDocumented,
-        member_href: `/members/${member.id}`
-      };
-    })
-    .filter((row) => row.total > 0)
-    .sort((a, b) => (a.total < b.total ? 1 : -1));
+  // TODO(schema): Replace with member-documentation aggregate materialized view.
+  return [] as Array<Record<string, unknown>>;
 }
 
 export async function getAdminLastToileted() {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with last toileted view.
-    return [];
-  }
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("toilet_logs")
+    .select("member_id, members(display_name), event_at, staff_user_id, profiles(full_name)")
+    .order("event_at", { ascending: false });
 
-  const db = getMockDb();
-  return db.members.map((member) => {
-    const latest = db.toiletLogs.filter((row) => row.member_id === member.id).sort((a, b) => (a.event_at < b.event_at ? 1 : -1))[0];
-    const gapHours = latest ? Number(hoursBetween(latest.event_at, toEasternISO()).toFixed(1)) : null;
-    return {
-      member_id: member.id,
-      member_name: member.display_name,
-      last_toileted_at: latest?.event_at ?? null,
-      staff_name: latest?.staff_name ?? null,
-      gap_hours: gapHours,
-      member_href: `/members/${member.id}`
-    };
+  const seen = new Set<string>();
+  const rows: Array<Record<string, unknown>> = [];
+  (data ?? []).forEach((row: any) => {
+    if (seen.has(row.member_id)) return;
+    seen.add(row.member_id);
+    rows.push({
+      member_id: row.member_id,
+      member_name: row.members?.display_name ?? "Unknown Member",
+      last_toileted_at: row.event_at,
+      staff_name: row.profiles?.full_name ?? null
+    });
   });
+  return rows;
 }
 
 export async function getAdminCareTracker() {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with care tracker view.
-    return [];
-  }
-
-  return getMockDocumentationTracker();
+  // TODO(schema): Add public.v_admin_care_tracker with toileting windows and care gaps.
+  return [] as Array<Record<string, unknown>>;
 }
 
 export async function getAdminSalesPipelineSummary(filters: ReportDateRange) {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with sales pipeline aggregate view.
-    return { stageRows: [], inquirySeries: [] };
-  }
-
-  const db = getMockDb();
-  const inRangeLeads = db.leads.filter((lead) => inDateRange(`${lead.inquiry_date}T00:00:00.000Z`, filters));
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("leads")
+    .select("id, stage, status, created_at")
+    .gte("created_at", `${filters.from}T00:00:00.000Z`)
+    .lte("created_at", `${filters.to}T23:59:59.999Z`);
 
   const byStage = new Map<string, number>();
-  let won = 0;
-  let lost = 0;
-
-  inRangeLeads.forEach((lead) => {
-    byStage.set(lead.stage, (byStage.get(lead.stage) ?? 0) + 1);
-    const status = canonicalLeadStatus(lead.status, lead.stage);
-    if (status === "Won") won += 1;
-    if (status === "Lost") lost += 1;
-  });
-
-  const inquiriesByDay = new Map<string, number>();
-  inRangeLeads.forEach((lead) => {
-    const key = lead.inquiry_date;
-    inquiriesByDay.set(key, (inquiriesByDay.get(key) ?? 0) + 1);
+  (data ?? []).forEach((row: any) => {
+    const key = String(row.stage ?? "Unknown");
+    byStage.set(key, (byStage.get(key) ?? 0) + 1);
   });
 
   return {
-    stageRows: Array.from(byStage.entries()).map(([stage, count]) => ({ stage, count })).sort((a, b) => (a.stage > b.stage ? 1 : -1)),
-    won,
-    lost,
-    inquirySeries: Array.from(inquiriesByDay.entries()).map(([date, count]) => ({ date, count })).sort((a, b) => (a.date > b.date ? 1 : -1))
+    totalLeads: (data ?? []).length,
+    byStage: [...byStage.entries()].map(([stage, count]) => ({ stage, count }))
   };
 }
 
 export async function getAdminCommunityPartnerPerformance(filters: ReportDateRange) {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with community partner aggregate view.
-    return [];
-  }
-
-  const db = getMockDb();
-
-  return db.partners.map((partner) => {
-    const linkedLeads = db.leads.filter(
-      (lead) =>
-        (lead.partner_id && lead.partner_id === partner.partner_id) ||
-        lead.referral_name === partner.organization_name ||
-        inDateRange(`${lead.inquiry_date}T00:00:00.000Z`, filters)
-    );
-
-    const won = linkedLeads.filter((lead) => canonicalLeadStatus(lead.status, lead.stage) === "Won").length;
-    const lost = linkedLeads.filter((lead) => canonicalLeadStatus(lead.status, lead.stage) === "Lost").length;
-    const open = linkedLeads.filter((lead) => {
-      const status = canonicalLeadStatus(lead.status, lead.stage);
-      return status === "Open" || status === "Nurture";
-    }).length;
-
-    const recentActivity = db.partnerActivities
-      .filter((a) => a.partner_id === partner.partner_id)
-      .sort((a, b) => (a.activity_at < b.activity_at ? 1 : -1))[0]?.activity_at;
-
-    return {
-      partner_id: partner.id,
-      organization_name: partner.organization_name,
-      primary_phone: partner.primary_phone,
-      primary_email: partner.primary_email,
-      linked_leads: linkedLeads.length,
-      open,
-      won,
-      lost,
-      recent_activity_at: recentActivity ?? null,
-      partner_href: `/sales/community-partners/${partner.id}`
-    };
-  });
+  // TODO(schema): Add aggregate for partner touches, referrals, and won conversions by range.
+  return [] as Array<Record<string, unknown>>;
 }
 
 export async function getAdminLeadActivityReport(filters: ReportDateRange & { staff?: string; partner?: string; lead?: string }) {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with lead activity joined report view.
-    return [];
-  }
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("lead_activities")
+    .select("id, lead_id, member_name, activity_at, activity_type, outcome, completed_by_user_id, completed_by_name, partner_id")
+    .gte("activity_at", `${filters.from}T00:00:00.000Z`)
+    .lte("activity_at", `${filters.to}T23:59:59.999Z`)
+    .order("activity_at", { ascending: false });
 
-  const db = getMockDb();
-
-  return db.leadActivities
-    .filter((row) => inDateRange(row.activity_at, filters))
-    .filter((row) => (!filters.staff || row.completed_by_user_id === filters.staff))
-    .filter((row) => (!filters.lead || row.lead_id === filters.lead))
-    .map((row) => {
-      const lead = db.leads.find((l) => l.id === row.lead_id);
-      const partner = lead?.partner_id ? db.partners.find((p) => p.partner_id === lead.partner_id) : null;
-      if (filters.partner && (!partner || partner.id !== filters.partner)) return null;
-
-      return {
-        ...row,
-        stage: lead?.stage ?? "-",
-        status: lead ? canonicalLeadStatus(lead.status, lead.stage) : "-",
-        partner_name: partner?.organization_name ?? lead?.referral_name ?? "-",
-        lead_href: lead ? `/sales/leads/${lead.id}` : "/sales"
-      };
-    })
-    .filter(Boolean) as Array<any>;
+  return (data ?? []).filter((row: any) => {
+    if (filters.staff && row.completed_by_user_id !== filters.staff) return false;
+    if (filters.partner && row.partner_id !== filters.partner) return false;
+    if (filters.lead && row.lead_id !== filters.lead) return false;
+    return true;
+  });
 }
 
 export async function getAdminAssessmentStatus(filters: BaseReportFilters) {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with assessment status view.
-    return [];
-  }
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("intake_assessments")
+    .select("id, member_id, members(display_name), assessment_date, total_score, completed_by, created_at")
+    .gte("assessment_date", filters.from)
+    .lte("assessment_date", filters.to)
+    .order("assessment_date", { ascending: false });
 
-  const db = getMockDb();
-  return db.assessments
-    .filter((row) => inDateRange(`${row.assessment_date}T00:00:00.000Z`, filters))
-    .filter((row) => (!filters.member || row.member_id === filters.member))
-    .map((row) => ({
+  return (data ?? [])
+    .filter((row: any) => !filters.member || row.member_id === filters.member)
+    .map((row: any) => ({
       id: row.id,
       member_id: row.member_id,
-      member_name: row.member_name,
-      assessment_date: row.assessment_date,
-      reviewer_name: row.reviewer_name,
-      signed_by: row.signed_by,
-      completion_state: row.complete ? "Complete" : "Incomplete",
-      missing_flag: row.complete ? "No" : "Yes",
-      detail_href: `/reports/assessments/${row.id}`
-    }))
-    .sort((a, b) => (a.assessment_date < b.assessment_date ? 1 : -1));
+      member_name: row.members?.display_name ?? "Unknown Member",
+      assessment_date: row.assessment_date ?? row.created_at?.slice(0, 10) ?? null,
+      total_score: row.total_score,
+      completed_by: row.completed_by ?? null
+    }));
 }
 
 export async function getAdminMemberServiceUtilization(filters: BaseReportFilters) {
-  if (!isMockMode()) {
-    // TODO(backend): Replace with member service utilization aggregate.
-    return [];
-  }
-
-  const db = getMockDb();
-
-  return db.members
-    .filter((member) => !filters.member || member.id === filters.member)
-    .map((member) => {
-      const daily = db.dailyActivities.filter((r) => r.member_id === member.id && inDateRange(r.created_at, filters));
-      const toilet = db.toiletLogs.filter((r) => r.member_id === member.id && inDateRange(r.event_at, filters));
-      const shower = db.showerLogs.filter((r) => r.member_id === member.id && inDateRange(r.event_at, filters));
-      const transportation = db.transportationLogs.filter((r) => r.member_id === member.id && inDateRange(`${r.service_date}T00:00:00.000Z`, filters));
-      const blood = db.bloodSugarLogs.filter((r) => r.member_id === member.id && inDateRange(r.checked_at, filters));
-      const photos = db.photoUploads.filter((r) => r.member_id === member.id && inDateRange(r.uploaded_at, filters));
-      const assessments = db.assessments.filter((r) => r.member_id === member.id && inDateRange(r.created_at, filters));
-      const ancillary = db.ancillaryLogs.filter((r) => r.member_id === member.id && inDateRange(`${r.service_date}T00:00:00.000Z`, filters));
-
-      return {
-        member_id: member.id,
-        member_name: member.display_name,
-        daily: daily.length,
-        toilet: toilet.length,
-        shower: shower.length,
-        transportation: transportation.length,
-        blood_sugar: blood.length,
-        photos: photos.length,
-        assessments: assessments.length,
-        ancillary_count: ancillary.length,
-        ancillary_total_cents: ancillary.reduce((sum, row) => sum + row.amount_cents, 0),
-        total_services: daily.length + toilet.length + shower.length + transportation.length + blood.length + photos.length + assessments.length,
-        member_href: `/members/${member.id}`
-      };
-    })
-    .filter((row) => row.total_services > 0 || row.ancillary_count > 0)
-    .sort((a, b) => (a.total_services < b.total_services ? 1 : -1));
+  // TODO(schema): Build service utilization view keyed by member/date/documentation types.
+  const days = buildDays(filters);
+  return days.map((day) => ({
+    date: day,
+    total_members: 0,
+    participation_logs: 0,
+    toileting_logs: 0,
+    shower_logs: 0,
+    transportation_logs: 0,
+    blood_sugar_logs: 0
+  }));
 }
 
+export async function getAdminReportGeneratedAt() {
+  return toEasternISO();
+}
 
-
-
+export async function isDateInCurrentPayPeriod(dateOnly: string) {
+  return isDateInPayPeriod(`${dateOnly}T12:00:00.000Z`, getCurrentPayPeriod());
+}
 

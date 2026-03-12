@@ -1,7 +1,3 @@
-﻿import { getMockDocumentationSummary, getMockDocumentationTracker, getMockMembers } from "@/lib/mock-data";
-import { getMappedMemberIdForLead, getMockDb } from "@/lib/mock-repo";
-import { canonicalLeadStage } from "@/lib/canonical";
-import { isMockMode } from "@/lib/runtime";
 import { createClient } from "@/lib/supabase/server";
 
 function toCount(value: unknown) {
@@ -106,11 +102,6 @@ function normalizeTimelyRows(rows: unknown[]) {
 }
 
 export async function getMembers() {
-  if (isMockMode()) {
-    // TODO(backend): Remove mock branch when members are loaded from Supabase in local/dev.
-    return getMockMembers();
-  }
-
   const supabase = await createClient();
   const { data } = await supabase
     .from("members")
@@ -120,52 +111,27 @@ export async function getMembers() {
   return data ?? [];
 }
 export async function getAssessmentMembers() {
-  if (isMockMode()) {
-    // Intake assessment picker is lead-driven (Tour / Enrollment in Progress).
-    const db = getMockDb();
-    const candidates = db.leads
-      .filter((lead) => {
-        const stage = canonicalLeadStage(String(lead.stage ?? lead.status ?? ""));
-        return stage === "Enrollment in Progress" || stage === "EIP" || stage === "Tour";
-      })
-      .map((lead) => {
-        const stage = canonicalLeadStage(String(lead.stage ?? lead.status ?? ""));
-        const linkedMemberId =
-          getMappedMemberIdForLead(lead.id) ??
-          db.assessments.find((assessment) => assessment.lead_id === lead.id)?.member_id ??
-          null;
-        return {
-          id: lead.id,
-          display_name: lead.member_name,
-          lead_id: lead.id,
-          lead_stage: stage,
-          lead_status: lead.status,
-          linked_member_id: linkedMemberId
-        };
-      });
+  const supabase = await createClient();
+  const { data: leads } = await supabase
+    .from("leads")
+    .select("id, member_name, stage, status")
+    .in("stage", ["Tour", "Enrollment in Progress"])
+    .order("member_name", { ascending: true });
 
-    return candidates
-      .filter((row): row is NonNullable<typeof row> => Boolean(row))
-      .sort((a, b) => {
-        if (a.lead_stage !== b.lead_stage) return a.lead_stage.localeCompare(b.lead_stage);
-        return a.display_name.localeCompare(b.display_name);
-      });
-  }
+  const { data: members } = await supabase.from("members").select("id, display_name");
+  const memberByName = new Map((members ?? []).map((row: any) => [String(row.display_name).toLowerCase(), row.id]));
 
-  // TODO(backend): return Tour/EIP lead-linked intake candidates from canonical lead source.
-  return getMembers();
+  return (leads ?? []).map((lead: any) => ({
+    id: lead.id,
+    display_name: lead.member_name,
+    lead_id: lead.id,
+    lead_stage: lead.stage,
+    lead_status: lead.status,
+    linked_member_id: memberByName.get(String(lead.member_name).toLowerCase()) ?? null
+  }));
 }
 
 export async function getDocumentationSummary() {
-  if (isMockMode()) {
-    // TODO(backend): Remove mock branch when documentation summaries are loaded from Supabase in local/dev.
-    const mock = getMockDocumentationSummary();
-    return {
-      today: normalizeTodayRows(mock.today),
-      timely: normalizeTimelyRows(mock.timely)
-    };
-  }
-
   const supabase = await createClient();
   const { data: today } = await supabase.from("v_today_at_a_glance").select("*");
   const { data: timely } = await supabase
@@ -181,11 +147,6 @@ export async function getDocumentationSummary() {
 }
 
 export async function getDocumentationTracker() {
-  if (isMockMode()) {
-    // TODO(backend): Remove mock branch when documentation tracker data is loaded from Supabase in local/dev.
-    return getMockDocumentationTracker();
-  }
-
   const supabase = await createClient();
   const { data } = await supabase
     .from("documentation_tracker")
@@ -194,6 +155,7 @@ export async function getDocumentationTracker() {
 
   return data ?? [];
 }
+
 
 
 

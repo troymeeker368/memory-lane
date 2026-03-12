@@ -16,8 +16,16 @@ export default async function SalesRecentActivityPage() {
   }, []);
 
   const leadNameById = new Map(allLeads.map((lead: any) => [lead.id, lead.member_name]));
-  const partnerByPartnerId = new Map(partners.map((partner: any) => [partner.partner_id, partner]));
-  const referralById = new Map(referralSources.map((source: any) => [source.referral_source_id, source]));
+  const partnerByPartnerId = new Map<string, any>();
+  partners.forEach((partner: any) => {
+    if (partner.partner_id) partnerByPartnerId.set(String(partner.partner_id), partner);
+    if (partner.id) partnerByPartnerId.set(String(partner.id), partner);
+  });
+  const referralById = new Map<string, any>();
+  referralSources.forEach((source: any) => {
+    if (source.referral_source_id) referralById.set(String(source.referral_source_id), source);
+    if (source.id) referralById.set(String(source.id), source);
+  });
 
   return (
     <div className="space-y-4">
@@ -86,7 +94,7 @@ export default async function SalesRecentActivityPage() {
                     <td>{activity.contact_name || referral?.contact_name || "-"}</td>
                     <td>{activity.activity_type}</td>
                     <td>{activity.next_follow_up_date ? `${formatDate(activity.next_follow_up_date)} (${activity.next_follow_up_type ?? "-"})` : "-"}</td>
-                    <td>{activity.completed_by || "-"}</td>
+                    <td>{activity.completed_by || activity.completed_by_name || "-"}</td>
                     <td>{activity.lead_id ? <Link className="font-semibold text-brand" href={`/sales/leads/${activity.lead_id}`}>{leadNameById.get(activity.lead_id) ?? "Open"}</Link> : "-"}</td>
                     <td>{activity.notes || "-"}</td>
                   </tr>

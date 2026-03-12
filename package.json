@@ -10,19 +10,29 @@
     "port:kill": "npx kill-port 3001",
     "dev:clean": "npm run port:kill && npm run dev",
     "build": "next build",
+    "build:turbo": "next build --turbopack",
     "start": "next start -p 3001",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "quality:gates": "node scripts/quality-gates/run.cjs"
+    "quality:gates": "node scripts/quality-gates/run.cjs",
+    "seed": "tsx scripts/seed-supabase.ts",
+    "reseed": "tsx scripts/seed-supabase.ts --reset",
+    "seed:intake": "tsx scripts/seed-supabase.ts --module intake",
+    "seed:sales": "tsx scripts/seed-supabase.ts --module sales",
+    "seed:attendance": "tsx scripts/seed-supabase.ts --module attendance",
+    "seed:health": "tsx scripts/seed-supabase.ts --module intake --module attendance",
+    "migrate:mock-to-supabase": "tsx scripts/seed-supabase.ts --legacy-only",
+    "migrate:mock-to-supabase:reset": "tsx scripts/seed-supabase.ts --legacy-only --reset"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
-    "@supabase/supabase-js": "^2.49.8",
+    "@supabase/supabase-js": "^2.99.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "lucide-react": "^0.511.0",
     "next": "^15.5.12",
     "pdf-lib": "^1.17.1",
+    "postgres": "^3.4.8",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "zod": "^3.24.4"
@@ -35,7 +45,9 @@
     "eslint": "^9.26.0",
     "eslint-config-next": "15.3.2",
     "postcss": "^8.5.3",
+    "supabase": "^2.78.1",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.3"
   }
 }

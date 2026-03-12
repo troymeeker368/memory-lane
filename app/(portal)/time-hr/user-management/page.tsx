@@ -41,8 +41,8 @@ export default async function UserManagementPage({
   const role = parseRole(firstParam(resolvedSearchParams.role));
   const status = parseStatus(firstParam(resolvedSearchParams.status));
 
-  const users = listManagedUsers({ search, role, status });
-  const metrics = getUserManagementMetrics();
+  const users = await listManagedUsers({ search, role, status });
+  const metrics = await getUserManagementMetrics();
 
   return (
     <div className="space-y-4">

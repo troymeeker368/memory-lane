@@ -75,7 +75,7 @@ export async function createManagedUserFormAction(formData: FormData) {
     return;
   }
 
-  const created = createManagedUser(payload.data);
+  const created = await createManagedUser(payload.data);
 
   revalidatePath("/time-hr/user-management");
   revalidatePath(`/time-hr/user-management/${created.id}`);
@@ -94,7 +94,7 @@ export async function updateManagedUserFormAction(formData: FormData) {
     return;
   }
 
-  const updated = updateManagedUser(userId, payload.data);
+  const updated = await updateManagedUser(userId, payload.data);
   if (!updated) {
     return;
   }
@@ -114,7 +114,7 @@ export async function updateManagedUserStatusAction(formData: FormData) {
     return;
   }
 
-  const updated = setManagedUserStatus(userId, nextStatusParsed.data);
+  const updated = await setManagedUserStatus(userId, nextStatusParsed.data);
   if (!updated) {
     return;
   }
@@ -130,7 +130,7 @@ export async function updateManagedUserPermissionsAction(formData: FormData) {
     return;
   }
 
-  const user = getManagedUserById(userId);
+  const user = await getManagedUserById(userId);
   if (!user) {
     return;
   }
@@ -142,8 +142,8 @@ export async function updateManagedUserPermissionsAction(formData: FormData) {
 
   const updated =
     modeResult.data === "template"
-      ? resetManagedUserPermissionsToRoleDefaults(userId)
-      : updateManagedUserPermissions(userId, parsePermissionSetFromFormData(formData));
+      ? await resetManagedUserPermissionsToRoleDefaults(userId)
+      : await updateManagedUserPermissions(userId, parsePermissionSetFromFormData(formData));
 
   if (!updated) {
     return;
@@ -161,7 +161,7 @@ export async function resetManagedUserPermissionsAction(formData: FormData) {
     return;
   }
 
-  const updated = resetManagedUserPermissionsToRoleDefaults(userId);
+  const updated = await resetManagedUserPermissionsToRoleDefaults(userId);
   if (!updated) {
     return;
   }

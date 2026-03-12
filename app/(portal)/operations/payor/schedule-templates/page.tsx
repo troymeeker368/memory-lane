@@ -1,6 +1,6 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { getMockDb } from "@/lib/mock-repo";
-import { listBillingScheduleTemplates } from "@/lib/services/billing";
+import { listBillingScheduleTemplates } from "@/lib/services/billing-supabase";
+import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
 
 import { saveBillingScheduleTemplateAction } from "@/app/(portal)/operations/payor/actions";
 
@@ -9,9 +9,10 @@ function todayDate() {
 }
 
 export default async function BillingScheduleTemplatesPage() {
-  const db = getMockDb();
-  const members = db.members.filter((row) => row.status === "active");
-  const rows = listBillingScheduleTemplates();
+  const [members, rows] = await Promise.all([
+    listMembersSupabase({ status: "active" }),
+    listBillingScheduleTemplates()
+  ]);
 
   return (
     <div className="space-y-4">

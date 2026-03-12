@@ -11,22 +11,27 @@ import {
   MEMBER_TRANSPORTATION_SERVICE_OPTIONS
 } from "@/lib/canonical";
 import {
-  addAuditLogEvent,
-  addMemberMakeupLedgerEntry,
-  addMockRecord,
-  getMemberMakeupDayBalance,
-  getMockDb,
-  removeMockRecord,
-  updateMockRecord
-} from "@/lib/mock-repo";
-import {
-  ensureMemberAttendanceSchedule,
-  ensureMemberCommandCenterProfile,
-  updateMemberDobFromCommandCenter,
-  updateMemberEnrollmentFromSchedule
-} from "@/lib/services/member-command-center";
+  addMemberAllergySupabase,
+  addMemberFileSupabase,
+  deleteMemberAllergySupabase,
+  deleteMemberContactSupabase,
+  deleteMemberFileSupabase,
+  ensureMemberAttendanceScheduleSupabase,
+  ensureMemberCommandCenterProfileSupabase,
+  getMemberSupabase,
+  listBillingScheduleTemplatesSupabase,
+  listMemberBillingSettingsSupabase,
+  listMembersSupabase,
+  updateMemberAllergySupabase,
+  updateMemberAttendanceScheduleSupabase,
+  updateMemberCommandCenterProfileSupabase,
+  updateMemberSupabase,
+  upsertBillingScheduleTemplateSupabase,
+  upsertBusStopDirectoryFromValuesSupabase,
+  upsertMemberBillingSettingSupabase,
+  upsertMemberContactSupabase
+} from "@/lib/services/member-command-center-supabase";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
-import { syncCommandCenterToMhp, syncMhpToCommandCenter } from "@/lib/services/member-profile-sync";
 import { toEasternISO } from "@/lib/timezone";
 
 function asString(formData: FormData, key: string) {
@@ -133,35 +138,10 @@ function upsertBusStopDirectoryFromValues(input: {
   actor: { id: string; full_name: string };
   now: string;
 }) {
-  const db = getMockDb();
-  const nextNames = Array.from(
-    new Set(
-      input.busStopNames
-        .map((value) => normalizeBusStopName(value))
-        .filter((value): value is string => Boolean(value))
-    )
-  );
-
-  nextNames.forEach((busStopName) => {
-    const existing = db.busStopDirectory.find(
-      (row) => normalizeBusStopName(row.bus_stop_name)?.toLowerCase() === busStopName.toLowerCase()
-    );
-
-    if (existing) {
-      updateMockRecord("busStopDirectory", existing.id, {
-        bus_stop_name: busStopName,
-        updated_at: input.now
-      });
-      return;
-    }
-
-    addMockRecord("busStopDirectory", {
-      bus_stop_name: busStopName,
-      created_by_user_id: input.actor.id,
-      created_by_name: input.actor.full_name,
-      created_at: input.now,
-      updated_at: input.now
-    });
+  return upsertBusStopDirectoryFromValuesSupabase({
+    busStopNames: input.busStopNames.map((value) => normalizeBusStopName(value)),
+    actor: input.actor,
+    now: input.now
   });
 }
 
@@ -170,16 +150,15 @@ export async function saveMemberCommandCenterSummaryAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return { ok: false, error: "Member is required." };
 
-  const db = getMockDb();
-  const member = db.members.find((row) => row.id === memberId);
+  const member = await getMemberSupabase(memberId);
   if (!member) return { ok: false, error: "Member not found." };
   const lockerNumber = normalizeLockerInput(asString(formData, "lockerNumber"));
   if (lockerNumber && member.status === "active") {
-    const conflict = db.members.find(
-      (member) =>
-        member.id !== memberId &&
-        member.status === "active" &&
-        String(member.locker_number ?? "").trim().toLowerCase() === lockerNumber.toLowerCase()
+    const members = await listMembersSupabase({ status: "active" });
+    const conflict = members.find(
+      (candidate) =>
+        candidate.id !== memberId &&
+        String(candidate.locker_number ?? "").trim().toLowerCase() === lockerNumber.toLowerCase()
     );
     if (conflict) {
       return { ok: false, error: `Locker ${lockerNumber} is already assigned to ${conflict.display_name}.` };
@@ -187,10 +166,10 @@ export async function saveMemberCommandCenterSummaryAction(formData: FormData) {
   }
 
   const now = toEasternISO();
-  const profile = ensureMemberCommandCenterProfile(memberId);
+  const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
   const defaultLocation = profile.location ?? "Fort Mill";
 
-  updateMockRecord("memberCommandCenters", profile.id, {
+  await updateMemberCommandCenterProfileSupabase(profile.id, {
     payor: asNullableString(formData, "payor"),
     original_referral_source: asNullableString(formData, "originalReferralSource"),
     photo_consent: asNullableBoolSelect(formData, "photoConsent"),
@@ -199,18 +178,9 @@ export async function saveMemberCommandCenterSummaryAction(formData: FormData) {
     updated_by_name: actor.full_name,
     updated_at: now
   });
-  updateMockRecord("members", memberId, {
+  await updateMemberSupabase(memberId, {
     locker_number: lockerNumber
   });
-
-  syncCommandCenterToMhp(
-    memberId,
-    {
-      id: actor.id,
-      fullName: actor.full_name
-    },
-    now
-  );
 
   revalidateCommandCenter(memberId);
   return { ok: true };
@@ -222,23 +192,14 @@ export async function updateMemberCommandCenterPhotoAction(formData: FormData) {
   if (!memberId) return { ok: false, error: "Member is required." };
 
   const now = toEasternISO();
-  const profile = ensureMemberCommandCenterProfile(memberId);
+  const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
   const profileImageUrl = await asUploadedImageDataUrl(formData, "photoFile", profile.profile_image_url ?? null);
-  updateMockRecord("memberCommandCenters", profile.id, {
+  await updateMemberCommandCenterProfileSupabase(profile.id, {
     profile_image_url: profileImageUrl,
     updated_by_user_id: actor.id,
     updated_by_name: actor.full_name,
     updated_at: now
   });
-
-  syncCommandCenterToMhp(
-    memberId,
-    {
-      id: actor.id,
-      fullName: actor.full_name
-    },
-    now
-  );
 
   revalidateCommandCenter(memberId);
   return { ok: true, profileImageUrl };
@@ -249,9 +210,9 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
   const memberId = asString(formData, "memberId");
   if (!memberId) return { ok: false, error: "Member is required." };
 
-  const schedule = ensureMemberAttendanceSchedule(memberId);
+  const schedule = await ensureMemberAttendanceScheduleSupabase(memberId);
   if (!schedule) return { ok: false, error: "Attendance schedule not found." };
-  const commandCenterProfile = ensureMemberCommandCenterProfile(memberId);
+  const commandCenterProfile = await ensureMemberCommandCenterProfileSupabase(memberId);
   const now = toEasternISO();
   const enrollmentDate = asNullableString(formData, "enrollmentDate");
   const wasMonday = schedule.monday;
@@ -293,39 +254,13 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
   const billAncillaryArrears = asCheckbox(formData, "billAncillaryArrears");
   const rateEffectiveDate = asDateOnly(formData, "billingRateEffectiveDate", now.slice(0, 10));
   const billingNotes = asNullableString(formData, "billingNotes");
-  const currentMakeupBalance = getMemberMakeupDayBalance(memberId);
+  const currentMakeupBalance = schedule.make_up_days_available ?? 0;
   const requestedMakeupBalanceRaw = asString(formData, "makeUpDaysAvailable");
   let resolvedMakeupBalance = currentMakeupBalance;
   if (requestedMakeupBalanceRaw.length > 0) {
     const parsed = Number(requestedMakeupBalanceRaw);
     if (Number.isFinite(parsed)) {
-      const requestedBalance = Math.max(0, Math.trunc(parsed));
-      const delta = requestedBalance - currentMakeupBalance;
-      if (delta !== 0) {
-        addMemberMakeupLedgerEntry({
-          memberId,
-          deltaDays: delta,
-          reason: "Manual makeup-day balance adjustment",
-          source: "mcc-attendance-adjustment",
-          actorUserId: actor.id,
-          actorName: actor.full_name
-        });
-        addAuditLogEvent({
-          actorUserId: actor.id,
-          actorName: actor.full_name,
-          actorRole: actor.role,
-          action: "manager_review",
-          entityType: "makeup_day",
-          entityId: memberId,
-          details: {
-            source: "mcc-attendance-adjustment",
-            previousBalance: currentMakeupBalance,
-            nextBalance: requestedBalance,
-            deltaDays: delta
-          }
-        });
-      }
-      resolvedMakeupBalance = getMemberMakeupDayBalance(memberId);
+      resolvedMakeupBalance = Math.max(0, Math.trunc(parsed));
     }
   }
 
@@ -527,7 +462,7 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     return null;
   };
 
-  updateMockRecord("memberAttendanceSchedules", schedule.id, {
+  const updatedSchedule = await updateMemberAttendanceScheduleSupabase(schedule.id, {
     enrollment_date: enrollmentDate,
     monday,
     tuesday,
@@ -595,11 +530,11 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     updated_by_name: actor.full_name,
     updated_at: now
   });
+  if (!updatedSchedule) return { ok: false, error: "Unable to save attendance schedule." };
 
-  updateMemberEnrollmentFromSchedule(memberId, enrollmentDate);
+  await updateMemberSupabase(memberId, { enrollment_date: enrollmentDate ?? null });
 
-  const db = getMockDb();
-  const activeMemberBillingSettings = db.memberBillingSettings
+  const activeMemberBillingSettings = (await listMemberBillingSettingsSupabase(memberId))
     .filter((row) => row.member_id === memberId)
     .filter((row) => row.active)
     .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1));
@@ -611,28 +546,32 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     null;
 
   if (existingBillingSetting) {
-    updateMockRecord("memberBillingSettings", existingBillingSetting.id, {
+    await upsertMemberBillingSettingSupabase(existingBillingSetting.id, {
+      member_id: existingBillingSetting.member_id,
       payor_id: payorId ?? existingBillingSetting.payor_id,
       use_center_default_billing_mode: useCenterDefaultBillingMode,
       billing_mode: useCenterDefaultBillingMode ? null : billingMode ?? existingBillingSetting.billing_mode ?? "Membership",
       monthly_billing_basis: monthlyBillingBasis,
       use_center_default_rate: false,
       custom_daily_rate: dailyRate,
+      flat_monthly_rate: existingBillingSetting.flat_monthly_rate,
       bill_extra_days: billExtraDays,
       transportation_billing_status: transportationBillingStatus,
       bill_ancillary_arrears: billAncillaryArrears,
+      active: existingBillingSetting.active,
+      effective_start_date: existingBillingSetting.effective_start_date,
+      effective_end_date: existingBillingSetting.effective_end_date,
       billing_notes: billingNotes ?? existingBillingSetting.billing_notes,
-      updated_at: now,
       updated_by_user_id: actor.id,
       updated_by_name: actor.full_name
     });
   } else {
     const fallbackPayorId =
-      db.memberBillingSettings
+      activeMemberBillingSettings
         .filter((row) => row.member_id === memberId)
         .map((row) => row.payor_id)
         .find((row): row is string => Boolean(row)) ?? null;
-    addMockRecord("memberBillingSettings", {
+    await upsertMemberBillingSettingSupabase(null, {
       member_id: memberId,
       payor_id: payorId ?? fallbackPayorId,
       use_center_default_billing_mode: useCenterDefaultBillingMode,
@@ -649,14 +588,12 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
       effective_end_date: null,
       billing_notes:
         billingNotes ?? `MCC attendance billing daily rate synced ($${dailyRate.toFixed(2)}).`,
-      created_at: now,
-      updated_at: now,
       updated_by_user_id: actor.id,
       updated_by_name: actor.full_name
     });
   }
 
-  const activeScheduleTemplates = db.billingScheduleTemplates
+  const activeScheduleTemplates = (await listBillingScheduleTemplatesSupabase(memberId))
     .filter((row) => row.member_id === memberId)
     .filter((row) => row.active)
     .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1));
@@ -668,7 +605,10 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     null;
 
   if (existingScheduleTemplate) {
-    updateMockRecord("billingScheduleTemplates", existingScheduleTemplate.id, {
+    await upsertBillingScheduleTemplateSupabase(existingScheduleTemplate.id, {
+      member_id: existingScheduleTemplate.member_id,
+      effective_start_date: existingScheduleTemplate.effective_start_date,
+      effective_end_date: existingScheduleTemplate.effective_end_date,
       monday,
       tuesday,
       wednesday,
@@ -676,13 +616,13 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
       friday,
       saturday: false,
       sunday: false,
+      active: existingScheduleTemplate.active,
       notes: existingScheduleTemplate.notes ?? "Auto-synced from MCC attendance pattern.",
-      updated_at: now,
       updated_by_user_id: actor.id,
       updated_by_name: actor.full_name
     });
   } else {
-    addMockRecord("billingScheduleTemplates", {
+    await upsertBillingScheduleTemplateSupabase(null, {
       member_id: memberId,
       effective_start_date: enrollmentDate ?? rateEffectiveDate,
       effective_end_date: null,
@@ -695,8 +635,6 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
       sunday: false,
       active: true,
       notes: "Auto-created from MCC attendance pattern.",
-      created_at: now,
-      updated_at: now,
       updated_by_user_id: actor.id,
       updated_by_name: actor.full_name
     });
@@ -712,9 +650,9 @@ export async function saveMemberCommandCenterTransportationAction(formData: Form
     const memberId = asString(formData, "memberId");
     if (!memberId) return { ok: false, error: "Member is required." };
 
-    const schedule = ensureMemberAttendanceSchedule(memberId);
+    const schedule = await ensureMemberAttendanceScheduleSupabase(memberId);
     if (!schedule) return { ok: false, error: "Attendance schedule not found." };
-    const commandCenterProfile = ensureMemberCommandCenterProfile(memberId);
+    const commandCenterProfile = await ensureMemberCommandCenterProfileSupabase(memberId);
     const now = toEasternISO();
     const defaultDoorToDoorAddress =
       [
@@ -728,7 +666,7 @@ export async function saveMemberCommandCenterTransportationAction(formData: Form
         .join(", ") || null;
 
     const transportationRequired = asNullableBoolSelect(formData, "transportationRequired");
-    const configuredBusNumbers = getConfiguredBusNumbers();
+    const configuredBusNumbers = await getConfiguredBusNumbers();
     const normalizeMode = (raw: string) =>
       MEMBER_TRANSPORTATION_SERVICE_OPTIONS.includes(raw as (typeof MEMBER_TRANSPORTATION_SERVICE_OPTIONS)[number])
         ? (raw as "Door to Door" | "Bus Stop")
@@ -834,7 +772,7 @@ export async function saveMemberCommandCenterTransportationAction(formData: Form
       fridayAm.busStop ??
       fridayPm.busStop;
 
-    const updatedSchedule = updateMockRecord("memberAttendanceSchedules", schedule.id, {
+    const updatedSchedule = await updateMemberAttendanceScheduleSupabase(schedule.id, {
       transportation_required: transportationRequired,
       transportation_mode: transportationRequired === true ? firstMode : null,
       transport_bus_number: transportationRequired === true ? firstBusNumber : null,
@@ -892,7 +830,7 @@ export async function saveMemberCommandCenterTransportationAction(formData: Form
       return { ok: false, error: "Unable to save transportation updates." };
     }
 
-    upsertBusStopDirectoryFromValues({
+    await upsertBusStopDirectoryFromValues({
       busStopNames: [
         mondayAm.busStop,
         mondayPm.busStop,
@@ -926,7 +864,7 @@ export async function saveMemberCommandCenterDemographicsAction(formData: FormDa
   const memberId = asString(formData, "memberId");
   if (!memberId) return { ok: false, error: "Member is required." };
 
-  const profile = ensureMemberCommandCenterProfile(memberId);
+  const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
   const now = toEasternISO();
   const city = asNullableString(formData, "city");
   const isVeteran = asNullableBoolSelect(formData, "isVeteran");
@@ -936,7 +874,7 @@ export async function saveMemberCommandCenterDemographicsAction(formData: FormDa
   const memberDisplayName = asString(formData, "memberDisplayName");
   const memberDob = asNullableString(formData, "memberDob");
 
-  updateMockRecord("memberCommandCenters", profile.id, {
+  await updateMemberCommandCenterProfileSupabase(profile.id, {
     gender,
     street_address: asNullableString(formData, "streetAddress"),
     city,
@@ -958,16 +896,10 @@ export async function saveMemberCommandCenterDemographicsAction(formData: FormDa
   if (memberDisplayName.length > 0) {
     memberPatch.display_name = memberDisplayName;
   }
-  updateMockRecord("members", memberId, memberPatch);
-  updateMemberDobFromCommandCenter(memberId, memberDob);
-  syncCommandCenterToMhp(
-    memberId,
-    {
-      id: actor.id,
-      fullName: actor.full_name
-    },
-    now
-  );
+  await updateMemberSupabase(memberId, {
+    ...memberPatch,
+    dob: memberDob ?? null
+  });
 
   revalidateCommandCenter(memberId);
   return { ok: true };
@@ -979,14 +911,14 @@ export async function saveMemberCommandCenterLegalAction(formData: FormData) {
   if (!memberId) return { ok: false, error: "Member is required." };
 
   const now = toEasternISO();
-  const profile = ensureMemberCommandCenterProfile(memberId);
+  const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
   const codeStatusInput = asNullableString(formData, "codeStatus");
   const dnrInput = asNullableBoolSelect(formData, "dnr");
   const codeStatus =
     codeStatusInput ?? (dnrInput === true ? "DNR" : dnrInput === false ? "Full Code" : null);
   const dnr = codeStatus === "DNR" ? true : codeStatus === "Full Code" ? false : dnrInput;
 
-  updateMockRecord("memberCommandCenters", profile.id, {
+  await updateMemberCommandCenterProfileSupabase(profile.id, {
     code_status: codeStatus,
     dnr,
     dni: asNullableBoolSelect(formData, "dni"),
@@ -1000,15 +932,7 @@ export async function saveMemberCommandCenterLegalAction(formData: FormData) {
     updated_at: now
   });
 
-  updateMockRecord("members", memberId, { code_status: codeStatus });
-  syncCommandCenterToMhp(
-    memberId,
-    {
-      id: actor.id,
-      fullName: actor.full_name
-    },
-    now
-  );
+  await updateMemberSupabase(memberId, { code_status: codeStatus });
 
   revalidateCommandCenter(memberId);
   return { ok: true };
@@ -1020,12 +944,12 @@ export async function saveMemberCommandCenterDietAction(formData: FormData) {
   if (!memberId) return { ok: false, error: "Member is required." };
 
   const now = toEasternISO();
-  const profile = ensureMemberCommandCenterProfile(memberId);
+  const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
   const dietType = asString(formData, "dietType");
   const dietTypeOther = asNullableString(formData, "dietTypeOther");
   const normalizedDietType = dietType === "Other" ? (dietTypeOther ?? "Other") : dietType || "Regular";
 
-  updateMockRecord("memberCommandCenters", profile.id, {
+  await updateMemberCommandCenterProfileSupabase(profile.id, {
     diet_type: normalizedDietType,
     dietary_preferences_restrictions: asNullableString(formData, "dietaryPreferencesRestrictions"),
     swallowing_difficulty: asNullableString(formData, "swallowingDifficulty"),
@@ -1038,16 +962,6 @@ export async function saveMemberCommandCenterDietAction(formData: FormData) {
     updated_by_name: actor.full_name,
     updated_at: now
   });
-  syncCommandCenterToMhp(
-    memberId,
-    {
-      id: actor.id,
-      fullName: actor.full_name
-    },
-    now,
-    { syncAllergies: true }
-  );
-
   revalidateCommandCenter(memberId);
   return { ok: true };
 }
@@ -1067,7 +981,7 @@ export async function addMemberCommandCenterAllergyInlineAction(formData: FormDa
     if (!allergyGroup || !allergyName) return { ok: false, error: "Allergy group and name are required." };
 
     const now = toEasternISO();
-    const created = addMockRecord("memberAllergies", {
+    const created = await addMemberAllergySupabase({
       member_id: memberId,
       allergy_group: allergyGroup,
       allergy_name: allergyName,
@@ -1078,15 +992,6 @@ export async function addMemberCommandCenterAllergyInlineAction(formData: FormDa
       created_at: now,
       updated_at: now
     });
-
-    syncMhpToCommandCenter(
-      memberId,
-      {
-        id: actor.id,
-        fullName: actor.full_name
-      },
-      now
-    );
 
     revalidateCommandCenter(memberId);
     return { ok: true, row: created };
@@ -1111,7 +1016,7 @@ export async function updateMemberCommandCenterAllergyInlineAction(formData: For
     if (!allergyGroup || !allergyName) return { ok: false, error: "Allergy group and name are required." };
 
     const now = toEasternISO();
-    const updated = updateMockRecord("memberAllergies", allergyId, {
+    const updated = await updateMemberAllergySupabase(allergyId, {
       allergy_group: allergyGroup,
       allergy_name: allergyName,
       severity: asNullableString(formData, "allergySeverity"),
@@ -1119,15 +1024,6 @@ export async function updateMemberCommandCenterAllergyInlineAction(formData: For
       updated_at: now
     });
     if (!updated) return { ok: false, error: "Allergy not found." };
-
-    syncMhpToCommandCenter(
-      memberId,
-      {
-        id: actor.id,
-        fullName: actor.full_name
-      },
-      now
-    );
 
     revalidateCommandCenter(memberId);
     return { ok: true, row: updated };
@@ -1143,18 +1039,7 @@ export async function deleteMemberCommandCenterAllergyInlineAction(formData: For
     const allergyId = asString(formData, "allergyId");
     if (!memberId || !allergyId) return { ok: false, error: "Missing allergy reference." };
 
-    const removed = removeMockRecord("memberAllergies", allergyId);
-    if (!removed) return { ok: false, error: "Allergy not found." };
-
-    const now = toEasternISO();
-    syncMhpToCommandCenter(
-      memberId,
-      {
-        id: actor.id,
-        fullName: actor.full_name
-      },
-      now
-    );
+    await deleteMemberAllergySupabase(allergyId);
 
     revalidateCommandCenter(memberId);
     return { ok: true };
@@ -1200,7 +1085,8 @@ export async function upsertMemberContactAction(raw: {
     const now = toEasternISO();
 
     if (raw.id?.trim()) {
-      const updated = updateMockRecord("memberContacts", raw.id.trim(), {
+      const updated = await upsertMemberContactSupabase({
+        id: raw.id.trim(),
         member_id: memberId,
         contact_name: contactName,
         relationship_to_member: raw.relationshipToMember?.trim() || null,
@@ -1214,13 +1100,16 @@ export async function upsertMemberContactAction(raw: {
         city: raw.city?.trim() || null,
         state: raw.state?.trim() || null,
         zip: raw.zip?.trim() || null,
+        created_by_user_id: actor.id,
+        created_by_name: actor.full_name,
+        created_at: now,
         updated_at: now
       });
       if (!updated) return { error: "Contact not found." };
       revalidateCommandCenter(memberId);
       return { ok: true, row: updated };
     } else {
-      const created = addMockRecord("memberContacts", {
+      const created = await upsertMemberContactSupabase({
         member_id: memberId,
         contact_name: contactName,
         relationship_to_member: raw.relationshipToMember?.trim() || null,
@@ -1254,8 +1143,7 @@ export async function deleteMemberContactAction(raw: { id: string; memberId: str
     const memberId = raw.memberId?.trim();
     if (!id || !memberId) return { error: "Invalid contact delete request." };
 
-    const removed = removeMockRecord("memberContacts", id);
-    if (!removed) return { error: "Contact not found." };
+    await deleteMemberContactSupabase(id);
 
     revalidateCommandCenter(memberId);
     return { ok: true };
@@ -1293,7 +1181,7 @@ export async function addMemberFileAction(raw: {
 
     const now = toEasternISO();
 
-    addMockRecord("memberFiles", {
+    const created = await addMemberFileSupabase({
       member_id: memberId,
       file_name: fileName,
       file_type: raw.fileType?.trim() || "application/octet-stream",
@@ -1308,7 +1196,7 @@ export async function addMemberFileAction(raw: {
     });
 
     revalidateCommandCenter(memberId);
-    return { ok: true };
+    return { ok: true, row: created };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to upload file." };
   }
@@ -1321,8 +1209,7 @@ export async function deleteMemberFileAction(raw: { id: string; memberId: string
     const memberId = raw.memberId?.trim();
     if (!id || !memberId) return { error: "Invalid file delete request." };
 
-    const removed = removeMockRecord("memberFiles", id);
-    if (!removed) return { error: "File not found." };
+    await deleteMemberFileSupabase(id);
 
     revalidateCommandCenter(memberId);
     return { ok: true };

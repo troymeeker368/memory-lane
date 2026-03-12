@@ -1,5 +1,5 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { getVariableChargesQueue } from "@/lib/services/billing";
+import { getVariableChargesQueue } from "@/lib/services/billing-supabase";
 
 import { setVariableChargeStatusAction } from "@/app/(portal)/operations/payor/actions";
 
@@ -22,7 +22,7 @@ export default async function VariableChargesQueuePage({
 }) {
   const params = await searchParams;
   const month = firstString(params.month) ?? previousMonthStart();
-  const queue = getVariableChargesQueue({ month });
+  const queue = await getVariableChargesQueue({ month });
 
   return (
     <div className="space-y-4">

@@ -14,6 +14,8 @@ export interface MockMember {
   id: string;
   display_name: string;
   locker_number: string | null;
+  locker_assigned_at?: string | null;
+  updated_at?: string | null;
   status: "active" | "inactive";
   discharge_date: string | null;
   discharge_reason: string | null;

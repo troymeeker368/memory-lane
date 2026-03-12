@@ -1,8 +1,6 @@
 import type { AppRole } from "@/types/app";
-import { getMockDb, getTimeReview } from "@/lib/mock-repo";
 import { getCurrentPayPeriod, isDateInPayPeriod } from "@/lib/pay-period";
 import { normalizeRoleKey } from "@/lib/permissions";
-import { isMockMode } from "@/lib/runtime";
 import { calculateDailyTimecard, type TimecardPunch } from "@/lib/services/timecard-workflow";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate } from "@/lib/timezone";
@@ -25,18 +23,16 @@ type CanonicalHistoryPunch = {
   linked_time_punch_id: string | null;
 };
 
-type SupabaseOverviewPunch = {
+type SupabasePunchRow = {
   id: string;
-  punch_type: "in" | "out";
-  punch_at: string;
-  within_fence: boolean;
-  distance_meters: number | null;
+  employee_id: string;
+  employee_name: string;
+  timestamp: string;
+  type: "in" | "out";
+  source: PunchSource;
+  status: PunchStatus;
   note: string | null;
-};
-
-type SupabaseHistoryPunch = SupabaseOverviewPunch & {
-  staff_user_id: string;
-  staff_name: string;
+  linked_time_punch_id: string | null;
 };
 
 function roundHours(value: number) {
@@ -51,53 +47,6 @@ function toWorkflowPunch(row: CanonicalHistoryPunch): TimecardPunch {
     source: row.source,
     status: row.status
   };
-}
-
-function buildCanonicalPunchHistoryRows() {
-  const db = getMockDb();
-  const timePunchById = new Map(db.timePunches.map((row) => [row.id, row] as const));
-
-  const linked = new Set<string>();
-  const rows: CanonicalHistoryPunch[] = db.punches.map((row) => {
-    const linkedTimePunchId = row.linked_time_punch_id ?? null;
-    if (linkedTimePunchId) linked.add(linkedTimePunchId);
-    const linkedTimePunch = linkedTimePunchId ? timePunchById.get(linkedTimePunchId) : null;
-
-    return {
-      id: row.id,
-      staff_user_id: row.employee_id,
-      staff_name: row.employee_name,
-      punch_type: row.type,
-      punch_at: row.timestamp,
-      within_fence: linkedTimePunch?.within_fence ?? null,
-      distance_meters: linkedTimePunch?.distance_meters ?? null,
-      note: row.note ?? linkedTimePunch?.note ?? null,
-      source: row.source,
-      status: row.status,
-      linked_time_punch_id: linkedTimePunchId
-    };
-  });
-
-  // Keep backwards compatibility for any historical rows where employee punches
-  // still exist only in `timePunches` and haven't been mirrored into `punches`.
-  db.timePunches.forEach((row) => {
-    if (linked.has(row.id)) return;
-    rows.push({
-      id: `legacy-time-punch-${row.id}`,
-      staff_user_id: row.staff_user_id,
-      staff_name: row.staff_name,
-      punch_type: row.punch_type,
-      punch_at: row.punch_at,
-      within_fence: row.within_fence,
-      distance_meters: row.distance_meters,
-      note: row.note ?? null,
-      source: "employee",
-      status: "active",
-      linked_time_punch_id: row.id
-    });
-  });
-
-  return rows.sort((left, right) => (left.punch_at < right.punch_at ? 1 : -1));
 }
 
 function summarizePunchRows(punches: CanonicalHistoryPunch[]) {
@@ -137,25 +86,93 @@ function summarizePunchRows(punches: CanonicalHistoryPunch[]) {
   };
 }
 
-function filterPeriodPunches(rows: CanonicalHistoryPunch[], period: PayPeriod) {
-  return rows.filter((row) => isDateInPayPeriod(row.punch_at, period));
+function roleCanSeeAllPunches(role: AppRole) {
+  const normalizedRole = normalizeRoleKey(role);
+  return normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director";
 }
 
-function buildMockOverview(staffUserId: string, period: PayPeriod) {
+async function loadSupabaseCanonicalPunchRows(input: {
+  staffUserId?: string | null;
+  role?: AppRole;
+  period?: PayPeriod;
+  limit?: number;
+}) {
+  const supabase = await createClient();
+  let query = supabase
+    .from("punches")
+    .select("id, employee_id, employee_name, timestamp, type, source, status, note, linked_time_punch_id")
+    .order("timestamp", { ascending: false });
+
+  if (input.staffUserId && input.role && !roleCanSeeAllPunches(input.role)) {
+    query = query.eq("employee_id", input.staffUserId);
+  }
+  if (input.staffUserId && !input.role) {
+    query = query.eq("employee_id", input.staffUserId);
+  }
+  if (input.period) {
+    query = query
+      .gte("timestamp", input.period.startAtIso)
+      .lt("timestamp", input.period.endExclusiveIso);
+  }
+  if (input.limit) {
+    query = query.limit(input.limit);
+  }
+
+  const { data: punchesData, error: punchesError } = await query;
+  if (punchesError) throw new Error(punchesError.message);
+  const punchRows = (punchesData ?? []) as SupabasePunchRow[];
+
+  const linkedIds = punchRows
+    .map((row) => row.linked_time_punch_id)
+    .filter((value): value is string => Boolean(value));
+  const geofenceByLinkedId = new Map<string, { within_fence: boolean; distance_meters: number | null; note: string | null }>();
+  if (linkedIds.length > 0) {
+    const { data: geofenceRows, error: geofenceError } = await supabase
+      .from("time_punches")
+      .select("id, within_fence, distance_meters, note")
+      .in("id", linkedIds);
+    if (geofenceError) throw new Error(geofenceError.message);
+    (geofenceRows ?? []).forEach((row: any) => {
+      geofenceByLinkedId.set(String(row.id), {
+        within_fence: Boolean(row.within_fence),
+        distance_meters: row.distance_meters == null ? null : Number(row.distance_meters),
+        note: (row.note as string | null) ?? null
+      });
+    });
+  }
+
+  return punchRows.map<CanonicalHistoryPunch>((row) => {
+    const linked = row.linked_time_punch_id ? geofenceByLinkedId.get(row.linked_time_punch_id) : null;
+    return {
+      id: row.id,
+      staff_user_id: row.employee_id,
+      staff_name: row.employee_name,
+      punch_type: row.type,
+      punch_at: row.timestamp,
+      within_fence: linked?.within_fence ?? null,
+      distance_meters: linked?.distance_meters ?? null,
+      note: row.note ?? linked?.note ?? null,
+      source: row.source,
+      status: row.status,
+      linked_time_punch_id: row.linked_time_punch_id
+    };
+  });
+}
+
+function buildSupabaseOverview(period: PayPeriod, rows: CanonicalHistoryPunch[]) {
   const today = toEasternDate();
-  const allPunches = buildCanonicalPunchHistoryRows().filter((row) => row.staff_user_id === staffUserId);
-  const todaysPunches = allPunches.filter((row) => toEasternDate(row.punch_at) === today);
-  const periodPunches = filterPeriodPunches(allPunches, period);
-  const dailySummary = summarizePunchRows(todaysPunches);
-  const periodSummary = summarizePunchRows(periodPunches);
-  const latestActive = allPunches.find((row) => row.status === "active");
+  const todayRows = rows.filter((row) => toEasternDate(row.punch_at) === today);
+  const periodRows = rows.filter((row) => isDateInPayPeriod(row.punch_at, period));
+  const dailySummary = summarizePunchRows(todayRows);
+  const periodSummary = summarizePunchRows(periodRows);
+  const latestActive = rows.find((row) => row.status === "active");
 
   return {
     periodStart: period.startAtIso,
     payPeriodLabel: period.label,
     currentStatus: latestActive?.punch_type === "in" ? "Clocked In" : "Clocked Out",
-    punches: allPunches,
-    exceptions: periodPunches
+    punches: rows,
+    exceptions: periodRows
       .filter((row) => row.within_fence === false)
       .map((row) => ({
         id: `ex-${row.id}`,
@@ -171,169 +188,77 @@ function buildMockOverview(staffUserId: string, period: PayPeriod) {
   };
 }
 
-function buildMockManagerReview(period: PayPeriod) {
-  const db = getMockDb();
-  const historyRows = buildCanonicalPunchHistoryRows();
-
-  return db.staff
-    .map((staff) => {
-      const punches = filterPeriodPunches(
-        historyRows.filter((row) => row.staff_user_id === staff.id),
-        period
-      );
-      const summary = summarizePunchRows(punches);
-      const baseStatus = summary.missingClockOuts > 0 || summary.longShifts > 0 ? "Needs Follow-up" : "Reviewed";
-      const baseNotes =
-        summary.missingClockOuts > 0 || summary.longShifts > 0
-          ? `Missing punches: ${summary.missingClockOuts}, long shifts: ${summary.longShifts}`
-          : "-";
-      const review = getTimeReview(staff.full_name, period.label);
-
-      return {
-        staff_name: staff.full_name,
-        pay_period: period.label,
-        total_hours_worked: summary.rawHours,
-        meal_deduction_applied: summary.mealDeductionHours,
-        adjusted_hours: summary.workedHours,
-        exception_notes: review?.notes || baseNotes,
-        approval_status: review?.status ?? baseStatus,
-        reviewed_by: review?.reviewed_by ?? null,
-        reviewed_at: review?.reviewed_at ?? null
-      };
-    })
-    .sort((a, b) => (a.staff_name > b.staff_name ? 1 : -1));
-}
-
-function getMockPunchHistory(staffUserId: string, role: AppRole) {
-  const normalizedRole = normalizeRoleKey(role);
-  return buildCanonicalPunchHistoryRows().filter((row) =>
-    normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director"
-      ? true
-      : row.staff_user_id === staffUserId
-  );
-}
-
-function roleCanSeeAllPunches(role: AppRole) {
-  const normalizedRole = normalizeRoleKey(role);
-  return normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director";
-}
-
-function mapSupabaseHistoryRows(rows: SupabaseHistoryPunch[]) {
-  return rows.map((row) => ({
-    ...row,
-    source: "employee" as const,
-    status: "active" as const,
-    linked_time_punch_id: row.id
-  }));
-}
-
-function mapSupabaseOverviewRows(rows: SupabaseOverviewPunch[]) {
-  return rows.map((row) => ({
-    ...row,
-    source: "employee" as const,
-    status: "active" as const,
-    linked_time_punch_id: row.id,
-    staff_user_id: "",
-    staff_name: ""
-  }));
-}
-
-function summarizeSupabaseRows(rows: SupabaseOverviewPunch[]) {
-  const canonicalRows = mapSupabaseOverviewRows(rows);
-  return summarizePunchRows(canonicalRows);
-}
-
-function buildSupabaseOverview(
-  period: PayPeriod,
-  rows: SupabaseOverviewPunch[],
-  exceptions: Array<{ id: string; exception_type: string; message: string; resolved: boolean }>
-) {
-  const today = toEasternDate();
-  const todayRows = rows.filter((row) => toEasternDate(row.punch_at) === today);
-  const periodRows = rows.filter((row) => isDateInPayPeriod(row.punch_at, period));
-  const dailySummary = summarizeSupabaseRows(todayRows);
-  const periodSummary = summarizeSupabaseRows(periodRows);
-
-  return {
-    periodStart: period.startAtIso,
-    payPeriodLabel: period.label,
-    currentStatus: rows[0]?.punch_type === "in" ? "Clocked In" : "Clocked Out",
-    punches: mapSupabaseOverviewRows(rows),
-    exceptions,
-    dailyHours: dailySummary.rawHours,
-    payPeriodHours: periodSummary.rawHours,
-    mealDeductionHours: dailySummary.mealDeductionHours,
-    adjustedPayPeriodHours: periodSummary.workedHours
-  };
-}
-
 export async function getTimeCardOverview(userId: string) {
   const period = getCurrentPayPeriod();
-
-  if (isMockMode()) {
-    return buildMockOverview(userId, period);
-  }
-
-  const supabase = await createClient();
-
-  const { data: punches } = await supabase
-    .from("time_punches")
-    .select("id, punch_type, punch_at, within_fence, distance_meters, note")
-    .eq("staff_user_id", userId)
-    .gte("punch_at", period.startAtIso)
-    .lt("punch_at", period.endExclusiveIso)
-    .order("punch_at", { ascending: false });
-
-  const { data: exceptions } = await supabase
-    .from("time_punch_exceptions")
-    .select("id, exception_type, message, resolved")
-    .eq("staff_user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(20);
-
-  return buildSupabaseOverview(period, (punches ?? []) as SupabaseOverviewPunch[], exceptions ?? []);
+  const punches = await loadSupabaseCanonicalPunchRows({ staffUserId: userId, period });
+  return buildSupabaseOverview(period, punches);
 }
 
 export async function getManagerTimeReview() {
   const period = getCurrentPayPeriod();
-
-  if (isMockMode()) {
-    return buildMockManagerReview(period);
-  }
-
   const supabase = await createClient();
+  const { data: payPeriodsData, error: payPeriodsError } = await supabase
+    .from("pay_periods")
+    .select("id, start_date, end_date")
+    .order("start_date", { ascending: false });
+  if (payPeriodsError) throw new Error(payPeriodsError.message);
 
-  const { data } = await supabase
-    .from("v_biweekly_totals")
-    .select("staff_name, regular_hours, meal_deduct_hours, payable_hours, exception_count")
-    .order("staff_name");
+  const selectedPayPeriod =
+    (payPeriodsData ?? []).find((row: any) => row.start_date === period.startDate && row.end_date === period.endDate) ??
+    (payPeriodsData ?? [])[0];
+  if (!selectedPayPeriod) return [];
 
-  return (data ?? []).map((row: any) => ({
-    ...row,
-    pay_period: period.label,
-    total_hours_worked: row.regular_hours,
-    meal_deduction_applied: row.meal_deduct_hours,
-    adjusted_hours: row.payable_hours,
-    exception_notes: row.exception_count > 0 ? "Review required" : "-",
-    approval_status: "Pending"
-  }));
+  const { data: timecardsData, error: timecardsError } = await supabase
+    .from("daily_timecards")
+    .select("employee_id, employee_name, raw_hours, meal_deduction_hours, worked_hours, has_exception, status")
+    .eq("pay_period_id", selectedPayPeriod.id);
+  if (timecardsError) throw new Error(timecardsError.message);
+
+  const byEmployee = new Map<string, {
+    staff_name: string;
+    total_hours_worked: number;
+    meal_deduction_applied: number;
+    adjusted_hours: number;
+    exception_count: number;
+    statuses: Set<string>;
+  }>();
+  (timecardsData ?? []).forEach((row: any) => {
+    const key = String(row.employee_id);
+    const existing = byEmployee.get(key) ?? {
+      staff_name: String(row.employee_name),
+      total_hours_worked: 0,
+      meal_deduction_applied: 0,
+      adjusted_hours: 0,
+      exception_count: 0,
+      statuses: new Set<string>()
+    };
+    existing.total_hours_worked = roundHours(existing.total_hours_worked + Number(row.raw_hours ?? 0));
+    existing.meal_deduction_applied = roundHours(existing.meal_deduction_applied + Number(row.meal_deduction_hours ?? 0));
+    existing.adjusted_hours = roundHours(existing.adjusted_hours + Number(row.worked_hours ?? 0));
+    existing.exception_count += row.has_exception ? 1 : 0;
+    existing.statuses.add(String(row.status ?? "pending"));
+    byEmployee.set(key, existing);
+  });
+
+  return [...byEmployee.values()]
+    .map((row) => ({
+      staff_name: row.staff_name,
+      pay_period: period.label,
+      total_hours_worked: row.total_hours_worked,
+      meal_deduction_applied: row.meal_deduction_applied,
+      adjusted_hours: row.adjusted_hours,
+      exception_notes: row.exception_count > 0 ? `Exceptions: ${row.exception_count}` : "-",
+      approval_status: row.statuses.has("pending") || row.statuses.has("needs_review") ? "Needs Follow-up" : "Reviewed",
+      reviewed_by: null,
+      reviewed_at: null
+    }))
+    .sort((a, b) => (a.staff_name > b.staff_name ? 1 : -1));
 }
 
 export async function getPunchHistory(staffUserId: string, role: AppRole) {
-  if (isMockMode()) {
-    return getMockPunchHistory(staffUserId, role);
-  }
-
-  const supabase = await createClient();
-  let query = supabase
-    .from("time_punches")
-    .select("id, staff_user_id, staff_name, punch_type, punch_at, within_fence, distance_meters, note")
-    .order("punch_at", { ascending: false });
-
-  if (!roleCanSeeAllPunches(role)) {
-    query = query.eq("staff_user_id", staffUserId);
-  }
-
-  const { data } = await query.limit(1000);
-  return mapSupabaseHistoryRows((data ?? []) as SupabaseHistoryPunch[]);
+  return loadSupabaseCanonicalPunchRows({
+    staffUserId,
+    role,
+    limit: 1000
+  });
 }

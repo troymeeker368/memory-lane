@@ -30,7 +30,7 @@ export default async function MemberDietCardPage({
         ? `/health/member-health-profiles/${memberId}?tab=medical`
         : `/operations/member-command-center/${memberId}?tab=diet-allergies`;
 
-  const dietCard = getMemberDietCard(memberId);
+  const dietCard = await getMemberDietCard(memberId);
   if (!dietCard) notFound();
   const allergyDisplay = (dietCard.allergies || "").trim().length > 0 ? dietCard.allergies : "NONE";
   const showNoAllergyStyle = allergyDisplay.toUpperCase() === "NONE";

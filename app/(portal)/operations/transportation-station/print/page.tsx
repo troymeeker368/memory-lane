@@ -1,14 +1,15 @@
 import { unstable_noStore as noStore } from "next/cache";
 
+import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { ManifestPrintActions } from "@/components/transportation-station/manifest-print-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireModuleAccess } from "@/lib/auth";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import {
-  getTransportationManifest,
+  getTransportationManifestSupabase,
   type TransportationManifestBusFilter,
   type TransportationStationShift
-} from "@/lib/services/transportation-station";
+} from "@/lib/services/transportation-station-supabase";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
@@ -47,11 +48,11 @@ export default async function TransportationManifestPrintPage({
   noStore();
   await requireModuleAccess("operations");
   const params = await searchParams;
-  const busNumberOptions = getConfiguredBusNumbers();
+  const busNumberOptions = await getConfiguredBusNumbers();
   const date = firstString(params.date) ?? toEasternDate();
   const shift = normalizeShift(firstString(params.shift));
   const bus = normalizeBusFilter(firstString(params.bus), busNumberOptions);
-  const manifest = getTransportationManifest({
+  const manifest = await getTransportationManifestSupabase({
     selectedDate: date,
     shift,
     busFilter: bus
@@ -69,6 +70,12 @@ export default async function TransportationManifestPrintPage({
         .filter((entry) => entry.riders.length > 0)
     }))
     .filter((entry) => entry.shifts.length > 0);
+  const baseMetaLines = [
+    `Generated: ${formatDateTime(manifest.generatedAt)} (ET)`,
+    `Date: ${formatDate(manifest.selectedDate)}`,
+    `Shift: ${manifest.selectedShift}`,
+    `Total Riders: ${manifest.totalRiders}`
+  ];
 
   const backHref = `/operations/transportation-station?date=${manifest.selectedDate}&shift=${manifest.selectedShift}&bus=${bus}`;
 
@@ -84,25 +91,17 @@ export default async function TransportationManifestPrintPage({
         <ManifestPrintActions />
       </div>
 
-      <header className="border-b border-black/30 pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-xl font-bold uppercase tracking-wide">Transportation Manifest</p>
-            <p className="text-sm">Town Square Fort Mill</p>
-          </div>
-          <div className="text-right text-xs">
-            <p>Generated: {formatDateTime(manifest.generatedAt)} (ET)</p>
-            <p>Date: {formatDate(manifest.selectedDate)}</p>
-            <p>Shift: {manifest.selectedShift}</p>
-            <p>Total Riders: {manifest.totalRiders}</p>
-          </div>
-        </div>
-      </header>
+      <div className="print-hide">
+        <DocumentBrandHeader title="Transportation Manifest" metaLines={baseMetaLines} />
+      </div>
 
       {busPages.length === 0 ? (
-        <section>
-          <p className="text-sm">No riders match this date/shift selection.</p>
-        </section>
+        <>
+          <DocumentBrandHeader title="Transportation Manifest" metaLines={baseMetaLines} className="hidden print:block" />
+          <section>
+            <p className="text-sm">No riders match this date/shift selection.</p>
+          </section>
+        </>
       ) : (
         busPages.map((busPage, busIndex) => (
           <section
@@ -110,6 +109,11 @@ export default async function TransportationManifestPrintPage({
             className="face-sheet-section"
             style={busIndex < busPages.length - 1 ? { breakAfter: "page", pageBreakAfter: "always" } : undefined}
           >
+            <DocumentBrandHeader
+              title="Transportation Manifest"
+              metaLines={[...baseMetaLines, `Bus: ${busPage.group.label}`]}
+              className="mb-3 hidden print:block"
+            />
             <h2 className="face-sheet-heading">
               {busPage.group.label} | {weekdayLabel} ({formatDate(manifest.selectedDate)})
             </h2>
@@ -151,7 +155,12 @@ export default async function TransportationManifestPrintPage({
       )}
 
       {manifest.exclusions.length > 0 ? (
-        <section className="face-sheet-section">
+        <section className="face-sheet-section" style={busPages.length > 0 ? { breakBefore: "page", pageBreakBefore: "always" } : undefined}>
+          <DocumentBrandHeader
+            title="Transportation Manifest"
+            metaLines={[...baseMetaLines, "Section: Exclusions"]}
+            className="mb-3 hidden print:block"
+          />
           <h2 className="face-sheet-heading">Exclusions Applied</h2>
           <table className="face-sheet-table">
             <thead>

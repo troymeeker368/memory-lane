@@ -7,8 +7,7 @@ import { DevRoleSwitcher } from "@/components/dev-role-switcher";
 import { PortalNav } from "@/components/portal-nav";
 import { SignOutForm } from "@/components/sign-out-form";
 import { GlobalTablePaginator } from "@/components/ui/global-table-paginator";
-import { isMockMode } from "@/lib/runtime";
-import { listManagedUsers } from "@/lib/services/user-management";
+import { getDevRoleOverrideFromEnv, isDevelopmentMode } from "@/lib/runtime";
 
 export default async function PortalLayout({
   children
@@ -16,14 +15,8 @@ export default async function PortalLayout({
   children: React.ReactNode;
 }) {
   const profile = await getCurrentProfile();
-  const showDevRoleSwitcher = process.env.NODE_ENV === "development" && isMockMode();
-  const devUsers = showDevRoleSwitcher
-    ? listManagedUsers({ role: "all", status: "active" }).map((user) => ({
-        id: user.id,
-        full_name: user.displayName,
-        role: user.role
-      }))
-    : [];
+  const showDevRoleSwitcher = isDevelopmentMode();
+  const envRoleOverride = getDevRoleOverrideFromEnv();
 
   return (
     <div className="portal-shell mx-auto grid min-h-screen w-full max-w-7xl gap-4 p-3 md:grid-cols-[270px_minmax(0,1fr)] md:p-4">
@@ -53,9 +46,8 @@ export default async function PortalLayout({
           </div>
           <DevRoleSwitcher
             currentRole={profile.role}
-            currentUserId={profile.id}
-            availableUsers={devUsers}
             enabled={showDevRoleSwitcher}
+            envRoleOverride={envRoleOverride}
           />
           <GlobalTablePaginator />
         </div>

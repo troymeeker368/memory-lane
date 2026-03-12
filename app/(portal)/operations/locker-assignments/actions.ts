@@ -2,9 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 
 import { getCurrentProfile } from "@/lib/auth";
-import { getMockDb, setPreviousLockerAssignment, updateMockRecord } from "@/lib/mock-repo";
+import { createClient } from "@/lib/supabase/server";
 import { toEasternISO } from "@/lib/timezone";
 
 function asString(formData: FormData, key: string) {
@@ -79,8 +80,15 @@ export async function assignLockerAction(formData: FormData) {
       return;
     }
 
-    const db = getMockDb();
-    const member = db.members.find((row) => row.id === memberId);
+    const supabase = await createClient();
+    const { data: member, error: memberError } = await supabase
+      .from("members")
+      .select("id, display_name, status, locker_number")
+      .eq("id", memberId)
+      .maybeSingle();
+    if (memberError) {
+      throw new Error(memberError.message);
+    }
     if (!member) {
       redirectWith({ error: "Member not found." });
       return;
@@ -90,12 +98,17 @@ export async function assignLockerAction(formData: FormData) {
       return;
     }
 
-    const conflict = db.members.find(
-      (row) =>
-        row.id !== memberId &&
-        row.status === "active" &&
-        String(row.locker_number ?? "").trim().toLowerCase() === lockerNumber.toLowerCase()
-    );
+    const { data: conflictRows, error: conflictError } = await supabase
+      .from("members")
+      .select("id, display_name")
+      .neq("id", memberId)
+      .eq("status", "active")
+      .eq("locker_number", lockerNumber)
+      .limit(1);
+    if (conflictError) {
+      throw new Error(conflictError.message);
+    }
+    const conflict = conflictRows?.[0] ?? null;
     if (conflict) {
       redirectWith({
         error: `Locker ${lockerNumber} is already assigned to ${conflict.display_name}.`,
@@ -105,18 +118,15 @@ export async function assignLockerAction(formData: FormData) {
       return;
     }
 
-    const previousLocker = normalizeLockerInput(String(member.locker_number ?? ""));
-    if (previousLocker && previousLocker !== lockerNumber) {
-      setPreviousLockerAssignment({
-        lockerNumber: previousLocker,
-        previousMemberId: member.id,
-        previousMemberName: member.display_name,
-        recordedAt: toEasternISO()
-      });
-    }
-
-    const updated = updateMockRecord("members", memberId, { locker_number: lockerNumber });
-    if (!updated) {
+    const assignedAt = toEasternISO();
+    const { error: updateError } = await supabase
+      .from("members")
+      .update({
+        locker_number: lockerNumber,
+        updated_at: assignedAt
+      })
+      .eq("id", memberId);
+    if (updateError) {
       redirectWith({ error: "Unable to save locker assignment." });
       return;
     }
@@ -128,6 +138,9 @@ export async function assignLockerAction(formData: FormData) {
       memberId
     });
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     console.error("[Locker] assignLockerAction failed", {
       message: error instanceof Error ? error.message : "Unknown error",
       memberId: asString(formData, "memberId"),
@@ -153,25 +166,29 @@ export async function clearLockerAction(formData: FormData) {
       return;
     }
 
-    const db = getMockDb();
-    const member = db.members.find((row) => row.id === memberId);
+    const supabase = await createClient();
+    const { data: member, error: memberError } = await supabase
+      .from("members")
+      .select("id, display_name, locker_number")
+      .eq("id", memberId)
+      .maybeSingle();
+    if (memberError) {
+      throw new Error(memberError.message);
+    }
     if (!member) {
       redirectWith({ error: "Member not found." });
       return;
     }
 
-    const previousLocker = normalizeLockerInput(String(member.locker_number ?? ""));
-    if (previousLocker) {
-      setPreviousLockerAssignment({
-        lockerNumber: previousLocker,
-        previousMemberId: member.id,
-        previousMemberName: member.display_name,
-        recordedAt: toEasternISO()
-      });
-    }
-
-    const updated = updateMockRecord("members", memberId, { locker_number: null });
-    if (!updated) {
+    const clearedAt = toEasternISO();
+    const { error: clearError } = await supabase
+      .from("members")
+      .update({
+        locker_number: null,
+        updated_at: clearedAt
+      })
+      .eq("id", memberId);
+    if (clearError) {
       redirectWith({ error: "Unable to clear locker." });
       return;
     }
@@ -179,6 +196,9 @@ export async function clearLockerAction(formData: FormData) {
     revalidateLockerViews(memberId);
     redirectWith({ success: `Locker cleared for ${member.display_name}.` });
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     console.error("[Locker] clearLockerAction failed", {
       message: error instanceof Error ? error.message : "Unknown error",
       memberId: asString(formData, "memberId")

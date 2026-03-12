@@ -18,8 +18,12 @@ import { MhpTrackBannerEditor } from "@/components/forms/mhp-track-banner-editor
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { requireRoles } from "@/lib/auth";
 import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans";
-import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders";
-import { MHP_TABS, type MhpTab, getMemberHealthProfileDetail } from "@/lib/services/member-health-profiles";
+import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-supabase";
+import {
+  MHP_TABS,
+  type MhpTab,
+  getMemberHealthProfileDetailSupabase
+} from "@/lib/services/member-health-profiles-supabase";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 import {
   saveMhpCognitiveBehaviorAction,
@@ -157,7 +161,7 @@ export default async function MemberHealthProfileDetailPage({
   const query = await searchParams;
   const tab = resolveTab(firstString(query.tab));
 
-  const detail = getMemberHealthProfileDetail(memberId);
+  const detail = await getMemberHealthProfileDetailSupabase(memberId);
   if (!detail) notFound();
 
   const { member, profile } = detail;
@@ -189,13 +193,13 @@ export default async function MemberHealthProfileDetailPage({
   const equipmentUpdatedBy = latestUpdatedBy(detail.equipment, (row) => row.updated_at, (row) => row.created_by_name);
   const notesUpdatedBy = latestUpdatedBy(detail.notes, (row) => row.updated_at, (row) => row.created_by_name);
   const assessmentsUpdatedBy = latestUpdatedBy(detail.assessments, (row) => row.created_at, (row) => row.completed_by);
-  const relatedCarePlans = getCarePlansForMember(member.id);
+  const relatedCarePlans = await getCarePlansForMember(member.id);
   const carePlansUpdatedAt = latestTimestamp(relatedCarePlans.map((row) => row.updatedAt));
   const carePlansUpdatedBy = latestUpdatedBy(relatedCarePlans, (row) => row.updatedAt, (row) => row.completedBy);
-  const relatedPhysicianOrders = getPhysicianOrdersForMember(member.id);
+  const relatedPhysicianOrders = await getPhysicianOrdersForMember(member.id);
   const physicianOrdersUpdatedAt = latestTimestamp(relatedPhysicianOrders.map((row) => row.updatedAt));
   const physicianOrdersUpdatedBy = latestUpdatedBy(relatedPhysicianOrders, (row) => row.updatedAt, (row) => row.updatedByName);
-  const carePlanSummary = getMemberCarePlanSummary(member.id);
+  const carePlanSummary = await getMemberCarePlanSummary(member.id);
   const latestIntakeAssessment = detail.assessments[0] ?? null;
   const trackFromRecord = member.latest_assessment_track ?? latestIntakeAssessment?.recommended_track ?? null;
   const trackSourceText = latestIntakeAssessment
@@ -365,7 +369,7 @@ export default async function MemberHealthProfileDetailPage({
               </Link>
             </div>
             <table className="mt-3">
-              <thead><tr><th>Status</th><th>Provider</th><th>Completed</th><th>Signed</th><th>Updated</th><th>Open</th></tr></thead>
+              <thead><tr><th>Status</th><th>Provider</th><th>Sent</th><th>Signed</th><th>Updated</th><th>Open</th></tr></thead>
               <tbody>
                 {relatedPhysicianOrders.length === 0 ? (
                   <tr>
@@ -455,7 +459,7 @@ export default async function MemberHealthProfileDetailPage({
               initialRows={detail.medications.map((row) => ({
                 id: row.id,
                 medication_name: row.medication_name,
-                date_started: row.date_started,
+                date_started: row.date_started ?? "",
                 medication_status: row.medication_status,
                 inactivated_at: row.inactivated_at ?? null,
                 dose: row.dose ?? null,

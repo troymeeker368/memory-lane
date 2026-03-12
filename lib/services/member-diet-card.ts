@@ -50,9 +50,11 @@ function buildAllergySummary(input: {
   return entries.join(", ");
 }
 
-export function getMemberDietCard(memberId: string) {
-  const mcc = getMemberCommandCenterDetail(memberId);
-  const mhp = getMemberHealthProfileDetail(memberId);
+export async function getMemberDietCard(memberId: string) {
+  const [mcc, mhp] = await Promise.all([
+    getMemberCommandCenterDetail(memberId),
+    getMemberHealthProfileDetail(memberId)
+  ]);
   if (!mcc || !mhp) return null;
 
   const profile = mcc.profile;

@@ -45,7 +45,7 @@ async function loadCenterLogoImage(pdf: PDFDocument) {
 }
 
 async function buildFaceSheetPdf(memberId: string) {
-  const faceSheet = getMemberFaceSheet(memberId);
+  const faceSheet = await getMemberFaceSheet(memberId);
   if (!faceSheet) {
     return { error: "Member face sheet data not found." } as const;
   }
@@ -202,7 +202,7 @@ export async function generateMemberFaceSheetPdfAction(input: { memberId: string
     return { ok: false, error: built.error } as const;
   }
 
-  const saved = saveGeneratedMemberPdfToFiles({
+  const saved = await saveGeneratedMemberPdfToFiles({
     memberId,
     memberName: built.faceSheet.member.name,
     documentLabel: "Face Sheet",
@@ -226,3 +226,4 @@ export async function generateMemberFaceSheetPdfAction(input: { memberId: string
     dataUrl: built.dataUrl
   } as const;
 }
+

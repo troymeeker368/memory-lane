@@ -1,6 +1,7 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { getMockDb } from "@/lib/mock-repo";
-import { listMemberBillingSettings, listPayors } from "@/lib/services/billing";
+import { listCenterBillingSettingsSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMemberBillingSettings, listPayors } from "@/lib/services/billing-supabase";
 
 import {
   saveCenterBillingSettingAction,
@@ -13,11 +14,13 @@ function todayDate() {
 }
 
 export default async function BillingAgreementsPage() {
-  const db = getMockDb();
-  const payors = listPayors();
-  const memberBilling = listMemberBillingSettings();
-  const members = db.members.filter((row) => row.status === "active");
-  const centerSetting = db.centerBillingSettings.find((row) => row.active) ?? db.centerBillingSettings[0] ?? null;
+  const centerBillingSettings = await listCenterBillingSettingsSupabase();
+  const [payors, memberBilling, members] = await Promise.all([
+    listPayors(),
+    listMemberBillingSettings(),
+    listMembersSupabase({ status: "active" })
+  ]);
+  const centerSetting = centerBillingSettings.find((row) => row.active) ?? centerBillingSettings[0] ?? null;
 
   return (
     <div className="space-y-4">

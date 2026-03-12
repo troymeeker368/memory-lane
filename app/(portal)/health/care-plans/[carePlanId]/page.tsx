@@ -34,10 +34,10 @@ export default async function CarePlanDetailPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const profile = await requireNavItemAccess("/health/care-plans");
-  const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
+  const signerName = await getManagedUserSignatureName(profile.id, profile.full_name);
   const { carePlanId } = await params;
   const query = searchParams ? await searchParams : {};
-  const detail = getCarePlanById(carePlanId);
+  const detail = await getCarePlanById(carePlanId);
 
   if (!detail) redirect("/health/care-plans/list");
 

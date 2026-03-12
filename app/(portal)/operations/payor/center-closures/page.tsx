@@ -4,7 +4,7 @@ import {
   CENTER_CLOSURE_TYPE_OPTIONS,
   listCenterClosures,
   listClosureRules
-} from "@/lib/services/billing";
+} from "@/lib/services/billing-supabase";
 
 import {
   deleteCenterClosureAction,
@@ -18,7 +18,7 @@ function todayDate() {
 }
 
 export default async function CenterClosuresPage() {
-  const [closures, rules] = [listCenterClosures(), listClosureRules()];
+  const [closures, rules] = await Promise.all([listCenterClosures(), listClosureRules()]);
   const ruleNameById = new Map(rules.map((row) => [row.id, row.name] as const));
 
   return (

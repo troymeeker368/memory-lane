@@ -7,7 +7,7 @@ import { PofMedicationsEditor } from "@/components/forms/pof-medications-editor"
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
-import { getMockDb } from "@/lib/mock-repo";
+import { createClient } from "@/lib/supabase/server";
 import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
 import {
   POF_LEVEL_OF_CARE_OPTIONS,
@@ -15,7 +15,7 @@ import {
   POF_STANDING_ORDER_OPTIONS,
   buildNewPhysicianOrderDraft,
   getPhysicianOrderById
-} from "@/lib/services/physician-orders";
+} from "@/lib/services/physician-orders-supabase";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
@@ -49,15 +49,18 @@ export default async function NewPhysicianOrderPage({
 }) {
   await requireRoles(["admin", "nurse"]);
   const profile = await getCurrentProfile();
-  const actorDisplayName = getManagedUserSignoffLabel(profile.id, profile.full_name);
+  const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";
   const pofId = firstString(query.pofId) ?? "";
 
-  const db = getMockDb();
-  const members = db.members
-    .filter((row) => row.status === "active")
-    .sort((left, right) => left.display_name.localeCompare(right.display_name, undefined, { sensitivity: "base" }));
+  const supabase = await createClient();
+  const { data: memberRows } = await supabase
+    .from("members")
+    .select("id, display_name, status")
+    .eq("status", "active")
+    .order("display_name", { ascending: true });
+  const members = memberRows ?? [];
 
   if (!memberId && !pofId) {
     return (
@@ -85,16 +88,19 @@ export default async function NewPhysicianOrderPage({
     );
   }
 
-  const editing = pofId ? getPhysicianOrderById(pofId) : null;
+  const editing = pofId ? await getPhysicianOrderById(pofId) : null;
   const draft =
     editing ??
     (memberId
-      ? buildNewPhysicianOrderDraft({
+      ? await buildNewPhysicianOrderDraft({
           memberId,
           actor: { id: profile.id, fullName: actorDisplayName, signoffName: actorDisplayName }
         })
       : null);
   if (!draft) notFound();
+  if (editing && (editing.status === "Signed" || editing.status === "Superseded" || editing.status === "Expired")) {
+    notFound();
+  }
 
   return (
     <div className="space-y-4">
@@ -106,6 +112,11 @@ export default async function NewPhysicianOrderPage({
         <p className="mt-1 text-sm text-muted">
           Member: <span className="font-semibold">{draft.memberNameSnapshot}</span> | DOB: {formatOptionalDate(draft.memberDobSnapshot)}
         </p>
+        {draft.intakeAssessmentId ? (
+          <p className="mt-1 text-xs text-muted">
+            Prefilled from Intake Assessment: <span className="font-semibold">{draft.intakeAssessmentId}</span>
+          </p>
+        ) : null}
         {editing ? (
           <p className="mt-1 text-xs text-muted">
             Status: {editing.status} | Created by {editing.createdByName} on {formatDateTime(editing.createdAt)}
@@ -116,6 +127,7 @@ export default async function NewPhysicianOrderPage({
       <form action={savePhysicianOrderFormAction} className="space-y-4">
         <input type="hidden" name="memberId" value={draft.memberId} />
         <input type="hidden" name="pofId" value={editing?.id ?? ""} />
+        <input type="hidden" name="intakeAssessmentId" value={draft.intakeAssessmentId ?? ""} />
 
         <Card>
           <CardTitle>Identification / Medical Orders</CardTitle>
@@ -175,6 +187,7 @@ export default async function NewPhysicianOrderPage({
 
           <div className="mt-3">
             <p className="text-sm font-semibold">Diagnoses</p>
+            <p className="text-xs text-muted">Physician-entered field. Intake does not prefill diagnoses.</p>
             <PofDiagnosesEditor initialRows={draft.diagnosisRows} />
           </div>
 
@@ -466,8 +479,8 @@ export default async function NewPhysicianOrderPage({
           <button type="submit" name="saveIntent" value="draft" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
             Save Draft
           </button>
-          <button type="submit" name="saveIntent" value="completed" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
-            Save Completed
+          <button type="submit" name="saveIntent" value="sent" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
+            Save Sent
           </button>
           <button type="submit" name="saveIntent" value="signed" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
             Save Signed

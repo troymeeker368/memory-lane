@@ -11,7 +11,7 @@ export default async function NewCarePlanPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const profile = await requireNavItemAccess("/health/care-plans");
-  const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
+  const signerName = await getManagedUserSignatureName(profile.id, profile.full_name);
   const params = await searchParams;
   const initialMemberId = typeof params.memberId === "string" ? params.memberId : undefined;
 

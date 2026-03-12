@@ -9,7 +9,7 @@ export interface PofMhpFieldMapping {
 }
 
 // Source-of-truth contract:
-// - POF_AUTHORED_PUSH: POF writes to MHP on save (with stronger writes on Completed/Signed).
+// - POF_AUTHORED_PUSH: POF writes to MHP when the POF is Signed.
 // - MHP_AUTHORED: not pushed from POF.
 // - BIDIRECTIONAL: maintained by dedicated bidirectional sync paths outside direct POF write.
 export const POF_MHP_FIELD_MAPPINGS: PofMhpFieldMapping[] = [

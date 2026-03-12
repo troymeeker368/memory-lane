@@ -51,9 +51,11 @@ export interface MemberNameBadgeDetail {
   indicators: MemberBadgeIndicator[];
 }
 
-export function getMemberNameBadgeDetail(memberId: string): MemberNameBadgeDetail | null {
-  const mcc = getMemberCommandCenterDetail(memberId);
-  const mhp = getMemberHealthProfileDetail(memberId);
+export async function getMemberNameBadgeDetail(memberId: string): Promise<MemberNameBadgeDetail | null> {
+  const [mcc, mhp] = await Promise.all([
+    getMemberCommandCenterDetail(memberId),
+    getMemberHealthProfileDetail(memberId)
+  ]);
   if (!mcc || !mhp) return null;
 
   const memberName = mcc.member.display_name;

@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
-import { getMemberHealthProfileIndex } from "@/lib/services/member-health-profiles";
+import { getMemberHealthProfileIndexSupabase } from "@/lib/services/member-health-profiles-supabase";
 
 function firstString(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0];
@@ -30,7 +30,7 @@ export default async function MemberHealthProfilesPage({
   const q = firstString(params.q) ?? "";
   const status = (firstString(params.status) as "all" | "active" | "inactive" | undefined) ?? "active";
 
-  const rows = getMemberHealthProfileIndex({ q, status });
+  const rows = await getMemberHealthProfileIndexSupabase({ q, status });
   const total = rows.length;
   const active = rows.filter((row) => row.member.status === "active").length;
   const withAlerts = rows.filter((row) => row.alerts.length > 0).length;

@@ -1,6 +1,5 @@
 import { MEMBER_BUS_NUMBER_OPTIONS } from "@/lib/canonical";
-import { getOperationalConfig, updateOperationalConfig } from "@/lib/mock-repo";
-import { isMockMode } from "@/lib/runtime";
+import { createClient } from "@/lib/supabase/server";
 
 export interface OperationalSettings {
   busNumbers: string[];
@@ -14,6 +13,21 @@ export interface OperationalSettings {
   };
 }
 
+const DEFAULT_OPERATIONAL_SETTINGS: OperationalSettings = {
+  busNumbers: [...MEMBER_BUS_NUMBER_OPTIONS],
+  makeupPolicy: "rolling_30_day_expiration",
+  latePickupRules: {
+    graceStartTime: "17:00",
+    firstWindowMinutes: 15,
+    firstWindowFeeCents: 2500,
+    additionalPerMinuteCents: 200,
+    additionalMinutesCap: 15
+  }
+};
+
+const OPERATIONAL_SETTINGS_MISSING_TABLE_ERROR =
+  "Missing Supabase table public.operations_settings. Required columns: id text primary key, bus_numbers text[] not null, makeup_policy text not null, late_pickup_grace_start_time text not null, late_pickup_first_window_minutes integer not null, late_pickup_first_window_fee_cents integer not null, late_pickup_additional_per_minute_cents integer not null, late_pickup_additional_minutes_cap integer not null, created_at timestamptz not null default now(), updated_at timestamptz not null default now().";
+
 function normalizeBusNumbers(values: string[]) {
   const normalized = Array.from(
     new Set(
@@ -25,6 +39,28 @@ function normalizeBusNumbers(values: string[]) {
   return normalized.length > 0 ? normalized : [...MEMBER_BUS_NUMBER_OPTIONS];
 }
 
+function normalizeMakeupPolicy(value: string | null | undefined): OperationalSettings["makeupPolicy"] {
+  return value === "running_total" ? "running_total" : "rolling_30_day_expiration";
+}
+
+function normalizeSettingsRow(row: any): OperationalSettings {
+  const busNumbers = Array.isArray(row?.bus_numbers)
+    ? normalizeBusNumbers(row.bus_numbers.map((value: unknown) => String(value)))
+    : [...DEFAULT_OPERATIONAL_SETTINGS.busNumbers];
+
+  return {
+    busNumbers,
+    makeupPolicy: normalizeMakeupPolicy(row?.makeup_policy),
+    latePickupRules: {
+      graceStartTime: String(row?.late_pickup_grace_start_time ?? DEFAULT_OPERATIONAL_SETTINGS.latePickupRules.graceStartTime),
+      firstWindowMinutes: Number(row?.late_pickup_first_window_minutes ?? DEFAULT_OPERATIONAL_SETTINGS.latePickupRules.firstWindowMinutes),
+      firstWindowFeeCents: Number(row?.late_pickup_first_window_fee_cents ?? DEFAULT_OPERATIONAL_SETTINGS.latePickupRules.firstWindowFeeCents),
+      additionalPerMinuteCents: Number(row?.late_pickup_additional_per_minute_cents ?? DEFAULT_OPERATIONAL_SETTINGS.latePickupRules.additionalPerMinuteCents),
+      additionalMinutesCap: Number(row?.late_pickup_additional_minutes_cap ?? DEFAULT_OPERATIONAL_SETTINGS.latePickupRules.additionalMinutesCap)
+    }
+  };
+}
+
 export function parseBusNumbersInput(raw: string) {
   const segments = raw
     .split(/[,\s]+/)
@@ -33,42 +69,81 @@ export function parseBusNumbersInput(raw: string) {
   return normalizeBusNumbers(segments);
 }
 
-export function getOperationalSettings(): OperationalSettings {
-  if (isMockMode()) {
-    return getOperationalConfig();
-  }
-  // TODO(backend): Load operations settings from persistent store.
-  return {
-    busNumbers: [...MEMBER_BUS_NUMBER_OPTIONS],
-    makeupPolicy: "rolling_30_day_expiration",
-    latePickupRules: {
-      graceStartTime: "17:00",
-      firstWindowMinutes: 15,
-      firstWindowFeeCents: 2500,
-      additionalPerMinuteCents: 200,
-      additionalMinutesCap: 15
+export async function getOperationalSettings(): Promise<OperationalSettings> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("operations_settings")
+    .select(
+      "id, bus_numbers, makeup_policy, late_pickup_grace_start_time, late_pickup_first_window_minutes, late_pickup_first_window_fee_cents, late_pickup_additional_per_minute_cents, late_pickup_additional_minutes_cap"
+    )
+    .eq("id", "default")
+    .maybeSingle();
+
+  if (error) {
+    if ((error as { code?: string }).code === "42P01") {
+      throw new Error(OPERATIONAL_SETTINGS_MISSING_TABLE_ERROR);
     }
-  };
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return {
+      ...DEFAULT_OPERATIONAL_SETTINGS,
+      busNumbers: [...DEFAULT_OPERATIONAL_SETTINGS.busNumbers],
+      latePickupRules: { ...DEFAULT_OPERATIONAL_SETTINGS.latePickupRules }
+    };
+  }
+
+  return normalizeSettingsRow(data);
 }
 
-export function getConfiguredBusNumbers() {
-  return normalizeBusNumbers(getOperationalSettings().busNumbers);
+export async function getConfiguredBusNumbers() {
+  const settings = await getOperationalSettings();
+  return normalizeBusNumbers(settings.busNumbers);
 }
 
-export function updateOperationalSettings(input: {
+export async function updateOperationalSettings(input: {
   busNumbers?: string[];
   makeupPolicy?: "rolling_30_day_expiration" | "running_total";
   latePickupRules?: Partial<OperationalSettings["latePickupRules"]>;
 }) {
-  if (!isMockMode()) {
-    // TODO(backend): Persist operations settings in production data store.
-    return getOperationalSettings();
+  const current = await getOperationalSettings();
+  const next: OperationalSettings = {
+    busNumbers: input.busNumbers ? normalizeBusNumbers(input.busNumbers) : current.busNumbers,
+    makeupPolicy: input.makeupPolicy ?? current.makeupPolicy,
+    latePickupRules: {
+      graceStartTime: input.latePickupRules?.graceStartTime ?? current.latePickupRules.graceStartTime,
+      firstWindowMinutes: input.latePickupRules?.firstWindowMinutes ?? current.latePickupRules.firstWindowMinutes,
+      firstWindowFeeCents: input.latePickupRules?.firstWindowFeeCents ?? current.latePickupRules.firstWindowFeeCents,
+      additionalPerMinuteCents:
+        input.latePickupRules?.additionalPerMinuteCents ?? current.latePickupRules.additionalPerMinuteCents,
+      additionalMinutesCap: input.latePickupRules?.additionalMinutesCap ?? current.latePickupRules.additionalMinutesCap
+    }
+  };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("operations_settings").upsert(
+    {
+      id: "default",
+      bus_numbers: next.busNumbers,
+      makeup_policy: next.makeupPolicy,
+      late_pickup_grace_start_time: next.latePickupRules.graceStartTime,
+      late_pickup_first_window_minutes: next.latePickupRules.firstWindowMinutes,
+      late_pickup_first_window_fee_cents: next.latePickupRules.firstWindowFeeCents,
+      late_pickup_additional_per_minute_cents: next.latePickupRules.additionalPerMinuteCents,
+      late_pickup_additional_minutes_cap: next.latePickupRules.additionalMinutesCap
+    },
+    { onConflict: "id" }
+  );
+
+  if (error) {
+    if ((error as { code?: string }).code === "42P01") {
+      throw new Error(OPERATIONAL_SETTINGS_MISSING_TABLE_ERROR);
+    }
+    throw new Error(error.message);
   }
-  return updateOperationalConfig({
-    busNumbers: input.busNumbers ? normalizeBusNumbers(input.busNumbers) : undefined,
-    makeupPolicy: input.makeupPolicy,
-    latePickupRules: input.latePickupRules
-  });
+
+  return next;
 }
 
 function parseTimeToMinutes(raw: string | null | undefined) {
@@ -87,7 +162,7 @@ export function calculateLatePickupFee(input: {
   latePickupTime: string;
   rules?: OperationalSettings["latePickupRules"];
 }) {
-  const rules = input.rules ?? getOperationalSettings().latePickupRules;
+  const rules = input.rules ?? DEFAULT_OPERATIONAL_SETTINGS.latePickupRules;
   const pickupMinutes = parseTimeToMinutes(input.latePickupTime);
   const graceStartMinutes = parseTimeToMinutes(rules.graceStartTime);
   if (pickupMinutes == null || graceStartMinutes == null) return null;

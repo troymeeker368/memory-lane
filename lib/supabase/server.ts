@@ -2,13 +2,20 @@ import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import type { SetAllCookies } from "@supabase/ssr";
 
-import { getSupabaseEnv } from "@/lib/runtime";
+import { getSupabaseEnv, isAuthBypassEnabled } from "@/lib/runtime";
 
-export async function createClient() {
+type CreateClientOptions = {
+  serviceRole?: boolean;
+};
+
+export async function createClient(options: CreateClientOptions = {}) {
   const cookieStore = await cookies();
   const { url, anonKey } = getSupabaseEnv();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY;
+  const shouldUseServiceRole = Boolean(serviceRoleKey) && (options.serviceRole || isAuthBypassEnabled());
+  const key = shouldUseServiceRole ? serviceRoleKey! : anonKey;
 
-  return createServerClient(url, anonKey, {
+  return createServerClient(url, key, {
     cookies: {
       getAll() {
         return cookieStore.getAll();

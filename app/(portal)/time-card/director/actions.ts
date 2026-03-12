@@ -5,7 +5,6 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { getCurrentProfile } from "@/lib/auth";
-import { getMockDb } from "@/lib/mock-repo";
 import { normalizeRoleKey } from "@/lib/permissions";
 import {
   addDirectorCorrectionPunch,
@@ -18,6 +17,7 @@ import {
   submitForgottenPunchRequest,
   updatePendingPtoEntry
 } from "@/lib/services/director-timecards";
+import { createClient } from "@/lib/supabase/server";
 
 const DIRECTOR_BASE_PATH = "/time-card/director";
 const FORGOTTEN_BASE_PATH = "/time-card/forgotten-punch";
@@ -82,6 +82,17 @@ function revalidateTimecardRoutes() {
   revalidatePath("/time-card/punch-history");
   revalidatePath("/time-card/forgotten-punch");
   revalidatePath("/time-card/director");
+}
+
+async function resolveEmployeeName(employeeId: string, fallback?: string) {
+  if (fallback) return fallback;
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("profiles")
+    .select("full_name")
+    .eq("id", employeeId)
+    .maybeSingle();
+  return String(data?.full_name ?? "").trim() || "Unknown Employee";
 }
 
 type ActionOptions = {
@@ -174,10 +185,7 @@ export async function addDirectorCorrectionPunchAction(formData: FormData) {
         time: asText(formData, "time"),
         note: asText(formData, "note") || undefined
       });
-      const employeeName =
-        parsed.employeeName ??
-        getMockDb().staff.find((row) => row.id === parsed.employeeId)?.full_name ??
-        "Unknown Employee";
+      const employeeName = await resolveEmployeeName(parsed.employeeId, parsed.employeeName);
       await addDirectorCorrectionPunch({
         employeeId: parsed.employeeId,
         employeeName,
@@ -243,10 +251,7 @@ export async function addPtoEntryAction(formData: FormData) {
         type: asText(formData, "type"),
         note: asText(formData, "note") || undefined
       });
-      const employeeName =
-        parsed.employeeName ??
-        getMockDb().staff.find((row) => row.id === parsed.employeeId)?.full_name ??
-        "Unknown Employee";
+      const employeeName = await resolveEmployeeName(parsed.employeeId, parsed.employeeName);
       await addPtoEntry({
         employeeId: parsed.employeeId,
         employeeName,

@@ -22,7 +22,7 @@ export async function generateAssessmentPdfAction(input: { assessmentId: string 
 
   try {
     const generated = await buildIntakeAssessmentPdfDataUrl(assessmentId);
-    const saved = saveGeneratedMemberPdfToFiles({
+    const saved = await saveGeneratedMemberPdfToFiles({
       memberId: detail.assessment.member_id,
       memberName: detail.assessment.member_name,
       documentLabel: "Intake Assessment",
@@ -54,3 +54,4 @@ export async function generateAssessmentPdfAction(input: { assessmentId: string 
     } as const;
   }
 }
+

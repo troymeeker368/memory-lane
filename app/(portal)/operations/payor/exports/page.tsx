@@ -1,5 +1,5 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { getBillingBatches, getBillingExports } from "@/lib/services/billing";
+import { getBillingBatches, getBillingExports } from "@/lib/services/billing-supabase";
 
 import { createBillingExportAction } from "@/app/(portal)/operations/payor/actions";
 
@@ -10,8 +10,8 @@ export default async function BillingExportsPage({
 }) {
   const query = await searchParams;
   const errorMessage = Array.isArray(query.error) ? query.error[0] : query.error;
-  const batches = getBillingBatches();
-  const jobs = getBillingExports();
+  const batches = await getBillingBatches();
+  const jobs = await getBillingExports();
   const finalizedBatches = batches.filter(
     (row) => row.batch_status === "Finalized" || row.batch_status === "Exported" || row.batch_status === "Closed"
   );

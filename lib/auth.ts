@@ -13,30 +13,19 @@ import {
   PERMISSION_MODULES,
   resolveEffectivePermissionSet
 } from "@/lib/permissions";
-import { getMockProfile } from "@/lib/mock-data";
-import { isMockMode, MOCK_ROLE_COOKIE_KEY, MOCK_USER_COOKIE_KEY, resolveMockRole } from "@/lib/runtime";
+import {
+  DEV_ROLE_COOKIE_KEY,
+  LEGACY_DEV_ROLE_COOKIE_KEY,
+  getAuthBypassRole,
+  getDevRoleOverrideFromEnv,
+  isAuthBypassEnabled,
+  isDevelopmentMode,
+  resolveDevRoleOverride
+} from "@/lib/runtime";
 import { getManagedUserById } from "@/lib/services/user-management";
 import { createClient } from "@/lib/supabase/server";
 
-async function getRequestMockContext(): Promise<{ role: AppRole; selectedUserId: string | null }> {
-  const cookieStore = await cookies();
-  const cookieRole = cookieStore.get(MOCK_ROLE_COOKIE_KEY)?.value;
-  const selectedUserId = cookieStore.get(MOCK_USER_COOKIE_KEY)?.value?.trim() || null;
-
-  return {
-    role: resolveMockRole(cookieRole),
-    selectedUserId
-  };
-}
-
 export async function getSession() {
-  if (isMockMode()) {
-    const { role, selectedUserId } = await getRequestMockContext();
-    const profile = getMockProfile(role, selectedUserId);
-    // TODO(backend): Replace mock session with Supabase user session once auth is enabled locally.
-    return { id: profile.id, email: profile.email } as { id: string; email: string };
-  }
-
   const supabase = await createClient();
   const {
     data: { user }
@@ -45,30 +34,101 @@ export async function getSession() {
   return user;
 }
 
-export async function getCurrentProfile(): Promise<UserProfile> {
-  if (isMockMode()) {
-    const { role, selectedUserId } = await getRequestMockContext();
-    // TODO(backend): Remove this branch after local auth/profile table wiring is complete.
-    return getMockProfile(role, selectedUserId);
+async function getDevRoleOverride(): Promise<AppRole | null> {
+  const envRoleOverride = getDevRoleOverrideFromEnv();
+  if (envRoleOverride) {
+    return envRoleOverride;
   }
 
-  const user = await getSession();
-  if (!user) {
-    redirect("/login");
+  if (!isDevelopmentMode()) {
+    return null;
+  }
+
+  const cookieStore = await cookies();
+  const cookieRoleValue =
+    cookieStore.get(DEV_ROLE_COOKIE_KEY)?.value ??
+    cookieStore.get(LEGACY_DEV_ROLE_COOKIE_KEY)?.value ??
+    null;
+
+  return resolveDevRoleOverride(cookieRoleValue);
+}
+
+export async function getCurrentProfile(): Promise<UserProfile> {
+  if (isAuthBypassEnabled()) {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY;
+    if (!serviceRoleKey) {
+      throw new Error(
+        "Auth bypass mode is enabled, but SUPABASE_SERVICE_ROLE_KEY is missing. Set it before using bypass mode."
+      );
+    }
+
+    const bypassClient = await createClient({ serviceRole: true });
+    const { data: profileRows, error: profileLookupError } = await bypassClient
+      .from("profiles")
+      .select("id, email, full_name, role, active, staff_id")
+      .eq("active", true)
+      .limit(1);
+
+    if (profileLookupError) {
+      throw new Error(
+        `Auth bypass mode is enabled, but profile lookup failed: ${profileLookupError.message}`
+      );
+    }
+
+    const devRoleOverride = await getDevRoleOverride();
+    const effectiveRole = devRoleOverride ?? getAuthBypassRole();
+    const permissions = resolveEffectivePermissionSet({
+      role: effectiveRole,
+      hasCustomPermissions: false,
+      customPermissions: null
+    });
+
+    if (Array.isArray(profileRows) && profileRows.length > 0) {
+      const profile = profileRows[0];
+      return {
+        ...(profile as Omit<UserProfile, "permissions">),
+        role: effectiveRole,
+        permissions,
+        has_custom_permissions: false,
+        permission_source: getPermissionSource(false)
+      };
+    }
+
+    throw new Error(
+      "Auth bypass mode is enabled, but no active profile rows were found in public.profiles. Seed/create an active profile row or disable bypass."
+    );
   }
 
   const supabase = await createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login?reason=no-auth-user");
+  }
+
   const { data, error } = await supabase
     .from("profiles")
     .select("id, email, full_name, role, active, staff_id")
     .eq("id", user.id)
-    .single();
+    .maybeSingle();
 
-  if (error || !data || !data.active) {
-    redirect("/login");
+  if (error) {
+    throw new Error(`Failed to load profile row for authenticated user: ${error.message}`);
+  }
+
+  if (!data) {
+    redirect("/login?reason=no-linked-profile");
+  }
+
+  if (!data.active) {
+    redirect("/login?reason=inactive-profile");
   }
 
   const role = normalizeRoleKey(data.role as AppRole);
+  const devRoleOverride = await getDevRoleOverride();
+  const effectiveRole = devRoleOverride ?? role;
   let hasCustomPermissions = false;
   let customPermissions = null;
 
@@ -98,18 +158,20 @@ export async function getCurrentProfile(): Promise<UserProfile> {
     // Non-fatal fallback until RBAC schema is available in all environments.
   }
 
+  const effectiveHasCustomPermissions = devRoleOverride ? false : hasCustomPermissions;
+  const effectiveCustomPermissions = devRoleOverride ? null : customPermissions;
   const permissions = resolveEffectivePermissionSet({
-    role,
-    hasCustomPermissions,
-    customPermissions
+    role: effectiveRole,
+    hasCustomPermissions: effectiveHasCustomPermissions,
+    customPermissions: effectiveCustomPermissions
   });
 
   return {
     ...(data as Omit<UserProfile, "permissions">),
-    role,
+    role: effectiveRole,
     permissions,
-    has_custom_permissions: hasCustomPermissions,
-    permission_source: getPermissionSource(hasCustomPermissions)
+    has_custom_permissions: effectiveHasCustomPermissions,
+    permission_source: getPermissionSource(effectiveHasCustomPermissions)
   };
 }
 
@@ -160,5 +222,5 @@ export async function requireRoles(roles: AppRole[]): Promise<UserProfile> {
 
 export async function getCurrentManagedUser() {
   const profile = await getCurrentProfile();
-  return getManagedUserById(profile.id);
+  return await getManagedUserById(profile.id);
 }

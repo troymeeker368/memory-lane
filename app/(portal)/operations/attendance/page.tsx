@@ -7,18 +7,17 @@ import { UnscheduledAttendanceForm } from "@/components/forms/unscheduled-attend
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getMemberMakeupDayBalance, getMockDb } from "@/lib/mock-repo";
 import {
   getDailyAttendanceView,
   getDailyCensusView,
   getDailyTrackSheetView,
   getIncompleteAttendanceSummary,
+  getUnscheduledAttendanceMemberOptions,
   getWeeklyAttendanceView,
   getWeeklyCensusView,
+  type DailyTrackGroup,
   type DailyAttendanceRow
 } from "@/lib/services/attendance";
-import { isMemberOnHoldOnDate } from "@/lib/services/holds";
-import { isMemberScheduledForDate } from "@/lib/services/member-schedule-selectors";
 import {
   coerceToOperationalWeekday,
   getOperationsTodayDate,
@@ -95,7 +94,7 @@ function filterMembersByQuery<T extends { memberName: string }>(rows: T[], query
 }
 
 function filterTrackGroupsByQuery(
-  groups: ReturnType<typeof getDailyTrackSheetView>["groups"],
+  groups: DailyTrackGroup[],
   query: string
 ) {
   const normalized = query.trim().toLowerCase();
@@ -103,10 +102,7 @@ function filterTrackGroupsByQuery(
   return groups
     .map((group) => {
       const members = group.members.filter((member) => {
-        return (
-          member.memberName.toLowerCase().includes(normalized) ||
-          String(member.lockerNumber ?? "").toLowerCase().includes(normalized)
-        );
+        return member.memberName.toLowerCase().includes(normalized);
       });
       const presentCount = members.filter((member) => member.attendanceStatus === "Present").length;
       const absentCount = members.filter((member) => member.attendanceStatus === "Absent").length;
@@ -160,6 +156,30 @@ function toTimeInputValue(value: string | null) {
   return `${hour}:${minute}`;
 }
 
+function getSundayForWeek(dateOnlyInput: string) {
+  const dateOnly = normalizeOperationalDateOnly(dateOnlyInput);
+  const parsed = new Date(`${dateOnly}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return dateOnly;
+  parsed.setUTCDate(parsed.getUTCDate() - parsed.getUTCDay());
+  return parsed.toISOString().slice(0, 10);
+}
+
+function coerceToOperationalWeekAnchor(dateOnlyInput: string) {
+  const dateOnly = normalizeOperationalDateOnly(dateOnlyInput);
+  const parsed = new Date(`${dateOnly}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return dateOnly;
+  const day = parsed.getUTCDay();
+  if (day === 0) {
+    parsed.setUTCDate(parsed.getUTCDate() + 1);
+    return parsed.toISOString().slice(0, 10);
+  }
+  if (day === 6) {
+    parsed.setUTCDate(parsed.getUTCDate() - 5);
+    return parsed.toISOString().slice(0, 10);
+  }
+  return dateOnly;
+}
+
 function memberInitials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "M";
@@ -186,9 +206,10 @@ export default async function OperationsAttendancePage({
   const selectedDate = coerceToOperationalWeekday(
     normalizeOperationalDateOnly(firstString(params.date) ?? getOperationsTodayDate())
   );
-  const selectedWeekAnchor = coerceToOperationalWeekday(
+  const selectedWeekAnchor = coerceToOperationalWeekAnchor(
     normalizeOperationalDateOnly(firstString(params.week) ?? selectedDate)
   );
+  const selectedWeekSunday = getSundayForWeek(selectedWeekAnchor);
   const query = firstString(params.q) ?? "";
 
   const isDailyAttendanceTab = selectedTab === "daily-attendance";
@@ -197,32 +218,17 @@ export default async function OperationsAttendancePage({
   const isDailyTracksTab = selectedTab === "daily-tracks";
   const isWeeklyCensusTab = selectedTab === "weekly-census";
 
-  const dailyAttendance = isDailyAttendanceTab ? getDailyAttendanceView({ selectedDate }) : null;
-  const incompleteAttendance = isDailyAttendanceTab ? getIncompleteAttendanceSummary({ selectedDate }) : null;
-  const weeklyAttendance = isWeeklyAttendanceTab ? getWeeklyAttendanceView({ anchorDate: selectedWeekAnchor }) : null;
-  const dailyCensus = isDailyCensusTab ? getDailyCensusView({ selectedDate }) : null;
-  const dailyTracks = isDailyTracksTab ? getDailyTrackSheetView({ selectedDate }) : null;
-  const weeklyCensus = isWeeklyCensusTab ? getWeeklyCensusView({ anchorDate: selectedWeekAnchor }) : null;
+  const dailyAttendance = isDailyAttendanceTab ? await getDailyAttendanceView({ selectedDate }) : null;
+  const incompleteAttendance = isDailyAttendanceTab ? await getIncompleteAttendanceSummary({ selectedDate }) : null;
+  const weeklyAttendance = isWeeklyAttendanceTab ? await getWeeklyAttendanceView({ anchorDate: selectedWeekAnchor }) : null;
+  const dailyCensus = isDailyCensusTab ? await getDailyCensusView({ selectedDate }) : null;
+  const dailyTracks = isDailyTracksTab ? await getDailyTrackSheetView({ selectedDate }) : null;
+  const weeklyCensus = isWeeklyCensusTab ? await getWeeklyCensusView({ anchorDate: selectedWeekAnchor }) : null;
 
-  const unscheduledMembers = isDailyAttendanceTab
-    ? (() => {
-        const db = getMockDb();
-        const scheduleByMember = new Map(db.memberAttendanceSchedules.map((row) => [row.member_id, row] as const));
-        return db.members
-          .filter((member) => member.status === "active")
-          .filter((member) => {
-            const schedule = scheduleByMember.get(member.id) ?? null;
-            if (isMemberOnHoldOnDate(member.id, selectedDate)) return false;
-            return !isMemberScheduledForDate(schedule, selectedDate);
-          })
-          .map((member) => ({
-            id: member.id,
-            displayName: member.display_name,
-            makeupBalance: getMemberMakeupDayBalance(member.id, selectedDate)
-          }))
-          .sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: "base" }));
-      })()
-    : [];
+  const unscheduledMembers =
+    isDailyAttendanceTab && dailyAttendance
+      ? await getUnscheduledAttendanceMemberOptions({ selectedDate: dailyAttendance.selectedDate })
+      : [];
 
   const dailyRows = isDailyAttendanceTab && dailyAttendance ? filterRowsByQuery(dailyAttendance.rows, query) : [];
   const weeklyAttendanceDays =
@@ -426,13 +432,17 @@ export default async function OperationsAttendancePage({
             <p>Pending Member-Days: {weeklyAttendance.totals.pendingMemberDays}</p>
           </div>
 
-          <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-5">
+          <div className="mt-3 rounded-lg bg-brand px-3 py-2 text-center text-sm font-bold text-white">
+            Week of {formatDate(selectedWeekSunday)}
+          </div>
+
+          <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-5">
             {weeklyDays.map((day) => (
               <div key={`weekly-day-card-${day.date}`} className="min-w-0 rounded-lg border border-border p-2">
-                <p className="text-xs font-semibold text-fg">
-                  {WEEKDAY_LABELS[day.weekday]} ({formatDate(day.date)})
+                <p className="text-center text-xl font-semibold leading-tight text-fg">
+                  {WEEKDAY_LABELS[day.weekday]}
                 </p>
-                <p className="mt-0.5 text-[11px] text-muted">Scheduled: {day.scheduledMembers}</p>
+                <p className="mt-0.5 text-center text-lg font-semibold leading-tight text-muted">{day.scheduledMembers}</p>
                 {query.trim().length > 0 ? (
                   <p className="text-[11px] text-muted">Showing: {day.members.length}</p>
                 ) : null}
@@ -535,7 +545,7 @@ export default async function OperationsAttendancePage({
               <input
                 name="q"
                 defaultValue={query}
-                placeholder="Search member or locker #"
+                placeholder="Search member name"
                 className="h-10 w-full rounded-lg border border-border px-3"
               />
             </label>
@@ -559,58 +569,22 @@ export default async function OperationsAttendancePage({
           {dailyTrackGroups.length === 0 ? (
             <p className="mt-3 text-sm text-muted">No members match this date/filter.</p>
           ) : (
-            <div className="mt-3 space-y-4">
+            <div className="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {dailyTrackGroups.map((group) => (
-                <div key={`track-group-${group.trackLabel}`} className="rounded-lg border border-border">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
+                <div key={`track-group-${group.trackLabel}`} className="rounded-lg border border-border p-3">
+                  <div className="border-b border-border pb-2">
                     <p className="text-sm font-semibold text-fg">{group.trackLabel}</p>
-                    <p className="text-xs text-muted">
-                      Members: {group.memberCount} | Present: {group.presentCount} | Absent: {group.absentCount} | Pending: {group.pendingCount}
-                    </p>
+                    <p className="text-xs text-muted">Members: {group.memberCount}</p>
                   </div>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Member</th>
-                        <th>Status</th>
-                        <th>Bus #</th>
-                        <th>Locker #</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.members.map((member) => (
-                        <tr key={`${group.trackLabel}-${member.memberId}`}>
-                          <td>
-                            <div className="flex items-center gap-2">
-                              {member.photoUrl ? (
-                                <Image
-                                  src={member.photoUrl}
-                                  alt={member.memberName}
-                                  width={32}
-                                  height={32}
-                                  className="h-8 w-8 rounded-full border border-border object-cover"
-                                />
-                              ) : (
-                                <div className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-[#e8edf7] text-[10px] font-semibold text-brand">
-                                  {memberInitials(member.memberName)}
-                                </div>
-                              )}
-                              <Link href={`/operations/member-command-center/${member.memberId}`} className="font-semibold text-brand">
-                                {member.memberName}
-                              </Link>
-                            </div>
-                          </td>
-                          <td>
-                            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusPillClass(member.attendanceStatus)}`}>
-                              {member.attendanceStatus}
-                            </span>
-                          </td>
-                          <td>{member.transportRequired ? (member.transportBusNumber ? `Bus ${member.transportBusNumber}` : "Unassigned") : "-"}</td>
-                          <td>{member.lockerNumber ?? "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <ul className="mt-2 space-y-1">
+                    {group.members.map((member) => (
+                      <li key={`${group.trackLabel}-${member.memberId}`}>
+                        <Link href={`/operations/member-command-center/${member.memberId}`} className="text-sm font-semibold text-brand">
+                          {member.memberName}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ))}
             </div>

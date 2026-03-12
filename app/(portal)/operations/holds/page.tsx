@@ -5,12 +5,13 @@ import { MemberHoldCreateForm } from "@/components/forms/member-hold-create-form
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getMockDb } from "@/lib/mock-repo";
 import {
   normalizeOperationalDateOnly,
   getOperationsTodayDate,
   getFirstDayOfNextMonth
 } from "@/lib/services/operations-calendar";
+import { listMemberHolds } from "@/lib/services/holds-supabase";
+import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
@@ -19,7 +20,7 @@ function firstString(value: string | string[] | undefined) {
 }
 
 function isHoldActiveForDate(
-  hold: ReturnType<typeof getMockDb>["memberHolds"][number],
+  hold: { status: string; start_date: string; end_date: string | null },
   dateOnly: string
 ) {
   if (hold.status !== "active") return false;
@@ -40,19 +41,23 @@ export default async function OperationsHoldsPage({
   const defaultHoldStartDate = getOperationsTodayDate();
   const defaultHoldEndDate = getFirstDayOfNextMonth(defaultHoldStartDate);
 
-  const db = getMockDb();
-  const memberById = new Map(db.members.map((member) => [member.id, member] as const));
-  const activeMembers = db.members
+  const supabase = await createClient();
+  const { data } = await supabase.from("members").select("id, display_name, status").order("display_name", { ascending: true });
+  const members = (data ?? []) as Array<{ id: string; display_name: string; status: string }>;
+  const holds = await listMemberHolds();
+
+  const memberById = new Map(members.map((member) => [member.id, member] as const));
+  const activeMembers = members
     .filter((member) => member.status === "active")
     .sort((left, right) => left.display_name.localeCompare(right.display_name, undefined, { sensitivity: "base" }));
-  const holds = [...db.memberHolds].sort((left, right) => {
+  const sortedHolds = [...holds].sort((left, right) => {
     if (left.start_date === right.start_date) return left.member_id.localeCompare(right.member_id, undefined, { sensitivity: "base" });
     return left.start_date < right.start_date ? 1 : -1;
   });
 
-  const activeForDate = holds.filter((hold) => isHoldActiveForDate(hold, selectedDate));
-  const upcoming = holds.filter((hold) => hold.status === "active" && hold.start_date > selectedDate);
-  const ended = holds.filter((hold) => hold.status === "ended" || (hold.end_date && hold.end_date < selectedDate));
+  const activeForDate = sortedHolds.filter((hold) => isHoldActiveForDate(hold, selectedDate));
+  const upcoming = sortedHolds.filter((hold) => hold.status === "active" && hold.start_date > selectedDate);
+  const ended = sortedHolds.filter((hold) => hold.status === "ended" || (hold.end_date && hold.end_date < selectedDate));
 
   return (
     <div className="space-y-4">

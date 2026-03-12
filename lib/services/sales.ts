@@ -1,13 +1,6 @@
-import { getMockLeadsSnapshot, getMockReferralSources } from "@/lib/mock-data";
-import { isMockMode } from "@/lib/runtime";
 import { createClient } from "@/lib/supabase/server";
 
 export async function getLeadsSnapshot() {
-  if (isMockMode()) {
-    // TODO(backend): Remove mock branch when leads data is loaded from Supabase in local/dev.
-    return getMockLeadsSnapshot();
-  }
-
   const supabase = await createClient();
 
   const [{ data: leads }, { data: stages }, { data: activities }] = await Promise.all([
@@ -32,11 +25,6 @@ export async function getLeadsSnapshot() {
 }
 
 export async function getReferralSources() {
-  if (isMockMode()) {
-    // TODO(backend): Remove mock branch when referral source data is loaded from Supabase in local/dev.
-    return getMockReferralSources();
-  }
-
   const supabase = await createClient();
   const { data } = await supabase
     .from("referral_sources")

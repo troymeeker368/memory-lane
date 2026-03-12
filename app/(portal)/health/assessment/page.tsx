@@ -23,7 +23,7 @@ export default async function HealthAssessmentPage({
         : undefined;
 
   const [members, workflows] = await Promise.all([getAssessmentMembers(), getDocumentationWorkflows()]);
-  const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
+  const signerName = await getManagedUserSignatureName(profile.id, profile.full_name);
 
   return (
     <div className="space-y-4">

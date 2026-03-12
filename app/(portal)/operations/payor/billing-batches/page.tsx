@@ -3,8 +3,12 @@ import Link from "next/link";
 import { BillingManualAdjustmentForm } from "@/components/forms/billing-manual-adjustment-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getCurrentProfile } from "@/lib/auth";
-import { getBillingBatchReviewRows, getBillingBatches, getBillingGenerationPreview } from "@/lib/services/billing";
-import { getMockDb } from "@/lib/mock-repo";
+import {
+  getBillingBatchReviewRows,
+  getBillingBatches,
+  getBillingGenerationPreview,
+  getBillingMemberPayorLookups
+} from "@/lib/services/billing-supabase";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { toEasternDate } from "@/lib/timezone";
 
@@ -37,32 +41,17 @@ export default async function BillingBatchesPage({
   const selectedBatchId = firstString(params.batchId) ?? "";
   const errorMessage = firstString(params.error);
   const status = firstString(params.status);
-  const preview = getBillingGenerationPreview({ billingMonth, batchType: batchType === "Membership" || batchType === "Monthly" || batchType === "Custom" ? batchType : "Mixed" });
-  const batches = getBillingBatches();
+  const preview = await getBillingGenerationPreview({
+    billingMonth,
+    batchType: batchType === "Membership" || batchType === "Monthly" || batchType === "Custom" ? batchType : "Mixed"
+  });
+  const batches = await getBillingBatches();
   const selectedBatch = selectedBatchId ? batches.find((row) => row.id === selectedBatchId) ?? null : batches[0] ?? null;
-  const reviewRows = selectedBatch ? getBillingBatchReviewRows(selectedBatch.id) : [];
-  const db = getMockDb();
-  const activeMembers = db.members
-    .filter((row) => row.status === "active")
-    .map((row) => ({ id: row.id, displayName: row.display_name }))
-    .sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: "base" }));
-  const activePayors = db.payors
-    .filter((row) => row.status === "active")
-    .map((row) => ({ id: row.id, payorName: row.payor_name }))
-    .sort((left, right) => left.payorName.localeCompare(right.payorName, undefined, { sensitivity: "base" }));
-  const memberPayorIdsByMember = activeMembers.reduce<Record<string, string[]>>((acc, member) => {
-    const payorIds = Array.from(
-      new Set(
-        db.memberBillingSettings
-          .filter((row) => row.member_id === member.id)
-          .filter((row) => row.active)
-          .map((row) => row.payor_id)
-          .filter((row): row is string => Boolean(row))
-      )
-    );
-    acc[member.id] = payorIds;
-    return acc;
-  }, {});
+  const reviewRows = selectedBatch ? await getBillingBatchReviewRows(selectedBatch.id) : [];
+  const lookup = await getBillingMemberPayorLookups();
+  const activeMembers = lookup.members;
+  const activePayors = lookup.payors;
+  const memberPayorIdsByMember = lookup.memberPayorIdsByMember;
   const profile = await getCurrentProfile();
   const role = normalizeRoleKey(profile.role);
   const canReopenBatch = role === "admin" || role === "manager";

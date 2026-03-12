@@ -2,11 +2,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import type { SetAllCookies } from "@supabase/ssr";
 
-import { getSupabaseEnv, isMockMode } from "../runtime";
+import { getSupabaseEnv, isAuthEnforced } from "../runtime";
 
 export async function updateSession(request: NextRequest) {
-  if (isMockMode()) {
-    // TODO(backend): Re-enable auth redirects once Supabase-backed local auth is required.
+  if (!isAuthEnforced()) {
+    // Explicit auth bypass mode: skip auth redirects.
     return NextResponse.next({ request });
   }
 

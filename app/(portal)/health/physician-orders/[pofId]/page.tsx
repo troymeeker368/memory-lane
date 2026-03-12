@@ -8,7 +8,7 @@ import { requireRoles } from "@/lib/auth";
 import {
   getPhysicianOrderById,
   getPhysicianOrdersForMember
-} from "@/lib/services/physician-orders";
+} from "@/lib/services/physician-orders-supabase";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
@@ -39,10 +39,10 @@ export default async function PhysicianOrderDetailPage({
   const source = firstString(query.from);
   const pdfSaveFailed = firstString(query.pdfSave) === "failed";
 
-  const form = getPhysicianOrderById(pofId);
+  const form = await getPhysicianOrderById(pofId);
   if (!form) notFound();
 
-  const history = getPhysicianOrdersForMember(form.memberId);
+  const history = await getPhysicianOrdersForMember(form.memberId);
   const backHref =
     source === "mhp"
       ? `/health/member-health-profiles/${form.memberId}`
@@ -52,6 +52,7 @@ export default async function PhysicianOrderDetailPage({
 
   const care = form.careInformation;
   const flags = form.operationalFlags;
+  const canEditThisOrder = canEdit && form.status !== "Signed" && form.status !== "Superseded" && form.status !== "Expired";
 
   return (
     <div className="space-y-4">
@@ -63,15 +64,20 @@ export default async function PhysicianOrderDetailPage({
         <p className="mt-1 text-sm text-muted">
           Member: <span className="font-semibold">{form.memberNameSnapshot}</span> | DOB: {formatOptionalDate(form.memberDobSnapshot)}
         </p>
+        {form.intakeAssessmentId ? (
+          <p className="mt-1 text-xs text-muted">
+            Intake Source: <span className="font-semibold">{form.intakeAssessmentId}</span>
+          </p>
+        ) : null}
         <div className="mt-2 grid gap-2 text-xs text-muted sm:grid-cols-2 lg:grid-cols-4">
           <p>Status: <span className="font-semibold text-primary-text">{form.status}</span></p>
           <p>Provider Signature Status: <span className="font-semibold text-primary-text">{form.providerSignatureStatus}</span></p>
-          <p>Completed: <span className="font-semibold text-primary-text">{form.completedDate ? formatDate(form.completedDate) : "-"}</span></p>
+          <p>Sent: <span className="font-semibold text-primary-text">{form.completedDate ? formatDate(form.completedDate) : "-"}</span></p>
           <p>Next Renewal Due: <span className="font-semibold text-primary-text">{form.nextRenewalDueDate ? formatDate(form.nextRenewalDueDate) : "-"}</span></p>
           <p>Signed: <span className="font-semibold text-primary-text">{form.signedDate ? formatDate(form.signedDate) : "-"}</span></p>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          {canEdit ? (
+          {canEditThisOrder ? (
             <Link href={`/health/physician-orders/new?pofId=${form.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
               Edit / Update Form
             </Link>
@@ -263,8 +269,8 @@ export default async function PhysicianOrderDetailPage({
           <p><span className="font-semibold">Provider Signature Date:</span> {form.providerSignatureDate ? formatDate(form.providerSignatureDate) : "-"}</p>
           <p><span className="font-semibold">Created By:</span> {form.createdByName}</p>
           <p><span className="font-semibold">Created At:</span> {formatDateTime(form.createdAt)}</p>
-          <p><span className="font-semibold">Completed By:</span> {form.completedByName ?? "-"}</p>
-          <p><span className="font-semibold">Completed Date:</span> {form.completedDate ? formatDate(form.completedDate) : "-"}</p>
+          <p><span className="font-semibold">Sent By:</span> {form.completedByName ?? "-"}</p>
+          <p><span className="font-semibold">Sent Date:</span> {form.completedDate ? formatDate(form.completedDate) : "-"}</p>
           <p><span className="font-semibold">Signed By:</span> {form.signedBy ?? "-"}</p>
           <p><span className="font-semibold">Signed Date:</span> {form.signedDate ? formatDate(form.signedDate) : "-"}</p>
           <p><span className="font-semibold">Last Updated By:</span> {form.updatedByName ?? "-"}</p>
@@ -279,7 +285,7 @@ export default async function PhysicianOrderDetailPage({
             <tr>
               <th>Status</th>
               <th>Provider</th>
-              <th>Completed</th>
+              <th>Sent</th>
               <th>Signed</th>
               <th>Updated</th>
               <th>Open</th>

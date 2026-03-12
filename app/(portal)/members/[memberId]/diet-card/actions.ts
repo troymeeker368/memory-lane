@@ -20,7 +20,7 @@ function lineOrDash(value: string | null | undefined) {
 }
 
 async function buildDietCardPdf(memberId: string) {
-  const dietCard = getMemberDietCard(memberId);
+  const dietCard = await getMemberDietCard(memberId);
   if (!dietCard) {
     return { error: "Member diet card data not found." } as const;
   }
@@ -72,7 +72,7 @@ export async function generateMemberDietCardPdfAction(input: { memberId: string 
     return { ok: false, error: built.error } as const;
   }
 
-  const saved = saveGeneratedMemberPdfToFiles({
+  const saved = await saveGeneratedMemberPdfToFiles({
     memberId,
     memberName: built.dietCard.member.name,
     documentLabel: "Diet Card",
@@ -97,3 +97,4 @@ export async function generateMemberDietCardPdfAction(input: { memberId: string 
     dataUrl: built.dataUrl
   } as const;
 }
+

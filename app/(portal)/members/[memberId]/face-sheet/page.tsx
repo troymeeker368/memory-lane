@@ -36,7 +36,7 @@ export default async function MemberFaceSheetPage({
         ? `/operations/member-command-center/${memberId}`
         : `/members/${memberId}`;
 
-  const faceSheet = getMemberFaceSheet(memberId);
+  const faceSheet = await getMemberFaceSheet(memberId);
   if (!faceSheet) notFound();
 
   return (

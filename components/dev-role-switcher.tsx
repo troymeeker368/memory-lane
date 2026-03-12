@@ -1,87 +1,95 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import type { AppRole } from "@/types/app";
-import { CANONICAL_ROLE_ORDER, getRoleLabel, normalizeRoleKey } from "@/lib/permissions";
+import { getRoleLabel } from "@/lib/permissions";
+import {
+  DEV_ROLE_COOKIE_KEY,
+  DEV_ROLE_STORAGE_KEY,
+  LEGACY_DEV_ROLE_COOKIE_KEY,
+  resolveDevRoleOverride
+} from "@/lib/runtime";
 
-const ROLE_OPTIONS: AppRole[] = [...CANONICAL_ROLE_ORDER];
-const ROLE_STORAGE_KEY = "memory_lane_dev_role";
-const USER_STORAGE_KEY = "memory_lane_dev_user";
-const ROLE_COOKIE_KEY = "ml_mock_role";
-const USER_COOKIE_KEY = "ml_mock_user_id";
+const ROLE_OPTIONS: AppRole[] = [
+  "program-assistant",
+  "coordinator",
+  "nurse",
+  "manager",
+  "director",
+  "admin"
+];
 
-type DevUserOption = {
-  id: string;
-  full_name: string;
-  role: AppRole;
-};
-
-function isRole(value: string | null | undefined): value is AppRole {
-  return Boolean(value && ROLE_OPTIONS.includes(normalizeRoleKey(value)));
+function readCookie(name: string): string | null {
+  const cookiePart = document.cookie
+    .split(";")
+    .map((value) => value.trim())
+    .find((value) => value.startsWith(`${name}=`));
+  if (!cookiePart) return null;
+  return cookiePart.slice(name.length + 1) || null;
 }
 
-function persistRole(role: AppRole) {
-  window.localStorage.setItem(ROLE_STORAGE_KEY, role);
-  document.cookie = `${ROLE_COOKIE_KEY}=${role}; path=/; max-age=31536000; samesite=lax`;
+function setCookie(name: string, value: string) {
+  document.cookie = `${name}=${value}; path=/; max-age=31536000; samesite=lax`;
 }
 
-function persistUser(userId: string | null) {
-  if (!userId) {
-    window.localStorage.removeItem(USER_STORAGE_KEY);
-    document.cookie = `${USER_COOKIE_KEY}=; path=/; max-age=0; samesite=lax`;
+function clearCookie(name: string) {
+  document.cookie = `${name}=; path=/; max-age=0; samesite=lax`;
+}
+
+function persistRole(role: AppRole | null) {
+  if (!role) {
+    window.localStorage.removeItem(DEV_ROLE_STORAGE_KEY);
+    clearCookie(DEV_ROLE_COOKIE_KEY);
+    clearCookie(LEGACY_DEV_ROLE_COOKIE_KEY);
     return;
   }
 
-  window.localStorage.setItem(USER_STORAGE_KEY, userId);
-  document.cookie = `${USER_COOKIE_KEY}=${userId}; path=/; max-age=31536000; samesite=lax`;
+  window.localStorage.setItem(DEV_ROLE_STORAGE_KEY, role);
+  setCookie(DEV_ROLE_COOKIE_KEY, role);
+  // Keep legacy cookie in sync for backwards compatibility.
+  setCookie(LEGACY_DEV_ROLE_COOKIE_KEY, role);
 }
 
 export function DevRoleSwitcher({
   currentRole,
-  currentUserId,
-  availableUsers,
-  enabled
+  enabled,
+  envRoleOverride
 }: {
   currentRole: AppRole;
-  currentUserId: string;
-  availableUsers: DevUserOption[];
   enabled: boolean;
+  envRoleOverride: AppRole | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [selectedRole, setSelectedRole] = useState<AppRole>(currentRole);
-  const [selectedUserId, setSelectedUserId] = useState<string>(currentUserId);
-
-  const usersForRole = useMemo(
-    () => availableUsers.filter((user) => normalizeRoleKey(user.role) === selectedRole).sort((a, b) => a.full_name.localeCompare(b.full_name)),
-    [availableUsers, selectedRole]
-  );
+  const [selectedRole, setSelectedRole] = useState<AppRole | "">(envRoleOverride ?? "");
 
   useEffect(() => {
     if (!enabled) return;
 
-    const storedRole = window.localStorage.getItem(ROLE_STORAGE_KEY);
-    const effectiveRole = normalizeRoleKey(isRole(storedRole) ? storedRole : currentRole);
+    if (envRoleOverride) {
+      setSelectedRole(envRoleOverride);
+      return;
+    }
 
-    const storedUserId = window.localStorage.getItem(USER_STORAGE_KEY);
-    const roleUsers = availableUsers.filter((user) => normalizeRoleKey(user.role) === effectiveRole);
+    const storedRole = window.localStorage.getItem(DEV_ROLE_STORAGE_KEY);
+    const cookieRole = readCookie(DEV_ROLE_COOKIE_KEY) ?? readCookie(LEGACY_DEV_ROLE_COOKIE_KEY);
+    const effectiveOverride = resolveDevRoleOverride(storedRole) ?? resolveDevRoleOverride(cookieRole);
 
-    const currentUserForRole = roleUsers.find((user) => user.id === currentUserId)?.id ?? null;
-    const storedUserForRole = roleUsers.find((user) => user.id === storedUserId)?.id ?? null;
-    const effectiveUserId = storedUserForRole ?? currentUserForRole ?? roleUsers[0]?.id ?? "";
+    if (!effectiveOverride) {
+      setSelectedRole("");
+      persistRole(null);
+      return;
+    }
 
-    setSelectedRole(effectiveRole);
-    setSelectedUserId(effectiveUserId);
+    setSelectedRole(effectiveOverride);
+    persistRole(effectiveOverride);
 
-    persistRole(effectiveRole);
-    persistUser(effectiveUserId || null);
-
-    if (effectiveRole !== currentRole || (effectiveUserId && effectiveUserId !== currentUserId)) {
+    if (effectiveOverride !== currentRole) {
       startTransition(() => router.refresh());
     }
-  }, [availableUsers, currentRole, currentUserId, enabled, router]);
+  }, [currentRole, enabled, envRoleOverride, router]);
 
   if (!enabled) return null;
 
@@ -92,21 +100,15 @@ export function DevRoleSwitcher({
         <select
           className="h-9 rounded-md border border-border bg-white px-2 text-xs text-brand"
           value={selectedRole}
-          disabled={isPending}
+          disabled={isPending || Boolean(envRoleOverride)}
           onChange={(event) => {
-            const nextRole = normalizeRoleKey(event.target.value);
-            const nextUsers = availableUsers
-              .filter((user) => normalizeRoleKey(user.role) === nextRole)
-              .sort((a, b) => a.full_name.localeCompare(b.full_name));
-            const nextUserId = nextUsers[0]?.id ?? "";
-
-            setSelectedRole(nextRole);
-            setSelectedUserId(nextUserId);
+            const nextRole = resolveDevRoleOverride(event.target.value);
+            setSelectedRole(nextRole ?? "");
             persistRole(nextRole);
-            persistUser(nextUserId || null);
             startTransition(() => router.refresh());
           }}
         >
+          <option value="">Database Profile</option>
           {ROLE_OPTIONS.map((role) => (
             <option key={role} value={role}>
               {getRoleLabel(role)}
@@ -114,28 +116,7 @@ export function DevRoleSwitcher({
           ))}
         </select>
       </label>
-
-      <label className="flex items-center gap-2">
-        <span className="font-semibold">Dev Staff</span>
-        <select
-          className="h-9 rounded-md border border-border bg-white px-2 text-xs text-brand"
-          value={selectedUserId}
-          disabled={isPending || usersForRole.length === 0}
-          onChange={(event) => {
-            const nextUserId = event.target.value;
-            setSelectedUserId(nextUserId);
-            persistUser(nextUserId || null);
-            startTransition(() => router.refresh());
-          }}
-        >
-          {usersForRole.length === 0 ? <option value="">No users</option> : null}
-          {usersForRole.map((user) => (
-            <option key={user.id} value={user.id}>
-              {user.full_name}
-            </option>
-          ))}
-        </select>
-      </label>
+      {envRoleOverride ? <p className="text-[11px] text-muted">Locked by `DEV_ROLE_OVERRIDE`.</p> : null}
     </div>
   );
 }

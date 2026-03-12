@@ -1,7 +1,4 @@
-import { getMockAncillarySummary } from "@/lib/mock-data";
-import { getMockDb } from "@/lib/mock-repo";
 import { normalizeRoleKey } from "@/lib/permissions";
-import { isMockMode } from "@/lib/runtime";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";
 
@@ -11,13 +8,6 @@ interface AncillaryScope {
 }
 
 export async function getAncillarySummary(monthKey?: string, scope?: AncillaryScope) {
-  if (isMockMode()) {
-    // TODO(backend): Remove mock branch when ancillary data is loaded from Supabase in local/dev.
-    return getMockAncillarySummary(monthKey, {
-      staffUserId: scope?.role && normalizeRoleKey(scope.role) === "program-assistant" ? scope.staffUserId ?? null : null
-    });
-  }
-
   const supabase = await createClient();
 
   let logsQuery = supabase
@@ -86,14 +76,6 @@ export async function getAncillarySummary(monthKey?: string, scope?: AncillarySc
 }
 
 export async function getAncillaryEntryCountLastDays(days = 30) {
-  if (isMockMode()) {
-    const db = getMockDb();
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    start.setDate(start.getDate() - (days - 1));
-    return db.ancillaryLogs.filter((row) => new Date(`${row.service_date}T12:00:00.000`) >= start).length;
-  }
-
   const supabase = await createClient();
   const since = new Date();
   since.setDate(since.getDate() - (days - 1));

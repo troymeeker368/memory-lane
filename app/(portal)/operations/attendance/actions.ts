@@ -4,24 +4,23 @@ import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { ATTENDANCE_ABSENCE_REASON_OPTIONS } from "@/lib/canonical";
-import {
-  addAuditLogEvent,
-  addMemberMakeupLedgerEntry,
-  addMockRecord,
-  getMemberMakeupDayBalance,
-  getMockDb,
-  removeMockRecord,
-  updateMockRecord
-} from "@/lib/mock-repo";
-import { isMemberOnHoldOnDate } from "@/lib/services/holds";
-import { syncAttendanceBillingForDate } from "@/lib/services/billing";
+import { syncAttendanceBillingForDate } from "@/lib/services/billing-supabase";
 import { isMemberScheduledForDate } from "@/lib/services/member-schedule-selectors";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
+import { createClient } from "@/lib/supabase/server";
 import { easternDateTimeLocalToISO, toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
 
 function asString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
+}
+
+function isUuid(value: string | null | undefined) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value ?? ""));
+}
+
+function actorUserIdOrNull(value: string | null | undefined) {
+  return isUuid(value) ? String(value) : null;
 }
 
 async function requireAttendanceEditor() {
@@ -38,54 +37,6 @@ function revalidateAttendanceViews() {
   revalidatePath("/operations/member-command-center");
 }
 
-function syncScheduleMakeupBalance(memberId: string, asOfDate?: string) {
-  const db = getMockDb();
-  const schedule = db.memberAttendanceSchedules.find((row) => row.member_id === memberId);
-  if (!schedule) return;
-  updateMockRecord("memberAttendanceSchedules", schedule.id, {
-    make_up_days_available: getMemberMakeupDayBalance(memberId, asOfDate)
-  });
-}
-
-function applyScheduledAbsenceMakeupDelta(input: {
-  memberId: string;
-  attendanceDate: string;
-  deltaDays: number;
-  actor: { id: string; full_name: string; role: AppRole };
-  source: string;
-  reason: string;
-}) {
-  const db = getMockDb();
-  const schedule = db.memberAttendanceSchedules.find((row) => row.member_id === input.memberId) ?? null;
-  if (!schedule || !isMemberScheduledForDate(schedule, input.attendanceDate)) return;
-  if (isMemberOnHoldOnDate(input.memberId, input.attendanceDate)) return;
-
-  // Makeup accrual/reversal is ledger-based so policy (30-day expiry vs running total) stays consistent.
-  addMemberMakeupLedgerEntry({
-    memberId: input.memberId,
-    deltaDays: input.deltaDays,
-    reason: input.reason,
-    source: input.source,
-    effectiveDate: input.attendanceDate,
-    actorUserId: input.actor.id,
-    actorName: input.actor.full_name
-  });
-  addAuditLogEvent({
-    actorUserId: input.actor.id,
-    actorName: input.actor.full_name,
-    actorRole: input.actor.role,
-    action: "manager_review",
-    entityType: "makeup_day",
-    entityId: input.memberId,
-    details: {
-      attendanceDate: input.attendanceDate,
-      deltaDays: input.deltaDays,
-      source: input.source
-    }
-  });
-  syncScheduleMakeupBalance(input.memberId, input.attendanceDate);
-}
-
 function resolveAttendanceTimestamp(input: {
   attendanceDate: string;
   localDateTime: string;
@@ -99,6 +50,191 @@ function resolveAttendanceTimestamp(input: {
     return easternDateTimeLocalToISO(`${input.attendanceDate}T${input.localTime}`);
   }
   return input.fallbackIso;
+}
+
+type AttendanceRecordRow = {
+  id: string;
+  member_id: string;
+  attendance_date: string;
+  status: "present" | "absent";
+  absent_reason: string | null;
+  absent_reason_other: string | null;
+  check_in_at: string | null;
+  check_out_at: string | null;
+  linked_adjustment_id: string | null;
+};
+
+type AttendanceScheduleRow = {
+  id: string;
+  member_id: string;
+  monday: boolean;
+  tuesday: boolean;
+  wednesday: boolean;
+  thursday: boolean;
+  friday: boolean;
+  make_up_days_available: number | null;
+};
+
+async function getAttendanceRecord(memberId: string, attendanceDate: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("attendance_records")
+    .select("id, member_id, attendance_date, status, absent_reason, absent_reason_other, check_in_at, check_out_at, linked_adjustment_id")
+    .eq("member_id", memberId)
+    .eq("attendance_date", attendanceDate)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as AttendanceRecordRow | null) ?? null;
+}
+
+async function getMemberAttendanceSchedule(memberId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("member_attendance_schedules")
+    .select("id, member_id, monday, tuesday, wednesday, thursday, friday, make_up_days_available")
+    .eq("member_id", memberId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as AttendanceScheduleRow | null) ?? null;
+}
+
+async function isMemberOnHoldOnDate(memberId: string, attendanceDate: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("member_holds")
+    .select("id")
+    .eq("member_id", memberId)
+    .eq("status", "active")
+    .lte("start_date", attendanceDate)
+    .or(`end_date.is.null,end_date.gte.${attendanceDate}`)
+    .limit(1);
+  if (error) throw new Error(error.message);
+  return (data ?? []).length > 0;
+}
+
+async function recordMakeupAuditLog(input: {
+  memberId: string;
+  attendanceDate: string;
+  deltaDays: number;
+  source: string;
+  actorUserId: string | null;
+  actorRole: AppRole;
+}) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("audit_logs").insert({
+    actor_user_id: input.actorUserId,
+    actor_role: input.actorRole,
+    action: "manager_review",
+    entity_type: "makeup_day",
+    entity_id: input.memberId,
+    details: {
+      attendanceDate: input.attendanceDate,
+      deltaDays: input.deltaDays,
+      source: input.source
+    }
+  });
+  if (error) {
+    console.warn("[Attendance] Unable to write makeup audit log", {
+      message: error.message,
+      memberId: input.memberId,
+      attendanceDate: input.attendanceDate
+    });
+  }
+}
+
+async function applyScheduledAbsenceMakeupDelta(input: {
+  memberId: string;
+  attendanceDate: string;
+  deltaDays: number;
+  actor: { id: string; full_name: string; role: AppRole };
+  source: string;
+}) {
+  const schedule = await getMemberAttendanceSchedule(input.memberId);
+  if (!schedule || !isMemberScheduledForDate(schedule as any, input.attendanceDate)) return;
+  if (await isMemberOnHoldOnDate(input.memberId, input.attendanceDate)) return;
+
+  const currentBalance = Math.max(0, Number(schedule.make_up_days_available ?? 0));
+  const nextBalance = Math.max(0, currentBalance + input.deltaDays);
+  if (nextBalance === currentBalance) return;
+
+  const now = toEasternISO();
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("member_attendance_schedules")
+    .update({
+      make_up_days_available: nextBalance,
+      updated_by_user_id: actorUserIdOrNull(input.actor.id),
+      updated_by_name: input.actor.full_name,
+      updated_at: now
+    })
+    .eq("id", schedule.id);
+  if (error) throw new Error(error.message);
+
+  await recordMakeupAuditLog({
+    memberId: input.memberId,
+    attendanceDate: input.attendanceDate,
+    deltaDays: input.deltaDays,
+    source: input.source,
+    actorUserId: actorUserIdOrNull(input.actor.id),
+    actorRole: input.actor.role
+  });
+}
+
+async function upsertAttendanceRecord(input: {
+  existing: AttendanceRecordRow | null;
+  memberId: string;
+  attendanceDate: string;
+  status: "present" | "absent";
+  absentReason: string | null;
+  absentReasonOther: string | null;
+  checkInAt: string | null;
+  checkOutAt: string | null;
+  notes: string | null;
+  actor: { id: string; full_name: string };
+  at: string;
+}) {
+  const supabase = await createClient();
+  if (input.existing) {
+    const { data, error } = await supabase
+      .from("attendance_records")
+      .update({
+        status: input.status,
+        absent_reason: input.absentReason,
+        absent_reason_other: input.absentReasonOther,
+        check_in_at: input.checkInAt,
+        check_out_at: input.checkOutAt,
+        notes: input.notes,
+        recorded_by_user_id: actorUserIdOrNull(input.actor.id),
+        recorded_by_name: input.actor.full_name,
+        updated_at: input.at
+      })
+      .eq("id", input.existing.id)
+      .select("id, member_id, attendance_date, status, absent_reason, absent_reason_other, check_in_at, check_out_at, linked_adjustment_id")
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data as AttendanceRecordRow | null) ?? null;
+  }
+
+  const { data, error } = await supabase
+    .from("attendance_records")
+    .insert({
+      member_id: input.memberId,
+      attendance_date: input.attendanceDate,
+      status: input.status,
+      absent_reason: input.absentReason,
+      absent_reason_other: input.absentReasonOther,
+      check_in_at: input.checkInAt,
+      check_out_at: input.checkOutAt,
+      notes: input.notes,
+      recorded_by_user_id: actorUserIdOrNull(input.actor.id),
+      recorded_by_name: input.actor.full_name,
+      created_at: input.at,
+      updated_at: input.at
+    })
+    .select("id, member_id, attendance_date, status, absent_reason, absent_reason_other, check_in_at, check_out_at, linked_adjustment_id")
+    .single();
+  if (error) throw new Error(error.message);
+  return data as AttendanceRecordRow;
 }
 
 export async function saveAttendanceStatusAction(formData: FormData) {
@@ -124,36 +260,40 @@ export async function saveAttendanceStatusAction(formData: FormData) {
       throw new Error("Invalid attendance status.");
     }
 
-    const db = getMockDb();
-    const existing = db.attendanceRecords.find(
-      (record) => record.member_id === memberId && record.attendance_date === attendanceDate
-    );
+    const existing = await getAttendanceRecord(memberId, attendanceDate);
     const existingStatus = existing?.status ?? null;
 
     if (requestedStatus === "clear") {
+      const now = toEasternISO();
       if (existing?.linked_adjustment_id) {
-        updateMockRecord("billingAdjustments", existing.linked_adjustment_id, {
-          billing_status: "Excluded",
-          invoice_id: null,
-          updated_at: toEasternISO()
-        });
+        const supabase = await createClient();
+        const { error } = await supabase
+          .from("billing_adjustments")
+          .update({
+            billing_status: "Excluded",
+            invoice_id: null,
+            updated_at: now
+          })
+          .eq("id", existing.linked_adjustment_id);
+        if (error) throw new Error(error.message);
       }
+
       if (existingStatus === "absent") {
-        applyScheduledAbsenceMakeupDelta({
+        await applyScheduledAbsenceMakeupDelta({
           memberId,
           attendanceDate,
           deltaDays: -1,
           actor,
-          source: "attendance-clear-absence",
-          reason: `Removed scheduled absence makeup accrual (${attendanceDate})`
+          source: "attendance-clear-absence"
         });
       }
+
       if (existing) {
-        const removed = removeMockRecord("attendanceRecords", existing.id);
-        if (!removed) {
-          throw new Error("Unable to clear attendance record.");
-        }
+        const supabase = await createClient();
+        const { error } = await supabase.from("attendance_records").delete().eq("id", existing.id);
+        if (error) throw new Error(error.message);
       }
+
       revalidateAttendanceViews();
       return { ok: true as const };
     }
@@ -177,52 +317,31 @@ export async function saveAttendanceStatusAction(formData: FormData) {
     });
 
     if (requestedStatus === "check-in") {
-      if (existing) {
-        const updated = updateMockRecord("attendanceRecords", existing.id, {
-          status: "present",
-          absent_reason: null,
-          absent_reason_other: null,
-          check_in_at: resolvedCheckInAt,
-          check_out_at: existing.check_out_at,
-          updated_at: now,
-          recorded_by_user_id: actor.id,
-          recorded_by_name: actor.full_name
-        });
-        if (!updated) {
-          throw new Error("Unable to save check-in.");
-        }
-      } else {
-        const created = addMockRecord("attendanceRecords", {
-          member_id: memberId,
-          attendance_date: attendanceDate,
-          status: "present",
-          absent_reason: null,
-          absent_reason_other: null,
-          check_in_at: resolvedCheckInAt,
-          check_out_at: null,
-          notes: null,
-          recorded_by_user_id: actor.id,
-          recorded_by_name: actor.full_name,
-          created_at: now,
-          updated_at: now
-        });
-        if (!created) {
-          throw new Error("Unable to save check-in.");
-        }
-      }
+      await upsertAttendanceRecord({
+        existing,
+        memberId,
+        attendanceDate,
+        status: "present",
+        absentReason: null,
+        absentReasonOther: null,
+        checkInAt: resolvedCheckInAt,
+        checkOutAt: existing?.check_out_at ?? null,
+        notes: existing ? null : null,
+        actor,
+        at: now
+      });
 
       if (existingStatus === "absent") {
-        applyScheduledAbsenceMakeupDelta({
+        await applyScheduledAbsenceMakeupDelta({
           memberId,
           attendanceDate,
           deltaDays: -1,
           actor,
-          source: "attendance-check-in-reversal",
-          reason: `Reversed scheduled absence makeup accrual (${attendanceDate})`
+          source: "attendance-check-in-reversal"
         });
       }
 
-      syncAttendanceBillingForDate({
+      await syncAttendanceBillingForDate({
         memberId,
         attendanceDate,
         actorName: actor.full_name
@@ -233,52 +352,31 @@ export async function saveAttendanceStatusAction(formData: FormData) {
     }
 
     if (requestedStatus === "check-out") {
-      if (existing) {
-        const updated = updateMockRecord("attendanceRecords", existing.id, {
-          status: "present",
-          absent_reason: null,
-          absent_reason_other: null,
-          check_in_at: existing.check_in_at,
-          check_out_at: resolvedCheckOutAt,
-          updated_at: now,
-          recorded_by_user_id: actor.id,
-          recorded_by_name: actor.full_name
-        });
-        if (!updated) {
-          throw new Error("Unable to save check-out.");
-        }
-      } else {
-        const created = addMockRecord("attendanceRecords", {
-          member_id: memberId,
-          attendance_date: attendanceDate,
-          status: "present",
-          absent_reason: null,
-          absent_reason_other: null,
-          check_in_at: null,
-          check_out_at: resolvedCheckOutAt,
-          notes: null,
-          recorded_by_user_id: actor.id,
-          recorded_by_name: actor.full_name,
-          created_at: now,
-          updated_at: now
-        });
-        if (!created) {
-          throw new Error("Unable to save check-out.");
-        }
-      }
+      await upsertAttendanceRecord({
+        existing,
+        memberId,
+        attendanceDate,
+        status: "present",
+        absentReason: null,
+        absentReasonOther: null,
+        checkInAt: existing?.check_in_at ?? null,
+        checkOutAt: resolvedCheckOutAt,
+        notes: existing ? null : null,
+        actor,
+        at: now
+      });
 
       if (existingStatus === "absent") {
-        applyScheduledAbsenceMakeupDelta({
+        await applyScheduledAbsenceMakeupDelta({
           memberId,
           attendanceDate,
           deltaDays: -1,
           actor,
-          source: "attendance-check-out-reversal",
-          reason: `Reversed scheduled absence makeup accrual (${attendanceDate})`
+          source: "attendance-check-out-reversal"
         });
       }
 
-      syncAttendanceBillingForDate({
+      await syncAttendanceBillingForDate({
         memberId,
         attendanceDate,
         actorName: actor.full_name
@@ -297,61 +395,39 @@ export async function saveAttendanceStatusAction(formData: FormData) {
       }
     }
 
-    if (existing) {
-      const updated = updateMockRecord("attendanceRecords", existing.id, {
-        status: requestedStatus,
-        absent_reason: requestedStatus === "absent" ? absentReason : null,
-        absent_reason_other: requestedStatus === "absent" && absentReason === "Other" ? absentReasonOther.trim() : null,
-        check_in_at: requestedStatus === "present" ? existing.check_in_at ?? now : null,
-        check_out_at: requestedStatus === "present" ? existing.check_out_at : null,
-        updated_at: now,
-        recorded_by_user_id: actor.id,
-        recorded_by_name: actor.full_name
-      });
-      if (!updated) {
-        throw new Error("Unable to update attendance.");
-      }
-    } else {
-      const created = addMockRecord("attendanceRecords", {
-        member_id: memberId,
-        attendance_date: attendanceDate,
-        status: requestedStatus,
-        absent_reason: requestedStatus === "absent" ? absentReason : null,
-        absent_reason_other: requestedStatus === "absent" && absentReason === "Other" ? absentReasonOther.trim() : null,
-        check_in_at: requestedStatus === "present" ? now : null,
-        check_out_at: null,
-        notes: null,
-        recorded_by_user_id: actor.id,
-        recorded_by_name: actor.full_name,
-        created_at: now,
-        updated_at: now
-      });
-      if (!created) {
-        throw new Error("Unable to create attendance record.");
-      }
-    }
+    await upsertAttendanceRecord({
+      existing,
+      memberId,
+      attendanceDate,
+      status: requestedStatus,
+      absentReason: requestedStatus === "absent" ? absentReason : null,
+      absentReasonOther: requestedStatus === "absent" && absentReason === "Other" ? absentReasonOther.trim() : null,
+      checkInAt: requestedStatus === "present" ? existing?.check_in_at ?? now : null,
+      checkOutAt: requestedStatus === "present" ? existing?.check_out_at ?? null : null,
+      notes: existing?.status === "present" ? null : existing?.status === "absent" ? null : null,
+      actor,
+      at: now
+    });
 
     if (requestedStatus === "absent" && existingStatus !== "absent") {
-      applyScheduledAbsenceMakeupDelta({
+      await applyScheduledAbsenceMakeupDelta({
         memberId,
         attendanceDate,
         deltaDays: 1,
         actor,
-        source: "attendance-absence-accrual",
-        reason: `Scheduled absence accrued makeup day (${attendanceDate})`
+        source: "attendance-absence-accrual"
       });
     } else if (requestedStatus === "present" && existingStatus === "absent") {
-      applyScheduledAbsenceMakeupDelta({
+      await applyScheduledAbsenceMakeupDelta({
         memberId,
         attendanceDate,
         deltaDays: -1,
         actor,
-        source: "attendance-present-reversal",
-        reason: `Reversed scheduled absence makeup accrual (${attendanceDate})`
+        source: "attendance-present-reversal"
       });
     }
 
-    syncAttendanceBillingForDate({
+    await syncAttendanceBillingForDate({
       memberId,
       attendanceDate,
       actorName: actor.full_name
@@ -383,18 +459,24 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
       throw new Error("Member is required.");
     }
 
-    const db = getMockDb();
-    const member = db.members.find((row) => row.id === memberId);
-    if (!member || member.status !== "active") {
+    const supabase = await createClient();
+    const { data: member, error: memberError } = await supabase
+      .from("members")
+      .select("id, status")
+      .eq("id", memberId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (memberError) throw new Error(memberError.message);
+    if (!member) {
       throw new Error("Active member not found.");
     }
 
-    if (isMemberOnHoldOnDate(memberId, attendanceDate)) {
+    if (await isMemberOnHoldOnDate(memberId, attendanceDate)) {
       throw new Error("Member is on hold for this date.");
     }
 
-    const schedule = db.memberAttendanceSchedules.find((row) => row.member_id === memberId) ?? null;
-    if (schedule && isMemberScheduledForDate(schedule, attendanceDate)) {
+    const schedule = await getMemberAttendanceSchedule(memberId);
+    if (schedule && isMemberScheduledForDate(schedule as any, attendanceDate)) {
       throw new Error("Member is already scheduled on this date. Use the Daily Attendance roster.");
     }
 
@@ -406,75 +488,53 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
       fallbackIso: now
     });
 
-    const existing = db.attendanceRecords.find(
-      (record) => record.member_id === memberId && record.attendance_date === attendanceDate
-    );
-    if (existing) {
-      const updated = updateMockRecord("attendanceRecords", existing.id, {
-        status: "present",
-        absent_reason: null,
-        absent_reason_other: null,
-        check_in_at: existing.check_in_at ?? resolvedCheckInAt,
-        check_out_at: existing.check_out_at,
-        updated_at: now,
-        recorded_by_user_id: actor.id,
-        recorded_by_name: actor.full_name
-      });
-      if (!updated) {
-        throw new Error("Unable to update unscheduled attendance.");
-      }
-    } else {
-      const created = addMockRecord("attendanceRecords", {
-        member_id: memberId,
-        attendance_date: attendanceDate,
-        status: "present",
-        absent_reason: null,
-        absent_reason_other: null,
-        check_in_at: resolvedCheckInAt,
-        check_out_at: null,
-        notes: "Unscheduled attendance",
-        recorded_by_user_id: actor.id,
-        recorded_by_name: actor.full_name,
-        created_at: now,
-        updated_at: now
-      });
-      if (!created) {
-        throw new Error("Unable to save unscheduled attendance.");
-      }
-    }
+    const existing = await getAttendanceRecord(memberId, attendanceDate);
+    await upsertAttendanceRecord({
+      existing,
+      memberId,
+      attendanceDate,
+      status: "present",
+      absentReason: null,
+      absentReasonOther: null,
+      checkInAt: existing?.check_in_at ?? resolvedCheckInAt,
+      checkOutAt: existing?.check_out_at ?? null,
+      notes: "Unscheduled attendance",
+      actor,
+      at: now
+    });
 
     if (useMakeupDay) {
-      const currentBalance = getMemberMakeupDayBalance(memberId, attendanceDate);
+      if (!schedule) {
+        throw new Error("No attendance schedule found to apply makeup day balance.");
+      }
+
+      const currentBalance = Math.max(0, Number(schedule.make_up_days_available ?? 0));
       if (currentBalance < 1) {
         throw new Error("No makeup days are currently available for this member.");
       }
-      addMemberMakeupLedgerEntry({
+
+      const { error: scheduleError } = await supabase
+        .from("member_attendance_schedules")
+        .update({
+          make_up_days_available: currentBalance - 1,
+          updated_by_user_id: actorUserIdOrNull(actor.id),
+          updated_by_name: actor.full_name,
+          updated_at: now
+        })
+        .eq("id", schedule.id);
+      if (scheduleError) throw new Error(scheduleError.message);
+
+      await recordMakeupAuditLog({
         memberId,
+        attendanceDate,
         deltaDays: -1,
-        reason: `Used makeup day for unscheduled attendance (${attendanceDate})`,
         source: "unscheduled-attendance",
-        effectiveDate: attendanceDate,
-        actorUserId: actor.id,
-        actorName: actor.full_name
-      });
-      addAuditLogEvent({
-        actorUserId: actor.id,
-        actorName: actor.full_name,
-        actorRole: actor.role,
-        action: "manager_review",
-        entityType: "makeup_day",
-        entityId: memberId,
-        details: {
-          memberId,
-          attendanceDate,
-          deltaDays: -1,
-          source: "unscheduled-attendance"
-        }
+        actorUserId: actorUserIdOrNull(actor.id),
+        actorRole: actor.role
       });
     }
 
-    syncScheduleMakeupBalance(memberId, attendanceDate);
-    syncAttendanceBillingForDate({
+    await syncAttendanceBillingForDate({
       memberId,
       attendanceDate,
       actorName: actor.full_name

@@ -4,10 +4,15 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
-import { addMockRecord, getMockDb, removeMockRecord, updateMockRecord } from "@/lib/mock-repo";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
-import { getTransportationManifest } from "@/lib/services/transportation-station";
+import {
+  findTransportationManifestAdjustmentSupabase,
+  getTransportationManifestSupabase,
+  removeTransportationManifestAdjustmentSupabase,
+  resolvePreferredMemberContactSupabase,
+  upsertTransportationManifestAdjustmentSupabase
+} from "@/lib/services/transportation-station-supabase";
 import { toEasternISO } from "@/lib/timezone";
 
 type Shift = "AM" | "PM";
@@ -80,35 +85,11 @@ function revalidateTransportationStation() {
   revalidatePath("/operations/attendance");
 }
 
-function resolvePreferredContact(memberId: string, explicitContactId?: string | null) {
-  const db = getMockDb();
-  if (explicitContactId) {
-    const explicit = db.memberContacts.find((row) => row.id === explicitContactId && row.member_id === memberId);
-    if (explicit) return explicit;
-  }
-
-  const priority: Record<string, number> = {
-    "Responsible Party": 1,
-    "Care Provider": 2,
-    "Emergency Contact": 3,
-    Spouse: 4,
-    Child: 5,
-    Payor: 6,
-    Other: 7
-  };
-
-  return [...db.memberContacts]
-    .filter((row) => row.member_id === memberId)
-    .sort((left, right) => {
-      const leftRank = priority[left.category] ?? 99;
-      const rightRank = priority[right.category] ?? 99;
-      if (leftRank !== rightRank) return leftRank - rightRank;
-      if (left.updated_at === right.updated_at) return 0;
-      return left.updated_at > right.updated_at ? -1 : 1;
-    })[0];
+async function resolvePreferredContact(memberId: string, explicitContactId?: string | null) {
+  return resolvePreferredMemberContactSupabase(memberId, explicitContactId);
 }
 
-function upsertAdjustment(input: {
+async function upsertAdjustment(input: {
   date: string;
   shift: Shift;
   memberId: string;
@@ -125,55 +106,29 @@ function upsertAdjustment(input: {
   actorUserId: string;
   actorName: string;
 }) {
-  const db = getMockDb();
-  const existing = db.transportationManifestAdjustments.find(
-    (row) =>
-      row.selected_date === input.date &&
-      row.shift === input.shift &&
-      row.member_id === input.memberId &&
-      row.adjustment_type === input.adjustmentType
-  );
-
-  if (existing) {
-    return updateMockRecord("transportationManifestAdjustments", existing.id, {
-      bus_number: input.busNumber ?? null,
-      transport_type: input.transportType ?? null,
-      bus_stop_name: input.busStopName ?? null,
-      door_to_door_address: input.doorToDoorAddress ?? null,
-      caregiver_contact_id: input.caregiverContactId ?? null,
-      caregiver_contact_name_snapshot: input.caregiverContactNameSnapshot ?? null,
-      caregiver_contact_phone_snapshot: input.caregiverContactPhoneSnapshot ?? null,
-      caregiver_contact_address_snapshot: input.caregiverContactAddressSnapshot ?? null,
-      notes: input.notes ?? null,
-      created_by_user_id: input.actorUserId,
-      created_by_name: input.actorName,
-      created_at: toEasternISO()
-    });
-  }
-
-  return addMockRecord("transportationManifestAdjustments", {
-    selected_date: input.date,
+  return upsertTransportationManifestAdjustmentSupabase({
+    selectedDate: input.date,
     shift: input.shift,
-    member_id: input.memberId,
-    adjustment_type: input.adjustmentType,
-    bus_number: input.busNumber ?? null,
-    transport_type: input.transportType ?? null,
-    bus_stop_name: input.busStopName ?? null,
-    door_to_door_address: input.doorToDoorAddress ?? null,
-    caregiver_contact_id: input.caregiverContactId ?? null,
-    caregiver_contact_name_snapshot: input.caregiverContactNameSnapshot ?? null,
-    caregiver_contact_phone_snapshot: input.caregiverContactPhoneSnapshot ?? null,
-    caregiver_contact_address_snapshot: input.caregiverContactAddressSnapshot ?? null,
+    memberId: input.memberId,
+    adjustmentType: input.adjustmentType,
+    busNumber: input.busNumber ?? null,
+    transportType: input.transportType ?? null,
+    busStopName: input.busStopName ?? null,
+    doorToDoorAddress: input.doorToDoorAddress ?? null,
+    caregiverContactId: input.caregiverContactId ?? null,
+    caregiverContactNameSnapshot: input.caregiverContactNameSnapshot ?? null,
+    caregiverContactPhoneSnapshot: input.caregiverContactPhoneSnapshot ?? null,
+    caregiverContactAddressSnapshot: input.caregiverContactAddressSnapshot ?? null,
     notes: input.notes ?? null,
-    created_by_user_id: input.actorUserId,
-    created_by_name: input.actorName,
-    created_at: toEasternISO()
+    actorUserId: input.actorUserId,
+    actorName: input.actorName,
+    nowIso: toEasternISO()
   });
 }
 
 export async function addTransportationManifestRiderAction(formData: FormData) {
   const actor = await requireTransportationEditor();
-  const busNumberOptions = getConfiguredBusNumbers();
+  const busNumberOptions = await getConfiguredBusNumbers();
   const selectedDate = normalizeDateOnly(asString(formData, "selectedDate"));
   const memberId = asString(formData, "memberId");
   const shiftInput = asString(formData, "shift");
@@ -204,10 +159,10 @@ export async function addTransportationManifestRiderAction(formData: FormData) {
   }
 
   const shifts: Shift[] = shiftInput === "Both" ? ["AM", "PM"] : [normalizeShift(shiftInput)];
-  const contact = resolvePreferredContact(memberId, caregiverContactId);
+  const contact = await resolvePreferredContact(memberId, caregiverContactId);
 
-  shifts.forEach((shift) => {
-    upsertAdjustment({
+  for (const shift of shifts) {
+    await upsertAdjustment({
       date: selectedDate,
       shift,
       memberId,
@@ -234,14 +189,14 @@ export async function addTransportationManifestRiderAction(formData: FormData) {
       actorUserId: actor.id,
       actorName: actor.full_name
     });
-  });
+  }
 
   revalidateTransportationStation();
 }
 
 export async function excludeTransportationManifestRiderAction(formData: FormData) {
   const actor = await requireTransportationEditor();
-  const busNumberOptions = getConfiguredBusNumbers();
+  const busNumberOptions = await getConfiguredBusNumbers();
   const selectedDate = normalizeDateOnly(asString(formData, "selectedDate"));
   const memberId = asString(formData, "memberId");
   const shift = normalizeShift(asString(formData, "shift"));
@@ -259,7 +214,7 @@ export async function excludeTransportationManifestRiderAction(formData: FormDat
     throw new Error("Member is required.");
   }
 
-  upsertAdjustment({
+  await upsertAdjustment({
     date: selectedDate,
     shift,
     memberId,
@@ -281,7 +236,7 @@ export async function excludeTransportationManifestRiderAction(formData: FormDat
 }
 
 export async function reassignTransportationManifestBusAction(formData: FormData) {
-  const busNumberOptions = getConfiguredBusNumbers();
+  const busNumberOptions = await getConfiguredBusNumbers();
   const selectedDate = normalizeDateOnly(asString(formData, "selectedDate"));
   const shift = normalizeShift(asString(formData, "shift"));
   const busFilter = normalizeBusFilter(asString(formData, "busFilter"), busNumberOptions);
@@ -309,21 +264,19 @@ export async function reassignTransportationManifestBusAction(formData: FormData
     redirect(failureHref("Transport type is required."));
   }
 
-  const db = getMockDb();
-  const exclusion = db.transportationManifestAdjustments.find(
-    (row) =>
-      row.selected_date === selectedDate &&
-      row.shift === shift &&
-      row.member_id === memberId &&
-      row.adjustment_type === "exclude"
-  );
+  const exclusion = await findTransportationManifestAdjustmentSupabase({
+    selectedDate,
+    shift,
+    memberId,
+    adjustmentType: "exclude"
+  });
   if (exclusion) {
-    removeMockRecord("transportationManifestAdjustments", exclusion.id);
+    await removeTransportationManifestAdjustmentSupabase(exclusion.id);
   }
 
   // Reassignments from Transportation Station are one-day operational overrides only.
   // They intentionally do not mutate the recurring MCC transportation schedule.
-  upsertAdjustment({
+  await upsertAdjustment({
     date: selectedDate,
     shift,
     memberId,
@@ -359,10 +312,7 @@ export async function undoTransportationManifestAdjustmentAction(formData: FormD
     throw new Error("Adjustment id is required.");
   }
 
-  const removed = removeMockRecord("transportationManifestAdjustments", adjustmentId);
-  if (!removed) {
-    throw new Error("Adjustment was not found.");
-  }
+  await removeTransportationManifestAdjustmentSupabase(adjustmentId);
 
   revalidateTransportationStation();
 }
@@ -378,7 +328,7 @@ export async function copyForwardTransportationDetailsAction(formData: FormData)
       return { ok: false as const, error: "Member is required." };
     }
 
-    const sourceManifest = getTransportationManifest({
+    const sourceManifest = await getTransportationManifestSupabase({
       selectedDate: sourceDate,
       shift,
       busFilter: "all"
@@ -391,7 +341,7 @@ export async function copyForwardTransportationDetailsAction(formData: FormData)
       return { ok: false as const, error: "No transport details found for that member/date/shift." };
     }
 
-    const targetManifest = getTransportationManifest({
+    const targetManifest = await getTransportationManifestSupabase({
       selectedDate: targetDate,
       shift,
       busFilter: "all"

@@ -32,7 +32,7 @@ export default async function CarePlansListPage({
   const query = typeof params.q === "string" ? params.q : "";
   const members = await getMembers();
   const tracks = getCarePlanTracks();
-  const plans = getCarePlans({
+  const plans = await getCarePlans({
     status,
     track: track === "All" ? undefined : track,
     memberId: memberId === "All" ? undefined : memberId,

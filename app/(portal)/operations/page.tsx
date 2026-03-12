@@ -6,6 +6,7 @@ import { requireModuleAccess } from "@/lib/auth";
 const SECTIONS = [
   { href: "/operations/attendance", label: "Attendance", description: "Operational attendance scheduling and enrollment cadence." },
   { href: "/operations/member-command-center", label: "Member Command Center", description: "Coordinator-focused member master record and linked operations." },
+  { href: "/operations/schedule-changes", label: "Schedule Changes", description: "Create temporary or permanent attendance schedule exceptions without destroying recurring history." },
   { href: "/operations/additional-charges", label: "Additional Charges", description: "Quick bridge into ancillary/additional charges oversight." },
   { href: "/operations/holds", label: "Holds", description: "Date-aware hold management that feeds attendance, census, and transportation manifests." },
   { href: "/operations/payor", label: "Billing", description: "Hybrid billing module for agreements, schedule-based prebilling, arrears, batch review, and exports." },

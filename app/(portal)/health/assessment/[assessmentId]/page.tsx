@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AssessmentPdfActions } from "@/components/assessment/assessment-pdf-actions";
@@ -35,7 +34,12 @@ export default async function HealthAssessmentDetailPage({
   const assessment = detail.assessment as any;
   const generatedAt = toEasternISO();
   const pdfSaveFailed = firstString(query?.pdfSave) === "failed";
-  const responsesBySection = detail.responses.reduce((acc, response) => {
+  const filteredResponses = detail.responses.filter((response) => {
+    if (response.section_type === "Lead Intake Context") return false;
+    if (response.field_key === "admissionReviewRequired") return false;
+    return true;
+  });
+  const responsesBySection = filteredResponses.reduce((acc, response) => {
     if (!acc[response.section_type]) {
       acc[response.section_type] = [];
     }
@@ -49,8 +53,7 @@ export default async function HealthAssessmentDetailPage({
         <DocumentBrandHeader
           title="Intake Assessment"
           metaLines={[
-            `Generated: ${formatDateTime(generatedAt)} (ET)`,
-            `Assessment ID: ${assessment.id}`
+            `Generated: ${formatDateTime(generatedAt)} (ET)`
           ]}
         />
         <div className="mt-3">
@@ -69,14 +72,11 @@ export default async function HealthAssessmentDetailPage({
         <CardTitle>Intake Assessment Detail</CardTitle>
         <div className="mt-2 grid gap-3 md:grid-cols-4">
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Member</p><p className="font-semibold">{assessment.member_name}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Linked Lead ID</p><p className="font-semibold">{assessment.lead_id || "-"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Assessment Date</p><p className="font-semibold">{formatDate(assessment.assessment_date)}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Total Score</p><p className="font-semibold">{assessment.total_score ?? "-"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Recommended Track</p><p className="font-semibold">{assessment.recommended_track ?? "-"}</p></div>
         </div>
-        <div className="mt-2 grid gap-3 md:grid-cols-3">
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Lead Stage / Status</p><p className="font-semibold">{assessment.lead_stage_at_assessment || "-"} / {assessment.lead_status_at_assessment || "-"}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Admission Review</p><p className="font-semibold">{assessment.admission_review_required ? "Required" : "No"}</p></div>
+        <div className="mt-2 grid gap-3 md:grid-cols-2">
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Completed By</p><p className="font-semibold">{assessment.completed_by ?? assessment.reviewer_name ?? "-"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed By</p><p className="font-semibold">{assessment.signed_by ?? "-"}</p></div>
         </div>
@@ -154,7 +154,7 @@ export default async function HealthAssessmentDetailPage({
             <div key={section} className="rounded-lg border border-border p-3">
               <p className="text-sm font-semibold">{section}</p>
               <div className="mt-2 grid gap-2 md:grid-cols-2">
-                {rows.map((row) => (
+                {(rows as any[]).map((row: any) => (
                   <div key={row.id} className="rounded border border-border px-2 py-1 text-xs">
                     <p className="font-semibold">{row.field_label}</p>
                     <p className="text-muted">{row.field_value || "-"}</p>
@@ -163,19 +163,6 @@ export default async function HealthAssessmentDetailPage({
               </div>
             </div>
           ))}
-        </div>
-      </Card>
-
-      <Card>
-        <CardTitle>Navigation</CardTitle>
-        <div className="mt-2 flex flex-wrap gap-3 text-sm">
-          <Link className="font-semibold text-brand" href={`/members/${assessment.member_id}`}>Open Member Profile</Link>
-          {assessment.lead_id ? (
-            <Link className="font-semibold text-brand" href={`/sales/leads/${assessment.lead_id}`}>Open Linked Lead</Link>
-          ) : null}
-          <Link className="font-semibold text-brand" href={assessment.lead_id ? `/health/assessment?leadId=${assessment.lead_id}` : "/health/assessment"}>
-            New Intake Assessment (Tour/EIP)
-          </Link>
         </div>
       </Card>
     </div>

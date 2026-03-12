@@ -1,4 +1,4 @@
-import { getMockDb } from "@/lib/mock-repo";
+import { createClient } from "@/lib/supabase/server";
 import {
   getCurrentWeekRange,
   getOperationsTodayDate,
@@ -13,9 +13,96 @@ import {
   getScheduledDayAbbreviations,
   isMemberScheduledForDate
 } from "@/lib/services/member-schedule-selectors";
-import { isMemberOnHoldOnDate } from "@/lib/services/holds";
+
 
 type AttendanceStatusLabel = "Present" | "Checked Out" | "Absent" | "Not Checked In Yet" | "Not Scheduled";
+
+type MemberRow = {
+  id: string;
+  display_name: string;
+  status: "active" | "inactive";
+  locker_number: string | null;
+  latest_assessment_track: string | null;
+};
+
+type AttendanceScheduleRow = {
+  id: string;
+  member_id: string;
+  monday: boolean;
+  tuesday: boolean;
+  wednesday: boolean;
+  thursday: boolean;
+  friday: boolean;
+  transportation_required: boolean | null;
+  transportation_mode: "Bus Stop" | "Door to Door" | null;
+  transport_bus_number: string | null;
+  transportation_bus_stop: string | null;
+  transport_monday_period: "AM" | "PM" | null;
+  transport_tuesday_period: "AM" | "PM" | null;
+  transport_wednesday_period: "AM" | "PM" | null;
+  transport_thursday_period: "AM" | "PM" | null;
+  transport_friday_period: "AM" | "PM" | null;
+  transport_monday_am_mode: "Bus Stop" | "Door to Door" | null;
+  transport_monday_am_door_to_door_address: string | null;
+  transport_monday_am_bus_number: string | null;
+  transport_monday_am_bus_stop: string | null;
+  transport_monday_pm_mode: "Bus Stop" | "Door to Door" | null;
+  transport_monday_pm_door_to_door_address: string | null;
+  transport_monday_pm_bus_number: string | null;
+  transport_monday_pm_bus_stop: string | null;
+  transport_tuesday_am_mode: "Bus Stop" | "Door to Door" | null;
+  transport_tuesday_am_door_to_door_address: string | null;
+  transport_tuesday_am_bus_number: string | null;
+  transport_tuesday_am_bus_stop: string | null;
+  transport_tuesday_pm_mode: "Bus Stop" | "Door to Door" | null;
+  transport_tuesday_pm_door_to_door_address: string | null;
+  transport_tuesday_pm_bus_number: string | null;
+  transport_tuesday_pm_bus_stop: string | null;
+  transport_wednesday_am_mode: "Bus Stop" | "Door to Door" | null;
+  transport_wednesday_am_door_to_door_address: string | null;
+  transport_wednesday_am_bus_number: string | null;
+  transport_wednesday_am_bus_stop: string | null;
+  transport_wednesday_pm_mode: "Bus Stop" | "Door to Door" | null;
+  transport_wednesday_pm_door_to_door_address: string | null;
+  transport_wednesday_pm_bus_number: string | null;
+  transport_wednesday_pm_bus_stop: string | null;
+  transport_thursday_am_mode: "Bus Stop" | "Door to Door" | null;
+  transport_thursday_am_door_to_door_address: string | null;
+  transport_thursday_am_bus_number: string | null;
+  transport_thursday_am_bus_stop: string | null;
+  transport_thursday_pm_mode: "Bus Stop" | "Door to Door" | null;
+  transport_thursday_pm_door_to_door_address: string | null;
+  transport_thursday_pm_bus_number: string | null;
+  transport_thursday_pm_bus_stop: string | null;
+  transport_friday_am_mode: "Bus Stop" | "Door to Door" | null;
+  transport_friday_am_door_to_door_address: string | null;
+  transport_friday_am_bus_number: string | null;
+  transport_friday_am_bus_stop: string | null;
+  transport_friday_pm_mode: "Bus Stop" | "Door to Door" | null;
+  transport_friday_pm_door_to_door_address: string | null;
+  transport_friday_pm_bus_number: string | null;
+  transport_friday_pm_bus_stop: string | null;
+  make_up_days_available: number | null;
+};
+
+type AttendanceRecordRow = {
+  id: string;
+  member_id: string;
+  attendance_date: string;
+  status: "present" | "absent";
+  absent_reason: string | null;
+  absent_reason_other: string | null;
+  check_in_at: string | null;
+  check_out_at: string | null;
+  updated_at: string;
+};
+
+type HoldRow = {
+  member_id: string;
+  start_date: string;
+  end_date: string | null;
+  status: "active" | "ended";
+};
 
 export interface DailyAttendanceRow {
   memberId: string;
@@ -152,6 +239,12 @@ export interface DailyTrackSheetView {
   groups: DailyTrackGroup[];
 }
 
+export interface UnscheduledAttendanceMemberOption {
+  id: string;
+  displayName: string;
+  makeupBalance: number;
+}
+
 function sortByLastName(left: string, right: string) {
   const toSortKey = (value: string) => {
     const parts = value.trim().split(/\s+/).filter(Boolean);
@@ -175,19 +268,6 @@ function getStatusLabel(input: {
   return "Not Checked In Yet";
 }
 
-function buildAttendanceRecordMap() {
-  const db = getMockDb();
-  const map = new Map<string, (typeof db.attendanceRecords)[number]>();
-  db.attendanceRecords.forEach((record) => {
-    const key = `${record.member_id}:${record.attendance_date}`;
-    const existing = map.get(key);
-    if (!existing || record.updated_at > existing.updated_at) {
-      map.set(key, record);
-    }
-  });
-  return map;
-}
-
 function normalizeTrackLabel(value: string | null | undefined): "Track 1" | "Track 2" | "Track 3" | "Unassigned" {
   if (value === "Track 1" || value === "Track 2" || value === "Track 3") return value;
   return "Unassigned";
@@ -200,39 +280,153 @@ function trackSortOrder(label: "Track 1" | "Track 2" | "Track 3" | "Unassigned")
   return 4;
 }
 
-function buildDailyRows(selectedDate: string) {
-  const db = getMockDb();
-  const recordMap = buildAttendanceRecordMap();
-  const profileByMember = new Map(db.memberCommandCenters.map((row) => [row.member_id, row] as const));
-  const healthProfileByMember = new Map(db.memberHealthProfiles.map((row) => [row.member_id, row] as const));
-  const scheduleByMember = new Map(db.memberAttendanceSchedules.map((row) => [row.member_id, row] as const));
-  const weekday = getWeekdayForDate(selectedDate);
+function isMissingSchemaObjectError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+  return code === "PGRST205" || /does not exist|relation .* does not exist|schema cache/i.test(message);
+}
 
+function buildAttendanceRecordMap(records: AttendanceRecordRow[]) {
+  const map = new Map<string, AttendanceRecordRow>();
+  records.forEach((record) => {
+    const key = `${record.member_id}:${record.attendance_date}`;
+    const existing = map.get(key);
+    if (!existing || record.updated_at > existing.updated_at) {
+      map.set(key, record);
+    }
+  });
+  return map;
+}
+
+function isHoldActiveForDate(hold: HoldRow, dateOnly: string) {
+  if (hold.status !== "active") return false;
+  if (dateOnly < hold.start_date) return false;
+  if (hold.end_date && dateOnly > hold.end_date) return false;
+  return true;
+}
+
+async function loadAttendanceBaseData(input: { startDate: string; endDate: string }) {
+  const supabase = await createClient();
+  const { data: membersData, error: membersError } = await supabase
+    .from("members")
+    .select("id, display_name, status, locker_number, latest_assessment_track")
+    .eq("status", "active")
+    .order("display_name", { ascending: true });
+
+  if (membersError) throw new Error(membersError.message);
+
+  const members = (membersData ?? []) as MemberRow[];
+  const memberIds = members.map((member) => member.id);
+  if (memberIds.length === 0) {
+    return {
+      members,
+      schedules: [] as AttendanceScheduleRow[],
+      attendanceRecords: [] as AttendanceRecordRow[],
+      holds: [] as HoldRow[],
+      mccPhotos: new Map<string, string | null>(),
+      mhpPhotos: new Map<string, string | null>()
+    };
+  }
+
+  const holdsFilter = `end_date.is.null,end_date.gte.${input.startDate}`;
+  const [scheduleResult, attendanceResult, holdsResult, mccResult, mhpResult] = await Promise.all([
+    supabase.from("member_attendance_schedules").select("*").in("member_id", memberIds),
+    supabase
+      .from("attendance_records")
+      .select("id, member_id, attendance_date, status, absent_reason, absent_reason_other, check_in_at, check_out_at, updated_at")
+      .in("member_id", memberIds)
+      .gte("attendance_date", input.startDate)
+      .lte("attendance_date", input.endDate),
+    supabase
+      .from("member_holds")
+      .select("member_id, start_date, end_date, status")
+      .in("member_id", memberIds)
+      .eq("status", "active")
+      .lte("start_date", input.endDate)
+      .or(holdsFilter),
+    supabase.from("member_command_centers").select("member_id, profile_image_url").in("member_id", memberIds),
+    supabase.from("member_health_profiles").select("member_id, profile_image_url").in("member_id", memberIds)
+  ]);
+
+  if (scheduleResult.error) throw new Error(scheduleResult.error.message);
+  if (attendanceResult.error) throw new Error(attendanceResult.error.message);
+  if (holdsResult.error && !isMissingSchemaObjectError(holdsResult.error)) {
+    throw new Error(holdsResult.error.message);
+  }
+  if (mccResult.error && !isMissingSchemaObjectError(mccResult.error)) {
+    throw new Error(mccResult.error.message);
+  }
+  if (mhpResult.error && !isMissingSchemaObjectError(mhpResult.error)) {
+    throw new Error(mhpResult.error.message);
+  }
+
+  const mccPhotos = new Map(
+    (((mccResult.error ? [] : mccResult.data) ?? []) as Array<{ member_id: string; profile_image_url: string | null }>).map((row) => [
+      row.member_id,
+      row.profile_image_url ?? null
+    ])
+  );
+  const mhpPhotos = new Map(
+    (((mhpResult.error ? [] : mhpResult.data) ?? []) as Array<{ member_id: string; profile_image_url: string | null }>).map((row) => [
+      row.member_id,
+      row.profile_image_url ?? null
+    ])
+  );
+
+  return {
+    members,
+    schedules: (scheduleResult.data ?? []) as AttendanceScheduleRow[],
+    attendanceRecords: (attendanceResult.data ?? []) as AttendanceRecordRow[],
+    holds: (holdsResult.error ? [] : holdsResult.data ?? []) as HoldRow[],
+    mccPhotos,
+    mhpPhotos
+  };
+}
+
+function buildDailyRows(input: {
+  selectedDate: string;
+  members: MemberRow[];
+  schedules: AttendanceScheduleRow[];
+  attendanceRecords: AttendanceRecordRow[];
+  holds: HoldRow[];
+  mccPhotos: Map<string, string | null>;
+  mhpPhotos: Map<string, string | null>;
+}) {
+  const recordMap = buildAttendanceRecordMap(input.attendanceRecords);
+  const scheduleByMember = new Map(input.schedules.map((row) => [row.member_id, row] as const));
+  const holdsByMember = new Map<string, HoldRow[]>();
+  input.holds.forEach((hold) => {
+    const existing = holdsByMember.get(hold.member_id) ?? [];
+    existing.push(hold);
+    holdsByMember.set(hold.member_id, existing);
+  });
+
+  const weekday = getWeekdayForDate(input.selectedDate);
   let onHoldExcludedMembers = 0;
 
-  const rows = db.members
-    .filter((member) => member.status === "active")
+  const rows = input.members
     .map((member) => {
       const schedule = scheduleByMember.get(member.id) ?? null;
-      const scheduledForDate = isMemberScheduledForDate(schedule, selectedDate);
+      const scheduledForDate = isMemberScheduledForDate(schedule as any, input.selectedDate);
       if (!scheduledForDate) return null;
-      if (isMemberOnHoldOnDate(member.id, selectedDate)) {
+
+      const holdRows = holdsByMember.get(member.id) ?? [];
+      if (holdRows.some((hold) => isHoldActiveForDate(hold, input.selectedDate))) {
         onHoldExcludedMembers += 1;
         return null;
       }
 
-      const attendanceRecord = recordMap.get(`${member.id}:${selectedDate}`) ?? null;
-      const transportSnapshot = getPrimaryTransportSnapshotForDate(schedule, selectedDate);
-      const profile = profileByMember.get(member.id);
-      const healthProfile = healthProfileByMember.get(member.id);
+      const attendanceRecord = recordMap.get(`${member.id}:${input.selectedDate}`) ?? null;
+      const transportSnapshot = getPrimaryTransportSnapshotForDate(schedule as any, input.selectedDate);
 
       return {
         memberId: member.id,
         memberName: member.display_name,
-        photoUrl: profile?.profile_image_url ?? healthProfile?.profile_image_url ?? null,
+        photoUrl: input.mccPhotos.get(member.id) ?? input.mhpPhotos.get(member.id) ?? null,
         lockerNumber: member.locker_number,
         trackLabel: normalizeTrackLabel(member.latest_assessment_track),
-        scheduledDays: getScheduledDayAbbreviations(schedule),
+        scheduledDays: getScheduledDayAbbreviations(schedule as any),
         attendanceRecordId: attendanceRecord?.id ?? null,
         attendanceStatus: getStatusLabel({
           status: attendanceRecord?.status ?? null,
@@ -281,15 +475,26 @@ function buildDailyRows(selectedDate: string) {
       onHoldExcludedMembers
     }
   );
+
   summary.incompleteMembers =
     summary.pendingMembers + summary.missingCheckOutMembers + summary.missingCheckInMembers;
 
   return { rows, summary, weekday };
 }
 
-export function getDailyAttendanceView(input?: { selectedDate?: string | null }): DailyAttendanceView {
+export async function getDailyAttendanceView(input?: { selectedDate?: string | null }): Promise<DailyAttendanceView> {
   const selectedDate = normalizeOperationalDateOnly(input?.selectedDate ?? getOperationsTodayDate());
-  const daily = buildDailyRows(selectedDate);
+  const base = await loadAttendanceBaseData({ startDate: selectedDate, endDate: selectedDate });
+  const daily = buildDailyRows({
+    selectedDate,
+    members: base.members,
+    schedules: base.schedules,
+    attendanceRecords: base.attendanceRecords,
+    holds: base.holds,
+    mccPhotos: base.mccPhotos,
+    mhpPhotos: base.mhpPhotos
+  });
+
   return {
     selectedDate,
     weekday: daily.weekday,
@@ -298,12 +503,56 @@ export function getDailyAttendanceView(input?: { selectedDate?: string | null })
   };
 }
 
-export function getWeeklyAttendanceView(input?: { anchorDate?: string | null }): WeeklyAttendanceView {
+export async function getUnscheduledAttendanceMemberOptions(input?: {
+  selectedDate?: string | null;
+}): Promise<UnscheduledAttendanceMemberOption[]> {
+  const selectedDate = normalizeOperationalDateOnly(input?.selectedDate ?? getOperationsTodayDate());
+  const base = await loadAttendanceBaseData({ startDate: selectedDate, endDate: selectedDate });
+  const scheduleByMember = new Map(base.schedules.map((row) => [row.member_id, row] as const));
+  const holdsByMember = new Map<string, HoldRow[]>();
+  base.holds.forEach((hold) => {
+    const existing = holdsByMember.get(hold.member_id) ?? [];
+    existing.push(hold);
+    holdsByMember.set(hold.member_id, existing);
+  });
+
+  return base.members
+    .filter((member) => {
+      const schedule = scheduleByMember.get(member.id) ?? null;
+      if (schedule && isMemberScheduledForDate(schedule as any, selectedDate)) {
+        return false;
+      }
+      const holdRows = holdsByMember.get(member.id) ?? [];
+      if (holdRows.some((hold) => isHoldActiveForDate(hold, selectedDate))) {
+        return false;
+      }
+      return true;
+    })
+    .map((member) => ({
+      id: member.id,
+      displayName: member.display_name,
+      makeupBalance: Math.max(0, Number(scheduleByMember.get(member.id)?.make_up_days_available ?? 0))
+    }))
+    .sort((left, right) => sortByLastName(left.displayName, right.displayName));
+}
+
+export async function getWeeklyAttendanceView(input?: { anchorDate?: string | null }): Promise<WeeklyAttendanceView> {
   const anchorDate = normalizeOperationalDateOnly(input?.anchorDate ?? getOperationsTodayDate());
   const range = getWeekRangeFromDate(anchorDate);
   const weekdayDates = getWeekdayDatesForRange(range);
+  const base = await loadAttendanceBaseData({ startDate: range.startDate, endDate: range.endDate });
+
   const dayViews = weekdayDates.map((date) => {
-    const daily = buildDailyRows(date);
+    const daily = buildDailyRows({
+      selectedDate: date,
+      members: base.members,
+      schedules: base.schedules,
+      attendanceRecords: base.attendanceRecords,
+      holds: base.holds,
+      mccPhotos: base.mccPhotos,
+      mhpPhotos: base.mhpPhotos
+    });
+
     return {
       date,
       weekday: daily.weekday,
@@ -378,8 +627,8 @@ export function getWeeklyAttendanceView(input?: { anchorDate?: string | null }):
   return {
     weekStartDate: range.startDate,
     weekEndDate: range.endDate,
-    days: dayViews.map(({ rows, ...day }) => {
-      void rows;
+    days: dayViews.map(({ rows: dayRows, ...day }) => {
+      void dayRows;
       return day;
     }),
     rows,
@@ -387,8 +636,8 @@ export function getWeeklyAttendanceView(input?: { anchorDate?: string | null }):
   };
 }
 
-export function getDailyCensusView(input?: { selectedDate?: string | null }): DailyCensusView {
-  const daily = getDailyAttendanceView({ selectedDate: input?.selectedDate });
+export async function getDailyCensusView(input?: { selectedDate?: string | null }): Promise<DailyCensusView> {
+  const daily = await getDailyAttendanceView({ selectedDate: input?.selectedDate });
   return {
     selectedDate: daily.selectedDate,
     weekday: daily.weekday,
@@ -405,8 +654,8 @@ export function getDailyCensusView(input?: { selectedDate?: string | null }): Da
   };
 }
 
-export function getWeeklyCensusView(input?: { anchorDate?: string | null }): WeeklyCensusView {
-  const weekly = getWeeklyAttendanceView({ anchorDate: input?.anchorDate ?? getCurrentWeekRange().startDate });
+export async function getWeeklyCensusView(input?: { anchorDate?: string | null }): Promise<WeeklyCensusView> {
+  const weekly = await getWeeklyAttendanceView({ anchorDate: input?.anchorDate ?? getCurrentWeekRange().startDate });
   const transportMemberDays = weekly.days.reduce((sum, day) => sum + day.transportMembers, 0);
   return {
     weekStartDate: weekly.weekStartDate,
@@ -421,8 +670,8 @@ export function getWeeklyCensusView(input?: { anchorDate?: string | null }): Wee
   };
 }
 
-export function getIncompleteAttendanceSummary(input?: { selectedDate?: string | null }): IncompleteAttendanceSummary {
-  const daily = getDailyAttendanceView({ selectedDate: input?.selectedDate });
+export async function getIncompleteAttendanceSummary(input?: { selectedDate?: string | null }): Promise<IncompleteAttendanceSummary> {
+  const daily = await getDailyAttendanceView({ selectedDate: input?.selectedDate });
   return {
     selectedDate: daily.selectedDate,
     pendingWithoutStatus: daily.summary.pendingMembers,
@@ -432,8 +681,8 @@ export function getIncompleteAttendanceSummary(input?: { selectedDate?: string |
   };
 }
 
-export function getDailyTrackSheetView(input?: { selectedDate?: string | null }): DailyTrackSheetView {
-  const daily = getDailyAttendanceView({ selectedDate: input?.selectedDate });
+export async function getDailyTrackSheetView(input?: { selectedDate?: string | null }): Promise<DailyTrackSheetView> {
+  const daily = await getDailyAttendanceView({ selectedDate: input?.selectedDate });
   const groupsMap = new Map<"Track 1" | "Track 2" | "Track 3" | "Unassigned", DailyTrackGroup>();
 
   daily.rows.forEach((row) => {
@@ -447,10 +696,12 @@ export function getDailyTrackSheetView(input?: { selectedDate?: string | null })
         pendingCount: 0,
         members: []
       } satisfies DailyTrackGroup);
+
     existing.memberCount += 1;
     if (row.recordStatus === "present") existing.presentCount += 1;
     else if (row.recordStatus === "absent") existing.absentCount += 1;
     else existing.pendingCount += 1;
+
     existing.members.push({
       memberId: row.memberId,
       memberName: row.memberName,

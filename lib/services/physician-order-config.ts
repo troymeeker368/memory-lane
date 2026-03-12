@@ -4,6 +4,7 @@ import {
   DOCUMENT_CENTER_NAME,
   DOCUMENT_CENTER_PHONE
 } from "@/lib/services/document-branding";
+import { SHARED_DIET_OPTIONS } from "@/lib/services/intake-pof-shared";
 
 export const POF_CENTER_NAME = DOCUMENT_CENTER_NAME;
 export const POF_CENTER_ADDRESS = DOCUMENT_CENTER_ADDRESS;
@@ -11,19 +12,7 @@ export const POF_CENTER_PHONE = DOCUMENT_CENTER_PHONE;
 export const POF_CENTER_LOGO_PUBLIC_PATH = DOCUMENT_CENTER_LOGO_PUBLIC_PATH;
 
 export const POF_LEVEL_OF_CARE_OPTIONS = ["Home", "SNF", "MCU", "ALF", "ILF"] as const;
-export const POF_NUTRITION_OPTIONS = [
-  "Regular",
-  "Soft",
-  "Cardiac",
-  "Diabetic",
-  "Low sodium",
-  "Renal",
-  "Bland",
-  "Puree",
-  "Low residue",
-  "Consistent Carb",
-  "Other"
-] as const;
+export const POF_NUTRITION_OPTIONS = SHARED_DIET_OPTIONS;
 
 export const POF_MEDICATION_ROUTE_OPTIONS = ["PO", "SQ", "IM", "TD", "INH", "Topical", "Ophthalmic", "Otic"] as const;
 export const POF_MEDICATION_FORM_OPTIONS = [

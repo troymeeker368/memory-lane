@@ -1,8 +1,8 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { getBillingModuleIndex } from "@/lib/services/billing";
+import { getBillingModuleIndex } from "@/lib/services/billing-supabase";
 
 export default async function OperationsPayorPage() {
-  const index = getBillingModuleIndex();
+  const index = await getBillingModuleIndex();
 
   return (
     <div className="space-y-4">

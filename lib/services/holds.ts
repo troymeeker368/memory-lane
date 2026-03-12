@@ -1,10 +1,14 @@
-import { addMockRecord, getMockDb, updateMockRecord } from "@/lib/mock-repo";
+import {
+  createMemberHoldSupabase,
+  endMemberHoldSupabase,
+  listMemberHolds,
+  type MemberHoldRow
+} from "@/lib/services/holds-supabase";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
-import { toEasternISO } from "@/lib/timezone";
 
 export interface HoldCoverageResult {
   isOnHold: boolean;
-  hold: ReturnType<typeof getMockDb>["memberHolds"][number] | null;
+  hold: MemberHoldRow | null;
 }
 
 function normalizeDate(value: string | null | undefined) {
@@ -14,10 +18,7 @@ function normalizeDate(value: string | null | undefined) {
   return normalizeOperationalDateOnly(raw);
 }
 
-function isHoldActiveForDate(
-  hold: ReturnType<typeof getMockDb>["memberHolds"][number],
-  dateOnly: string
-) {
+function isHoldActiveForDate(hold: MemberHoldRow, dateOnly: string) {
   if (hold.status !== "active") return false;
   const start = normalizeDate(hold.start_date);
   const end = normalizeDate(hold.end_date);
@@ -27,39 +28,40 @@ function isHoldActiveForDate(
   return true;
 }
 
-export function getMemberHoldCoverageForDate(memberId: string, dateOnlyInput: string): HoldCoverageResult {
+export async function getMemberHoldCoverageForDate(memberId: string, dateOnlyInput: string): Promise<HoldCoverageResult> {
   const dateOnly = normalizeOperationalDateOnly(dateOnlyInput);
-  const db = getMockDb();
+  const holds = await listMemberHolds();
   const hold =
-    db.memberHolds
+    holds
       .filter((row) => row.member_id === memberId)
       .find((row) => isHoldActiveForDate(row, dateOnly)) ?? null;
+
   return {
     isOnHold: Boolean(hold),
     hold
   };
 }
 
-export function isMemberOnHoldOnDate(memberId: string, dateOnlyInput: string) {
-  return getMemberHoldCoverageForDate(memberId, dateOnlyInput).isOnHold;
+export async function isMemberOnHoldOnDate(memberId: string, dateOnlyInput: string) {
+  return (await getMemberHoldCoverageForDate(memberId, dateOnlyInput)).isOnHold;
 }
 
-export function getMemberHolds(memberId: string) {
-  const db = getMockDb();
-  return db.memberHolds
+export async function getMemberHolds(memberId: string) {
+  const holds = await listMemberHolds();
+  return holds
     .filter((row) => row.member_id === memberId)
     .sort((left, right) => (left.start_date < right.start_date ? 1 : -1));
 }
 
-export function getMemberHoldsByDate(dateOnlyInput: string) {
+export async function getMemberHoldsByDate(dateOnlyInput: string) {
   const dateOnly = normalizeOperationalDateOnly(dateOnlyInput);
-  const db = getMockDb();
-  return db.memberHolds
+  const holds = await listMemberHolds();
+  return holds
     .filter((row) => isHoldActiveForDate(row, dateOnly))
     .sort((left, right) => left.member_id.localeCompare(right.member_id, undefined, { sensitivity: "base" }));
 }
 
-export function createMemberHold(input: {
+export async function createMemberHold(input: {
   memberId: string;
   startDate: string;
   endDate: string | null;
@@ -69,35 +71,9 @@ export function createMemberHold(input: {
   actorUserId: string;
   actorName: string;
 }) {
-  const now = toEasternISO();
-  const startDate = normalizeOperationalDateOnly(input.startDate);
-  const endDate = input.endDate ? normalizeOperationalDateOnly(input.endDate) : null;
-  return addMockRecord("memberHolds", {
-    member_id: input.memberId,
-    start_date: startDate,
-    end_date: endDate,
-    status: "active",
-    reason: input.reason,
-    reason_other: input.reasonOther?.trim() || null,
-    notes: input.notes?.trim() || null,
-    created_by_user_id: input.actorUserId,
-    created_by_name: input.actorName,
-    created_at: now,
-    updated_at: now,
-    ended_at: null,
-    ended_by_user_id: null,
-    ended_by_name: null
-  });
+  return createMemberHoldSupabase(input);
 }
 
-export function endMemberHold(input: { holdId: string; actorUserId: string; actorName: string }) {
-  const now = toEasternISO();
-  return updateMockRecord("memberHolds", input.holdId, {
-    status: "ended",
-    ended_at: now,
-    ended_by_user_id: input.actorUserId,
-    ended_by_name: input.actorName,
-    updated_at: now
-  });
+export async function endMemberHold(input: { holdId: string; actorUserId: string; actorName: string }) {
+  return endMemberHoldSupabase(input);
 }
-

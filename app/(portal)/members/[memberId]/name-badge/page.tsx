@@ -27,7 +27,7 @@ export default async function MemberNameBadgePage({
       ? `/health/member-health-profiles/${memberId}`
       : `/operations/member-command-center/${memberId}?tab=member-summary`;
 
-  const badge = getMemberNameBadgeDetail(memberId);
+  const badge = await getMemberNameBadgeDetail(memberId);
   if (!badge) notFound();
 
   return (

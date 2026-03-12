@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 
-import { getMockDb } from "@/lib/mock-repo";
+import { createClient } from "@/lib/supabase/server";
 import {
   DOCUMENT_CENTER_ADDRESS,
   DOCUMENT_CENTER_LOGO_PUBLIC_PATH,
@@ -146,19 +146,17 @@ function drawDocumentHeader(input: {
   return 694;
 }
 
-function groupedAssessmentSections(assessmentId: string): AssessmentSection[] {
-  const db = getMockDb();
-  const responses = db.assessmentResponses
-    .filter((row) => row.assessment_id === assessmentId)
-    .sort((a, b) => {
-      if (a.section_type === b.section_type) {
-        return a.field_label.localeCompare(b.field_label, undefined, { sensitivity: "base" });
-      }
-      return a.section_type.localeCompare(b.section_type, undefined, { sensitivity: "base" });
-    });
+async function groupedAssessmentSections(assessmentId: string): Promise<AssessmentSection[]> {
+  const supabase = await createClient();
+  const { data: responses } = await supabase
+    .from("assessment_responses")
+    .select("field_key, field_label, section_type, field_value")
+    .eq("assessment_id", assessmentId)
+    .order("section_type", { ascending: true })
+    .order("field_label", { ascending: true });
 
   const bySection = new Map<string, AssessmentSection>();
-  responses.forEach((row) => {
+  (responses ?? []).forEach((row: any) => {
     const value = String(row.field_value ?? "").trim();
     const section = row.section_type?.trim() || "Other";
     if (!bySection.has(section)) {
@@ -174,14 +172,18 @@ function groupedAssessmentSections(assessmentId: string): AssessmentSection[] {
 }
 
 export async function buildIntakeAssessmentPdfDataUrl(assessmentId: string) {
-  const db = getMockDb();
-  const assessment = db.assessments.find((row) => row.id === assessmentId);
+  const supabase = await createClient();
+  const { data: assessment } = await supabase
+    .from("intake_assessments")
+    .select("*, member:members!intake_assessments_member_id_fkey(display_name)")
+    .eq("id", assessmentId)
+    .maybeSingle();
   if (!assessment) {
     throw new Error("Intake assessment not found.");
   }
 
   const generatedAt = toEasternISO();
-  const sections = groupedAssessmentSections(assessmentId);
+  const sections = await groupedAssessmentSections(assessmentId);
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -208,7 +210,7 @@ export async function buildIntakeAssessmentPdfDataUrl(assessmentId: string) {
   y -= 20;
 
   const summaryLines = [
-    `Member: ${assessment.member_name}`,
+    `Member: ${assessment.member?.display_name ?? "Unknown Member"}`,
     `Assessment ID: ${assessment.id}`,
     `Assessment Date: ${assessment.assessment_date}`,
     `Total Score: ${assessment.total_score ?? "-"}`,
@@ -217,7 +219,7 @@ export async function buildIntakeAssessmentPdfDataUrl(assessmentId: string) {
     `Completed: ${assessment.complete ? "Yes" : "No"}`,
     `Completed By: ${assessment.completed_by ?? "-"}`,
     `Signed By: ${assessment.signed_by ?? "-"}`,
-    `Created By: ${assessment.created_by_name ?? "-"}`,
+    `Created By: ${assessment.completed_by ?? "-"}`,
     `Created At: ${assessment.created_at}`
   ];
 

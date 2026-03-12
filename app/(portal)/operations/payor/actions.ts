@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
-import { addMockRecord, getMockDb, removeMockRecord, updateMockRecord } from "@/lib/mock-repo";
+import {
+  listCenterBillingSettingsSupabase,
+  upsertCenterBillingSettingSupabase
+} from "@/lib/services/member-command-center-supabase";
 import {
   CLOSURE_RULE_OBSERVED_WEEKEND_OPTIONS,
   CLOSURE_RULE_OCCURRENCE_OPTIONS,
@@ -18,6 +21,13 @@ import {
   BILLING_MODE_OPTIONS,
   CENTER_CLOSURE_TYPE_OPTIONS,
   MONTHLY_BILLING_BASIS_OPTIONS,
+  upsertCenterClosure,
+  deleteCenterClosure,
+  upsertClosureRule,
+  upsertPayor,
+  upsertMemberBillingSetting,
+  upsertBillingScheduleTemplate,
+  upsertBillingAdjustment,
   ensureCenterClosuresForCurrentAndNextYear,
   createCustomInvoice,
   createEnrollmentProratedInvoice,
@@ -27,10 +37,9 @@ import {
   generateBillingBatch,
   reopenBillingBatch,
   setVariableChargeBillingStatus,
-  validateCenterBillingSettingOverlap,
   validateMemberBillingSettingOverlap,
   validateScheduleTemplateOverlap
-} from "@/lib/services/billing";
+} from "@/lib/services/billing-supabase";
 import { canAccessNavItem, normalizeRoleKey } from "@/lib/permissions";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -61,6 +70,12 @@ function asBoolean(formData: FormData, key: string, fallback = false) {
 function asDateOnly(formData: FormData, key: string, fallback = toEasternDate()) {
   const value = asString(formData, key).slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
+}
+
+function dateRangesOverlap(startA: string, endA: string | null, startB: string, endB: string | null) {
+  const normalizedEndA = endA ?? "9999-12-31";
+  const normalizedEndB = endB ?? "9999-12-31";
+  return startA <= normalizedEndB && startB <= normalizedEndA;
 }
 
 async function requireBillingProfile() {
@@ -118,13 +133,18 @@ export async function saveCenterBillingSettingAction(formData: FormData) {
   const effectiveEndDate = asNullableString(formData, "effectiveEndDate");
   const active = asBoolean(formData, "active", false);
 
-  const overlap = validateCenterBillingSettingOverlap({
-    effectiveStartDate,
-    effectiveEndDate,
-    active,
-    excludeId: id || undefined
-  });
-  if (!overlap.ok) throw new Error(overlap.error);
+  const existingSettings = await listCenterBillingSettingsSupabase();
+  if (active) {
+    const overlap = existingSettings.find(
+      (row) =>
+        row.id !== id &&
+        row.active &&
+        dateRangesOverlap(effectiveStartDate, effectiveEndDate, row.effective_start_date, row.effective_end_date)
+    );
+    if (overlap) {
+      throw new Error("Active center billing settings cannot have overlapping effective date ranges.");
+    }
+  }
 
   const payload = {
     default_daily_rate: asNumber(formData, "defaultDailyRate", 0),
@@ -143,14 +163,9 @@ export async function saveCenterBillingSettingAction(formData: FormData) {
     updated_by_name: profile.full_name
   };
 
-  if (id) {
-    const updated = updateMockRecord("centerBillingSettings", id, payload);
-    if (!updated) throw new Error("Center billing setting not found.");
-  } else {
-    addMockRecord("centerBillingSettings", {
-      ...payload,
-      created_at: now
-    });
+  const saved = await upsertCenterBillingSettingSupabase(id || null, payload);
+  if (id && !saved) {
+    throw new Error("Center billing setting not found.");
   }
 
   revalidateBillingPaths();
@@ -177,15 +192,10 @@ export async function saveCenterClosureAction(formData: FormData) {
     updated_by_name: profile.full_name
   };
 
-  if (id) {
-    const updated = updateMockRecord("centerClosures", id, payload);
-    if (!updated) throw new Error("Center closure not found.");
-  } else {
-    addMockRecord("centerClosures", {
-      ...payload,
-      created_at: now
-    });
-  }
+  await upsertCenterClosure({
+    id: id || undefined,
+    ...payload
+  });
 
   revalidateBillingPaths();
 }
@@ -235,10 +245,12 @@ export async function saveClosureRuleAction(formData: FormData) {
     updated_by_user_id: profile.id,
     updated_by_name: profile.full_name
   };
-  const updated = updateMockRecord("closureRules", id, payload);
-  if (!updated) throw new Error("Closure rule not found.");
+  await upsertClosureRule({
+    id,
+    ...payload
+  });
 
-  ensureCenterClosuresForCurrentAndNextYear({
+  await ensureCenterClosuresForCurrentAndNextYear({
     generatedByUserId: profile.id,
     generatedByName: profile.full_name
   });
@@ -249,27 +261,14 @@ export async function deleteCenterClosureAction(formData: FormData) {
   const profile = await requireBillingProfile();
   const id = asString(formData, "id");
   if (!id) throw new Error("Center closure id is required.");
-  const existing = getMockDb().centerClosures.find((row) => row.id === id) ?? null;
-  if (existing?.auto_generated) {
-    const updated = updateMockRecord("centerClosures", id, {
-      active: false,
-      notes: existing.notes ?? "Auto-generated closure manually removed.",
-      updated_at: toEasternISO(),
-      updated_by_user_id: profile.id,
-      updated_by_name: profile.full_name
-    });
-    if (!updated) throw new Error("Center closure not found.");
-    revalidateBillingPaths();
-    return;
-  }
-  const removed = removeMockRecord("centerClosures", id);
+  const removed = await deleteCenterClosure({ id, actorUserId: profile.id, actorName: profile.full_name });
   if (!removed) throw new Error("Center closure not found.");
   revalidateBillingPaths();
 }
 
 export async function ensureCenterClosuresAction(_formData: FormData) {
   const profile = await requireBillingProfile();
-  ensureCenterClosuresForCurrentAndNextYear({
+  await ensureCenterClosuresForCurrentAndNextYear({
     generatedByUserId: profile.id,
     generatedByName: profile.full_name
   });
@@ -303,15 +302,7 @@ export async function savePayorAction(formData: FormData) {
     updated_by_name: profile.full_name
   };
 
-  if (id) {
-    const updated = updateMockRecord("payors", id, payload);
-    if (!updated) throw new Error("Payor not found.");
-  } else {
-    addMockRecord("payors", {
-      ...payload,
-      created_at: now
-    });
-  }
+  await upsertPayor({ id: id || undefined, ...payload });
 
   revalidateBillingPaths();
 }
@@ -324,7 +315,7 @@ export async function saveMemberBillingSettingAction(formData: FormData) {
   const effectiveEndDate = asNullableString(formData, "effectiveEndDate");
   const active = asBoolean(formData, "active", false);
 
-  const overlap = validateMemberBillingSettingOverlap({
+  const overlap = await validateMemberBillingSettingOverlap({
     memberId: asString(formData, "memberId"),
     effectiveStartDate,
     effectiveEndDate,
@@ -363,15 +354,10 @@ export async function saveMemberBillingSettingAction(formData: FormData) {
     updated_by_name: profile.full_name
   };
 
-  if (id) {
-    const updated = updateMockRecord("memberBillingSettings", id, payload);
-    if (!updated) throw new Error("Member billing setting not found.");
-  } else {
-    addMockRecord("memberBillingSettings", {
-      ...payload,
-      created_at: now
-    });
-  }
+  await upsertMemberBillingSetting({
+    id: id || undefined,
+    row: payload
+  });
 
   revalidateBillingPaths();
 }
@@ -384,7 +370,7 @@ export async function saveBillingScheduleTemplateAction(formData: FormData) {
   const effectiveEndDate = asNullableString(formData, "effectiveEndDate");
   const active = asBoolean(formData, "active", false);
 
-  const overlap = validateScheduleTemplateOverlap({
+  const overlap = await validateScheduleTemplateOverlap({
     memberId: asString(formData, "memberId"),
     effectiveStartDate,
     effectiveEndDate,
@@ -411,15 +397,10 @@ export async function saveBillingScheduleTemplateAction(formData: FormData) {
     updated_by_name: profile.full_name
   };
 
-  if (id) {
-    const updated = updateMockRecord("billingScheduleTemplates", id, payload);
-    if (!updated) throw new Error("Schedule template not found.");
-  } else {
-    addMockRecord("billingScheduleTemplates", {
-      ...payload,
-      created_at: now
-    });
-  }
+  await upsertBillingScheduleTemplate({
+    id: id || undefined,
+    row: payload
+  });
 
   revalidateBillingPaths();
 }
@@ -461,15 +442,13 @@ export async function saveBillingAdjustmentAction(formData: FormData) {
     created_by_name: profile.full_name
   };
 
-  if (id) {
-    const updated = updateMockRecord("billingAdjustments", id, payload);
-    if (!updated) throw new Error("Billing adjustment not found.");
-  } else {
-    addMockRecord("billingAdjustments", {
+  await upsertBillingAdjustment({
+    id: id || undefined,
+    row: {
       ...payload,
-      created_at: now
-    });
-  }
+      exclusion_reason: payload.billing_status === "Excluded" ? "Manually excluded" : null
+    }
+  });
 
   revalidateBillingPaths();
 }
@@ -483,7 +462,7 @@ export async function generateBillingBatchAction(formData: FormData) {
       ? (batchTypeRaw as (typeof BILLING_BATCH_TYPE_OPTIONS)[number])
       : ("Mixed" as const);
     const runDate = asDateOnly(formData, "runDate", toEasternDate());
-    const result = generateBillingBatch({
+    const result = await generateBillingBatch({
       billingMonth,
       batchType,
       runDate,
@@ -518,7 +497,7 @@ export async function finalizeBillingBatchAction(formData: FormData) {
     if (!access.ok) {
       redirectWithError(returnPath, access.error);
     }
-    const result = finalizeBillingBatch({
+    const result = await finalizeBillingBatch({
       billingBatchId: asString(formData, "billingBatchId"),
       finalizedBy: access.profile.full_name
     });
@@ -538,7 +517,7 @@ export async function reopenBillingBatchAction(formData: FormData) {
     if (!access.ok) {
       redirectWithError(returnPath, access.error);
     }
-    const result = reopenBillingBatch({
+    const result = await reopenBillingBatch({
       billingBatchId: asString(formData, "billingBatchId"),
       reopenedBy: access.profile.full_name
     });
@@ -558,7 +537,7 @@ export async function finalizeInvoiceAction(formData: FormData) {
     if (!access.ok) {
       redirectWithError(returnPath, access.error);
     }
-    const result = finalizeInvoice({
+    const result = await finalizeInvoice({
       invoiceId: asString(formData, "invoiceId"),
       finalizedBy: access.profile.full_name
     });
@@ -575,7 +554,7 @@ export async function setVariableChargeStatusAction(formData: FormData) {
   await requireBillingProfile();
   const table = asString(formData, "table");
   const status = asString(formData, "billingStatus");
-  const next = setVariableChargeBillingStatus({
+  const next = await setVariableChargeBillingStatus({
     table:
       table === "transportationLogs" || table === "ancillaryLogs" || table === "billingAdjustments"
         ? table
@@ -594,7 +573,7 @@ export async function createBillingExportAction(formData: FormData) {
     const profile = await requireBillingProfile();
     const exportType = asString(formData, "exportType");
     const quickbooksDetailLevel = asString(formData, "quickbooksDetailLevel");
-    const result = createBillingExport({
+    const result = await createBillingExport({
       billingBatchId: asString(formData, "billingBatchId"),
       exportType:
         exportType === "InternalReviewCSV" || exportType === "InvoiceSummaryCSV"
@@ -654,7 +633,7 @@ export async function createCustomInvoiceAction(formData: FormData) {
     const calculationMethod =
       method === "FlatAmount" || method === "ManualLineItems" ? method : ("DailyRateTimesDates" as const);
 
-    const result = createCustomInvoice({
+    const result = await createCustomInvoice({
       memberId: asString(formData, "memberId"),
       payorId: asNullableString(formData, "payorId"),
       invoiceDate: asDateOnly(formData, "invoiceDate", toEasternDate()),
@@ -687,7 +666,7 @@ export async function createEnrollmentInvoiceAction(formData: FormData) {
   const returnPath = asString(formData, "returnPath") || "/operations/payor/custom-invoices";
   try {
     const profile = await requireBillingProfile();
-    const result = createEnrollmentProratedInvoice({
+    const result = await createEnrollmentProratedInvoice({
       memberId: asString(formData, "memberId"),
       payorId: asNullableString(formData, "payorId"),
       effectiveStartDate: asDateOnly(formData, "effectiveStartDate"),

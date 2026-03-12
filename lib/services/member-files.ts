@@ -1,4 +1,6 @@
-import { addMockRecord, getMockDb, updateMockRecord } from "@/lib/mock-repo";
+import { randomUUID } from "node:crypto";
+
+import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 type MemberFileCategory =
@@ -45,32 +47,52 @@ function withDuplicateSuffix(fileName: string, timestampIso: string) {
   return `${root} - ${suffix}${extension}`;
 }
 
-export function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPdfInput) {
+function nextMemberFileId() {
+  return `mf_${randomUUID().replace(/-/g, "")}`;
+}
+
+export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPdfInput) {
   const now = input.generatedAtIso ?? toEasternISO();
-  const db = getMockDb();
+  const supabase = await createClient();
   const defaultName = basePdfFileName(input.documentLabel, input.memberName, now);
   const categoryOther = input.category === "Other" ? input.categoryOther ?? null : null;
 
   if (input.replaceExistingByDocumentSource) {
-    const existing = db.memberFiles.find(
-      (row) =>
-        row.member_id === input.memberId &&
-        String(row.document_source ?? "").trim().toLowerCase() === input.documentSource.trim().toLowerCase()
-    );
+    const { data: existing, error: existingError } = await supabase
+      .from("member_files")
+      .select("id")
+      .eq("member_id", input.memberId)
+      .eq("document_source", input.documentSource)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new Error(existingError.message);
+    }
 
     if (existing) {
-      const updated = updateMockRecord("memberFiles", existing.id, {
-        file_name: defaultName,
-        file_type: "application/pdf",
-        file_data_url: input.dataUrl,
-        category: input.category,
-        category_other: categoryOther,
-        document_source: input.documentSource,
-        uploaded_by_user_id: input.uploadedBy.id,
-        uploaded_by_name: input.uploadedBy.name,
-        uploaded_at: now,
-        updated_at: now
-      });
+      const { data: updated, error: updateError } = await supabase
+        .from("member_files")
+        .update({
+          file_name: defaultName,
+          file_type: "application/pdf",
+          file_data_url: input.dataUrl,
+          category: input.category,
+          category_other: categoryOther,
+          document_source: input.documentSource,
+          uploaded_by_user_id: input.uploadedBy.id,
+          uploaded_by_name: input.uploadedBy.name,
+          uploaded_at: now,
+          updated_at: now
+        })
+        .eq("id", existing.id)
+        .select("*")
+        .maybeSingle();
+
+      if (updateError) {
+        throw new Error(updateError.message);
+      }
 
       if (updated) {
         return {
@@ -82,26 +104,41 @@ export function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPdfInput
     }
   }
 
-  const hasConflict = db.memberFiles.some(
-    (row) =>
-      row.member_id === input.memberId &&
-      row.file_name.trim().toLowerCase() === defaultName.trim().toLowerCase()
-  );
+  const { data: duplicateRows, error: duplicateError } = await supabase
+    .from("member_files")
+    .select("id")
+    .eq("member_id", input.memberId)
+    .eq("file_name", defaultName);
+
+  if (duplicateError) {
+    throw new Error(duplicateError.message);
+  }
+
+  const hasConflict = (duplicateRows ?? []).length > 0;
   const fileName = hasConflict ? withDuplicateSuffix(defaultName, now) : defaultName;
 
-  const created = addMockRecord("memberFiles", {
-    member_id: input.memberId,
-    file_name: fileName,
-    file_type: "application/pdf",
-    file_data_url: input.dataUrl,
-    category: input.category,
-    category_other: categoryOther,
-    document_source: input.documentSource,
-    uploaded_by_user_id: input.uploadedBy.id,
-    uploaded_by_name: input.uploadedBy.name,
-    uploaded_at: now,
-    updated_at: now
-  });
+  const { data: created, error: createError } = await supabase
+    .from("member_files")
+    .insert({
+      id: nextMemberFileId(),
+      member_id: input.memberId,
+      file_name: fileName,
+      file_type: "application/pdf",
+      file_data_url: input.dataUrl,
+      category: input.category,
+      category_other: categoryOther,
+      document_source: input.documentSource,
+      uploaded_by_user_id: input.uploadedBy.id,
+      uploaded_by_name: input.uploadedBy.name,
+      uploaded_at: now,
+      updated_at: now
+    })
+    .select("*")
+    .single();
+
+  if (createError) {
+    throw new Error(createError.message);
+  }
 
   return {
     created,

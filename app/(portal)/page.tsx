@@ -4,12 +4,13 @@ import { Card, CardBody, CardTitle } from "@/components/ui/card";
 import { PunchStatusBadge, PunchTypeBadge } from "@/components/ui/punch-type-badge";
 import { getCurrentProfile } from "@/lib/auth";
 import { canonicalLeadStage, canonicalLeadStatus, isOpenLeadStatus } from "@/lib/canonical";
-import { getMockDb } from "@/lib/mock-repo";
 import { canView, normalizeRoleKey } from "@/lib/permissions";
 import { getDailyAttendanceView } from "@/lib/services/attendance";
 import { getDashboardAlerts, getDashboardStats } from "@/lib/services/dashboard";
+import { listMemberHolds } from "@/lib/services/holds-supabase";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 const HOLD_EXPIRY_LOOKAHEAD_DAYS = 14;
@@ -48,13 +49,22 @@ export default async function DashboardPage() {
 
   const firstName = profile.full_name.trim().split(/\s+/)[0] || profile.full_name;
   const today = getOperationsTodayDate();
-  const dailyAttendance = canViewOperations ? getDailyAttendanceView({ selectedDate: today }) : null;
+  const dailyAttendance = canViewOperations ? await getDailyAttendanceView({ selectedDate: today }) : null;
   const absentTodayRows = (dailyAttendance?.rows ?? []).filter((row) => row.recordStatus === "absent");
 
-  const db = getMockDb();
+  const supabase = await createClient();
+  const [{ data: membersData }, holds, { data: ancillaryData }] = await Promise.all([
+    supabase.from("members").select("id, display_name"),
+    listMemberHolds(),
+    supabase
+      .from("ancillary_charge_logs")
+      .select("service_date, amount, billing_status")
+      .gte("service_date", `${today.slice(0, 7)}-01`)
+      .lte("service_date", `${today.slice(0, 7)}-31`)
+  ]);
   const expiryThreshold = addDays(today, HOLD_EXPIRY_LOOKAHEAD_DAYS);
-  const activeHolds = db.memberHolds.filter((row) => row.status === "active");
-  const memberNameById = new Map(db.members.map((member) => [member.id, member.display_name] as const));
+  const activeHolds = holds.filter((row) => row.status === "active");
+  const memberNameById = new Map((membersData ?? []).map((member: any) => [member.id, member.display_name] as const));
   const upcomingHolds = activeHolds
     .filter((hold) => toDateOnly(hold.start_date) && (toDateOnly(hold.start_date) as string) > today)
     .sort((left, right) => String(left.start_date).localeCompare(String(right.start_date)))
@@ -68,10 +78,9 @@ export default async function DashboardPage() {
     .sort((left, right) => String(left.end_date).localeCompare(String(right.end_date)))
     .slice(0, 6);
 
-  const currentMonthKey = today.slice(0, 7);
-  const monthlyAncillary = db.ancillaryLogs.filter((row) => String(row.service_date).startsWith(currentMonthKey));
-  const monthlyRevenueCents = monthlyAncillary.reduce((sum, row) => sum + row.amount_cents, 0);
-  const unreconciledCharges = monthlyAncillary.filter((row) => (row.reconciliation_status ?? "open") !== "reconciled").length;
+  const monthlyAncillary = ancillaryData ?? [];
+  const monthlyRevenueCents = monthlyAncillary.reduce((sum: number, row: any) => sum + Math.round(Number(row.amount ?? 0) * 100), 0);
+  const unreconciledCharges = monthlyAncillary.filter((row: any) => String(row.billing_status ?? "Unbilled") !== "Billed").length;
 
   const unresolvedLeads = salesWorkflows
     ? salesWorkflows.openLeads.filter((lead) => isOpenLeadStatus(canonicalLeadStatus(lead.status, lead.stage))).length
@@ -121,9 +130,9 @@ export default async function DashboardPage() {
             <Card>
               <CardTitle>Attendance Today</CardTitle>
               <CardBody>
-                <p className="text-sm">Scheduled: <span className="font-semibold">{dailyAttendance?.summary.scheduledMembers ?? 0}</span></p>
-                <p className="text-sm">Present: <span className="font-semibold">{dailyAttendance?.summary.presentMembers ?? 0}</span></p>
-                <p className="text-sm">Absent: <span className="font-semibold">{dailyAttendance?.summary.absentMembers ?? 0}</span></p>
+                <p className="text-sm">Scheduled: <span className="font-semibold">{dailyAttendance?.summary?.scheduledMembers ?? 0}</span></p>
+                <p className="text-sm">Present: <span className="font-semibold">{dailyAttendance?.summary?.presentMembers ?? 0}</span></p>
+                <p className="text-sm">Absent: <span className="font-semibold">{dailyAttendance?.summary?.absentMembers ?? 0}</span></p>
                 <Link href={`/operations/attendance?tab=daily-attendance&date=${today}`} className="mt-2 inline-block text-sm font-semibold text-brand">
                   Open Daily Attendance
                 </Link>

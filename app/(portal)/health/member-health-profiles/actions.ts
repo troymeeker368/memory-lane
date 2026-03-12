@@ -5,9 +5,10 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
-import { addMockRecord, getMockDb, removeMockRecord, updateMockRecord } from "@/lib/mock-repo";
-import { ensureMemberHealthProfile } from "@/lib/services/member-health-profiles";
-import { syncMhpToCommandCenter } from "@/lib/services/member-profile-sync";
+import {
+  ensureMemberHealthProfileSupabase
+} from "@/lib/services/member-health-profiles-supabase";
+import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 function asString(formData: FormData, key: string) {
@@ -74,7 +75,132 @@ function resolveProviderSpecialty(formData: FormData) {
   };
 }
 
-function upsertProviderDirectoryFromValues(input: {
+const TABLE_MAP = {
+  members: "members",
+  memberHealthProfiles: "member_health_profiles",
+  providerDirectory: "provider_directory",
+  hospitalPreferenceDirectory: "hospital_preference_directory",
+  memberDiagnoses: "member_diagnoses",
+  memberMedications: "member_medications",
+  memberAllergies: "member_allergies",
+  memberProviders: "member_providers",
+  memberEquipment: "member_equipment",
+  memberNotes: "member_notes"
+} as const;
+
+type TableKey = keyof typeof TABLE_MAP;
+
+function isUuid(value: string | null | undefined) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value ?? ""));
+}
+
+function toNullableUuid(value: string | null | undefined) {
+  return isUuid(value) ? String(value) : null;
+}
+
+async function getHealthProfileContext() {
+  const supabase = await createClient();
+  const [providerDirectoryResult, hospitalDirectoryResult, diagnosesResult, membersResult] = await Promise.all([
+    supabase.from("provider_directory").select("*"),
+    supabase.from("hospital_preference_directory").select("*"),
+    supabase.from("member_diagnoses").select("*"),
+    supabase.from("members").select("*")
+  ]);
+
+  if (providerDirectoryResult.error) throw new Error(providerDirectoryResult.error.message);
+  if (hospitalDirectoryResult.error) throw new Error(hospitalDirectoryResult.error.message);
+  if (diagnosesResult.error) throw new Error(diagnosesResult.error.message);
+  if (membersResult.error) throw new Error(membersResult.error.message);
+
+  return {
+    providerDirectory: providerDirectoryResult.data ?? [],
+    hospitalPreferenceDirectory: hospitalDirectoryResult.data ?? [],
+    memberDiagnoses: diagnosesResult.data ?? [],
+    members: membersResult.data ?? []
+  };
+}
+
+async function insertHealthRow<K extends TableKey>(key: K, record: Record<string, unknown>) {
+  const supabase = await createClient();
+  const { data, error } = await supabase.from(TABLE_MAP[key]).insert(record).select("*").single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function updateHealthRow<K extends TableKey>(key: K, id: string, patch: Record<string, unknown>) {
+  const supabase = await createClient();
+  const { data, error } = await supabase.from(TABLE_MAP[key]).update(patch).eq("id", id).select("*").maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function deleteHealthRow<K extends TableKey>(key: K, id: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase.from(TABLE_MAP[key]).delete().eq("id", id).select("*").maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function syncMhpToCommandCenter(
+  memberId: string,
+  actor: { id: string; fullName: string },
+  at?: string
+) {
+  const now = at ?? toEasternISO();
+  const profile = await ensureMemberHealthProfileSupabase(memberId);
+  const supabase = await createClient();
+  const { data: existing, error: existingError } = await supabase
+    .from("member_command_centers")
+    .select("id")
+    .eq("member_id", memberId)
+    .maybeSingle();
+  if (existingError) throw new Error(existingError.message);
+
+  const patch = {
+    member_id: memberId,
+    gender: profile.gender,
+    payor: profile.payor,
+    original_referral_source: profile.original_referral_source,
+    photo_consent: profile.photo_consent,
+    profile_image_url: profile.profile_image_url,
+    code_status: profile.code_status,
+    dnr: profile.dnr,
+    dni: profile.dni,
+    polst_molst_colst: profile.polst_molst_colst,
+    hospice: profile.hospice,
+    advanced_directives_obtained: profile.advanced_directives_obtained,
+    power_of_attorney: profile.power_of_attorney,
+    legal_comments: profile.legal_comments,
+    diet_type: profile.diet_type,
+    dietary_preferences_restrictions: profile.dietary_restrictions,
+    swallowing_difficulty: profile.swallowing_difficulty,
+    supplements: profile.supplements,
+    foods_to_omit: profile.foods_to_omit,
+    diet_texture: profile.diet_texture,
+    command_center_notes: profile.important_alerts,
+    updated_by_user_id: toNullableUuid(actor.id),
+    updated_by_name: actor.fullName,
+    updated_at: now
+  };
+
+  if (existing?.id) {
+    const { error } = await supabase.from("member_command_centers").update(patch).eq("id", existing.id);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase.from("member_command_centers").insert({
+      ...patch,
+      created_at: now
+    });
+    if (error) throw new Error(error.message);
+  }
+
+  if (profile.code_status) {
+    const { error: memberError } = await supabase.from("members").update({ code_status: profile.code_status }).eq("id", memberId);
+    if (memberError) throw new Error(memberError.message);
+  }
+}
+
+async function upsertProviderDirectoryFromValues(input: {
   providerName: string;
   specialty: string | null;
   specialtyOther: string | null;
@@ -86,13 +212,13 @@ function upsertProviderDirectoryFromValues(input: {
   const normalizedProviderName = input.providerName.trim();
   if (!normalizedProviderName) return;
 
-  const db = getMockDb();
+  const db = await getHealthProfileContext();
   const existing = db.providerDirectory.find(
     (row) => row.provider_name.trim().toLowerCase() === normalizedProviderName.toLowerCase()
   );
 
   if (existing) {
-    updateMockRecord("providerDirectory", existing.id, {
+    await updateHealthRow("providerDirectory", existing.id, {
       provider_name: normalizedProviderName,
       specialty: input.specialty ?? existing.specialty ?? null,
       specialty_other: input.specialtyOther ?? existing.specialty_other ?? null,
@@ -103,20 +229,20 @@ function upsertProviderDirectoryFromValues(input: {
     return;
   }
 
-  addMockRecord("providerDirectory", {
+  await insertHealthRow("providerDirectory", {
     provider_name: normalizedProviderName,
     specialty: input.specialty,
     specialty_other: input.specialtyOther,
     practice_name: input.practiceName,
     provider_phone: input.providerPhone,
-    created_by_user_id: input.actor.id,
+    created_by_user_id: toNullableUuid(input.actor.id),
     created_by_name: input.actor.full_name,
     created_at: input.now,
     updated_at: input.now
   });
 }
 
-function upsertHospitalPreferenceDirectoryFromValue(input: {
+async function upsertHospitalPreferenceDirectoryFromValue(input: {
   hospitalName: string | null;
   actor: { id: string; full_name: string };
   now: string;
@@ -124,22 +250,22 @@ function upsertHospitalPreferenceDirectoryFromValue(input: {
   const normalizedHospitalName = (input.hospitalName ?? "").trim();
   if (!normalizedHospitalName) return;
 
-  const db = getMockDb();
+  const db = await getHealthProfileContext();
   const existing = db.hospitalPreferenceDirectory.find(
     (row) => row.hospital_name.trim().toLowerCase() === normalizedHospitalName.toLowerCase()
   );
 
   if (existing) {
-    updateMockRecord("hospitalPreferenceDirectory", existing.id, {
+    await updateHealthRow("hospitalPreferenceDirectory", existing.id, {
       hospital_name: normalizedHospitalName,
       updated_at: input.now
     });
     return;
   }
 
-  addMockRecord("hospitalPreferenceDirectory", {
+  await insertHealthRow("hospitalPreferenceDirectory", {
     hospital_name: normalizedHospitalName,
-    created_by_user_id: input.actor.id,
+    created_by_user_id: toNullableUuid(input.actor.id),
     created_by_name: input.actor.full_name,
     created_at: input.now,
     updated_at: input.now
@@ -172,12 +298,12 @@ async function asUploadedImageDataUrl(formData: FormData, key: string, fallback:
   return fallback;
 }
 
-function touchMhpProfile(memberId: string, actor: { id: string; full_name: string }, at?: string) {
+async function touchMhpProfile(memberId: string, actor: { id: string; full_name: string }, at?: string) {
   const now = at ?? toEasternISO();
-  const profile = ensureMemberHealthProfile(memberId);
-  updateMockRecord("memberHealthProfiles", profile.id, {
+  const profile = await ensureMemberHealthProfileSupabase(memberId);
+  await updateHealthRow("memberHealthProfiles", profile.id, {
     updated_at: now,
-    updated_by_user_id: actor.id,
+    updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
   });
 }
@@ -187,7 +313,7 @@ export async function saveMhpOverviewAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const profile = ensureMemberHealthProfile(memberId);
+  const profile = await ensureMemberHealthProfileSupabase(memberId);
   const profileImageUrl = await asUploadedImageDataUrl(formData, "photoFile", profile.profile_image_url ?? null);
   const sameAsPrimary = asNullableBool(formData, "sameAsPrimary") === true;
   const primaryCaregiverName = asNullableString(formData, "primaryCaregiverName");
@@ -196,7 +322,7 @@ export async function saveMhpOverviewAction(formData: FormData) {
   const responsiblePartyPhone = sameAsPrimary ? primaryCaregiverPhone : asNullableString(formData, "responsiblePartyPhone");
   const memberDob = asNullableString(formData, "memberDob");
 
-  updateMockRecord("memberHealthProfiles", profile.id, {
+  await updateHealthRow("memberHealthProfiles", profile.id, {
     gender: asNullableString(formData, "gender"),
     payor: asNullableString(formData, "payor"),
     original_referral_source: asNullableString(formData, "originalReferralSource"),
@@ -208,13 +334,13 @@ export async function saveMhpOverviewAction(formData: FormData) {
     responsible_party_phone: responsiblePartyPhone,
     important_alerts: asNullableString(formData, "importantAlerts"),
     updated_at: now,
-    updated_by_user_id: actor.id,
+    updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
   });
-  updateMockRecord("members", memberId, {
+  await updateHealthRow("members", memberId, {
     dob: memberDob
   });
-  syncMhpToCommandCenter(
+  await syncMhpToCommandCenter(
     memberId,
     {
       id: actor.id,
@@ -233,16 +359,16 @@ export async function updateMhpPhotoAction(formData: FormData) {
   const returnTab = asString(formData, "returnTab") || "overview";
   if (!memberId) return;
   const now = toEasternISO();
-  const profile = ensureMemberHealthProfile(memberId);
+  const profile = await ensureMemberHealthProfileSupabase(memberId);
   const profileImageUrl = await asUploadedImageDataUrl(formData, "photoFile", profile.profile_image_url ?? null);
 
-  updateMockRecord("memberHealthProfiles", profile.id, {
+  await updateHealthRow("memberHealthProfiles", profile.id, {
     profile_image_url: profileImageUrl,
     updated_at: now,
-    updated_by_user_id: actor.id,
+    updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
   });
-  syncMhpToCommandCenter(
+  await syncMhpToCommandCenter(
     memberId,
     {
       id: actor.id,
@@ -260,12 +386,12 @@ export async function saveMhpMedicalAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const profile = ensureMemberHealthProfile(memberId);
+  const profile = await ensureMemberHealthProfileSupabase(memberId);
   const dietType = asString(formData, "dietType");
   const dietTypeOther = asNullableString(formData, "dietTypeOther");
   const normalizedDietType = dietType === "Other" ? (dietTypeOther ?? "Other") : (dietType || null);
 
-  updateMockRecord("memberHealthProfiles", profile.id, {
+  await updateHealthRow("memberHealthProfiles", profile.id, {
     diet_type: normalizedDietType,
     dietary_restrictions: asNullableString(formData, "dietaryRestrictions"),
     swallowing_difficulty: asNullableString(formData, "swallowingDifficulty"),
@@ -273,10 +399,10 @@ export async function saveMhpMedicalAction(formData: FormData) {
     supplements: asNullableString(formData, "supplements"),
     foods_to_omit: asNullableString(formData, "foodsToOmit"),
     updated_at: now,
-    updated_by_user_id: actor.id,
+    updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
   });
-  syncMhpToCommandCenter(
+  await syncMhpToCommandCenter(
     memberId,
     {
       id: actor.id,
@@ -294,9 +420,9 @@ export async function saveMhpFunctionalAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const profile = ensureMemberHealthProfile(memberId);
+  const profile = await ensureMemberHealthProfileSupabase(memberId);
 
-  updateMockRecord("memberHealthProfiles", profile.id, {
+  await updateHealthRow("memberHealthProfiles", profile.id, {
     ambulation: asNullableString(formData, "ambulation"),
     transferring: asNullableString(formData, "transferring"),
     bathing: asNullableString(formData, "bathing"),
@@ -316,7 +442,7 @@ export async function saveMhpFunctionalAction(formData: FormData) {
     may_self_medicate: asNullableBool(formData, "maySelfMedicate"),
     medication_manager_name: asNullableString(formData, "medicationManagerName"),
     updated_at: now,
-    updated_by_user_id: actor.id,
+    updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
   });
 
@@ -329,9 +455,9 @@ export async function saveMhpCognitiveBehaviorAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const profile = ensureMemberHealthProfile(memberId);
+  const profile = await ensureMemberHealthProfileSupabase(memberId);
 
-  updateMockRecord("memberHealthProfiles", profile.id, {
+  await updateHealthRow("memberHealthProfiles", profile.id, {
     orientation_dob: asNullableString(formData, "orientationDob"),
     orientation_city: asNullableString(formData, "orientationCity"),
     orientation_current_year: asNullableString(formData, "orientationCurrentYear"),
@@ -351,7 +477,7 @@ export async function saveMhpCognitiveBehaviorAction(formData: FormData) {
     exit_seeking: asNullableBool(formData, "exitSeeking"),
     cognitive_behavior_comments: asNullableString(formData, "cognitiveBehaviorComments"),
     updated_at: now,
-    updated_by_user_id: actor.id,
+    updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
   });
 
@@ -364,12 +490,12 @@ export async function saveMhpLegalAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const profile = ensureMemberHealthProfile(memberId);
+  const profile = await ensureMemberHealthProfileSupabase(memberId);
   const codeStatus = asNullableString(formData, "codeStatus");
   const computedDnr = codeStatus === "DNR" ? true : codeStatus === "Full Code" ? false : asNullableBool(formData, "dnr");
   const hospitalPreference = asNullableString(formData, "hospitalPreference");
 
-  updateMockRecord("memberHealthProfiles", profile.id, {
+  await updateHealthRow("memberHealthProfiles", profile.id, {
     code_status: codeStatus,
     dnr: computedDnr,
     dni: asNullableBool(formData, "dni"),
@@ -380,15 +506,15 @@ export async function saveMhpLegalAction(formData: FormData) {
     hospital_preference: hospitalPreference,
     legal_comments: asNullableString(formData, "legalComments"),
     updated_at: now,
-    updated_by_user_id: actor.id,
+    updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
   });
-  upsertHospitalPreferenceDirectoryFromValue({
+  await upsertHospitalPreferenceDirectoryFromValue({
     hospitalName: hospitalPreference,
     actor,
     now
   });
-  syncMhpToCommandCenter(
+  await syncMhpToCommandCenter(
     memberId,
     {
       id: actor.id,
@@ -406,23 +532,23 @@ export async function addMhpDiagnosisAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const db = getMockDb();
+  const db = await getHealthProfileContext();
   const existingDiagnosisCount = db.memberDiagnoses.filter((row) => row.member_id === memberId).length;
   const diagnosisType = existingDiagnosisCount === 0 ? "primary" : "secondary";
-  addMockRecord("memberDiagnoses", {
+  await insertHealthRow("memberDiagnoses", {
     member_id: memberId,
     diagnosis_type: diagnosisType,
     diagnosis_name: asString(formData, "diagnosisName"),
     diagnosis_code: null,
     date_added: asString(formData, "diagnosisDate") || now.slice(0, 10),
     comments: null,
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
-  syncMhpToCommandCenter(
+  await touchMhpProfile(memberId, actor, now);
+  await syncMhpToCommandCenter(
     memberId,
     {
       id: actor.id,
@@ -442,15 +568,15 @@ export async function updateMhpDiagnosisAction(formData: FormData) {
   if (!memberId || !diagnosisId) return;
   const now = toEasternISO();
 
-  updateMockRecord("memberDiagnoses", diagnosisId, {
+  await updateHealthRow("memberDiagnoses", diagnosisId, {
     diagnosis_name: asString(formData, "diagnosisName"),
     diagnosis_code: null,
     date_added: asString(formData, "diagnosisDate"),
     comments: null,
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
-  syncMhpToCommandCenter(
+  await touchMhpProfile(memberId, actor, now);
+  await syncMhpToCommandCenter(
     memberId,
     {
       id: actor.id,
@@ -469,27 +595,27 @@ export async function addMhpDiagnosisInlineAction(formData: FormData) {
   if (!memberId) return { ok: false, error: "Member is required." };
 
   const now = toEasternISO();
-  const db = getMockDb();
+  const db = await getHealthProfileContext();
   const existingDiagnosisCount = db.memberDiagnoses.filter((row) => row.member_id === memberId).length;
   const diagnosisType = existingDiagnosisCount === 0 ? "primary" : "secondary";
   const diagnosisName = asString(formData, "diagnosisName");
   const diagnosisDate = asString(formData, "diagnosisDate") || now.slice(0, 10);
   if (!diagnosisName) return { ok: false, error: "Diagnosis is required." };
 
-  const created = addMockRecord("memberDiagnoses", {
+  const created = await insertHealthRow("memberDiagnoses", {
     member_id: memberId,
     diagnosis_type: diagnosisType,
     diagnosis_name: diagnosisName,
     diagnosis_code: null,
     date_added: diagnosisDate,
     comments: null,
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
 
   return {
@@ -514,7 +640,7 @@ export async function updateMhpDiagnosisInlineAction(formData: FormData) {
   if (!diagnosisName || !diagnosisDate) return { ok: false, error: "Diagnosis and date are required." };
 
   const now = toEasternISO();
-  const updated = updateMockRecord("memberDiagnoses", diagnosisId, {
+  const updated = await updateHealthRow("memberDiagnoses", diagnosisId, {
     diagnosis_name: diagnosisName,
     diagnosis_code: null,
     date_added: diagnosisDate,
@@ -523,7 +649,7 @@ export async function updateMhpDiagnosisInlineAction(formData: FormData) {
   });
   if (!updated) return { ok: false, error: "Diagnosis not found." };
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
 
   return {
@@ -546,7 +672,7 @@ export async function addMhpMedicationAction(formData: FormData) {
   const parsedLaterality = parseRouteLaterality(route, formData);
   if (!parsedLaterality.ok) return;
 
-  addMockRecord("memberMedications", {
+  await insertHealthRow("memberMedications", {
     member_id: memberId,
     medication_name: asString(formData, "medicationName"),
     date_started: asString(formData, "dateStarted") || toEasternDate(),
@@ -559,12 +685,12 @@ export async function addMhpMedicationAction(formData: FormData) {
     route,
     route_laterality: parsedLaterality.value,
     comments: asNullableString(formData, "medicationComments"),
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -580,7 +706,7 @@ export async function updateMhpMedicationAction(formData: FormData) {
   const parsedLaterality = parseRouteLaterality(route, formData);
   if (!parsedLaterality.ok) return;
 
-  updateMockRecord("memberMedications", medicationId, {
+  await updateHealthRow("memberMedications", medicationId, {
     medication_name: asString(formData, "medicationName"),
     date_started: asString(formData, "dateStarted") || toEasternDate(),
     dose: asNullableString(formData, "dose"),
@@ -592,7 +718,7 @@ export async function updateMhpMedicationAction(formData: FormData) {
     comments: asNullableString(formData, "medicationComments"),
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -604,18 +730,18 @@ export async function addMhpAllergyAction(formData: FormData) {
   if (!memberId) return;
   const now = toEasternISO();
 
-  addMockRecord("memberAllergies", {
+  await insertHealthRow("memberAllergies", {
     member_id: memberId,
     allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: asString(formData, "allergyName"),
     severity: asNullableString(formData, "allergySeverity"),
     comments: asNullableString(formData, "allergyComments"),
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -628,14 +754,14 @@ export async function updateMhpAllergyAction(formData: FormData) {
   if (!memberId || !allergyId) return;
   const now = toEasternISO();
 
-  updateMockRecord("memberAllergies", allergyId, {
+  await updateHealthRow("memberAllergies", allergyId, {
     allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: asString(formData, "allergyName"),
     severity: asNullableString(formData, "allergySeverity"),
     comments: asNullableString(formData, "allergyComments"),
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -651,19 +777,19 @@ export async function addMhpProviderAction(formData: FormData) {
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = asNullableString(formData, "providerPhone");
   const providerName = asString(formData, "providerName");
-  addMockRecord("memberProviders", {
+  await insertHealthRow("memberProviders", {
     member_id: memberId,
     provider_name: providerName,
     specialty: specialty.specialty,
     specialty_other: specialty.specialty_other,
     practice_name: practiceName,
     provider_phone: providerPhone,
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
-  upsertProviderDirectoryFromValues({
+  await upsertProviderDirectoryFromValues({
     providerName,
     specialty: specialty.specialty,
     specialtyOther: specialty.specialty_other,
@@ -672,7 +798,7 @@ export async function addMhpProviderAction(formData: FormData) {
     actor,
     now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -689,7 +815,7 @@ export async function updateMhpProviderAction(formData: FormData) {
   const providerName = asString(formData, "providerName");
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = asNullableString(formData, "providerPhone");
-  updateMockRecord("memberProviders", providerId, {
+  await updateHealthRow("memberProviders", providerId, {
     provider_name: providerName,
     specialty: specialty.specialty,
     specialty_other: specialty.specialty_other,
@@ -697,7 +823,7 @@ export async function updateMhpProviderAction(formData: FormData) {
     provider_phone: providerPhone,
     updated_at: now
   });
-  upsertProviderDirectoryFromValues({
+  await upsertProviderDirectoryFromValues({
     providerName,
     specialty: specialty.specialty,
     specialtyOther: specialty.specialty_other,
@@ -706,7 +832,7 @@ export async function updateMhpProviderAction(formData: FormData) {
     actor,
     now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -718,9 +844,9 @@ export async function deleteMhpDiagnosisInlineAction(formData: FormData) {
   const diagnosisId = asString(formData, "diagnosisId");
   if (!memberId || !diagnosisId) return { ok: false, error: "Missing diagnosis reference." };
   const now = toEasternISO();
-  const deleted = removeMockRecord("memberDiagnoses", diagnosisId);
+  const deleted = await deleteHealthRow("memberDiagnoses", diagnosisId);
   if (!deleted) return { ok: false, error: "Diagnosis not found." };
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true };
 }
@@ -731,9 +857,9 @@ export async function deleteMhpProviderAction(formData: FormData) {
   const providerId = asString(formData, "providerId");
   if (!memberId || !providerId) return;
   const now = toEasternISO();
-  const deleted = removeMockRecord("memberProviders", providerId);
+  const deleted = await deleteHealthRow("memberProviders", providerId);
   if (!deleted) return;
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
 }
@@ -744,9 +870,9 @@ export async function deleteMhpMedicationAction(formData: FormData) {
   const medicationId = asString(formData, "medicationId");
   if (!memberId || !medicationId) return;
   const now = toEasternISO();
-  const deleted = removeMockRecord("memberMedications", medicationId);
+  const deleted = await deleteHealthRow("memberMedications", medicationId);
   if (!deleted) return;
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
 }
@@ -757,10 +883,10 @@ export async function deleteMhpAllergyAction(formData: FormData) {
   const allergyId = asString(formData, "allergyId");
   if (!memberId || !allergyId) return;
   const now = toEasternISO();
-  const deleted = removeMockRecord("memberAllergies", allergyId);
+  const deleted = await deleteHealthRow("memberAllergies", allergyId);
   if (!deleted) return;
-  touchMhpProfile(memberId, actor, now);
-  syncMhpToCommandCenter(
+  await touchMhpProfile(memberId, actor, now);
+  await syncMhpToCommandCenter(
     memberId,
     {
       id: actor.id,
@@ -783,20 +909,20 @@ export async function addMhpProviderInlineAction(formData: FormData) {
   const specialty = resolveProviderSpecialty(formData);
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = asNullableString(formData, "providerPhone");
-  const created = addMockRecord("memberProviders", {
+  const created = await insertHealthRow("memberProviders", {
     member_id: memberId,
     provider_name: providerName,
     specialty: specialty.specialty,
     specialty_other: specialty.specialty_other,
     practice_name: practiceName,
     provider_phone: providerPhone,
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
 
-  upsertProviderDirectoryFromValues({
+  await upsertProviderDirectoryFromValues({
     providerName,
     specialty: specialty.specialty,
     specialtyOther: specialty.specialty_other,
@@ -806,7 +932,7 @@ export async function addMhpProviderInlineAction(formData: FormData) {
     now
   });
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
 
   return { ok: true, row: created };
@@ -819,10 +945,10 @@ export async function deleteMhpProviderInlineAction(formData: FormData) {
   if (!memberId || !providerId) return { ok: false, error: "Missing provider reference." };
 
   const now = toEasternISO();
-  const deleted = removeMockRecord("memberProviders", providerId);
+  const deleted = await deleteHealthRow("memberProviders", providerId);
   if (!deleted) return { ok: false, error: "Provider not found." };
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true };
 }
@@ -839,7 +965,7 @@ export async function updateMhpProviderInlineAction(formData: FormData) {
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = asNullableString(formData, "providerPhone");
   const now = toEasternISO();
-  const updated = updateMockRecord("memberProviders", providerId, {
+  const updated = await updateHealthRow("memberProviders", providerId, {
     provider_name: providerName,
     specialty: specialty.specialty,
     specialty_other: specialty.specialty_other,
@@ -849,7 +975,7 @@ export async function updateMhpProviderInlineAction(formData: FormData) {
   });
   if (!updated) return { ok: false, error: "Provider not found." };
 
-  upsertProviderDirectoryFromValues({
+  await upsertProviderDirectoryFromValues({
     providerName,
     specialty: specialty.specialty,
     specialtyOther: specialty.specialty_other,
@@ -859,7 +985,7 @@ export async function updateMhpProviderInlineAction(formData: FormData) {
     now
   });
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true, row: updated };
 }
@@ -875,7 +1001,7 @@ export async function addMhpMedicationInlineAction(formData: FormData) {
   if (!parsedLaterality.ok) return { ok: false, error: parsedLaterality.error };
 
   const now = toEasternISO();
-  const created = addMockRecord("memberMedications", {
+  const created = await insertHealthRow("memberMedications", {
     member_id: memberId,
     medication_name: medicationName,
     date_started: asString(formData, "dateStarted") || toEasternDate(),
@@ -888,14 +1014,14 @@ export async function addMhpMedicationInlineAction(formData: FormData) {
     route,
     route_laterality: parsedLaterality.value,
     comments: asNullableString(formData, "medicationComments"),
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
 
-  touchMhpProfile(memberId, actor, now);
-  syncMhpToCommandCenter(
+  await touchMhpProfile(memberId, actor, now);
+  await syncMhpToCommandCenter(
     memberId,
     {
       id: actor.id,
@@ -919,7 +1045,7 @@ export async function updateMhpMedicationInlineAction(formData: FormData) {
   if (!parsedLaterality.ok) return { ok: false, error: parsedLaterality.error };
 
   const now = toEasternISO();
-  const updated = updateMockRecord("memberMedications", medicationId, {
+  const updated = await updateHealthRow("memberMedications", medicationId, {
     medication_name: medicationName,
     date_started: asString(formData, "dateStarted") || toEasternDate(),
     dose: asNullableString(formData, "dose"),
@@ -933,7 +1059,7 @@ export async function updateMhpMedicationInlineAction(formData: FormData) {
   });
   if (!updated) return { ok: false, error: "Medication not found." };
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true, row: updated };
 }
@@ -945,10 +1071,10 @@ export async function deleteMhpMedicationInlineAction(formData: FormData) {
   if (!memberId || !medicationId) return { ok: false, error: "Missing medication reference." };
 
   const now = toEasternISO();
-  const deleted = removeMockRecord("memberMedications", medicationId);
+  const deleted = await deleteHealthRow("memberMedications", medicationId);
   if (!deleted) return { ok: false, error: "Medication not found." };
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true };
 }
@@ -961,14 +1087,14 @@ export async function inactivateMhpMedicationInlineAction(formData: FormData) {
 
   const now = toEasternISO();
   const today = toEasternDate();
-  const updated = updateMockRecord("memberMedications", medicationId, {
+  const updated = await updateHealthRow("memberMedications", medicationId, {
     medication_status: "inactive",
     inactivated_at: today,
     updated_at: now
   });
   if (!updated) return { ok: false, error: "Medication not found." };
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true, row: updated };
 }
@@ -981,7 +1107,7 @@ export async function reactivateMhpMedicationInlineAction(formData: FormData) {
 
   const now = toEasternISO();
   const today = toEasternDate();
-  const updated = updateMockRecord("memberMedications", medicationId, {
+  const updated = await updateHealthRow("memberMedications", medicationId, {
     medication_status: "active",
     date_started: today,
     inactivated_at: null,
@@ -989,7 +1115,7 @@ export async function reactivateMhpMedicationInlineAction(formData: FormData) {
   });
   if (!updated) return { ok: false, error: "Medication not found." };
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true, row: updated };
 }
@@ -1002,19 +1128,19 @@ export async function addMhpAllergyInlineAction(formData: FormData) {
   if (!allergyName) return { ok: false, error: "Allergy is required." };
 
   const now = toEasternISO();
-  const created = addMockRecord("memberAllergies", {
+  const created = await insertHealthRow("memberAllergies", {
     member_id: memberId,
     allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: allergyName,
     severity: asNullableString(formData, "allergySeverity"),
     comments: asNullableString(formData, "allergyComments"),
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true, row: created };
 }
@@ -1026,11 +1152,11 @@ export async function deleteMhpAllergyInlineAction(formData: FormData) {
   if (!memberId || !allergyId) return { ok: false, error: "Missing allergy reference." };
 
   const now = toEasternISO();
-  const deleted = removeMockRecord("memberAllergies", allergyId);
+  const deleted = await deleteHealthRow("memberAllergies", allergyId);
   if (!deleted) return { ok: false, error: "Allergy not found." };
 
-  touchMhpProfile(memberId, actor, now);
-  syncMhpToCommandCenter(
+  await touchMhpProfile(memberId, actor, now);
+  await syncMhpToCommandCenter(
     memberId,
     {
       id: actor.id,
@@ -1051,7 +1177,7 @@ export async function updateMhpAllergyInlineAction(formData: FormData) {
   if (!allergyName) return { ok: false, error: "Allergy is required." };
 
   const now = toEasternISO();
-  const updated = updateMockRecord("memberAllergies", allergyId, {
+  const updated = await updateHealthRow("memberAllergies", allergyId, {
     allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: allergyName,
     severity: asNullableString(formData, "allergySeverity"),
@@ -1060,8 +1186,8 @@ export async function updateMhpAllergyInlineAction(formData: FormData) {
   });
   if (!updated) return { ok: false, error: "Allergy not found." };
 
-  touchMhpProfile(memberId, actor, now);
-  syncMhpToCommandCenter(
+  await touchMhpProfile(memberId, actor, now);
+  await syncMhpToCommandCenter(
     memberId,
     {
       id: actor.id,
@@ -1079,18 +1205,18 @@ export async function addMhpEquipmentAction(formData: FormData) {
   if (!memberId) return;
   const now = toEasternISO();
 
-  addMockRecord("memberEquipment", {
+  await insertHealthRow("memberEquipment", {
     member_id: memberId,
     equipment_type: asString(formData, "equipmentType"),
     provider_source: null,
     status: asNullableString(formData, "equipmentStatus") ?? "Active",
     comments: asNullableString(formData, "equipmentComments"),
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=equipment`);
@@ -1103,14 +1229,14 @@ export async function updateMhpEquipmentAction(formData: FormData) {
   if (!memberId || !equipmentId) return;
   const now = toEasternISO();
 
-  updateMockRecord("memberEquipment", equipmentId, {
+  await updateHealthRow("memberEquipment", equipmentId, {
     equipment_type: asString(formData, "equipmentType"),
     provider_source: null,
     status: asNullableString(formData, "equipmentStatus") ?? "Active",
     comments: asNullableString(formData, "equipmentComments"),
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=equipment`);
@@ -1124,18 +1250,18 @@ export async function addMhpEquipmentInlineAction(formData: FormData) {
   if (!equipmentType) return { ok: false, error: "Equipment type is required." };
 
   const now = toEasternISO();
-  const created = addMockRecord("memberEquipment", {
+  const created = await insertHealthRow("memberEquipment", {
     member_id: memberId,
     equipment_type: equipmentType,
     provider_source: null,
     status: asNullableString(formData, "equipmentStatus") ?? "Active",
     comments: asNullableString(formData, "equipmentComments"),
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true, row: created };
 }
@@ -1147,7 +1273,7 @@ export async function updateMhpEquipmentInlineAction(formData: FormData) {
   if (!memberId || !equipmentId) return { ok: false, error: "Missing equipment reference." };
 
   const now = toEasternISO();
-  const updated = updateMockRecord("memberEquipment", equipmentId, {
+  const updated = await updateHealthRow("memberEquipment", equipmentId, {
     equipment_type: asString(formData, "equipmentType"),
     provider_source: null,
     status: asNullableString(formData, "equipmentStatus") ?? "Active",
@@ -1156,7 +1282,7 @@ export async function updateMhpEquipmentInlineAction(formData: FormData) {
   });
   if (!updated) return { ok: false, error: "Equipment not found." };
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true, row: updated };
 }
@@ -1168,10 +1294,10 @@ export async function deleteMhpEquipmentInlineAction(formData: FormData) {
   if (!memberId || !equipmentId) return { ok: false, error: "Missing equipment reference." };
 
   const now = toEasternISO();
-  const deleted = removeMockRecord("memberEquipment", equipmentId);
+  const deleted = await deleteHealthRow("memberEquipment", equipmentId);
   if (!deleted) return { ok: false, error: "Equipment not found." };
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true };
 }
@@ -1182,16 +1308,16 @@ export async function addMhpNoteAction(formData: FormData) {
   if (!memberId) return;
   const now = toEasternISO();
 
-  addMockRecord("memberNotes", {
+  await insertHealthRow("memberNotes", {
     member_id: memberId,
     note_type: asString(formData, "noteType") || "General",
     note_text: asString(formData, "noteText"),
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=notes`);
@@ -1204,12 +1330,12 @@ export async function updateMhpNoteAction(formData: FormData) {
   if (!memberId || !noteId) return;
   const now = toEasternISO();
 
-  updateMockRecord("memberNotes", noteId, {
+  await updateHealthRow("memberNotes", noteId, {
     note_type: asString(formData, "noteType") || "General",
     note_text: asString(formData, "noteText"),
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=notes`);
@@ -1223,16 +1349,16 @@ export async function addMhpNoteInlineAction(formData: FormData) {
   if (!noteText) return { ok: false, error: "Note text is required." };
 
   const now = toEasternISO();
-  const created = addMockRecord("memberNotes", {
+  const created = await insertHealthRow("memberNotes", {
     member_id: memberId,
     note_type: asString(formData, "noteType") || "General",
     note_text: noteText,
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true, row: created };
 }
@@ -1246,14 +1372,14 @@ export async function updateMhpNoteInlineAction(formData: FormData) {
   if (!noteText) return { ok: false, error: "Note text is required." };
 
   const now = toEasternISO();
-  const updated = updateMockRecord("memberNotes", noteId, {
+  const updated = await updateHealthRow("memberNotes", noteId, {
     note_type: asString(formData, "noteType") || "General",
     note_text: noteText,
     updated_at: now
   });
   if (!updated) return { ok: false, error: "Note not found." };
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true, row: updated };
 }
@@ -1265,10 +1391,10 @@ export async function deleteMhpNoteInlineAction(formData: FormData) {
   if (!memberId || !noteId) return { ok: false, error: "Missing note reference." };
 
   const now = toEasternISO();
-  const deleted = removeMockRecord("memberNotes", noteId);
+  const deleted = await deleteHealthRow("memberNotes", noteId);
   if (!deleted) return { ok: false, error: "Note not found." };
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
   return { ok: true };
 }
@@ -1282,7 +1408,7 @@ export async function updateMhpTrackInlineAction(formData: FormData) {
   const allowedTracks = new Set(["Track 1", "Track 2", "Track 3"]);
   if (!allowedTracks.has(track)) return { ok: false, error: "Invalid track." };
 
-  const db = getMockDb();
+  const db = await getHealthProfileContext();
   const member = db.members.find((row) => row.id === memberId);
   if (!member) return { ok: false, error: "Member not found." };
 
@@ -1290,22 +1416,28 @@ export async function updateMhpTrackInlineAction(formData: FormData) {
   if (!changed) return { ok: true, changed: false, track };
 
   const now = toEasternISO();
-  updateMockRecord("members", memberId, {
+  await updateHealthRow("members", memberId, {
     latest_assessment_track: track
   });
 
-  addMockRecord("memberNotes", {
+  await insertHealthRow("memberNotes", {
     member_id: memberId,
     note_type: "Care Plan",
     note_text: `Track changed to ${track}. Care plan review requested.`,
-    created_by_user_id: actor.id,
+    created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
     created_at: now,
     updated_at: now
   });
 
-  touchMhpProfile(memberId, actor, now);
+  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
 
   return { ok: true, changed: true, track };
 }
+
+
+
+
+
+

@@ -27,14 +27,14 @@ export default async function ManagedUserDetailPage({
   const query: Record<string, string | string[] | undefined> = (await searchParams) ?? {};
   const from = firstString(query.from);
   const to = firstString(query.to);
-  const user = getManagedUserById(userId);
+  const user = await getManagedUserById(userId);
 
   if (!user) {
     notFound();
   }
 
   const permissionRows = summarizePermissionSet(user.permissions);
-  const recentActivity = getManagedUserRecentActivity(user.id, { from, to, limit: 200 });
+  const recentActivity = await getManagedUserRecentActivity(user.id, { from, to, limit: 200 });
   const groupedRecentActivity = recentActivity.items.reduce<Array<{ activityType: string; items: typeof recentActivity.items }>>((groups, item) => {
     const existing = groups.find((group) => group.activityType === item.activityType);
     if (existing) {

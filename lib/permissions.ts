@@ -181,6 +181,7 @@ export const NAV_ITEMS: AppNavItem[] = [
   { label: "Operations Home", href: "/operations", group: "Operations", module: "operations" },
   { label: "Attendance", href: "/operations/attendance", group: "Operations", module: "operations" },
   { label: "Member Command Center", href: "/operations/member-command-center", group: "Operations", module: "operations" },
+  { label: "Schedule Changes", href: "/operations/schedule-changes", group: "Operations", module: "operations" },
   { label: "Additional Charges", href: "/operations/additional-charges", group: "Operations", module: "operations" },
   { label: "Holds", href: "/operations/holds", group: "Operations", module: "operations" },
   { label: "Billing", href: "/operations/payor", group: "Operations", module: "operations", roles: ["admin", "manager", "director", "coordinator"] },

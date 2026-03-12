@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getMemberCommandCenterIndex } from "@/lib/services/member-command-center";
+import { getMemberCommandCenterIndexSupabase } from "@/lib/services/member-command-center-supabase";
 import { formatOptionalDate } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
@@ -27,7 +27,7 @@ export default async function MemberCommandCenterIndexPage({
   const q = firstString(params.q) ?? "";
   const status = (firstString(params.status) as "all" | "active" | "inactive" | undefined) ?? "active";
 
-  const rows = getMemberCommandCenterIndex({ q, status });
+  const rows = await getMemberCommandCenterIndexSupabase({ q, status });
 
   return (
     <div className="space-y-4">

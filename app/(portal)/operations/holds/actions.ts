@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { MEMBER_HOLD_REASON_OPTIONS } from "@/lib/canonical";
-import { createMemberHold, endMemberHold } from "@/lib/services/holds";
+import { createMemberHoldSupabase, endMemberHoldSupabase } from "@/lib/services/holds-supabase";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 
 function asString(formData: FormData, key: string) {
@@ -54,7 +54,7 @@ export async function createMemberHoldAction(formData: FormData) {
     throw new Error("End date cannot be earlier than start date.");
   }
 
-  createMemberHold({
+  await createMemberHoldSupabase({
     memberId,
     startDate,
     endDate,
@@ -75,7 +75,7 @@ export async function endMemberHoldAction(formData: FormData) {
     throw new Error("Hold reference is required.");
   }
 
-  const ended = endMemberHold({
+  const ended = await endMemberHoldSupabase({
     holdId,
     actorUserId: actor.id,
     actorName: actor.full_name
@@ -86,4 +86,3 @@ export async function endMemberHoldAction(formData: FormData) {
 
   revalidateHoldsWorkflows();
 }
-

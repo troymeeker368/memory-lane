@@ -2,8 +2,8 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
-import { getMockDb } from "@/lib/mock-repo";
-import { getPhysicianOrders } from "@/lib/services/physician-orders";
+import { getPhysicianOrders } from "@/lib/services/physician-orders-supabase";
+import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
@@ -23,14 +23,21 @@ export default async function PhysicianOrdersIndexPage({
   const status = firstString(query.status) ?? "all";
   const q = firstString(query.q) ?? "";
 
-  const rows = getPhysicianOrders({
+  const rows = await getPhysicianOrders({
     memberId: memberId || undefined,
-    status: status === "Draft" || status === "Completed" || status === "Signed" ? status : "all",
+    status:
+      status === "Draft" || status === "Sent" || status === "Signed" || status === "Expired" || status === "Superseded"
+        ? status
+        : "all",
     q
   });
-  const members = getMockDb().members
-    .filter((row) => row.status === "active")
-    .sort((left, right) => left.display_name.localeCompare(right.display_name, undefined, { sensitivity: "base" }));
+  const supabase = await createClient();
+  const { data: memberRows } = await supabase
+    .from("members")
+    .select("id, display_name, status")
+    .eq("status", "active")
+    .order("display_name", { ascending: true });
+  const members = memberRows ?? [];
 
   return (
     <div className="space-y-4">
@@ -72,8 +79,10 @@ export default async function PhysicianOrdersIndexPage({
           <select name="status" defaultValue={status} className="h-10 rounded-lg border border-border px-3 text-sm">
             <option value="all">All statuses</option>
             <option value="Draft">Draft</option>
-            <option value="Completed">Completed</option>
+            <option value="Sent">Sent</option>
             <option value="Signed">Signed</option>
+            <option value="Expired">Expired</option>
+            <option value="Superseded">Superseded</option>
           </select>
           <input
             name="q"
@@ -104,7 +113,7 @@ export default async function PhysicianOrdersIndexPage({
               <th>Status</th>
               <th>Level of Care</th>
               <th>Provider</th>
-              <th>Completed</th>
+              <th>Sent</th>
               <th>Next Renewal Due</th>
               <th>Renewal Status</th>
               <th>Signed</th>

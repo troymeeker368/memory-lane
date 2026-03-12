@@ -16,7 +16,7 @@ export async function generateCarePlanPdfAction(input: { carePlanId: string }) {
 
   try {
     const generated = await buildCarePlanPdfDataUrl(carePlanId);
-    const saved = saveGeneratedMemberPdfToFiles({
+    const saved = await saveGeneratedMemberPdfToFiles({
       memberId: generated.carePlan.memberId,
       memberName: generated.carePlan.memberName,
       documentLabel: "Care Plan",
@@ -48,3 +48,4 @@ export async function generateCarePlanPdfAction(input: { carePlanId: string }) {
     } as const;
   }
 }
+

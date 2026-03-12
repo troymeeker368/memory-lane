@@ -31,7 +31,7 @@ export default async function CarePlanDueReportPage({
   const memberId = typeof params.memberId === "string" ? params.memberId : "All";
   const members = await getMembers();
   const tracks = getCarePlanTracks();
-  const plans = getCarePlans({
+  const plans = await getCarePlans({
     status,
     track: track === "All" ? undefined : track,
     memberId: memberId === "All" ? undefined : memberId

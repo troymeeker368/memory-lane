@@ -37,7 +37,7 @@ async function loadPngFromPublic(pdf: PDFDocument, src: string) {
 }
 
 async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?: string[]) {
-  const badge = getMemberNameBadgeDetail(memberId);
+  const badge = await getMemberNameBadgeDetail(memberId);
   if (!badge) {
     return { error: "Member badge data not found." } as const;
   }
@@ -189,7 +189,7 @@ export async function generateMemberNameBadgePdfAction(input: {
     return { ok: false, error: built.error } as const;
   }
 
-  const saved = saveGeneratedMemberPdfToFiles({
+  const saved = await saveGeneratedMemberPdfToFiles({
     memberId,
     memberName: built.badge.member.name,
     documentLabel: "Name Badge",
@@ -213,3 +213,4 @@ export async function generateMemberNameBadgePdfAction(input: {
     dataUrl: built.dataUrl
   } as const;
 }
+

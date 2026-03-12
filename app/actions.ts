@@ -1,4 +1,4 @@
-﻿"use server";
+"use server";
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -24,50 +24,32 @@ import {
   canonicalLeadStatus
 } from "@/lib/canonical";
 import { calculateAssessmentTotal, getAssessmentTrack } from "@/lib/assessment";
-import {
-  addAuditLogEvent,
-  addLeadStageHistoryEntry,
-  addMockRecord,
-  ensureIntakeMemberFromLead,
-  getMemberName,
-  getMockDb,
-  getStaffName,
-  removeMockRecord,
-  setDocumentationReview,
-  setMockMemberStatus,
-  setTimeReview,
-  updateMockRecord,
-  upsertMemberFromLead
-} from "@/lib/mock-repo";
-import { prefillMemberHealthProfileFromAssessment } from "@/lib/services/member-health-profiles";
-import { prefillMemberCommandCenterFromAssessment } from "@/lib/services/member-command-center";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
-import { syncCommandCenterToMhp, syncMhpToCommandCenter } from "@/lib/services/member-profile-sync";
+import { createDraftPhysicianOrderFromAssessment } from "@/lib/services/physician-orders-supabase";
 import { buildIntakeAssessmentPdfDataUrl } from "@/lib/services/intake-assessment-pdf";
 import { calculateLatePickupFee, getOperationalSettings, parseBusNumbersInput, updateOperationalSettings } from "@/lib/services/operations-settings";
-import { getActiveCenterBillingSetting, getActiveMemberBillingSetting, getMemberAttendanceBillingSetting } from "@/lib/services/billing";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { normalizeRoleKey } from "@/lib/permissions";
-import { isMockMode } from "@/lib/runtime";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import type { AuditAction } from "@/types/app";
 
-async function insertAudit(action: AuditAction, entityType: string, entityId: string | null, details: Record<string, unknown>) {
-  if (isMockMode()) {
-    const profile = await getCurrentProfile();
-    addAuditLogEvent({
-      actorUserId: profile.id,
-      actorName: profile.full_name,
-      actorRole: profile.role,
-      action,
-      entityType,
-      entityId,
-      details
-    });
-    return;
-  }
+function isPostgresColumnMissingError(error: unknown, columnName: string) {
+  const candidate = error as { code?: string; message?: string } | null;
+  return (
+    candidate?.code === "42703" &&
+    typeof candidate.message === "string" &&
+    candidate.message.toLowerCase().includes(columnName.toLowerCase())
+  );
+}
 
+function schemaDependencyError(details: string) {
+  return {
+    error: `Missing Supabase schema dependency: ${details}`
+  } as const;
+}
+
+async function insertAudit(action: AuditAction, entityType: string, entityId: string | null, details: Record<string, unknown>) {
   const profile = await getCurrentProfile();
   const supabase = await createClient();
 
@@ -96,27 +78,6 @@ async function requireAdminEditor() {
     return { error: "Only admin can manage ancillary pricing." } as const;
   }
   return profile;
-}
-
-function syncLeadToMemberList(lead: {
-  id?: string;
-  member_name: string;
-  member_start_date: string | null;
-  stage: string;
-  status: string;
-  closed_date: string | null;
-}) {
-  const member = upsertMemberFromLead(lead.member_name, {
-    enrollmentDate: lead.member_start_date ?? lead.closed_date ?? toEasternDate(),
-    stage: lead.stage,
-    status: lead.status,
-    leadId: lead.id ?? null
-  });
-
-  if (member) {
-    revalidatePath("/members");
-    revalidatePath(`/members/${member.id}`);
-  }
 }
 
 function leadProgressRank(stage: string, status: string) {
@@ -208,11 +169,6 @@ const credentialsSchema = z.object({
 });
 
 export async function signInAction(formData: FormData) {
-  if (isMockMode()) {
-    // TODO(backend): Restore Supabase auth sign-in once local backend is connected.
-    return { ok: true };
-  }
-
   const payload = credentialsSchema.safeParse({
     email: String(formData.get("email") || ""),
     password: String(formData.get("password") || "")
@@ -234,11 +190,6 @@ export async function signInAction(formData: FormData) {
 }
 
 export async function signOutAction() {
-  if (isMockMode()) {
-    revalidatePath("/login");
-    return;
-  }
-
   const supabase = await createClient();
   await supabase.auth.signOut();
   revalidatePath("/login");
@@ -260,37 +211,6 @@ export async function timePunchAction(raw: z.infer<typeof timePunchSchema>) {
   const profile = await getCurrentProfile();
   if (normalizeRoleKey(profile.role) !== "program-assistant") {
     return { error: "Clock in/out is only available for Program Assistant users." };
-  }
-
-  if (isMockMode()) {
-    const created = addMockRecord("timePunches", {
-      staff_user_id: profile.id,
-      staff_name: profile.full_name,
-      punch_type: payload.data.punchType,
-      punch_at: toEasternISO(),
-      within_fence: true,
-      distance_meters: payload.data.lat && payload.data.lng ? 12 : null,
-      note: payload.data.note ?? null
-    });
-    addMockRecord("punches", {
-      employee_id: profile.id,
-      employee_name: profile.full_name,
-      timestamp: created.punch_at,
-      type: created.punch_type,
-      source: "employee",
-      status: "active",
-      note: created.note ?? null,
-      created_by: profile.full_name,
-      created_at: created.punch_at,
-      updated_at: created.punch_at,
-      linked_time_punch_id: created.id
-    });
-
-    await insertAudit(payload.data.punchType === "in" ? "clock_in" : "clock_out", "time_punch", created.id, payload.data);
-    revalidatePath("/time-card");
-    revalidatePath("/time-card/punch-history");
-    revalidatePath("/");
-    return { ok: true };
   }
 
   const supabase = await createClient();
@@ -364,42 +284,11 @@ export async function createDailyActivityAction(raw: z.infer<typeof dailyActivit
   const participation = Math.round(
     (payload.data.activity1 + payload.data.activity2 + payload.data.activity3 + payload.data.activity4 + payload.data.activity5) / 5
   );
-  const memberName = payload.data.memberId ? getMemberName(payload.data.memberId) : "Unknown Member";
-
-  if (isMockMode()) {
-    const created = addMockRecord("dailyActivities", {
-      timestamp: toEasternISO(),
-      member_id: payload.data.memberId,
-      member_name: memberName,
-      activity_date: payload.data.activityDate,
-      staff_user_id: profile.id,
-      staff_name: profile.full_name,
-      staff_recording_activity: profile.full_name,
-      participation,
-      participation_reason: null,
-      activity_1_level: payload.data.activity1,
-      reason_missing_activity_1: payload.data.activity1 === 0 ? payload.data.reasonMissing1?.trim() ?? null : null,
-      activity_2_level: payload.data.activity2,
-      reason_missing_activity_2: payload.data.activity2 === 0 ? payload.data.reasonMissing2?.trim() ?? null : null,
-      activity_3_level: payload.data.activity3,
-      reason_missing_activity_3: payload.data.activity3 === 0 ? payload.data.reasonMissing3?.trim() ?? null : null,
-      activity_4_level: payload.data.activity4,
-      reason_missing_activity_4: payload.data.activity4 === 0 ? payload.data.reasonMissing4?.trim() ?? null : null,
-      activity_5_level: payload.data.activity5,
-      reason_missing_activity_5: payload.data.activity5 === 0 ? payload.data.reasonMissing5?.trim() ?? null : null,
-      notes: payload.data.notes ?? null,
-      email_address: profile.email,
-      created_at: toEasternISO()
-    });
-
-    await insertAudit("create_log", "daily_activity_log", created.id, payload.data);
-    revalidatePath("/documentation");
-    revalidatePath("/documentation/activity");
-    revalidatePath("/");
-    return { ok: true };
-  }
 
   const supabase = await createClient();
+  if (!payload.data.memberId) {
+    return { error: "Member is required." };
+  }
   const { data, error } = await supabase
     .from("daily_activity_logs")
     .insert({
@@ -407,15 +296,15 @@ export async function createDailyActivityAction(raw: z.infer<typeof dailyActivit
       activity_date: payload.data.activityDate,
       staff_user_id: profile.id,
       activity_1_level: payload.data.activity1,
-      reason_missing_activity_1: payload.data.activity1 === 0 ? payload.data.reasonMissing1?.trim() ?? null : null,
+      missing_reason_1: payload.data.activity1 === 0 ? payload.data.reasonMissing1?.trim() ?? null : null,
       activity_2_level: payload.data.activity2,
-      reason_missing_activity_2: payload.data.activity2 === 0 ? payload.data.reasonMissing2?.trim() ?? null : null,
+      missing_reason_2: payload.data.activity2 === 0 ? payload.data.reasonMissing2?.trim() ?? null : null,
       activity_3_level: payload.data.activity3,
-      reason_missing_activity_3: payload.data.activity3 === 0 ? payload.data.reasonMissing3?.trim() ?? null : null,
+      missing_reason_3: payload.data.activity3 === 0 ? payload.data.reasonMissing3?.trim() ?? null : null,
       activity_4_level: payload.data.activity4,
-      reason_missing_activity_4: payload.data.activity4 === 0 ? payload.data.reasonMissing4?.trim() ?? null : null,
+      missing_reason_4: payload.data.activity4 === 0 ? payload.data.reasonMissing4?.trim() ?? null : null,
       activity_5_level: payload.data.activity5,
-      reason_missing_activity_5: payload.data.activity5 === 0 ? payload.data.reasonMissing5?.trim() ?? null : null,
+      missing_reason_5: payload.data.activity5 === 0 ? payload.data.reasonMissing5?.trim() ?? null : null,
       notes: payload.data.notes ?? null
     })
     .select("id")
@@ -478,32 +367,9 @@ function splitLegacyLostReasonParts(lostReason: string | null | undefined) {
 function resolveLegacyReferralLookup(input: { partnerId?: string | null; referralSourceId?: string | null; referralName?: string | null }) {
   const requestedPartnerId = (input.partnerId ?? "").trim();
   const requestedReferralSourceId = (input.referralSourceId ?? "").trim();
-  const referralName = (input.referralName ?? "").trim().toLowerCase();
-
-  if (!isMockMode()) {
-    return { partnerId: requestedPartnerId, referralSourceId: requestedReferralSourceId };
-  }
-
-  const db = getMockDb();
-  const resolvedSource =
-    db.referralSources.find((row) => row.id === requestedReferralSourceId || row.referral_source_id === requestedReferralSourceId) ??
-    (referralName
-      ? db.referralSources.find(
-          (row) =>
-            row.contact_name.trim().toLowerCase() === referralName || row.organization_name.trim().toLowerCase() === referralName
-        ) ?? null
-      : null);
-
-  const resolvedPartnerFromInput =
-    db.partners.find((row) => row.id === requestedPartnerId || row.partner_id === requestedPartnerId) ?? null;
-  const resolvedPartnerFromSource = resolvedSource
-    ? db.partners.find((row) => row.partner_id === resolvedSource.partner_id || row.id === resolvedSource.partner_id) ?? null
-    : null;
-  const resolvedPartner = resolvedPartnerFromInput ?? resolvedPartnerFromSource;
-
   return {
-    partnerId: resolvedPartner?.id ?? requestedPartnerId,
-    referralSourceId: resolvedSource?.id ?? requestedReferralSourceId
+    partnerId: requestedPartnerId,
+    referralSourceId: requestedReferralSourceId
   };
 }
 
@@ -535,6 +401,48 @@ type LegacyLeadSaveInput = {
   closedDate?: string | null;
   allowUnlinkedReferral?: boolean;
 };
+
+type LegacyLeadRecord = {
+  id: string;
+  stage: string;
+  status: string;
+  inquiry_date: string;
+  caregiver_name: string;
+  caregiver_relationship: string | null;
+  caregiver_email: string | null;
+  caregiver_phone: string;
+  member_name: string;
+  member_dob: string | null;
+  lead_source: string;
+  lead_source_other: string | null;
+  partner_id: string | null;
+  referral_source_id: string | null;
+  referral_name: string | null;
+  likelihood: string | null;
+  next_follow_up_date: string | null;
+  next_follow_up_type: string | null;
+  tour_date: string | null;
+  tour_completed: boolean;
+  discovery_date: string | null;
+  member_start_date: string | null;
+  notes_summary: string | null;
+  lost_reason: string | null;
+  closed_date: string | null;
+};
+
+async function getLegacyLeadRecordById(leadId: string): Promise<{ lead: LegacyLeadRecord | null; error?: string }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("leads")
+    .select(
+      "id, stage, status, inquiry_date, caregiver_name, caregiver_relationship, caregiver_email, caregiver_phone, member_name, member_dob, lead_source, lead_source_other, partner_id, referral_source_id, referral_name, likelihood, next_follow_up_date, next_follow_up_type, tour_date, tour_completed, discovery_date, member_start_date, notes_summary, lost_reason, closed_date"
+    )
+    .eq("id", leadId)
+    .maybeSingle();
+
+  if (error) return { lead: null, error: error.message };
+  return { lead: (data as LegacyLeadRecord | null) ?? null };
+}
 
 function buildLegacyLeadSavePayload(input: LegacyLeadSaveInput): Parameters<typeof saveSalesLeadAction>[0] {
   const stage = normalizeLegacyLeadStageOption(input.stage);
@@ -675,92 +583,30 @@ export async function createAncillaryChargeAction(raw: z.infer<typeof ancillaryS
     return normalized.includes("late pick-up") || normalized.includes("late pickup");
   };
 
-  if (isMockMode()) {
-    const db = getMockDb();
-    const category = db.ancillaryCategories.find((c) => c.id === payload.data.categoryId);
-    const requiresLatePickupTime = isLatePickupCategory(category?.name);
-    if (requiresLatePickupTime && !payload.data.latePickupTime?.trim()) {
-      return { error: "Late pick-up time is required for late pick-up charges." };
-    }
-    const latePickupTime = requiresLatePickupTime ? payload.data.latePickupTime?.trim() || null : null;
-    let amountCents = category?.price_cents ?? 0;
-    if (requiresLatePickupTime) {
-      // Late pickup charges are computed from centralized operations rules, not static category price.
-      const fee = calculateLatePickupFee({
-        latePickupTime: latePickupTime ?? "",
-        rules: getOperationalSettings().latePickupRules
-      });
-      if (!fee) {
-        return { error: "Invalid late pick-up time." };
-      }
-      if (fee.amountCents <= 0) {
-        return { error: "Selected pick-up time is not later than the configured late threshold." };
-      }
-      amountCents = fee.amountCents;
-    }
-    const existingDuplicate = db.ancillaryLogs.find((row) => {
-      const sameMember = row.member_id === payload.data.memberId;
-      const sameCategory = row.category_id === payload.data.categoryId;
-      const sameDate = row.service_date === payload.data.serviceDate;
-      const sameSourceEntity = (row.source_entity ?? null) === (payload.data.sourceEntity ?? null);
-      const sameSourceId = (row.source_entity_id ?? null) === (payload.data.sourceEntityId ?? null);
-      return sameMember && sameCategory && sameDate && sameSourceEntity && sameSourceId;
-    });
-
-    if (existingDuplicate) {
-      return { error: "Duplicate ancillary charge detected for this member/date/category/source." };
-    }
-
-    const quantity = 1;
-    const unitRate = Number((amountCents / 100).toFixed(2));
-    const totalAmount = Number((unitRate * quantity).toFixed(2));
-    const created = addMockRecord("ancillaryLogs", {
-      timestamp: toEasternISO(),
-      member_id: payload.data.memberId,
-      member_name: getMemberName(payload.data.memberId),
-      category_id: payload.data.categoryId,
-      category_name: category?.name ?? "Unknown",
-      charge_type: category?.name ?? "Ancillary Charge",
-      amount_cents: amountCents,
-      service_date: payload.data.serviceDate,
-      charge_date: payload.data.serviceDate,
-      late_pickup_time: latePickupTime,
-      staff_user_id: profile.id,
-      staff_name: profile.full_name,
-      staff_recording_entry: profile.full_name,
-      notes: payload.data.notes ?? null,
-      source_entity: payload.data.sourceEntity ?? null,
-      source_entity_id: payload.data.sourceEntityId ?? null,
-      quantity,
-      unit_rate: unitRate,
-      total_amount: totalAmount,
-      billable: true,
-      billing_status: "Unbilled",
-      billing_exclusion_reason: null,
-      invoice_id: null,
-      created_at: toEasternISO()
-    });
-
-    await insertAudit("create_log", "ancillary_charge", created.id, payload.data);
-    revalidatePath("/ancillary");
-    revalidatePath("/documentation/ancillary");
-    revalidatePath("/reports/monthly-ancillary");
-    return { ok: true };
+  const supabase = await createClient();
+  const { data: category, error: categoryError } = await supabase
+    .from("ancillary_charge_categories")
+    .select("id, name, price_cents")
+    .eq("id", payload.data.categoryId)
+    .maybeSingle();
+  if (categoryError) {
+    return { error: categoryError.message };
+  }
+  if (!category) {
+    return { error: "Ancillary charge category not found." };
   }
 
-  const supabase = await createClient();
-  // TODO(backend): Enforce category rule server-side in DB constraints once backend tables are managed.
-  const mockDb = getMockDb();
-  const category = mockDb.ancillaryCategories.find((c) => c.id === payload.data.categoryId);
   const requiresLatePickupTime = isLatePickupCategory(category?.name);
   if (requiresLatePickupTime && !payload.data.latePickupTime?.trim()) {
     return { error: "Late pick-up time is required for late pick-up charges." };
   }
+
   const latePickupTime = requiresLatePickupTime ? payload.data.latePickupTime?.trim() || null : null;
+  let amountCents = Number(category.price_cents ?? 0);
   if (requiresLatePickupTime) {
     const fee = calculateLatePickupFee({
       latePickupTime: latePickupTime ?? "",
-      rules: getOperationalSettings().latePickupRules
+      rules: (await getOperationalSettings()).latePickupRules
     });
     if (!fee) {
       return { error: "Invalid late pick-up time." };
@@ -768,7 +614,40 @@ export async function createAncillaryChargeAction(raw: z.infer<typeof ancillaryS
     if (fee.amountCents <= 0) {
       return { error: "Selected pick-up time is not later than the configured late threshold." };
     }
+    amountCents = fee.amountCents;
   }
+
+  const sourceEntity = payload.data.sourceEntity?.trim() || null;
+  const sourceEntityId = payload.data.sourceEntityId?.trim() || null;
+  const duplicateBaseQuery = supabase
+    .from("ancillary_charge_logs")
+    .select("id")
+    .eq("member_id", payload.data.memberId)
+    .eq("category_id", payload.data.categoryId)
+    .eq("service_date", payload.data.serviceDate);
+  const duplicateQuery =
+    sourceEntity || sourceEntityId
+      ? duplicateBaseQuery.eq("source_entity", sourceEntity).eq("source_entity_id", sourceEntityId)
+      : duplicateBaseQuery.is("source_entity", null).is("source_entity_id", null);
+  const { data: duplicate, error: duplicateError } = await duplicateQuery.limit(1).maybeSingle();
+  if (duplicateError) {
+    if (
+      isPostgresColumnMissingError(duplicateError, "source_entity") ||
+      isPostgresColumnMissingError(duplicateError, "source_entity_id")
+    ) {
+      return schemaDependencyError(
+        "public.ancillary_charge_logs requires source_entity text and source_entity_id text for de-duplication and workflow linkage."
+      );
+    }
+    return { error: duplicateError.message };
+  }
+  if (duplicate) {
+    return { error: "Duplicate ancillary charge detected for this member/date/category/source." };
+  }
+
+  const quantity = 1;
+  const unitRate = Number((amountCents / 100).toFixed(2));
+  const amount = Number((unitRate * quantity).toFixed(2));
   const { data, error } = await supabase
     .from("ancillary_charge_logs")
     .insert({
@@ -777,18 +656,34 @@ export async function createAncillaryChargeAction(raw: z.infer<typeof ancillaryS
       service_date: payload.data.serviceDate,
       late_pickup_time: latePickupTime,
       staff_user_id: profile.id,
-      notes: payload.data.notes ?? null
+      notes: payload.data.notes ?? null,
+      source_entity: sourceEntity,
+      source_entity_id: sourceEntityId,
+      quantity,
+      unit_rate: unitRate,
+      amount,
+      billing_status: "Unbilled"
     })
     .select("id")
     .single();
 
   if (error) {
+    if (
+      isPostgresColumnMissingError(error, "source_entity") ||
+      isPostgresColumnMissingError(error, "source_entity_id")
+    ) {
+      return schemaDependencyError(
+        "public.ancillary_charge_logs requires source_entity text and source_entity_id text for workflow linkage."
+      );
+    }
     return { error: error.message };
   }
 
   await insertAudit("create_log", "ancillary_charge", data.id, payload.data);
   revalidatePath("/ancillary");
-  return { ok: true };
+  revalidatePath("/documentation/ancillary");
+  revalidatePath("/reports/monthly-ancillary");
+  return { ok: true, ancillaryChargeId: data.id };
 }
 
 const ancillaryPricingSchema = z.object({
@@ -805,20 +700,16 @@ export async function updateAncillaryCategoryPriceAction(raw: z.infer<typeof anc
   const editor = await requireAdminEditor();
   if ("error" in editor) return editor;
 
-  if (!isMockMode()) {
-    // TODO(backend): Wire ancillary category pricing updates to Supabase table.
-    return { error: "Ancillary pricing backend integration pending." };
-  }
-
+  const supabase = await createClient();
   const nextPriceCents = Math.round(payload.data.unitPriceDollars * 100);
-  const updated = updateMockRecord("ancillaryCategories", payload.data.categoryId, {
-    price_cents: nextPriceCents
-  });
-
-  if (!updated) {
-    return { error: "Ancillary charge category not found." };
-  }
-
+  const { data: updated, error } = await supabase
+    .from("ancillary_charge_categories")
+    .update({ price_cents: nextPriceCents })
+    .eq("id", payload.data.categoryId)
+    .select("id, name")
+    .maybeSingle();
+  if (error) return { error: error.message };
+  if (!updated) return { error: "Ancillary charge category not found." };
   await insertAudit("manager_review", "ancillary_category", updated.id, {
     categoryName: updated.name,
     unitPriceDollars: payload.data.unitPriceDollars,
@@ -853,13 +744,8 @@ export async function updateOperationalSettingsAction(raw: z.infer<typeof operat
   const editor = await requireAdminEditor();
   if ("error" in editor) return editor;
 
-  if (!isMockMode()) {
-    // TODO(backend): Persist operations settings in production data store.
-    return { error: "Operations settings backend integration pending." };
-  }
-
   const busNumbers = parseBusNumbersInput(payload.data.busNumbersCsv);
-  const settings = updateOperationalSettings({
+  const settings = await updateOperationalSettings({
     busNumbers,
     makeupPolicy: payload.data.makeupPolicy,
     latePickupRules: {
@@ -906,69 +792,59 @@ export async function createToiletLogAction(raw: z.infer<typeof toiletSchema>) {
     return { error: "Invalid toilet log." };
   }
 
-  if (!isMockMode()) {
-    // TODO(backend): wire to public.toilet_logs.
-    return { error: "Toilet log backend integration pending." };
+  const profile = await getCurrentProfile();
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("toilet_logs")
+    .insert({
+      member_id: payload.data.memberId,
+      event_at: payload.data.eventAt,
+      briefs: payload.data.briefs,
+      member_supplied: payload.data.memberSupplied,
+      use_type: payload.data.useType,
+      staff_user_id: profile.id,
+      notes: payload.data.notes ?? null
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    return { error: error.message };
   }
 
-  const profile = await getCurrentProfile();
-  const created = addMockRecord("toiletLogs", {
-    ratee: "5",
-    event_at: payload.data.eventAt,
-    event_date: payload.data.eventAt.slice(0, 10),
-    member_id: payload.data.memberId,
-    member_name: getMemberName(payload.data.memberId),
-    briefs: payload.data.briefs,
-    member_supplied: payload.data.memberSupplied,
-    use_type: payload.data.useType,
-    staff_user_id: profile.id,
-    staff_name: profile.full_name,
-    staff_assisting: profile.full_name,
-    linked_ancillary_charge_id: null,
-    notes: payload.data.notes ?? null
-  });
+  await insertAudit("create_log", "toilet_log", data.id, payload.data);
+  let warning: string | null = null;
 
   if (payload.data.briefs && !payload.data.memberSupplied) {
-    const db = getMockDb();
-    const briefsCategory = db.ancillaryCategories.find((c) => c.name.toLowerCase() === "briefs") ?? db.ancillaryCategories[0];
-
-    const ancillary = addMockRecord("ancillaryLogs", {
-      timestamp: toEasternISO(),
-      member_id: payload.data.memberId,
-      member_name: getMemberName(payload.data.memberId),
-      category_id: briefsCategory.id,
-      category_name: briefsCategory.name,
-      charge_type: briefsCategory.name,
-      amount_cents: briefsCategory.price_cents,
-      service_date: payload.data.eventAt.slice(0, 10),
-      charge_date: payload.data.eventAt.slice(0, 10),
-      late_pickup_time: null,
-      staff_user_id: profile.id,
-      staff_name: profile.full_name,
-      staff_recording_entry: profile.full_name,
-      notes: "Auto-generated from Toilet Log (briefs changed and not member supplied)",
-      source_entity: "toiletLogs",
-      source_entity_id: created.id,
-      quantity: 1,
-      unit_rate: Number((briefsCategory.price_cents / 100).toFixed(2)),
-      total_amount: Number((briefsCategory.price_cents / 100).toFixed(2)),
-      billable: true,
-      billing_status: "Unbilled",
-      billing_exclusion_reason: null,
-      invoice_id: null,
-      created_at: toEasternISO()
-    });
-
-    updateMockRecord("toiletLogs", created.id, {
-      linked_ancillary_charge_id: ancillary.id
-    });
+    const { data: briefsCategory, error: briefsCategoryError } = await supabase
+      .from("ancillary_charge_categories")
+      .select("id, name")
+      .ilike("name", "briefs")
+      .maybeSingle();
+    if (briefsCategoryError) {
+      warning = `Toilet log saved, but briefs ancillary category lookup failed (${briefsCategoryError.message}).`;
+    }
+    if (briefsCategory && !warning) {
+      const ancillaryResult = await createAncillaryChargeAction({
+        memberId: payload.data.memberId,
+        categoryId: briefsCategory.id,
+        serviceDate: payload.data.eventAt.slice(0, 10),
+        latePickupTime: "",
+        notes: "Auto-generated from Toilet Log (briefs changed and not member supplied)",
+        sourceEntity: "toiletLogs",
+        sourceEntityId: data.id
+      });
+      if ("error" in ancillaryResult) {
+        warning = `Toilet log saved, but linked ancillary charge could not be created (${ancillaryResult.error}).`;
+      }
+    }
   }
 
   revalidatePath("/documentation/toilet");
   revalidatePath("/documentation");
   revalidatePath("/ancillary");
   revalidatePath("/reports/monthly-ancillary");
-  return { ok: true };
+  return warning ? { ok: true, warning } : { ok: true };
 }
 
 const showerSchema = z.object({
@@ -985,27 +861,25 @@ export async function createShowerLogAction(raw: z.infer<typeof showerSchema>) {
     return { error: "Invalid shower log." };
   }
 
-  if (!isMockMode()) {
-    // TODO(backend): wire to public.shower_logs.
-    return { error: "Shower log backend integration pending." };
+  const profile = await getCurrentProfile();
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("shower_logs")
+    .insert({
+      member_id: payload.data.memberId,
+      event_at: payload.data.eventAt,
+      laundry: payload.data.laundry,
+      briefs: payload.data.briefs,
+      staff_user_id: profile.id
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    return { error: error.message };
   }
 
-  const profile = await getCurrentProfile();
-  addMockRecord("showerLogs", {
-    timestamp: toEasternISO(),
-    event_at: payload.data.eventAt,
-    event_date: payload.data.eventAt.slice(0, 10),
-    member_id: payload.data.memberId,
-    member_name: getMemberName(payload.data.memberId),
-    laundry: payload.data.laundry,
-    briefs: payload.data.briefs,
-    staff_user_id: profile.id,
-    staff_name: profile.full_name,
-    staff_assisting: profile.full_name,
-    linked_ancillary_charge_id: null,
-    notes: payload.data.notes ?? null
-  });
-
+  await insertAudit("create_log", "shower_log", data.id, payload.data);
   revalidatePath("/documentation/shower");
   revalidatePath("/documentation");
   return { ok: true };
@@ -1024,54 +898,46 @@ export async function createTransportationLogAction(raw: z.infer<typeof transpor
     return { error: "Invalid transportation log." };
   }
 
-  if (!isMockMode()) {
-    // TODO(backend): wire to public.transportation_logs.
-    return { error: "Transportation log backend integration pending." };
+  const profile = await getCurrentProfile();
+  const supabase = await createClient();
+  const { data: memberRow } = await supabase
+    .from("members")
+    .select("display_name")
+    .eq("id", payload.data.memberId)
+    .maybeSingle();
+  const firstName = String(memberRow?.display_name ?? "").trim().split(/\s+/)[0] ?? "";
+
+  const { data, error } = await supabase
+    .from("transportation_logs")
+    .insert({
+      member_id: payload.data.memberId,
+      first_name: firstName,
+      period: payload.data.period,
+      transport_type: payload.data.transportType,
+      service_date: payload.data.serviceDate,
+      staff_user_id: profile.id
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    return { error: error.message };
   }
 
-  const profile = await getCurrentProfile();
-  const memberSetting = getActiveMemberBillingSetting(payload.data.memberId, payload.data.serviceDate);
-  const attendanceBillingSetting = getMemberAttendanceBillingSetting(payload.data.memberId);
-  const centerSetting = getActiveCenterBillingSetting(payload.data.serviceDate);
-  const transportStatus = attendanceBillingSetting?.transportationBillingStatus ?? memberSetting?.transportation_billing_status ?? "BillNormally";
-  const isBillable = transportStatus === "BillNormally";
-  const tripType = payload.data.transportType.toLowerCase().includes("round") ? "RoundTrip" : "OneWay";
-  const unitRate =
-    tripType === "RoundTrip"
-      ? Number(centerSetting?.default_transport_round_trip_rate ?? 0)
-      : Number(centerSetting?.default_transport_one_way_rate ?? 0);
-  const totalAmount = Number((unitRate * 1).toFixed(2));
-
-  addMockRecord("transportationLogs", {
-    timestamp: toEasternISO(),
-    first_name: getMemberName(payload.data.memberId).split(" ")[0] ?? "",
+  await supabase.from("documentation_events").insert({
+    event_type: "transportation_logs",
+    event_table: "transportation_logs",
+    event_row_id: data.id,
     member_id: payload.data.memberId,
-    member_name: getMemberName(payload.data.memberId),
-    pick_up_drop_off: payload.data.period,
-    period: payload.data.period,
-    transport_type: payload.data.transportType,
-    service_date: payload.data.serviceDate,
     staff_user_id: profile.id,
-    staff_name: profile.full_name,
-    staff_responsible: profile.full_name,
-    notes: null,
-    trip_type: tripType,
-    quantity: 1,
-    unit_rate: unitRate,
-    total_amount: totalAmount,
-    billable: isBillable,
-    billing_status: isBillable ? "Unbilled" : "Excluded",
-    billing_exclusion_reason:
-      transportStatus === "Waived"
-        ? "Waived in MCC attendance billing"
-        : transportStatus === "IncludedInProgramRate"
-          ? "Included in program rate (MCC attendance billing)"
-          : null,
-    invoice_id: null
+    event_at: toEasternISO()
   });
+
+  await insertAudit("create_log", "transportation_log", data.id, payload.data);
 
   revalidatePath("/documentation/transportation");
   revalidatePath("/documentation");
+  revalidatePath("/");
   return { ok: true };
 }
 
@@ -1089,6 +955,18 @@ function estimateDataUrlBytes(dataUrl: string) {
   return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
 }
 
+function inferPhotoMimeType(dataUrl?: string) {
+  if (!dataUrl?.startsWith("data:")) return "image/*";
+  const marker = dataUrl.slice(5, dataUrl.indexOf(";"));
+  return marker || "image/*";
+}
+
+function buildPhotoFileName(rawFileName: string, uploadedAtIso: string) {
+  const trimmed = rawFileName.trim();
+  if (trimmed) return trimmed;
+  return `photo-upload-${uploadedAtIso.slice(0, 10)}.img`;
+}
+
 export async function createPhotoUploadAction(raw: z.infer<typeof photoSchema>) {
   const payload = photoSchema.safeParse(raw);
   if (!payload.success) {
@@ -1101,28 +979,42 @@ export async function createPhotoUploadAction(raw: z.infer<typeof photoSchema>) 
     }
   }
 
-  if (!isMockMode()) {
-    // TODO(backend): wire to Supabase Storage + member_photo_uploads.
-    return { error: "Photo upload backend integration pending." };
+  const profile = await getCurrentProfile();
+  const uploadedAt = toEasternISO();
+  const photoUrl = payload.data.fileDataUrl || "https://placehold.co/600x400?text=Uploaded+Photo";
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("member_photo_uploads")
+    .insert({
+      member_id: null,
+      photo_url: photoUrl,
+      uploaded_by: profile.id,
+      uploaded_at: uploadedAt
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    return { error: error.message };
   }
 
-  const profile = await getCurrentProfile();
-  addMockRecord("photoUploads", {
-    member_id: "",
-    member_name: "",
-    photo_url: payload.data.fileDataUrl || "https://placehold.co/600x400?text=Uploaded+Photo",
-    file_name: payload.data.fileName,
-    file_type: payload.data.fileType ?? "image/*",
-    uploaded_by: profile.id,
-    uploaded_by_name: profile.full_name,
-    uploaded_at: toEasternISO(),
-    upload_date: toEasternDate(),
-    staff_clean: profile.full_name,
-    notes: payload.data.notes ?? null
+  await supabase.from("documentation_events").insert({
+    event_type: "member_photo_uploads",
+    event_table: "member_photo_uploads",
+    event_row_id: data.id,
+    member_id: null,
+    staff_user_id: profile.id,
+    event_at: uploadedAt
+  });
+
+  await insertAudit("create_log", "member_photo_upload", data.id, {
+    fileName: buildPhotoFileName(payload.data.fileName, uploadedAt),
+    fileType: payload.data.fileType ?? inferPhotoMimeType(payload.data.fileDataUrl)
   });
 
   revalidatePath("/documentation/photo-upload");
   revalidatePath("/documentation");
+  revalidatePath("/");
   return { ok: true };
 }
 const bloodSugarSchema = z.object({
@@ -1138,21 +1030,21 @@ export async function createBloodSugarLogAction(raw: z.infer<typeof bloodSugarSc
     return { error: "Invalid blood sugar log." };
   }
 
-  if (!isMockMode()) {
-    // TODO(backend): wire to public.blood_sugar_logs.
-    return { error: "Blood sugar backend integration pending." };
-  }
-
   const profile = await getCurrentProfile();
-  addMockRecord("bloodSugarLogs", {
-    member_id: payload.data.memberId,
-    member_name: getMemberName(payload.data.memberId),
-    checked_at: payload.data.checkedAt,
-    reading_mg_dl: payload.data.readingMgDl,
-    nurse_user_id: profile.id,
-    nurse_name: profile.full_name,
-    notes: payload.data.notes ?? null
-  });
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("blood_sugar_logs")
+    .insert({
+      member_id: payload.data.memberId,
+      checked_at: payload.data.checkedAt,
+      reading_mg_dl: payload.data.readingMgDl,
+      nurse_user_id: profile.id,
+      notes: payload.data.notes ?? null
+    })
+    .select("id")
+    .single();
+  if (error) return { error: error.message };
+  await insertAudit("create_log", "blood_sugar_log", data.id, payload.data);
 
   revalidatePath("/health");
   revalidatePath("/documentation/blood-sugar");
@@ -1250,34 +1142,9 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     return { error: "Invalid assessment." };
   }
 
-  if (!isMockMode()) {
-    // TODO(backend): add assessment table + relation tables and PDF generation pipeline.
-    return { error: "Assessment backend integration pending." };
-  }
-
   const profile = await getCurrentProfile();
-  const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
-  const db = getMockDb();
-  const lead = db.leads.find((row) => row.id === payload.data.leadId);
-  if (!lead) {
-    return { error: "Linked lead not found." };
-  }
-
-  const leadStage = canonicalLeadStage(lead.stage);
-  if (leadStage !== "Tour" && leadStage !== "Enrollment in Progress") {
-    return { error: "Intake assessment can only be created for leads in Tour or Enrollment in Progress." };
-  }
-
-  const linkedMember =
-    ensureIntakeMemberFromLead({
-      memberName: lead.member_name,
-      leadId: lead.id,
-      enrollmentDate: lead.member_start_date ?? lead.inquiry_date ?? null
-    }) ?? null;
-  const effectiveMemberId = linkedMember?.id ?? payload.data.memberId;
-  if (!effectiveMemberId) {
-    return { error: "Unable to resolve intake member record for this lead." };
-  }
+  const signerName = await getManagedUserSignatureName(profile.id, profile.full_name);
+  const supabase = await createClient();
 
   const totalScore = calculateAssessmentTotal({
     orientationGeneralHealth: payload.data.scoreOrientationGeneralHealth,
@@ -1286,20 +1153,45 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     mobilitySafety: payload.data.scoreMobilitySafety,
     socialEmotionalWellness: payload.data.scoreSocialEmotionalWellness
   });
-
   const { recommendedTrack, admissionReviewRequired } = getAssessmentTrack(totalScore);
 
-  const created = addMockRecord("assessments", {
-    lead_id: payload.data.leadId,
-    lead_stage_at_assessment: leadStage,
-    lead_status_at_assessment: canonicalLeadStatus(lead.status, leadStage),
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const candidateMemberId = payload.data.memberId?.trim() || payload.data.leadId.trim();
+  if (!candidateMemberId || !uuidPattern.test(candidateMemberId)) {
+    return { error: "A valid member is required for Intake Assessment persistence." };
+  }
+  const effectiveMemberId = candidateMemberId;
+
+  const { data: memberRow, error: memberError } = await supabase
+    .from("members")
+    .select("id, display_name")
+    .eq("id", effectiveMemberId)
+    .maybeSingle();
+  if (memberError || !memberRow) {
+    return { error: "Selected member could not be found in Supabase." };
+  }
+
+  const leadIdCandidate = uuidPattern.test(payload.data.leadId) ? payload.data.leadId : null;
+  let leadId: string | null = null;
+  let leadStage: string | null = null;
+  let leadStatus: string | null = null;
+  if (leadIdCandidate) {
+    const { data: leadRow } = await supabase.from("leads").select("id, stage, status").eq("id", leadIdCandidate).maybeSingle();
+    leadId = leadRow?.id ?? null;
+    leadStage = leadRow?.stage ?? payload.data.leadStage ?? null;
+    leadStatus = leadRow?.status ?? payload.data.leadStatus ?? null;
+  }
+
+  const nowIso = toEasternISO();
+  const assessmentInsert = {
     member_id: effectiveMemberId,
-    member_name: getMemberName(effectiveMemberId),
+    lead_id: leadId,
     assessment_date: payload.data.assessmentDate,
+    status: payload.data.complete ? "completed" : "draft",
+    completed_by_user_id: profile.id,
     completed_by: signerName,
     signed_by: signerName,
     complete: payload.data.complete,
-
     feeling_today: payload.data.feelingToday,
     health_lately: payload.data.healthLately,
     allergies: payload.data.allergies,
@@ -1309,7 +1201,6 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     orientation_year_verified: payload.data.orientationYearVerified,
     orientation_occupation_verified: payload.data.orientationOccupationVerified,
     orientation_notes: payload.data.orientationNotes || "",
-
     medication_management_status: payload.data.medicationManagementStatus,
     dressing_support_status: payload.data.dressingSupportStatus,
     assistive_devices: payload.data.assistiveDevices || "",
@@ -1317,23 +1208,18 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     on_site_medication_use: payload.data.onSiteMedicationUse || "",
     on_site_medication_list: payload.data.onSiteMedicationList?.trim() || "",
     independence_notes: payload.data.independenceNotes || "",
-
     diet_type: payload.data.dietType,
     diet_other: payload.data.dietOther || "",
     diet_restrictions_notes: payload.data.dietRestrictionsNotes || "",
-
     mobility_steadiness: payload.data.mobilitySteadiness,
     falls_history: payload.data.fallsHistory || "",
     mobility_aids: payload.data.mobilityAids || "",
     mobility_safety_notes: payload.data.mobilitySafetyNotes || "",
-
     overwhelmed_by_noise: payload.data.overwhelmedByNoise,
     social_triggers: payload.data.socialTriggers || "",
     emotional_wellness_notes: payload.data.emotionalWellnessNotes || "",
-
     joy_sparks: payload.data.joySparks || "",
     personal_notes: payload.data.personalNotes || "",
-
     score_orientation_general_health: payload.data.scoreOrientationGeneralHealth,
     score_daily_routines_independence: payload.data.scoreDailyRoutinesIndependence,
     score_nutrition_dietary_needs: payload.data.scoreNutritionDietaryNeeds,
@@ -1342,7 +1228,6 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     total_score: totalScore,
     recommended_track: recommendedTrack,
     admission_review_required: admissionReviewRequired,
-
     transport_can_enter_exit_vehicle: payload.data.transportCanEnterExitVehicle,
     transport_assistance_level: payload.data.transportAssistanceLevel,
     transport_mobility_aid: payload.data.transportMobilityAid || "",
@@ -1354,13 +1239,19 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     vitals_bp: payload.data.vitalsBp.trim(),
     vitals_o2_percent: payload.data.vitalsO2Percent,
     vitals_rr: payload.data.vitalsRr,
+    notes: payload.data.notes || "",
+    created_at: nowIso,
+    updated_at: nowIso
+  };
 
-    reviewer_name: signerName,
-    created_by_user_id: profile.id,
-    created_by_name: profile.full_name,
-    created_at: toEasternISO(),
-    notes: payload.data.notes || ""
-  });
+  const { data: created, error: createError } = await supabase
+    .from("intake_assessments")
+    .insert(assessmentInsert)
+    .select("*")
+    .single();
+  if (createError || !created) {
+    return { error: createError?.message ?? "Unable to save intake assessment." };
+  }
 
   const responseRows = buildAssessmentResponseRows({
     assessmentId: created.id,
@@ -1368,149 +1259,67 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     createdAt: created.created_at,
     values: {
       ...payload.data,
-      leadStage: leadStage,
-      leadStatus: canonicalLeadStatus(lead.status, leadStage),
+      leadStage: leadStage ?? payload.data.leadStage ?? "",
+      leadStatus: leadStatus ?? payload.data.leadStatus ?? "",
       totalScore,
       recommendedTrack,
       admissionReviewRequired
     }
+  }).map((row) => ({
+    assessment_id: row.assessment_id,
+    member_id: row.member_id,
+    field_key: row.field_key,
+    field_label: row.field_label,
+    section_type: row.section_type,
+    field_value: row.field_value,
+    field_value_type: row.field_value_type,
+    created_at: row.created_at
+  }));
+  if (responseRows.length > 0) {
+    const { error: responsesError } = await supabase.from("assessment_responses").insert(responseRows);
+    if (responsesError) {
+      return { error: responsesError.message };
+    }
+  }
+
+  await createDraftPhysicianOrderFromAssessment({
+    assessment: created,
+    actor: { id: profile.id, fullName: profile.full_name, signoffName: signerName }
   });
-  responseRows.forEach((row) => addMockRecord("assessmentResponses", row));
 
-    updateMockRecord("members", effectiveMemberId, {
-    allergies: payload.data.allergies,
-    code_status: payload.data.codeStatus || null,
-    orientation_dob_verified: payload.data.orientationDobVerified,
-    orientation_city_verified: payload.data.orientationCityVerified,
-    orientation_year_verified: payload.data.orientationYearVerified,
-    orientation_occupation_verified: payload.data.orientationOccupationVerified,
-    medication_management_status: payload.data.medicationManagementStatus || null,
-    dressing_support_status: payload.data.dressingSupportStatus || null,
-    assistive_devices: payload.data.assistiveDevices || null,
-    incontinence_products: payload.data.incontinenceProducts || null,
-    on_site_medication_use: payload.data.onSiteMedicationUse || null,
-    on_site_medication_list: payload.data.onSiteMedicationList?.trim() || null,
-    diet_type: payload.data.dietType || null,
-    diet_restrictions_notes: payload.data.dietRestrictionsNotes || null,
-    mobility_status: payload.data.mobilitySteadiness || null,
-    mobility_aids: payload.data.mobilityAids || null,
-    social_triggers: payload.data.socialTriggers || null,
-    joy_sparks: payload.data.joySparks || null,
-    personal_notes: payload.data.personalNotes || null,
-    transport_can_enter_exit_vehicle: payload.data.transportCanEnterExitVehicle || null,
-    transport_assistance_level: payload.data.transportAssistanceLevel || null,
-    transport_mobility_aid: payload.data.transportMobilityAid || null,
-    transport_can_remain_seated_buckled: payload.data.transportCanRemainSeatedBuckled,
-    transport_behavior_concern: payload.data.transportBehaviorConcern || null,
-    transport_appropriate: payload.data.transportAppropriate,
-    latest_assessment_id: created.id,
-    latest_assessment_date: payload.data.assessmentDate,
-    latest_assessment_score: totalScore,
-      latest_assessment_track: recommendedTrack,
-      latest_assessment_admission_review_required: admissionReviewRequired
-    });
-
-    prefillMemberHealthProfileFromAssessment({
+  let pdfWarning: string | null = null;
+  try {
+    const generated = await buildIntakeAssessmentPdfDataUrl(created.id);
+    await saveGeneratedMemberPdfToFiles({
       memberId: effectiveMemberId,
-      assessment: created,
-      actor: { id: profile.id, fullName: profile.full_name }
+      memberName: memberRow.display_name,
+      documentLabel: "Intake Assessment",
+      documentSource: `Intake Assessment:${created.id}`,
+      category: "Assessment",
+      dataUrl: generated.dataUrl,
+      uploadedBy: {
+        id: profile.id,
+        name: profile.full_name
+      },
+      generatedAtIso: created.created_at,
+      replaceExistingByDocumentSource: true
     });
-    prefillMemberCommandCenterFromAssessment({
-      memberId: effectiveMemberId,
-      assessment: created,
-      actor: { id: profile.id, fullName: profile.full_name }
-    });
-    syncMhpToCommandCenter(effectiveMemberId, { id: profile.id, fullName: profile.full_name });
-    syncCommandCenterToMhp(
-      effectiveMemberId,
-      { id: profile.id, fullName: profile.full_name },
-      undefined,
-      { syncAllergies: true }
-    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown PDF generation error.";
+    pdfWarning = `Assessment saved, but Intake Assessment PDF could not be saved to member files (${message}).`;
+  }
 
-    let pdfWarning: string | null = null;
-    try {
-      const generated = await buildIntakeAssessmentPdfDataUrl(created.id);
-      saveGeneratedMemberPdfToFiles({
-        memberId: effectiveMemberId,
-        memberName: created.member_name,
-        documentLabel: "Intake Assessment",
-        documentSource: `Intake Assessment:${created.id}`,
-        category: "Assessment",
-        dataUrl: generated.dataUrl,
-        uploadedBy: {
-          id: profile.id,
-          name: profile.full_name
-        },
-        generatedAtIso: created.created_at,
-        replaceExistingByDocumentSource: true
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown PDF generation error.";
-      pdfWarning = `Assessment saved, but Intake Assessment PDF could not be saved to member files (${message}).`;
-    }
-
-    const shouldAutoAdvanceLeadToEip =
-      payload.data.complete &&
-      leadProgressRank(lead.stage, lead.status) < leadProgressRank("Enrollment in Progress", "Open");
-
-    if (shouldAutoAdvanceLeadToEip) {
-      const transitionedLead = updateMockRecord("leads", lead.id, {
-        stage: "Enrollment in Progress",
-        status: "Open",
-        stage_updated_at: toEasternISO(),
-        member_start_date: lead.member_start_date ?? payload.data.assessmentDate
-      });
-
-      if (transitionedLead) {
-        addLeadStageHistoryEntry({
-          leadId: transitionedLead.id,
-          fromStage: lead.stage,
-          toStage: transitionedLead.stage,
-          fromStatus: lead.status,
-          toStatus: transitionedLead.status,
-          changedByUserId: profile.id,
-          changedByName: profile.full_name,
-          reason: "Intake assessment marked complete",
-          source: "createAssessmentAction:auto-eip"
-        });
-
-        addAuditLogEvent({
-          actorUserId: profile.id,
-          actorName: profile.full_name,
-          actorRole: profile.role,
-          action: "update_lead",
-          entityType: "lead",
-          entityId: transitionedLead.id,
-          details: {
-            operation: "assessment-complete-auto-stage",
-            assessmentId: created.id,
-            fromStage: lead.stage,
-            toStage: transitionedLead.stage,
-            fromStatus: lead.status,
-            toStatus: transitionedLead.status
-          }
-        });
-
-        revalidatePath("/sales");
-        revalidatePath("/sales/pipeline");
-        revalidatePath("/sales/pipeline/tour");
-        revalidatePath("/sales/pipeline/eip");
-        revalidatePath(`/sales/leads/${transitionedLead.id}`);
-      }
-    }
-
-    revalidatePath("/health");
-    revalidatePath("/health/assessment");
-    revalidatePath(`/health/assessment/${created.id}`);
-    revalidatePath("/health/member-health-profiles");
-    revalidatePath(`/health/member-health-profiles/${effectiveMemberId}`);
-    revalidatePath(`/operations/member-command-center/${effectiveMemberId}`);
-    revalidatePath(`/members/${effectiveMemberId}`);
-    revalidatePath(`/reports/assessments/${created.id}`);
-    return pdfWarning
-      ? { ok: true, assessmentId: created.id, warning: pdfWarning }
-      : { ok: true, assessmentId: created.id };
+  revalidatePath("/health");
+  revalidatePath("/health/assessment");
+  revalidatePath(`/health/assessment/${created.id}`);
+  revalidatePath("/health/member-health-profiles");
+  revalidatePath(`/health/member-health-profiles/${effectiveMemberId}`);
+  revalidatePath("/health/physician-orders");
+  revalidatePath(`/health/physician-orders?memberId=${effectiveMemberId}`);
+  revalidatePath(`/operations/member-command-center/${effectiveMemberId}`);
+  revalidatePath(`/members/${effectiveMemberId}`);
+  revalidatePath(`/reports/assessments/${created.id}`);
+  return pdfWarning ? { ok: true, assessmentId: created.id, warning: pdfWarning } : { ok: true, assessmentId: created.id };
 }
 
 const leadActivitySchema = z
@@ -1565,22 +1374,13 @@ export async function updateLeadStatusAction(raw: z.infer<typeof leadStatusSchem
     return { error: "Invalid lead status update." };
   }
 
-  if (!isMockMode()) {
-    // TODO(backend): wire to public.leads update endpoint.
-    return { error: "Lead status backend integration pending." };
-  }
-
-  const db = getMockDb();
-  const lead = db.leads.find((l) => l.id === payload.data.leadId);
-
-  if (!lead) {
-    return { error: "Lead not found." };
-  }
-
+  const supabase = await createClient();
+  const { data: lead, error } = await supabase.from("leads").select("*").eq("id", payload.data.leadId).maybeSingle();
+  if (error) return { error: error.message };
+  if (!lead) return { error: "Lead not found." };
   const nextStage = normalizeLegacyLeadStageOption(payload.data.stage);
   const nextStatus = normalizeLegacyLeadStatusOption(payload.data.status, nextStage);
   const isLost = canonicalLeadStatus(nextStatus, nextStage) === "Lost";
-
   return saveSalesLeadAction(
     buildLegacyLeadSavePayload({
       leadId: lead.id,
@@ -1614,29 +1414,24 @@ export async function updateLeadStatusAction(raw: z.infer<typeof leadStatusSchem
 }
 
 export async function getMockStaffLookup() {
-  if (!isMockMode()) {
-    return [];
-  }
-
-  const db = getMockDb();
-  return db.staff.map((s) => ({ id: s.id, full_name: s.full_name, role: s.role }));
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("profiles").select("id, full_name, role").order("full_name");
+  if (error) return [];
+  return (data ?? []).map((row) => ({ id: row.id, full_name: row.full_name, role: row.role }));
 }
 
 export async function getMockMemberLookup() {
-  if (!isMockMode()) {
-    return [];
-  }
-
-  const db = getMockDb();
-  return db.members.filter((m) => m.status === "active").map((m) => ({ id: m.id, display_name: m.display_name }));
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("members").select("id, display_name, status").eq("status", "active");
+  if (error) return [];
+  return (data ?? []).map((row) => ({ id: row.id, display_name: row.display_name }));
 }
 
 export async function resolveStaffName(staffId: string) {
-  if (!isMockMode()) {
-    return null;
-  }
-
-  return getStaffName(staffId);
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("profiles").select("full_name").eq("id", staffId).maybeSingle();
+  if (error) return null;
+  return data?.full_name ?? null;
 }
 
 
@@ -1678,7 +1473,6 @@ const updateDailyActivitySchema = z
 export async function updateDailyActivityAction(raw: z.infer<typeof updateDailyActivitySchema>) {
   const payload = updateDailyActivitySchema.safeParse(raw);
   if (!payload.success) return { error: "Invalid participation log update." };
-  if (!isMockMode()) return { error: "Participation log update backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
 
@@ -1686,23 +1480,24 @@ export async function updateDailyActivityAction(raw: z.infer<typeof updateDailyA
     (payload.data.activity1 + payload.data.activity2 + payload.data.activity3 + payload.data.activity4 + payload.data.activity5) / 5
   );
 
-  const updated = updateMockRecord("dailyActivities", payload.data.id, {
-    participation,
-    participation_reason: null,
-    activity_1_level: payload.data.activity1,
-    reason_missing_activity_1: payload.data.activity1 === 0 ? payload.data.reasonMissing1?.trim() ?? null : null,
-    activity_2_level: payload.data.activity2,
-    reason_missing_activity_2: payload.data.activity2 === 0 ? payload.data.reasonMissing2?.trim() ?? null : null,
-    activity_3_level: payload.data.activity3,
-    reason_missing_activity_3: payload.data.activity3 === 0 ? payload.data.reasonMissing3?.trim() ?? null : null,
-    activity_4_level: payload.data.activity4,
-    reason_missing_activity_4: payload.data.activity4 === 0 ? payload.data.reasonMissing4?.trim() ?? null : null,
-    activity_5_level: payload.data.activity5,
-    reason_missing_activity_5: payload.data.activity5 === 0 ? payload.data.reasonMissing5?.trim() ?? null : null,
-    notes: payload.data.notes ?? null
-  });
-
-  if (!updated) return { error: "Record not found." };
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("daily_activity_logs")
+    .update({
+      activity_1_level: payload.data.activity1,
+      missing_reason_1: payload.data.activity1 === 0 ? payload.data.reasonMissing1?.trim() ?? null : null,
+      activity_2_level: payload.data.activity2,
+      missing_reason_2: payload.data.activity2 === 0 ? payload.data.reasonMissing2?.trim() ?? null : null,
+      activity_3_level: payload.data.activity3,
+      missing_reason_3: payload.data.activity3 === 0 ? payload.data.reasonMissing3?.trim() ?? null : null,
+      activity_4_level: payload.data.activity4,
+      missing_reason_4: payload.data.activity4 === 0 ? payload.data.reasonMissing4?.trim() ?? null : null,
+      activity_5_level: payload.data.activity5,
+      missing_reason_5: payload.data.activity5 === 0 ? payload.data.reasonMissing5?.trim() ?? null : null,
+      notes: payload.data.notes ?? null
+    });
+  if (error) return { error: error.message };
+  await insertAudit("manager_review", "daily_activity_log", payload.data.id, { participation });
   revalidatePath("/documentation/activity");
   revalidatePath("/documentation");
   return { ok: true };
@@ -1713,95 +1508,132 @@ const updateSimpleSchema = z.object({ id: z.string(), notes: z.string().max(500)
 export async function updateToiletLogAction(raw: z.infer<typeof updateSimpleSchema> & { useType: string; briefs: boolean; memberSupplied?: boolean }) {
   const payload = z.object({ id: z.string(), notes: z.string().max(500).optional(), useType: toiletUseTypeSchema, briefs: z.boolean(), memberSupplied: z.boolean().optional() }).safeParse(raw);
   if (!payload.success) return { error: "Invalid toilet update." };
-  if (!isMockMode()) return { error: "Toilet update backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
 
-  const existing = getMockDb().toiletLogs.find((row) => row.id === payload.data.id);
-  const memberSupplied = payload.data.memberSupplied ?? existing?.member_supplied ?? false;
+  const supabase = await createClient();
+  const { data: existingRow, error: existingError } = await supabase
+    .from("toilet_logs")
+    .select("id, member_id, event_at, member_supplied")
+    .eq("id", payload.data.id)
+    .maybeSingle();
+  if (existingError) return { error: existingError.message };
+  if (!existingRow) return { error: "Record not found." };
 
-  const updated = updateMockRecord("toiletLogs", payload.data.id, {
-    notes: payload.data.notes ?? null,
-    use_type: payload.data.useType,
-    briefs: payload.data.briefs,
-    member_supplied: memberSupplied
-  });
-
-  if (!updated) return { error: "Record not found." };
+  const memberSupplied = payload.data.memberSupplied ?? Boolean(existingRow.member_supplied);
+  const { error } = await supabase
+    .from("toilet_logs")
+    .update({
+      notes: payload.data.notes ?? null,
+      use_type: payload.data.useType,
+      briefs: payload.data.briefs,
+      member_supplied: memberSupplied
+    })
+    .eq("id", payload.data.id);
+  if (error) return { error: error.message };
 
   const shouldHaveBriefsCharge = payload.data.briefs && !memberSupplied;
-  const linkedChargeId = updated.linked_ancillary_charge_id ?? null;
-
-  if (shouldHaveBriefsCharge && !linkedChargeId) {
-    const db = getMockDb();
-    const profile = editor;
-    const briefsCategory = db.ancillaryCategories.find((c) => c.name.toLowerCase() === "briefs") ?? db.ancillaryCategories[0];
-    const existingCharge = db.ancillaryLogs.find(
-      (row) =>
-        row.source_entity === "toiletLogs" &&
-        row.source_entity_id === updated.id &&
-        row.category_id === briefsCategory.id
-    );
-
-    if (existingCharge) {
-      updateMockRecord("toiletLogs", updated.id, { linked_ancillary_charge_id: existingCharge.id });
-      revalidatePath("/documentation/toilet");
-      revalidatePath("/documentation");
-      revalidatePath("/ancillary");
-      revalidatePath("/reports/monthly-ancillary");
-      return { ok: true };
+  let warning: string | null = null;
+  if (shouldHaveBriefsCharge) {
+    const { data: briefsCategory, error: briefsCategoryError } = await supabase
+      .from("ancillary_charge_categories")
+      .select("id")
+      .ilike("name", "briefs")
+      .maybeSingle();
+    if (briefsCategoryError) {
+      warning = `Toilet log updated, but briefs ancillary category lookup failed (${briefsCategoryError.message}).`;
     }
 
-    const ancillary = addMockRecord("ancillaryLogs", {
-      timestamp: toEasternISO(),
-      member_id: updated.member_id,
-      member_name: updated.member_name,
-      category_id: briefsCategory.id,
-      category_name: briefsCategory.name,
-      charge_type: briefsCategory.name,
-      amount_cents: briefsCategory.price_cents,
-      service_date: updated.event_date,
-      charge_date: updated.event_date,
-      late_pickup_time: null,
-      staff_user_id: profile.id,
-      staff_name: profile.full_name,
-      staff_recording_entry: profile.full_name,
-      notes: "Auto-generated from Toilet Log edit (briefs changed and not member supplied)",
-      source_entity: "toiletLogs",
-      source_entity_id: updated.id,
-      quantity: 1,
-      unit_rate: Number((briefsCategory.price_cents / 100).toFixed(2)),
-      total_amount: Number((briefsCategory.price_cents / 100).toFixed(2)),
-      billable: true,
-      billing_status: "Unbilled",
-      billing_exclusion_reason: null,
-      invoice_id: null,
-      created_at: toEasternISO()
-    });
+    if (briefsCategory && !warning) {
+      const { data: existingCharge, error: chargeLookupError } = await supabase
+        .from("ancillary_charge_logs")
+        .select("id")
+        .eq("source_entity", "toiletLogs")
+        .eq("source_entity_id", payload.data.id)
+        .eq("category_id", briefsCategory.id)
+        .maybeSingle();
+      if (chargeLookupError) {
+        if (
+          isPostgresColumnMissingError(chargeLookupError, "source_entity") ||
+          isPostgresColumnMissingError(chargeLookupError, "source_entity_id")
+        ) {
+          warning =
+            "Toilet log updated, but linked ancillary sync requires public.ancillary_charge_logs columns source_entity text and source_entity_id text.";
+        } else {
+          warning = `Toilet log updated, but linked ancillary lookup failed (${chargeLookupError.message}).`;
+        }
+      }
 
-    updateMockRecord("toiletLogs", updated.id, { linked_ancillary_charge_id: ancillary.id });
+      if (!existingCharge && !warning) {
+        const ancillaryResult = await createAncillaryChargeAction({
+          memberId: existingRow.member_id,
+          categoryId: briefsCategory.id,
+          serviceDate: String(existingRow.event_at).slice(0, 10),
+          latePickupTime: "",
+          notes: "Auto-generated from Toilet Log edit (briefs changed and not member supplied)",
+          sourceEntity: "toiletLogs",
+          sourceEntityId: payload.data.id
+        });
+        if ("error" in ancillaryResult) {
+          warning = `Toilet log updated, but linked ancillary charge could not be created (${ancillaryResult.error}).`;
+        }
+      }
+    }
+  } else {
+    const { data: linkedCharges, error: linkedError } = await supabase
+      .from("ancillary_charge_logs")
+      .select("id")
+      .eq("source_entity", "toiletLogs")
+      .eq("source_entity_id", payload.data.id);
+    if (linkedError) {
+      if (
+        isPostgresColumnMissingError(linkedError, "source_entity") ||
+        isPostgresColumnMissingError(linkedError, "source_entity_id")
+      ) {
+        warning =
+          "Toilet log updated, but linked ancillary sync requires public.ancillary_charge_logs columns source_entity text and source_entity_id text.";
+      } else {
+        warning = `Toilet log updated, but linked ancillary lookup failed (${linkedError.message}).`;
+      }
+    }
+    const chargeIds = !warning ? (linkedCharges ?? []).map((row) => row.id) : [];
+    if (chargeIds.length > 0) {
+      const { error: deleteChargeError } = await supabase.from("ancillary_charge_logs").delete().in("id", chargeIds);
+      if (deleteChargeError) {
+        warning = `Toilet log updated, but linked ancillary removal failed (${deleteChargeError.message}).`;
+      }
+    }
   }
 
-  if (!shouldHaveBriefsCharge && linkedChargeId) {
-    removeMockRecord("ancillaryLogs", linkedChargeId);
-    updateMockRecord("toiletLogs", updated.id, { linked_ancillary_charge_id: null });
-  }
-
+  await insertAudit("manager_review", "toilet_log", payload.data.id, {
+    useType: payload.data.useType,
+    briefs: payload.data.briefs,
+    memberSupplied
+  });
   revalidatePath("/documentation/toilet");
   revalidatePath("/documentation");
   revalidatePath("/ancillary");
   revalidatePath("/reports/monthly-ancillary");
-  return { ok: true };
+  return warning ? { ok: true, warning } : { ok: true };
 }
 
 export async function updateShowerLogAction(raw: z.infer<typeof updateSimpleSchema> & { laundry: boolean; briefs: boolean }) {
   const payload = z.object({ id: z.string(), notes: z.string().max(500).optional(), laundry: z.boolean(), briefs: z.boolean() }).safeParse(raw);
   if (!payload.success) return { error: "Invalid shower update." };
-  if (!isMockMode()) return { error: "Shower update backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const updated = updateMockRecord("showerLogs", payload.data.id, { notes: payload.data.notes ?? null, laundry: payload.data.laundry, briefs: payload.data.briefs });
-  if (!updated) return { error: "Record not found." };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("shower_logs")
+    .update({ laundry: payload.data.laundry, briefs: payload.data.briefs })
+    .eq("id", payload.data.id);
+  if (error) return { error: error.message };
+  await insertAudit("manager_review", "shower_log", payload.data.id, {
+    laundry: payload.data.laundry,
+    briefs: payload.data.briefs,
+    notes: payload.data.notes ?? null
+  });
   revalidatePath("/documentation/shower");
   revalidatePath("/documentation");
   return { ok: true };
@@ -1810,11 +1642,19 @@ export async function updateShowerLogAction(raw: z.infer<typeof updateSimpleSche
 export async function updateTransportationLogAction(raw: { id: string; period: (typeof TRANSPORT_PERIOD_OPTIONS)[number]; transportType: (typeof TRANSPORT_TYPE_OPTIONS)[number] }) {
   const payload = z.object({ id: z.string(), period: z.enum(TRANSPORT_PERIOD_OPTIONS), transportType: z.enum(TRANSPORT_TYPE_OPTIONS) }).safeParse(raw);
   if (!payload.success) return { error: "Invalid transportation update." };
-  if (!isMockMode()) return { error: "Transportation update backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const updated = updateMockRecord("transportationLogs", payload.data.id, { period: payload.data.period, pick_up_drop_off: payload.data.period, transport_type: payload.data.transportType, notes: null });
-  if (!updated) return { error: "Record not found." };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("transportation_logs")
+    .update({
+      period: payload.data.period,
+      transport_type: payload.data.transportType
+    })
+    .eq("id", payload.data.id);
+  if (error) return { error: error.message };
+  await insertAudit("manager_review", "transportation_log", payload.data.id, payload.data);
   revalidatePath("/documentation/transportation");
   revalidatePath("/documentation");
   return { ok: true };
@@ -1823,11 +1663,18 @@ export async function updateTransportationLogAction(raw: { id: string; period: (
 export async function updateBloodSugarAction(raw: { id: string; readingMgDl: number; notes?: string }) {
   const payload = z.object({ id: z.string(), readingMgDl: z.number().min(20).max(600), notes: z.string().max(500).optional() }).safeParse(raw);
   if (!payload.success) return { error: "Invalid blood sugar update." };
-  if (!isMockMode()) return { error: "Blood sugar update backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const updated = updateMockRecord("bloodSugarLogs", payload.data.id, { reading_mg_dl: payload.data.readingMgDl, notes: payload.data.notes ?? null });
-  if (!updated) return { error: "Record not found." };
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("blood_sugar_logs")
+    .update({ reading_mg_dl: payload.data.readingMgDl, notes: payload.data.notes ?? null })
+    .eq("id", payload.data.id);
+  if (error) return { error: error.message };
+  await insertAudit("manager_review", "blood_sugar_log", payload.data.id, {
+    reading_mg_dl: payload.data.readingMgDl,
+    notes: payload.data.notes ?? null
+  });
   revalidatePath("/documentation/blood-sugar");
   revalidatePath("/health");
   return { ok: true };
@@ -1836,11 +1683,15 @@ export async function updateBloodSugarAction(raw: { id: string; readingMgDl: num
 export async function updateAncillaryAction(raw: { id: string; notes?: string }) {
   const payload = updateSimpleSchema.safeParse(raw);
   if (!payload.success) return { error: "Invalid ancillary update." };
-  if (!isMockMode()) return { error: "Ancillary update backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const updated = updateMockRecord("ancillaryLogs", payload.data.id, { notes: payload.data.notes ?? null });
-  if (!updated) return { error: "Record not found." };
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("ancillary_charge_logs")
+    .update({ notes: payload.data.notes ?? null })
+    .eq("id", payload.data.id);
+  if (error) return { error: error.message };
+  await insertAudit("manager_review", "ancillary_charge", payload.data.id, { notes: payload.data.notes ?? null });
   revalidatePath("/ancillary");
   revalidatePath("/documentation");
   return { ok: true };
@@ -1859,15 +1710,14 @@ export async function setAncillaryReconciliationAction(raw: {
     })
     .safeParse(raw);
   if (!payload.success) return { error: "Invalid reconciliation update." };
-  if (!isMockMode()) return { error: "Ancillary reconciliation backend integration pending." };
 
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-
+  const supabase = await createClient();
   const nextPatch =
     payload.data.status === "reconciled"
       ? {
-          reconciliation_status: "reconciled" as const,
+          reconciliation_status: "reconciled",
           reconciled_by: editor.full_name,
           reconciled_at: toEasternISO(),
           reconciliation_note: payload.data.note?.trim() || "Reconciled by manager/admin review."
@@ -1881,10 +1731,8 @@ export async function setAncillaryReconciliationAction(raw: {
               ? payload.data.note?.trim() || "Voided during reconciliation review."
               : payload.data.note?.trim() || null
         };
-
-  const updated = updateMockRecord("ancillaryLogs", payload.data.id, nextPatch);
-  if (!updated) return { error: "Record not found." };
-
+  const { error } = await supabase.from("ancillary_charge_logs").update(nextPatch).eq("id", payload.data.id);
+  if (error) return { error: error.message };
   await insertAudit("manager_review", "ancillary_charge", payload.data.id, {
     reconciliation_status: payload.data.status,
     note: payload.data.note ?? null
@@ -1900,14 +1748,12 @@ export async function setAncillaryReconciliationAction(raw: {
 export async function updateLeadDetailsAction(raw: { id: string; stage: string; status: (typeof LEAD_STATUS_OPTIONS)[number]; notes?: string }) {
   const payload = z.object({ id: z.string(), stage: z.string().min(1), status: z.enum(LEAD_STATUS_OPTIONS), notes: z.string().max(1000).optional() }).safeParse(raw);
   if (!payload.success) return { error: "Invalid lead update." };
-  if (!isMockMode()) return { error: "Lead update backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const existingLead = getMockDb().leads.find((row) => row.id === payload.data.id) ?? null;
-  if (!existingLead) {
-    return { error: "Lead not found." };
-  }
-
+  const supabase = await createClient();
+  const { data: existingLead, error } = await supabase.from("leads").select("*").eq("id", payload.data.id).maybeSingle();
+  if (error) return { error: error.message };
+  if (!existingLead) return { error: "Lead not found." };
   const nextStage = normalizeLegacyLeadStageOption(payload.data.stage);
   const nextStatus = normalizeLegacyLeadStatusOption(payload.data.status, nextStage);
   const isLost = canonicalLeadStatus(nextStatus, nextStage) === "Lost";
@@ -1976,18 +1822,24 @@ export async function setMemberStatusAction(raw: {
     })
     .safeParse(raw);
   if (!payload.success) return { error: "Invalid member status update." };
-  if (!isMockMode()) return { error: "Member status backend integration pending." };
 
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-
-  const updated = setMockMemberStatus(payload.data.memberId, payload.data.status, {
-    dischargeReason: payload.data.dischargeReason ?? null,
-    dischargeDisposition: payload.data.dischargeDisposition ?? null,
-    actorName: editor.full_name
-  });
+  const supabase = await createClient();
+  const { data: updated, error } = await supabase
+    .from("members")
+    .update({
+      status: payload.data.status,
+      discharge_reason: payload.data.dischargeReason ?? null,
+      discharge_disposition: payload.data.dischargeDisposition ?? null,
+      discharge_date: payload.data.status === "inactive" ? toEasternDate() : null,
+      updated_at: toEasternISO()
+    })
+    .eq("id", payload.data.memberId)
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: error.message };
   if (!updated) return { error: "Member not found." };
-
   await insertAudit("manager_review", "member", payload.data.memberId, {
     status: payload.data.status,
     dischargeReason: payload.data.dischargeReason ?? null,
@@ -1995,75 +1847,65 @@ export async function setMemberStatusAction(raw: {
   });
 
   revalidatePath("/members");
-  revalidatePath(`/members/${updated.id}`);
+  revalidatePath(`/members/${payload.data.memberId}`);
   revalidatePath("/reports/member-summary");
   revalidatePath("/operations/member-command-center");
-  revalidatePath(`/operations/member-command-center/${updated.id}`);
+  revalidatePath(`/operations/member-command-center/${payload.data.memberId}`);
   revalidatePath("/operations/holds");
   revalidatePath("/operations/attendance");
   revalidatePath("/operations/transportation-station");
   revalidatePath("/operations/transportation-station/print");
   revalidatePath("/operations/locker-assignments");
   revalidatePath("/health/member-health-profiles");
-  revalidatePath(`/health/member-health-profiles/${updated.id}`);
+  revalidatePath(`/health/member-health-profiles/${payload.data.memberId}`);
   return { ok: true };
 }
 
 export async function deleteWorkflowRecordAction(raw: { entity: string; id: string }) {
   const payload = z.object({ entity: z.string(), id: z.string() }).safeParse(raw);
   if (!payload.success) return { error: "Invalid delete request." };
-  if (!isMockMode()) return { error: "Delete backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const db = getMockDb();
-
-  const entityMap: Record<string, keyof ReturnType<typeof getMockDb>> = {
-    dailyActivities: "dailyActivities",
-    toiletLogs: "toiletLogs",
-    showerLogs: "showerLogs",
-    transportationLogs: "transportationLogs",
-    photoUploads: "photoUploads",
-    bloodSugarLogs: "bloodSugarLogs",
-    ancillaryLogs: "ancillaryLogs",
+  const supabase = await createClient();
+  const tableMap: Record<string, string> = {
+    dailyActivities: "daily_activity_logs",
+    toiletLogs: "toilet_logs",
+    showerLogs: "shower_logs",
+    transportationLogs: "transportation_logs",
+    photoUploads: "member_photo_uploads",
+    bloodSugarLogs: "blood_sugar_logs",
+    ancillaryLogs: "ancillary_charge_logs",
     leads: "leads",
-    leadActivities: "leadActivities",
-    assessments: "assessments"
+    leadActivities: "lead_activities",
+    assessments: "intake_assessments"
   };
-
-  const key = entityMap[payload.data.entity];
-  if (!key) return { error: "Unknown entity." };
-
-  if (key === "ancillaryLogs") {
-    const existing = db.ancillaryLogs.find((row) => row.id === payload.data.id);
-    if (existing?.source_entity === "toiletLogs" && existing.source_entity_id) {
-      updateMockRecord("toiletLogs", existing.source_entity_id, { linked_ancillary_charge_id: null });
-    }
-  }
-
-  const deleted = removeMockRecord(key, payload.data.id);
-  if (!deleted) return { error: "Record not found." };
+  const table = tableMap[payload.data.entity];
+  if (!table) return { error: "Unknown entity." };
+  const { error } = await supabase.from(table).delete().eq("id", payload.data.id);
+  if (error) return { error: error.message };
+  await insertAudit("manager_review", payload.data.entity, payload.data.id, { operation: "delete" });
 
   revalidatePath("/");
   revalidatePath("/documentation");
-  revalidatePath("/health");
-  revalidatePath("/ancillary");
-  revalidatePath("/reports");
-  revalidatePath("/reports/monthly-ancillary");
-  revalidatePath("/sales");
+  revalidatePath("/documentation/activity");
+  revalidatePath("/documentation/toilet");
+  revalidatePath("/documentation/shower");
+  revalidatePath("/documentation/transportation");
+  revalidatePath("/documentation/photo-upload");
   return { ok: true };
 }
 
 export async function reviewTimeCardAction(raw: { staffName: string; payPeriod: string; status: "Pending" | "Reviewed" | "Needs Follow-up"; notes?: string }) {
   const payload = z.object({ staffName: z.string().min(1), payPeriod: z.string().min(1), status: z.enum(["Pending", "Reviewed", "Needs Follow-up"]), notes: z.string().max(500).optional() }).safeParse(raw);
   if (!payload.success) return { error: "Invalid time review." };
-  if (!isMockMode()) return { error: "Time review backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const profile = editor;
-  setTimeReview(payload.data.staffName, payload.data.payPeriod, {
+  await insertAudit("manager_review", "time_review", null, {
+    staffName: payload.data.staffName,
+    payPeriod: payload.data.payPeriod,
     status: payload.data.status,
     notes: payload.data.notes ?? "",
-    reviewed_by: profile.full_name,
+    reviewed_by: editor.full_name,
     reviewed_at: toEasternISO()
   });
   revalidatePath("/time-card");
@@ -2073,20 +1915,21 @@ export async function reviewTimeCardAction(raw: { staffName: string; payPeriod: 
 export async function reviewDocumentationAction(raw: { staffName: string; periodLabel: string; status: "Pending" | "Reviewed" | "Needs Follow-up"; notes?: string }) {
   const payload = z.object({ staffName: z.string().min(1), periodLabel: z.string().min(1), status: z.enum(["Pending", "Reviewed", "Needs Follow-up"]), notes: z.string().max(500).optional() }).safeParse(raw);
   if (!payload.success) return { error: "Invalid documentation review." };
-  if (!isMockMode()) return { error: "Documentation review backend integration pending." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const profile = editor;
-  setDocumentationReview(payload.data.staffName, payload.data.periodLabel, {
+  await insertAudit("manager_review", "documentation_review", null, {
+    staffName: payload.data.staffName,
+    periodLabel: payload.data.periodLabel,
     status: payload.data.status,
     notes: payload.data.notes ?? "",
-    reviewed_by: profile.full_name,
+    reviewed_by: editor.full_name,
     reviewed_at: toEasternISO()
   });
   revalidatePath("/documentation");
   revalidatePath("/reports");
   return { ok: true };
 }
+
 
 
 

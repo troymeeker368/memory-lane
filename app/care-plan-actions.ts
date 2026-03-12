@@ -58,9 +58,9 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
     return { error: "Invalid care plan submission." };
   }
 
-  const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
+  const signerName = await getManagedUserSignatureName(profile.id, profile.full_name);
   const completedDate = payload.data.dateOfCompletion || payload.data.reviewDate || toEasternDate();
-  const created = createCarePlan({
+  const created = await createCarePlan({
     ...payload.data,
     completedBy: signerName,
     dateOfCompletion: completedDate,
@@ -121,8 +121,8 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
     return { error: "Invalid care plan review submission." };
   }
 
-  const signerName = getManagedUserSignatureName(profile.id, profile.full_name);
-  const updated = reviewCarePlan({
+  const signerName = await getManagedUserSignatureName(profile.id, profile.full_name);
+  const updated = await reviewCarePlan({
     ...payload.data,
     reviewedBy: signerName,
     administratorSignature: signerName,

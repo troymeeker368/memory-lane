@@ -15,7 +15,7 @@ interface FileRow {
   category: string;
   category_other: string | null;
   document_source?: string | null;
-  uploaded_by_name: string;
+  uploaded_by_name: string | null;
   uploaded_at: string;
 }
 
@@ -202,7 +202,7 @@ export function MemberCommandCenterFileManager({
                   <td>{row.category === "Other" ? row.category_other ?? "Other" : row.category}</td>
                   <td>{row.document_source ?? "-"}</td>
                   <td>{formatDateTime(row.uploaded_at)}</td>
-                  <td>{row.uploaded_by_name}</td>
+                  <td>{row.uploaded_by_name ?? "-"}</td>
                   <td>
                     <div className="flex flex-wrap gap-2 text-xs">
                       {row.file_data_url ? (

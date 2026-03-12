@@ -16,15 +16,15 @@ import { MccPhotoUploader } from "@/components/forms/mcc-photo-uploader";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getMockDb } from "@/lib/mock-repo";
 import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import {
-  calculateMonthsEnrolled,
-  getAvailableLockerNumbersForMember,
-  getMemberCommandCenterDetail
-} from "@/lib/services/member-command-center";
+  getAvailableLockerNumbersForMemberSupabase,
+  getMemberCommandCenterDetailSupabase,
+  listActivePayorsSupabase,
+  listMemberBillingSettingsSupabase
+} from "@/lib/services/member-command-center-supabase";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
-import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders";
+import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-supabase";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
@@ -144,23 +144,44 @@ export default async function MemberCommandCenterDetailPage({
   const query = await searchParams;
   const tab = resolveTab(firstString(query.tab));
 
-  const detail = getMemberCommandCenterDetail(memberId);
+  const detail = await getMemberCommandCenterDetailSupabase(memberId);
   if (!detail) notFound();
-  const db = getMockDb();
   const billingDate = toEasternDate();
+  const memberBillingSettings = await listMemberBillingSettingsSupabase(detail.member.id).catch((error) => {
+    console.warn(
+      `[member-command-center] Unable to load member billing settings for ${detail.member.id}. Continuing with empty settings. ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return [];
+  });
   const activeMemberBillingSetting =
-    db.memberBillingSettings
+    memberBillingSettings
       .filter((row) => row.member_id === detail.member.id)
       .filter((row) => row.active)
       .filter((row) => row.effective_start_date <= billingDate)
       .filter((row) => !row.effective_end_date || row.effective_end_date >= billingDate)
       .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1))[0] ?? null;
-  const activePayorOptions = db.payors
+  const activePayorOptions = (await listActivePayorsSupabase().catch((error) => {
+    console.warn(
+      `[member-command-center] Unable to load active payors. Continuing with empty payor options. ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return [];
+  }))
     .filter((row) => row.status === "active")
     .sort((left, right) => left.payor_name.localeCompare(right.payor_name, undefined, { sensitivity: "base" }))
     .map((row) => ({ id: row.id, name: row.payor_name }));
-  const lockerOptions = getAvailableLockerNumbersForMember(memberId);
-  const busNumberOptions = getConfiguredBusNumbers();
+  const lockerOptions = await getAvailableLockerNumbersForMemberSupabase(memberId).catch((error) => {
+    console.warn(
+      `[member-command-center] Unable to load locker options for ${memberId}. Continuing with empty locker options. ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return [];
+  });
+  const busNumberOptions = await getConfiguredBusNumbers();
 
   const scheduleDays = [
     detail.schedule?.monday ? "Mon" : null,
@@ -170,7 +191,7 @@ export default async function MemberCommandCenterDetailPage({
     detail.schedule?.friday ? "Fri" : null
   ].filter(Boolean) as string[];
 
-  const monthsEnrolled = calculateMonthsEnrolled(detail.schedule?.enrollment_date ?? detail.member.enrollment_date);
+  const monthsEnrolled = detail.monthsEnrolled;
   const defaultDoorToDoorAddress =
     [detail.profile.street_address, detail.profile.city, detail.profile.state, detail.profile.zip]
       .map((value) => (value ?? "").trim())
@@ -227,7 +248,14 @@ export default async function MemberCommandCenterDetailPage({
   const filesUpdatedBy = latestUpdatedBy(detail.files, (row) => row.updated_at, (row) => row.uploaded_by_name);
   const allergiesUpdatedAt = latestTimestamp(detail.mhpAllergies.map((row) => row.updated_at));
   const allergiesUpdatedBy = latestUpdatedBy(detail.mhpAllergies, (row) => row.updated_at, (row) => row.created_by_name);
-  const physicianOrders = getPhysicianOrdersForMember(detail.member.id);
+  const physicianOrders = await getPhysicianOrdersForMember(detail.member.id).catch((error) => {
+    console.warn(
+      `[member-command-center] Unable to load physician orders for ${detail.member.id}. Continuing with empty list. ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return [];
+  });
   const physicianOrdersUpdatedAt = latestTimestamp(physicianOrders.map((row) => row.updatedAt));
   const physicianOrdersUpdatedBy = latestUpdatedBy(physicianOrders, (row) => row.updatedAt, (row) => row.updatedByName);
 
@@ -725,7 +753,7 @@ export default async function MemberCommandCenterDetailPage({
               <tr>
                 <th>Status</th>
                 <th>Provider</th>
-                <th>Completed</th>
+                <th>Sent</th>
                 <th>Signed</th>
                 <th>Updated</th>
                 <th>Open</th>

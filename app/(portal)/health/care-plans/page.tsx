@@ -19,7 +19,7 @@ function StatusLink({ status, href }: { status: string; href: string }) {
 
 export default async function CarePlansDashboardPage() {
   await requireNavItemAccess("/health/care-plans");
-  const dashboard = getCarePlanDashboard();
+  const dashboard = await getCarePlanDashboard();
 
   return (
     <div className="space-y-4">

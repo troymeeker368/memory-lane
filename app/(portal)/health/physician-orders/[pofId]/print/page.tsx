@@ -5,7 +5,7 @@ import { DocumentBrandHeader } from "@/components/documents/document-brand-heade
 import { PhysicianOrderPdfActions } from "@/components/physician-orders/pof-pdf-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireRoles } from "@/lib/auth";
-import { getPhysicianOrderById } from "@/lib/services/physician-orders";
+import { getPhysicianOrderById } from "@/lib/services/physician-orders-supabase";
 import { toEasternISO } from "@/lib/timezone";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
@@ -25,7 +25,7 @@ export default async function PhysicianOrderPrintPage({
 }) {
   await requireRoles(["admin", "nurse"]);
   const { pofId } = await params;
-  const form = getPhysicianOrderById(pofId);
+  const form = await getPhysicianOrderById(pofId);
   if (!form) notFound();
 
   const care = form.careInformation;
@@ -60,7 +60,7 @@ export default async function PhysicianOrderPrintPage({
             <p><span className="font-semibold">DNR Selected:</span> {yesNo(form.dnrSelected)}</p>
             <p><span className="font-semibold">Status:</span> {form.status}</p>
             <p><span className="font-semibold">Provider Signature Status:</span> {form.providerSignatureStatus}</p>
-            <p><span className="font-semibold">Completed:</span> {form.completedDate ? formatDate(form.completedDate) : "-"}</p>
+            <p><span className="font-semibold">Sent:</span> {form.completedDate ? formatDate(form.completedDate) : "-"}</p>
           </div>
 
           <div className="mt-2 grid gap-1 text-sm sm:grid-cols-4">
@@ -201,8 +201,8 @@ export default async function PhysicianOrderPrintPage({
             <p><span className="font-semibold">Provider Signature Date:</span> {form.providerSignatureDate ? formatDate(form.providerSignatureDate) : "-"}</p>
             <p><span className="font-semibold">Created By:</span> {form.createdByName}</p>
             <p><span className="font-semibold">Created Date:</span> {formatDateTime(form.createdAt)}</p>
-            <p><span className="font-semibold">Completed By:</span> {form.completedByName ?? "-"}</p>
-            <p><span className="font-semibold">Completed Date:</span> {form.completedDate ? formatDate(form.completedDate) : "-"}</p>
+            <p><span className="font-semibold">Sent By:</span> {form.completedByName ?? "-"}</p>
+            <p><span className="font-semibold">Sent Date:</span> {form.completedDate ? formatDate(form.completedDate) : "-"}</p>
             <p><span className="font-semibold">Signed By:</span> {form.signedBy ?? "-"}</p>
             <p><span className="font-semibold">Signed Date:</span> {form.signedDate ? formatDate(form.signedDate) : "-"}</p>
             <p><span className="font-semibold">Last Updated By:</span> {form.updatedByName ?? "-"}</p>

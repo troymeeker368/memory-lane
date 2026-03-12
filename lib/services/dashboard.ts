@@ -1,20 +1,11 @@
-import { getMockDashboardAlerts, getMockDashboardStats } from "@/lib/mock-data";
-import { isMockMode } from "@/lib/runtime";
 import { getIncompleteAttendanceSummary } from "@/lib/services/attendance";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export async function getDashboardStats(userId: string) {
-  if (isMockMode()) {
-    // TODO(backend): Remove mock branch when dashboard stats come from Supabase in local/dev.
-    return {
-      ...getMockDashboardStats(userId),
-      incompleteAttendance: getIncompleteAttendanceSummary({ selectedDate: getOperationsTodayDate() })
-    };
-  }
-
   const supabase = await createClient();
+  const operationsDate = getOperationsTodayDate();
 
   const today = new Date();
   const start = new Date(today);
@@ -22,7 +13,7 @@ export async function getDashboardStats(userId: string) {
   const end = new Date(today);
   end.setHours(23, 59, 59, 999);
 
-  const [{ count: todaysLogs }, { count: missingDocs }, { data: latestPunches }] = await Promise.all([
+  const [{ count: todaysLogs }, { count: missingDocs }, { data: latestPunches }, incompleteAttendance] = await Promise.all([
     supabase
       .from("documentation_events")
       .select("id", { count: "exact", head: true })
@@ -38,29 +29,19 @@ export async function getDashboardStats(userId: string) {
       .select("id, punch_type, punch_at")
       .eq("staff_user_id", userId)
       .order("punch_at", { ascending: false })
-      .limit(5)
+      .limit(5),
+    getIncompleteAttendanceSummary({ selectedDate: operationsDate })
   ]);
 
   return {
     todaysLogs: todaysLogs ?? 0,
     missingDocs: missingDocs ?? 0,
     latestPunches: latestPunches ?? [],
-    incompleteAttendance: {
-      selectedDate: getOperationsTodayDate(),
-      pendingWithoutStatus: 0,
-      checkInMissingCheckOut: 0,
-      checkOutMissingCheckIn: 0,
-      totalIncomplete: 0
-    }
+    incompleteAttendance
   };
 }
 
 export async function getDashboardAlerts() {
-  if (isMockMode()) {
-    // TODO(backend): Remove mock branch when dashboard alerts come from Supabase in local/dev.
-    return getMockDashboardAlerts();
-  }
-
   const supabase = await createClient();
 
   const { data: overdueCarePlan } = await supabase

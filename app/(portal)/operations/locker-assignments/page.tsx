@@ -5,8 +5,9 @@ import { assignLockerAction, clearLockerAction } from "@/app/(portal)/operations
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getLockerHistoryEntries, getMockDb } from "@/lib/mock-repo";
+import { createClient } from "@/lib/supabase/server";
 import { formatOptionalDate } from "@/lib/utils";
+import { LockerAssignModalTrigger } from "@/app/(portal)/operations/locker-assignments/locker-assign-modal-trigger";
 
 const PAGE_SIZE = 25;
 const PDF_REFERENCE_ROWS: Array<{ locker: string; current?: string; previous?: string }> = [
@@ -50,6 +51,18 @@ function lockerSort(a: string, b: string) {
   return a.localeCompare(b, undefined, { sensitivity: "base" });
 }
 
+function resolveLockerAssignmentDate(member: {
+  enrollment_date: string | null;
+  locker_assigned_at?: string | null;
+  updated_at?: string | null;
+}) {
+  const lockerAssignedAt = typeof member.locker_assigned_at === "string" ? member.locker_assigned_at : null;
+  if (lockerAssignedAt) return lockerAssignedAt;
+  const updatedAt = typeof member.updated_at === "string" ? member.updated_at : null;
+  if (updatedAt) return updatedAt;
+  return member.enrollment_date;
+}
+
 export default async function LockerAssignmentsPage({
   searchParams
 }: {
@@ -68,17 +81,34 @@ export default async function LockerAssignmentsPage({
   const errorMessage = firstString(params.error) ?? "";
   const successMessage = firstString(params.success) ?? "";
 
-  const db = getMockDb();
+  const supabase = await createClient();
+  const { data: membersData, error } = await supabase
+    .from("members")
+    .select("id, display_name, status, locker_number, enrollment_date, discharge_date, updated_at")
+    .order("display_name", { ascending: true });
+  if (error) {
+    throw new Error(error.message);
+  }
+  const allMembers = (membersData ?? []) as Array<{
+    id: string;
+    display_name: string;
+    status: "active" | "inactive";
+    locker_number: string | null;
+    enrollment_date: string | null;
+    discharge_date: string | null;
+    updated_at: string | null;
+    locker_assigned_at?: string | null;
+  }>;
   const activeMembers = Array.from(
     new Map(
-      db.members
+      allMembers
         .filter((member) => member.status === "active")
         .map((member) => [member.id, member] as const)
     ).values()
   ).sort((a, b) => a.display_name.localeCompare(b.display_name, undefined, { sensitivity: "base" }));
   const inactiveMembers = Array.from(
     new Map(
-      db.members
+      allMembers
         .filter((member) => member.status === "inactive")
         .map((member) => [member.id, member] as const)
     ).values()
@@ -97,11 +127,6 @@ export default async function LockerAssignmentsPage({
   });
 
   const previousByLocker = new Map<string, string>();
-  getLockerHistoryEntries().forEach((entry) => {
-    if (!entry.lockerNumber || previousByLocker.has(entry.lockerNumber)) return;
-    previousByLocker.set(entry.lockerNumber, entry.previousMemberName);
-  });
-  // Fallback for older mock states that predate locker history persistence.
   inactiveMembers.forEach((member) => {
     const locker = normalizeLocker(member.locker_number);
     if (!locker || previousByLocker.has(locker)) return;
@@ -153,6 +178,11 @@ export default async function LockerAssignmentsPage({
   const availableLockerOptions = [...lockerPool]
     .filter((locker) => !currentByLocker.has(locker) || locker === selectedMemberCurrentLocker)
     .sort(lockerSort);
+  const activeMemberOptions = activeMembers.map((member) => ({
+    id: member.id,
+    displayName: member.display_name,
+    lockerNumber: normalizeLocker(member.locker_number)
+  }));
 
   const totalRows = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
@@ -169,17 +199,6 @@ export default async function LockerAssignmentsPage({
     qs.set("page", String(page));
     return `/operations/locker-assignments?${qs.toString()}`;
   };
-
-  const assignLinkHref = (locker: string, memberId?: string) => {
-    const qs = new URLSearchParams();
-    if (rawQuery) qs.set("q", rawQuery);
-    if (status !== "all") qs.set("status", status);
-    qs.set("locker", locker);
-    if (memberId) qs.set("memberId", memberId);
-    qs.set("page", String(currentPage));
-    return `/operations/locker-assignments?${qs.toString()}#assignment-form`;
-  };
-
   return (
     <div className="space-y-4">
       <Card>
@@ -316,16 +335,20 @@ export default async function LockerAssignmentsPage({
                   </td>
                   <td>{row.previousMember ?? "-"}</td>
                   <td>{row.status}</td>
-                  <td>{row.currentMember ? formatOptionalDate(row.currentMember.enrollment_date) : "-"}</td>
+                  <td>{row.currentMember ? formatOptionalDate(resolveLockerAssignmentDate(row.currentMember)) : "-"}</td>
                   <td>
                     <div className="flex flex-wrap items-center gap-2">
                       {canEdit ? (
-                        <Link
-                          href={assignLinkHref(row.locker, row.currentMember?.id)}
-                          className="text-sm font-semibold text-brand"
-                        >
-                          Assign/Reassign
-                        </Link>
+                        <LockerAssignModalTrigger
+                          assignAction={assignLockerAction}
+                          defaultLocker={row.locker}
+                          defaultMemberId={row.currentMember?.id}
+                          activeMembers={activeMemberOptions}
+                          availableLockerOptions={availableLockerOptions}
+                          rawQuery={rawQuery}
+                          status={status}
+                          currentPage={currentPage}
+                        />
                       ) : null}
                       {canEdit && row.currentMember ? (
                         <form action={clearLockerAction}>
@@ -386,3 +409,4 @@ export default async function LockerAssignmentsPage({
     </div>
   );
 }
+
