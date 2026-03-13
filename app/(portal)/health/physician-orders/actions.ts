@@ -329,70 +329,88 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
   const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
   const memberId = asString(formData, "memberId");
   if (!memberId) throw new Error("Member is required.");
+  const pofId = asNullableString(formData, "pofId");
 
-  const saveIntent = asString(formData, "saveIntent");
-  const status = parseStatusFromIntent(saveIntent);
+  const redirectToFormWithError = (message: string) => {
+    const params = new URLSearchParams();
+    params.set("memberId", memberId);
+    if (pofId) params.set("pofId", pofId);
+    params.set("saveError", message.slice(0, 280));
+    redirect(`/health/physician-orders/new?${params.toString()}`);
+  };
 
-  const providerNameFromForm = asNullableString(formData, "providerName");
-  const providerNameResolved = providerNameFromForm ?? actorDisplayName;
-  const providerSignatureDate = asNullableString(formData, "providerSignatureDate");
-  const providerSignature = asNullableString(formData, "providerSignature") ?? actorDisplayName;
-  const diagnosisRows = parseDiagnosisRows(formData);
-  const allergyRows = parseAllergyRows(formData);
-  const standingOrders = parseStandingOrders(formData);
+  let destinationUrl = `/health/physician-orders/new?memberId=${encodeURIComponent(memberId)}`;
 
-  const saved = await savePhysicianOrderForm({
-    id: asNullableString(formData, "pofId"),
-    memberId,
-    intakeAssessmentId: asNullableString(formData, "intakeAssessmentId"),
-    memberDobSnapshot: asNullableString(formData, "memberDob"),
-    sex: parseSex(asString(formData, "sex")),
-    levelOfCare: parseLevelOfCare(asString(formData, "levelOfCare")),
-    dnrSelected: asCheckbox(formData, "dnrSelected"),
-    vitalsBloodPressure: asNullableString(formData, "vitalsBloodPressure"),
-    vitalsPulse: asNullableString(formData, "vitalsPulse"),
-    vitalsOxygenSaturation:
-      asNullableString(formData, "vitalsOxygenSaturation") ??
-      asNullableString(formData, "vitalsTemperature"),
-    vitalsRespiration: asNullableString(formData, "vitalsRespiration"),
-    diagnosisRows,
-    diagnoses: diagnosisRows.map((row) => row.diagnosisName),
-    allergyRows,
-    allergies: allergyRows.map((row) => row.allergyName),
-    medications: parseMedicationRows(formData),
-    standingOrders,
-    careInformation: parseCareInformation(formData),
-    operationalFlags: parseOperationalFlags(formData),
-    providerName: providerNameResolved,
-    providerSignature,
-    providerSignatureDate,
-    status,
-    actor: {
-      id: profile.id,
-      fullName: actorDisplayName
+  try {
+    const saveIntent = asString(formData, "saveIntent");
+    const status = parseStatusFromIntent(saveIntent);
+
+    const providerNameFromForm = asNullableString(formData, "providerName");
+    const providerNameResolved = providerNameFromForm ?? actorDisplayName;
+    const providerSignatureDate = asNullableString(formData, "providerSignatureDate");
+    const providerSignature = asNullableString(formData, "providerSignature") ?? actorDisplayName;
+    const diagnosisRows = parseDiagnosisRows(formData);
+    const allergyRows = parseAllergyRows(formData);
+    const standingOrders = parseStandingOrders(formData);
+
+    const saved = await savePhysicianOrderForm({
+      id: pofId,
+      memberId,
+      intakeAssessmentId: asNullableString(formData, "intakeAssessmentId"),
+      memberDobSnapshot: asNullableString(formData, "memberDob"),
+      sex: parseSex(asString(formData, "sex")),
+      levelOfCare: parseLevelOfCare(asString(formData, "levelOfCare")),
+      dnrSelected: asCheckbox(formData, "dnrSelected"),
+      vitalsBloodPressure: asNullableString(formData, "vitalsBloodPressure"),
+      vitalsPulse: asNullableString(formData, "vitalsPulse"),
+      vitalsOxygenSaturation:
+        asNullableString(formData, "vitalsOxygenSaturation") ??
+        asNullableString(formData, "vitalsTemperature"),
+      vitalsRespiration: asNullableString(formData, "vitalsRespiration"),
+      diagnosisRows,
+      diagnoses: diagnosisRows.map((row) => row.diagnosisName),
+      allergyRows,
+      allergies: allergyRows.map((row) => row.allergyName),
+      medications: parseMedicationRows(formData),
+      standingOrders,
+      careInformation: parseCareInformation(formData),
+      operationalFlags: parseOperationalFlags(formData),
+      providerName: providerNameResolved,
+      providerSignature,
+      providerSignatureDate,
+      status,
+      actor: {
+        id: profile.id,
+        fullName: actorDisplayName
+      }
+    });
+
+    let pdfSaveFailed = false;
+    if (status === "Sent" || status === "Signed") {
+      try {
+        const generated = await buildPhysicianOrderPdfDataUrl(saved.id);
+        await savePofPdfToMemberFiles({
+          memberId: saved.memberId,
+          memberName: saved.memberNameSnapshot,
+          dataUrl: generated.dataUrl,
+          uploadedBy: {
+            id: profile.id,
+            name: actorDisplayName
+          }
+        });
+      } catch {
+        pdfSaveFailed = true;
+      }
     }
-  });
 
-  let pdfSaveFailed = false;
-  if (status === "Sent" || status === "Signed") {
-    try {
-      const generated = await buildPhysicianOrderPdfDataUrl(saved.id);
-      await savePofPdfToMemberFiles({
-        memberId: saved.memberId,
-        memberName: saved.memberNameSnapshot,
-        dataUrl: generated.dataUrl,
-        uploadedBy: {
-          id: profile.id,
-          name: actorDisplayName
-        }
-      });
-    } catch {
-      pdfSaveFailed = true;
-    }
+    revalidatePofRoutes(saved.memberId, saved.id);
+    destinationUrl = pdfSaveFailed ? `/health/physician-orders/${saved.id}?pdfSave=failed` : `/health/physician-orders/${saved.id}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save physician order.";
+    redirectToFormWithError(message);
   }
 
-  revalidatePofRoutes(saved.memberId, saved.id);
-  redirect(pdfSaveFailed ? `/health/physician-orders/${saved.id}?pdfSave=failed` : `/health/physician-orders/${saved.id}`);
+  redirect(destinationUrl);
 }
 
 export async function generatePhysicianOrderPdfAction(input: { pofId: string }) {

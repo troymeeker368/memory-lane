@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { EnrollMemberAction } from "@/components/sales/enroll-member-action";
 import { LeadContactQuickActions } from "@/components/sales/lead-contact-quick-actions";
+import { SendEnrollmentPacketAction } from "@/components/sales/send-enrollment-packet-action";
 import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
 import { requireModuleAccess } from "@/lib/auth";
@@ -36,8 +37,13 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
           {detail.referralSource ? <Link className="font-semibold text-brand" href={`/sales/community-partners/referral-sources/${detail.referralSource.id}`}>View Referral Source</Link> : null}
         </div>
         {showEnrollMemberAction ? (
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap gap-2">
             <EnrollMemberAction leadId={lead.id} />
+            <SendEnrollmentPacketAction
+              leadId={lead.id}
+              memberId={detail.linkedMemberId ?? null}
+              defaultCaregiverEmail={lead.caregiver_email}
+            />
           </div>
         ) : null}
         <div className="mt-3">

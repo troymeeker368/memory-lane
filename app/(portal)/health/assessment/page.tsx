@@ -1,6 +1,6 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 
-import { AssessmentForm } from "@/components/forms/workflow-forms";
+import { AssessmentFormBoundary } from "@/components/forms/assessment-form-boundary";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getAssessmentMembers } from "@/lib/services/documentation";
@@ -33,7 +33,7 @@ export default async function HealthAssessmentPage({
           Structured intake assessment for Tour/EIP leads with score-based track recommendation and member profile writeback.
         </p>
         <div className="mt-3">
-          <AssessmentForm members={members} initialMemberId={initialMemberId} initialStaffName={signerName} />
+          <AssessmentFormBoundary members={members} initialMemberId={initialMemberId} initialStaffName={signerName} />
         </div>
       </Card>
 
@@ -88,5 +88,3 @@ export default async function HealthAssessmentPage({
     </div>
   );
 }
-
-

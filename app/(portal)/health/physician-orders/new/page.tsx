@@ -73,6 +73,7 @@ export default async function NewPhysicianOrderPage({
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";
   const pofId = firstString(query.pofId) ?? "";
+  const saveError = firstString(query.saveError) ?? "";
 
   const supabase = await createClient();
   const { data: memberRows } = await supabase
@@ -143,6 +144,13 @@ export default async function NewPhysicianOrderPage({
           </p>
         ) : null}
       </Card>
+
+      {saveError ? (
+        <Card>
+          <p className="text-sm font-semibold text-rose-700">Unable to save Physician Order.</p>
+          <p className="mt-1 text-sm text-muted">{saveError}</p>
+        </Card>
+      ) : null}
 
       <form action={savePhysicianOrderFormAction} className="space-y-4">
         <input type="hidden" name="memberId" value={draft.memberId} />

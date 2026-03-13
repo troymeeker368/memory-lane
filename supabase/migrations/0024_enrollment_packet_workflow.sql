@@ -56,14 +56,14 @@ create table if not exists public.enrollment_packet_events (
   event_type text not null,
   actor_user_id uuid references public.profiles(id) on delete set null,
   actor_email text,
-  event_timestamp timestamptz not null default now(),
+  timestamp timestamptz not null default now(),
   metadata jsonb not null default '{}'::jsonb
 );
 
 create index if not exists idx_enrollment_packet_events_packet_timestamp
-  on public.enrollment_packet_events(packet_id, event_timestamp asc);
+  on public.enrollment_packet_events(packet_id, timestamp asc);
 create index if not exists idx_enrollment_packet_events_type_timestamp
-  on public.enrollment_packet_events(event_type, event_timestamp desc);
+  on public.enrollment_packet_events(event_type, timestamp desc);
 
 create table if not exists public.enrollment_packet_signatures (
   id uuid primary key default gen_random_uuid(),
@@ -80,6 +80,19 @@ create table if not exists public.enrollment_packet_signatures (
 
 create index if not exists idx_enrollment_packet_signatures_packet_signed
   on public.enrollment_packet_signatures(packet_id, signed_at asc);
+
+create table if not exists public.enrollment_packet_sender_signatures (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  signature_name text not null,
+  signature_blob text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists trg_enrollment_packet_sender_signatures_updated on public.enrollment_packet_sender_signatures;
+create trigger trg_enrollment_packet_sender_signatures_updated
+before update on public.enrollment_packet_sender_signatures
+for each row execute function public.set_updated_at();
 
 create table if not exists public.enrollment_packet_uploads (
   id uuid primary key default gen_random_uuid(),
@@ -143,6 +156,7 @@ alter table public.enrollment_packet_requests enable row level security;
 alter table public.enrollment_packet_fields enable row level security;
 alter table public.enrollment_packet_events enable row level security;
 alter table public.enrollment_packet_signatures enable row level security;
+alter table public.enrollment_packet_sender_signatures enable row level security;
 alter table public.enrollment_packet_uploads enable row level security;
 alter table public.user_notifications enable row level security;
 
@@ -181,6 +195,16 @@ for select to authenticated using (true);
 create policy "enrollment_packet_signatures_insert" on public.enrollment_packet_signatures
 for insert to authenticated with check (true);
 create policy "enrollment_packet_signatures_update" on public.enrollment_packet_signatures
+for update to authenticated using (true) with check (true);
+
+drop policy if exists "enrollment_packet_sender_signatures_select" on public.enrollment_packet_sender_signatures;
+drop policy if exists "enrollment_packet_sender_signatures_insert" on public.enrollment_packet_sender_signatures;
+drop policy if exists "enrollment_packet_sender_signatures_update" on public.enrollment_packet_sender_signatures;
+create policy "enrollment_packet_sender_signatures_select" on public.enrollment_packet_sender_signatures
+for select to authenticated using (true);
+create policy "enrollment_packet_sender_signatures_insert" on public.enrollment_packet_sender_signatures
+for insert to authenticated with check (true);
+create policy "enrollment_packet_sender_signatures_update" on public.enrollment_packet_sender_signatures
 for update to authenticated using (true) with check (true);
 
 drop policy if exists "enrollment_packet_uploads_select" on public.enrollment_packet_uploads;

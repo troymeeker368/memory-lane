@@ -318,6 +318,7 @@ export function MemberCommandCenterPofSection({
                 const canVoid = request && (request.status === "draft" || request.status === "sent" || request.status === "opened");
                 const canDownloadSigned = request && request.status === "signed";
                 const canCopySignLink = request && (request.status === "draft" || request.status === "sent" || request.status === "opened");
+                const sendWorkflowMode = canSendNew ? "send" : canResend ? "resend" : null;
                 return (
                   <tr key={row.id}>
                     <td>
@@ -337,11 +338,17 @@ export function MemberCommandCenterPofSection({
                     <td>{request?.signedAt ? formatDateTime(request.signedAt) : row.signedDate ? formatOptionalDate(row.signedDate) : "-"}</td>
                     <td>
                       <div className="flex flex-wrap gap-2 text-xs">
-                        {canSendNew ? (
+                        {sendWorkflowMode ? (
                           <button
                             type="button"
                             className="font-semibold text-brand"
-                            onClick={() => openSendModal(row)}
+                            onClick={() => {
+                              if (sendWorkflowMode === "resend" && request) {
+                                openResendModal(row, request);
+                                return;
+                              }
+                              openSendModal(row);
+                            }}
                             disabled={isPending}
                           >
                             Send POF for Signature

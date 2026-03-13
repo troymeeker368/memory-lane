@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { z } from "zod";
 
 import { getCurrentProfile, requireModuleAction } from "@/lib/auth";
@@ -17,6 +18,11 @@ import {
   canonicalLeadStatus
 } from "@/lib/canonical";
 import { normalizeRoleKey } from "@/lib/permissions";
+import {
+  getEnrollmentPacketSenderSignatureProfile,
+  sendEnrollmentPacketRequest,
+  upsertEnrollmentPacketSenderSignatureProfile
+} from "@/lib/services/enrollment-packets";
 import { applyLeadStageTransitionSupabase } from "@/lib/services/sales-lead-stage-supabase";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternDateTimeLocal, toEasternISO } from "@/lib/timezone";
@@ -74,6 +80,21 @@ function normalizeText(value: string | null | undefined) {
 function makeShortId(prefix: string) {
   const random = Math.random().toString(16).slice(2, 10);
   return `${prefix}-${random}`;
+}
+
+async function resolveRequestAppBaseUrl() {
+  const headerMap = await headers();
+  const origin = (headerMap.get("origin") ?? "").trim();
+  if (origin) return origin;
+
+  const forwardedHost = (headerMap.get("x-forwarded-host") ?? "").trim();
+  const host = forwardedHost || (headerMap.get("host") ?? "").trim();
+  if (!host) return null;
+  const forwardedProto = (headerMap.get("x-forwarded-proto") ?? "").trim();
+  const proto =
+    forwardedProto.split(",")[0]?.trim() ||
+    (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
+  return `${proto}://${host}`;
 }
 
 function resolveLostReason(lostReason?: string, lostReasonOther?: string) {
@@ -852,6 +873,112 @@ export async function getSalesFormLookups() {
     partners: partners ?? [],
     referralSources: normalizedReferralSources
   };
+}
+
+const enrollmentPacketSendSchema = z.object({
+  leadId: optionalString,
+  memberId: optionalString,
+  caregiverEmail: optionalString,
+  requestedDays: z.array(z.string().min(1)).min(1),
+  transportation: optionalString,
+  communityFee: z.number().min(0),
+  dailyRate: z.number().min(0),
+  optionalMessage: optionalString
+});
+
+export async function sendEnrollmentPacketAction(raw: z.infer<typeof enrollmentPacketSendSchema>) {
+  await requireSalesRoles();
+  const payload = enrollmentPacketSendSchema.safeParse(raw);
+  if (!payload.success) {
+    return { ok: false, error: "Invalid enrollment packet request." } as const;
+  }
+
+  try {
+    const profile = await getCurrentProfile();
+    const sent = await sendEnrollmentPacketRequest({
+      leadId: payload.data.leadId || null,
+      memberId: payload.data.memberId || null,
+      senderUserId: profile.id,
+      senderFullName: profile.full_name,
+      caregiverEmail: payload.data.caregiverEmail || null,
+      requestedDays: payload.data.requestedDays.map((day) => day.trim()).filter(Boolean),
+      transportation: payload.data.transportation || null,
+      communityFee: payload.data.communityFee,
+      dailyRate: payload.data.dailyRate,
+      optionalMessage: payload.data.optionalMessage || null,
+      appBaseUrl: await resolveRequestAppBaseUrl()
+    });
+
+    revalidateSalesLeadViews(payload.data.leadId || undefined);
+    revalidatePath("/sales/new-entries/send-enrollment-packet");
+    revalidatePath("/operations/member-command-center");
+    if (payload.data.memberId?.trim()) {
+      revalidatePath(`/operations/member-command-center/${payload.data.memberId.trim()}`);
+      revalidatePath(`/members/${payload.data.memberId.trim()}`);
+    }
+
+    return {
+      ok: true,
+      requestId: sent.request.id,
+      requestUrl: sent.requestUrl
+    } as const;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to send enrollment packet.";
+    const code = typeof error === "object" && error !== null ? String((error as { code?: string }).code ?? "") : "";
+    if (code === "signature_setup_required") {
+      return {
+        ok: false,
+        error: message,
+        code,
+        redirectTo: "/sales/new-entries/enrollment-signature-setup"
+      } as const;
+    }
+    return { ok: false, error: message } as const;
+  }
+}
+
+const enrollmentSignatureSchema = z.object({
+  signatureName: z.string().min(1),
+  signatureImageDataUrl: z.string().min(1)
+});
+
+export async function getEnrollmentPacketSenderSignatureProfileAction() {
+  await requireSalesRoles();
+  const profile = await getCurrentProfile();
+  const signature = await getEnrollmentPacketSenderSignatureProfile(profile.id);
+  if (!signature) return null;
+  return {
+    signatureName: signature.signature_name,
+    signatureImageDataUrl: signature.signature_blob,
+    updatedAt: signature.updated_at
+  };
+}
+
+export async function saveEnrollmentPacketSenderSignatureProfileAction(raw: z.infer<typeof enrollmentSignatureSchema>) {
+  await requireSalesRoles();
+  const payload = enrollmentSignatureSchema.safeParse(raw);
+  if (!payload.success) {
+    return { ok: false, error: "Invalid signature setup input." } as const;
+  }
+  try {
+    const profile = await getCurrentProfile();
+    const saved = await upsertEnrollmentPacketSenderSignatureProfile({
+      userId: profile.id,
+      signatureName: payload.data.signatureName,
+      signatureImageDataUrl: payload.data.signatureImageDataUrl
+    });
+    revalidatePath("/sales/new-entries/enrollment-signature-setup");
+    return {
+      ok: true,
+      signatureName: saved.signature_name,
+      updatedAt: saved.updated_at
+    } as const;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to save signature setup."
+    } as const;
+  }
 }
 
 export async function getSalesNowLocalAction() {

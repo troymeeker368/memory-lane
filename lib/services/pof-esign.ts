@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { Resend } from "resend";
 
 import {
   getPhysicianOrderById,
@@ -139,10 +140,65 @@ function clean(value: string | null | undefined) {
   return normalized.length > 0 ? normalized : null;
 }
 
-function isEmail(value: string | null | undefined) {
+function parseEmailAddress(value: string | null | undefined) {
   const normalized = clean(value);
-  if (!normalized) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+  if (!normalized) return null;
+  const angledMatch = /<([^<>]+)>/.exec(normalized);
+  const candidate = clean(angledMatch ? angledMatch[1] : normalized);
+  if (!candidate) return null;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) ? candidate : null;
+}
+
+function isEmail(value: string | null | undefined) {
+  return Boolean(parseEmailAddress(value));
+}
+
+type PofRuntimeDiagnostics = {
+  hasResendApiKey: boolean;
+  hasClinicalSenderEmail: boolean;
+  hasSupabaseServiceRoleKey: boolean;
+  missing: string[];
+};
+
+export function getPofRuntimeDiagnostics(input?: {
+  requireResend?: boolean;
+}): PofRuntimeDiagnostics {
+  const hasResendApiKey = Boolean(clean(process.env.RESEND_API_KEY));
+  const hasClinicalSenderEmail = Boolean(getConfiguredClinicalSenderEmail());
+  const hasSupabaseServiceRoleKey = Boolean(
+    clean(process.env.SUPABASE_SERVICE_ROLE_KEY) ?? clean(process.env.SUPABASE_SERVICE_KEY)
+  );
+  const missing: string[] = [];
+  if (!hasSupabaseServiceRoleKey) missing.push("SUPABASE_SERVICE_ROLE_KEY");
+  if (input?.requireResend) {
+    if (!hasResendApiKey) missing.push("RESEND_API_KEY");
+    if (!hasClinicalSenderEmail) missing.push("CLINICAL_SENDER_EMAIL");
+  }
+  return {
+    hasResendApiKey,
+    hasClinicalSenderEmail,
+    hasSupabaseServiceRoleKey,
+    missing
+  };
+}
+
+function assertPofRuntimeDiagnostics(input: {
+  context: string;
+  requireResend?: boolean;
+}) {
+  const diagnostics = getPofRuntimeDiagnostics({ requireResend: input.requireResend });
+  if ((process.env.NODE_ENV ?? "").toLowerCase() !== "production") {
+    console.info(`[POF e-sign diagnostics:${input.context}]`, {
+      hasResendApiKey: diagnostics.hasResendApiKey,
+      hasClinicalSenderEmail: diagnostics.hasClinicalSenderEmail,
+      hasSupabaseServiceRoleKey: diagnostics.hasSupabaseServiceRoleKey
+    });
+  }
+  if (diagnostics.missing.length > 0) {
+    throw new Error(
+      `Missing required environment configuration for POF e-sign: ${diagnostics.missing.join(", ")}.`
+    );
+  }
 }
 
 function toStatus(value: string | null | undefined): PofRequestStatus {
@@ -272,11 +328,11 @@ function escapeHtml(value: string) {
 function buildAppBaseUrl(requestBaseUrl?: string | null) {
   const requested = clean(requestBaseUrl);
   const explicit =
-    requested ??
     clean(process.env.NEXT_PUBLIC_APP_URL) ??
     clean(process.env.APP_URL) ??
     clean(process.env.NEXT_PUBLIC_SITE_URL) ??
-    clean(process.env.SITE_URL);
+    clean(process.env.SITE_URL) ??
+    requested;
   const vercelHost =
     clean(process.env.VERCEL_PROJECT_PRODUCTION_URL) ??
     clean(process.env.VERCEL_URL);
@@ -348,20 +404,27 @@ async function sendSignatureEmail(input: {
   memberName: string;
   optionalMessage?: string | null;
 }) {
-  const apiKey = clean(process.env.RESEND_API_KEY);
-  if (!apiKey) {
-    throw new Error("POF e-sign email delivery is not configured. Set RESEND_API_KEY.");
-  }
+  assertPofRuntimeDiagnostics({
+    context: "send-signature-email",
+    requireResend: true
+  });
 
-  const subject = `Memory Lane POF Signature Request for ${input.memberName}`;
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const clinicalSenderEmail = getConfiguredClinicalSenderEmail();
+  if (!clinicalSenderEmail) {
+    throw new Error("Clinical sender email is missing or invalid. Configure CLINICAL_SENDER_EMAIL.");
+  }
+  const subject = "Physician Order Form Signature Request";
   const expiresOn = input.expiresAt.slice(0, 10);
   const optionalMessage = clean(input.optionalMessage);
   const providerNameEscaped = escapeHtml(input.providerName);
   const nurseNameEscaped = escapeHtml(input.nurseName);
+  const memberNameEscaped = escapeHtml(input.memberName);
   const requestUrlEscaped = escapeHtml(input.requestUrl);
   const optionalMessageEscaped = optionalMessage ? escapeHtml(optionalMessage) : null;
   const html = `
     <p>Hello ${providerNameEscaped},</p>
+    <p><strong>Member:</strong> ${memberNameEscaped}</p>
     <p>${nurseNameEscaped} sent a Physician Order Form (POF) for review and signature.</p>
     ${optionalMessageEscaped ? `<p><strong>Message:</strong> ${optionalMessageEscaped}</p>` : ""}
     <p><a href="${requestUrlEscaped}">Open secure POF signing page</a></p>
@@ -379,38 +442,22 @@ async function sendSignatureEmail(input: {
   ]
     .filter(Boolean)
     .join("\n");
-
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from: input.fromEmail,
-      to: [input.toEmail],
-      subject,
-      html,
-      text
-    })
+  const response = await resend.emails.send({
+    from: `Memory Lane <${clinicalSenderEmail}>`,
+    to: [input.toEmail],
+    subject,
+    html,
+    text,
+    ...(isEmail(input.fromEmail) ? { replyTo: parseEmailAddress(input.fromEmail)! } : {})
   });
-
-  if (!response.ok) {
-    let detail = "";
-    try {
-      detail = await response.text();
-    } catch {
-      detail = "";
-    }
-    if (
-      response.status === 403 &&
-      detail.toLowerCase().includes("you can only send testing emails to your own email address")
-    ) {
+  if (response.error) {
+    const detail = clean(response.error.message) ?? "Unknown Resend error.";
+    if (detail.toLowerCase().includes("you can only send testing emails to your own email address")) {
       throw new Error(
         "Resend is in test mode. Verify your sending domain in Resend and set CLINICAL_SENDER_EMAIL to that verified domain before sending live provider signature requests."
       );
     }
-    throw new Error(`Unable to deliver signature email (${response.status}). ${detail}`.trim());
+    throw new Error(`Unable to deliver signature email. ${detail}`.trim());
   }
 }
 
@@ -563,12 +610,11 @@ async function buildSignedPdfBytes(input: {
 }
 
 export function getConfiguredClinicalSenderEmail() {
-  return (
-    clean(process.env.CLINICAL_SENDER_EMAIL) ??
-    clean(process.env.DEFAULT_CLINICAL_SENDER_EMAIL) ??
-    clean(process.env.RESEND_FROM_EMAIL) ??
-    ""
-  );
+  const preferred =
+    parseEmailAddress(process.env.CLINICAL_SENDER_EMAIL) ??
+    parseEmailAddress(process.env.DEFAULT_CLINICAL_SENDER_EMAIL) ??
+    parseEmailAddress(process.env.RESEND_FROM_EMAIL);
+  return preferred ?? "";
 }
 
 export async function listPofRequestsForMember(memberId: string) {
@@ -682,6 +728,10 @@ export async function listPofTimelineForPhysicianOrder(physicianOrderId: string)
 }
 
 export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
+  assertPofRuntimeDiagnostics({
+    context: "send-new-request",
+    requireResend: true
+  });
   const providerName = clean(input.providerName);
   const providerEmail = clean(input.providerEmail);
   const nurseName = clean(input.nurseName);
@@ -814,6 +864,10 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
 }
 
 export async function resendPofSignatureRequest(input: ResendPofSignatureInput) {
+  assertPofRuntimeDiagnostics({
+    context: "resend-request",
+    requireResend: true
+  });
   const request = await loadRequestById(input.requestId);
   if (!request) throw new Error("POF signature request was not found.");
   if (request.member_id !== input.memberId) throw new Error("Request/member mismatch.");
@@ -1042,6 +1096,9 @@ export async function getPublicPofSigningContext(
 }
 
 export async function submitPublicPofSignature(input: SubmitPublicPofSignatureInput) {
+  assertPofRuntimeDiagnostics({
+    context: "submit-public-signature"
+  });
   const token = clean(input.token);
   const providerTypedName = clean(input.providerTypedName);
   if (!token) throw new Error("Signature token is required.");

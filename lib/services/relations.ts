@@ -164,17 +164,19 @@ export async function getLeadDetail(leadId: string) {
           .maybeSingle()
       : Promise.resolve({ data: null, error: null } as const);
 
-  const [activitiesResult, stageHistoryResult, partnerResult, referralSourceResult] = await Promise.all([
+  const [activitiesResult, stageHistoryResult, partnerResult, referralSourceResult, linkedMemberResult] = await Promise.all([
     supabase.from("lead_activities").select("*").eq("lead_id", leadId).order("activity_at", { ascending: false }),
     supabase.from("lead_stage_history").select("*").eq("lead_id", leadId).order("changed_at", { ascending: false }),
     partnerPromise,
-    referralSourcePromise
+    referralSourcePromise,
+    supabase.from("members").select("id").eq("source_lead_id", leadId).maybeSingle()
   ]);
 
   if (activitiesResult.error) throw new Error(activitiesResult.error.message);
   if (stageHistoryResult.error) throw new Error(stageHistoryResult.error.message);
   if (partnerResult.error) throw new Error(partnerResult.error.message);
   if (referralSourceResult.error) throw new Error(referralSourceResult.error.message);
+  if (linkedMemberResult.error) throw new Error(linkedMemberResult.error.message);
 
   const partner = partnerResult.data ?? null;
   const referralSource = referralSourceResult.data ?? null;
@@ -196,6 +198,7 @@ export async function getLeadDetail(leadId: string) {
     lead,
     activities: activitiesResult.data ?? [],
     stageHistory: stageHistoryResult.data ?? [],
+    linkedMemberId: linkedMemberResult.data ? String((linkedMemberResult.data as { id: string }).id) : null,
     partner,
     referralSource,
     partnerActivities: partnerActivities ?? []

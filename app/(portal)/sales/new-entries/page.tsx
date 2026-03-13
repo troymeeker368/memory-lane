@@ -5,6 +5,8 @@ import { requireModuleAccess } from "@/lib/auth";
 
 const entryLinks = [
   { label: "New Inquiry", href: "/sales/new-entries/new-inquiry" },
+  { label: "Send Enrollment Packet", href: "/sales/new-entries/send-enrollment-packet" },
+  { label: "Enrollment Signature Setup", href: "/sales/new-entries/enrollment-signature-setup" },
   { label: "Log Partner Activities", href: "/sales/new-entries/log-partner-activities" },
   { label: "New Community Partner", href: "/sales/new-entries/new-community-partner" },
   { label: "New Referral Source", href: "/sales/new-entries/new-referral-source" },
