@@ -7,11 +7,7 @@ import {
   signPhysicianOrder,
   type PhysicianOrderForm
 } from "@/lib/services/physician-orders-supabase";
-import {
-  facilityBranding,
-  getFacilitySignatureLines,
-  resolveFacilityLogoUrl
-} from "@/lib/config/facility-branding";
+import { buildPofSignatureRequestTemplate } from "@/lib/email/templates/pof-signature-request";
 import { buildPofDocumentPdfBytes } from "@/lib/services/pof-document-pdf";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -337,15 +333,6 @@ async function assertPhysicianOrderMember(physicianOrderId: string, memberId: st
   return form;
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function buildAppBaseUrl(requestBaseUrl?: string | null) {
   const requested = clean(requestBaseUrl);
   const explicit =
@@ -436,104 +423,21 @@ async function sendSignatureEmail(input: {
     throw new Error("Clinical sender email is missing or invalid. Configure CLINICAL_SENDER_EMAIL.");
   }
 
-  const subject = `Physician Order Form Signature Request \u2013 ${facilityBranding.facilityName}`;
-  const expiresOn = new Intl.DateTimeFormat("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "America/New_York"
-  }).format(new Date(input.expiresAt));
-  const signatureLines = getFacilitySignatureLines();
-  const signatureHtml = signatureLines.map((line) => escapeHtml(line)).join("<br/>");
-  const signatureText = signatureLines.join("\n");
-  const optionalMessage = clean(input.optionalMessage);
-  const providerNameEscaped = escapeHtml(input.providerName);
-  const nurseNameEscaped = escapeHtml(input.nurseName);
-  const memberNameEscaped = escapeHtml(input.memberName);
-  const requestUrlEscaped = escapeHtml(input.requestUrl);
-  const optionalMessageEscaped = optionalMessage ? escapeHtml(optionalMessage) : null;
-  const logoUrlEscaped = escapeHtml(resolveFacilityLogoUrl());
-  const titleEscaped = escapeHtml(subject);
-  const facilityNameEscaped = escapeHtml(facilityBranding.facilityName);
-
-  const html = `
-    <div style="background:#f3f8fc;padding:24px;font-family:Arial,sans-serif;color:#0f172a;">
-      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #d9e4ef;border-radius:14px;overflow:hidden;">
-        <tr>
-          <td style="padding:24px 24px 12px;">
-            <img src="${logoUrlEscaped}" alt="Town Square Fort Mill" width="180" style="display:block;width:180px;max-width:100%;height:auto;"/>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:0 24px 0;">
-            <h1 style="margin:0;font-size:24px;line-height:1.3;font-weight:700;color:#0f2943;">${titleEscaped}</h1>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:18px 24px 0;">
-            <p style="margin:0 0 12px;font-size:16px;line-height:1.6;">Hello ${providerNameEscaped},</p>
-            <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">A Physician Order Form (POF) for the following member requires your review and signature.</p>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:2px 24px 0;">
-            <div style="background:#eef6ff;border:1px solid #c8ddf4;border-radius:10px;padding:14px 16px;">
-              <p style="margin:0;font-size:12px;line-height:1.2;text-transform:uppercase;letter-spacing:0.06em;color:#45617c;">Member</p>
-              <p style="margin:8px 0 0;font-size:20px;line-height:1.3;font-weight:700;color:#0f2943;">${memberNameEscaped}</p>
-            </div>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:18px 24px 0;">
-            <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">This request was sent by ${nurseNameEscaped} from ${facilityNameEscaped}.</p>
-            <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Please review and sign the document securely using the link below.</p>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:8px 24px 0;">
-            <a href="${requestUrlEscaped}" style="display:inline-block;background:#005f9f;color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:12px 18px;border-radius:8px;">Open Secure POF Signing Page</a>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:18px 24px 0;">
-            <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#334155;">This secure link will expire on ${expiresOn}.</p>
-            ${optionalMessageEscaped ? `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;"><strong>Additional message:</strong> ${optionalMessageEscaped}</p>` : ""}
-            <p style="margin:0 0 12px;font-size:14px;line-height:1.6;">If you have any questions regarding this request, please contact our team.</p>
-            <p style="margin:0 0 12px;font-size:14px;line-height:1.6;">Thank you,</p>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:14px 24px 24px;border-top:1px solid #d9e4ef;background:#f8fbff;font-size:13px;line-height:1.6;color:#334155;">
-            ${signatureHtml}
-          </td>
-        </tr>
-      </table>
-    </div>
-  `.trim();
-
-  const text = [
-    `Hello ${input.providerName},`,
-    "A Physician Order Form (POF) for the following member requires your review and signature.",
-    `Member: ${input.memberName}`,
-    `This request was sent by ${input.nurseName} from ${facilityBranding.facilityName}.`,
-    "Please review and sign the document securely using the link below.",
-    "Open Secure POF Signing Page",
-    input.requestUrl,
-    `This secure link will expire on ${expiresOn}.`,
-    optionalMessage ? `Additional message: ${optionalMessage}` : null,
-    "If you have any questions regarding this request, please contact our team.",
-    "Thank you,",
-    signatureText
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const emailTemplate = buildPofSignatureRequestTemplate({
+    providerName: input.providerName,
+    nurseName: input.nurseName,
+    memberName: input.memberName,
+    requestUrl: input.requestUrl,
+    expiresAt: input.expiresAt,
+    optionalMessage: input.optionalMessage
+  });
 
   const response = await resend.emails.send({
-    from: `${facilityBranding.facilityName} <${clinicalSenderEmail}>`,
+    from: `${emailTemplate.fromDisplayName} <${clinicalSenderEmail}>`,
     to: [input.toEmail],
-    subject,
-    html,
-    text,
+    subject: emailTemplate.subject,
+    html: emailTemplate.html,
+    text: emailTemplate.text,
     ...(isEmail(input.fromEmail) ? { replyTo: parseEmailAddress(input.fromEmail)! } : {})
   });
   if (response.error) {

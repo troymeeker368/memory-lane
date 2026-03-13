@@ -19,10 +19,15 @@ export function resolveFacilityLogoUrl() {
   return DEFAULT_FACILITY_LOGO_URL;
 }
 
-export function getFacilitySignatureLines() {
-  const [addressLine1, ...rest] = facilityBranding.facilityAddress.split(",");
-  const addressLine2 = rest.join(",").trim();
-  return [facilityBranding.facilityName, addressLine1?.trim() ?? "", addressLine2, facilityBranding.facilityPhone].filter(
-    Boolean
+export function getFacilitySignatureLines(): string[] {
+  const addressSplitToken = ", Fort Mill, SC 29715";
+  const hasExpectedTail = facilityBranding.facilityAddress.endsWith(addressSplitToken);
+  const addressLine1 = hasExpectedTail
+    ? facilityBranding.facilityAddress.slice(0, -addressSplitToken.length)
+    : facilityBranding.facilityAddress;
+  const addressLine2 = hasExpectedTail ? "Fort Mill, SC 29715" : null;
+
+  return [facilityBranding.facilityName, addressLine1, addressLine2, facilityBranding.facilityPhone].filter(
+    (line): line is string => Boolean(line)
   );
 }

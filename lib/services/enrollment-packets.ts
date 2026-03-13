@@ -8,11 +8,7 @@ import {
   resolveCanonicalLeadRef,
   resolveCanonicalMemberRef
 } from "@/lib/services/canonical-person-ref";
-import {
-  DOCUMENT_CENTER_NAME,
-  getDocumentCenterSignatureHtml,
-  getDocumentCenterSignatureText
-} from "@/lib/services/document-branding";
+import { buildEnrollmentPacketTemplate } from "@/lib/email/templates/enrollment-packet";
 import { buildCompletedEnrollmentPacketDocxData } from "@/lib/services/enrollment-packet-docx";
 import {
   ensureMemberAttendanceScheduleSupabase,
@@ -515,45 +511,18 @@ async function sendEnrollmentPacketEmail(input: {
   caregiverEmail: string;
   caregiverName: string | null;
   memberName: string;
-  senderName: string;
-  senderEmail: string;
   optionalMessage?: string | null;
   requestUrl: string;
-  expiresAt: string;
 }) {
   const apiKey = clean(process.env.RESEND_API_KEY);
   if (!apiKey) throw new Error("Enrollment packet email delivery is not configured. Set RESEND_API_KEY.");
-
-  const subject = `${DOCUMENT_CENTER_NAME} Enrollment Packet for ${input.memberName}`;
-  const caregiverName = clean(input.caregiverName) ?? "Family Representative";
-  const expiresOn = input.expiresAt.slice(0, 10);
-  const optionalMessage = clean(input.optionalMessage);
-  const html = `
-    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#1f2937;">
-      <p style="margin:0 0 12px;">Hello ${caregiverName},</p>
-      <p style="margin:0 0 12px;">${input.senderName} sent an enrollment packet for <strong>${input.memberName}</strong>.</p>
-      ${optionalMessage ? `<p style="margin:0 0 12px;"><strong>Message from care team:</strong> ${optionalMessage}</p>` : ""}
-      <p style="margin:0 0 16px;">
-        <a href="${input.requestUrl}" style="display:inline-block;background:#005f9f;color:#ffffff;text-decoration:none;font-weight:700;padding:10px 16px;border-radius:8px;">
-          Open Secure Enrollment Packet
-        </a>
-      </p>
-      <p style="margin:0 0 12px;">This secure link expires on ${expiresOn}.</p>
-      <p style="margin:0;">Thank you,</p>
-      <p style="margin:0;">${getDocumentCenterSignatureHtml()}</p>
-    </div>
-  `.trim();
-  const text = [
-    `Hello ${caregiverName},`,
-    `${input.senderName} sent an enrollment packet for ${input.memberName}.`,
-    optionalMessage ? `Message from care team: ${optionalMessage}` : null,
-    `Open secure enrollment packet: ${input.requestUrl}`,
-    `This secure link expires on ${expiresOn}.`,
-    "Thank you,",
-    getDocumentCenterSignatureText()
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const clinicalSenderEmail = resolveClinicalSenderEmail();
+  const template = buildEnrollmentPacketTemplate({
+    recipientName: clean(input.caregiverName) ?? "Family Member",
+    memberName: input.memberName,
+    requestUrl: input.requestUrl,
+    optionalMessage: input.optionalMessage ?? null
+  });
 
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -562,11 +531,11 @@ async function sendEnrollmentPacketEmail(input: {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      from: input.senderEmail,
+      from: `${template.fromDisplayName} <${clinicalSenderEmail}>`,
       to: [input.caregiverEmail],
-      subject,
-      html,
-      text
+      subject: template.subject,
+      html: template.html,
+      text: template.text
     })
   });
 
@@ -581,13 +550,10 @@ async function sendEnrollmentPacketEmail(input: {
   }
 }
 
-function defaultSenderEmail() {
-  const sender =
-    clean(process.env.CLINICAL_SENDER_EMAIL) ??
-    clean(process.env.DEFAULT_CLINICAL_SENDER_EMAIL) ??
-    clean(process.env.RESEND_FROM_EMAIL);
+function resolveClinicalSenderEmail() {
+  const sender = clean(process.env.CLINICAL_SENDER_EMAIL);
   if (!sender || !isEmail(sender)) {
-    throw new Error("Sender email is missing or invalid. Configure CLINICAL_SENDER_EMAIL.");
+    throw new Error("CLINICAL_SENDER_EMAIL is missing or invalid.");
   }
   return sender;
 }
@@ -669,7 +635,7 @@ export async function sendEnrollmentPacketRequest(input: {
 }) {
   const senderUserId = clean(input.senderUserId);
   const senderFullName = clean(input.senderFullName);
-  const senderEmail = cleanEmail(input.senderEmail) ?? defaultSenderEmail();
+  const senderEmail = resolveClinicalSenderEmail();
   if (!senderUserId) throw new Error("Sender user is required.");
   if (!senderFullName) throw new Error("Sender name is required.");
   if (!isEmail(senderEmail)) throw new Error("Sender email is invalid.");
@@ -808,11 +774,8 @@ export async function sendEnrollmentPacketRequest(input: {
       caregiverEmail: caregiverEmail!,
       caregiverName: lead?.caregiver_name ?? null,
       memberName: member.display_name,
-      senderName: senderFullName,
-      senderEmail: senderEmail!,
       optionalMessage: input.optionalMessage ?? null,
-      requestUrl,
-      expiresAt
+      requestUrl
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to deliver enrollment packet email.";
