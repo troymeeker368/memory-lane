@@ -57,7 +57,7 @@ export async function getMemberNameBadgeDetail(memberId: string): Promise<Member
   ]);
   if (!mcc || !mhp) return null;
 
-  const memberRow = mcc.member as Record<string, unknown>;
+  const memberRow = mcc.member as unknown as Record<string, unknown>;
   const asOptionalName = (value: unknown) => (typeof value === "string" ? clean(value) : null);
   const preferredName = asOptionalName(memberRow.preferred_name);
   const firstName = asOptionalName(memberRow.first_name);

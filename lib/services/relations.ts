@@ -1,13 +1,20 @@
 import { normalizeRoleKey } from "@/lib/permissions";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
-import { getCarePlansForMember } from "@/lib/services/care-plans";
-import { getIntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
+import { resolveCanonicalLeadRef, resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPayPeriod, isDateInPayPeriod } from "@/lib/pay-period";
 import type { AppRole } from "@/types/app";
 
 function sortDesc<T>(rows: T[], getValue: (row: T) => string) {
   return [...rows].sort((a, b) => (getValue(a) < getValue(b) ? 1 : -1));
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isInvalidUuidFilterError(message: string) {
+  return message.toLowerCase().includes("invalid input syntax for type uuid");
 }
 
 function summarizePunches(punches: { punch_type: "in" | "out"; punch_at: string }[]) {
@@ -49,8 +56,22 @@ export async function getMemberDetail(
     staffUserId?: string | null;
   }
 ) {
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId,
+      selectedId: memberId
+    },
+    {
+      actionLabel: "getMemberDetail"
+    }
+  );
+  if (!canonical.memberId) {
+    throw new Error("getMemberDetail expected member.id but canonical member resolution returned empty memberId.");
+  }
+  const canonicalMemberId = canonical.memberId;
   const supabase = await createClient();
-  const { data: member, error } = await supabase.from("members").select("*").eq("id", memberId).maybeSingle();
+  const { data: member, error } = await supabase.from("members").select("*").eq("id", canonicalMemberId).maybeSingle();
   if (error) throw new Error(error.message);
   if (!member) return null;
 
@@ -69,14 +90,14 @@ export async function getMemberDetail(
     assessmentsResult,
     photosResult
   ] = await Promise.all([
-    supabase.from("daily_activity_logs").select("*").eq("member_id", memberId).order("created_at", { ascending: false }),
-    supabase.from("toilet_logs").select("*").eq("member_id", memberId).order("event_at", { ascending: false }),
-    supabase.from("shower_logs").select("*").eq("member_id", memberId).order("event_at", { ascending: false }),
-    supabase.from("transportation_logs").select("*").eq("member_id", memberId).order("service_date", { ascending: false }),
-    supabase.from("blood_sugar_logs").select("*").eq("member_id", memberId).order("checked_at", { ascending: false }),
-    supabase.from("ancillary_charge_logs").select("*").eq("member_id", memberId).order("created_at", { ascending: false }),
-    supabase.from("intake_assessments").select("*").eq("member_id", memberId).order("created_at", { ascending: false }),
-    supabase.from("member_photo_uploads").select("*").eq("member_id", memberId).order("uploaded_at", { ascending: false })
+    supabase.from("daily_activity_logs").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
+    supabase.from("toilet_logs").select("*").eq("member_id", canonicalMemberId).order("event_at", { ascending: false }),
+    supabase.from("shower_logs").select("*").eq("member_id", canonicalMemberId).order("event_at", { ascending: false }),
+    supabase.from("transportation_logs").select("*").eq("member_id", canonicalMemberId).order("service_date", { ascending: false }),
+    supabase.from("blood_sugar_logs").select("*").eq("member_id", canonicalMemberId).order("checked_at", { ascending: false }),
+    supabase.from("ancillary_charge_logs").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
+    supabase.from("intake_assessments").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
+    supabase.from("member_photo_uploads").select("*").eq("member_id", canonicalMemberId).order("uploaded_at", { ascending: false })
   ]);
 
   if (dailyActivitiesResult.error) throw new Error(dailyActivitiesResult.error.message);
@@ -100,7 +121,10 @@ export async function getMemberDetail(
   const assessments = filterByStaff(assessmentsResult.data ?? [], "created_by_user_id");
   const photos = filterByStaff(photosResult.data ?? [], "uploaded_by");
 
-  const carePlans = isStaffViewer || !canViewCarePlans ? [] : await getCarePlansForMember(memberId);
+  const carePlans =
+    isStaffViewer || !canViewCarePlans
+      ? []
+      : await (await import("@/lib/services/care-plans")).getCarePlansForMember(canonicalMemberId);
   const latestCarePlan = [...carePlans].sort((a, b) => {
     if (a.updatedAt !== b.updatedAt) return a.updatedAt < b.updatedAt ? 1 : -1;
     return a.reviewDate < b.reviewDate ? 1 : -1;
@@ -133,8 +157,23 @@ export async function getMemberDetail(
 }
 
 export async function getLeadDetail(leadId: string) {
+  const canonical = await resolveCanonicalLeadRef(
+    {
+      sourceType: "lead",
+      leadId,
+      selectedId: leadId
+    },
+    {
+      actionLabel: "getLeadDetail"
+    }
+  );
+  if (!canonical.leadId) {
+    throw new Error("getLeadDetail expected lead.id but canonical lead resolution returned empty leadId.");
+  }
+  const canonicalLeadId = canonical.leadId;
+
   const supabase = await createClient();
-  const { data: lead, error: leadError } = await supabase.from("leads").select("*").eq("id", leadId).maybeSingle();
+  const { data: lead, error: leadError } = await supabase.from("leads").select("*").eq("id", canonicalLeadId).maybeSingle();
   if (leadError) throw new Error(leadError.message);
   if (!lead) return null;
 
@@ -143,19 +182,23 @@ export async function getLeadDetail(leadId: string) {
   const referralName = String(lead.referral_name ?? "").trim();
 
   const partnerPromise = partnerId
-    ? supabase
-        .from("community_partner_organizations")
-        .select("*")
-        .or(`id.eq.${partnerId},partner_id.eq.${partnerId}`)
-        .maybeSingle()
+    ? (() => {
+        const filters = [
+          isUuid(partnerId) ? `id.eq.${partnerId}` : null,
+          `partner_id.eq.${partnerId}`
+        ].filter(Boolean) as string[];
+        return supabase.from("community_partner_organizations").select("*").or(filters.join(",")).maybeSingle();
+      })()
     : Promise.resolve({ data: null, error: null } as const);
 
   const referralSourcePromise = referralSourceId
-    ? supabase
-        .from("referral_sources")
-        .select("*")
-        .or(`id.eq.${referralSourceId},referral_source_id.eq.${referralSourceId}`)
-        .maybeSingle()
+    ? (() => {
+        const filters = [
+          isUuid(referralSourceId) ? `id.eq.${referralSourceId}` : null,
+          `referral_source_id.eq.${referralSourceId}`
+        ].filter(Boolean) as string[];
+        return supabase.from("referral_sources").select("*").or(filters.join(",")).maybeSingle();
+      })()
     : referralName
       ? supabase
           .from("referral_sources")
@@ -164,22 +207,24 @@ export async function getLeadDetail(leadId: string) {
           .maybeSingle()
       : Promise.resolve({ data: null, error: null } as const);
 
-  const [activitiesResult, stageHistoryResult, partnerResult, referralSourceResult, linkedMemberResult] = await Promise.all([
-    supabase.from("lead_activities").select("*").eq("lead_id", leadId).order("activity_at", { ascending: false }),
-    supabase.from("lead_stage_history").select("*").eq("lead_id", leadId).order("changed_at", { ascending: false }),
+  const [activitiesResult, stageHistoryResult, partnerResult, referralSourceResult] = await Promise.all([
+    supabase.from("lead_activities").select("*").eq("lead_id", canonicalLeadId).order("activity_at", { ascending: false }),
+    supabase.from("lead_stage_history").select("*").eq("lead_id", canonicalLeadId).order("changed_at", { ascending: false }),
     partnerPromise,
-    referralSourcePromise,
-    supabase.from("members").select("id").eq("source_lead_id", leadId).maybeSingle()
+    referralSourcePromise
   ]);
 
   if (activitiesResult.error) throw new Error(activitiesResult.error.message);
   if (stageHistoryResult.error) throw new Error(stageHistoryResult.error.message);
-  if (partnerResult.error) throw new Error(partnerResult.error.message);
-  if (referralSourceResult.error) throw new Error(referralSourceResult.error.message);
-  if (linkedMemberResult.error) throw new Error(linkedMemberResult.error.message);
+  if (partnerResult.error && !isInvalidUuidFilterError(partnerResult.error.message)) {
+    throw new Error(partnerResult.error.message);
+  }
+  if (referralSourceResult.error && !isInvalidUuidFilterError(referralSourceResult.error.message)) {
+    throw new Error(referralSourceResult.error.message);
+  }
 
-  const partner = partnerResult.data ?? null;
-  const referralSource = referralSourceResult.data ?? null;
+  const partner = partnerResult.error ? null : partnerResult.data ?? null;
+  const referralSource = referralSourceResult.error ? null : referralSourceResult.data ?? null;
 
   let partnerActivitiesQuery = supabase.from("partner_activities").select("*").order("activity_at", { ascending: false }).limit(200);
   const partnerFilters = [
@@ -198,7 +243,7 @@ export async function getLeadDetail(leadId: string) {
     lead,
     activities: activitiesResult.data ?? [],
     stageHistory: stageHistoryResult.data ?? [],
-    linkedMemberId: linkedMemberResult.data ? String((linkedMemberResult.data as { id: string }).id) : null,
+    canonicalMemberId: canonical.memberId ?? null,
     partner,
     referralSource,
     partnerActivities: partnerActivities ?? []
@@ -207,10 +252,14 @@ export async function getLeadDetail(leadId: string) {
 
 export async function getPartnerDetail(partnerId: string) {
   const supabase = await createClient();
+  const partnerFilters = [
+    isUuid(partnerId) ? `id.eq.${partnerId}` : null,
+    `partner_id.eq.${partnerId}`
+  ].filter(Boolean) as string[];
   const { data: partner, error: partnerError } = await supabase
     .from("community_partner_organizations")
     .select("*")
-    .or(`id.eq.${partnerId},partner_id.eq.${partnerId}`)
+    .or(partnerFilters.join(","))
     .maybeSingle();
   if (partnerError) throw new Error(partnerError.message);
   if (!partner) return null;
@@ -269,10 +318,14 @@ export async function getPartnerDetail(partnerId: string) {
 
 export async function getReferralSourceDetail(sourceId: string) {
   const supabase = await createClient();
+  const referralSourceFilters = [
+    isUuid(sourceId) ? `id.eq.${sourceId}` : null,
+    `referral_source_id.eq.${sourceId}`
+  ].filter(Boolean) as string[];
   const { data: referralSource, error: referralError } = await supabase
     .from("referral_sources")
     .select("*")
-    .or(`id.eq.${sourceId},referral_source_id.eq.${sourceId}`)
+    .or(referralSourceFilters.join(","))
     .maybeSingle();
   if (referralError) throw new Error(referralError.message);
   if (!referralSource) return null;
@@ -281,11 +334,13 @@ export async function getReferralSourceDetail(sourceId: string) {
   const partnerKey = String(referralSource.partner_id ?? "");
 
   const partnerPromise = partnerKey
-    ? supabase
-        .from("community_partner_organizations")
-        .select("*")
-        .or(`id.eq.${partnerKey},partner_id.eq.${partnerKey}`)
-        .maybeSingle()
+    ? (() => {
+        const filters = [
+          isUuid(partnerKey) ? `id.eq.${partnerKey}` : null,
+          `partner_id.eq.${partnerKey}`
+        ].filter(Boolean) as string[];
+        return supabase.from("community_partner_organizations").select("*").or(filters.join(",")).maybeSingle();
+      })()
     : Promise.resolve({ data: null, error: null } as const);
 
   const leadsQuery = supabase
@@ -337,34 +392,35 @@ export async function getAssessmentDetail(assessmentId: string) {
     .select("*, member:members!intake_assessments_member_id_fkey(*)")
     .eq("id", assessmentId)
     .maybeSingle();
-  if (!assessmentError && assessment) {
-    const signature = await getIntakeAssessmentSignatureState(assessmentId);
-    const { data: responses } = await supabase
-      .from("assessment_responses")
-      .select("*")
-      .eq("assessment_id", assessmentId)
-      .order("section_type", { ascending: true })
-      .order("field_label", { ascending: true });
+  if (assessmentError) throw new Error(assessmentError.message);
+  if (!assessment) return null;
 
-    return {
-      assessment: {
-        ...assessment,
-        signed_by: signature.signedByName,
-        signed_by_user_id: signature.signedByUserId,
-        signed_at: signature.signedAt,
-        signature_status: signature.status,
-        signature_metadata: signature.signatureMetadata,
-        signature_artifact_storage_path: signature.signatureArtifactStoragePath,
-        signature_artifact_member_file_id: signature.signatureArtifactMemberFileId,
-        member_name: assessment.member?.display_name ?? "Unknown Member"
-      },
-      member: assessment.member ?? null,
-      responses: responses ?? [],
-      signature
-    };
+  const { getIntakeAssessmentSignatureState } = await import("@/lib/services/intake-assessment-esign");
+  const signature = await getIntakeAssessmentSignatureState(assessmentId);
+  const { data: responses, error: responsesError } = await supabase
+    .from("assessment_responses")
+    .select("*")
+    .eq("assessment_id", assessmentId)
+    .order("section_type", { ascending: true })
+    .order("field_label", { ascending: true });
+  if (responsesError) throw new Error(responsesError.message);
+
+  return {
+    assessment: {
+      ...assessment,
+      signed_by: signature.signedByName,
+      signed_by_user_id: signature.signedByUserId,
+      signed_at: signature.signedAt,
+      signature_status: signature.status,
+      signature_metadata: signature.signatureMetadata,
+      signature_artifact_storage_path: signature.signatureArtifactStoragePath,
+      signature_artifact_member_file_id: signature.signatureArtifactMemberFileId,
+      member_name: assessment.member?.display_name ?? "Unknown Member"
+    },
+    member: assessment.member ?? null,
+    responses: responses ?? [],
+    signature
   }
-
-  return null;
 }
 
 export async function getStaffDetail(staffId: string) {

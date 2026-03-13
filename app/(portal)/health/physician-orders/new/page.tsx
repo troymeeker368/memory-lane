@@ -5,9 +5,11 @@ import { PofAllergiesEditor } from "@/components/forms/pof-allergies-editor";
 import { PofDiagnosesEditor } from "@/components/forms/pof-diagnoses-editor";
 import { PofMedicationsEditor } from "@/components/forms/pof-medications-editor";
 import { SegmentedChoiceGroup } from "@/components/forms/segmented-choice-group";
+import { PofEsignWorkflowCard } from "@/components/physician-orders/pof-esign-workflow-card";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import {
   MHP_AMBULATION_OPTIONS,
   MHP_BLADDER_CONTINENCE_OPTIONS,
@@ -22,6 +24,7 @@ import {
   MHP_VISION_OPTIONS
 } from "@/lib/services/mhp-functional-options";
 import { createClient } from "@/lib/supabase/server";
+import { getConfiguredClinicalSenderEmail, listPofTimelineForPhysicianOrder } from "@/lib/services/pof-esign";
 import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
 import {
   POF_LEVEL_OF_CARE_OPTIONS,
@@ -74,22 +77,42 @@ export default async function NewPhysicianOrderPage({
   const memberId = firstString(query.memberId) ?? "";
   const pofId = firstString(query.pofId) ?? "";
   const saveError = firstString(query.saveError) ?? "";
+  let canonicalMemberId = memberId;
+  let identityError: string | null = null;
+  if (memberId) {
+    try {
+      const canonical = await resolveCanonicalMemberRef(
+        {
+          sourceType: "member",
+          memberId,
+          selectedId: memberId
+        },
+        { actionLabel: "NewPhysicianOrderPage" }
+      );
+      canonicalMemberId = canonical.memberId ?? "";
+    } catch (error) {
+      canonicalMemberId = "";
+      identityError = error instanceof Error ? error.message : "Invalid member identity for new physician order.";
+    }
+  }
+  const effectiveSaveError = identityError ?? saveError;
 
   const supabase = await createClient();
-  const { data: memberRows } = await supabase
+  const { data: memberRows, error: memberRowsError } = await supabase
     .from("members")
     .select("id, display_name, status")
     .eq("status", "active")
     .order("display_name", { ascending: true });
+  if (memberRowsError) throw new Error(`Unable to load active members for physician order creation: ${memberRowsError.message}`);
   const members = memberRows ?? [];
 
-  if (!memberId && !pofId) {
+  if (!canonicalMemberId && !pofId) {
     return (
       <div className="space-y-4">
-        {saveError ? (
+        {effectiveSaveError ? (
           <Card>
             <p className="text-sm font-semibold text-rose-700">Unable to save Physician Order.</p>
-            <p className="mt-1 text-sm text-muted">{saveError}</p>
+            <p className="mt-1 text-sm text-muted">{effectiveSaveError}</p>
           </Card>
         ) : null}
         <Card>
@@ -118,9 +141,9 @@ export default async function NewPhysicianOrderPage({
   const editing = pofId ? await getPhysicianOrderById(pofId) : null;
   const draft =
     editing ??
-    (memberId
+    (canonicalMemberId
       ? await buildNewPhysicianOrderDraft({
-          memberId,
+          memberId: canonicalMemberId,
           actor: { id: profile.id, fullName: actorDisplayName, signoffName: actorDisplayName }
         })
       : null);
@@ -128,6 +151,8 @@ export default async function NewPhysicianOrderPage({
   if (editing && (editing.status === "Signed" || editing.status === "Superseded" || editing.status === "Expired")) {
     notFound();
   }
+  const latestRequest = editing?.id ? (await listPofTimelineForPhysicianOrder(editing.id)).requests[0] ?? null : null;
+  const defaultFromEmail = profile.email?.trim() || getConfiguredClinicalSenderEmail();
 
   return (
     <div className="space-y-4">
@@ -151,10 +176,10 @@ export default async function NewPhysicianOrderPage({
         ) : null}
       </Card>
 
-      {saveError ? (
+      {effectiveSaveError ? (
         <Card>
           <p className="text-sm font-semibold text-rose-700">Unable to save Physician Order.</p>
-          <p className="mt-1 text-sm text-muted">{saveError}</p>
+          <p className="mt-1 text-sm text-muted">{effectiveSaveError}</p>
         </Card>
       ) : null}
 
@@ -538,7 +563,7 @@ export default async function NewPhysicianOrderPage({
         </Card>
 
         <Card>
-          <CardTitle>Operational Flags & Provider Signoff</CardTitle>
+          <CardTitle>Operational Flags</CardTitle>
           <div className="mt-3 grid gap-2 md:grid-cols-4">
             <CheckboxField name="flagNutAllergy" label="Nut allergy" defaultChecked={draft.operationalFlags.nutAllergy} />
             <CheckboxField name="flagShellfishAllergy" label="Shellfish allergy" defaultChecked={draft.operationalFlags.shellfishAllergy} />
@@ -549,32 +574,32 @@ export default async function NewPhysicianOrderPage({
             <CheckboxField name="flagNoPhotos" label="No photos" defaultChecked={draft.operationalFlags.noPhotos} />
             <CheckboxField name="flagBathroomAssistance" label="Bathroom assistance" defaultChecked={draft.operationalFlags.bathroomAssistance} />
           </div>
+        </Card>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">Provider Name</span>
-              <input name="providerName" defaultValue={draft.providerName ?? ""} className="h-10 w-full rounded-lg border border-border px-3" />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">Provider Signature</span>
-              <input name="providerSignature" defaultValue={draft.providerSignature ?? ""} className="h-10 w-full rounded-lg border border-border px-3" />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">Provider Signature Date</span>
-              <input type="date" name="providerSignatureDate" defaultValue={draft.providerSignatureDate ?? ""} className="h-10 w-full rounded-lg border border-border px-3" />
-            </label>
+        <Card>
+          <CardTitle>Provider E-Sign Workflow</CardTitle>
+          {!editing ? (
+            <p className="mt-1 text-xs text-muted">Save draft first to enable Send POF for Signature.</p>
+          ) : null}
+          <div className="mt-3">
+            <PofEsignWorkflowCard
+              memberId={draft.memberId}
+              physicianOrderId={editing?.id ?? null}
+              latestRequest={latestRequest}
+              defaultProviderName={draft.providerName ?? ""}
+              defaultProviderEmail={latestRequest?.providerEmail ?? ""}
+              defaultNurseName={latestRequest?.nurseName || profile.full_name}
+              defaultFromEmail={latestRequest?.fromEmail || defaultFromEmail}
+              defaultOptionalMessage={latestRequest?.optionalMessage ?? ""}
+              signedProviderName={draft.providerName}
+              signedAt={latestRequest?.signedAt ?? null}
+            />
           </div>
         </Card>
 
         <div className="flex flex-wrap gap-2">
           <button type="submit" name="saveIntent" value="draft" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
             Save Draft
-          </button>
-          <button type="submit" name="saveIntent" value="sent" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
-            Save Sent
-          </button>
-          <button type="submit" name="saveIntent" value="signed" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
-            Save Signed
           </button>
         </div>
       </form>

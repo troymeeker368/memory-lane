@@ -12,7 +12,7 @@ type LeadOption = {
   id: string;
   memberName: string;
   caregiverEmail: string | null;
-  linkedMemberId: string | null;
+  canonicalMemberId: string | null;
 };
 
 type MemberOption = {
@@ -55,8 +55,8 @@ export function SalesEnrollmentPacketStandaloneAction({
     setLeadId(nextLeadId);
     const nextLead = leadById.get(nextLeadId);
     setCaregiverEmail(nextLead?.caregiverEmail ?? "");
-    if (nextLead?.linkedMemberId) {
-      setMemberId(nextLead.linkedMemberId);
+    if (nextLead?.canonicalMemberId) {
+      setMemberId(nextLead.canonicalMemberId);
     }
   };
 

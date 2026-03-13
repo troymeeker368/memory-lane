@@ -2,7 +2,6 @@
 
 import { Buffer } from "node:buffer";
 
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
@@ -20,6 +19,7 @@ function lineOrDash(value: string | null | undefined) {
 }
 
 async function buildDietCardPdf(memberId: string) {
+  const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
   const dietCard = await getMemberDietCard(memberId);
   if (!dietCard) {
     return { error: "Member diet card data not found." } as const;

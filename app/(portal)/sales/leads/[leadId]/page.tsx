@@ -41,7 +41,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
             <EnrollMemberAction leadId={lead.id} />
             <SendEnrollmentPacketAction
               leadId={lead.id}
-              memberId={detail.linkedMemberId ?? null}
+              memberId={detail.canonicalMemberId ?? null}
               defaultCaregiverEmail={lead.caregiver_email}
             />
           </div>

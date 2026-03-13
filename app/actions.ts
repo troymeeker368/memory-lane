@@ -923,11 +923,17 @@ export async function createTransportationLogAction(raw: z.infer<typeof transpor
 
   const profile = await getCurrentProfile();
   const supabase = await createClient();
-  const { data: memberRow } = await supabase
+  const { data: memberRow, error: memberRowError } = await supabase
     .from("members")
     .select("display_name")
     .eq("id", memberId)
     .maybeSingle();
+  if (memberRowError) {
+    return { error: `Unable to load member for transportation log: ${memberRowError.message}` };
+  }
+  if (!memberRow) {
+    return { error: "Unable to load member for transportation log." };
+  }
   const firstName = String(memberRow?.display_name ?? "").trim().split(/\s+/)[0] ?? "";
 
   const { data, error } = await supabase
@@ -1361,7 +1367,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     const generated = await buildIntakeAssessmentPdfDataUrl(created.id);
     await saveGeneratedMemberPdfToFiles({
       memberId: effectiveMemberId,
-      memberName: resolvedMember.member.displayName || "Member",
+      memberName: canonicalIdentity.displayName || "Member",
       documentLabel: "Intake Assessment",
       documentSource: `Intake Assessment:${created.id}`,
       category: "Assessment",

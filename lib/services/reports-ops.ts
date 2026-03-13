@@ -3,7 +3,13 @@ import { createClient } from "@/lib/supabase/server";
 
 export async function getOperationsReports() {
   const supabase = await createClient();
-  const [{ data: staffRows }, { data: docEvents }, { data: punchRows }, { data: leads }, { data: ancillaryRows }] = await Promise.all([
+  const [
+    { data: staffRows, error: staffError },
+    { data: docEvents, error: docEventsError },
+    { data: punchRows, error: punchRowsError },
+    { data: leads, error: leadsError },
+    { data: ancillaryRows, error: ancillaryError }
+  ] = await Promise.all([
     supabase.from("profiles").select("id, full_name").eq("active", true),
     supabase
       .from("documentation_events")
@@ -13,6 +19,11 @@ export async function getOperationsReports() {
     supabase.from("leads").select("status, stage"),
     supabase.from("v_monthly_ancillary_summary").select("month_label, total_amount_cents")
   ]);
+  if (staffError) throw new Error(`Unable to load active staff profiles: ${staffError.message}`);
+  if (docEventsError) throw new Error(`Unable to load documentation_events: ${docEventsError.message}`);
+  if (punchRowsError) throw new Error(`Unable to load time_punches: ${punchRowsError.message}`);
+  if (leadsError) throw new Error(`Unable to load leads: ${leadsError.message}`);
+  if (ancillaryError) throw new Error(`Unable to load v_monthly_ancillary_summary: ${ancillaryError.message}`);
 
   const staffById = new Map((staffRows ?? []).map((row) => [row.id, row.full_name] as const));
   const staffProductivityMap = new Map<

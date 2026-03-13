@@ -173,61 +173,83 @@ th {
 
 .name-badge-preview {
   position: relative;
-  width: 100mm;
-  height: 85mm;
+  width: 378px;
+  height: 321px;
   margin: 0 auto;
   border: 1px solid #d1d8e3;
   border-radius: 6px;
   background: #ffffff;
-  padding: 8mm 7mm 7mm;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
   text-align: center;
+  overflow: hidden;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 
 .name-badge-logo {
-  width: 42mm;
+  position: absolute;
+  top: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 160px;
   height: auto;
   object-fit: contain;
+  z-index: 1;
 }
 
 .name-badge-member-name {
-  margin: 7mm 0 1.5mm;
+  position: absolute;
+  top: 114px;
+  left: 24px;
+  right: 24px;
+  margin: 0;
   line-height: 1.1;
-  font-size: 7.2mm;
+  font-size: 28px;
   font-weight: 700;
   color: #1f2937;
   text-align: center;
-  width: 100%;
   white-space: nowrap;
   overflow: hidden;
+  min-height: 36px;
+  z-index: 1;
 }
 
 .name-badge-locker {
+  position: absolute;
+  top: 170px;
+  left: 24px;
+  right: 24px;
   margin: 0;
-  font-size: 6mm;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.03em;
   color: #1b3e93;
+  text-align: center;
+  z-index: 1;
 }
 
 .name-badge-divider {
-  margin-top: auto;
-  width: 100%;
+  position: absolute;
+  top: 218px;
+  left: 24px;
+  right: 24px;
+  margin: 0;
   border-top: 1.5px solid #1b3e93;
+  z-index: 1;
 }
 
 .name-badge-icons {
-  margin-top: 3mm;
-  width: 100%;
+  position: absolute;
+  top: 230px;
+  left: 24px;
+  right: 24px;
+  margin: 0;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   align-items: center;
-  gap: 2.2mm;
-  min-height: 13mm;
+  gap: 8px;
+  min-height: 48px;
+  z-index: 1;
 }
 
 .name-badge-icon-item {
@@ -239,13 +261,13 @@ th {
 }
 
 .name-badge-icon {
-  width: 9.5mm;
-  height: 9.5mm;
+  width: 36px;
+  height: 36px;
   object-fit: contain;
 }
 
 .name-badge-icon-label {
-  font-size: 1.9mm;
+  font-size: 7px;
   line-height: 1;
   font-weight: 700;
   color: #1f2937;
@@ -253,11 +275,11 @@ th {
 }
 
 .name-badge-icon-fallback {
-  width: 12mm;
-  height: 11mm;
+  width: 45px;
+  height: 42px;
   border: 1px solid #1b3e93;
   color: #1b3e93;
-  font-size: 1.9mm;
+  font-size: 8px;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -267,25 +289,27 @@ th {
 
 .name-badge-empty-icons {
   margin: 0;
-  font-size: 3.1mm;
+  font-size: 12px;
   color: #6b7280;
 }
 
 .name-badge-star {
   position: absolute;
-  font-size: 5mm;
+  font-size: 19px;
   color: rgba(27, 62, 147, 0.25);
   line-height: 1;
+  z-index: 0;
+  pointer-events: none;
 }
 
 .name-badge-star-left {
-  left: 4mm;
-  top: 3.6mm;
+  left: 16px;
+  top: 14px;
 }
 
 .name-badge-star-right {
-  right: 4mm;
-  top: 3.6mm;
+  right: 16px;
+  top: 14px;
 }
 
 .diet-card-sheet {
@@ -391,9 +415,17 @@ th {
     padding: 0 !important;
     margin: 0 !important;
     box-shadow: none !important;
+    width: 100mm !important;
+    max-width: 100mm !important;
   }
 
   .name-badge-preview {
+    width: 100mm !important;
+    height: 85mm !important;
+    min-width: 100mm !important;
+    min-height: 85mm !important;
+    max-width: 100mm !important;
+    max-height: 85mm !important;
     border: 1px solid #111 !important;
     border-radius: 0 !important;
     box-shadow: none !important;

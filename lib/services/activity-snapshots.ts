@@ -85,27 +85,8 @@ export async function getStaffActivitySnapshot(staffSlug: string, rawFrom?: stri
     .select("id, full_name")
     .eq("active", true);
 
-  if (staffError || !staffRows) {
-    return {
-      staff: null,
-      range,
-      counts: {
-        dailyActivity: 0,
-        toilet: 0,
-        shower: 0,
-        transportation: 0,
-        bloodSugar: 0,
-        photoUpload: 0,
-        assessments: 0,
-        timePunches: 0,
-        leadActivities: 0,
-        partnerActivities: 0
-      } as SnapshotCounts,
-      totalEntries: 0,
-      activities: [] as SnapshotActivity[],
-      placeholderNotice: "Live staff activity data could not be loaded from reporting tables."
-    };
-  }
+  if (staffError) throw new Error(`Unable to load staff activity snapshot roster: ${staffError.message}`);
+  if (!staffRows) throw new Error("Unable to load staff activity snapshot roster: Supabase returned no staff rows.");
 
   const staff = staffRows.find((row) => staffNameToSlug(row.full_name) === staffSlug) ?? null;
   if (!staff) {
@@ -132,7 +113,18 @@ export async function getStaffActivitySnapshot(staffSlug: string, rawFrom?: stri
 
   const fromIso = range.fromDateTime.toISOString();
   const toIso = range.toDateTime.toISOString();
-  const [{ data: dailyRows }, { data: toiletRows }, { data: showerRows }, { data: transportRows }, { data: bloodRows }, { data: photoRows }, { data: punchRows }, { data: leadRows }, { data: partnerRows }] =
+  const [
+    { data: dailyRows, error: dailyError },
+    { data: toiletRows, error: toiletError },
+    { data: showerRows, error: showerError },
+    { data: transportRows, error: transportError },
+    { data: bloodRows, error: bloodError },
+    { data: photoRows, error: photoError },
+    { data: punchRows, error: punchError },
+    { data: leadRows, error: leadError },
+    { data: partnerRows, error: partnerError },
+    { data: assessmentRows, error: assessmentError }
+  ] =
     await Promise.all([
       supabase
         .from("daily_activity_logs")
@@ -187,8 +179,24 @@ export async function getStaffActivitySnapshot(staffSlug: string, rawFrom?: stri
         .select("id, organization_name, activity_at, activity_type, completed_by_name")
         .eq("completed_by_name", staff.full_name)
         .gte("activity_at", fromIso)
-        .lte("activity_at", toIso)
+        .lte("activity_at", toIso),
+      supabase
+        .from("intake_assessments")
+        .select("id, created_at, assessment_date, member:members!intake_assessments_member_id_fkey(display_name)")
+        .eq("completed_by_user_id", staff.id)
+        .gte("created_at", fromIso)
+        .lte("created_at", toIso)
     ]);
+  if (dailyError) throw new Error(`Unable to load staff daily activity rows: ${dailyError.message}`);
+  if (toiletError) throw new Error(`Unable to load staff toilet log rows: ${toiletError.message}`);
+  if (showerError) throw new Error(`Unable to load staff shower log rows: ${showerError.message}`);
+  if (transportError) throw new Error(`Unable to load staff transportation rows: ${transportError.message}`);
+  if (bloodError) throw new Error(`Unable to load staff blood sugar rows: ${bloodError.message}`);
+  if (photoError) throw new Error(`Unable to load staff photo upload rows: ${photoError.message}`);
+  if (punchError) throw new Error(`Unable to load staff time punch rows: ${punchError.message}`);
+  if (leadError) throw new Error(`Unable to load staff lead activity rows: ${leadError.message}`);
+  if (partnerError) throw new Error(`Unable to load staff partner activity rows: ${partnerError.message}`);
+  if (assessmentError) throw new Error(`Unable to load staff assessment rows: ${assessmentError.message}`);
 
   const activities: SnapshotActivity[] = [];
   (dailyRows ?? []).forEach((row: any) => activities.push({ id: `daily-${row.id}`, type: "Participation Log", when: row.created_at || `${row.activity_date}T12:00:00.000`, memberName: extractRelationName(row.member, "Unknown Member"), details: "Participation log submitted", href: "/documentation/activity" }));
@@ -200,6 +208,16 @@ export async function getStaffActivitySnapshot(staffSlug: string, rawFrom?: stri
   (punchRows ?? []).forEach((row: any) => activities.push({ id: `punch-${row.id}`, type: "Time Punch", when: row.punch_at, memberName: row.within_fence == null ? "Unknown" : row.within_fence ? "Yes" : "No", details: String(row.punch_type ?? "").toUpperCase(), href: "/time-card" }));
   (leadRows ?? []).forEach((row: any) => activities.push({ id: `lead-activity-${row.id}`, type: "Lead Activity", when: row.activity_at, memberName: row.member_name ?? "Unknown Prospect", details: `${row.activity_type ?? "Activity"}${row.outcome ? ` | ${row.outcome}` : ""}`, href: row.lead_id ? `/sales/leads/${row.lead_id}` : "/sales" }));
   (partnerRows ?? []).forEach((row: any) => activities.push({ id: `partner-activity-${row.id}`, type: "Partner Activity", when: row.activity_at, memberName: row.organization_name ?? "Community Partner", details: row.activity_type ?? "Partner activity", href: "/sales/new-entries/log-partner-activities" }));
+  (assessmentRows ?? []).forEach((row: any) =>
+    activities.push({
+      id: `assessment-${row.id}`,
+      type: "Assessment",
+      when: row.created_at || `${row.assessment_date}T12:00:00.000`,
+      memberName: extractRelationName(row.member, "Unknown Member"),
+      details: "Intake assessment completed",
+      href: `/health/assessment/${row.id}`
+    })
+  );
 
   const counts: SnapshotCounts = {
     dailyActivity: (dailyRows ?? []).length,
@@ -208,7 +226,7 @@ export async function getStaffActivitySnapshot(staffSlug: string, rawFrom?: stri
     transportation: (transportRows ?? []).length,
     bloodSugar: (bloodRows ?? []).length,
     photoUpload: (photoRows ?? []).length,
-    assessments: 0,
+    assessments: (assessmentRows ?? []).length,
     timePunches: (punchRows ?? []).length,
     leadActivities: (leadRows ?? []).length,
     partnerActivities: (partnerRows ?? []).length
@@ -220,7 +238,7 @@ export async function getStaffActivitySnapshot(staffSlug: string, rawFrom?: stri
     counts,
     totalEntries: Object.values(counts).reduce((sum, value) => sum + value, 0),
     activities: activities.sort((a, b) => (a.when < b.when ? 1 : -1)),
-    placeholderNotice: "Assessment activity is not yet wired to live reporting tables."
+    placeholderNotice: null
   };
 }
 
@@ -233,16 +251,7 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
     .eq("id", memberId)
     .maybeSingle();
 
-  if (memberError) {
-    return {
-      member: null,
-      range,
-      counts: null as MemberSnapshotCounts | null,
-      ancillaryTotalCents: 0,
-      activities: [] as SnapshotActivity[],
-      placeholderNotice: "Live member activity data could not be loaded from reporting tables."
-    };
-  }
+  if (memberError) throw new Error(`Unable to load member activity snapshot member row: ${memberError.message}`);
   if (!memberRow) {
     return {
       member: null,
@@ -256,7 +265,16 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
 
   const fromIso = range.fromDateTime.toISOString();
   const toIso = range.toDateTime.toISOString();
-  const [{ data: dailyRows }, { data: toiletRows }, { data: showerRows }, { data: transportRows }, { data: bloodRows }, { data: photoRows }, { data: ancillaryRows }] =
+  const [
+    { data: dailyRows, error: dailyError },
+    { data: toiletRows, error: toiletError },
+    { data: showerRows, error: showerError },
+    { data: transportRows, error: transportError },
+    { data: bloodRows, error: bloodError },
+    { data: photoRows, error: photoError },
+    { data: ancillaryRows, error: ancillaryError },
+    { data: assessmentRows, error: assessmentError }
+  ] =
     await Promise.all([
       supabase
         .from("daily_activity_logs")
@@ -299,8 +317,22 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
         .select("id, category_name, amount_cents, service_date, created_at")
         .eq("member_id", memberRow.id)
         .gte("service_date", range.from)
-        .lte("service_date", range.to)
+        .lte("service_date", range.to),
+      supabase
+        .from("intake_assessments")
+        .select("id, created_at, assessment_date")
+        .eq("member_id", memberRow.id)
+        .gte("created_at", fromIso)
+        .lte("created_at", toIso)
     ]);
+  if (dailyError) throw new Error(`Unable to load member daily activity rows: ${dailyError.message}`);
+  if (toiletError) throw new Error(`Unable to load member toilet log rows: ${toiletError.message}`);
+  if (showerError) throw new Error(`Unable to load member shower log rows: ${showerError.message}`);
+  if (transportError) throw new Error(`Unable to load member transportation rows: ${transportError.message}`);
+  if (bloodError) throw new Error(`Unable to load member blood sugar rows: ${bloodError.message}`);
+  if (photoError) throw new Error(`Unable to load member photo upload rows: ${photoError.message}`);
+  if (ancillaryError) throw new Error(`Unable to load member ancillary charge rows: ${ancillaryError.message}`);
+  if (assessmentError) throw new Error(`Unable to load member assessment rows: ${assessmentError.message}`);
 
   const activities: SnapshotActivity[] = [];
   (dailyRows ?? []).forEach((row: any) => activities.push({ id: `daily-${row.id}`, type: "Participation Log", when: row.created_at || `${row.activity_date}T12:00:00.000`, memberName: memberRow.display_name, details: `${extractRelationName(row.staff, "Staff")} | Participation log`, href: "/documentation/activity" }));
@@ -310,6 +342,16 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
   (bloodRows ?? []).forEach((row: any) => activities.push({ id: `blood-${row.id}`, type: "Blood Sugar", when: row.checked_at, memberName: memberRow.display_name, details: `${row.reading_mg_dl} mg/dL | ${row.nurse_name ?? "Nurse"}`, href: "/documentation/blood-sugar" }));
   (photoRows ?? []).forEach((row: any) => activities.push({ id: `photo-${row.id}`, type: "Photo Upload", when: row.uploaded_at, memberName: memberRow.display_name, details: `${extractRelationName(row.uploader, "Staff")} | ${row.photo_url ?? "Photo upload"}`, href: "/documentation/photo-upload" }));
   (ancillaryRows ?? []).forEach((row: any) => activities.push({ id: `ancillary-${row.id}`, type: "Ancillary Charge", when: row.created_at || `${row.service_date}T12:00:00.000`, memberName: memberRow.display_name, details: `${row.category_name ?? "Ancillary"} | $${(Number(row.amount_cents ?? 0) / 100).toFixed(2)}`, href: "/reports/monthly-ancillary" }));
+  (assessmentRows ?? []).forEach((row: any) =>
+    activities.push({
+      id: `assessment-${row.id}`,
+      type: "Assessment",
+      when: row.created_at || `${row.assessment_date}T12:00:00.000`,
+      memberName: memberRow.display_name,
+      details: "Intake assessment completed",
+      href: `/health/assessment/${row.id}`
+    })
+  );
 
   const counts: MemberSnapshotCounts = {
     dailyActivity: (dailyRows ?? []).length,
@@ -319,7 +361,7 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
     bloodSugar: (bloodRows ?? []).length,
     photos: (photoRows ?? []).length,
     ancillary: (ancillaryRows ?? []).length,
-    assessments: 0,
+    assessments: (assessmentRows ?? []).length,
     total:
       (dailyRows ?? []).length +
       (toiletRows ?? []).length +
@@ -327,7 +369,8 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
       (transportRows ?? []).length +
       (bloodRows ?? []).length +
       (photoRows ?? []).length +
-      (ancillaryRows ?? []).length
+      (ancillaryRows ?? []).length +
+      (assessmentRows ?? []).length
   };
 
   return {
@@ -336,7 +379,7 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
     counts,
     ancillaryTotalCents: (ancillaryRows ?? []).reduce((sum: number, row: any) => sum + Number(row.amount_cents ?? 0), 0),
     activities: activities.sort((a, b) => (a.when < b.when ? 1 : -1)),
-    placeholderNotice: "Assessment activity is not yet wired to live reporting tables."
+    placeholderNotice: null
   };
 }
 

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -54,6 +55,20 @@ function nextMemberFileId() {
 
 export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPdfInput) {
   const now = input.generatedAtIso ?? toEasternISO();
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: input.memberId,
+      selectedId: input.memberId
+    },
+    {
+      actionLabel: "saveGeneratedMemberPdfToFiles"
+    }
+  );
+  if (!canonical.memberId) {
+    throw new Error("saveGeneratedMemberPdfToFiles expected member.id but canonical member resolution returned empty memberId.");
+  }
+  const memberId = canonical.memberId;
   const supabase = await createClient();
   const defaultName = basePdfFileName(input.documentLabel, input.memberName, now);
   const categoryOther = input.category === "Other" ? input.categoryOther ?? null : null;
@@ -62,7 +77,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     const { data: existing, error: existingError } = await supabase
       .from("member_files")
       .select("id")
-      .eq("member_id", input.memberId)
+      .eq("member_id", memberId)
       .eq("document_source", input.documentSource)
       .order("updated_at", { ascending: false })
       .limit(1)
@@ -109,7 +124,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
   const { data: duplicateRows, error: duplicateError } = await supabase
     .from("member_files")
     .select("id")
-    .eq("member_id", input.memberId)
+    .eq("member_id", memberId)
     .eq("file_name", defaultName);
 
   if (duplicateError) {
@@ -123,7 +138,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     .from("member_files")
     .insert({
       id: nextMemberFileId(),
-      member_id: input.memberId,
+      member_id: memberId,
       file_name: fileName,
       file_type: "application/pdf",
       file_data_url: input.dataUrl,

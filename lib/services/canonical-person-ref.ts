@@ -24,6 +24,13 @@ type MemberIdentityRow = {
   source_lead_id: string | null;
 };
 
+export type CanonicalMemberLink = {
+  leadId: string;
+  memberId: string;
+  displayName: string;
+  memberStatus: "active" | "inactive" | null;
+};
+
 function clean(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
@@ -100,8 +107,8 @@ function toCanonicalPersonRef(input: {
   };
 }
 
-async function getMemberById(memberId: string) {
-  const supabase = await createClient();
+async function getMemberById(memberId: string, serviceRole = false) {
+  const supabase = await createClient({ serviceRole });
   const { data, error } = await supabase
     .from("members")
     .select("id, display_name, status, source_lead_id")
@@ -111,8 +118,8 @@ async function getMemberById(memberId: string) {
   return (data as MemberIdentityRow | null) ?? null;
 }
 
-async function getLeadById(leadId: string) {
-  const supabase = await createClient();
+async function getLeadById(leadId: string, serviceRole = false) {
+  const supabase = await createClient({ serviceRole });
   const { data, error } = await supabase
     .from("leads")
     .select("id, member_name, stage, status")
@@ -122,8 +129,8 @@ async function getLeadById(leadId: string) {
   return (data as LeadIdentityRow | null) ?? null;
 }
 
-async function getMemberByLeadId(leadId: string) {
-  const supabase = await createClient();
+async function getMemberByLeadId(leadId: string, serviceRole = false) {
+  const supabase = await createClient({ serviceRole });
   const { data, error } = await supabase
     .from("members")
     .select("id, display_name, status, source_lead_id")
@@ -133,11 +140,55 @@ async function getMemberByLeadId(leadId: string) {
   return (data as MemberIdentityRow | null) ?? null;
 }
 
+export async function listCanonicalMemberLinksForLeadIds(
+  leadIds: string[],
+  options?: { actionLabel?: string; serviceRole?: boolean }
+) {
+  const actionLabel = clean(options?.actionLabel) ?? "listCanonicalMemberLinksForLeadIds";
+  const normalizedLeadIds = [...new Set(leadIds.map((leadId) => asUuid(leadId)).filter((leadId): leadId is string => Boolean(leadId)))];
+  if (normalizedLeadIds.length === 0) {
+    return new Map<string, CanonicalMemberLink>();
+  }
+
+  const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
+  const { data, error } = await supabase
+    .from("members")
+    .select("id, display_name, status, source_lead_id")
+    .in("source_lead_id", normalizedLeadIds);
+  if (error) {
+    throw new Error(`${actionLabel} failed to load canonical lead/member links: ${error.message}`);
+  }
+
+  const links = new Map<string, CanonicalMemberLink>();
+  for (const row of (data ?? []) as MemberIdentityRow[]) {
+    const leadId = asUuid(row.source_lead_id);
+    if (!leadId) continue;
+    if (links.has(leadId)) {
+      debugCanonicalIdentity("duplicate-lead-link", {
+        actionLabel,
+        leadId,
+        existingMemberId: links.get(leadId)?.memberId ?? "",
+        duplicateMemberId: row.id
+      });
+      continue;
+    }
+    links.set(leadId, {
+      leadId,
+      memberId: row.id,
+      displayName: clean(row.display_name) ?? "Unknown Person",
+      memberStatus: row.status ?? null
+    });
+  }
+
+  return links;
+}
+
 export async function resolveCanonicalPersonRef(
   input: CanonicalPersonRefInput,
   options?: {
     expectedType?: CanonicalExpectedIdentity;
     actionLabel?: string;
+    serviceRole?: boolean;
   }
 ) {
   const expectedType = options?.expectedType ?? "any";
@@ -178,20 +229,21 @@ export async function resolveCanonicalPersonRef(
     legacyId: legacyId ?? ""
   });
 
+  const serviceRole = Boolean(options?.serviceRole);
   const [memberFromId, leadFromId] = await Promise.all([
-    candidateMemberId ? getMemberById(candidateMemberId) : Promise.resolve(null),
-    candidateLeadId ? getLeadById(candidateLeadId) : Promise.resolve(null)
+    candidateMemberId ? getMemberById(candidateMemberId, serviceRole) : Promise.resolve(null),
+    candidateLeadId ? getLeadById(candidateLeadId, serviceRole) : Promise.resolve(null)
   ]);
 
   let member = memberFromId;
   let lead = leadFromId;
 
   if (member?.source_lead_id && !lead) {
-    lead = await getLeadById(member.source_lead_id);
+    lead = await getLeadById(member.source_lead_id, serviceRole);
   }
 
   if (lead && !member) {
-    member = await getMemberByLeadId(lead.id);
+    member = await getMemberByLeadId(lead.id, serviceRole);
   }
 
   const canonical = toCanonicalPersonRef({
@@ -244,11 +296,12 @@ export async function resolveCanonicalPersonRef(
 
 export async function resolveCanonicalMemberRef(
   input: CanonicalPersonRefInput,
-  options?: { actionLabel?: string }
+  options?: { actionLabel?: string; serviceRole?: boolean }
 ) {
   const canonical = await resolveCanonicalPersonRef(input, {
     expectedType: "member",
-    actionLabel: options?.actionLabel
+    actionLabel: options?.actionLabel,
+    serviceRole: options?.serviceRole
   });
   if (!canonical.memberId) {
     throw new Error(
@@ -260,11 +313,12 @@ export async function resolveCanonicalMemberRef(
 
 export async function resolveCanonicalLeadRef(
   input: CanonicalPersonRefInput,
-  options?: { actionLabel?: string }
+  options?: { actionLabel?: string; serviceRole?: boolean }
 ) {
   const canonical = await resolveCanonicalPersonRef(input, {
     expectedType: "lead",
-    actionLabel: options?.actionLabel
+    actionLabel: options?.actionLabel,
+    serviceRole: options?.serviceRole
   });
   if (!canonical.leadId) {
     throw new Error(
@@ -273,4 +327,3 @@ export async function resolveCanonicalLeadRef(
   }
   return canonical;
 }
-

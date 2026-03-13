@@ -4,18 +4,41 @@ import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { getMemberNameBadgeDetail } from "@/lib/services/member-name-badge";
 import { toEasternISO } from "@/lib/timezone";
+import type { PDFDocument as PDFDocumentType } from "pdf-lib";
 
 const MILLIMETER_TO_POINTS = 72 / 25.4;
+const BADGE_WIDTH_MM = 100;
+const BADGE_HEIGHT_MM = 85;
+
+const BADGE_LAYOUT = {
+  sidePaddingMm: 6.3,
+  logoTopMm: 7.9,
+  logoWidthMm: 42.3,
+  nameTopMm: 30.2,
+  nameMaxSizePt: 22,
+  nameMinSizePt: 14,
+  lockerTopMm: 45.1,
+  lockerSizePt: 13,
+  dividerTopMm: 57.7,
+  dividerThicknessPt: 1.5,
+  iconsTopMm: 60.9,
+  iconSizeMm: 9.5,
+  iconGapMm: 2.1,
+  textBadgeWidthMm: 11.9
+} as const;
 
 function toPoints(mm: number) {
   return mm * MILLIMETER_TO_POINTS;
+}
+
+function toPageYFromTop(pageHeight: number, topMm: number, heightPoints = 0) {
+  return pageHeight - toPoints(topMm) - heightPoints;
 }
 
 function roleCanGenerate(role: string) {
@@ -27,7 +50,7 @@ function imagePathFromPublicSrc(src: string) {
   return path.join(process.cwd(), "public", normalized.replaceAll("/", path.sep));
 }
 
-async function loadPngFromPublic(pdf: PDFDocument, src: string) {
+async function loadPngFromPublic(pdf: PDFDocumentType, src: string) {
   try {
     const bytes = await readFile(imagePathFromPublicSrc(src));
     return await pdf.embedPng(bytes);
@@ -37,75 +60,85 @@ async function loadPngFromPublic(pdf: PDFDocument, src: string) {
 }
 
 async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?: string[]) {
+  const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
   const badge = await getMemberNameBadgeDetail(memberId);
   if (!badge) {
     return { error: "Member badge data not found." } as const;
   }
-  const memberDisplayName = badge.member.name.trim() || badge.member.initials.trim() || "Member Name";
+  const memberDisplayName = (badge.member.displayName ?? "").trim();
+  if (!memberDisplayName) {
+    return {
+      error:
+        "Unable to generate badge: this member does not have a usable name. Add a preferred/first/last name or full display name, then try again."
+    } as const;
+  }
 
-  const pageWidth = toPoints(100);
-  const pageHeight = toPoints(85);
-  const margin = toPoints(6);
+  const pageWidth = toPoints(BADGE_WIDTH_MM);
+  const pageHeight = toPoints(BADGE_HEIGHT_MM);
+  const sidePadding = toPoints(BADGE_LAYOUT.sidePaddingMm);
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([pageWidth, pageHeight]);
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const brandBlue = rgb(0.106, 0.243, 0.576);
 
-  const logoMaxWidth = toPoints(45);
+  const logoWidth = toPoints(BADGE_LAYOUT.logoWidthMm);
   let logoHeight = toPoints(12);
   const logoImage = await loadPngFromPublic(pdf, badge.logoSrc);
   if (logoImage) {
-    const logoScale = logoMaxWidth / logoImage.width;
-    const logoWidth = logoImage.width * logoScale;
+    const logoScale = logoWidth / logoImage.width;
+    const scaledLogoWidth = logoImage.width * logoScale;
     logoHeight = logoImage.height * logoScale;
     page.drawImage(logoImage, {
-      x: (pageWidth - logoWidth) / 2,
-      y: pageHeight - margin - logoHeight,
-      width: logoWidth,
+      x: (pageWidth - scaledLogoWidth) / 2,
+      y: toPageYFromTop(pageHeight, BADGE_LAYOUT.logoTopMm, logoHeight),
+      width: scaledLogoWidth,
       height: logoHeight
     });
   } else {
     const fallbackText = "Town Square";
+    const fallbackSize = 12;
     page.drawText(fallbackText, {
-      x: (pageWidth - fontBold.widthOfTextAtSize(fallbackText, 12)) / 2,
-      y: pageHeight - margin - logoHeight + 2,
-      size: 12,
+      x: (pageWidth - fontBold.widthOfTextAtSize(fallbackText, fallbackSize)) / 2,
+      y: toPageYFromTop(pageHeight, BADGE_LAYOUT.logoTopMm + 2, fallbackSize),
+      size: fallbackSize,
       font: fontBold,
       color: brandBlue
     });
   }
 
-  const availableNameWidth = pageWidth - margin * 2;
-  let nameFontSize = 30;
-  const minNameFontSize = 14;
-  while (nameFontSize > minNameFontSize && fontBold.widthOfTextAtSize(memberDisplayName, nameFontSize) > availableNameWidth) {
+  const availableNameWidth = pageWidth - sidePadding * 2;
+  let nameFontSize = BADGE_LAYOUT.nameMaxSizePt;
+  while (
+    nameFontSize > BADGE_LAYOUT.nameMinSizePt &&
+    fontBold.widthOfTextAtSize(memberDisplayName, nameFontSize) > availableNameWidth
+  ) {
     nameFontSize -= 1;
   }
   const nameTextWidth = fontBold.widthOfTextAtSize(memberDisplayName, nameFontSize);
   page.drawText(memberDisplayName, {
-    x: Math.max(margin, (pageWidth - nameTextWidth) / 2),
-    y: pageHeight - margin - logoHeight - toPoints(18),
+    x: Math.max(sidePadding, (pageWidth - nameTextWidth) / 2),
+    y: toPageYFromTop(pageHeight, BADGE_LAYOUT.nameTopMm, nameFontSize),
     size: nameFontSize,
     font: fontBold,
     color: rgb(0.1, 0.1, 0.1)
   });
 
   const lockerLabel = badge.member.lockerNumber ? `LOCKER ${badge.member.lockerNumber}` : "LOCKER ##";
-  const lockerSize = 18;
+  const lockerSize = BADGE_LAYOUT.lockerSizePt;
   const lockerWidth = fontBold.widthOfTextAtSize(lockerLabel, lockerSize);
   page.drawText(lockerLabel, {
     x: (pageWidth - lockerWidth) / 2,
-    y: pageHeight - margin - logoHeight - toPoints(28),
+    y: toPageYFromTop(pageHeight, BADGE_LAYOUT.lockerTopMm, lockerSize),
     size: lockerSize,
     font: fontBold,
     color: brandBlue
   });
 
-  const dividerY = toPoints(18);
+  const dividerY = toPageYFromTop(pageHeight, BADGE_LAYOUT.dividerTopMm);
   page.drawLine({
-    start: { x: margin, y: dividerY },
-    end: { x: pageWidth - margin, y: dividerY },
-    thickness: 1.5,
+    start: { x: sidePadding, y: dividerY },
+    end: { x: pageWidth - sidePadding, y: dividerY },
+    thickness: BADGE_LAYOUT.dividerThicknessPt,
     color: brandBlue
   });
 
@@ -117,15 +150,15 @@ async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?
   const enabledIndicators = badge.indicators.filter((indicator) =>
     selectedKeys ? selectedKeys.has(indicator.key) : indicator.enabled
   );
-  const iconSize = toPoints(9.6);
-  const iconGap = toPoints(3);
-  const textBadgeWidth = toPoints(14);
+  const iconSize = toPoints(BADGE_LAYOUT.iconSizeMm);
+  const iconGap = toPoints(BADGE_LAYOUT.iconGapMm);
+  const textBadgeWidth = toPoints(BADGE_LAYOUT.textBadgeWidthMm);
   const totalUnits = enabledIndicators.reduce((width, indicator, index) => {
     const nextWidth = indicator.iconSrc ? iconSize : textBadgeWidth;
     return width + nextWidth + (index > 0 ? iconGap : 0);
   }, 0);
-  let cursorX = Math.max(margin, (pageWidth - totalUnits) / 2);
-  const iconY = toPoints(6.2);
+  let cursorX = Math.max(sidePadding, (pageWidth - totalUnits) / 2);
+  const iconY = toPageYFromTop(pageHeight, BADGE_LAYOUT.iconsTopMm, iconSize);
 
   for (const indicator of enabledIndicators) {
     if (indicator.iconSrc) {
@@ -191,7 +224,7 @@ export async function generateMemberNameBadgePdfAction(input: {
 
   const saved = await saveGeneratedMemberPdfToFiles({
     memberId,
-    memberName: built.badge.member.name,
+    memberName: built.badge.member.displayName ?? "Member",
     documentLabel: "Name Badge",
     documentSource: "Name Badge Generator",
     category: "Name Badge",

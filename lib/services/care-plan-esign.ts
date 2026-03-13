@@ -70,13 +70,31 @@ function generateSigningToken() {
 }
 
 function buildAppBaseUrl() {
-  const value =
+  const explicit =
     clean(process.env.NEXT_PUBLIC_APP_URL) ??
     clean(process.env.APP_URL) ??
     clean(process.env.NEXT_PUBLIC_SITE_URL) ??
-    clean(process.env.SITE_URL) ??
-    "http://localhost:3001";
-  return value.endsWith("/") ? value.slice(0, -1) : value;
+    clean(process.env.SITE_URL);
+  const vercelHost =
+    clean(process.env.VERCEL_PROJECT_PRODUCTION_URL) ??
+    clean(process.env.VERCEL_URL);
+  const raw = explicit ?? vercelHost ?? null;
+  if (!raw) {
+    if ((process.env.NODE_ENV ?? "").toLowerCase() === "production") {
+      throw new Error(
+        "Care plan e-sign public URL is not configured. Set NEXT_PUBLIC_APP_URL (or APP_URL/SITE_URL) so caregiver links are live."
+      );
+    }
+    return "http://localhost:3001";
+  }
+
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  const parsed = new URL(withProtocol);
+  const localhostHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
+  if (parsed.protocol === "http:" && !localhostHostnames.has(parsed.hostname)) {
+    parsed.protocol = "https:";
+  }
+  return parsed.toString().replace(/\/$/, "");
 }
 
 function toIsoAtEndOfDate(dateOnly: string) {

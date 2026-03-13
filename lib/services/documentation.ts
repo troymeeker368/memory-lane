@@ -1,3 +1,4 @@
+import { listCanonicalMemberLinksForLeadIds } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import type { CanonicalPersonRef } from "@/types/identity";
 
@@ -104,52 +105,36 @@ function normalizeTimelyRows(rows: unknown[]) {
 
 export async function getMembers() {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("members")
     .select("id, display_name, status, enrollment_date")
     .eq("status", "active")
     .order("display_name");
+  if (error) throw new Error(`Unable to load active members: ${error.message}`);
   return data ?? [];
 }
 export async function getAssessmentMembers() {
   const supabase = await createClient();
-  const { data: leads } = await supabase
+  const { data: leads, error: leadsError } = await supabase
     .from("leads")
     .select("id, member_name, stage, status")
     .in("stage", ["Tour", "Enrollment in Progress"])
     .order("member_name", { ascending: true });
+  if (leadsError) throw new Error(`Unable to load leads for assessment members: ${leadsError.message}`);
 
   const leadIds = (leads ?? []).map((lead: any) => String(lead.id)).filter(Boolean);
-  let members: Array<{
-    id: string;
-    display_name: string | null;
-    status: "active" | "inactive" | null;
-    source_lead_id: string | null;
-  }> = [];
-  if (leadIds.length > 0) {
-    const { data: memberRows } = await supabase
-      .from("members")
-      .select("id, display_name, status, source_lead_id")
-      .in("source_lead_id", leadIds);
-    members = (
-      (memberRows ?? []) as Array<{
-        id: string;
-        display_name: string | null;
-        status: "active" | "inactive" | null;
-        source_lead_id: string | null;
-      }>
-    ).filter((row) => Boolean(row.source_lead_id));
-  }
-  const memberByLeadId = new Map(members.map((row) => [String(row.source_lead_id), row] as const));
+  const canonicalMemberLinksByLeadId = await listCanonicalMemberLinksForLeadIds(leadIds, {
+    actionLabel: "getAssessmentMembers"
+  });
 
   return (leads ?? []).map((lead: any) => {
-    const linkedMember = memberByLeadId.get(String(lead.id)) ?? null;
-    const memberStatus = linkedMember?.status ?? null;
+    const linkedMember = canonicalMemberLinksByLeadId.get(String(lead.id)) ?? null;
+    const memberStatus = linkedMember?.memberStatus ?? null;
     const canonicalRow = {
       sourceType: linkedMember ? "member" : "lead",
       leadId: String(lead.id),
-      memberId: linkedMember ? String(linkedMember.id) : null,
-      displayName: String(linkedMember?.display_name ?? lead.member_name ?? "Unknown Person"),
+      memberId: linkedMember ? String(linkedMember.memberId) : null,
+      displayName: String(linkedMember?.displayName ?? lead.member_name ?? "Unknown Person"),
       memberStatus,
       leadStage: String(lead.stage ?? ""),
       leadStatus: String(lead.status ?? ""),
@@ -162,12 +147,14 @@ export async function getAssessmentMembers() {
 
 export async function getDocumentationSummary() {
   const supabase = await createClient();
-  const { data: today } = await supabase.from("v_today_at_a_glance").select("*");
-  const { data: timely } = await supabase
+  const { data: today, error: todayError } = await supabase.from("v_today_at_a_glance").select("*");
+  const { data: timely, error: timelyError } = await supabase
     .from("v_timely_docs_summary")
     .select("*")
     .order("on_time_percent", { ascending: false })
     .limit(10);
+  if (todayError) throw new Error(`Unable to load v_today_at_a_glance: ${todayError.message}`);
+  if (timelyError) throw new Error(`Unable to load v_timely_docs_summary: ${timelyError.message}`);
 
   return {
     today: normalizeTodayRows(today ?? []),
@@ -177,10 +164,11 @@ export async function getDocumentationSummary() {
 
 export async function getDocumentationTracker() {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("documentation_tracker")
     .select("id, member_name, assigned_staff_name, next_care_plan_due, next_progress_note_due, care_plan_done, note_done")
     .order("next_care_plan_due");
+  if (error) throw new Error(`Unable to load documentation_tracker: ${error.message}`);
 
   return data ?? [];
 }

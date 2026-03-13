@@ -66,22 +66,24 @@ export default async function OperationsScheduleChangesPage({
   const errorMessage = firstString(params.error) ?? "";
 
   const supabase = await createClient();
-  const { data: membersData } = await supabase
+  const { data: membersData, error: membersError } = await supabase
     .from("members")
     .select("id, display_name, status")
     .order("display_name", { ascending: true });
+  if (membersError) throw new Error(`Unable to load members for schedule changes: ${membersError.message}`);
   const members = ((membersData ?? []) as Array<{ id: string; display_name: string; status: string }>)
     .filter((row) => row.status === "active")
     .sort((left, right) => left.display_name.localeCompare(right.display_name, undefined, { sensitivity: "base" }));
   const selectedMemberId = members.some((row) => row.id === requestedMemberId)
     ? requestedMemberId
     : (members[0]?.id ?? "");
-  const [{ data: schedulesData }, scheduleChanges] = await Promise.all([
+  const [{ data: schedulesData, error: schedulesError }, scheduleChanges] = await Promise.all([
     selectedMemberId
       ? supabase.from("member_attendance_schedules").select("*").eq("member_id", selectedMemberId).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     listScheduleChangesSupabase({ status: "all", limit: 200 })
   ]);
+  if (schedulesError) throw new Error(`Unable to load member attendance schedule: ${schedulesError.message}`);
   const memberById = new Map(
     ((membersData ?? []) as Array<{ id: string; display_name: string; status: string }>).map((row) => [row.id, row] as const)
   );

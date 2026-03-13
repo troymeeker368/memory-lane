@@ -87,12 +87,17 @@ function revalidateTimecardRoutes() {
 async function resolveEmployeeName(employeeId: string, fallback?: string) {
   if (fallback) return fallback;
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("profiles")
     .select("full_name")
     .eq("id", employeeId)
     .maybeSingle();
-  return String(data?.full_name ?? "").trim() || "Unknown Employee";
+  if (error) throw new Error(`Unable to resolve employee profile: ${error.message}`);
+  const fullName = String(data?.full_name ?? "").trim();
+  if (!fullName) {
+    throw new Error("Unable to resolve employee profile name.");
+  }
+  return fullName;
 }
 
 type ActionOptions = {

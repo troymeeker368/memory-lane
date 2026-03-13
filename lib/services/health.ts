@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 export async function getClinicalOverview() {
   const supabase = await createClient();
 
-  const [{ data: mar }, { data: bloodSugar }] = await Promise.all([
+  const [{ data: mar, error: marError }, { data: bloodSugar, error: bloodSugarError }] = await Promise.all([
     supabase
       .from("v_mar_entries_detailed")
       .select("id, member_name, medication_name, due_at, administered_at, nurse_name, status")
@@ -15,6 +15,8 @@ export async function getClinicalOverview() {
       .order("checked_at", { ascending: false })
       .limit(100)
   ]);
+  if (marError) throw new Error(`Unable to load v_mar_entries_detailed: ${marError.message}`);
+  if (bloodSugarError) throw new Error(`Unable to load v_blood_sugar_logs_detailed: ${bloodSugarError.message}`);
 
   return {
     mar: mar ?? [],

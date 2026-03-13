@@ -3,7 +3,6 @@
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
@@ -16,6 +15,7 @@ import {
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { getMemberFaceSheet } from "@/lib/services/member-face-sheet";
 import { toEasternISO } from "@/lib/timezone";
+import type { PDFDocument as PDFDocumentType } from "pdf-lib";
 
 function canGenerate(role: string) {
   return role === "admin" || role === "manager" || role === "nurse";
@@ -35,7 +35,7 @@ function publicAssetPath(publicPath: string) {
   return path.join(process.cwd(), "public", normalized);
 }
 
-async function loadCenterLogoImage(pdf: PDFDocument) {
+async function loadCenterLogoImage(pdf: PDFDocumentType) {
   try {
     const bytes = await readFile(publicAssetPath(DOCUMENT_CENTER_LOGO_PUBLIC_PATH));
     return await pdf.embedPng(bytes);
@@ -45,6 +45,7 @@ async function loadCenterLogoImage(pdf: PDFDocument) {
 }
 
 async function buildFaceSheetPdf(memberId: string) {
+  const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
   const faceSheet = await getMemberFaceSheet(memberId);
   if (!faceSheet) {
     return { error: "Member face sheet data not found." } as const;

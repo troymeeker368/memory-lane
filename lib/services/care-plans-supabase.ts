@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import {
   parseCarePlanNurseSignatureStatus,
@@ -44,6 +45,20 @@ export {
 export type { CarePlanSectionType, CarePlanTrack };
 
 export type CarePlanStatus = "Due Soon" | "Due Now" | "Overdue" | "Completed";
+
+async function resolveCarePlanMemberId(rawMemberId: string, actionLabel: string) {
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: rawMemberId
+    },
+    { actionLabel }
+  );
+  if (!canonical.memberId) {
+    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
+  }
+  return canonical.memberId;
+}
 
 export const CAREGIVER_SIGNATURE_STATUS_VALUES = [
   "not_requested",
@@ -491,6 +506,7 @@ async function syncCarePlanSectionsToCanonical(carePlanId: string, track: CarePl
 }
 
 export async function getCarePlanParticipationSummary(memberId: string): Promise<CarePlanParticipationSummary> {
+  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getCarePlanParticipationSummary");
   const supabase = await createClient();
   const windowEndDate = toEasternDate();
   const windowStartDate = addDays(windowEndDate, -180);
@@ -499,13 +515,13 @@ export async function getCarePlanParticipationSummary(memberId: string): Promise
       supabase
         .from("attendance_records")
         .select("attendance_date")
-        .eq("member_id", memberId)
+        .eq("member_id", canonicalMemberId)
         .gte("attendance_date", windowStartDate)
         .lte("attendance_date", windowEndDate),
       supabase
         .from("daily_activity_logs")
         .select("activity_date")
-        .eq("member_id", memberId)
+        .eq("member_id", canonicalMemberId)
         .gte("activity_date", windowStartDate)
         .lte("activity_date", windowEndDate)
     ]);
@@ -531,12 +547,15 @@ async function listCarePlanRows(filters?: {
   serviceRole?: boolean;
 }) {
   const supabase = await createClient({ serviceRole: Boolean(filters?.serviceRole) });
+  const canonicalMemberId = filters?.memberId
+    ? await resolveCarePlanMemberId(filters.memberId, "listCarePlanRows")
+    : null;
   let query = supabase
     .from("care_plans")
     .select("*, member:members!care_plans_member_id_fkey(display_name)")
     .order("next_due_date", { ascending: true });
   if (filters?.carePlanId) query = query.eq("id", filters.carePlanId);
-  if (filters?.memberId) query = query.eq("member_id", filters.memberId);
+  if (canonicalMemberId) query = query.eq("member_id", canonicalMemberId);
   if (filters?.track && filters.track !== "All") query = query.eq("track", filters.track);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -646,11 +665,13 @@ export async function getCarePlanDashboard() {
 }
 
 export async function getCarePlansForMember(memberId: string) {
-  return await listCarePlanRows({ memberId });
+  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getCarePlansForMember");
+  return await listCarePlanRows({ memberId: canonicalMemberId });
 }
 
 export async function getLatestCarePlanForMember(memberId: string) {
-  const rows = await listCarePlanRows({ memberId });
+  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getLatestCarePlanForMember");
+  const rows = await listCarePlanRows({ memberId: canonicalMemberId });
   return (
     rows.sort((a, b) => {
       if (a.reviewDate === b.reviewDate) return a.updatedAt < b.updatedAt ? 1 : -1;
@@ -660,7 +681,8 @@ export async function getLatestCarePlanForMember(memberId: string) {
 }
 
 export async function getMemberCarePlanSummary(memberId: string): Promise<MemberCarePlanSummary> {
-  const latest = await getLatestCarePlanForMember(memberId);
+  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getMemberCarePlanSummary");
+  const latest = await getLatestCarePlanForMember(canonicalMemberId);
   if (latest) {
     return {
       hasExistingPlan: true,
@@ -675,7 +697,7 @@ export async function getMemberCarePlanSummary(memberId: string): Promise<Member
     hasExistingPlan: false,
     nextDueDate: null,
     status: null,
-    actionHref: `/health/care-plans/new?memberId=${memberId}`,
+    actionHref: `/health/care-plans/new?memberId=${canonicalMemberId}`,
     actionLabel: "New Care Plan",
     planId: null
   };
@@ -718,6 +740,7 @@ export async function createCarePlan(input: {
   signatureImageDataUrl: string;
   actor: { id: string; fullName: string; signatureName: string; role: string };
 }) {
+  const canonicalMemberId = await resolveCarePlanMemberId(input.memberId, "createCarePlan");
   const supabase = await createClient();
   const now = toEasternISO();
   const completionDate = input.reviewDate;
@@ -728,7 +751,7 @@ export async function createCarePlan(input: {
   const { data, error } = await supabase
     .from("care_plans")
     .insert({
-      member_id: input.memberId,
+      member_id: canonicalMemberId,
       track: input.track,
       enrollment_date: input.enrollmentDate,
       review_date: input.reviewDate,

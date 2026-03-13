@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { getPhysicianOrders } from "@/lib/services/physician-orders-supabase";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatDateTime } from "@/lib/utils";
@@ -23,20 +24,45 @@ export default async function PhysicianOrdersIndexPage({
   const status = firstString(query.status) ?? "all";
   const q = firstString(query.q) ?? "";
 
-  const rows = await getPhysicianOrders({
-    memberId: memberId || undefined,
-    status:
-      status === "Draft" || status === "Sent" || status === "Signed" || status === "Expired" || status === "Superseded"
-        ? status
-        : "all",
-    q
-  });
+  let canonicalMemberId = memberId;
+  let loadError: string | null = null;
+  if (memberId) {
+    try {
+      const canonical = await resolveCanonicalMemberRef(
+        {
+          sourceType: "member",
+          memberId,
+          selectedId: memberId
+        },
+        { actionLabel: "PhysicianOrdersIndexPage" }
+      );
+      canonicalMemberId = canonical.memberId ?? "";
+    } catch (error) {
+      canonicalMemberId = "";
+      loadError = error instanceof Error ? error.message : "Invalid member identity filter.";
+    }
+  }
+
+  let rows: Awaited<ReturnType<typeof getPhysicianOrders>> = [];
+  try {
+    rows = await getPhysicianOrders({
+      memberId: canonicalMemberId || undefined,
+      status:
+        status === "Draft" || status === "Sent" || status === "Signed" || status === "Expired" || status === "Superseded"
+          ? status
+          : "all",
+      q
+    });
+  } catch (error) {
+    loadError = loadError ?? (error instanceof Error ? error.message : "Unable to load physician orders.");
+  }
   const supabase = await createClient();
-  const { data: memberRows } = await supabase
+  const { data: memberRows, error: memberRowsError } = await supabase
     .from("members")
     .select("id, display_name, status")
     .eq("status", "active")
     .order("display_name", { ascending: true });
+  if (memberRowsError) throw new Error(`Unable to load active members for physician orders filters: ${memberRowsError.message}`);
   const members = memberRows ?? [];
 
   return (
@@ -49,15 +75,15 @@ export default async function PhysicianOrdersIndexPage({
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {canCreate ? (
             <Link
-              href={memberId ? `/health/physician-orders/new?memberId=${memberId}` : "/health/physician-orders/new"}
+              href={canonicalMemberId ? `/health/physician-orders/new?memberId=${canonicalMemberId}` : "/health/physician-orders/new"}
               className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white"
             >
               New Physician Order
             </Link>
           ) : null}
-          {memberId ? (
+          {canonicalMemberId ? (
             <Link
-              href={`/operations/member-command-center/${memberId}`}
+              href={`/operations/member-command-center/${canonicalMemberId}`}
               className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
             >
               Open Member Command Center
@@ -68,7 +94,7 @@ export default async function PhysicianOrdersIndexPage({
 
       <Card>
         <form className="grid gap-2 md:grid-cols-5" action="/health/physician-orders">
-          <select name="memberId" defaultValue={memberId} className="h-10 rounded-lg border border-border px-3 text-sm">
+          <select name="memberId" defaultValue={canonicalMemberId} className="h-10 rounded-lg border border-border px-3 text-sm">
             <option value="">All members</option>
             {members.map((member) => (
               <option key={member.id} value={member.id}>
@@ -102,6 +128,7 @@ export default async function PhysicianOrdersIndexPage({
             </Link>
           </div>
         </form>
+        {loadError ? <p className="mt-2 text-xs font-semibold text-rose-700">{loadError}</p> : null}
         <p className="mt-2 text-xs text-muted">Total: {rows.length}</p>
       </Card>
 

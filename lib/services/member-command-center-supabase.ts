@@ -3,10 +3,16 @@ import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { getStandardDailyRateForAttendanceDays } from "@/lib/services/billing-rate-tiers";
+import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans-supabase";
 
 export interface MccMemberRow {
   id: string;
   display_name: string;
+  preferred_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string | null;
+  name: string | null;
   status: "active" | "inactive";
   locker_number: string | null;
   enrollment_date: string | null;
@@ -669,6 +675,11 @@ export async function upsertBillingScheduleTemplateSupabase(
 export async function listMembersSupabase(filters?: { q?: string; status?: "all" | "active" | "inactive" }) {
   const supabase = await createClient();
   const selectVariants = [
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, code_status, latest_assessment_track",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status",
     "id, display_name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
     "id, display_name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
     "id, display_name, status, enrollment_date, dob, code_status, latest_assessment_track",
@@ -678,6 +689,11 @@ export async function listMembersSupabase(filters?: { q?: string; status?: "all"
   const mapRow = (row: Record<string, unknown>): MccMemberRow => ({
     id: String(row.id ?? ""),
     display_name: String(row.display_name ?? ""),
+    preferred_name: typeof row.preferred_name === "string" ? row.preferred_name : null,
+    first_name: typeof row.first_name === "string" ? row.first_name : null,
+    last_name: typeof row.last_name === "string" ? row.last_name : null,
+    full_name: typeof row.full_name === "string" ? row.full_name : null,
+    name: typeof row.name === "string" ? row.name : null,
     status: row.status === "inactive" ? "inactive" : "active",
     locker_number: typeof row.locker_number === "string" ? row.locker_number : null,
     enrollment_date: typeof row.enrollment_date === "string" ? row.enrollment_date : null,
@@ -722,6 +738,11 @@ export async function getMemberSupabase(memberId: string) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberSupabase");
   const supabase = await createClient();
   const selectVariants = [
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, code_status, latest_assessment_track",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status",
     "id, display_name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
     "id, display_name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
     "id, display_name, status, enrollment_date, dob, code_status, latest_assessment_track",
@@ -731,6 +752,11 @@ export async function getMemberSupabase(memberId: string) {
   const mapRow = (row: Record<string, unknown>): MccMemberRow => ({
     id: String(row.id ?? ""),
     display_name: String(row.display_name ?? ""),
+    preferred_name: typeof row.preferred_name === "string" ? row.preferred_name : null,
+    first_name: typeof row.first_name === "string" ? row.first_name : null,
+    last_name: typeof row.last_name === "string" ? row.last_name : null,
+    full_name: typeof row.full_name === "string" ? row.full_name : null,
+    name: typeof row.name === "string" ? row.name : null,
     status: row.status === "inactive" ? "inactive" : "active",
     locker_number: typeof row.locker_number === "string" ? row.locker_number : null,
     enrollment_date: typeof row.enrollment_date === "string" ? row.enrollment_date : null,
@@ -1244,13 +1270,15 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterDetailSupabase");
   const member = await getMemberSupabase(canonicalMemberId);
   if (!member) return null;
-  const [profile, schedule, contacts, files, busStopDirectory, mhpAllergies] = await Promise.all([
+  const [profile, schedule, contacts, files, busStopDirectory, mhpAllergies, carePlanSummary, carePlans] = await Promise.all([
     ensureMemberCommandCenterProfileSupabase(canonicalMemberId),
     ensureMemberAttendanceScheduleSupabase(canonicalMemberId),
     listMemberContactsSupabase(canonicalMemberId),
     listMemberFilesSupabase(canonicalMemberId),
     listBusStopDirectorySupabase(),
-    listMemberAllergiesSupabase(canonicalMemberId)
+    listMemberAllergiesSupabase(canonicalMemberId),
+    getMemberCarePlanSummary(canonicalMemberId),
+    getCarePlansForMember(canonicalMemberId)
   ]);
   const supabase = await createClient();
   const { count, error } = await supabase
@@ -1284,15 +1312,8 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     makeupBalance: schedule?.make_up_days_available ?? 0,
     makeupLedger: [] as MakeupLedgerRow[],
     assessmentsCount: safeAssessmentsCount,
-    carePlansCount: 0,
-    carePlanSummary: {
-      hasExistingPlan: false,
-      nextDueDate: null,
-      status: null,
-      actionHref: `/health/care-plans/new?memberId=${canonicalMemberId}`,
-      actionLabel: "New Care Plan" as const,
-      planId: null
-    },
+    carePlansCount: carePlans.length,
+    carePlanSummary,
     age: calculateAgeYears(member.dob),
     monthsEnrolled: calculateMonthsEnrolled(schedule?.enrollment_date ?? member.enrollment_date)
   };

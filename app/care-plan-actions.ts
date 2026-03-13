@@ -58,26 +58,31 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
   const payload = createCarePlanSchema.safeParse(raw);
   if (!payload.success) return { error: "Invalid care plan submission." };
 
-  const created = await createCarePlan({
-    memberId: payload.data.memberId,
-    track: payload.data.track,
-    enrollmentDate: payload.data.enrollmentDate,
-    reviewDate: payload.data.reviewDate,
-    noChangesNeeded: payload.data.noChangesNeeded,
-    modificationsRequired: payload.data.modificationsRequired,
-    modificationsDescription: payload.data.modificationsDescription || "",
-    careTeamNotes: payload.data.careTeamNotes,
-    caregiverName: payload.data.caregiverName,
-    caregiverEmail: payload.data.caregiverEmail,
-    signatureAttested: payload.data.signatureAttested,
-    signatureImageDataUrl: payload.data.signatureImageDataUrl,
-    actor: {
-      id: user.userId,
-      fullName: user.fullName,
-      signatureName: user.signatureName,
-      role: user.role
-    }
-  });
+  let created: Awaited<ReturnType<typeof createCarePlan>>;
+  try {
+    created = await createCarePlan({
+      memberId: payload.data.memberId,
+      track: payload.data.track,
+      enrollmentDate: payload.data.enrollmentDate,
+      reviewDate: payload.data.reviewDate,
+      noChangesNeeded: payload.data.noChangesNeeded,
+      modificationsRequired: payload.data.modificationsRequired,
+      modificationsDescription: payload.data.modificationsDescription || "",
+      careTeamNotes: payload.data.careTeamNotes,
+      caregiverName: payload.data.caregiverName,
+      caregiverEmail: payload.data.caregiverEmail,
+      signatureAttested: payload.data.signatureAttested,
+      signatureImageDataUrl: payload.data.signatureImageDataUrl,
+      actor: {
+        id: user.userId,
+        fullName: user.fullName,
+        signatureName: user.signatureName,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create care plan." };
+  }
 
   revalidatePath("/health");
   revalidatePath("/health/care-plans");

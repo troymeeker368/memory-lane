@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { PofEsignWorkflowCard } from "@/components/physician-orders/pof-esign-workflow-card";
 import { PhysicianOrderPdfActions } from "@/components/physician-orders/pof-pdf-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
-import { listPofTimelineForPhysicianOrder } from "@/lib/services/pof-esign";
+import { getConfiguredClinicalSenderEmail, listPofTimelineForPhysicianOrder } from "@/lib/services/pof-esign";
 import {
   getPhysicianOrderById,
   getPhysicianOrdersForMember
@@ -45,6 +46,8 @@ export default async function PhysicianOrderDetailPage({
 
   const history = await getPhysicianOrdersForMember(form.memberId);
   const pofTimeline = await listPofTimelineForPhysicianOrder(form.id);
+  const latestRequest = pofTimeline.requests[0] ?? null;
+  const defaultFromEmail = profile.email?.trim() || getConfiguredClinicalSenderEmail();
   const backHref =
     source === "mhp"
       ? `/health/member-health-profiles/${form.memberId}`
@@ -73,7 +76,7 @@ export default async function PhysicianOrderDetailPage({
         ) : null}
         <div className="mt-2 grid gap-2 text-xs text-muted sm:grid-cols-2 lg:grid-cols-4">
           <p>Status: <span className="font-semibold text-primary-text">{form.status}</span></p>
-          <p>Provider Signature Status: <span className="font-semibold text-primary-text">{form.providerSignatureStatus}</span></p>
+          <p>Workflow Status: <span className="font-semibold text-primary-text">{latestRequest?.status ?? "draft"}</span></p>
           <p>Sent: <span className="font-semibold text-primary-text">{form.completedDate ? formatDate(form.completedDate) : "-"}</span></p>
           <p>Next Renewal Due: <span className="font-semibold text-primary-text">{form.nextRenewalDueDate ? formatDate(form.nextRenewalDueDate) : "-"}</span></p>
           <p>Signed: <span className="font-semibold text-primary-text">{form.signedDate ? formatDate(form.signedDate) : "-"}</span></p>
@@ -104,6 +107,25 @@ export default async function PhysicianOrderDetailPage({
           <p className="mt-1 text-xs text-muted">Use Download PDF to regenerate and save the document.</p>
         </Card>
       ) : null}
+
+      <Card>
+        <CardTitle>Provider E-Sign Workflow</CardTitle>
+        <div className="mt-3">
+          <PofEsignWorkflowCard
+            memberId={form.memberId}
+            physicianOrderId={form.id}
+            latestRequest={latestRequest}
+            defaultProviderName={form.providerName ?? ""}
+            defaultProviderEmail={latestRequest?.providerEmail ?? ""}
+            defaultNurseName={latestRequest?.nurseName || profile.full_name}
+            defaultFromEmail={latestRequest?.fromEmail || defaultFromEmail}
+            defaultOptionalMessage={latestRequest?.optionalMessage ?? ""}
+            signedProviderName={form.providerName}
+            signedAt={latestRequest?.signedAt ?? null}
+            showProviderNameInput={false}
+          />
+        </div>
+      </Card>
 
       <Card>
         <CardTitle>Identification / Medical Orders</CardTitle>
@@ -260,12 +282,10 @@ export default async function PhysicianOrderDetailPage({
       </Card>
 
       <Card>
-        <CardTitle>Operational Flags & Signature Tracking</CardTitle>
+        <CardTitle>Operational Flags & Audit Tracking</CardTitle>
         <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
           <p><span className="font-semibold">Operational Flags:</span> {selectedList([{ label: "Nut allergy", value: flags.nutAllergy }, { label: "Shellfish allergy", value: flags.shellfishAllergy }, { label: "Fish allergy", value: flags.fishAllergy }, { label: "Diabetic / Restricted Sweets", value: flags.diabeticRestrictedSweets }, { label: "Oxygen requirement", value: flags.oxygenRequirement }, { label: "DNR", value: flags.dnr }, { label: "No photos", value: flags.noPhotos }, { label: "Bathroom assistance", value: flags.bathroomAssistance }])}</p>
           <p><span className="font-semibold">Provider Name:</span> {form.providerName ?? "-"}</p>
-          <p><span className="font-semibold">Provider Signature:</span> {form.providerSignature ?? "-"}</p>
-          <p><span className="font-semibold">Provider Signature Date:</span> {form.providerSignatureDate ? formatDate(form.providerSignatureDate) : "-"}</p>
           <p><span className="font-semibold">Created By:</span> {form.createdByName}</p>
           <p><span className="font-semibold">Created At:</span> {formatDateTime(form.createdAt)}</p>
           <p><span className="font-semibold">Sent By:</span> {form.completedByName ?? "-"}</p>

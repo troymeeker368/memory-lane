@@ -59,7 +59,13 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
   const filteredTransportationQuery = staffScoped ? transportationQuery.eq("staff_user_id", staffUserId as string) : transportationQuery;
   const filteredPhotosQuery = staffScoped ? photosQuery.eq("uploaded_by", staffUserId as string) : photosQuery;
 
-  const [{ data: dailyRows }, { data: toiletRows }, { data: showerRows }, { data: transportRows }, { data: photoRows }] =
+  const [
+    { data: dailyRows, error: dailyError },
+    { data: toiletRows, error: toiletError },
+    { data: showerRows, error: showerError },
+    { data: transportRows, error: transportError },
+    { data: photoRows, error: photoError }
+  ] =
     await Promise.all([
       filteredDailyQuery,
       filteredToiletsQuery,
@@ -67,6 +73,11 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
       filteredTransportationQuery,
       filteredPhotosQuery
     ]);
+  if (dailyError) throw new Error(`Unable to load daily activity workflows: ${dailyError.message}`);
+  if (toiletError) throw new Error(`Unable to load toilet workflows: ${toiletError.message}`);
+  if (showerError) throw new Error(`Unable to load shower workflows: ${showerError.message}`);
+  if (transportError) throw new Error(`Unable to load transportation workflows: ${transportError.message}`);
+  if (photoError) throw new Error(`Unable to load photo workflows: ${photoError.message}`);
 
   const dailyActivities = (dailyRows ?? []).map((row: any) => {
     const participation = Math.round(
@@ -161,7 +172,8 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
       const filteredAssessmentsQuery = staffScoped
         ? assessmentsQuery.eq("completed_by_user_id", staffUserId as string)
         : assessmentsQuery;
-      const { data: assessmentRows } = await filteredAssessmentsQuery;
+      const { data: assessmentRows, error: assessmentsError } = await filteredAssessmentsQuery;
+      if (assessmentsError) throw new Error(`Unable to load intake assessment workflows: ${assessmentsError.message}`);
       const rows = assessmentRows ?? [];
       const signatureByAssessmentId = await listIntakeAssessmentSignatureStatesByAssessmentIds(
         rows.map((row: any) => String(row.id))

@@ -149,12 +149,15 @@ function drawDocumentHeader(input: {
 
 async function groupedAssessmentSections(assessmentId: string): Promise<AssessmentSection[]> {
   const supabase = await createClient();
-  const { data: responses } = await supabase
+  const { data: responses, error: responsesError } = await supabase
     .from("assessment_responses")
     .select("field_key, field_label, section_type, field_value")
     .eq("assessment_id", assessmentId)
     .order("section_type", { ascending: true })
     .order("field_label", { ascending: true });
+  if (responsesError) {
+    throw new Error(`Unable to load assessment responses for PDF: ${responsesError.message}`);
+  }
 
   const bySection = new Map<string, AssessmentSection>();
   (responses ?? []).forEach((row: any) => {
@@ -174,11 +177,14 @@ async function groupedAssessmentSections(assessmentId: string): Promise<Assessme
 
 export async function buildIntakeAssessmentPdfDataUrl(assessmentId: string) {
   const supabase = await createClient();
-  const { data: assessment } = await supabase
+  const { data: assessment, error: assessmentError } = await supabase
     .from("intake_assessments")
     .select("*, member:members!intake_assessments_member_id_fkey(display_name)")
     .eq("id", assessmentId)
     .maybeSingle();
+  if (assessmentError) {
+    throw new Error(`Unable to load intake assessment for PDF: ${assessmentError.message}`);
+  }
   if (!assessment) {
     throw new Error("Intake assessment not found.");
   }

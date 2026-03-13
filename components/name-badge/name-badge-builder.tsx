@@ -16,8 +16,13 @@ interface BadgeViewModel {
   generatedAt: string;
   member: {
     id: string;
-    name: string;
-    initials: string;
+    preferredName: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    fullName: string | null;
+    name: string | null;
+    displayName: string | null;
+    displayNameSource: string;
     lockerNumber: string | null;
   };
   logoSrc: string;
@@ -50,21 +55,18 @@ export function NameBadgeBuilder({
     () => badge.indicators.filter((indicator) => selectedKeys.includes(indicator.key)),
     [badge.indicators, selectedKeys]
   );
-  const memberDisplayName = useMemo(() => {
-    const normalized = badge.member.name.trim();
-    if (normalized.length > 0) return normalized;
-    const initials = badge.member.initials.trim();
-    if (initials.length > 0) return initials;
-    return "Member Name";
-  }, [badge.member.initials, badge.member.name]);
-  const nameFontSizeMm = useMemo(() => {
+  const memberDisplayName = useMemo(() => (badge.member.displayName ?? "").trim(), [badge.member.displayName]);
+  const hasResolvedName = memberDisplayName.length > 0;
+  const nameResolutionError =
+    "Unable to render badge: this member does not have a usable name. Add a preferred/first/last name or full display name, then try again.";
+  const nameFontSizePx = useMemo(() => {
     const text = memberDisplayName;
     const length = text.length || 1;
     // Approximate Helvetica Bold width factor for uppercase/mixed names.
     const estimatedWidthFactor = 0.58;
-    const availableWidthMm = 84;
-    const fitSize = availableWidthMm / (length * estimatedWidthFactor);
-    return Math.max(3.8, Math.min(7.8, fitSize));
+    const availableWidthPx = 330;
+    const fitSize = availableWidthPx / (length * estimatedWidthFactor);
+    return Math.max(20, Math.min(30, fitSize));
   }, [memberDisplayName]);
 
   function toggleIndicator(key: string) {
@@ -76,6 +78,10 @@ export function NameBadgeBuilder({
   }
 
   function runGeneration(printAfterDownload: boolean) {
+    if (!hasResolvedName) {
+      setStatus(`Error: ${nameResolutionError}`);
+      return;
+    }
     setStatus("");
     startTransition(async () => {
       const result = await generateMemberNameBadgePdfAction({
@@ -125,7 +131,7 @@ export function NameBadgeBuilder({
             type="button"
             className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70"
             onClick={() => runGeneration(false)}
-            disabled={isPending}
+            disabled={isPending || !hasResolvedName}
           >
             {isPending ? "Generating..." : "Download PDF"}
           </button>
@@ -133,7 +139,7 @@ export function NameBadgeBuilder({
             type="button"
             className="rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-70"
             onClick={() => runGeneration(true)}
-            disabled={isPending}
+            disabled={isPending || !hasResolvedName}
           >
             Print
           </button>
@@ -146,36 +152,43 @@ export function NameBadgeBuilder({
             Reset from Profile
           </button>
         </div>
-        {status ? <p className="mt-2 text-xs text-muted">{status}</p> : null}
+        {!hasResolvedName ? <p className="mt-2 text-xs text-[#B42318]">{nameResolutionError}</p> : null}
+        {status ? <p className={`mt-2 text-xs ${status.startsWith("Error:") ? "text-[#B42318]" : "text-muted"}`}>{status}</p> : null}
       </div>
 
-      <div className="name-badge-preview">
-        <div className="name-badge-star name-badge-star-left">*</div>
-        <div className="name-badge-star name-badge-star-right">*</div>
-        <img src={badge.logoSrc} alt="Town Square Fort Mill logo" className="name-badge-logo" />
-        <p className="name-badge-member-name" style={{ fontSize: `${nameFontSizeMm}mm` }}>
-          {memberDisplayName}
-        </p>
-        <p className="name-badge-locker">{badge.member.lockerNumber ? `LOCKER ${badge.member.lockerNumber}` : "LOCKER ##"}</p>
-        <div className="name-badge-divider" />
-        <div className="name-badge-icons">
-          {selectedIndicators.length === 0 ? (
-            <p className="name-badge-empty-icons">No indicators selected</p>
-          ) : (
-            selectedIndicators.map((indicator) =>
-              indicator.iconSrc ? (
-                <div key={indicator.key} className="name-badge-icon-item" title={indicator.label}>
-                  <img src={indicator.iconSrc} alt={indicator.label} className="name-badge-icon" />
-                </div>
-              ) : (
-                <div key={indicator.key} className="name-badge-icon-fallback" title={indicator.label}>
-                  <span aria-hidden>*</span>
-                </div>
+      {hasResolvedName ? (
+        <div className="name-badge-preview">
+          <div className="name-badge-star name-badge-star-left">*</div>
+          <div className="name-badge-star name-badge-star-right">*</div>
+          <img src={badge.logoSrc} alt="Town Square Fort Mill logo" className="name-badge-logo" />
+          <p className="name-badge-member-name" style={{ fontSize: `${nameFontSizePx}px` }}>
+            {memberDisplayName}
+          </p>
+          <p className="name-badge-locker">{badge.member.lockerNumber ? `LOCKER ${badge.member.lockerNumber}` : "LOCKER ##"}</p>
+          <div className="name-badge-divider" />
+          <div className="name-badge-icons">
+            {selectedIndicators.length === 0 ? (
+              <p className="name-badge-empty-icons">No indicators selected</p>
+            ) : (
+              selectedIndicators.map((indicator) =>
+                indicator.iconSrc ? (
+                  <div key={indicator.key} className="name-badge-icon-item" title={indicator.label}>
+                    <img src={indicator.iconSrc} alt={indicator.label} className="name-badge-icon" />
+                  </div>
+                ) : (
+                  <div key={indicator.key} className="name-badge-icon-fallback" title={indicator.label}>
+                    <span aria-hidden>*</span>
+                  </div>
+                )
               )
-            )
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="rounded-lg border border-[#f0b6b6] bg-[#fff6f6] px-4 py-3 text-sm text-[#7f1d1d]">
+          {nameResolutionError}
+        </div>
+      )}
     </div>
   );
 }

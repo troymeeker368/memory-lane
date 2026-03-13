@@ -5,6 +5,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
+import { resolveCanonicalLeadRef, resolveCanonicalMemberRef, resolveCanonicalPersonRef } from "@/lib/services/canonical-person-ref";
 import { createUserNotification } from "@/lib/services/notifications";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -210,9 +211,23 @@ function buildAppBaseUrl(requestBaseUrl?: string | null) {
     clean(process.env.NEXT_PUBLIC_SITE_URL) ??
     clean(process.env.SITE_URL);
   const fallbackHost = clean(process.env.VERCEL_PROJECT_PRODUCTION_URL) ?? clean(process.env.VERCEL_URL);
-  const raw = explicit ?? fallbackHost ?? "http://localhost:3001";
+  const raw = explicit ?? fallbackHost ?? null;
+  if (!raw) {
+    if ((process.env.NODE_ENV ?? "").toLowerCase() === "production") {
+      throw new Error(
+        "Enrollment packet public URL is not configured. Set NEXT_PUBLIC_APP_URL (or APP_URL/SITE_URL) so signer links are live."
+      );
+    }
+    return "http://localhost:3001";
+  }
+
   const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-  return withProtocol.replace(/\/$/, "");
+  const parsed = new URL(withProtocol);
+  const localhostHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
+  if (parsed.protocol === "http:" && !localhostHostnames.has(parsed.hostname)) {
+    parsed.protocol = "https:";
+  }
+  return parsed.toString().replace(/\/$/, "");
 }
 
 function getStorageUri(objectPath: string) {
@@ -282,13 +297,6 @@ async function getLeadById(leadId: string) {
     .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as LeadRow | null) ?? null;
-}
-
-async function findMemberIdForLead(leadId: string) {
-  const admin = createSupabaseAdminClient();
-  const { data, error } = await admin.from("members").select("id").eq("source_lead_id", leadId).maybeSingle();
-  if (error) throw new Error(error.message);
-  return data ? String((data as { id: string }).id) : null;
 }
 
 async function loadRequestById(packetId: string) {
@@ -391,11 +399,25 @@ async function listActivePacketRows(memberId: string, leadId: string | null) {
 export async function listEnrollmentPacketRequestsForMember(memberId: string) {
   const normalizedMemberId = clean(memberId);
   if (!normalizedMemberId) throw new Error("Member ID is required.");
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: normalizedMemberId,
+      selectedId: normalizedMemberId
+    },
+    {
+      actionLabel: "listEnrollmentPacketRequestsForMember",
+      serviceRole: true
+    }
+  );
+  if (!canonical.memberId) {
+    throw new Error("listEnrollmentPacketRequestsForMember expected member.id but canonical member resolution returned empty memberId.");
+  }
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select("*")
-    .eq("member_id", normalizedMemberId)
+    .eq("member_id", canonical.memberId)
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
   return ((data ?? []) as EnrollmentPacketRequestRow[]).map((row) => toSummary(row));
@@ -404,11 +426,25 @@ export async function listEnrollmentPacketRequestsForMember(memberId: string) {
 export async function listEnrollmentPacketRequestsForLead(leadId: string) {
   const normalizedLeadId = clean(leadId);
   if (!normalizedLeadId) throw new Error("Lead ID is required.");
+  const canonical = await resolveCanonicalLeadRef(
+    {
+      sourceType: "lead",
+      leadId: normalizedLeadId,
+      selectedId: normalizedLeadId
+    },
+    {
+      actionLabel: "listEnrollmentPacketRequestsForLead",
+      serviceRole: true
+    }
+  );
+  if (!canonical.leadId) {
+    throw new Error("listEnrollmentPacketRequestsForLead expected lead.id but canonical lead resolution returned empty leadId.");
+  }
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select("*")
-    .eq("lead_id", normalizedLeadId)
+    .eq("lead_id", canonical.leadId)
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
   return ((data ?? []) as EnrollmentPacketRequestRow[]).map((row) => toSummary(row));
@@ -539,15 +575,34 @@ async function resolveSendContext(input: {
 }) {
   const leadId = clean(input.leadId);
   const memberIdFromInput = clean(input.memberId);
-  const lead = leadId ? await getLeadById(leadId) : null;
-  if (leadId && !lead) throw new Error("Lead was not found.");
+  const canonical = await resolveCanonicalPersonRef(
+    {
+      sourceType: leadId ? "lead" : "member",
+      leadId,
+      memberId: memberIdFromInput,
+      selectedId: memberIdFromInput ?? leadId
+    },
+    {
+      expectedType: "member",
+      actionLabel: "sendEnrollmentPacketRequest",
+      serviceRole: true
+    }
+  );
 
-  const memberId = memberIdFromInput ?? (leadId ? await findMemberIdForLead(leadId) : null);
-  if (!memberId) {
-    throw new Error("Enrollment packet requires a linked member record.");
+  if (!canonical.memberId) {
+    throw new Error("Enrollment packet requires canonical member.id.");
   }
-  const member = await getMemberById(memberId);
+
+  if (leadId && canonical.leadId !== leadId) {
+    throw new Error(
+      `sendEnrollmentPacketRequest expected lead.id ${leadId}, but canonical resolution mapped to ${canonical.leadId ?? "none"}.`
+    );
+  }
+
+  const member = await getMemberById(canonical.memberId);
   if (!member) throw new Error("Member was not found.");
+  const lead = canonical.leadId ? await getLeadById(canonical.leadId) : null;
+  if (canonical.leadId && !lead) throw new Error("Lead was not found.");
 
   return { member, lead };
 }

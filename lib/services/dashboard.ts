@@ -13,7 +13,12 @@ export async function getDashboardStats(userId: string) {
   const end = new Date(today);
   end.setHours(23, 59, 59, 999);
 
-  const [{ count: todaysLogs }, { count: missingDocs }, { data: latestPunches }, incompleteAttendance] = await Promise.all([
+  const [
+    { count: todaysLogs, error: todaysLogsError },
+    { count: missingDocs, error: missingDocsError },
+    { data: latestPunches, error: latestPunchesError },
+    incompleteAttendance
+  ] = await Promise.all([
     supabase
       .from("documentation_events")
       .select("id", { count: "exact", head: true })
@@ -32,6 +37,9 @@ export async function getDashboardStats(userId: string) {
       .limit(5),
     getIncompleteAttendanceSummary({ selectedDate: operationsDate })
   ]);
+  if (todaysLogsError) throw new Error(`Unable to load today's documentation event count: ${todaysLogsError.message}`);
+  if (missingDocsError) throw new Error(`Unable to load missing documentation assignment count: ${missingDocsError.message}`);
+  if (latestPunchesError) throw new Error(`Unable to load latest time punches: ${latestPunchesError.message}`);
 
   return {
     todaysLogs: todaysLogs ?? 0,
@@ -44,18 +52,20 @@ export async function getDashboardStats(userId: string) {
 export async function getDashboardAlerts() {
   const supabase = await createClient();
 
-  const { data: overdueCarePlan } = await supabase
+  const { data: overdueCarePlan, error: overdueCarePlanError } = await supabase
     .from("documentation_tracker")
     .select("id")
     .lt("next_care_plan_due", toEasternDate())
     .eq("care_plan_done", false)
     .limit(1);
 
-  const { data: clockIssues } = await supabase
+  const { data: clockIssues, error: clockIssuesError } = await supabase
     .from("time_punch_exceptions")
     .select("id")
     .eq("resolved", false)
     .limit(1);
+  if (overdueCarePlanError) throw new Error(`Unable to load overdue care plan alerts: ${overdueCarePlanError.message}`);
+  if (clockIssuesError) throw new Error(`Unable to load clock issue alerts: ${clockIssuesError.message}`);
 
   const alerts: { id: string; severity: "warning" | "critical"; message: string; actionLabel: string; actionHref: string }[] = [];
 

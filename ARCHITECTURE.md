@@ -1,92 +1,99 @@
-# Memory Lane Architecture
+# Memory Lane Architecture Standard
 
-## Architecture Contract
+This document defines the production runtime architecture contract for Memory Lane.
+All code paths must comply.
 
-Memory Lane is a Supabase-backed production system.
-Supabase migrations define the runtime schema contract.
+## Supabase Source of Truth
 
-Runtime storage alternatives are not allowed:
-- no runtime mock repository
-- no local JSON store
-- no file-backed runtime persistence
-- no in-memory persistence as source of truth
+- Supabase is the only supported runtime persistence backend.
+- Persisted runtime reads and writes must use migration-defined Supabase objects.
+- Runtime mock persistence, file-backed persistence, local JSON stores, and in-memory persistence as source of truth are forbidden.
+- A write is successful only when it is durably persisted in Supabase.
+- Fallback records and synthetic success states are forbidden.
 
-## Canonical Layers
+## Canonical Entity Identity
 
-Only these layers are valid for business writes:
+- Each business entity has one canonical identity.
+- Each business entity has one canonical persistence path.
+- Mixed lead/member identity submission is forbidden unless a shared canonical resolver performs translation.
+- Identity translation must fail explicitly on mismatches.
+- Ambiguous identity inference without shared resolver mediation is forbidden.
 
-1. UI
-2. Server Action
-3. Service Layer (`lib/services/*`)
-4. Supabase
+Canonical identity rule:
+- member workflows operate on canonical `members.id`
+- lead workflows operate on canonical `leads.id`
+- cross-domain handoff must go through shared identity resolver/service
 
-Canonical write path:
+## Shared Resolver / Service Boundaries
+
+Shared logic must be centralized in canonical resolver/service modules when logic is:
+- reused
+- workflow-critical
+- identity-sensitive
+- invariant-enforcing
+- drift-prone
+
+Mandatory boundary:
+- UI renders and collects input
+- Server Actions validate input and call canonical services
+- Service layer executes business logic and persistence
+- Supabase stores canonical state
+
+Required write path:
 
 `UI -> Server Action -> Service Layer -> Supabase`
 
-## Layer Responsibilities
+Forbidden:
+- UI direct Supabase writes
+- business writes in actions/routes that bypass service layer
+- duplicate business-rule logic across modules
+- parallel write paths for the same business concept
 
-### UI
+## Schema Drift Prevention
 
-- Collect input and render output.
-- Call server actions.
-- Never write directly to Supabase.
-- Never host canonical derived-rule logic.
+- Supabase migrations are authoritative schema.
+- Runtime code must not assume missing tables/columns/relationships/functions.
+- New runtime dependencies require forward-only migrations.
+- Introducing new tables/flows without migrations is forbidden.
+- Drift must be fixed by migrations and service alignment, never by runtime fallbacks.
 
-### Server Actions
+Migration contract:
+- migration filenames use ordered format `####_description.sql`
+- migrations remain forward-only
+- services, actions, and UI contracts must remain migration-aligned
 
-- Validate request context and role/permission access.
-- Call canonical service functions.
-- Revalidate paths and return user-safe outcomes.
-- Must not bypass canonical service-layer write paths.
+## Mock Data Boundaries
 
-### Service Layer
+- Mock data is allowed only for isolated UI/test development.
+- Mock data is forbidden in canonical production runtime flows.
+- Importing `lib/mock*` runtime data into production code paths is forbidden.
+- Compatibility assets with `mock` naming are not valid runtime backends.
 
-- Canonical location for domain writes and derived business rules.
-- Canonical resolver location for cross-module shared state.
-- Canonical place for schema-aware error handling and integrity checks.
-- Must not fabricate non-persistent fallback records.
+## Workflow State Integrity
 
-### Supabase
+- Workflow states are system-driven event outcomes.
+- Manual editing of system workflow states is forbidden.
+- States such as `sent`, `opened`, `signed`, `completed`, `declined`, and `expired` must be derived from persisted events.
+- Success flags must not be emitted when persistence, delivery, or downstream artifact creation fails.
 
-- Canonical persistence for operational entities.
-- Migration-defined tables/views/functions only.
-- RLS/policies/triggers and constraints are part of architecture contract.
+Required integrity examples:
+- if email delivery fails, do not mark as sent
+- if artifact save fails, do not mark as completed
+- if canonical downstream sync fails, surface explicit error
 
-## Canonical Source Of Truth
+## Canonical Shared Domains
 
-Rules:
-- Every business entity has one canonical table.
-- Every derived business rule has one canonical shared resolver/service.
-- Views/aggregates support read use cases but are not source of truth.
-- Duplicated rule calculations across pages/actions/reports are architectural violations.
-
-## Shared Resolver/Service Requirements
-
-Shared canonical services must be reused for:
-- member detail and cross-domain relation resolution
-- physician orders and health profile derivation
+The following domains require shared resolver/service ownership:
+- member and cross-module identity/detail resolution
+- physician orders
 - intake assessment signature state
-- member command center aggregate state
-- attendance-derived operational state
-- transportation-derived operational state
-- billing eligibility and execution state
+- member health profiles
+- member command center
+- attendance
+- transportation
+- billing
 
-When duplicate logic is discovered, consolidate into the shared service and migrate all consumers.
-
-## Canonical Clinical Data Cascade
-
-Canonical lifecycle:
-
-`Intake Assessment -> Physician Orders (POF) -> Member Health Profile (MHP) -> Member Command Center (MCC)`
-
-Interpretation:
-- Intake Assessment is the clinical root source.
-- POF is canonical physician authorization.
-- MHP is normalized clinical state from intake + active signed physician orders.
-- MCC is operational aggregate state derived from upstream canonical clinical/operational records.
-
-## Role And Permission Architecture
+## Permission and Access Architecture
 
 Canonical role keys:
 - `program-assistant`
@@ -97,91 +104,79 @@ Canonical role keys:
 - `director`
 - `admin`
 
-Canonical permission/auth services:
-- `lib/permissions.ts`
+Canonical auth/permission modules:
 - `lib/auth.ts`
+- `lib/permissions.ts`
 
-Required enforcement entry points:
+Required guards:
 - `requireModuleAccess`
 - `requireModuleAction`
 - `requireNavItemAccess`
 - `requireRoles`
 
-Permissions must be enforced both:
-- at route/module access boundaries
-- at sensitive business action/write boundaries
+Sensitive operations must enforce canonical permissions at action boundary and data-write boundary.
 
-## Public E-Sign Architecture
+## Canonical Clinical Cascade
 
-Status:
-- implemented for public POF signing and intake-assessment signed-state persistence
+Canonical lifecycle:
 
-Canonical POF e-sign flow:
+`Intake Assessment -> Physician Orders (POF) -> Member Health Profile (MHP) -> Member Command Center (MCC)`
 
-1. staff user creates request in canonical service
-2. hashed token persisted in `pof_requests`
-3. email sent with public link `/sign/pof/[token]`
-4. provider opens link; request transitions (`sent -> opened`)
-5. provider signs with attestation
-6. canonical services persist signature, signed PDF, and audit events
-7. physician order canonical signed state and downstream sync are updated
+Rules:
+- Intake Assessment is root clinical source.
+- POF is canonical physician authorization.
+- MHP is normalized clinical state derived from intake plus active signed orders.
+- MCC is aggregated operational state derived from canonical upstream records.
 
-Canonical POF e-sign tables:
+## E-Sign Architecture Contract
+
+Canonical e-sign tables:
 - `pof_requests`
 - `pof_signatures`
 - `document_events`
-- `member_files` linkage (`pof_request_id`, storage path fields)
-
-Canonical intake signature tables:
 - `intake_assessment_signatures`
-- mirrored signed-state fields on `intake_assessments`
 
 Operational dependencies:
-- migration `0019_pof_esign_workflow.sql`
-- migration `0020_intake_assessment_esign.sql`
-- Supabase storage bucket `member-documents`
-- email provider API key `RESEND_API_KEY`
-- configured sender email (`CLINICAL_SENDER_EMAIL` fallback chain)
-- application base URL for public signature links
+- migrations `0019_pof_esign_workflow.sql`, `0020_intake_assessment_esign.sql`
+- storage bucket `member-documents`
+- provider config `RESEND_API_KEY`
+- sender config `CLINICAL_SENDER_EMAIL` fallback chain
+- canonical app base URL for public links
 
-Security/integrity expectations:
-- tokens are stored hashed and rotated after use
-- expiration state is enforced in persistence
-- IP/user-agent metadata is captured in canonical event records
-- signed artifacts must link to canonical member file records
+A second persistence flow for e-sign state outside canonical tables/services is forbidden.
 
-## Schema Governance
+## Production Readiness Checklist
 
-Required:
-- forward-only migrations
-- unique ordered migration names (`####_description.sql`)
-- migration-defined schema usage only
-- explicit failures when required schema objects are missing
+All checklist items are required before merge:
+- `Supabase-backed?`
+- `migration added?`
+- `canonical identity path defined?`
+- `shared resolver/service used where logically required?`
+- `UI and backend contracts aligned?`
+- `downstream artifacts saved?`
+- `audit trail present?`
+- `no mock/runtime split-brain?`
 
-Forbidden:
-- assuming schema objects that are absent from migrations
-- patching schema drift with runtime fallback behavior
-- introducing table/column dependencies without migration updates
+Any `No` blocks merge.
 
-## Definition Of Done For New Modules
+## Definition of Done
 
-A module is complete only when all are true:
-- route/UI works end-to-end
-- writes persist through canonical services into Supabase
-- permission enforcement is present in code
-- shared resolver/service usage is canonical
-- migration updates are applied for new schema requirements
-- downstream reports/exports/integrations consume canonical records
+A feature is complete only when all are true:
+- end-to-end route and workflow behavior is functional
+- writes persist in Supabase through canonical services
+- permissions are enforced with canonical guards
+- canonical identity resolution is enforced where needed
+- schema dependencies are migration-defined
+- downstream consumers use canonical records
 - `npm run typecheck` passes
 - `npm run build` passes
 
-## Architecture Do-Not Rules
+## Architecture Violations (Forbidden)
 
-- Do not add direct Supabase writes in UI components.
-- Do not bypass canonical service-layer writes from actions/routes.
-- Do not add parallel resolver implementations for the same rule.
-- Do not fabricate fallback records after failed persistence.
-- Do not import `lib/mock*` in runtime production paths.
-- Do not rely on compatibility APIs containing `mock` naming as runtime architecture.
+- mock fallback persistence in runtime flows
+- duplicate resolver/business-rule implementations for shared workflows
+- mixed lead/member identity handling outside canonical resolver paths
+- manual editing of system workflow states
+- silent fallback records after failed writes
+- schema-dependent code without migrations
 
-No workflow may infer entity identity from mixed fields like linked_member_id without first passing through the shared canonical person resolver. Member workflows must operate on canonical member.id; lead workflows must operate on canonical lead.id.

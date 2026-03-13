@@ -18,6 +18,7 @@ import {
   canonicalLeadStatus
 } from "@/lib/canonical";
 import { normalizeRoleKey } from "@/lib/permissions";
+import { resolveCanonicalLeadRef, resolveCanonicalPersonRef } from "@/lib/services/canonical-person-ref";
 import {
   getEnrollmentPacketSenderSignatureProfile,
   sendEnrollmentPacketRequest,
@@ -80,6 +81,25 @@ function normalizeText(value: string | null | undefined) {
 function makeShortId(prefix: string) {
   const random = Math.random().toString(16).slice(2, 10);
   return `${prefix}-${random}`;
+}
+
+async function resolveSalesLeadId(rawLeadId: string, actionLabel: string) {
+  const leadId = rawLeadId.trim();
+  const canonical = await resolveCanonicalLeadRef(
+    {
+      sourceType: "lead",
+      leadId,
+      selectedId: leadId
+    },
+    { actionLabel }
+  );
+  if (!canonical.leadId) {
+    throw new Error(`${actionLabel} expected lead.id but canonical lead resolution returned empty leadId.`);
+  }
+  return {
+    leadId: canonical.leadId,
+    memberId: canonical.memberId
+  };
 }
 
 async function resolveRequestAppBaseUrl() {
@@ -263,24 +283,24 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
 
     const requestedPartner = payload.data.partnerId?.trim() || null;
     const requestedSource = payload.data.referralSourceId?.trim() || null;
-    const selectedPartner = requestedPartner
-      ? (
-          await supabase
-            .from("community_partner_organizations")
-            .select("id, partner_id")
-            .or(`id.eq.${requestedPartner},partner_id.eq.${requestedPartner}`)
-            .maybeSingle()
-        ).data ?? null
-      : null;
-    const selectedReferralSource = requestedSource
-      ? (
-          await supabase
-            .from("referral_sources")
-            .select("id, partner_id, referral_source_id, contact_name")
-            .or(`id.eq.${requestedSource},referral_source_id.eq.${requestedSource}`)
-            .maybeSingle()
-        ).data ?? null
-      : null;
+    const selectedPartnerResult = requestedPartner
+      ? await supabase
+          .from("community_partner_organizations")
+          .select("id, partner_id")
+          .or(`id.eq.${requestedPartner},partner_id.eq.${requestedPartner}`)
+          .maybeSingle()
+      : { data: null, error: null };
+    if (selectedPartnerResult.error) return { error: selectedPartnerResult.error.message };
+    const selectedPartner = selectedPartnerResult.data ?? null;
+    const selectedReferralSourceResult = requestedSource
+      ? await supabase
+          .from("referral_sources")
+          .select("id, partner_id, referral_source_id, contact_name")
+          .or(`id.eq.${requestedSource},referral_source_id.eq.${requestedSource}`)
+          .maybeSingle()
+      : { data: null, error: null };
+    if (selectedReferralSourceResult.error) return { error: selectedReferralSourceResult.error.message };
+    const selectedReferralSource = selectedReferralSourceResult.data ?? null;
 
     if (requestedPartner && !selectedPartner) return { error: "Community partner organization not found." };
     if (requestedSource && !selectedReferralSource) return { error: "Referral source not found." };
@@ -324,6 +344,11 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
     let leadId = payload.data.leadId?.trim() || "";
     if (leadId) {
       try {
+        leadId = (await resolveSalesLeadId(leadId, "saveSalesLeadAction")).leadId;
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
+      }
+      try {
         await applyLeadStageTransitionSupabase({
           leadId,
           requestedStage: stage,
@@ -353,13 +378,9 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
 
     if (status === "Won") {
       const enrollmentDate = payload.data.memberStartDate?.trim() || toEasternDate();
-      const { data: existingMember } = await supabase
-        .from("members")
-        .select("id")
-        .eq("source_lead_id", leadId)
-        .maybeSingle();
-      if (existingMember) {
-        await supabase
+      const canonicalLead = await resolveSalesLeadId(leadId, "saveSalesLeadAction:closed-won");
+      if (canonicalLead.memberId) {
+        const { error: memberUpdateError } = await supabase
           .from("members")
           .update({
             display_name: payload.data.memberName.trim(),
@@ -368,19 +389,21 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
             dob: payload.data.memberDob?.trim() || null,
             updated_at: toEasternISO()
           })
-          .eq("id", existingMember.id);
+          .eq("id", canonicalLead.memberId);
+        if (memberUpdateError) return { error: memberUpdateError.message };
       } else {
-        await supabase.from("members").insert({
+        const { error: memberInsertError } = await supabase.from("members").insert({
           display_name: payload.data.memberName.trim(),
           status: "active",
           enrollment_date: enrollmentDate,
           dob: payload.data.memberDob?.trim() || null,
           source_lead_id: leadId
         });
+        if (memberInsertError) return { error: memberInsertError.message };
       }
     }
 
-    await supabase.from("audit_logs").insert({
+    const { error: auditInsertError } = await supabase.from("audit_logs").insert({
       actor_user_id: profile.id,
       actor_role: normalizeRoleKey(profile.role),
       action: "upsert_lead",
@@ -392,6 +415,7 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
         leadSource: payload.data.leadSource
       }
     });
+    if (auditInsertError) return { error: auditInsertError.message };
 
     revalidateSalesLeadViews(leadId);
     return { ok: true, id: leadId };}
@@ -407,12 +431,22 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
     return { error: "Invalid lead conversion request." };
   }
 
+    let canonicalLeadId = "";
+    let canonicalMemberIdFromLead: string | null = null;
+    try {
+      const canonicalLead = await resolveSalesLeadId(payload.data.leadId, "enrollMemberFromLeadAction");
+      canonicalLeadId = canonicalLead.leadId;
+      canonicalMemberIdFromLead = canonicalLead.memberId;
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
+    }
+
       const supabase = await createClient();
     const profile = await getCurrentProfile();
     const { data: lead, error: leadError } = await supabase
       .from("leads")
       .select("id, stage, status, member_name, member_dob, lead_source, member_start_date")
-      .eq("id", payload.data.leadId)
+      .eq("id", canonicalLeadId)
       .maybeSingle();
     if (leadError) return { error: leadError.message };
     if (!lead) return { error: "Lead not found." };
@@ -421,14 +455,8 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
     }
 
     const enrollmentDate = lead.member_start_date?.trim() || toEasternDate();
-    const { data: existingMember } = await supabase
-      .from("members")
-      .select("id")
-      .eq("source_lead_id", lead.id)
-      .maybeSingle();
-
-    let memberId = existingMember?.id ?? "";
-    if (existingMember) {
+    let memberId = canonicalMemberIdFromLead ?? "";
+    if (memberId) {
       const { error: memberUpdateError } = await supabase
         .from("members")
         .update({
@@ -438,9 +466,8 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
           dob: lead.member_dob ?? null,
           updated_at: toEasternISO()
         })
-        .eq("id", existingMember.id);
+        .eq("id", memberId);
       if (memberUpdateError) return { error: memberUpdateError.message };
-      memberId = existingMember.id;
     } else {
       const { data: insertedMember, error: memberInsertError } = await supabase
         .from("members")
@@ -474,7 +501,7 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
       return { error: error instanceof Error ? error.message : "Unable to transition lead to Closed - Won." };
     }
 
-    await supabase.from("audit_logs").insert({
+    const { error: auditInsertError } = await supabase.from("audit_logs").insert({
       actor_user_id: profile.id,
       actor_role: normalizeRoleKey(profile.role),
       action: "manager_review",
@@ -486,6 +513,7 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
         convertedMemberName: lead.member_name
       }
     });
+    if (auditInsertError) return { error: auditInsertError.message };
 
     revalidateSalesLeadViews(lead.id);
     revalidatePath("/members");
@@ -526,12 +554,19 @@ export async function createSalesLeadActivityAction(raw: z.infer<typeof leadActi
     return { error: "Invalid lead activity." };
   }
 
+    let leadId = "";
+    try {
+      leadId = (await resolveSalesLeadId(payload.data.leadId, "createSalesLeadActivityAction")).leadId;
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
+    }
+
       const supabase = await createClient();
     const profile = await getCurrentProfile();
     const { data: lead, error: leadError } = await supabase
       .from("leads")
       .select("id, member_name, stage, status, partner_id, referral_source_id")
-      .eq("id", payload.data.leadId)
+      .eq("id", leadId)
       .maybeSingle();
     if (leadError) return { error: leadError.message };
     if (!lead) return { error: "Lead not found." };
@@ -539,7 +574,7 @@ export async function createSalesLeadActivityAction(raw: z.infer<typeof leadActi
     const partnerId = payload.data.partnerId?.trim() || lead.partner_id || null;
     const referralSourceId = payload.data.referralSourceId?.trim() || lead.referral_source_id || null;
     const { error: insertError } = await supabase.from("lead_activities").insert({
-      lead_id: payload.data.leadId,
+      lead_id: leadId,
       member_name: lead.member_name,
       activity_at: payload.data.activityAt || toEasternISO(),
       activity_type: payload.data.activityType,
@@ -597,7 +632,7 @@ export async function createSalesLeadActivityAction(raw: z.infer<typeof leadActi
       actor_role: normalizeRoleKey(profile.role),
       action: "create_log",
       entity_type: "lead_activity",
-      entity_id: payload.data.leadId,
+      entity_id: leadId,
       details: {
         activityType: payload.data.activityType,
         outcome: payload.data.outcome
@@ -623,12 +658,19 @@ export async function createLeadQuickContactActivityAction(raw: z.infer<typeof q
     return { error: "Invalid quick contact action." };
   }
 
+    let leadId = "";
+    try {
+      leadId = (await resolveSalesLeadId(payload.data.leadId, "createLeadQuickContactActivityAction")).leadId;
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
+    }
+
       const supabase = await createClient();
     const profile = await getCurrentProfile();
     const { data: lead, error: leadError } = await supabase
       .from("leads")
       .select("id, member_name, next_follow_up_date, next_follow_up_type, partner_id, referral_source_id")
-      .eq("id", payload.data.leadId)
+      .eq("id", leadId)
       .maybeSingle();
     if (leadError) return { error: leadError.message };
     if (!lead) return { error: "Lead not found." };
@@ -637,7 +679,7 @@ export async function createLeadQuickContactActivityAction(raw: z.infer<typeof q
     const { data: created, error: insertError } = await supabase
       .from("lead_activities")
       .insert({
-        lead_id: payload.data.leadId,
+        lead_id: leadId,
         member_name: lead.member_name,
         activity_at: toEasternISO(),
         activity_type: isCall ? "Call" : "Email",
@@ -894,10 +936,26 @@ export async function sendEnrollmentPacketAction(raw: z.infer<typeof enrollmentP
   }
 
   try {
+    const canonical = await resolveCanonicalPersonRef(
+      {
+        sourceType: payload.data.leadId?.trim() ? "lead" : "member",
+        leadId: payload.data.leadId?.trim() || null,
+        memberId: payload.data.memberId?.trim() || null,
+        selectedId: payload.data.memberId?.trim() || payload.data.leadId?.trim() || null
+      },
+      {
+        expectedType: "member",
+        actionLabel: "sendEnrollmentPacketAction"
+      }
+    );
+    if (!canonical.memberId) {
+      return { ok: false, error: "sendEnrollmentPacketAction expected member.id but canonical member resolution returned empty memberId." } as const;
+    }
+
     const profile = await getCurrentProfile();
     const sent = await sendEnrollmentPacketRequest({
-      leadId: payload.data.leadId || null,
-      memberId: payload.data.memberId || null,
+      leadId: canonical.leadId,
+      memberId: canonical.memberId,
       senderUserId: profile.id,
       senderFullName: profile.full_name,
       caregiverEmail: payload.data.caregiverEmail || null,
@@ -909,13 +967,11 @@ export async function sendEnrollmentPacketAction(raw: z.infer<typeof enrollmentP
       appBaseUrl: await resolveRequestAppBaseUrl()
     });
 
-    revalidateSalesLeadViews(payload.data.leadId || undefined);
+    revalidateSalesLeadViews(sent.request.leadId || undefined);
     revalidatePath("/sales/new-entries/send-enrollment-packet");
     revalidatePath("/operations/member-command-center");
-    if (payload.data.memberId?.trim()) {
-      revalidatePath(`/operations/member-command-center/${payload.data.memberId.trim()}`);
-      revalidatePath(`/members/${payload.data.memberId.trim()}`);
-    }
+    revalidatePath(`/operations/member-command-center/${sent.request.memberId}`);
+    revalidatePath(`/members/${sent.request.memberId}`);
 
     return {
       ok: true,

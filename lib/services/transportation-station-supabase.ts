@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { normalizeOperationalDateOnly, getWeekdayForDate, type OperationsWeekdayKey } from "@/lib/services/operations-calendar";
 import { getTransportSlotForScheduleDay } from "@/lib/services/member-schedule-selectors";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
@@ -183,6 +184,20 @@ function transportationManifestStorageRequiredError() {
   );
 }
 
+async function resolveTransportationServiceMemberId(rawMemberId: string, actionLabel: string) {
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: rawMemberId
+    },
+    { actionLabel }
+  );
+  if (!canonical.memberId) {
+    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
+  }
+  return canonical.memberId;
+}
+
 async function listPreferredContactsByMember(memberIds: string[]) {
   if (memberIds.length === 0) {
     return { rows: [] as MemberContactRow[], preferred: new Map<string, MemberContactRow>() };
@@ -213,13 +228,14 @@ async function listPreferredContactsByMember(memberIds: string[]) {
 }
 
 export async function resolvePreferredMemberContactSupabase(memberId: string, explicitContactId?: string | null) {
+  const canonicalMemberId = await resolveTransportationServiceMemberId(memberId, "resolvePreferredMemberContactSupabase");
   const supabase = await createClient();
   if (explicitContactId) {
     const { data, error } = await supabase
       .from("member_contacts")
       .select("*")
       .eq("id", explicitContactId)
-      .eq("member_id", memberId)
+      .eq("member_id", canonicalMemberId)
       .maybeSingle();
     if (error) {
       if (isMissingTableError(error, "member_contacts")) {
@@ -229,8 +245,8 @@ export async function resolvePreferredMemberContactSupabase(memberId: string, ex
     }
     if (data) return data as MemberContactRow;
   }
-  const { preferred } = await listPreferredContactsByMember([memberId]);
-  return preferred.get(memberId) ?? null;
+  const { preferred } = await listPreferredContactsByMember([canonicalMemberId]);
+  return preferred.get(canonicalMemberId) ?? null;
 }
 
 export async function findTransportationManifestAdjustmentSupabase(input: {
@@ -239,13 +255,14 @@ export async function findTransportationManifestAdjustmentSupabase(input: {
   memberId: string;
   adjustmentType: "add" | "exclude";
 }) {
+  const canonicalMemberId = await resolveTransportationServiceMemberId(input.memberId, "findTransportationManifestAdjustmentSupabase");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("transportation_manifest_adjustments")
     .select("*")
     .eq("selected_date", normalizeOperationalDateOnly(input.selectedDate))
     .eq("shift", input.shift)
-    .eq("member_id", input.memberId)
+    .eq("member_id", canonicalMemberId)
     .eq("adjustment_type", input.adjustmentType)
     .maybeSingle();
   if (error) {
@@ -275,11 +292,12 @@ export async function upsertTransportationManifestAdjustmentSupabase(input: {
   actorName: string;
   nowIso: string;
 }) {
+  const canonicalMemberId = await resolveTransportationServiceMemberId(input.memberId, "upsertTransportationManifestAdjustmentSupabase");
   const supabase = await createClient();
   const existing = await findTransportationManifestAdjustmentSupabase({
     selectedDate: input.selectedDate,
     shift: input.shift,
-    memberId: input.memberId,
+    memberId: canonicalMemberId,
     adjustmentType: input.adjustmentType
   });
   if (existing) {
@@ -316,7 +334,7 @@ export async function upsertTransportationManifestAdjustmentSupabase(input: {
       id: `transport-adjustment-${randomUUID()}`,
       selected_date: normalizeOperationalDateOnly(input.selectedDate),
       shift: input.shift,
-      member_id: input.memberId,
+      member_id: canonicalMemberId,
       adjustment_type: input.adjustmentType,
       bus_number: input.busNumber,
       transport_type: input.transportType,

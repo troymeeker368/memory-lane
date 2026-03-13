@@ -1,58 +1,94 @@
-# Memory Lane Development Rules
+# Memory Lane Agent Contract
 
-- Always run local app on `http://localhost:3001`.
-- Do not move to another port because `3001` is busy.
-- If `3001` is occupied, stop the occupying process before starting.
+Memory Lane is a production operations and clinical platform.
+This repository is governed by a strict production architecture contract.
+
+## Local Execution Rules
+
+- Local app URL is `http://localhost:3001`.
+- Port `3001` is required. Running on another port is forbidden.
+- If `3001` is occupied, stop the occupying process before starting dev server.
 - Before edits, run `git status`.
 - After edits, run `npm run typecheck`.
 - After significant edits, run `npm run build`.
-- Summarize changed files and remaining issues at completion.
+- After major stabilization edits, run `npm run quality:gates`.
+- Completion reports must include changed files and remaining issues.
 
-## Port Utilities (Windows)
+Windows helpers:
+- `npm run dev:clean`
+- `netstat -ano | findstr :3001`
+- `taskkill /PID <PID> /F`
 
-- Optional helper: `npm run dev:clean`
-  - Frees `3001` then starts local app on `3001`.
-- Manual cleanup:
-  - `netstat -ano | findstr :3001`
-  - `taskkill /PID <PID> /F`
+## Supabase Source of Truth
 
-# Agent Governance For Memory Lane
+- Supabase is the only supported runtime backend.
+- All persisted runtime reads and writes must use Supabase objects defined in migrations.
+- Runtime mock persistence, local JSON persistence, file-backed persistence, and in-memory persistence are forbidden.
+- Runtime success is valid only when data is persisted in Supabase.
+- Silent fallback records are forbidden.
 
-Memory Lane is a production operations and clinical management platform.
-Runtime behavior must be Supabase-backed, canonical, and migration-defined.
-
-## Non-Negotiable Runtime Rules
-
-1. Supabase is the only runtime data backend.
-2. Persisted state must come from Supabase tables defined in migrations.
-3. UI components must not write directly to Supabase.
-4. Route handlers and server actions must not bypass canonical service-layer writes.
-5. Runtime mock stores, mock repositories, local JSON stores, file-backed stores, and in-memory persistence are forbidden.
-6. Synthetic fallback records are forbidden.
-7. A write is successful only if it is persisted in Supabase.
-
-If required records are missing, services must:
+If required data is missing, services must do exactly one of:
 - create canonical records in Supabase, or
 - throw explicit errors.
 
-Silent fallback objects are forbidden.
+## Canonical Entity Identity
 
-## Canonicality Rules
+- Every business entity must have one canonical identity and one canonical persistence path.
+- Mixed lead/member identity submission is forbidden unless a shared canonical resolver translates identities.
+- Identity translation must use shared canonical resolver/service code.
+- Workflow code must not infer identity from ambiguous fields without resolver mediation.
+- Canonical identity mismatches must fail explicitly.
 
-Canonical Source of Truth (SoT):
-- Every business object maps to one canonical Supabase table.
-- Every derived rule maps to one canonical shared resolver/service.
-- Derived views and aggregates are never SoT.
+## Shared Resolver / Service Boundaries
 
-Do not introduce:
-- parallel persistence paths
-- parallel resolver logic
-- duplicated business-rule calculations in pages/actions/reports/exports
+- Shared business rules, identity resolution, workflow transitions, and cross-module invariants must live in shared resolver/service layers.
+- UI components must not implement canonical business rules.
+- Server actions and route handlers must call canonical services for business writes.
+- Duplicate business-rule implementations across pages/actions/reports/exports are forbidden.
+- Pure presentation logic may remain local only when it does not duplicate business rules or create canonicality risk.
 
-## Required Shared Resolver/Service Domains
+Required write path:
 
-Derived resolution in these domains must use shared services:
-- members and cross-module detail resolution
+`UI -> Server Action -> Service Layer -> Supabase`
+
+Forbidden write paths:
+- UI direct Supabase writes
+- route/action direct business writes that bypass canonical service functions
+- parallel write paths for the same business concept
+
+## Schema Drift Prevention
+
+- Supabase migrations are the schema contract.
+- Code must not depend on schema objects that are missing from migrations.
+- New runtime tables, columns, constraints, views, and functions require forward-only migrations.
+- Introducing new flows without migrations is forbidden.
+- Runtime fallback logic that masks schema drift is forbidden.
+
+Migration rules:
+- use ordered migration names: `####_description.sql`
+- keep migrations forward-only
+- align queries, services, and UI contracts with migration-defined schema
+
+## Mock Data Boundaries
+
+- Mock data is permitted only for isolated UI development and tests.
+- Mock data must never participate in canonical runtime flows.
+- Production code paths must not import `lib/mock*` runtime data paths.
+- Compatibility assets with `mock` naming are not valid production runtime backends.
+
+## Workflow State Integrity
+
+- Workflow state fields are system-driven.
+- Manual editing of system workflow states is forbidden.
+- `sent/opened/signed/completed/declined/expired` style states must come from persisted events.
+- A workflow step is complete only when downstream persistence and required side effects succeed.
+- If email delivery fails, the workflow must not be marked sent.
+- If artifacts are not saved (for example Member Files), completion claims are forbidden.
+
+## Required Shared Domains
+
+The following domains require canonical shared resolver/service logic:
+- member and cross-module identity/detail resolution
 - physician orders
 - intake assessment signature state
 - member health profiles
@@ -61,129 +97,59 @@ Derived resolution in these domains must use shared services:
 - transportation
 - billing
 
-No feature module may reimplement these derivations independently.
+## Production Readiness Checklist
 
-## Write Path Governance
+Every merge request must pass all checks:
+- `Supabase-backed?`
+- `migration added?`
+- `canonical identity path defined?`
+- `shared resolver/service used where logically required?`
+- `UI and backend contracts aligned?`
+- `downstream artifacts saved?`
+- `audit trail present?`
+- `no mock/runtime split-brain?`
 
-Required write path:
-
-`UI -> Server Action -> Service Layer -> Supabase`
-
-Forbidden:
-- direct Supabase writes from UI components
-- business writes in route handlers/server actions that bypass service-layer functions
-- UI-only business-rule patches that bypass canonical services
-
-## Canonical Clinical Cascade
-
-The canonical lifecycle is:
-
-`Intake Assessment -> Physician Orders (POF) -> Member Health Profile (MHP) -> Member Command Center (MCC)`
-
-Rules:
-- Intake is the root clinical source.
-- POF is canonical physician authorization.
-- MHP is normalized clinical state derived from intake plus active signed orders.
-- MCC is aggregated operational state derived from upstream canonical records.
-
-## Role And Permission Expectations
-
-Canonical role keys:
-- `program-assistant`
-- `coordinator`
-- `nurse`
-- `sales`
-- `manager`
-- `director`
-- `admin`
-
-Canonical permission/auth resolution is implemented in:
-- `lib/permissions.ts`
-- `lib/auth.ts`
-
-Enforce access using canonical guards:
-- `requireModuleAccess`
-- `requireModuleAction`
-- `requireNavItemAccess`
-- `requireRoles`
-
-Sensitive operations requiring strict enforcement:
-- payroll exports and approvals
-- PTO approvals
-- billing adjustments
-- member record edits
-- punch corrections
-- clinical authorization and e-sign updates
-
-## Public E-Sign Governance
-
-Implemented e-sign flows:
-- POF public e-sign (`/sign/pof/[token]`)
-- Intake assessment signed-state persistence
-
-Canonical e-sign tables:
-- `pof_requests`
-- `pof_signatures`
-- `document_events`
-- `intake_assessment_signatures`
-
-Operational dependencies:
-- migrations `0019_pof_esign_workflow.sql`, `0020_intake_assessment_esign.sql`
-- storage bucket `member-documents`
-- mail provider API key `RESEND_API_KEY`
-- sender config (`CLINICAL_SENDER_EMAIL` fallback chain)
-- canonical app URL configuration for public links
-
-Do not introduce a second e-sign persistence flow outside these canonical tables/services.
-
-## Schema Governance
-
-- Supabase migrations are the authoritative schema contract.
-- Code must not assume schema objects missing from migrations.
-- Every new domain feature requires forward-only migration updates.
-- Use unique ordered migration names: `####_description.sql`.
-- Fix schema drift with migrations and service alignment, never with fallback logic.
+If any answer is `No`, merge is blocked.
 
 ## Required Agent Workflow
 
-1. Inspect repo state with `git status` and account for in-progress files.
-2. Identify canonical tables, write path, shared resolver/service, and downstream consumers.
-3. Implement in canonical services first.
-4. Align downstream consumers to canonical resolvers/services.
-5. Verify routing, permissions, persistence, and workflow integrity.
-6. Run required validations (`typecheck`, `build`, plus quality gates when applicable).
-7. Report files changed, schema changes, permission impacts, tests run, blockers, and technical debt.
+1. Run `git status` and account for in-progress files.
+2. Identify canonical entities, canonical tables, and canonical write paths.
+3. Identify shared resolvers/services required by scope.
+4. Implement/fix canonical service layer first.
+5. Align actions/routes/UI consumers to canonical services.
+6. Verify permissions, persistence, identity integrity, and downstream effects.
+7. Run validations (`typecheck`, `build`, and quality gates when applicable).
+8. Report changed files, schema impact, permission impact, tests run, blockers, and technical debt.
 
 ## Required Agent Audits
 
 Agents must actively detect and flag:
 - schema drift
-- duplicate resolver logic
 - non-canonical write paths
-- mock runtime usage
-- fallback branches masking persistence failures
-- dead routes and permission gaps
+- duplicate business-rule logic
+- identity ambiguity and mixed lead/member handling
+- runtime mock usage in production paths
+- fallback branches masking failed persistence
+- workflow state spoofing
+- permission gaps
 
 ## Completion Criteria
 
-A feature/module is complete only when:
+A feature is complete only when all are true:
 - route/UI works end-to-end
 - writes persist in Supabase
-- permissions are enforced in code
-- canonical resolver/service is used
-- exports and downstream workflows work end-to-end
+- permissions are enforced with canonical guards
+- canonical shared resolvers/services are used
+- downstream exports/reports/integrations operate on canonical records
 - required validations pass
-
-## Safety And Hygiene
-
-- Run `npm run quality:gates` after major stabilization edits.
-- Do not commit temporary artifacts (`.tmp-*`, screenshots, html dumps, test-results, tsbuildinfo).
-- Do not introduce mock/runtime fallback behavior for any reason.
 
 ## Do-Not Rules
 
-- Do not import runtime data from `lib/mock*` into production code paths.
-- Do not add direct Supabase writes in UI components.
-- Do not bypass canonical services for business writes.
-- Do not add duplicate resolver implementations for the same derived rule.
-- Do not treat compatibility aliases with `mock` naming as valid runtime mock mode.
+- Do not add runtime mock fallback persistence.
+- Do not add duplicate resolver/business-rule logic for shared workflows.
+- Do not submit mixed lead/member identities without canonical resolver translation.
+- Do not allow manual edits of system workflow states.
+- Do not return synthetic success when persistence or downstream effects fail.
+- Do not add tables/flows without migrations.
+

@@ -22,8 +22,7 @@ import {
   type PhysicianOrderCareInformation,
   type PhysicianOrderDiagnosis,
   type PhysicianOrderMedication,
-  type PhysicianOrderOperationalFlags,
-  type PhysicianOrderStatus
+  type PhysicianOrderOperationalFlags
 } from "@/lib/services/physician-orders-supabase";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -65,12 +64,6 @@ function parseLevelOfCare(value: string) {
   return POF_LEVEL_OF_CARE_OPTIONS.includes(value as (typeof POF_LEVEL_OF_CARE_OPTIONS)[number])
     ? (value as (typeof POF_LEVEL_OF_CARE_OPTIONS)[number])
     : null;
-}
-
-function parseStatusFromIntent(intent: string): PhysicianOrderStatus {
-  if (intent === "signed") return "Signed";
-  if (intent === "sent" || intent === "completed") return "Sent";
-  return "Draft";
 }
 
 function isNextRedirectError(error: unknown) {
@@ -369,13 +362,9 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
   try {
     const profile = await requireRoles(["admin", "nurse"]);
     const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
-    const saveIntent = asString(formData, "saveIntent");
-    const status = parseStatusFromIntent(saveIntent);
 
     const providerNameFromForm = asNullableString(formData, "providerName");
     const providerNameResolved = providerNameFromForm ?? actorDisplayName;
-    const providerSignatureDate = asNullableString(formData, "providerSignatureDate");
-    const providerSignature = asNullableString(formData, "providerSignature") ?? actorDisplayName;
     const diagnosisRows = parseDiagnosisRows(formData);
     const allergyRows = parseAllergyRows(formData);
     const standingOrders = parseStandingOrders(formData);
@@ -403,35 +392,17 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
       careInformation: parseCareInformation(formData),
       operationalFlags: parseOperationalFlags(formData),
       providerName: providerNameResolved,
-      providerSignature,
-      providerSignatureDate,
-      status,
+      providerSignature: null,
+      providerSignatureDate: null,
+      status: "Draft",
       actor: {
         id: profile.id,
         fullName: actorDisplayName
       }
     });
 
-    let pdfSaveFailed = false;
-    if (status === "Sent" || status === "Signed") {
-      try {
-        const generated = await buildPhysicianOrderPdfDataUrl(saved.id);
-        await savePofPdfToMemberFiles({
-          memberId: saved.memberId,
-          memberName: saved.memberNameSnapshot,
-          dataUrl: generated.dataUrl,
-          uploadedBy: {
-            id: profile.id,
-            name: actorDisplayName
-          }
-        });
-      } catch {
-        pdfSaveFailed = true;
-      }
-    }
-
     revalidatePofRoutes(saved.memberId, saved.id);
-    destinationUrl = pdfSaveFailed ? `/health/physician-orders/${saved.id}?pdfSave=failed` : `/health/physician-orders/${saved.id}`;
+    destinationUrl = `/health/physician-orders/${saved.id}`;
   } catch (error) {
     if (isNextRedirectError(error)) {
       throw error;

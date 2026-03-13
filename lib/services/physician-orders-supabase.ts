@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import {
   DEFAULT_PHYSICIAN_ORDER_RULE_SETTINGS,
@@ -414,6 +415,20 @@ function physicianOrdersTableRequiredError() {
   return new Error("Physician Orders storage is not available. Run Supabase migration 0006_intake_pof_mhp_supabase.sql.");
 }
 
+async function resolvePhysicianOrderMemberId(rawMemberId: string, actionLabel: string) {
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: rawMemberId
+    },
+    { actionLabel }
+  );
+  if (!canonical.memberId) {
+    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
+  }
+  return canonical.memberId;
+}
+
 function rowToForm(row: any): PhysicianOrderForm {
   const diagnosisRows = parseJsonArray<PhysicianOrderDiagnosis>(row.diagnoses, []);
   const allergyRows = parseJsonArray<PhysicianOrderAllergy>(row.allergies, []);
@@ -467,8 +482,9 @@ function rowToForm(row: any): PhysicianOrderForm {
 }
 
 async function getMember(memberId: string) {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "physician-orders:getMember");
   const supabase = await createClient();
-  const { data } = await supabase.from("members").select("id, display_name").eq("id", memberId).single();
+  const { data } = await supabase.from("members").select("id, display_name").eq("id", canonicalMemberId).single();
   return data;
 }
 
@@ -485,7 +501,10 @@ export async function getPhysicianOrders(filters?: {
     )
     .order("updated_at", { ascending: false });
 
-  if (filters?.memberId) query = query.eq("member_id", filters.memberId);
+  if (filters?.memberId) {
+    const canonicalMemberId = await resolvePhysicianOrderMemberId(filters.memberId, "getPhysicianOrders");
+    query = query.eq("member_id", canonicalMemberId);
+  }
   if (filters?.status && filters.status !== "all") query = query.eq("status", fromStatus(filters.status));
 
   const { data, error } = await query;
@@ -522,11 +541,12 @@ export async function getPhysicianOrders(filters?: {
 }
 
 export async function getPhysicianOrdersForMember(memberId: string) {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "getPhysicianOrdersForMember");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("physician_orders")
     .select("*, members!physician_orders_member_id_fkey(display_name)")
-    .eq("member_id", memberId)
+    .eq("member_id", canonicalMemberId)
     .order("updated_at", { ascending: false });
   if (error) {
     if (isMissingPhysicianOrdersTableError(error)) {
@@ -538,11 +558,12 @@ export async function getPhysicianOrdersForMember(memberId: string) {
 }
 
 export async function getActivePhysicianOrderForMember(memberId: string) {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "getActivePhysicianOrderForMember");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("physician_orders")
     .select("*, members!physician_orders_member_id_fkey(display_name)")
-    .eq("member_id", memberId)
+    .eq("member_id", canonicalMemberId)
     .eq("is_active_signed", true)
     .maybeSingle();
   if (error) {
@@ -575,24 +596,28 @@ export async function buildNewPhysicianOrderDraft(input: {
   memberId: string;
   actor: { id: string; fullName: string; signoffName?: string | null };
 }): Promise<PhysicianOrderForm | null> {
-  const member = await getMember(input.memberId);
+  const memberId = await resolvePhysicianOrderMemberId(input.memberId, "buildNewPhysicianOrderDraft");
+  const member = await getMember(memberId);
   if (!member) return null;
 
   const supabase = await createClient();
-  const { data: latestIntake } = await supabase
+  const { data: latestIntake, error: latestIntakeError } = await supabase
     .from("intake_assessments")
     .select("*")
-    .eq("member_id", input.memberId)
+    .eq("member_id", memberId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (latestIntakeError) {
+    throw new Error(`Unable to load latest intake assessment for POF draft prefill: ${latestIntakeError.message}`);
+  }
 
   const mapped = latestIntake ? mapIntakeAssessmentToPofPrefill(latestIntake as IntakeAssessmentForPofPrefill) : null;
   const now = toEasternISO();
 
   return {
     id: "",
-    memberId: input.memberId,
+    memberId,
     intakeAssessmentId: latestIntake?.id ?? null,
     memberNameSnapshot: member.display_name,
     memberDobSnapshot: null,
@@ -638,11 +663,12 @@ export async function buildNewPhysicianOrderDraft(input: {
 }
 
 async function nextVersionNumber(memberId: string) {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "nextVersionNumber");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("physician_orders")
     .select("version_number")
-    .eq("member_id", memberId)
+    .eq("member_id", canonicalMemberId)
     .order("version_number", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -759,13 +785,14 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
 }
 
 export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(input.memberId, "updatePhysicianOrder");
   const supabase = await createClient();
   const existing = input.id ? await getPhysicianOrderById(input.id) : null;
   if (existing && existing.status === "Signed") {
     throw new Error("Signed physician orders are locked. Create a new order to make updates.");
   }
 
-  const member = await getMember(input.memberId);
+  const member = await getMember(canonicalMemberId);
   if (!member) throw new Error("Member not found.");
 
   const wantsSigned = input.status === "Signed";
@@ -778,7 +805,7 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
   const nextRenewalDueDate = sentAt ? calculateRenewalDueDate(sentAt.slice(0, 10)) : null;
 
   const payload = {
-    member_id: input.memberId,
+    member_id: canonicalMemberId,
     intake_assessment_id: clean(input.intakeAssessmentId),
     status: fromStatus(persistedStatus),
     is_active_signed: false,
@@ -848,7 +875,7 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
     return saved;
   }
 
-  const version = await nextVersionNumber(input.memberId);
+  const version = await nextVersionNumber(canonicalMemberId);
   const { data, error } = await supabase
     .from("physician_orders")
     .insert({
@@ -982,8 +1009,9 @@ export async function syncMemberHealthProfileFromSignedPhysicianOrder(
 }
 
 export async function getMemberHealthProfile(memberId: string) {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "getMemberHealthProfile");
   const supabase = await createClient();
-  const { data, error } = await supabase.from("member_health_profiles").select("*").eq("member_id", memberId).maybeSingle();
+  const { data, error } = await supabase.from("member_health_profiles").select("*").eq("member_id", canonicalMemberId).maybeSingle();
   if (error) throw new Error(error.message);
   return data;
 }
