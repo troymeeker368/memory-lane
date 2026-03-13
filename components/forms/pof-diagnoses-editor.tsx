@@ -6,7 +6,6 @@ type DiagnosisRow = {
   id: string;
   diagnosisType: "primary" | "secondary";
   diagnosisName: string;
-  diagnosisCode: string;
 };
 
 function normalizeRows(initialRows: DiagnosisRow[]): DiagnosisRow[] {
@@ -15,8 +14,7 @@ function normalizeRows(initialRows: DiagnosisRow[]): DiagnosisRow[] {
     rows.push({
       id: "pof-diagnosis-1",
       diagnosisType: "primary",
-      diagnosisName: "",
-      diagnosisCode: ""
+      diagnosisName: ""
     });
   }
   return rows.map(
@@ -44,8 +42,7 @@ export function PofDiagnosesEditor({
         return {
           id: row.id || `pof-diagnosis-${idx + 1}`,
           diagnosisType,
-          diagnosisName: row.diagnosisName,
-          diagnosisCode: row.diagnosisCode ?? ""
+          diagnosisName: row.diagnosisName
         };
       })
     )
@@ -71,8 +68,7 @@ export function PofDiagnosesEditor({
       {
         id: `pof-diagnosis-${Date.now()}-${current.length + 1}`,
         diagnosisType: "secondary",
-        diagnosisName: "",
-        diagnosisCode: ""
+        diagnosisName: ""
       }
     ]);
   }
@@ -108,7 +104,6 @@ export function PofDiagnosesEditor({
                   <span className="text-xs font-semibold capitalize">{idx === 0 ? "primary" : "secondary"}</span>
                 </td>
                 <td>
-                  <input type="hidden" name="diagnosisCode" defaultValue={row.diagnosisCode} />
                   <input
                     name="diagnosisName"
                     value={row.diagnosisName}

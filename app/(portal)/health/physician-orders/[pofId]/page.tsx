@@ -173,7 +173,6 @@ export default async function PhysicianOrderDetailPage({
                   <tr>
                     <th>Type</th>
                     <th>Diagnosis</th>
-                    <th>Code</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -181,7 +180,6 @@ export default async function PhysicianOrderDetailPage({
                     <tr key={row.id}>
                       <td>{row.diagnosisType}</td>
                       <td>{row.diagnosisName}</td>
-                      <td>{row.diagnosisCode ?? "-"}</td>
                     </tr>
                   ))}
                 </tbody>

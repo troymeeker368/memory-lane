@@ -1,4 +1,6 @@
 import { CARE_PLAN_SIGNATURE_LABELS } from "@/lib/services/care-plan-track-definitions";
+import { getCaregiverSignatureStatusLabel } from "@/lib/services/care-plan-esign-rules";
+import type { CaregiverSignatureStatus } from "@/lib/services/care-plans";
 import { formatOptionalDate } from "@/lib/utils";
 
 function SignatureRow({
@@ -34,12 +36,8 @@ export function CarePlanSignatureBlock({
   administratorSignature,
   administratorSignatureDate,
   nurseSignatureStatus,
-  nurseSignedByUserId,
   nurseSignedByName,
   nurseSignedAt,
-  nurseSignatureArtifactMemberFileId,
-  nurseSignatureArtifactStoragePath,
-  nurseSignatureMetadata,
   caregiverSignatureStatus,
   caregiverSentAt,
   caregiverViewedAt,
@@ -52,12 +50,8 @@ export function CarePlanSignatureBlock({
   administratorSignature: string | null;
   administratorSignatureDate: string | null;
   nurseSignatureStatus?: string | null;
-  nurseSignedByUserId?: string | null;
   nurseSignedByName?: string | null;
   nurseSignedAt?: string | null;
-  nurseSignatureArtifactMemberFileId?: string | null;
-  nurseSignatureArtifactStoragePath?: string | null;
-  nurseSignatureMetadata?: Record<string, unknown> | null;
   caregiverSignatureStatus?: string | null;
   caregiverSentAt?: string | null;
   caregiverViewedAt?: string | null;
@@ -65,19 +59,23 @@ export function CarePlanSignatureBlock({
 }) {
   const canonicalSignerName = nurseSignedByName ?? completedBy ?? administratorSignature;
   const canonicalSignedAt = nurseSignedAt ?? dateOfCompletion ?? administratorSignatureDate;
+  const nurseStatusLabel =
+    nurseSignatureStatus === "signed"
+      ? "Signed by Nurse/Admin"
+      : nurseSignatureStatus === "unsigned"
+        ? "Awaiting Nurse/Admin signature"
+        : nurseSignatureStatus ?? "Unknown";
+  const caregiverStatusLabel = caregiverSignatureStatus
+    ? getCaregiverSignatureStatusLabel(caregiverSignatureStatus as CaregiverSignatureStatus)
+    : null;
 
   return (
     <div className="space-y-3">
       {nurseSignatureStatus ? (
         <div className="space-y-1 text-xs text-muted">
-          <p>
-            Nurse/Admin E-Sign Status: {nurseSignatureStatus} | Signed By: {canonicalSignerName ?? "-"} | Signed At:{" "}
-            {formatOptionalDate(canonicalSignedAt ?? null)}
-          </p>
-          <p>Signer User ID: {nurseSignedByUserId ?? "-"}</p>
-          <p>Signature Artifact Member File ID: {nurseSignatureArtifactMemberFileId ?? "-"}</p>
-          <p>Signature Artifact Storage Path: {nurseSignatureArtifactStoragePath ?? "-"}</p>
-          <p>Signature Metadata: {nurseSignatureMetadata ? JSON.stringify(nurseSignatureMetadata) : "{}"}</p>
+          <p>Nurse/Admin E-Sign Status: {nurseStatusLabel}</p>
+          <p>Signed By: {canonicalSignerName ?? "-"}</p>
+          <p>Signed At: {formatOptionalDate(canonicalSignedAt ?? null)}</p>
         </div>
       ) : null}
       <SignatureRow
@@ -99,10 +97,12 @@ export function CarePlanSignatureBlock({
         rightValue={canonicalSignedAt}
       />
       {caregiverSignatureStatus ? (
-        <p className="text-xs text-muted">
-          Caregiver signature status: {caregiverSignatureStatus} | Sent: {formatOptionalDate(caregiverSentAt ?? null)} | Viewed:{" "}
-          {formatOptionalDate(caregiverViewedAt ?? null)} | Signed: {formatOptionalDate(caregiverSignedAt ?? null)}
-        </p>
+        <div className="space-y-1 text-xs text-muted">
+          <p>Responsible Party Signature Status: {caregiverStatusLabel}</p>
+          <p>Sent: {formatOptionalDate(caregiverSentAt ?? null)}</p>
+          <p>Opened: {formatOptionalDate(caregiverViewedAt ?? null)}</p>
+          <p>Signed: {formatOptionalDate(caregiverSignedAt ?? null)}</p>
+        </div>
       ) : null}
     </div>
   );

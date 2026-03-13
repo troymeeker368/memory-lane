@@ -15,6 +15,7 @@ import {
   CARE_PLAN_REVIEW_OPTIONS,
   CARE_PLAN_REVIEW_UPDATES_LABEL,
   CARE_PLAN_SHORT_TERM_LABEL,
+  type CarePlanSectionType,
   type CarePlanTrack,
   getCarePlanTrackDefinition
 } from "@/lib/services/care-plan-track-definitions";
@@ -22,32 +23,92 @@ import { toEasternDate } from "@/lib/timezone";
 
 type MemberOption = { id: string; display_name: string; enrollment_date?: string | null };
 
-function TrackSectionPreview({ track }: { track: CarePlanTrack }) {
+type CarePlanSectionDraft = {
+  sectionType: CarePlanSectionType;
+  shortTermGoals: string;
+  longTermGoals: string;
+};
+
+function stripGoalPrefix(value: string) {
+  return value.replace(/^\s*(\d+[.):-]|[-*])\s*/, "").trim();
+}
+
+function toNumberedGoalText(lines: string[]) {
+  return lines.map((line, index) => `${index + 1}. ${stripGoalPrefix(line)}`).join("\n");
+}
+
+function toGoalLines(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((line) => stripGoalPrefix(line))
+    .filter(Boolean);
+}
+
+function buildTrackSectionDrafts(track: CarePlanTrack): CarePlanSectionDraft[] {
   const definition = getCarePlanTrackDefinition(track);
+  return definition.sections.map((section) => ({
+    sectionType: section.sectionType,
+    shortTermGoals: toNumberedGoalText([...section.shortTermGoals]),
+    longTermGoals: toNumberedGoalText([...section.longTermGoals])
+  }));
+}
+
+function normalizeSectionDrafts(sections: CarePlanSectionDraft[]) {
+  return sections.map((section) => ({
+    ...section,
+    shortTermGoals: toNumberedGoalText(toGoalLines(section.shortTermGoals)),
+    longTermGoals: toNumberedGoalText(toGoalLines(section.longTermGoals))
+  }));
+}
+
+function TrackSectionEditor({
+  sections,
+  onChange
+}: {
+  sections: CarePlanSectionDraft[];
+  onChange: (next: CarePlanSectionDraft[]) => void;
+}) {
   return (
     <div className="space-y-3 rounded-lg border border-border p-3">
-      <p className="text-sm font-semibold">{definition.title}</p>
-      {definition.sections.map((section) => (
+      <p className="text-sm font-semibold">Care Plan Sections</p>
+      {sections.map((section) => (
         <div key={section.sectionType} className="space-y-2 rounded-lg border border-border p-3">
           <p className="text-sm font-semibold">{section.sectionType}</p>
-          <div className="space-y-1">
-            <p className="text-xs font-semibold">{CARE_PLAN_SHORT_TERM_LABEL}</p>
-            {section.shortTermGoals.map((goal) => (
-              <p key={`${section.sectionType}-${goal}`} className="text-xs">
-                {goal}
-              </p>
-            ))}
-          </div>
-          <div className="space-y-1">
-            <p className="text-xs font-semibold">{CARE_PLAN_LONG_TERM_LABEL}</p>
-            {section.longTermGoals.map((goal) => (
-              <p key={`${section.sectionType}-long-${goal}`} className="text-xs">
-                {goal}
-              </p>
-            ))}
-          </div>
+          <label className="space-y-1 text-sm">
+            <span className="text-xs font-semibold text-muted">{CARE_PLAN_SHORT_TERM_LABEL}</span>
+            <textarea
+              className="min-h-24 w-full rounded-lg border border-border p-2 text-sm"
+              value={section.shortTermGoals}
+              onChange={(event) =>
+                onChange(
+                  sections.map((entry) =>
+                    entry.sectionType === section.sectionType
+                      ? { ...entry, shortTermGoals: event.target.value }
+                      : entry
+                  )
+                )
+              }
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="text-xs font-semibold text-muted">{CARE_PLAN_LONG_TERM_LABEL}</span>
+            <textarea
+              className="min-h-24 w-full rounded-lg border border-border p-2 text-sm"
+              value={section.longTermGoals}
+              onChange={(event) =>
+                onChange(
+                  sections.map((entry) =>
+                    entry.sectionType === section.sectionType
+                      ? { ...entry, longTermGoals: event.target.value }
+                      : entry
+                  )
+                )
+              }
+            />
+          </label>
         </div>
       ))}
+      <p className="text-xs text-muted">Items are saved as numbered lists and remain fully editable.</p>
     </div>
   );
 }
@@ -75,6 +136,7 @@ export function NewCarePlanForm({
   const [form, setForm] = useState({
     memberId: initialMember?.id ?? "",
     track: initialTrack,
+    sections: buildTrackSectionDrafts(initialTrack),
     enrollmentDate: initialEnrollmentDate,
     reviewDate: today,
     noChangesNeeded: true,
@@ -117,7 +179,16 @@ export function NewCarePlanForm({
             <select
               className="h-11 w-full rounded-lg border border-border px-3"
               value={form.track}
-              onChange={(event) => setForm((current) => ({ ...current, track: event.target.value as CarePlanTrack }))}
+              onChange={(event) =>
+                setForm((current) => {
+                  const nextTrack = event.target.value as CarePlanTrack;
+                  return {
+                    ...current,
+                    track: nextTrack,
+                    sections: buildTrackSectionDrafts(nextTrack)
+                  };
+                })
+              }
             >
               {tracks.map((track) => (
                 <option key={track} value={track}>
@@ -149,7 +220,10 @@ export function NewCarePlanForm({
         </div>
       </div>
 
-      <TrackSectionPreview track={form.track} />
+      <TrackSectionEditor
+        sections={form.sections}
+        onChange={(next) => setForm((current) => ({ ...current, sections: next }))}
+      />
 
       <div className="space-y-2 rounded-lg border border-border p-3">
         <p className="text-sm font-semibold">{CARE_PLAN_REVIEW_UPDATES_LABEL}</p>
@@ -261,6 +335,7 @@ export function NewCarePlanForm({
           !form.reviewDate ||
           !form.caregiverName.trim() ||
           !form.caregiverEmail.trim() ||
+          form.sections.some((section) => !section.shortTermGoals.trim() || !section.longTermGoals.trim()) ||
           !form.signatureAttested ||
           !form.signatureImageDataUrl ||
           (!form.noChangesNeeded && !form.modificationsRequired) ||
@@ -279,6 +354,7 @@ export function NewCarePlanForm({
               careTeamNotes: form.careTeamNotes,
               caregiverName: form.caregiverName,
               caregiverEmail: form.caregiverEmail,
+              sections: normalizeSectionDrafts(form.sections),
               signatureAttested: form.signatureAttested,
               signatureImageDataUrl: form.signatureImageDataUrl
             });
@@ -306,6 +382,7 @@ export function CarePlanReviewForm({
   careTeamNotes,
   caregiverName,
   caregiverEmail,
+  sections,
   returnTo
 }: {
   carePlanId: string;
@@ -314,6 +391,11 @@ export function CarePlanReviewForm({
   careTeamNotes: string;
   caregiverName: string | null;
   caregiverEmail: string | null;
+  sections: Array<{
+    sectionType: CarePlanSectionType;
+    shortTermGoals: string;
+    longTermGoals: string;
+  }>;
   returnTo?: string;
 }) {
   const router = useRouter();
@@ -322,6 +404,7 @@ export function CarePlanReviewForm({
   const [status, setStatus] = useState<string | null>(null);
   const [form, setForm] = useState({
     reviewDate: today,
+    sections: sections.length > 0 ? sections : buildTrackSectionDrafts(track),
     noChangesNeeded: true,
     modificationsRequired: false,
     modificationsDescription: "",
@@ -350,7 +433,10 @@ export function CarePlanReviewForm({
         </label>
       </div>
 
-      <TrackSectionPreview track={track} />
+      <TrackSectionEditor
+        sections={form.sections}
+        onChange={(next) => setForm((current) => ({ ...current, sections: next }))}
+      />
 
       <div className="space-y-2 rounded-lg border border-border p-3">
         <p className="text-sm font-semibold">{CARE_PLAN_REVIEW_UPDATES_LABEL}</p>
@@ -460,6 +546,7 @@ export function CarePlanReviewForm({
           !form.reviewDate ||
           !form.caregiverName.trim() ||
           !form.caregiverEmail.trim() ||
+          form.sections.some((section) => !section.shortTermGoals.trim() || !section.longTermGoals.trim()) ||
           !form.signatureAttested ||
           !form.signatureImageDataUrl ||
           (!form.noChangesNeeded && !form.modificationsRequired) ||
@@ -476,6 +563,7 @@ export function CarePlanReviewForm({
               careTeamNotes: form.careTeamNotes,
               caregiverName: form.caregiverName,
               caregiverEmail: form.caregiverEmail,
+              sections: normalizeSectionDrafts(form.sections),
               signatureAttested: form.signatureAttested,
               signatureImageDataUrl: form.signatureImageDataUrl
             });

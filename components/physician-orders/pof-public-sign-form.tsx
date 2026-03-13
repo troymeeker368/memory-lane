@@ -17,7 +17,6 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
   const [hasSignature, setHasSignature] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [signed, setSigned] = useState(false);
-  const [signedPdfUrl, setSignedPdfUrl] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -114,8 +113,7 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
         return;
       }
       setSigned(true);
-      setSignedPdfUrl(result.signedPdfUrl);
-      setStatus("Signature saved successfully.");
+      setStatus("Signing successful.");
     });
   }
 
@@ -123,22 +121,9 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
     return (
       <div className="space-y-3">
         <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">
-          POF signed successfully.
+          Signing Successful
         </p>
-        {signedPdfUrl ? (
-          <>
-            <p className="text-sm">
-              <a href={signedPdfUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-brand">
-                Open Final Signed PDF
-              </a>
-            </p>
-            <iframe
-              src={signedPdfUrl}
-              title="Signed POF PDF"
-              className="h-[620px] w-full rounded-lg border border-border bg-white"
-            />
-          </>
-        ) : null}
+        <p className="text-sm text-muted">Thank you. The signed form has been received and recorded successfully.</p>
       </div>
     );
   }

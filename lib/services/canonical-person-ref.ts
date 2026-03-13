@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { toEasternDate } from "@/lib/timezone";
 import type {
   CanonicalExpectedIdentity,
   CanonicalPersonRef,
@@ -21,6 +22,8 @@ type MemberIdentityRow = {
   id: string;
   display_name: string | null;
   status: "active" | "inactive" | null;
+  enrollment_date?: string | null;
+  dob?: string | null;
   source_lead_id: string | null;
 };
 
@@ -133,11 +136,80 @@ async function getMemberByLeadId(leadId: string, serviceRole = false) {
   const supabase = await createClient({ serviceRole });
   const { data, error } = await supabase
     .from("members")
-    .select("id, display_name, status, source_lead_id")
+    .select("id, display_name, status, enrollment_date, dob, source_lead_id")
     .eq("source_lead_id", leadId)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as MemberIdentityRow | null) ?? null;
+}
+
+export async function ensureCanonicalMemberForLead(
+  input: {
+    leadId: string;
+    actionLabel?: string;
+    serviceRole?: boolean;
+  }
+) {
+  const actionLabel = clean(input.actionLabel) ?? "ensureCanonicalMemberForLead";
+  const canonicalLead = await resolveCanonicalLeadRef(
+    {
+      sourceType: "lead",
+      leadId: input.leadId,
+      selectedId: input.leadId
+    },
+    {
+      actionLabel,
+      serviceRole: input.serviceRole
+    }
+  );
+  if (!canonicalLead.leadId) {
+    throw new Error(`${actionLabel} expected lead.id but canonical lead resolution returned empty leadId.`);
+  }
+
+  const serviceRole = Boolean(input.serviceRole);
+  const supabase = await createClient({ serviceRole });
+  const existingMember = await getMemberByLeadId(canonicalLead.leadId, serviceRole);
+  const { data: leadRow, error: leadError } = await supabase
+    .from("leads")
+    .select("id, member_name, member_dob, member_start_date")
+    .eq("id", canonicalLead.leadId)
+    .maybeSingle();
+  if (leadError) throw new Error(`${actionLabel} failed to load lead: ${leadError.message}`);
+  if (!leadRow) throw new Error(`${actionLabel} could not find lead.id ${canonicalLead.leadId}.`);
+
+  const displayName = clean(String(leadRow.member_name ?? "")) ?? canonicalLead.displayName ?? "Unknown Member";
+  const dob = clean(String(leadRow.member_dob ?? "")) ?? null;
+  const enrollmentDate = clean(String(leadRow.member_start_date ?? "")) ?? toEasternDate();
+
+  if (existingMember) {
+    const patch: Record<string, unknown> = {
+      display_name: displayName,
+      source_lead_id: canonicalLead.leadId
+    };
+    if (!clean(existingMember.enrollment_date)) patch.enrollment_date = enrollmentDate;
+    if (dob && !clean(existingMember.dob)) patch.dob = dob;
+    const { error: updateError } = await supabase.from("members").update(patch).eq("id", existingMember.id);
+    if (updateError) throw new Error(`${actionLabel} failed to update linked member: ${updateError.message}`);
+    const refreshed = await getMemberById(existingMember.id, serviceRole);
+    if (!refreshed) throw new Error(`${actionLabel} linked member disappeared after update.`);
+    return refreshed;
+  }
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("members")
+    .insert({
+      display_name: displayName,
+      status: "inactive",
+      enrollment_date: enrollmentDate,
+      dob,
+      source_lead_id: canonicalLead.leadId
+    })
+    .select("id, display_name, status, enrollment_date, dob, source_lead_id")
+    .single();
+  if (insertError) {
+    throw new Error(`${actionLabel} failed to create canonical member from lead: ${insertError.message}`);
+  }
+  return inserted as MemberIdentityRow;
 }
 
 export async function listCanonicalMemberLinksForLeadIds(
@@ -208,12 +280,14 @@ export async function resolveCanonicalPersonRef(
   if (!candidateLeadId && requestedSourceType === "lead") candidateLeadId = fallbackCandidate;
 
   if (!candidateMemberId && !candidateLeadId && fallbackCandidate) {
-    if (expectedType === "member") {
+    if (!requestedSourceType) {
+      throw new Error(
+        `${actionLabel} requires explicit sourceType ("member" or "lead") when only selectedId/externalId/legacyId is provided.`
+      );
+    }
+    if (requestedSourceType === "member") {
       candidateMemberId = fallbackCandidate;
-    } else if (expectedType === "lead") {
-      candidateLeadId = fallbackCandidate;
     } else {
-      candidateMemberId = fallbackCandidate;
       candidateLeadId = fallbackCandidate;
     }
   }
@@ -244,6 +318,20 @@ export async function resolveCanonicalPersonRef(
 
   if (lead && !member) {
     member = await getMemberByLeadId(lead.id, serviceRole);
+  }
+
+  if (member && lead) {
+    const linkedLeadId = asUuid(member.source_lead_id);
+    if (!linkedLeadId) {
+      throw new Error(
+        `${actionLabel} received both member.id and lead.id, but member.id ${member.id} is not canonically linked to any lead.`
+      );
+    }
+    if (linkedLeadId !== lead.id) {
+      throw new Error(
+        `${actionLabel} received conflicting identities: member.id ${member.id} is linked to lead.id ${linkedLeadId}, but lead.id ${lead.id} was supplied.`
+      );
+    }
   }
 
   const canonical = toCanonicalPersonRef({

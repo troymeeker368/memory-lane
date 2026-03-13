@@ -21,6 +21,83 @@ type AssessmentSection = {
   rows: Array<{ label: string; value: string }>;
 };
 
+const PDF_EXCLUDED_SECTION_NAMES = new Set(["Lead Intake Context"]);
+const PDF_EXCLUDED_FIELD_KEYS = new Set([
+  "assessmentid",
+  "admissionreviewrequired",
+  "completed",
+  "complete",
+  "signeruserid",
+  "signatureartifactstoragepath",
+  "createdby",
+  "createdat",
+  "leadintakecontext"
+]);
+const PDF_SECTION_ORDER = [
+  "Vital Signs",
+  "Orientation & General Health",
+  "Independence & Daily Routines",
+  "Diet & Nutrition",
+  "Mobility & Safety",
+  "Social Engagement & Emotional Wellness",
+  "Personal Notes & Joy Sparks",
+  "Transportation Screening",
+  "Scoring"
+] as const;
+
+function toNormalizedKey(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function toYesNo(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "yes" || normalized === "1") return "Yes";
+  if (normalized === "false" || normalized === "no" || normalized === "0") return "No";
+  return value.trim();
+}
+
+function isOrientedValue(value: string) {
+  const resolved = toYesNo(value);
+  if (!resolved) return "-";
+  return resolved === "Yes" ? "oriented" : "not oriented";
+}
+
+function formatAssessmentRow(input: {
+  fieldKey: string;
+  fieldLabel: string;
+  fieldValue: string;
+}) {
+  const normalizedFieldKey = toNormalizedKey(input.fieldKey);
+  if (normalizedFieldKey === "orientationdobverified") {
+    return { label: "DOB", value: isOrientedValue(input.fieldValue) };
+  }
+  if (normalizedFieldKey === "orientationcityverified") {
+    return { label: "Town/City", value: isOrientedValue(input.fieldValue) };
+  }
+  if (normalizedFieldKey === "orientationcurrentyearverified" || normalizedFieldKey === "orientationyearverified") {
+    return { label: "Current Year", value: isOrientedValue(input.fieldValue) };
+  }
+  if (
+    normalizedFieldKey === "orientationformeroccupationverified" ||
+    normalizedFieldKey === "orientationoccupationverified"
+  ) {
+    return { label: "Former Occupation", value: isOrientedValue(input.fieldValue) };
+  }
+  return {
+    label: input.fieldLabel.trim() || input.fieldKey,
+    value: input.fieldValue.trim().length > 0 ? input.fieldValue.trim() : "-"
+  };
+}
+
+function sectionSortOrder(section: string) {
+  const index = PDF_SECTION_ORDER.findIndex((entry) => entry === section);
+  if (index >= 0) return index;
+  return PDF_SECTION_ORDER.length + 1;
+}
+
 function safeFileName(value: string) {
   return value.replace(/[<>:"/\\|?*]/g, "").trim();
 }
@@ -152,27 +229,44 @@ async function groupedAssessmentSections(assessmentId: string): Promise<Assessme
   const { data: responses, error: responsesError } = await supabase
     .from("assessment_responses")
     .select("field_key, field_label, section_type, field_value")
-    .eq("assessment_id", assessmentId)
-    .order("section_type", { ascending: true })
-    .order("field_label", { ascending: true });
+    .eq("assessment_id", assessmentId);
   if (responsesError) {
     throw new Error(`Unable to load assessment responses for PDF: ${responsesError.message}`);
   }
 
   const bySection = new Map<string, AssessmentSection>();
   (responses ?? []).forEach((row: any) => {
-    const value = String(row.field_value ?? "").trim();
     const section = row.section_type?.trim() || "Other";
+    if (PDF_EXCLUDED_SECTION_NAMES.has(section)) return;
+    const fieldKey = String(row.field_key ?? "");
+    const normalizedFieldKey = toNormalizedKey(fieldKey);
+    if (PDF_EXCLUDED_FIELD_KEYS.has(normalizedFieldKey)) return;
+    const rowValue = String(row.field_value ?? "");
+    const formattedRow = formatAssessmentRow({
+      fieldKey,
+      fieldLabel: row.field_label?.trim() || row.field_key,
+      fieldValue: rowValue
+    });
     if (!bySection.has(section)) {
       bySection.set(section, { section, rows: [] });
     }
     bySection.get(section)?.rows.push({
-      label: row.field_label?.trim() || row.field_key,
-      value: value.length > 0 ? value : "-"
+      label: formattedRow.label,
+      value: formattedRow.value
     });
   });
 
-  return Array.from(bySection.values());
+  return Array.from(bySection.values())
+    .map((section) => ({
+      ...section,
+      rows: section.rows.sort((a, b) => a.label.localeCompare(b.label))
+    }))
+    .sort((a, b) => {
+      const orderA = sectionSortOrder(a.section);
+      const orderB = sectionSortOrder(b.section);
+      if (orderA !== orderB) return orderA - orderB;
+      return a.section.localeCompare(b.section);
+    });
 }
 
 export async function buildIntakeAssessmentPdfDataUrl(assessmentId: string) {
@@ -219,21 +313,7 @@ export async function buildIntakeAssessmentPdfDataUrl(assessmentId: string) {
 
   const summaryLines = [
     `Member: ${assessment.member?.display_name ?? "Unknown Member"}`,
-    `Assessment ID: ${assessment.id}`,
-    `Assessment Date: ${assessment.assessment_date}`,
-    `Total Score: ${assessment.total_score ?? "-"}`,
-    `Recommended Track: ${assessment.recommended_track ?? "-"}`,
-    `Admission Review Required: ${assessment.admission_review_required ? "Yes" : "No"}`,
-    `Completed: ${assessment.complete ? "Yes" : "No"}`,
-    `Completed By: ${assessment.completed_by ?? "-"}`,
-    `E-Sign Status: ${signature.status}`,
-    `Signer User ID: ${signature.signedByUserId ?? "-"}`,
-    `Signed By: ${signature.signedByName ?? "-"}`,
-    `Signed At: ${signature.signedAt ?? "-"}`,
-    `Signature Artifact Member File ID: ${signature.signatureArtifactMemberFileId ?? "-"}`,
-    `Signature Artifact Storage Path: ${signature.signatureArtifactStoragePath ?? "-"}`,
-    `Created By: ${assessment.completed_by ?? "-"}`,
-    `Created At: ${assessment.created_at}`
+    `Assessment Date: ${assessment.assessment_date}`
   ];
 
   summaryLines.forEach((line) => {
@@ -290,6 +370,32 @@ export async function buildIntakeAssessmentPdfDataUrl(assessmentId: string) {
       y -= 2;
     });
 
+    y -= 4;
+  });
+
+  const signedByDisplay = (signature.signedByName ?? assessment.signed_by ?? "").trim() || "-";
+  const eSignLines = [
+    `E-Sign Status: ${signature.status}`,
+    `Signed By: ${signedByDisplay}`,
+    `Signed At: ${signature.signedAt ?? "-"}`
+  ];
+  eSignLines.forEach((line) => {
+    if (y < 80) {
+      const next = newPage();
+      page = next.page;
+      y = next.y;
+    }
+    y = drawWrappedText({
+      page,
+      text: line,
+      x: 36,
+      y,
+      maxWidth: 540,
+      lineHeight: 12,
+      font,
+      size: 10.5,
+      color: text
+    });
     y -= 4;
   });
 

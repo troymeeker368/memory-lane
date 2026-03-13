@@ -7,6 +7,11 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import { buildCarePlanPdfDataUrl } from "@/lib/services/care-plan-pdf";
 import {
+  DOCUMENT_CENTER_NAME,
+  getDocumentCenterSignatureHtml,
+  getDocumentCenterSignatureText
+} from "@/lib/services/document-branding";
+import {
   canSendCaregiverSignatureByNurseSignatureState,
   resolvePublicCaregiverLinkState
 } from "@/lib/services/care-plan-esign-rules";
@@ -234,26 +239,33 @@ async function sendSignatureEmail(input: {
   const apiKey = clean(process.env.RESEND_API_KEY);
   if (!apiKey) throw new Error("Care plan e-sign email delivery is not configured. Set RESEND_API_KEY.");
 
-  const subject = `Memory Lane Care Plan Signature Request for ${input.memberName}`;
+  const subject = `${DOCUMENT_CENTER_NAME} Care Plan Signature Request for ${input.memberName}`;
   const expiresOn = input.expiresAt.slice(0, 10);
   const optionalMessage = clean(input.optionalMessage);
   const html = `
-    <p>Hello ${input.caregiverName},</p>
-    <p>${input.nurseName} sent a care plan for review and signature.</p>
-    ${optionalMessage ? `<p><strong>Message:</strong> ${optionalMessage}</p>` : ""}
-    <p><a href="${input.requestUrl}">Open secure care plan signing page</a></p>
-    <p>This secure link expires on ${expiresOn}.</p>
-    <p>Thank you,<br/>Memory Lane Clinical Team</p>
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#1f2937;">
+      <p style="margin:0 0 12px;">Hello ${input.caregiverName},</p>
+      <p style="margin:0 0 12px;">${input.nurseName} sent a care plan for your review and signature.</p>
+      ${optionalMessage ? `<p style="margin:0 0 12px;"><strong>Message from care team:</strong> ${optionalMessage}</p>` : ""}
+      <p style="margin:0 0 16px;">
+        <a href="${input.requestUrl}" style="display:inline-block;background:#005f9f;color:#ffffff;text-decoration:none;font-weight:700;padding:10px 16px;border-radius:8px;">
+          Open Secure Care Plan
+        </a>
+      </p>
+      <p style="margin:0 0 12px;">This secure link expires on ${expiresOn}.</p>
+      <p style="margin:0;">Thank you,</p>
+      <p style="margin:0;">${getDocumentCenterSignatureHtml()}</p>
+    </div>
   `.trim();
 
   const text = [
     `Hello ${input.caregiverName},`,
-    `${input.nurseName} sent a care plan for review and signature.`,
+    `${input.nurseName} sent a care plan for your review and signature.`,
     optionalMessage ? `Message: ${optionalMessage}` : null,
     `Sign securely: ${input.requestUrl}`,
     `This secure link expires on ${expiresOn}.`,
     "Thank you,",
-    "Memory Lane Clinical Team"
+    getDocumentCenterSignatureText()
   ]
     .filter(Boolean)
     .join("\n");
@@ -287,6 +299,9 @@ async function sendSignatureEmail(input: {
 export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToCaregiverInput) {
   const detail = await getCarePlanById(input.carePlanId);
   if (!detail) throw new Error("Care plan was not found.");
+  if (detail.carePlan.caregiverSignatureStatus === "signed") {
+    throw new Error("Care plan is already signed by the responsible party.");
+  }
   const canSend = canSendCaregiverSignature(detail.carePlan);
   if (!canSend.allowed) throw new Error(canSend.reason);
 
@@ -546,72 +561,84 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
   });
 
   const admin = createSupabaseAdminClient();
-  const rotatedToken = hashToken(generateSigningToken());
-  const { error: planUpdateError } = await admin
+  const { error: signatureDraftError } = await admin
     .from("care_plans")
     .update({
-      caregiver_signature_status: "signed",
-      caregiver_signed_at: now,
       caregiver_signed_name: caregiverTypedName,
       caregiver_signature_image_url: signatureUri,
       caregiver_signature_ip: clean(input.caregiverIp),
       caregiver_signature_user_agent: clean(input.caregiverUserAgent),
-      caregiver_signature_request_token: rotatedToken,
-      caregiver_signature_request_url: null,
       caregiver_signature_error: null,
       responsible_party_signature: caregiverTypedName,
       responsible_party_signature_date: day,
       updated_at: now
     })
     .eq("id", detail.carePlan.id);
-  if (planUpdateError) throw new Error(planUpdateError.message);
+  if (signatureDraftError) throw new Error(signatureDraftError.message);
 
-  const generated = await buildCarePlanPdfDataUrl(detail.carePlan.id, { serviceRole: true });
-  const parsedPdf = parseDataUrl(generated.dataUrl);
-  const signedPdfStoragePath = `members/${detail.carePlan.memberId}/care-plans/${detail.carePlan.id}/final-signed.pdf`;
-  const signedPdfStorageUri = await uploadToStorage({
-    objectPath: signedPdfStoragePath,
-    bytes: parsedPdf.bytes,
-    contentType: "application/pdf"
-  });
+  try {
+    const generated = await buildCarePlanPdfDataUrl(detail.carePlan.id, { serviceRole: true });
+    const parsedPdf = parseDataUrl(generated.dataUrl);
+    const signedPdfStoragePath = `members/${detail.carePlan.memberId}/care-plans/${detail.carePlan.id}/final-signed.pdf`;
+    const signedPdfStorageUri = await uploadToStorage({
+      objectPath: signedPdfStoragePath,
+      bytes: parsedPdf.bytes,
+      contentType: "application/pdf"
+    });
 
-  const finalMemberFileId = await upsertFinalSignedMemberFile({
-    carePlanId: detail.carePlan.id,
-    memberId: detail.carePlan.memberId,
-    memberName: detail.carePlan.memberName,
-    dataUrl: generated.dataUrl,
-    uploadedByUserId: detail.carePlan.nurseSignedByUserId ?? detail.carePlan.nurseDesigneeUserId,
-    uploadedByName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName,
-    signedPdfStorageUri
-  });
+    const finalMemberFileId = await upsertFinalSignedMemberFile({
+      carePlanId: detail.carePlan.id,
+      memberId: detail.carePlan.memberId,
+      memberName: detail.carePlan.memberName,
+      dataUrl: generated.dataUrl,
+      uploadedByUserId: detail.carePlan.nurseSignedByUserId ?? detail.carePlan.nurseDesigneeUserId,
+      uploadedByName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName,
+      signedPdfStorageUri
+    });
 
-  const { error: finalLinkError } = await admin
-    .from("care_plans")
-    .update({
-      final_member_file_id: finalMemberFileId,
-      updated_at: toEasternISO()
-    })
-    .eq("id", detail.carePlan.id);
-  if (finalLinkError) throw new Error(finalLinkError.message);
+    const rotatedToken = hashToken(generateSigningToken());
+    const { error: finalLinkError } = await admin
+      .from("care_plans")
+      .update({
+        caregiver_signature_status: "signed",
+        caregiver_signed_at: now,
+        caregiver_signature_request_token: rotatedToken,
+        caregiver_signature_request_url: null,
+        final_member_file_id: finalMemberFileId,
+        updated_at: toEasternISO()
+      })
+      .eq("id", detail.carePlan.id);
+    if (finalLinkError) throw new Error(finalLinkError.message);
 
-  await createCarePlanSignatureEvent({
-    carePlanId: detail.carePlan.id,
-    memberId: detail.carePlan.memberId,
-    eventType: "signed",
-    actorType: "caregiver",
-    actorName: caregiverTypedName,
-    actorEmail: detail.carePlan.caregiverEmail,
-    actorIp: clean(input.caregiverIp),
-    actorUserAgent: clean(input.caregiverUserAgent),
-    metadata: {
-      finalMemberFileId,
-      signatureImageUrl: signatureUri
-    }
-  });
+    await createCarePlanSignatureEvent({
+      carePlanId: detail.carePlan.id,
+      memberId: detail.carePlan.memberId,
+      eventType: "signed",
+      actorType: "caregiver",
+      actorName: caregiverTypedName,
+      actorEmail: detail.carePlan.caregiverEmail,
+      actorIp: clean(input.caregiverIp),
+      actorUserAgent: clean(input.caregiverUserAgent),
+      metadata: {
+        finalMemberFileId,
+        signatureImageUrl: signatureUri
+      }
+    });
 
-  return {
-    carePlanId: detail.carePlan.id,
-    memberId: detail.carePlan.memberId,
-    finalMemberFileId
-  };
+    return {
+      carePlanId: detail.carePlan.id,
+      memberId: detail.carePlan.memberId,
+      finalMemberFileId
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unable to complete care plan filing.";
+    await admin
+      .from("care_plans")
+      .update({
+        caregiver_signature_error: reason,
+        updated_at: toEasternISO()
+      })
+      .eq("id", detail.carePlan.id);
+    throw error;
+  }
 }

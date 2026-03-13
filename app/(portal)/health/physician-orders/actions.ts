@@ -139,8 +139,7 @@ function parseMedicationRows(formData: FormData): PhysicianOrderMedication[] {
 function parseDiagnosisRows(formData: FormData): PhysicianOrderDiagnosis[] {
   const types = formData.getAll("diagnosisType").map((value) => String(value ?? "").trim());
   const names = formData.getAll("diagnosisName").map((value) => String(value ?? "").trim());
-  const codes = formData.getAll("diagnosisCode").map((value) => String(value ?? "").trim());
-  const max = Math.max(types.length, names.length, codes.length);
+  const max = Math.max(types.length, names.length);
   const rows: PhysicianOrderDiagnosis[] = [];
   for (let idx = 0; idx < max; idx += 1) {
     const diagnosisName = names[idx] ?? "";
@@ -150,7 +149,7 @@ function parseDiagnosisRows(formData: FormData): PhysicianOrderDiagnosis[] {
       id: `diagnosis-input-${idx + 1}`,
       diagnosisType,
       diagnosisName,
-      diagnosisCode: codes[idx] ? codes[idx] : null
+      diagnosisCode: null
     });
   }
   return rows;

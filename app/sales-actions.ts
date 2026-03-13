@@ -18,7 +18,7 @@ import {
   canonicalLeadStatus
 } from "@/lib/canonical";
 import { normalizeRoleKey } from "@/lib/permissions";
-import { resolveCanonicalLeadRef, resolveCanonicalPersonRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalLeadRef } from "@/lib/services/canonical-person-ref";
 import {
   getEnrollmentPacketSenderSignatureProfile,
   sendEnrollmentPacketRequest,
@@ -918,11 +918,12 @@ export async function getSalesFormLookups() {
 }
 
 const enrollmentPacketSendSchema = z.object({
-  leadId: optionalString,
-  memberId: optionalString,
+  leadId: z.string().uuid(),
   caregiverEmail: optionalString,
   requestedDays: z.array(z.string().min(1)).min(1),
   transportation: optionalString,
+  communityFee: z.number().finite().nonnegative().optional().nullable(),
+  dailyRate: z.number().finite().nonnegative().optional().nullable(),
   optionalMessage: optionalString
 });
 
@@ -934,31 +935,30 @@ export async function sendEnrollmentPacketAction(raw: z.infer<typeof enrollmentP
   }
 
   try {
-    const canonical = await resolveCanonicalPersonRef(
+    const canonicalLead = await resolveCanonicalLeadRef(
       {
-        sourceType: payload.data.leadId?.trim() ? "lead" : "member",
-        leadId: payload.data.leadId?.trim() || null,
-        memberId: payload.data.memberId?.trim() || null,
-        selectedId: payload.data.memberId?.trim() || payload.data.leadId?.trim() || null
+        sourceType: "lead",
+        leadId: payload.data.leadId,
+        selectedId: payload.data.leadId
       },
       {
-        expectedType: "member",
         actionLabel: "sendEnrollmentPacketAction"
       }
     );
-    if (!canonical.memberId) {
-      return { ok: false, error: "sendEnrollmentPacketAction expected member.id but canonical member resolution returned empty memberId." } as const;
+    if (!canonicalLead.leadId) {
+      return { ok: false, error: "sendEnrollmentPacketAction expected lead.id but canonical lead resolution returned empty leadId." } as const;
     }
 
     const profile = await getCurrentProfile();
     const sent = await sendEnrollmentPacketRequest({
-      leadId: canonical.leadId,
-      memberId: canonical.memberId,
+      leadId: canonicalLead.leadId,
       senderUserId: profile.id,
       senderFullName: profile.full_name,
       caregiverEmail: payload.data.caregiverEmail || null,
       requestedDays: payload.data.requestedDays.map((day) => day.trim()).filter(Boolean),
       transportation: payload.data.transportation || null,
+      communityFeeOverride: payload.data.communityFee ?? null,
+      dailyRateOverride: payload.data.dailyRate ?? null,
       optionalMessage: payload.data.optionalMessage || null,
       appBaseUrl: await resolveRequestAppBaseUrl()
     });

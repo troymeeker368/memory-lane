@@ -24,9 +24,9 @@ export default async function PublicPofSigningPage({
   if (context.state === "invalid") {
     return (
       <div className="mx-auto max-w-3xl p-4">
-        <Card>
+          <Card>
           <CardTitle>Invalid Signature Link</CardTitle>
-          <p className="mt-2 text-sm text-muted">This POF signing link is invalid. Contact Memory Lane staff for a new link.</p>
+          <p className="mt-2 text-sm text-muted">This POF signing link is invalid. Contact your care team for a new link.</p>
         </Card>
       </div>
     );
@@ -38,7 +38,7 @@ export default async function PublicPofSigningPage({
         <Card>
           <CardTitle>Signature Link Expired</CardTitle>
           <p className="mt-2 text-sm text-muted">
-            This signing request expired on {formatDateTime(context.request.expiresAt)}. Contact Memory Lane staff for a new link.
+            This signing request expired on {formatDateTime(context.request.expiresAt)}. Contact your care team for a new link.
           </p>
         </Card>
       </div>
@@ -50,7 +50,7 @@ export default async function PublicPofSigningPage({
       <div className="mx-auto max-w-3xl p-4">
         <Card>
           <CardTitle>Signature Request Voided</CardTitle>
-          <p className="mt-2 text-sm text-muted">This signing request was voided. Contact Memory Lane staff for guidance.</p>
+          <p className="mt-2 text-sm text-muted">This signing request was voided. Contact your care team for guidance.</p>
         </Card>
       </div>
     );

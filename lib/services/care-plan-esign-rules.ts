@@ -34,6 +34,27 @@ export function canSendCaregiverSignatureByNurseSignatureState(input: {
   return { allowed: true } as const;
 }
 
+export function getCaregiverSignatureStatusLabel(status: CaregiverSignatureStatus) {
+  switch (status) {
+    case "not_requested":
+      return "Nurse/Admin signature required";
+    case "ready_to_send":
+      return "Nurse/Admin signed - ready to send";
+    case "send_failed":
+      return "Email delivery failed";
+    case "sent":
+      return "Email sent - awaiting responsible party";
+    case "viewed":
+      return "Opened by responsible party - awaiting signature";
+    case "signed":
+      return "Responsible party signed - completed";
+    case "expired":
+      return "Signature request expired";
+    default:
+      return status;
+  }
+}
+
 export function hasCanonicalNurseSignature(input: {
   nurseSignatureStatus: string | null | undefined;
   nurseSignedByUserId: string | null;

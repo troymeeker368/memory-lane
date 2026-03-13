@@ -39,7 +39,6 @@ function normalizeNutritionDiets(values: string[] | null | undefined) {
 
 export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentSection[] {
   const care = form.careInformation;
-  const flags = form.operationalFlags;
   const adl = care.adlProfile;
   const orientation = care.orientationProfile;
 
@@ -68,8 +67,7 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
         form.diagnosisRows.length > 0
           ? form.diagnosisRows.flatMap((row, index) => [
               { label: `Diagnosis ${index + 1} Type`, value: valueOrDash(row.diagnosisType) },
-              { label: `Diagnosis ${index + 1} Name`, value: valueOrDash(row.diagnosisName) },
-              { label: `Diagnosis ${index + 1} Code`, value: valueOrDash(row.diagnosisCode) }
+              { label: `Diagnosis ${index + 1} Name`, value: valueOrDash(row.diagnosisName) }
             ])
           : [{ label: "Diagnoses", value: "-" }]
     },
@@ -184,28 +182,6 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
         { label: "Nutrition / Diet", value: joinedOrDash(normalizeNutritionDiets(care.nutritionDiets)) },
         { label: "Nutrition Diet Other", value: valueOrDash(care.nutritionDietOther) },
         { label: "Additional Information to Help Spark Joy", value: valueOrDash(care.joySparksNotes) }
-      ]
-    },
-    {
-      title: "Operational Flags & Provider Signoff",
-      rows: [
-        { label: "Flag - Nut Allergy", value: yesNo(flags.nutAllergy) },
-        { label: "Flag - Shellfish Allergy", value: yesNo(flags.shellfishAllergy) },
-        { label: "Flag - Fish Allergy", value: yesNo(flags.fishAllergy) },
-        { label: "Flag - Diabetic / Restricted Sweets", value: yesNo(flags.diabeticRestrictedSweets) },
-        { label: "Flag - Oxygen Requirement", value: yesNo(flags.oxygenRequirement) },
-        { label: "Flag - DNR", value: yesNo(flags.dnr) },
-        { label: "Flag - No Photos", value: yesNo(flags.noPhotos) },
-        { label: "Flag - Bathroom Assistance", value: yesNo(flags.bathroomAssistance) },
-        { label: "Provider Name", value: valueOrDash(form.providerName) },
-        { label: "Provider Signature", value: valueOrDash(form.providerSignature) },
-        { label: "Provider Signature Date", value: valueOrDash(form.providerSignatureDate) },
-        { label: "Created By", value: valueOrDash(form.createdByName) },
-        { label: "Created At", value: valueOrDash(form.createdAt) },
-        { label: "Signed By", value: valueOrDash(form.signedBy) },
-        { label: "Signed Date", value: valueOrDash(form.signedDate) },
-        { label: "Last Updated By", value: valueOrDash(form.updatedByName) },
-        { label: "Last Updated At", value: valueOrDash(form.updatedAt) }
       ]
     }
   ];

@@ -21,7 +21,7 @@ export default async function PublicEnrollmentPacketPage({
       <div className="mx-auto max-w-3xl p-4">
         <Card>
           <CardTitle>Invalid Enrollment Packet Link</CardTitle>
-          <p className="mt-2 text-sm text-muted">This enrollment packet link is invalid. Contact Memory Lane staff for a new secure link.</p>
+          <p className="mt-2 text-sm text-muted">This enrollment packet link is invalid. Contact your care team for a new secure link.</p>
         </Card>
       </div>
     );
@@ -32,7 +32,7 @@ export default async function PublicEnrollmentPacketPage({
       <div className="mx-auto max-w-3xl p-4">
         <Card>
           <CardTitle>Enrollment Packet Link Expired</CardTitle>
-          <p className="mt-2 text-sm text-muted">This secure link has expired. Contact Memory Lane staff for a new enrollment packet link.</p>
+          <p className="mt-2 text-sm text-muted">This secure link has expired. Contact your care team for a new enrollment packet link.</p>
         </Card>
       </div>
     );
@@ -63,4 +63,3 @@ export default async function PublicEnrollmentPacketPage({
     </div>
   );
 }
-

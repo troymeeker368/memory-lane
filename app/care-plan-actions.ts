@@ -5,7 +5,18 @@ import { z } from "zod";
 
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { sendCarePlanToCaregiverForSignature } from "@/lib/services/care-plan-esign";
-import { createCarePlan, reviewCarePlan, signCarePlanAsNurseAdmin } from "@/lib/services/care-plans";
+import {
+  CARE_PLAN_SECTION_TYPES,
+  createCarePlan,
+  reviewCarePlan,
+  signCarePlanAsNurseAdmin
+} from "@/lib/services/care-plans";
+
+const carePlanSectionSchema = z.object({
+  sectionType: z.enum(CARE_PLAN_SECTION_TYPES),
+  shortTermGoals: z.string().min(1),
+  longTermGoals: z.string().min(1)
+});
 
 const createCarePlanSchema = z
   .object({
@@ -19,6 +30,7 @@ const createCarePlanSchema = z
     careTeamNotes: z.string().default(""),
     caregiverName: z.string().min(1),
     caregiverEmail: z.string().email(),
+    sections: z.array(carePlanSectionSchema).min(1),
     signatureAttested: z.boolean(),
     signatureImageDataUrl: z.string().min(1)
   })
@@ -71,6 +83,7 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
       careTeamNotes: payload.data.careTeamNotes,
       caregiverName: payload.data.caregiverName,
       caregiverEmail: payload.data.caregiverEmail,
+      sections: payload.data.sections,
       signatureAttested: payload.data.signatureAttested,
       signatureImageDataUrl: payload.data.signatureImageDataUrl,
       actor: {
@@ -102,6 +115,7 @@ const reviewCarePlanSchema = z
     careTeamNotes: z.string().default(""),
     caregiverName: z.string().min(1),
     caregiverEmail: z.string().email(),
+    sections: z.array(carePlanSectionSchema).min(1),
     signatureAttested: z.boolean(),
     signatureImageDataUrl: z.string().min(1)
   })
@@ -150,6 +164,7 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
     careTeamNotes: payload.data.careTeamNotes,
     caregiverName: payload.data.caregiverName,
     caregiverEmail: payload.data.caregiverEmail,
+    sections: payload.data.sections,
     signatureAttested: payload.data.signatureAttested,
     signatureImageDataUrl: payload.data.signatureImageDataUrl,
     actor: {

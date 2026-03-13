@@ -10,11 +10,11 @@ import { formatDate } from "@/lib/utils";
 function GoalList({ value }: { value: string }) {
   const items = getGoalListItems(value);
   return (
-    <div className="space-y-1">
+    <ol className="list-decimal space-y-1 pl-5">
       {items.map((item, idx) => (
-        <p key={`${idx}-${item}`} className="text-sm">{item}</p>
+        <li key={`${idx}-${item}`} className="text-sm">{item}</li>
       ))}
-    </div>
+    </ol>
   );
 }
 

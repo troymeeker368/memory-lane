@@ -119,7 +119,12 @@ export function CarePlanPublicSignForm({
   }
 
   if (signed) {
-    return <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">Care plan signed successfully. You may close this page.</p>;
+    return (
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+        <p className="font-semibold">Signing Successful</p>
+        <p>Thank you. The signed care plan has been received.</p>
+      </div>
+    );
   }
 
   return (

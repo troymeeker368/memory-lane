@@ -306,7 +306,7 @@ function parsePofPayloadSnapshot(value: unknown): PhysicianOrderForm | null {
 function getRequestPayloadSnapshotOrThrow(request: PofRequestRow) {
   const snapshot = parsePofPayloadSnapshot(request.pof_payload_json);
   if (!snapshot) {
-    throw new Error("POF request payload snapshot is missing. Ask Memory Lane staff to resend this request.");
+    throw new Error("POF request payload snapshot is missing. Ask your care team to resend this request.");
   }
   if (snapshot.id !== request.physician_order_id || snapshot.memberId !== request.member_id) {
     throw new Error("POF request payload snapshot does not match the linked member/order.");
@@ -1232,12 +1232,17 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
   });
 
   const signedPdfDataUrl = `data:application/pdf;base64,${signedPdfBytes.toString("base64")}`;
-  const memberFileId = nextMemberFileId();
   const admin = createSupabaseAdminClient();
   const memberFileName = `POF Signed - ${snapshot.memberNameSnapshot} - ${day}.pdf`;
+  const { data: existingMemberFile, error: existingMemberFileError } = await admin
+    .from("member_files")
+    .select("id")
+    .eq("pof_request_id", request.id)
+    .maybeSingle();
+  if (existingMemberFileError) throw new Error(existingMemberFileError.message);
+  const memberFileId = clean(existingMemberFile?.id) ?? nextMemberFileId();
 
-  const { error: fileError } = await admin.from("member_files").insert({
-    id: memberFileId,
+  const memberFilePayload = {
     member_id: request.member_id,
     file_name: memberFileName,
     file_type: "application/pdf",
@@ -1251,10 +1256,19 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     uploaded_by_name: request.nurse_name,
     uploaded_at: now,
     updated_at: now
-  });
-  if (fileError) throw new Error(fileError.message);
+  };
+  if (clean(existingMemberFile?.id)) {
+    const { error: fileUpdateError } = await admin.from("member_files").update(memberFilePayload).eq("id", memberFileId);
+    if (fileUpdateError) throw new Error(fileUpdateError.message);
+  } else {
+    const { error: fileInsertError } = await admin.from("member_files").insert({
+      id: memberFileId,
+      ...memberFilePayload
+    });
+    if (fileInsertError) throw new Error(fileInsertError.message);
+  }
 
-  const { error: signatureInsertError } = await admin.from("pof_signatures").insert({
+  const { error: signatureInsertError } = await admin.from("pof_signatures").upsert({
     pof_request_id: request.id,
     provider_typed_name: providerTypedName,
     provider_signature_image_url: signatureUri,
@@ -1263,37 +1277,10 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     signed_at: now,
     created_at: now,
     updated_at: now
+  }, {
+    onConflict: "pof_request_id"
   });
   if (signatureInsertError) throw new Error(signatureInsertError.message);
-
-  const rotatedToken = hashToken(generateSigningToken());
-  const { error: updateRequestError } = await admin
-    .from("pof_requests")
-    .update({
-      status: "signed",
-      opened_at: request.opened_at ?? now,
-      signed_at: now,
-      signed_pdf_url: signedPdfUri,
-      member_file_id: memberFileId,
-      signature_request_token: rotatedToken,
-      updated_by_user_id: request.sent_by_user_id,
-      updated_by_name: request.nurse_name,
-      updated_at: now
-    })
-    .eq("id", request.id);
-  if (updateRequestError) throw new Error(updateRequestError.message);
-
-  await createDocumentEvent({
-    documentId: request.id,
-    memberId: request.member_id,
-    physicianOrderId: request.physician_order_id,
-    eventType: "signed",
-    actorType: "provider",
-    actorName: providerTypedName,
-    actorEmail: request.provider_email,
-    actorIp: clean(input.providerIp),
-    actorUserAgent: clean(input.providerUserAgent)
-  });
 
   const signatureMetadata = {
     signedVia: "pof-esign",
@@ -1327,6 +1314,35 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
       signedAtIso: now
     }
   );
+
+  const rotatedToken = hashToken(generateSigningToken());
+  const { error: updateRequestError } = await admin
+    .from("pof_requests")
+    .update({
+      status: "signed",
+      opened_at: request.opened_at ?? now,
+      signed_at: now,
+      signed_pdf_url: signedPdfUri,
+      member_file_id: memberFileId,
+      signature_request_token: rotatedToken,
+      updated_by_user_id: request.sent_by_user_id,
+      updated_by_name: request.nurse_name,
+      updated_at: now
+    })
+    .eq("id", request.id);
+  if (updateRequestError) throw new Error(updateRequestError.message);
+
+  await createDocumentEvent({
+    documentId: request.id,
+    memberId: request.member_id,
+    physicianOrderId: request.physician_order_id,
+    eventType: "signed",
+    actorType: "provider",
+    actorName: providerTypedName,
+    actorEmail: request.provider_email,
+    actorIp: clean(input.providerIp),
+    actorUserAgent: clean(input.providerUserAgent)
+  });
 
   return {
     requestId: request.id,

@@ -3,7 +3,16 @@ import "server-only";
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
-import { resolveCanonicalLeadRef, resolveCanonicalMemberRef, resolveCanonicalPersonRef } from "@/lib/services/canonical-person-ref";
+import {
+  ensureCanonicalMemberForLead,
+  resolveCanonicalLeadRef,
+  resolveCanonicalMemberRef
+} from "@/lib/services/canonical-person-ref";
+import {
+  DOCUMENT_CENTER_NAME,
+  getDocumentCenterSignatureHtml,
+  getDocumentCenterSignatureText
+} from "@/lib/services/document-branding";
 import { buildCompletedEnrollmentPacketDocxData } from "@/lib/services/enrollment-packet-docx";
 import {
   ensureMemberAttendanceScheduleSupabase,
@@ -515,26 +524,33 @@ async function sendEnrollmentPacketEmail(input: {
   const apiKey = clean(process.env.RESEND_API_KEY);
   if (!apiKey) throw new Error("Enrollment packet email delivery is not configured. Set RESEND_API_KEY.");
 
-  const subject = `Memory Lane Enrollment Packet for ${input.memberName}`;
-  const caregiverName = clean(input.caregiverName) ?? "Caregiver";
+  const subject = `${DOCUMENT_CENTER_NAME} Enrollment Packet for ${input.memberName}`;
+  const caregiverName = clean(input.caregiverName) ?? "Family Representative";
   const expiresOn = input.expiresAt.slice(0, 10);
   const optionalMessage = clean(input.optionalMessage);
   const html = `
-    <p>Hello ${caregiverName},</p>
-    <p>${input.senderName} sent an enrollment packet for ${input.memberName}.</p>
-    ${optionalMessage ? `<p><strong>Message:</strong> ${optionalMessage}</p>` : ""}
-    <p><a href="${input.requestUrl}">Open secure enrollment packet</a></p>
-    <p>This secure link expires on ${expiresOn}.</p>
-    <p>Thank you,<br/>Memory Lane Team</p>
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#1f2937;">
+      <p style="margin:0 0 12px;">Hello ${caregiverName},</p>
+      <p style="margin:0 0 12px;">${input.senderName} sent an enrollment packet for <strong>${input.memberName}</strong>.</p>
+      ${optionalMessage ? `<p style="margin:0 0 12px;"><strong>Message from care team:</strong> ${optionalMessage}</p>` : ""}
+      <p style="margin:0 0 16px;">
+        <a href="${input.requestUrl}" style="display:inline-block;background:#005f9f;color:#ffffff;text-decoration:none;font-weight:700;padding:10px 16px;border-radius:8px;">
+          Open Secure Enrollment Packet
+        </a>
+      </p>
+      <p style="margin:0 0 12px;">This secure link expires on ${expiresOn}.</p>
+      <p style="margin:0;">Thank you,</p>
+      <p style="margin:0;">${getDocumentCenterSignatureHtml()}</p>
+    </div>
   `.trim();
   const text = [
     `Hello ${caregiverName},`,
     `${input.senderName} sent an enrollment packet for ${input.memberName}.`,
-    optionalMessage ? `Message: ${optionalMessage}` : null,
-    `Complete packet securely: ${input.requestUrl}`,
+    optionalMessage ? `Message from care team: ${optionalMessage}` : null,
+    `Open secure enrollment packet: ${input.requestUrl}`,
     `This secure link expires on ${expiresOn}.`,
     "Thank you,",
-    "Memory Lane Team"
+    getDocumentCenterSignatureText()
   ]
     .filter(Boolean)
     .join("\n");
@@ -581,48 +597,73 @@ async function resolveSendContext(input: {
   leadId?: string | null;
 }) {
   const leadId = clean(input.leadId);
-  const memberIdFromInput = clean(input.memberId);
-  const canonical = await resolveCanonicalPersonRef(
+  if (!leadId) {
+    throw new Error("sendEnrollmentPacketRequest requires lead.id. Enrollment packet sending is lead-driven.");
+  }
+
+  const canonicalLead = await resolveCanonicalLeadRef(
     {
-      sourceType: leadId ? "lead" : "member",
+      sourceType: "lead",
       leadId,
-      memberId: memberIdFromInput,
-      selectedId: memberIdFromInput ?? leadId
+      selectedId: leadId
     },
     {
-      expectedType: "member",
       actionLabel: "sendEnrollmentPacketRequest",
       serviceRole: true
     }
   );
-
-  if (!canonical.memberId) {
-    throw new Error("Enrollment packet requires canonical member.id.");
+  if (!canonicalLead.leadId) {
+    throw new Error("sendEnrollmentPacketRequest expected lead.id but canonical lead resolution returned empty leadId.");
   }
 
-  if (leadId && canonical.leadId !== leadId) {
-    throw new Error(
-      `sendEnrollmentPacketRequest expected lead.id ${leadId}, but canonical resolution mapped to ${canonical.leadId ?? "none"}.`
+  let member = await ensureCanonicalMemberForLead({
+    leadId: canonicalLead.leadId,
+    actionLabel: "sendEnrollmentPacketRequest.ensureCanonicalMemberForLead",
+    serviceRole: true
+  });
+  if (!member) {
+    throw new Error("Enrollment packet requires canonical member linkage for the selected lead.");
+  }
+
+  const memberIdFromInput = clean(input.memberId);
+  if (memberIdFromInput) {
+    const memberCanonical = await resolveCanonicalMemberRef(
+      {
+        sourceType: "member",
+        memberId: memberIdFromInput,
+        selectedId: memberIdFromInput
+      },
+      {
+        actionLabel: "sendEnrollmentPacketRequest.strictLinkCheck",
+        serviceRole: true
+      }
     );
+    if (!memberCanonical.memberId || memberCanonical.memberId !== member.id) {
+      throw new Error(
+        `sendEnrollmentPacketRequest expected canonical member linked to lead.id ${canonicalLead.leadId}, but member.id ${memberIdFromInput} is not linked to that lead.`
+      );
+    }
   }
 
-  const member = await getMemberById(canonical.memberId);
-  if (!member) throw new Error("Member was not found.");
-  const lead = canonical.leadId ? await getLeadById(canonical.leadId) : null;
-  if (canonical.leadId && !lead) throw new Error("Lead was not found.");
+  const lead = await getLeadById(canonicalLead.leadId);
+  if (!lead) throw new Error("Lead was not found.");
+  const refreshedMember = await getMemberById(member.id);
+  if (!refreshedMember) throw new Error("Member was not found.");
 
-  return { member, lead };
+  return { member: refreshedMember, lead };
 }
 
 export async function sendEnrollmentPacketRequest(input: {
   memberId?: string | null;
-  leadId?: string | null;
+  leadId: string;
   senderUserId: string;
   senderFullName: string;
   senderEmail?: string | null;
   caregiverEmail?: string | null;
   requestedDays: string[];
   transportation: string | null;
+  communityFeeOverride?: number | null;
+  dailyRateOverride?: number | null;
   optionalMessage?: string | null;
   appBaseUrl?: string | null;
 }) {
@@ -647,6 +688,27 @@ export async function sendEnrollmentPacketRequest(input: {
   const resolvedPricing = await resolveEnrollmentPricingForRequestedDays({
     requestedDays: input.requestedDays
   });
+  const communityFeeOverride =
+    typeof input.communityFeeOverride === "number" && Number.isFinite(input.communityFeeOverride)
+      ? safeNumber(input.communityFeeOverride, resolvedPricing.communityFeeAmount)
+      : null;
+  const dailyRateOverride =
+    typeof input.dailyRateOverride === "number" && Number.isFinite(input.dailyRateOverride)
+      ? safeNumber(input.dailyRateOverride, resolvedPricing.dailyRateAmount)
+      : null;
+  const effectiveCommunityFee = communityFeeOverride ?? safeNumber(resolvedPricing.communityFeeAmount);
+  const effectiveDailyRate = dailyRateOverride ?? safeNumber(resolvedPricing.dailyRateAmount);
+  const pricingSnapshot = {
+    ...(resolvedPricing.snapshot ?? {}),
+    selectedValues: {
+      communityFee: effectiveCommunityFee,
+      dailyRate: effectiveDailyRate
+    },
+    overrides: {
+      communityFee: communityFeeOverride,
+      dailyRate: dailyRateOverride
+    }
+  };
   const caregiverEmail = cleanEmail(input.caregiverEmail) ?? cleanEmail(lead?.caregiver_email);
   if (!isEmail(caregiverEmail)) throw new Error("Caregiver email is required.");
 
@@ -685,11 +747,11 @@ export async function sendEnrollmentPacketRequest(input: {
     packet_id: requestId,
     requested_days: resolvedPricing.requestedDays,
     transportation: clean(input.transportation),
-    community_fee: safeNumber(resolvedPricing.communityFeeAmount),
-    daily_rate: safeNumber(resolvedPricing.dailyRateAmount),
+    community_fee: effectiveCommunityFee,
+    daily_rate: effectiveDailyRate,
     pricing_community_fee_id: resolvedPricing.communityFeeId,
     pricing_daily_rate_id: resolvedPricing.dailyRateId,
-    pricing_snapshot: resolvedPricing.snapshot,
+    pricing_snapshot: pricingSnapshot,
     caregiver_name: clean(lead?.caregiver_name),
     caregiver_phone: clean(lead?.caregiver_phone),
     caregiver_email: caregiverEmail,
@@ -711,10 +773,18 @@ export async function sendEnrollmentPacketRequest(input: {
   });
   if (signatureError) throw new Error(signatureError.message);
 
-  await admin
+  const preparedAt = toEasternISO();
+  const { data: preparedRow, error: preparedError } = await admin
     .from("enrollment_packet_requests")
-    .update({ status: "prepared", updated_at: toEasternISO() })
-    .eq("id", requestId);
+    .update({ status: "prepared", updated_at: preparedAt })
+    .eq("id", requestId)
+    .eq("status", "draft")
+    .select("id")
+    .maybeSingle();
+  if (preparedError) throw new Error(preparedError.message);
+  if (!preparedRow) {
+    throw new Error("Unable to transition enrollment packet from Draft to Prepared.");
+  }
   await insertPacketEvent({
     packetId: requestId,
     eventType: "prepared",
@@ -725,7 +795,11 @@ export async function sendEnrollmentPacketRequest(input: {
       leadId: lead?.id ?? null,
       pricingCommunityFeeId: resolvedPricing.communityFeeId,
       pricingDailyRateId: resolvedPricing.dailyRateId,
-      pricingDaysPerWeek: resolvedPricing.daysPerWeek
+      pricingDaysPerWeek: resolvedPricing.daysPerWeek,
+      communityFee: effectiveCommunityFee,
+      dailyRate: effectiveDailyRate,
+      communityFeeOverride,
+      dailyRateOverride
     }
   });
 
@@ -746,15 +820,21 @@ export async function sendEnrollmentPacketRequest(input: {
   }
 
   const sentAt = toEasternISO();
-  const { error: sentError } = await admin
+  const { data: sentRow, error: sentError } = await admin
     .from("enrollment_packet_requests")
     .update({
       status: "sent",
       sent_at: sentAt,
       updated_at: sentAt
     })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .eq("status", "prepared")
+    .select("id")
+    .maybeSingle();
   if (sentError) throw new Error(sentError.message);
+  if (!sentRow) {
+    throw new Error("Unable to transition enrollment packet from Prepared to Sent.");
+  }
 
   await insertPacketEvent({
     packetId: requestId,
@@ -834,23 +914,28 @@ export async function getPublicEnrollmentPacketContext(
   if (toStatus(request.status) === "sent") {
     const now = toEasternISO();
     const admin = createSupabaseAdminClient();
-    const { error } = await admin
+    const { data: openedRow, error } = await admin
       .from("enrollment_packet_requests")
       .update({
         status: "opened",
         updated_at: now
       })
-      .eq("id", request.id);
+      .eq("id", request.id)
+      .eq("status", "sent")
+      .select("id")
+      .maybeSingle();
     if (error) throw new Error(error.message);
-    await insertPacketEvent({
-      packetId: request.id,
-      eventType: "opened",
-      actorEmail: request.caregiver_email,
-      metadata: {
-        ip: clean(metadata?.ip),
-        userAgent: clean(metadata?.userAgent)
-      }
-    });
+    if (openedRow) {
+      await insertPacketEvent({
+        packetId: request.id,
+        eventType: "opened",
+        actorEmail: request.caregiver_email,
+        metadata: {
+          ip: clean(metadata?.ip),
+          userAgent: clean(metadata?.userAgent)
+        }
+      });
+    }
   }
 
   const [reloaded, fields, member] = await Promise.all([
@@ -1296,14 +1381,20 @@ export async function savePublicEnrollmentPacketProgress(input: {
   if (fieldsError) throw new Error(fieldsError.message);
 
   const adminReq = createSupabaseAdminClient();
-  await adminReq
+  const { data: progressRow, error: progressError } = await adminReq
     .from("enrollment_packet_requests")
     .update({
       status: "partially_completed",
       updated_at: now
     })
     .eq("id", context.request.id)
-    .in("status", ["prepared", "sent", "opened", "partially_completed"]);
+    .in("status", ["prepared", "sent", "opened", "partially_completed"])
+    .select("id")
+    .maybeSingle();
+  if (progressError) throw new Error(progressError.message);
+  if (!progressRow) {
+    throw new Error("Unable to save enrollment packet progress because the packet is no longer in an editable state.");
+  }
 
   await insertPacketEvent({
     packetId: context.request.id,
@@ -1446,7 +1537,7 @@ export async function submitPublicEnrollmentPacket(input: {
     dataUrl: packetDocx.dataUrl
   });
 
-  const { error: completedError } = await admin
+  const { data: completedRow, error: completedError } = await admin
     .from("enrollment_packet_requests")
     .update({
       status: "completed",
@@ -1454,8 +1545,14 @@ export async function submitPublicEnrollmentPacket(input: {
       token: rotatedToken,
       updated_at: now
     })
-    .eq("id", request.id);
+    .eq("id", request.id)
+    .in("status", ["prepared", "sent", "opened", "partially_completed"])
+    .select("id")
+    .maybeSingle();
   if (completedError) throw new Error(completedError.message);
+  if (!completedRow) {
+    throw new Error("Unable to transition enrollment packet to Completed from its current status.");
+  }
 
   await insertPacketEvent({
     packetId: request.id,
@@ -1475,15 +1572,20 @@ export async function submitPublicEnrollmentPacket(input: {
   });
 
   const filedAt = toEasternISO();
-  const { error: filedError } = await admin
+  const { data: filedRow, error: filedError } = await admin
     .from("enrollment_packet_requests")
     .update({
       status: "filed",
       updated_at: filedAt
     })
     .eq("id", request.id)
-    .in("status", ["completed", "filed"]);
+    .in("status", ["completed", "filed"])
+    .select("id")
+    .maybeSingle();
   if (filedError) throw new Error(filedError.message);
+  if (!filedRow) {
+    throw new Error("Unable to transition enrollment packet to Filed from its current status.");
+  }
 
   await insertPacketEvent({
     packetId: request.id,

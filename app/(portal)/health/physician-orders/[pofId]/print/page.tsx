@@ -78,18 +78,16 @@ export default async function PhysicianOrderPrintPage({
                   <tr>
                     <th>Type</th>
                     <th>Diagnosis</th>
-                    <th>Code</th>
                   </tr>
                 </thead>
                 <tbody>
                   {form.diagnosisRows.length === 0 ? (
-                    <tr><td colSpan={3}>-</td></tr>
+                    <tr><td colSpan={2}>-</td></tr>
                   ) : (
                     form.diagnosisRows.map((row) => (
                       <tr key={row.id}>
                         <td>{row.diagnosisType}</td>
                         <td>{row.diagnosisName}</td>
-                        <td>{row.diagnosisCode ?? "-"}</td>
                       </tr>
                     ))
                   )}

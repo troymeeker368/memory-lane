@@ -21,13 +21,11 @@ import { formatDate, formatOptionalDate } from "@/lib/utils";
 function GoalList({ value }: { value: string }) {
   const items = getGoalListItems(value);
   return (
-    <div className="space-y-1">
+    <ol className="list-decimal space-y-1 pl-5">
       {items.map((item, idx) => (
-        <p key={`${idx}-${item}`} className="text-sm">
-          {item}
-        </p>
+        <li key={`${idx}-${item}`} className="text-sm">{item}</li>
       ))}
-    </div>
+    </ol>
   );
 }
 
@@ -63,6 +61,11 @@ export default async function CarePlanDetailPage({
         careTeamNotes={detail.carePlan.careTeamNotes}
         caregiverName={detail.carePlan.caregiverName}
         caregiverEmail={detail.carePlan.caregiverEmail}
+        sections={detail.sections.map((section) => ({
+          sectionType: section.sectionType,
+          shortTermGoals: section.shortTermGoals,
+          longTermGoals: section.longTermGoals
+        }))}
         returnTo={returnTo ?? undefined}
       />
     </Card>
@@ -136,12 +139,8 @@ export default async function CarePlanDetailPage({
           administratorSignature={detail.carePlan.administratorSignature ?? detail.carePlan.nurseDesigneeName}
           administratorSignatureDate={detail.carePlan.administratorSignatureDate}
           nurseSignatureStatus={detail.carePlan.nurseSignatureStatus}
-          nurseSignedByUserId={detail.carePlan.nurseSignedByUserId}
           nurseSignedByName={detail.carePlan.nurseSignedByName}
           nurseSignedAt={detail.carePlan.nurseSignedAt}
-          nurseSignatureArtifactMemberFileId={detail.carePlan.nurseSignatureArtifactMemberFileId}
-          nurseSignatureArtifactStoragePath={detail.carePlan.nurseSignatureArtifactStoragePath}
-          nurseSignatureMetadata={detail.carePlan.nurseSignatureMetadata}
           caregiverSignatureStatus={detail.carePlan.caregiverSignatureStatus}
           caregiverSentAt={detail.carePlan.caregiverSentAt}
           caregiverViewedAt={detail.carePlan.caregiverViewedAt}
@@ -158,7 +157,9 @@ export default async function CarePlanDetailPage({
           caregiverEmail={detail.carePlan.caregiverEmail}
           caregiverSignatureStatus={detail.carePlan.caregiverSignatureStatus}
           caregiverSentAt={detail.carePlan.caregiverSentAt}
+          caregiverViewedAt={detail.carePlan.caregiverViewedAt}
           caregiverSignedAt={detail.carePlan.caregiverSignedAt}
+          finalMemberFileId={detail.carePlan.finalMemberFileId}
         />
       </Card>
 

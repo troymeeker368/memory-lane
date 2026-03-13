@@ -125,6 +125,12 @@ export interface CarePlanSection {
   displayOrder: number;
 }
 
+export interface CarePlanSectionInput {
+  sectionType: CarePlanSectionType;
+  shortTermGoals: string;
+  longTermGoals: string;
+}
+
 export interface CarePlanTemplate {
   id: string;
   track: CarePlanTrack;
@@ -257,7 +263,17 @@ type DbCarePlanVersion = {
   modifications_required: boolean;
   modifications_description: string | null;
   care_team_notes: string | null;
+  sections_snapshot: unknown;
   created_at: string;
+};
+
+type DbCarePlanSection = {
+  id: string;
+  care_plan_id: string;
+  section_type: string;
+  short_term_goals: string;
+  long_term_goals: string;
+  display_order: number;
 };
 
 function addDays(date: string, days: number) {
@@ -362,18 +378,99 @@ function toCarePlan(row: DbCarePlan): CarePlan {
   };
 }
 
-function toCanonicalSections(carePlanId: string, track: CarePlanTrack): CarePlanSection[] {
-  return getCanonicalTrackSections(track).map((section, index) => ({
-    id: `${carePlanId}-${section.sectionType}`,
-    carePlanId,
-    sectionType: section.sectionType,
-    shortTermGoals: section.shortTermGoals,
-    longTermGoals: section.longTermGoals,
-    displayOrder: index + 1
-  }));
+function cleanGoalLine(value: string) {
+  return value.replace(/^\s*(\d+[.):-]|[-*])\s*/, "").trim();
+}
+
+function toGoalLines(value: string | null | undefined) {
+  return String(value ?? "")
+    .split(/\r?\n/)
+    .map((line) => cleanGoalLine(line))
+    .filter(Boolean);
+}
+
+function toNumberedGoals(value: string | null | undefined, fallback: string) {
+  const parsed = toGoalLines(value);
+  const fallbackLines = parsed.length > 0 ? parsed : toGoalLines(fallback);
+  return fallbackLines.map((line, index) => `${index + 1}. ${line}`).join("\n");
+}
+
+function isCarePlanSectionTypeValue(value: string): value is CarePlanSectionType {
+  return CARE_PLAN_SECTION_TYPES.includes(value as CarePlanSectionType);
+}
+
+function buildNormalizedSectionsForTrack(
+  track: CarePlanTrack,
+  overrides?: CarePlanSectionInput[] | null
+) {
+  const overrideByType = new Map((overrides ?? []).map((section) => [section.sectionType, section] as const));
+  return getCanonicalTrackSections(track).map((section) => {
+    const override = overrideByType.get(section.sectionType);
+    return {
+      sectionType: section.sectionType,
+      shortTermGoals: toNumberedGoals(override?.shortTermGoals, section.shortTermGoals),
+      longTermGoals: toNumberedGoals(override?.longTermGoals, section.longTermGoals),
+      displayOrder: section.displayOrder
+    };
+  });
+}
+
+function resolveCarePlanSections(input: {
+  carePlanId: string;
+  track: CarePlanTrack;
+  sectionRows?: DbCarePlanSection[] | null;
+}): CarePlanSection[] {
+  const sectionRows = (input.sectionRows ?? []).filter((row) => isCarePlanSectionTypeValue(row.section_type));
+  const overrideByType = new Map<CarePlanSectionType, CarePlanSectionInput>();
+  const rowByType = new Map<CarePlanSectionType, DbCarePlanSection>();
+
+  sectionRows.forEach((row) => {
+    const sectionType = row.section_type as CarePlanSectionType;
+    rowByType.set(sectionType, row);
+    overrideByType.set(sectionType, {
+      sectionType,
+      shortTermGoals: row.short_term_goals,
+      longTermGoals: row.long_term_goals
+    });
+  });
+
+  const normalized = buildNormalizedSectionsForTrack(input.track, [...overrideByType.values()]);
+  return normalized.map((section) => {
+    const existingRow = rowByType.get(section.sectionType);
+    return {
+      id: existingRow?.id ?? `${input.carePlanId}-${section.sectionType}`,
+      carePlanId: input.carePlanId,
+      sectionType: section.sectionType,
+      shortTermGoals: section.shortTermGoals,
+      longTermGoals: section.longTermGoals,
+      displayOrder: section.displayOrder
+    };
+  });
+}
+
+function parseSectionSnapshot(value: unknown): CarePlanSectionInput[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((row) => {
+      if (!row || typeof row !== "object") return null;
+      const candidate = row as {
+        sectionType?: unknown;
+        shortTermGoals?: unknown;
+        longTermGoals?: unknown;
+      };
+      if (typeof candidate.sectionType !== "string") return null;
+      if (!isCarePlanSectionTypeValue(candidate.sectionType)) return null;
+      return {
+        sectionType: candidate.sectionType,
+        shortTermGoals: String(candidate.shortTermGoals ?? ""),
+        longTermGoals: String(candidate.longTermGoals ?? "")
+      } satisfies CarePlanSectionInput;
+    })
+    .filter((row): row is CarePlanSectionInput => Boolean(row));
 }
 
 function toCarePlanVersion(row: DbCarePlanVersion, track: CarePlanTrack): CarePlanVersion {
+  const normalizedSections = buildNormalizedSectionsForTrack(track, parseSectionSnapshot(row.sections_snapshot));
   return {
     id: row.id,
     carePlanId: row.care_plan_id,
@@ -387,7 +484,7 @@ function toCarePlanVersion(row: DbCarePlanVersion, track: CarePlanTrack): CarePl
     modificationsRequired: Boolean(row.modifications_required),
     modificationsDescription: row.modifications_description ?? "",
     careTeamNotes: row.care_team_notes ?? "",
-    sections: toCanonicalSections(row.care_plan_id, track).map((section) => ({
+    sections: normalizedSections.map((section) => ({
       sectionType: section.sectionType,
       shortTermGoals: section.shortTermGoals,
       longTermGoals: section.longTermGoals,
@@ -397,8 +494,15 @@ function toCarePlanVersion(row: DbCarePlanVersion, track: CarePlanTrack): CarePl
   };
 }
 
-function serializeSectionsSnapshot(track: CarePlanTrack) {
-  return getCanonicalTrackSections(track).map((section) => ({
+function serializeSectionsSnapshot(
+  sections: Array<{
+    sectionType: CarePlanSectionType;
+    shortTermGoals: string;
+    longTermGoals: string;
+    displayOrder: number;
+  }>
+) {
+  return sections.map((section) => ({
     sectionType: section.sectionType,
     shortTermGoals: section.shortTermGoals,
     longTermGoals: section.longTermGoals,
@@ -427,8 +531,8 @@ const templates: CarePlanTemplate[] = getAllCarePlanTrackDefinitions().flatMap((
     id: `tpl-${trackDefinition.track.toLowerCase().replace(/\s+/g, "-")}-${index + 1}`,
     track: trackDefinition.track,
     sectionType: section.sectionType,
-    defaultShortTermGoals: section.shortTermGoals.join("\n"),
-    defaultLongTermGoals: section.longTermGoals.join("\n")
+    defaultShortTermGoals: toNumberedGoals(section.shortTermGoals.join("\n"), section.shortTermGoals.join("\n")),
+    defaultLongTermGoals: toNumberedGoals(section.longTermGoals.join("\n"), section.longTermGoals.join("\n"))
   }))
 );
 
@@ -452,7 +556,6 @@ async function getNextCarePlanVersionNumber(carePlanId: string, serviceRole = fa
 
 async function createCarePlanVersionSnapshot(input: {
   carePlanId: string;
-  track: CarePlanTrack;
   snapshotType: "initial" | "review";
   snapshotDate: string;
   reviewedBy: string | null;
@@ -462,6 +565,12 @@ async function createCarePlanVersionSnapshot(input: {
   modificationsRequired: boolean;
   modificationsDescription: string;
   careTeamNotes: string;
+  sections: Array<{
+    sectionType: CarePlanSectionType;
+    shortTermGoals: string;
+    longTermGoals: string;
+    displayOrder: number;
+  }>;
   serviceRole?: boolean;
 }) {
   const supabase = await createClient({ serviceRole: Boolean(input.serviceRole) });
@@ -480,7 +589,7 @@ async function createCarePlanVersionSnapshot(input: {
       modifications_required: input.modificationsRequired,
       modifications_description: input.modificationsDescription,
       care_team_notes: input.careTeamNotes,
-      sections_snapshot: serializeSectionsSnapshot(input.track),
+      sections_snapshot: serializeSectionsSnapshot(input.sections),
       created_at: toEasternISO()
     })
     .select("id")
@@ -489,9 +598,14 @@ async function createCarePlanVersionSnapshot(input: {
   return { versionId: String(data.id), versionNumber };
 }
 
-async function syncCarePlanSectionsToCanonical(carePlanId: string, track: CarePlanTrack, serviceRole = false) {
+async function syncCarePlanSectionsToCanonical(
+  carePlanId: string,
+  track: CarePlanTrack,
+  sections: CarePlanSectionInput[] | null | undefined,
+  serviceRole = false
+) {
   const supabase = await createClient({ serviceRole });
-  const sections = getCanonicalTrackSections(track).map((section) => ({
+  const normalizedSections = buildNormalizedSectionsForTrack(track, sections).map((section) => ({
     care_plan_id: carePlanId,
     section_type: section.sectionType,
     short_term_goals: section.shortTermGoals,
@@ -501,7 +615,7 @@ async function syncCarePlanSectionsToCanonical(carePlanId: string, track: CarePl
   }));
   const { error } = await supabase
     .from("care_plan_sections")
-    .upsert(sections, { onConflict: "care_plan_id,section_type" });
+    .upsert(normalizedSections, { onConflict: "care_plan_id,section_type" });
   if (error) throw new Error(error.message);
 }
 
@@ -614,7 +728,11 @@ export async function getCarePlanById(id: string, options?: { serviceRole?: bool
     nurseDesigneeName: signature.signedByName ?? baseCarePlan.nurseDesigneeName
   };
   const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
-  const [{ data: historyRows, error: historyError }, { data: versionRows, error: versionsError }] = await Promise.all([
+  const [
+    { data: historyRows, error: historyError },
+    { data: versionRows, error: versionsError },
+    { data: sectionRows, error: sectionError }
+  ] = await Promise.all([
     supabase
       .from("care_plan_review_history")
       .select("*")
@@ -624,13 +742,24 @@ export async function getCarePlanById(id: string, options?: { serviceRole?: bool
       .from("care_plan_versions")
       .select("*")
       .eq("care_plan_id", id)
-      .order("version_number", { ascending: false })
+      .order("version_number", { ascending: false }),
+    supabase
+      .from("care_plan_sections")
+      .select("*")
+      .eq("care_plan_id", id)
+      .order("display_order", { ascending: true })
   ]);
   if (historyError) throw new Error(historyError.message);
   if (versionsError) throw new Error(versionsError.message);
+  if (sectionError) throw new Error(sectionError.message);
+  const resolvedSections = resolveCarePlanSections({
+    carePlanId: carePlan.id,
+    track: carePlan.track,
+    sectionRows: (sectionRows ?? []) as DbCarePlanSection[]
+  });
   return {
     carePlan,
-    sections: toCanonicalSections(carePlan.id, carePlan.track),
+    sections: resolvedSections,
     history: (historyRows ?? []).map(
       (row: any) =>
         ({
@@ -728,6 +857,7 @@ function sanitizeCaregiverEmail(value: string | null | undefined) {
 export async function createCarePlan(input: {
   memberId: string;
   track: CarePlanTrack;
+  sections: CarePlanSectionInput[];
   enrollmentDate: string;
   reviewDate: string;
   careTeamNotes: string;
@@ -745,6 +875,7 @@ export async function createCarePlan(input: {
   const now = toEasternISO();
   const completionDate = input.reviewDate;
   const nextDueDate = computeNextReviewDueDate(completionDate);
+  const normalizedSections = buildNormalizedSectionsForTrack(input.track, input.sections);
   const caregiverName = sanitizeCaregiverName(input.caregiverName);
   const caregiverEmail = sanitizeCaregiverEmail(input.caregiverEmail);
 
@@ -805,7 +936,7 @@ export async function createCarePlan(input: {
   if (error) throw new Error(error.message);
 
   const createdCarePlanId = String(data.id);
-  await syncCarePlanSectionsToCanonical(createdCarePlanId, input.track);
+  await syncCarePlanSectionsToCanonical(createdCarePlanId, input.track, normalizedSections);
 
   let signedState: Awaited<ReturnType<typeof signCarePlanNurseEsign>>;
   try {
@@ -837,7 +968,6 @@ export async function createCarePlan(input: {
 
   await createCarePlanVersionSnapshot({
     carePlanId: createdCarePlanId,
-    track: input.track,
     snapshotType: "initial",
     snapshotDate: input.reviewDate,
     reviewedBy: signedState.signedByName ?? input.actor.signatureName,
@@ -846,8 +976,20 @@ export async function createCarePlan(input: {
     noChangesNeeded: Boolean(input.noChangesNeeded),
     modificationsRequired: Boolean(input.modificationsRequired),
     modificationsDescription: input.modificationsDescription ?? "",
-    careTeamNotes: input.careTeamNotes
+    careTeamNotes: input.careTeamNotes,
+    sections: normalizedSections
   });
+
+  await supabase
+    .from("care_plans")
+    .update({
+      caregiver_signature_status: "ready_to_send",
+      caregiver_signature_error: null,
+      updated_by_user_id: input.actor.id,
+      updated_by_name: input.actor.fullName,
+      updated_at: toEasternISO()
+    })
+    .eq("id", createdCarePlanId);
 
   const refreshed = await listCarePlanRows({ carePlanId: createdCarePlanId });
   const signedCarePlan = refreshed[0];
@@ -858,6 +1000,7 @@ export async function createCarePlan(input: {
 export async function reviewCarePlan(input: {
   carePlanId: string;
   reviewDate: string;
+  sections: CarePlanSectionInput[];
   noChangesNeeded: boolean;
   modificationsRequired: boolean;
   modificationsDescription: string;
@@ -878,7 +1021,8 @@ export async function reviewCarePlan(input: {
   if (!existing) throw new Error("Care plan not found.");
 
   const track = assertCarePlanTrack(existing.track);
-  await syncCarePlanSectionsToCanonical(input.carePlanId, track);
+  const normalizedSections = buildNormalizedSectionsForTrack(track, input.sections);
+  await syncCarePlanSectionsToCanonical(input.carePlanId, track, normalizedSections);
   const now = toEasternISO();
   const nextDueDate = computeNextReviewDueDate(input.reviewDate);
   const caregiverName = sanitizeCaregiverName(input.caregiverName);
@@ -953,7 +1097,6 @@ export async function reviewCarePlan(input: {
 
   const snapshot = await createCarePlanVersionSnapshot({
     carePlanId: input.carePlanId,
-    track,
     snapshotType: "review",
     snapshotDate: input.reviewDate,
     reviewedBy: signedState.signedByName ?? input.actor.signatureName,
@@ -962,8 +1105,19 @@ export async function reviewCarePlan(input: {
     noChangesNeeded: input.noChangesNeeded,
     modificationsRequired: input.modificationsRequired,
     modificationsDescription: input.modificationsDescription,
-    careTeamNotes: input.careTeamNotes
+    careTeamNotes: input.careTeamNotes,
+    sections: normalizedSections
   });
+  await supabase
+    .from("care_plans")
+    .update({
+      caregiver_signature_status: "ready_to_send",
+      caregiver_signature_error: null,
+      updated_by_user_id: input.actor.id,
+      updated_by_name: input.actor.fullName,
+      updated_at: toEasternISO()
+    })
+    .eq("id", input.carePlanId);
   const { error: historyError } = await supabase.from("care_plan_review_history").insert({
     care_plan_id: input.carePlanId,
     review_date: input.reviewDate,
@@ -991,6 +1145,12 @@ export async function signCarePlanAsNurseAdmin(input: {
   signatureImageDataUrl: string;
 }) {
   const supabase = await createClient();
+  const { data: existingPlan, error: existingPlanError } = await supabase
+    .from("care_plans")
+    .select("caregiver_name, caregiver_email, caregiver_signature_status")
+    .eq("id", input.carePlanId)
+    .maybeSingle();
+  if (existingPlanError) throw new Error(existingPlanError.message);
   await signCarePlanNurseEsign({
     carePlanId: input.carePlanId,
     actor: {
@@ -1008,13 +1168,24 @@ export async function signCarePlanAsNurseAdmin(input: {
   });
 
   const now = toEasternISO();
+  const canSetReadyToSend =
+    Boolean(clean(existingPlan?.caregiver_name)) &&
+    Boolean(clean(existingPlan?.caregiver_email)) &&
+    existingPlan?.caregiver_signature_status !== "sent" &&
+    existingPlan?.caregiver_signature_status !== "viewed" &&
+    existingPlan?.caregiver_signature_status !== "signed";
+  const touchPayload: Record<string, unknown> = {
+    updated_by_user_id: input.actor.id,
+    updated_by_name: input.actor.fullName,
+    updated_at: now
+  };
+  if (canSetReadyToSend) {
+    touchPayload.caregiver_signature_status = "ready_to_send";
+    touchPayload.caregiver_signature_error = null;
+  }
   const { error: touchError } = await supabase
     .from("care_plans")
-    .update({
-      updated_by_user_id: input.actor.id,
-      updated_by_name: input.actor.fullName,
-      updated_at: now
-    })
+    .update(touchPayload)
     .eq("id", input.carePlanId);
   if (touchError) throw new Error(touchError.message);
 

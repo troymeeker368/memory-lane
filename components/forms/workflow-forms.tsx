@@ -475,6 +475,45 @@ export function AssessmentForm({
   const toggleMulti = (current: string[], option: string) =>
     current.includes(option) ? current.filter((item) => item !== option) : [...current, option];
 
+  const OVERLAPPING_DEVICE_OPTIONS = ["Walker", "Cane", "Wheelchair", "Gait Belt", "None"] as const;
+  const overlappingOptionSet = new Set<string>(OVERLAPPING_DEVICE_OPTIONS);
+
+  const syncOverlappingDeviceSelections = (current: typeof form) => {
+    const selectedAcrossSections = [
+      ...current.assistiveDevicesSelected,
+      ...current.mobilityAidsSelected,
+      ...current.transportMobilityAidSelected
+    ].filter((value) => overlappingOptionSet.has(value));
+    const concreteSelections = new Set<string>(
+      selectedAcrossSections.filter((value) => value !== "None")
+    );
+    const hasConcreteSelection = concreteSelections.size > 0;
+    const hasNoneOnlySelection = !hasConcreteSelection && selectedAcrossSections.includes("None");
+
+    const projectSelection = (allowed: readonly string[], existing: string[]) => {
+      const next = allowed.filter((value) => {
+        if (value === "None") return hasNoneOnlySelection;
+        return concreteSelections.has(value);
+      });
+      if (existing.includes("Other")) next.push("Other");
+      return next;
+    };
+
+    const assistiveDevicesSelected = projectSelection(ASSISTIVE_DEVICE_OPTIONS, current.assistiveDevicesSelected);
+    const mobilityAidsSelected = projectSelection(MOBILITY_AID_OPTIONS, current.mobilityAidsSelected);
+    const transportMobilityAidSelected = projectSelection(TRANSPORT_AID_OPTIONS, current.transportMobilityAidSelected);
+
+    return {
+      ...current,
+      assistiveDevicesSelected,
+      mobilityAidsSelected,
+      transportMobilityAidSelected,
+      assistiveDevicesOther: assistiveDevicesSelected.includes("Other") ? current.assistiveDevicesOther : "",
+      mobilityAidsOther: mobilityAidsSelected.includes("Other") ? current.mobilityAidsOther : "",
+      transportMobilityAidOther: transportMobilityAidSelected.includes("Other") ? current.transportMobilityAidOther : ""
+    };
+  };
+
   const singleChoiceCheckboxGroup = (
     label: string,
     value: string,
@@ -774,7 +813,14 @@ export function AssessmentForm({
           {singleChoiceCheckboxGroup("Dressing Support", form.dressingSupportStatus, DRESSING_SUPPORT_OPTIONS, (next) => setForm((current) => ({ ...current, dressingSupportStatus: next })))}
 
           {multiChoiceCheckboxGroup("Assistive Devices", form.assistiveDevicesSelected, ASSISTIVE_DEVICE_OPTIONS, (option) =>
-            setForm((current) => ({ ...current, assistiveDevicesSelected: toggleWithNone(current.assistiveDevicesSelected, option), assistiveDevicesOther: option === "Other" || current.assistiveDevicesSelected.includes("Other") ? current.assistiveDevicesOther : "" }))
+            setForm((current) => {
+              const assistiveDevicesSelected = toggleWithNone(current.assistiveDevicesSelected, option);
+              return syncOverlappingDeviceSelections({
+                ...current,
+                assistiveDevicesSelected,
+                assistiveDevicesOther: assistiveDevicesSelected.includes("Other") ? current.assistiveDevicesOther : ""
+              });
+            })
           )}
           {form.assistiveDevicesSelected.includes("Other") ? (
             <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Assistive Device Other</span><input className="h-11 rounded-lg border border-border px-3" value={form.assistiveDevicesOther} onChange={(event) => setForm((current) => ({ ...current, assistiveDevicesOther: event.target.value }))} /></label>
@@ -836,7 +882,14 @@ export function AssessmentForm({
           <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Falls history</span><input className="h-11 rounded-lg border border-border px-3" value={form.fallsHistory} onChange={(event) => setForm((current) => ({ ...current, fallsHistory: event.target.value }))} /></label>
 
           {multiChoiceCheckboxGroup("Mobility Aids", form.mobilityAidsSelected, MOBILITY_AID_OPTIONS, (option) =>
-            setForm((current) => ({ ...current, mobilityAidsSelected: toggleWithNone(current.mobilityAidsSelected, option), mobilityAidsOther: option === "Other" || current.mobilityAidsSelected.includes("Other") ? current.mobilityAidsOther : "" }))
+            setForm((current) => {
+              const mobilityAidsSelected = toggleWithNone(current.mobilityAidsSelected, option);
+              return syncOverlappingDeviceSelections({
+                ...current,
+                mobilityAidsSelected,
+                mobilityAidsOther: mobilityAidsSelected.includes("Other") ? current.mobilityAidsOther : ""
+              });
+            })
           )}
           {form.mobilityAidsSelected.includes("Other") ? (
             <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Mobility Aid Other</span><input className="h-11 rounded-lg border border-border px-3" value={form.mobilityAidsOther} onChange={(event) => setForm((current) => ({ ...current, mobilityAidsOther: event.target.value }))} /></label>
@@ -888,7 +941,14 @@ export function AssessmentForm({
           {singleChoiceCheckboxGroup("Transport assistance level", form.transportAssistanceLevel, TRANSPORT_ASSISTANCE_OPTIONS, (next) => setForm((current) => ({ ...current, transportAssistanceLevel: next })))}
 
           {multiChoiceCheckboxGroup("Mobility aid during transport", form.transportMobilityAidSelected, TRANSPORT_AID_OPTIONS, (option) =>
-            setForm((current) => ({ ...current, transportMobilityAidSelected: toggleWithNone(current.transportMobilityAidSelected, option), transportMobilityAidOther: option === "Other" || current.transportMobilityAidSelected.includes("Other") ? current.transportMobilityAidOther : "" }))
+            setForm((current) => {
+              const transportMobilityAidSelected = toggleWithNone(current.transportMobilityAidSelected, option);
+              return syncOverlappingDeviceSelections({
+                ...current,
+                transportMobilityAidSelected,
+                transportMobilityAidOther: transportMobilityAidSelected.includes("Other") ? current.transportMobilityAidOther : ""
+              });
+            })
           )}
           {form.transportMobilityAidSelected.includes("Other") ? (
             <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Transport Mobility Aid Other</span><input className="h-11 rounded-lg border border-border px-3" value={form.transportMobilityAidOther} onChange={(event) => setForm((current) => ({ ...current, transportMobilityAidOther: event.target.value }))} /></label>

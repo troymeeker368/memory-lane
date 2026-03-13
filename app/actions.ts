@@ -29,6 +29,7 @@ import {
   autoCreateDraftPhysicianOrderFromIntake,
   createIntakeAssessmentWithResponses
 } from "@/lib/services/intake-pof-mhp-cascade";
+import { normalizeIntakeAssistiveDeviceFields } from "@/lib/services/intake-pof-shared";
 import { buildIntakeAssessmentPdfDataUrl } from "@/lib/services/intake-assessment-pdf";
 import {
   isAuthorizedIntakeAssessmentSignerRole,
@@ -1001,6 +1002,10 @@ export async function createPhotoUploadAction(raw: z.infer<typeof photoSchema>) 
   if (!payload.success) {
     return { error: "Invalid photo upload." };
   }
+  const photoDataUrl = payload.data.fileDataUrl?.trim() ?? "";
+  if (!photoDataUrl) {
+    return { error: "Photo upload requires image data." };
+  }
   if (payload.data.fileDataUrl) {
     const estimatedBytes = estimateDataUrlBytes(payload.data.fileDataUrl);
     if (estimatedBytes > MAX_PHOTO_UPLOAD_BYTES) {
@@ -1010,7 +1015,7 @@ export async function createPhotoUploadAction(raw: z.infer<typeof photoSchema>) 
 
   const profile = await getCurrentProfile();
   const uploadedAt = toEasternISO();
-  const photoUrl = payload.data.fileDataUrl || "https://placehold.co/600x400?text=Uploaded+Photo";
+  const photoUrl = photoDataUrl;
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_photo_uploads")
@@ -1266,6 +1271,12 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
 
   let created: any = null;
   try {
+    const normalizedAssistiveSelections = normalizeIntakeAssistiveDeviceFields({
+      assistiveDevices: payload.data.assistiveDevices || "",
+      mobilityAids: payload.data.mobilityAids || "",
+      transportMobilityAid: payload.data.transportMobilityAid || ""
+    });
+
     created = await createIntakeAssessmentWithResponses({
       payload: {
         memberId: effectiveMemberId,
@@ -1283,7 +1294,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
         orientationNotes: payload.data.orientationNotes || "",
         medicationManagementStatus: payload.data.medicationManagementStatus,
         dressingSupportStatus: payload.data.dressingSupportStatus,
-        assistiveDevices: payload.data.assistiveDevices || "",
+        assistiveDevices: normalizedAssistiveSelections.assistiveDevices,
         incontinenceProducts: payload.data.incontinenceProducts || "",
         onSiteMedicationUse: payload.data.onSiteMedicationUse || "",
         onSiteMedicationList: payload.data.onSiteMedicationList?.trim() || "",
@@ -1293,7 +1304,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
         dietRestrictionsNotes: payload.data.dietRestrictionsNotes || "",
         mobilitySteadiness: payload.data.mobilitySteadiness,
         fallsHistory: payload.data.fallsHistory || "",
-        mobilityAids: payload.data.mobilityAids || "",
+        mobilityAids: normalizedAssistiveSelections.mobilityAids,
         mobilitySafetyNotes: payload.data.mobilitySafetyNotes || "",
         overwhelmedByNoise: payload.data.overwhelmedByNoise,
         socialTriggers: payload.data.socialTriggers || "",
@@ -1307,7 +1318,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
         scoreSocialEmotionalWellness: payload.data.scoreSocialEmotionalWellness,
         transportCanEnterExitVehicle: payload.data.transportCanEnterExitVehicle,
         transportAssistanceLevel: payload.data.transportAssistanceLevel,
-        transportMobilityAid: payload.data.transportMobilityAid || "",
+        transportMobilityAid: normalizedAssistiveSelections.transportMobilityAid,
         transportCanRemainSeatedBuckled: payload.data.transportCanRemainSeatedBuckled,
         transportBehaviorConcern: payload.data.transportBehaviorConcern || "",
         transportAppropriate: payload.data.transportAppropriate,

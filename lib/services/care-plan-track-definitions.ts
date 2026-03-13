@@ -279,6 +279,6 @@ export function getCanonicalTrackSections(track: CarePlanTrack) {
 export function getGoalListItems(input: string) {
   return input
     .split(/\r?\n/)
-    .map((line) => line.trim())
+    .map((line) => line.replace(/^\s*(\d+[.):-]|[-*])\s*/, "").trim())
     .filter(Boolean);
 }

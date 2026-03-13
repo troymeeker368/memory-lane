@@ -8,6 +8,8 @@ export const SHARED_DIET_OPTIONS = [
 ] as const;
 
 export const SHARED_ASSISTIVE_DEVICE_OPTIONS = ["Walker", "Cane", "Wheelchair", "Gait Belt", "None", "Other"] as const;
+export const SHARED_MOBILITY_AID_OPTIONS = ["Walker", "Cane", "Wheelchair", "None", "Other"] as const;
+export const SHARED_TRANSPORT_AID_OPTIONS = ["Walker", "Cane", "Wheelchair", "Gait Belt", "None", "Other"] as const;
 
 export const SHARED_AMBULATORY_STATUS_OPTIONS = ["Full", "Semi", "Non"] as const;
 
@@ -49,6 +51,84 @@ export function splitCsv(value: string | null | undefined) {
     .split(/[,;\n]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+const SYNCABLE_DEVICE_OPTIONS = ["Walker", "Cane", "Wheelchair", "Gait Belt", "None"] as const;
+type SyncableDeviceOption = (typeof SYNCABLE_DEVICE_OPTIONS)[number];
+
+function parseSyncableDeviceOption(value: string): SyncableDeviceOption | null {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "walker") return "Walker";
+  if (normalized === "cane") return "Cane";
+  if (normalized === "wheelchair") return "Wheelchair";
+  if (normalized === "gait belt" || normalized === "gait-belt") return "Gait Belt";
+  if (normalized === "none") return "None";
+  return null;
+}
+
+function mergeWithSyncedSelections(input: {
+  sourceValue: string | null | undefined;
+  allowedOptions: readonly SyncableDeviceOption[];
+  syncedSelections: Set<SyncableDeviceOption>;
+}) {
+  const sourceTokens = splitCsv(input.sourceValue);
+  const preservedTokens = sourceTokens.filter((token) => !parseSyncableDeviceOption(token));
+  const syncedTokens = input.allowedOptions.filter((option) => input.syncedSelections.has(option));
+  const merged: string[] = [...syncedTokens];
+  preservedTokens.forEach((token) => {
+    if (!merged.some((existing) => existing.toLowerCase() === token.toLowerCase())) {
+      merged.push(token);
+    }
+  });
+  return merged.join(", ");
+}
+
+export function normalizeIntakeAssistiveDeviceFields(input: {
+  assistiveDevices?: string | null;
+  mobilityAids?: string | null;
+  transportMobilityAid?: string | null;
+}) {
+  const allTokens = [
+    ...splitCsv(input.assistiveDevices),
+    ...splitCsv(input.mobilityAids),
+    ...splitCsv(input.transportMobilityAid)
+  ];
+  const syncedSelections = new Set<SyncableDeviceOption>();
+  let hasConcreteDevice = false;
+  let sawNone = false;
+
+  allTokens.forEach((token) => {
+    const parsed = parseSyncableDeviceOption(token);
+    if (!parsed) return;
+    if (parsed === "None") {
+      sawNone = true;
+      return;
+    }
+    hasConcreteDevice = true;
+    syncedSelections.add(parsed);
+  });
+
+  if (!hasConcreteDevice && sawNone) {
+    syncedSelections.add("None");
+  }
+
+  return {
+    assistiveDevices: mergeWithSyncedSelections({
+      sourceValue: input.assistiveDevices,
+      allowedOptions: ["Walker", "Cane", "Wheelchair", "Gait Belt", "None"],
+      syncedSelections
+    }),
+    mobilityAids: mergeWithSyncedSelections({
+      sourceValue: input.mobilityAids,
+      allowedOptions: ["Walker", "Cane", "Wheelchair", "None"],
+      syncedSelections
+    }),
+    transportMobilityAid: mergeWithSyncedSelections({
+      sourceValue: input.transportMobilityAid,
+      allowedOptions: ["Walker", "Cane", "Wheelchair", "Gait Belt", "None"],
+      syncedSelections
+    })
+  };
 }
 
 export function canonicalDietSelection(intakeDietType: string | null | undefined, intakeDietOther: string | null | undefined) {

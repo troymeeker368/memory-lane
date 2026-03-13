@@ -11,7 +11,7 @@ type SeedModule = "sales" | "intake" | "attendance";
 const VALID_MODULES: SeedModule[] = ["sales", "intake", "attendance"];
 const SITE_ID = "11111111-1111-4111-8111-111111111111";
 const BATCH_SIZE = 250;
-const TARGET_MEMBER_COUNT = 16;
+const TARGET_MEMBER_COUNT = 10;
 const WEEKDAY_OPTIONS = ["monday", "tuesday", "wednesday", "thursday", "friday"] as const;
 const LEGACY_DEPENDENCY_TABLES = new Set(["pay_periods", "time_punches"]);
 
@@ -268,6 +268,8 @@ function buildIntakeCascade(db: SeededDb, staffMap: Map<string, string>) {
     const oldSignedId = stableUuid(`pof-old-${member.id}`);
     const draftId = stableUuid(`pof-draft-${member.id}`);
     const sentId = stableUuid(`pof-sent-${member.id}`);
+    const memberNameSnapshot = member.display_name ?? null;
+    const memberDobSnapshot = member.dob ?? null;
     const diagnoses = byMemberDiagnoses.get(member.id) ?? [];
     const allergies = byMemberAllergies.get(member.id) ?? [];
     const medications = byMemberMeds.get(member.id) ?? [];
@@ -283,6 +285,8 @@ function buildIntakeCascade(db: SeededDb, staffMap: Map<string, string>) {
         status: "superseded",
         is_active_signed: false,
         superseded_by: signedId,
+        member_name_snapshot: memberNameSnapshot,
+        member_dob_snapshot: memberDobSnapshot,
         diagnoses,
         allergies,
         medications,
@@ -298,6 +302,8 @@ function buildIntakeCascade(db: SeededDb, staffMap: Map<string, string>) {
       version_number: idx < 4 ? 2 : 1,
       status: "signed",
       is_active_signed: true,
+      member_name_snapshot: memberNameSnapshot,
+      member_dob_snapshot: memberDobSnapshot,
       diagnoses,
       allergies,
       medications,
@@ -313,6 +319,8 @@ function buildIntakeCascade(db: SeededDb, staffMap: Map<string, string>) {
         version_number: 3,
         status: "sent",
         is_active_signed: false,
+        member_name_snapshot: memberNameSnapshot,
+        member_dob_snapshot: memberDobSnapshot,
         diagnoses,
         allergies,
         medications,
@@ -328,6 +336,8 @@ function buildIntakeCascade(db: SeededDb, staffMap: Map<string, string>) {
         version_number: 3,
         status: "draft",
         is_active_signed: false,
+        member_name_snapshot: memberNameSnapshot,
+        member_dob_snapshot: memberDobSnapshot,
         diagnoses,
         allergies,
         medications,

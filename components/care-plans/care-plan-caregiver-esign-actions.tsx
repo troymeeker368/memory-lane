@@ -7,6 +7,8 @@ import {
   signCarePlanAction
 } from "@/app/care-plan-actions";
 import { EsignaturePad } from "@/components/signature/esignature-pad";
+import { getCaregiverSignatureStatusLabel } from "@/lib/services/care-plan-esign-rules";
+import type { CaregiverSignatureStatus } from "@/lib/services/care-plans";
 import { toEasternDate } from "@/lib/timezone";
 
 function plusDays(baseDate: string, days: number) {
@@ -23,7 +25,9 @@ export function CarePlanCaregiverEsignActions({
   caregiverEmail,
   caregiverSignatureStatus,
   caregiverSentAt,
-  caregiverSignedAt
+  caregiverViewedAt,
+  caregiverSignedAt,
+  finalMemberFileId
 }: {
   carePlanId: string;
   nurseSignatureStatus: string;
@@ -32,7 +36,9 @@ export function CarePlanCaregiverEsignActions({
   caregiverEmail: string | null;
   caregiverSignatureStatus: string;
   caregiverSentAt: string | null;
+  caregiverViewedAt: string | null;
   caregiverSignedAt: string | null;
+  finalMemberFileId: string | null;
 }) {
   const today = useMemo(() => toEasternDate(), []);
   const [isPending, startTransition] = useTransition();
@@ -47,13 +53,35 @@ export function CarePlanCaregiverEsignActions({
   });
 
   const nurseSignatureReady = nurseSignatureStatus === "signed" && Boolean(nurseSignedAt);
+  const caregiverStatusLabel = getCaregiverSignatureStatusLabel(
+    caregiverSignatureStatus as CaregiverSignatureStatus
+  );
+  const caregiverSigned = caregiverSignatureStatus === "signed" && Boolean(caregiverSignedAt);
+  const sendInProgressState = caregiverSignatureStatus === "sent" || caregiverSignatureStatus === "viewed";
+  const sendButtonLabel =
+    caregiverSignatureStatus === "send_failed" || caregiverSignatureStatus === "expired"
+      ? "Resend Caregiver Signature Request"
+      : "Send to Caregiver for Signature";
 
   return (
     <div className="space-y-3 rounded-lg border border-border p-3">
       <p className="text-sm font-semibold">Caregiver E-Sign Workflow</p>
-      <p className="text-xs text-muted">Do not implement caregiver signature as a separate disconnected doc flow; it must be part of the canonical care plan record lifecycle from nurse sign-off through caregiver completion and member-file archival.</p>
-      <p className="text-sm">Current signing status: <span className="font-semibold">{caregiverSignatureStatus}</span></p>
-      <p className="text-xs text-muted">Sent At: {caregiverSentAt ?? "-"} | Signed At: {caregiverSignedAt ?? "-"}</p>
+      <p className="text-sm">
+        Current status: <span className="font-semibold">{caregiverStatusLabel}</span>
+      </p>
+      <div className="rounded-lg border border-border bg-slate-50 p-3 text-xs text-muted">
+        <p>Nurse/Admin Signed: {nurseSignedAt ?? "-"}</p>
+        <p>Request Sent: {caregiverSentAt ?? "-"}</p>
+        <p>Responsible Party Opened: {caregiverViewedAt ?? "-"}</p>
+        <p>Responsible Party Signed: {caregiverSignedAt ?? "-"}</p>
+        <p>Filed to Member Files: {finalMemberFileId ?? "-"}</p>
+      </div>
+
+      {caregiverSigned ? (
+        <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-sm font-semibold text-emerald-700">
+          Care plan signature workflow is complete and filed.
+        </p>
+      ) : null}
 
       {!nurseSignatureReady ? (
         <div className="space-y-2">
@@ -80,7 +108,7 @@ export function CarePlanCaregiverEsignActions({
                   setStatus(result.error);
                   return;
                 }
-                setStatus("Care plan signed by Nurse/Admin.");
+                setStatus("Nurse/Admin signature saved. Caregiver request is ready to send.");
               })
             }
           >
@@ -126,6 +154,8 @@ export function CarePlanCaregiverEsignActions({
         disabled={
           isPending ||
           !nurseSignatureReady ||
+          caregiverSigned ||
+          sendInProgressState ||
           !form.caregiverName.trim() ||
           !form.caregiverEmail.trim() ||
           !form.expiresOnDate
@@ -143,11 +173,15 @@ export function CarePlanCaregiverEsignActions({
               setStatus(result.error);
               return;
             }
-            setStatus("Caregiver signature request sent.");
+            setStatus(
+              `Caregiver signature request sent. Status: ${getCaregiverSignatureStatusLabel(
+                result.status as CaregiverSignatureStatus
+              )}.`
+            );
           })
         }
       >
-        {isPending ? "Sending..." : "Send to Caregiver for Signature"}
+        {isPending ? "Sending..." : sendButtonLabel}
       </button>
 
       {status ? <p className="text-sm text-muted">{status}</p> : null}

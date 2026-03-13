@@ -12,6 +12,10 @@ function yesNo(value: boolean) {
   return value ? "Yes" : "No";
 }
 
+function orientedStatus(value: boolean) {
+  return value ? "oriented" : "not oriented";
+}
+
 function firstString(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0];
   return value;
@@ -37,6 +41,11 @@ export default async function HealthAssessmentDetailPage({
   const filteredResponses = detail.responses.filter((response) => {
     if (response.section_type === "Lead Intake Context") return false;
     if (response.field_key === "admissionReviewRequired") return false;
+    if (response.field_key === "assessmentId") return false;
+    if (response.field_key === "complete" || response.field_key === "completed") return false;
+    if (response.field_key === "signerUserId") return false;
+    if (response.field_key === "signatureArtifactStoragePath") return false;
+    if (response.field_key === "createdBy" || response.field_key === "createdAt") return false;
     return true;
   });
   const responsesBySection = filteredResponses.reduce((acc, response) => {
@@ -81,10 +90,6 @@ export default async function HealthAssessmentDetailPage({
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">E-Sign Status</p><p className="font-semibold">{assessment.signature_status ?? "unsigned"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed By</p><p className="font-semibold">{assessment.signed_by ?? "-"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed At</p><p className="font-semibold">{assessment.signed_at ? formatDateTime(assessment.signed_at) : "-"}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signer User ID</p><p className="font-semibold">{assessment.signed_by_user_id ?? "-"}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signature Artifact Member File ID</p><p className="font-semibold">{assessment.signature_artifact_member_file_id ?? "-"}</p></div>
-          <div className="rounded-lg border border-border p-3 md:col-span-2"><p className="text-xs text-muted">Signature Artifact Storage Path</p><p className="font-semibold break-all">{assessment.signature_artifact_storage_path ?? "-"}</p></div>
-          <div className="rounded-lg border border-border p-3 md:col-span-2"><p className="text-xs text-muted">Signature Metadata</p><p className="font-semibold break-all">{assessment.signature_metadata ? JSON.stringify(assessment.signature_metadata) : "{}"}</p></div>
         </div>
       </Card>
 
@@ -95,7 +100,15 @@ export default async function HealthAssessmentDetailPage({
           <div className="rounded-lg border border-border p-3"><p className="font-semibold">Health lately</p><p>{assessment.health_lately || "-"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="font-semibold">Allergies</p><p>{assessment.allergies || "-"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="font-semibold">Code Status</p><p>{assessment.code_status || "-"}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="font-semibold">Orientation Checks</p><p>DOB: {yesNo(Boolean(assessment.orientation_dob_verified))}, City: {yesNo(Boolean(assessment.orientation_city_verified))}, Year: {yesNo(Boolean(assessment.orientation_year_verified))}, Occupation: {yesNo(Boolean(assessment.orientation_occupation_verified))}</p></div>
+          <div className="rounded-lg border border-border p-3">
+            <p className="font-semibold">Orientation Checks</p>
+            <p>
+              DOB: {orientedStatus(Boolean(assessment.orientation_dob_verified))}, City:{" "}
+              {orientedStatus(Boolean(assessment.orientation_city_verified))}, Year:{" "}
+              {orientedStatus(Boolean(assessment.orientation_year_verified))}, Occupation:{" "}
+              {orientedStatus(Boolean(assessment.orientation_occupation_verified))}
+            </p>
+          </div>
           <div className="rounded-lg border border-border p-3"><p className="font-semibold">Orientation Notes</p><p>{assessment.orientation_notes || "-"}</p></div>
         </div>
       </Card>

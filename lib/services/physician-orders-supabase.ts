@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
@@ -17,6 +18,7 @@ import {
   POF_NUTRITION_OPTIONS,
   POF_STANDING_ORDER_OPTIONS
 } from "@/lib/services/physician-order-config";
+import { ensureMemberCommandCenterProfileSupabase } from "@/lib/services/member-command-center-supabase";
 import { type IntakeAssessmentForPofPrefill, mapIntakeAssessmentToPofPrefill } from "@/lib/services/intake-to-pof-mapping";
 import type { IntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -249,6 +251,66 @@ function sanitizeList(values: Array<string | null | undefined> | null | undefine
   return (values ?? []).map((value) => clean(value)).filter((value): value is string => Boolean(value));
 }
 
+function sanitizeDiagnosisRows(rows: PhysicianOrderDiagnosis[]) {
+  return rows
+    .map((row, index) => {
+      const diagnosisName = clean(row.diagnosisName);
+      if (!diagnosisName) return null;
+      const normalizedRow: PhysicianOrderDiagnosis = {
+        id: clean(row.id) ?? `diagnosis-${index + 1}`,
+        diagnosisType: row.diagnosisType === "secondary" ? "secondary" : index === 0 ? "primary" : "secondary",
+        diagnosisName,
+        diagnosisCode: null
+      };
+      return normalizedRow;
+    })
+    .filter((row): row is PhysicianOrderDiagnosis => Boolean(row));
+}
+
+function sanitizeAllergyRows(rows: PhysicianOrderAllergy[]) {
+  return rows
+    .map((row, index) => {
+      const allergyName = clean(row.allergyName);
+      if (!allergyName) return null;
+      return {
+        id: clean(row.id) ?? `allergy-${index + 1}`,
+        allergyGroup:
+          row.allergyGroup === "food" ||
+          row.allergyGroup === "medication" ||
+          row.allergyGroup === "environmental" ||
+          row.allergyGroup === "other"
+            ? row.allergyGroup
+            : "medication",
+        allergyName,
+        severity: clean(row.severity),
+        comments: clean(row.comments)
+      } satisfies PhysicianOrderAllergy;
+    })
+    .filter((row): row is PhysicianOrderAllergy => Boolean(row));
+}
+
+function sanitizeMedicationRows(rows: PhysicianOrderMedication[]) {
+  return rows
+    .map((row, index) => {
+      const name = clean(row.name);
+      if (!name) return null;
+      return {
+        id: clean(row.id) ?? `medication-${index + 1}`,
+        name,
+        dose: clean(row.dose),
+        quantity: clean(row.quantity),
+        form: clean(row.form),
+        route: clean(row.route),
+        routeLaterality: clean(row.routeLaterality),
+        frequency: clean(row.frequency),
+        givenAtCenter: Boolean(row.givenAtCenter),
+        givenAtCenterTime24h: clean(row.givenAtCenterTime24h),
+        comments: clean(row.comments)
+      } satisfies PhysicianOrderMedication;
+    })
+    .filter((row): row is PhysicianOrderMedication => Boolean(row));
+}
+
 function calculateRenewalDueDate(sentDate: string | null | undefined) {
   if (!sentDate) return null;
   const d = new Date(`${sentDate}T00:00:00.000Z`);
@@ -430,9 +492,9 @@ async function resolvePhysicianOrderMemberId(rawMemberId: string, actionLabel: s
 }
 
 function rowToForm(row: any): PhysicianOrderForm {
-  const diagnosisRows = parseJsonArray<PhysicianOrderDiagnosis>(row.diagnoses, []);
-  const allergyRows = parseJsonArray<PhysicianOrderAllergy>(row.allergies, []);
-  const medications = parseJsonArray<PhysicianOrderMedication>(row.medications, []);
+  const diagnosisRows = sanitizeDiagnosisRows(parseJsonArray<PhysicianOrderDiagnosis>(row.diagnoses, []));
+  const allergyRows = sanitizeAllergyRows(parseJsonArray<PhysicianOrderAllergy>(row.allergies, []));
+  const medications = sanitizeMedicationRows(parseJsonArray<PhysicianOrderMedication>(row.medications, []));
   const standingOrders = parseJsonArray<string>(row.standing_orders, []);
   const careInformation = parseJsonObject<PhysicianOrderCareInformation>(row.clinical_support, defaultCareInformation());
   const operationalFlags = parseJsonObject<PhysicianOrderOperationalFlags>(row.operational_flags, defaultOperationalFlags());
@@ -484,7 +546,7 @@ function rowToForm(row: any): PhysicianOrderForm {
 async function getMember(memberId: string) {
   const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "physician-orders:getMember");
   const supabase = await createClient();
-  const { data } = await supabase.from("members").select("id, display_name").eq("id", canonicalMemberId).single();
+  const { data } = await supabase.from("members").select("id, display_name, dob").eq("id", canonicalMemberId).single();
   return data;
 }
 
@@ -620,7 +682,7 @@ export async function buildNewPhysicianOrderDraft(input: {
     memberId,
     intakeAssessmentId: latestIntake?.id ?? null,
     memberNameSnapshot: member.display_name,
-    memberDobSnapshot: null,
+    memberDobSnapshot: clean(member.dob),
     sex: null,
     levelOfCare: "Home",
     dnrSelected: mapped?.dnrSelected ?? false,
@@ -717,6 +779,7 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
     status: "draft",
     is_active_signed: false,
     member_name_snapshot: member.display_name,
+    member_dob_snapshot: clean(member.dob),
     dnr_selected: mapped.dnrSelected,
     vitals_blood_pressure: mapped.vitalsBloodPressure,
     vitals_pulse: mapped.vitalsPulse,
@@ -794,6 +857,9 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
 
   const member = await getMember(canonicalMemberId);
   if (!member) throw new Error("Member not found.");
+  const diagnosisRows = sanitizeDiagnosisRows(input.diagnosisRows);
+  const allergyRows = sanitizeAllergyRows(input.allergyRows);
+  const medications = sanitizeMedicationRows(input.medications);
 
   const wantsSigned = input.status === "Signed";
   // Avoid tripping uniq_physician_orders_active_signed before we supersede old active orders.
@@ -818,9 +884,9 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
     vitals_pulse: clean(input.vitalsPulse),
     vitals_oxygen_saturation: clean(input.vitalsOxygenSaturation),
     vitals_respiration: clean(input.vitalsRespiration),
-    diagnoses: input.diagnosisRows,
-    allergies: input.allergyRows,
-    medications: input.medications,
+    diagnoses: diagnosisRows,
+    allergies: allergyRows,
+    medications,
     standing_orders: sanitizeList(input.standingOrders),
     diet_order: {
       diets: input.careInformation.nutritionDiets,
@@ -956,6 +1022,18 @@ export async function signPhysicianOrder(
   await syncMemberHealthProfileFromSignedPhysicianOrder(pofId, { serviceRole: options?.serviceRole });
 }
 
+function toMemberAllergyGroup(value: PhysicianOrderAllergy["allergyGroup"]) {
+  if (value === "food" || value === "medication" || value === "environmental") return value;
+  return "environmental";
+}
+
+function joinUnique(values: Array<string | null | undefined>, separator = ", ") {
+  const deduped = Array.from(
+    new Set(values.map((value) => clean(value)).filter((value): value is string => Boolean(value)))
+  );
+  return deduped.join(separator);
+}
+
 export async function syncMemberHealthProfileFromSignedPhysicianOrder(
   pofId: string,
   options?: {
@@ -966,13 +1044,20 @@ export async function syncMemberHealthProfileFromSignedPhysicianOrder(
   const form = await getPhysicianOrderById(pofId, { serviceRole: options?.serviceRole });
   if (!form) throw new Error("Physician order not found for sync.");
   if (form.status !== "Signed") return null;
+  const now = toEasternISO();
+  const signedDate = form.signedDate ?? toEasternDate(now);
+  const diagnosisRows = sanitizeDiagnosisRows(form.diagnosisRows);
+  const allergyRows = sanitizeAllergyRows(form.allergyRows);
+  const medicationRows = sanitizeMedicationRows(form.medications);
+  const actorUserId = clean(form.updatedByUserId) ?? clean(form.createdByUserId);
+  const actorName = clean(form.updatedByName) ?? clean(form.createdByName);
 
   const payload = {
     member_id: form.memberId,
     active_physician_order_id: form.id,
-    diagnoses: form.diagnosisRows,
-    allergies: form.allergyRows,
-    medications: form.medications,
+    diagnoses: diagnosisRows,
+    allergies: allergyRows,
+    medications: medicationRows,
     diet: {
       nutritionDiets: form.careInformation.nutritionDiets,
       nutritionDietOther: form.careInformation.nutritionDietOther
@@ -998,12 +1083,132 @@ export async function syncMemberHealthProfileFromSignedPhysicianOrder(
     operational_flags: form.operationalFlags,
     profile_notes: form.careInformation.orientationProfile.cognitiveBehaviorComments,
     joy_sparks: form.careInformation.joySparksNotes,
-    last_synced_at: toEasternISO(),
-    updated_at: toEasternISO()
+    last_synced_at: now,
+    updated_at: now
   };
 
-  const { error } = await supabase.from("member_health_profiles").upsert(payload, { onConflict: "member_id" });
-  if (error) throw new Error(error.message);
+  const [{ error: mhpError }, { error: clearDiagnosisError }, { error: clearMedicationError }, { error: clearAllergyError }] =
+    await Promise.all([
+      supabase.from("member_health_profiles").upsert(payload, { onConflict: "member_id" }),
+      supabase.from("member_diagnoses").delete().eq("member_id", form.memberId),
+      supabase.from("member_medications").delete().eq("member_id", form.memberId),
+      supabase.from("member_allergies").delete().eq("member_id", form.memberId)
+    ]);
+  if (mhpError) throw new Error(mhpError.message);
+  if (clearDiagnosisError) throw new Error(clearDiagnosisError.message);
+  if (clearMedicationError) throw new Error(clearMedicationError.message);
+  if (clearAllergyError) throw new Error(clearAllergyError.message);
+
+  if (diagnosisRows.length > 0) {
+    const { error } = await supabase.from("member_diagnoses").insert(
+      diagnosisRows.map((row) => ({
+        id: randomUUID(),
+        member_id: form.memberId,
+        diagnosis_type: row.diagnosisType,
+        diagnosis_name: row.diagnosisName,
+        diagnosis_code: null,
+        date_added: signedDate,
+        comments: null,
+        created_by_user_id: actorUserId,
+        created_by_name: actorName,
+        created_at: now,
+        updated_at: now
+      }))
+    );
+    if (error) throw new Error(error.message);
+  }
+
+  if (medicationRows.length > 0) {
+    const { error } = await supabase.from("member_medications").insert(
+      medicationRows.map((row) => ({
+        id: randomUUID(),
+        member_id: form.memberId,
+        medication_name: row.name,
+        date_started: signedDate,
+        medication_status: "active",
+        inactivated_at: null,
+        dose: row.dose,
+        quantity: row.quantity,
+        form: row.form,
+        frequency: row.frequency,
+        route: row.route,
+        route_laterality: row.routeLaterality,
+        comments: row.comments,
+        created_by_user_id: actorUserId,
+        created_by_name: actorName,
+        created_at: now,
+        updated_at: now
+      }))
+    );
+    if (error) throw new Error(error.message);
+  }
+
+  if (allergyRows.length > 0) {
+    const { error } = await supabase.from("member_allergies").insert(
+      allergyRows.map((row, index) => ({
+        id: `allergy-${randomUUID().replace(/-/g, "")}-${index + 1}`,
+        member_id: form.memberId,
+        allergy_group: toMemberAllergyGroup(row.allergyGroup),
+        allergy_name: row.allergyName,
+        severity: row.severity,
+        comments: row.comments,
+        created_by_user_id: actorUserId,
+        created_by_name: actorName,
+        created_at: now,
+        updated_at: now
+      }))
+    );
+    if (error) throw new Error(error.message);
+  }
+
+  const ensuredMcc = await ensureMemberCommandCenterProfileSupabase(form.memberId, {
+    serviceRole: options?.serviceRole,
+    actor: { userId: actorUserId, name: actorName }
+  });
+  if (ensuredMcc?.id) {
+    const nutritionDiets = form.careInformation.nutritionDiets ?? [];
+    const primaryDiet =
+      nutritionDiets.find((diet) => diet.toLowerCase() !== "regular") ??
+      nutritionDiets[0] ??
+      "Regular";
+    const foodAllergies = joinUnique(
+      allergyRows
+        .filter((row) => toMemberAllergyGroup(row.allergyGroup) === "food")
+        .map((row) => row.allergyName)
+    );
+    const medicationAllergies = joinUnique(
+      allergyRows
+        .filter((row) => toMemberAllergyGroup(row.allergyGroup) === "medication")
+        .map((row) => row.allergyName)
+    );
+    const environmentalAllergies = joinUnique(
+      allergyRows
+        .filter((row) => toMemberAllergyGroup(row.allergyGroup) === "environmental")
+        .map((row) => row.allergyName)
+    );
+    const { error: mccUpdateError } = await supabase
+      .from("member_command_centers")
+      .update({
+        code_status: form.dnrSelected ? "DNR" : "Full Code",
+        dnr: form.dnrSelected,
+        diet_type: primaryDiet,
+        dietary_preferences_restrictions: joinUnique([
+          form.careInformation.nutritionDietOther,
+          form.careInformation.joySparksNotes
+        ], " | "),
+        no_known_allergies: allergyRows.length === 0,
+        medication_allergies: medicationAllergies || null,
+        food_allergies: foodAllergies || null,
+        environmental_allergies: environmentalAllergies || null,
+        source_assessment_id: form.intakeAssessmentId,
+        source_assessment_at: form.signedDate ?? null,
+        updated_by_user_id: actorUserId,
+        updated_by_name: actorName,
+        updated_at: now
+      })
+      .eq("id", ensuredMcc.id);
+    if (mccUpdateError) throw new Error(mccUpdateError.message);
+  }
 
   return getMemberHealthProfile(form.memberId);
 }
@@ -1053,7 +1258,7 @@ export async function buildPhysicianOrderPdfDataUrl(
     y -= 12;
   } else {
     form.diagnosisRows.slice(0, 10).forEach((row) => {
-      page.drawText(`- ${row.diagnosisName}${row.diagnosisCode ? ` (${row.diagnosisCode})` : ""}`, {
+      page.drawText(`- ${row.diagnosisName}`, {
         x: 36,
         y,
         size: 10,
