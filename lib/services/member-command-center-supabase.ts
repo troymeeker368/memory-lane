@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { getStandardDailyRateForAttendanceDays } from "@/lib/services/billing-rate-tiers";
 
 export interface MccMemberRow {
@@ -402,6 +403,20 @@ function slugify(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
 
+async function resolveMccMemberId(rawMemberId: string, actionLabel: string) {
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: rawMemberId
+    },
+    { actionLabel }
+  );
+  if (!canonical.memberId) {
+    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
+  }
+  return canonical.memberId;
+}
+
 function defaultCommandCenter(memberId: string): MemberCommandCenterRow {
   const now = new Date().toISOString();
   return {
@@ -585,22 +600,24 @@ export async function upsertCenterBillingSettingSupabase(
 }
 
 export async function listMemberBillingSettingsSupabase(memberId: string) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberBillingSettingsSupabase");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_billing_settings")
     .select("*")
-    .eq("member_id", memberId)
+    .eq("member_id", canonicalMemberId)
     .order("effective_start_date", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as MemberBillingSettingRow[];
 }
 
 export async function listBillingScheduleTemplatesSupabase(memberId: string) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "listBillingScheduleTemplatesSupabase");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("billing_schedule_templates")
     .select("*")
-    .eq("member_id", memberId)
+    .eq("member_id", canonicalMemberId)
     .order("effective_start_date", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as BillingScheduleTemplateRow[];
@@ -702,6 +719,7 @@ export async function listMembersSupabase(filters?: { q?: string; status?: "all"
 }
 
 export async function getMemberSupabase(memberId: string) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberSupabase");
   const supabase = await createClient();
   const selectVariants = [
     "id, display_name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
@@ -724,7 +742,7 @@ export async function getMemberSupabase(memberId: string) {
 
   let lastError: PostgrestErrorLike | null = null;
   for (const selectClause of selectVariants) {
-    const { data, error } = await supabase.from("members").select(selectClause).eq("id", memberId).maybeSingle();
+    const { data, error } = await supabase.from("members").select(selectClause).eq("id", canonicalMemberId).maybeSingle();
     if (!error) {
       if (!data) return null;
       return mapRow((data as unknown as Record<string, unknown>) ?? {});
@@ -738,18 +756,20 @@ export async function getMemberSupabase(memberId: string) {
 }
 
 export async function updateMemberSupabase(memberId: string, patch: Record<string, unknown>) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "updateMemberSupabase");
   const supabase = await createClient();
-  const { data, error } = await supabase.from("members").update(patch).eq("id", memberId).select("*").maybeSingle();
+  const { data, error } = await supabase.from("members").update(patch).eq("id", canonicalMemberId).select("*").maybeSingle();
   if (error) throw new Error(error.message);
   return (data as MccMemberRow | null) ?? null;
 }
 
 export async function ensureMemberCommandCenterProfileSupabase(memberId: string) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "ensureMemberCommandCenterProfileSupabase");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_command_centers")
     .select("*")
-    .eq("member_id", memberId)
+    .eq("member_id", canonicalMemberId)
     .limit(1);
   if (error) {
     if (isMissingTableError(error, "member_command_centers")) {
@@ -763,7 +783,7 @@ export async function ensureMemberCommandCenterProfileSupabase(memberId: string)
   const existing = Array.isArray(data) ? data[0] : null;
   if (existing) return existing as MemberCommandCenterRow;
 
-  const created = defaultCommandCenter(memberId);
+  const created = defaultCommandCenter(canonicalMemberId);
   const { data: inserted, error: insertError } = await supabase
     .from("member_command_centers")
     .insert(created)
@@ -780,7 +800,7 @@ export async function ensureMemberCommandCenterProfileSupabase(memberId: string)
       const { data: recovered, error: recoverError } = await supabase
         .from("member_command_centers")
         .select("*")
-        .eq("member_id", memberId)
+        .eq("member_id", canonicalMemberId)
         .limit(1);
       if (recoverError) {
         if (isMissingTableError(recoverError, "member_command_centers")) {
@@ -817,14 +837,15 @@ export async function ensureMemberCommandCenterProfileSupabase(memberId: string)
 }
 
 export async function ensureMemberAttendanceScheduleSupabase(memberId: string) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "ensureMemberAttendanceScheduleSupabase");
   const supabase = await createClient();
-  const member = await getMemberSupabase(memberId);
+  const member = await getMemberSupabase(canonicalMemberId);
   if (!member) return null;
   const scheduleSeed = defaultAttendanceSchedule(member);
   const { data, error } = await supabase
     .from("member_attendance_schedules")
     .select("*")
-    .eq("member_id", memberId)
+    .eq("member_id", canonicalMemberId)
     .limit(1);
   if (error) {
     if (isMissingTableError(error, "member_attendance_schedules")) {
@@ -855,7 +876,7 @@ export async function ensureMemberAttendanceScheduleSupabase(memberId: string) {
       const { data: recovered, error: recoverError } = await supabase
         .from("member_attendance_schedules")
         .select("*")
-        .eq("member_id", memberId)
+        .eq("member_id", canonicalMemberId)
         .limit(1);
       if (recoverError) {
         if (isMissingTableError(recoverError, "member_attendance_schedules")) {
@@ -916,11 +937,12 @@ export async function updateMemberAttendanceScheduleSupabase(id: string, patch: 
 }
 
 export async function listMemberContactsSupabase(memberId: string) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberContactsSupabase");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_contacts")
     .select("*")
-    .eq("member_id", memberId)
+    .eq("member_id", canonicalMemberId)
     .order("updated_at", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as MemberContactRow[];
@@ -946,12 +968,13 @@ export async function upsertMemberContactSupabase(input: {
   created_at: string;
   updated_at: string;
 }) {
+  const canonicalMemberId = await resolveMccMemberId(input.member_id, "upsertMemberContactSupabase");
   const supabase = await createClient();
   if (input.id) {
     const { data, error } = await supabase
       .from("member_contacts")
       .update({
-        member_id: input.member_id,
+        member_id: canonicalMemberId,
         contact_name: input.contact_name,
         relationship_to_member: input.relationship_to_member,
         category: input.category,
@@ -974,7 +997,7 @@ export async function upsertMemberContactSupabase(input: {
   }
   const { data, error } = await supabase
     .from("member_contacts")
-    .insert({ ...input, id: toId("contact") })
+    .insert({ ...input, member_id: canonicalMemberId, id: toId("contact") })
     .select("*")
     .single();
   if (error) throw new Error(error.message);
@@ -989,21 +1012,23 @@ export async function deleteMemberContactSupabase(id: string) {
 }
 
 export async function listMemberFilesSupabase(memberId: string) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberFilesSupabase");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_files")
     .select("*")
-    .eq("member_id", memberId)
+    .eq("member_id", canonicalMemberId)
     .order("uploaded_at", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as MemberFileRow[];
 }
 
 export async function addMemberFileSupabase(input: Omit<MemberFileRow, "id">) {
+  const canonicalMemberId = await resolveMccMemberId(input.member_id, "addMemberFileSupabase");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_files")
-    .insert({ ...input, id: toId("file") })
+    .insert({ ...input, member_id: canonicalMemberId, id: toId("file") })
     .select("*")
     .single();
   if (error) throw new Error(error.message);
@@ -1018,21 +1043,23 @@ export async function deleteMemberFileSupabase(id: string) {
 }
 
 export async function listMemberAllergiesSupabase(memberId: string) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberAllergiesSupabase");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_allergies")
     .select("*")
-    .eq("member_id", memberId)
+    .eq("member_id", canonicalMemberId)
     .order("updated_at", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as MemberAllergyRow[];
 }
 
 export async function addMemberAllergySupabase(input: Omit<MemberAllergyRow, "id">) {
+  const canonicalMemberId = await resolveMccMemberId(input.member_id, "addMemberAllergySupabase");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_allergies")
-    .insert({ ...input, id: toId("allergy") })
+    .insert({ ...input, member_id: canonicalMemberId, id: toId("allergy") })
     .select("*")
     .single();
   if (error) throw new Error(error.message);
@@ -1106,12 +1133,13 @@ export async function upsertBusStopDirectoryFromValuesSupabase(input: {
 }
 
 export async function getAvailableLockerNumbersForMemberSupabase(memberId: string) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "getAvailableLockerNumbersForMemberSupabase");
   const members = await listMembersSupabase({ status: "all" });
-  const member = members.find((row) => row.id === memberId) ?? null;
+  const member = members.find((row) => row.id === canonicalMemberId) ?? null;
   const currentLocker = normalizeLocker(member?.locker_number ?? null);
   const usedByOtherActive = new Set(
     members
-      .filter((row) => row.status === "active" && row.id !== memberId)
+      .filter((row) => row.status === "active" && row.id !== canonicalMemberId)
       .map((row) => normalizeLocker(row.locker_number))
       .filter((value): value is string => Boolean(value))
   );
@@ -1213,21 +1241,22 @@ export async function getMemberCommandCenterIndexSupabase(filters?: { q?: string
 }
 
 export async function getMemberCommandCenterDetailSupabase(memberId: string) {
-  const member = await getMemberSupabase(memberId);
+  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterDetailSupabase");
+  const member = await getMemberSupabase(canonicalMemberId);
   if (!member) return null;
   const [profile, schedule, contacts, files, busStopDirectory, mhpAllergies] = await Promise.all([
-    ensureMemberCommandCenterProfileSupabase(memberId),
-    ensureMemberAttendanceScheduleSupabase(memberId),
-    listMemberContactsSupabase(memberId),
-    listMemberFilesSupabase(memberId),
+    ensureMemberCommandCenterProfileSupabase(canonicalMemberId),
+    ensureMemberAttendanceScheduleSupabase(canonicalMemberId),
+    listMemberContactsSupabase(canonicalMemberId),
+    listMemberFilesSupabase(canonicalMemberId),
     listBusStopDirectorySupabase(),
-    listMemberAllergiesSupabase(memberId)
+    listMemberAllergiesSupabase(canonicalMemberId)
   ]);
   const supabase = await createClient();
   const { count, error } = await supabase
     .from("intake_assessments")
     .select("id", { count: "exact", head: true })
-    .eq("member_id", memberId);
+    .eq("member_id", canonicalMemberId);
   if (error) {
     if (isMissingTableError(error, "intake_assessments")) {
       throw missingMccStorageError({
@@ -1260,7 +1289,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
       hasExistingPlan: false,
       nextDueDate: null,
       status: null,
-      actionHref: `/health/care-plans/new?memberId=${memberId}`,
+      actionHref: `/health/care-plans/new?memberId=${canonicalMemberId}`,
       actionLabel: "New Care Plan" as const,
       planId: null
     },

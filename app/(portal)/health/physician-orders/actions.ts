@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import {
   OTIC_LATERALITY_OPTIONS,
@@ -70,6 +71,12 @@ function parseStatusFromIntent(intent: string): PhysicianOrderStatus {
   if (intent === "signed") return "Signed";
   if (intent === "sent" || intent === "completed") return "Sent";
   return "Draft";
+}
+
+function isNextRedirectError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const digest = String((error as { digest?: string }).digest ?? "");
+  return digest.startsWith("NEXT_REDIRECT");
 }
 
 function parseMedicationRows(formData: FormData): PhysicianOrderMedication[] {
@@ -324,24 +331,44 @@ async function savePofPdfToMemberFiles(input: {
   });
 }
 
+async function resolvePofMemberId(rawMemberId: string, actionLabel: string) {
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: rawMemberId
+    },
+    { actionLabel }
+  );
+  if (!canonical.memberId) {
+    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
+  }
+  return canonical.memberId;
+}
+
 export async function savePhysicianOrderFormAction(formData: FormData) {
-  const profile = await requireRoles(["admin", "nurse"]);
-  const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
-  const memberId = asString(formData, "memberId");
-  if (!memberId) throw new Error("Member is required.");
+  const rawMemberId = asString(formData, "memberId");
   const pofId = asNullableString(formData, "pofId");
 
   const redirectToFormWithError = (message: string) => {
     const params = new URLSearchParams();
-    params.set("memberId", memberId);
+    if (rawMemberId) params.set("memberId", rawMemberId);
     if (pofId) params.set("pofId", pofId);
     params.set("saveError", message.slice(0, 280));
     redirect(`/health/physician-orders/new?${params.toString()}`);
   };
 
+  let memberId = "";
+  try {
+    memberId = await resolvePofMemberId(rawMemberId, "savePhysicianOrderFormAction");
+  } catch (error) {
+    redirectToFormWithError(error instanceof Error ? error.message : "Member is required.");
+  }
+
   let destinationUrl = `/health/physician-orders/new?memberId=${encodeURIComponent(memberId)}`;
 
   try {
+    const profile = await requireRoles(["admin", "nurse"]);
+    const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
     const saveIntent = asString(formData, "saveIntent");
     const status = parseStatusFromIntent(saveIntent);
 
@@ -406,6 +433,9 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
     revalidatePofRoutes(saved.memberId, saved.id);
     destinationUrl = pdfSaveFailed ? `/health/physician-orders/${saved.id}?pdfSave=failed` : `/health/physician-orders/${saved.id}`;
   } catch (error) {
+    if (isNextRedirectError(error)) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : "Unable to save physician order.";
     redirectToFormWithError(message);
   }

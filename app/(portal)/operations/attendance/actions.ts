@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { ATTENDANCE_ABSENCE_REASON_OPTIONS } from "@/lib/canonical";
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { syncAttendanceBillingForDate } from "@/lib/services/billing-supabase";
 import {
   loadExpectedAttendanceSupabaseContext,
@@ -25,6 +26,20 @@ function isUuid(value: string | null | undefined) {
 
 function actorUserIdOrNull(value: string | null | undefined) {
   return isUuid(value) ? String(value) : null;
+}
+
+async function resolveAttendanceMemberId(rawMemberId: string, actionLabel: string) {
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: rawMemberId
+    },
+    { actionLabel }
+  );
+  if (!canonical.memberId) {
+    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
+  }
+  return canonical.memberId;
 }
 
 async function requireAttendanceEditor() {
@@ -265,15 +280,11 @@ async function upsertAttendanceRecord(input: {
 export async function saveAttendanceStatusAction(formData: FormData) {
   try {
     const actor = await requireAttendanceEditor();
-    const memberId = asString(formData, "memberId");
+    const memberId = await resolveAttendanceMemberId(asString(formData, "memberId"), "saveAttendanceStatusAction");
     const attendanceDate = normalizeOperationalDateOnly(asString(formData, "attendanceDate"));
     const requestedStatus = asString(formData, "status").toLowerCase();
     const absentReason = asString(formData, "absentReason");
     const absentReasonOther = asString(formData, "absentReasonOther");
-
-    if (!memberId) {
-      throw new Error("Member is required.");
-    }
 
     if (
       requestedStatus !== "present" &&
@@ -475,14 +486,10 @@ export async function saveAttendanceStatusAction(formData: FormData) {
 export async function saveUnscheduledAttendanceAction(formData: FormData) {
   try {
     const actor = await requireAttendanceEditor();
-    const memberId = asString(formData, "memberId");
+    const memberId = await resolveAttendanceMemberId(asString(formData, "memberId"), "saveUnscheduledAttendanceAction");
     const attendanceDate = normalizeOperationalDateOnly(asString(formData, "attendanceDate"));
     const useMakeupDay = asString(formData, "useMakeupDay").toLowerCase() === "yes";
     const checkInTime = asString(formData, "checkInTime");
-
-    if (!memberId) {
-      throw new Error("Member is required.");
-    }
 
     const supabase = await createClient();
     const { data: member, error: memberError } = await supabase

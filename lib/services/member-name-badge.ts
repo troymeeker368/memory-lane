@@ -1,6 +1,10 @@
 import { toEasternISO } from "@/lib/timezone";
 import { getMemberCommandCenterDetail } from "@/lib/services/member-command-center";
 import { getMemberHealthProfileDetail } from "@/lib/services/member-health-profiles";
+import {
+  formatMemberBadgeDisplayName,
+  type BadgeDisplayNameResolutionSource
+} from "@/lib/services/member-badge-display-name";
 
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
@@ -11,16 +15,6 @@ function includesWord(value: string | null | undefined, pattern: RegExp) {
   const normalized = clean(value);
   if (!normalized) return false;
   return pattern.test(normalized.toLowerCase());
-}
-
-function asInitials(name: string) {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0] ?? "")
-    .join("")
-    .toUpperCase();
 }
 
 export interface MemberBadgeIndicator {
@@ -43,8 +37,13 @@ export interface MemberNameBadgeDetail {
   generatedAt: string;
   member: {
     id: string;
-    name: string;
-    initials: string;
+    preferredName: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    fullName: string | null;
+    name: string | null;
+    displayName: string | null;
+    displayNameSource: BadgeDisplayNameResolutionSource;
     lockerNumber: string | null;
   };
   logoSrc: string;
@@ -58,7 +57,20 @@ export async function getMemberNameBadgeDetail(memberId: string): Promise<Member
   ]);
   if (!mcc || !mhp) return null;
 
-  const memberName = mcc.member.display_name;
+  const memberRow = mcc.member as Record<string, unknown>;
+  const asOptionalName = (value: unknown) => (typeof value === "string" ? clean(value) : null);
+  const preferredName = asOptionalName(memberRow.preferred_name);
+  const firstName = asOptionalName(memberRow.first_name);
+  const lastName = asOptionalName(memberRow.last_name);
+  const fullName = asOptionalName(memberRow.full_name);
+  const fallbackName = asOptionalName(memberRow.name) ?? clean(mcc.member.display_name);
+  const badgeName = formatMemberBadgeDisplayName({
+    preferred_name: preferredName,
+    first_name: firstName,
+    last_name: lastName,
+    full_name: fullName,
+    name: fallbackName
+  });
   const allergies = mhp.allergies;
   const foodAllergyNames = allergies
     .filter((row) => row.allergy_group === "food")
@@ -151,8 +163,13 @@ export async function getMemberNameBadgeDetail(memberId: string): Promise<Member
     generatedAt: toEasternISO(),
     member: {
       id: mcc.member.id,
-      name: memberName,
-      initials: asInitials(memberName),
+      preferredName,
+      firstName,
+      lastName,
+      fullName,
+      name: fallbackName,
+      displayName: badgeName.displayName,
+      displayNameSource: badgeName.source,
       lockerNumber: clean(mcc.member.locker_number)
     },
     logoSrc: "/badge-assets/town-square-logo.png",

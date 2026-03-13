@@ -57,6 +57,11 @@ export async function sendPofSignatureRequestAction(formData: FormData) {
     const actorName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
     const memberId = asString(formData, "memberId");
     const physicianOrderId = asString(formData, "physicianOrderId");
+    console.info("[sendPofSignatureRequestAction] selected payload", {
+      memberId,
+      physicianOrderId,
+      providerEmail: asString(formData, "providerEmail")
+    });
     if (!memberId || !physicianOrderId) {
       return { ok: false, error: "Member and POF are required." } as const;
     }
@@ -93,6 +98,12 @@ export async function resendPofSignatureRequestAction(formData: FormData) {
     const requestId = asString(formData, "requestId");
     const memberId = asString(formData, "memberId");
     const physicianOrderId = asString(formData, "physicianOrderId");
+    console.info("[resendPofSignatureRequestAction] selected payload", {
+      requestId,
+      memberId,
+      physicianOrderId,
+      providerEmail: asString(formData, "providerEmail")
+    });
     if (!requestId || !memberId || !physicianOrderId) {
       return { ok: false, error: "Request, member, and POF are required." } as const;
     }

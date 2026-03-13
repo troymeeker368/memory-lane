@@ -30,15 +30,13 @@ import {
   SHARED_MEDICATION_ASSIST_OPTIONS,
   SHARED_TRANSFER_ASSIST_OPTIONS
 } from "@/lib/services/intake-pof-shared";
+import type { CanonicalPersonRef } from "@/types/identity";
 
 type MemberOption = {
   id: string;
   display_name: string;
-  lead_id?: string | null;
-  lead_stage?: string | null;
-  lead_status?: string | null;
-  linked_member_id?: string | null;
 };
+type AssessmentMemberOption = CanonicalPersonRef;
 type LeadOption = { id: string; member_name: string; stage: string; status: string };
 
 const TOILET_OPTIONS = TOILET_USE_TYPE_OPTIONS;
@@ -350,25 +348,26 @@ export function BloodSugarForm({ members }: { members: MemberOption[] }) {
   );
 }
 
-export function AssessmentForm({ members, initialMemberId, initialStaffName }: { members: MemberOption[]; initialMemberId?: string; initialStaffName?: string }) {
+export function AssessmentForm({
+  members,
+  initialMemberId,
+  initialStaffName
+}: {
+  members: AssessmentMemberOption[];
+  initialMemberId?: string;
+  initialStaffName?: string;
+}) {
   const today = useToday();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  const selectedInitialMemberId =
-    initialMemberId &&
-    members.some(
-      (member) =>
-        member.id === initialMemberId || member.lead_id === initialMemberId || member.linked_member_id === initialMemberId
-    )
-      ? members.find(
-          (member) =>
-            member.id === initialMemberId ||
-            member.lead_id === initialMemberId ||
-            member.linked_member_id === initialMemberId
-        )?.id ?? members[0]?.id ?? ""
-      : members[0]?.id ?? "";
-  const selectedInitialMember = members.find((member) => member.id === selectedInitialMemberId);
+  const selectableMembers = members.filter((member) => Boolean(member.memberId));
+  const selectedInitialMember =
+    (initialMemberId
+      ? selectableMembers.find((member) => member.memberId === initialMemberId || member.leadId === initialMemberId)
+      : null) ??
+    selectableMembers[0] ??
+    null;
 
   const CODE_STATUS_OPTIONS = ["Full Code", "DNR"] as const;
   const MEDICATION_MANAGEMENT_OPTIONS = SHARED_MEDICATION_ASSIST_OPTIONS;
@@ -383,10 +382,12 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
   const TRANSPORT_BEHAVIOR_OPTIONS = ["None", "Unbuckles seatbelt", "Exit-seeking", "Agitation", "Verbal aggression", "Other"] as const;
 
   const [form, setForm] = useState({
-    memberId: selectedInitialMember?.linked_member_id ?? "",
-    leadId: selectedInitialMember?.lead_id ?? selectedInitialMember?.id ?? "",
-    leadStage: selectedInitialMember?.lead_stage ?? "",
-    leadStatus: selectedInitialMember?.lead_status ?? "",
+    sourceType: selectedInitialMember?.sourceType ?? "member",
+    selectedRefId: selectedInitialMember?.memberId ?? selectedInitialMember?.leadId ?? "",
+    memberId: selectedInitialMember?.memberId ?? "",
+    leadId: selectedInitialMember?.leadId ?? "",
+    leadStage: selectedInitialMember?.leadStage ?? "",
+    leadStatus: selectedInitialMember?.leadStatus ?? "",
     assessmentDate: today,
     completedBy: initialStaffName ?? "",
     signatureAttested: false,
@@ -453,8 +454,6 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
 
     notes: ""
   });
-
-  const getAssessmentOptionValue = (member: MemberOption) => member.lead_id?.trim() || member.id;
 
   useEffect(() => {
     if (!initialStaffName?.trim()) return;
@@ -588,6 +587,7 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
 
   const getAssessmentValidationErrors = () => {
     const errors: string[] = [];
+    if (!form.memberId) errors.push("Linked Supabase Member");
     if (!form.leadId) errors.push("Linked Lead (Tour/EIP)");
     if (!form.completedBy.trim()) errors.push("Completed By");
     if (!form.signatureAttested) errors.push("Nurse E-Sign Attestation");
@@ -628,21 +628,25 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
           <span className="text-xs font-semibold text-muted">Lead / Prospect (Tour or EIP)</span>
           <select
             className="h-11 rounded-lg border border-border px-3"
-            value={form.leadId || form.memberId}
+            value={form.memberId}
+            disabled={selectableMembers.length === 0}
             onChange={(event) => {
-              const selected = members.find((member) => getAssessmentOptionValue(member) === event.target.value);
+              const selected = selectableMembers.find((member) => member.memberId === event.target.value);
               setForm((current) => ({
                 ...current,
-                memberId: selected?.linked_member_id ?? "",
-                leadId: selected?.lead_id ?? selected?.id ?? "",
-                leadStage: selected?.lead_stage ?? "",
-                leadStatus: selected?.lead_status ?? ""
+                sourceType: selected?.sourceType ?? "member",
+                selectedRefId: selected?.memberId ?? selected?.leadId ?? "",
+                memberId: selected?.memberId ?? "",
+                leadId: selected?.leadId ?? "",
+                leadStage: selected?.leadStage ?? "",
+                leadStatus: selected?.leadStatus ?? ""
               }));
             }}
           >
-            {members.map((member) => (
-              <option key={`${member.id}-${member.lead_id ?? "leadless"}`} value={getAssessmentOptionValue(member)}>
-                {member.display_name}
+            {selectableMembers.length === 0 ? <option value="">No Supabase-linked members available</option> : null}
+            {selectableMembers.map((member) => (
+              <option key={`${member.memberId ?? "memberless"}-${member.leadId ?? "leadless"}`} value={member.memberId ?? ""}>
+                {member.displayName}
               </option>
             ))}
           </select>
@@ -656,6 +660,11 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
           <input className="h-11 rounded-lg border border-border bg-slate-50 px-3" value={form.completedBy} readOnly />
         </label>
       </div>
+      {selectableMembers.length === 0 ? (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+          Intake Assessment can only be saved for members that exist in Supabase. Link or enroll this lead first.
+        </div>
+      ) : null}
 
       <div>
         <label className="flex w-fit items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
@@ -936,7 +945,7 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
 
       <Button
         type="button"
-        disabled={isPending}
+        disabled={isPending || !form.memberId}
         onClick={() =>
           startTransition(async () => {
             const errors = getAssessmentValidationErrors();
@@ -948,6 +957,8 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
 
             setValidationErrors([]);
             const res = await createAssessmentAction({
+              sourceType: form.sourceType,
+              selectedRefId: form.selectedRefId,
               memberId: form.memberId,
               leadId: form.leadId,
               leadStage: form.leadStage,

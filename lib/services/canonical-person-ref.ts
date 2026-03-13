@@ -1,0 +1,276 @@
+import "server-only";
+
+import { createClient } from "@/lib/supabase/server";
+import type {
+  CanonicalExpectedIdentity,
+  CanonicalPersonRef,
+  CanonicalPersonRefInput,
+  CanonicalPersonSourceType
+} from "@/types/identity";
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type LeadIdentityRow = {
+  id: string;
+  member_name: string | null;
+  stage: string | null;
+  status: string | null;
+};
+
+type MemberIdentityRow = {
+  id: string;
+  display_name: string | null;
+  status: "active" | "inactive" | null;
+  source_lead_id: string | null;
+};
+
+function clean(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function asUuid(value: string | null | undefined) {
+  const normalized = clean(value);
+  if (!normalized) return null;
+  return UUID_PATTERN.test(normalized) ? normalized : null;
+}
+
+function normalizeSourceType(value: string | null | undefined): CanonicalPersonSourceType | null {
+  const normalized = clean(value)?.toLowerCase();
+  if (normalized === "lead" || normalized === "member") return normalized;
+  return null;
+}
+
+function debugCanonicalIdentity(event: string, payload: Record<string, unknown>) {
+  if (process.env.NODE_ENV === "production") return;
+  console.info(`[canonical-person-ref] ${event}`, payload);
+}
+
+function buildIdentityErrorMessage(input: {
+  expectedType: Exclude<CanonicalExpectedIdentity, "any">;
+  actionLabel: string;
+  incomingSourceType: CanonicalPersonSourceType | null;
+  candidateLeadId: string | null;
+  candidateMemberId: string | null;
+  selectedId: string | null;
+  externalId: string | null;
+  legacyId: string | null;
+}) {
+  const expectedLabel = input.expectedType === "member" ? "member.id" : "lead.id";
+  const sourceLabel = input.incomingSourceType ?? "unknown";
+  const supplied = [
+    `sourceType=${sourceLabel}`,
+    `selectedId=${input.selectedId ?? "none"}`,
+    `memberId=${input.candidateMemberId ?? "none"}`,
+    `leadId=${input.candidateLeadId ?? "none"}`,
+    `externalId=${input.externalId ?? "none"}`,
+    `legacyId=${input.legacyId ?? "none"}`
+  ].join(", ");
+  return `${input.actionLabel} expected ${expectedLabel}, but payload did not resolve to a canonical ${expectedLabel}. Received: ${supplied}.`;
+}
+
+function toCanonicalPersonRef(input: {
+  requestedSourceType: CanonicalPersonSourceType | null;
+  member: MemberIdentityRow | null;
+  lead: LeadIdentityRow | null;
+  fallbackDisplayName: string | null;
+}): CanonicalPersonRef {
+  const member = input.member;
+  const lead = input.lead;
+  const sourceType: CanonicalPersonSourceType =
+    input.requestedSourceType ??
+    (member ? "member" : "lead");
+  const memberStatus = member?.status ?? null;
+  const enrollmentStatus = member
+    ? memberStatus === "active"
+      ? "enrolled-active"
+      : "enrolled-inactive"
+    : "not-enrolled";
+  const safeWorkflowType = member && lead ? "hybrid" : member ? "member-only" : "lead-only";
+  return {
+    sourceType,
+    leadId: lead?.id ?? member?.source_lead_id ?? null,
+    memberId: member?.id ?? null,
+    displayName: member?.display_name ?? lead?.member_name ?? input.fallbackDisplayName ?? "Unknown Person",
+    memberStatus,
+    leadStage: lead?.stage ?? null,
+    leadStatus: lead?.status ?? null,
+    enrollmentStatus,
+    safeWorkflowType
+  };
+}
+
+async function getMemberById(memberId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("members")
+    .select("id, display_name, status, source_lead_id")
+    .eq("id", memberId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as MemberIdentityRow | null) ?? null;
+}
+
+async function getLeadById(leadId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("leads")
+    .select("id, member_name, stage, status")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as LeadIdentityRow | null) ?? null;
+}
+
+async function getMemberByLeadId(leadId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("members")
+    .select("id, display_name, status, source_lead_id")
+    .eq("source_lead_id", leadId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as MemberIdentityRow | null) ?? null;
+}
+
+export async function resolveCanonicalPersonRef(
+  input: CanonicalPersonRefInput,
+  options?: {
+    expectedType?: CanonicalExpectedIdentity;
+    actionLabel?: string;
+  }
+) {
+  const expectedType = options?.expectedType ?? "any";
+  const actionLabel = clean(options?.actionLabel) ?? "identity resolution";
+  const requestedSourceType = normalizeSourceType(input.sourceType);
+  const selectedId = asUuid(input.selectedId);
+  const explicitLeadId = asUuid(input.leadId);
+  const explicitMemberId = asUuid(input.memberId);
+  const externalId = asUuid(input.externalId);
+  const legacyId = asUuid(input.legacyId);
+  const fallbackCandidate = selectedId ?? externalId ?? legacyId;
+
+  let candidateMemberId = explicitMemberId;
+  let candidateLeadId = explicitLeadId;
+
+  if (!candidateMemberId && requestedSourceType === "member") candidateMemberId = fallbackCandidate;
+  if (!candidateLeadId && requestedSourceType === "lead") candidateLeadId = fallbackCandidate;
+
+  if (!candidateMemberId && !candidateLeadId && fallbackCandidate) {
+    if (expectedType === "member") {
+      candidateMemberId = fallbackCandidate;
+    } else if (expectedType === "lead") {
+      candidateLeadId = fallbackCandidate;
+    } else {
+      candidateMemberId = fallbackCandidate;
+      candidateLeadId = fallbackCandidate;
+    }
+  }
+
+  debugCanonicalIdentity("incoming", {
+    actionLabel,
+    expectedType,
+    sourceType: requestedSourceType ?? "unknown",
+    selectedId: selectedId ?? "",
+    memberId: candidateMemberId ?? "",
+    leadId: candidateLeadId ?? "",
+    externalId: externalId ?? "",
+    legacyId: legacyId ?? ""
+  });
+
+  const [memberFromId, leadFromId] = await Promise.all([
+    candidateMemberId ? getMemberById(candidateMemberId) : Promise.resolve(null),
+    candidateLeadId ? getLeadById(candidateLeadId) : Promise.resolve(null)
+  ]);
+
+  let member = memberFromId;
+  let lead = leadFromId;
+
+  if (member?.source_lead_id && !lead) {
+    lead = await getLeadById(member.source_lead_id);
+  }
+
+  if (lead && !member) {
+    member = await getMemberByLeadId(lead.id);
+  }
+
+  const canonical = toCanonicalPersonRef({
+    requestedSourceType,
+    member,
+    lead,
+    fallbackDisplayName: clean(input.displayName)
+  });
+
+  if (expectedType === "member" && !canonical.memberId) {
+    throw new Error(
+      buildIdentityErrorMessage({
+        expectedType,
+        actionLabel,
+        incomingSourceType: requestedSourceType,
+        candidateLeadId,
+        candidateMemberId,
+        selectedId,
+        externalId,
+        legacyId
+      })
+    );
+  }
+  if (expectedType === "lead" && !canonical.leadId) {
+    throw new Error(
+      buildIdentityErrorMessage({
+        expectedType,
+        actionLabel,
+        incomingSourceType: requestedSourceType,
+        candidateLeadId,
+        candidateMemberId,
+        selectedId,
+        externalId,
+        legacyId
+      })
+    );
+  }
+
+  debugCanonicalIdentity("resolved", {
+    actionLabel,
+    sourceType: canonical.sourceType,
+    leadId: canonical.leadId ?? "",
+    memberId: canonical.memberId ?? "",
+    workflow: canonical.safeWorkflowType,
+    enrollmentStatus: canonical.enrollmentStatus
+  });
+
+  return canonical;
+}
+
+export async function resolveCanonicalMemberRef(
+  input: CanonicalPersonRefInput,
+  options?: { actionLabel?: string }
+) {
+  const canonical = await resolveCanonicalPersonRef(input, {
+    expectedType: "member",
+    actionLabel: options?.actionLabel
+  });
+  if (!canonical.memberId) {
+    throw new Error(
+      `${clean(options?.actionLabel) ?? "identity resolution"} expected member.id, but canonical member was missing.`
+    );
+  }
+  return canonical;
+}
+
+export async function resolveCanonicalLeadRef(
+  input: CanonicalPersonRefInput,
+  options?: { actionLabel?: string }
+) {
+  const canonical = await resolveCanonicalPersonRef(input, {
+    expectedType: "lead",
+    actionLabel: options?.actionLabel
+  });
+  if (!canonical.leadId) {
+    throw new Error(
+      `${clean(options?.actionLabel) ?? "identity resolution"} expected lead.id, but canonical lead was missing.`
+    );
+  }
+  return canonical;
+}
+

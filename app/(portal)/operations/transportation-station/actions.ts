@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import {
@@ -89,6 +90,20 @@ async function resolvePreferredContact(memberId: string, explicitContactId?: str
   return resolvePreferredMemberContactSupabase(memberId, explicitContactId);
 }
 
+async function resolveTransportationMemberId(rawMemberId: string, actionLabel: string) {
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: rawMemberId
+    },
+    { actionLabel }
+  );
+  if (!canonical.memberId) {
+    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
+  }
+  return canonical.memberId;
+}
+
 async function upsertAdjustment(input: {
   date: string;
   shift: Shift;
@@ -130,7 +145,7 @@ export async function addTransportationManifestRiderAction(formData: FormData) {
   const actor = await requireTransportationEditor();
   const busNumberOptions = await getConfiguredBusNumbers();
   const selectedDate = normalizeDateOnly(asString(formData, "selectedDate"));
-  const memberId = asString(formData, "memberId");
+  const memberId = await resolveTransportationMemberId(asString(formData, "memberId"), "addTransportationManifestRiderAction");
   const shiftInput = asString(formData, "shift");
   const transportType = normalizeTransportMode(asString(formData, "transportType")) ?? "Door to Door";
   const busNumber = normalizeBusNumber(asString(formData, "busNumber"), busNumberOptions);
@@ -141,10 +156,6 @@ export async function addTransportationManifestRiderAction(formData: FormData) {
   const caregiverContactPhone = asNullableString(formData, "caregiverContactPhone");
   const caregiverContactAddress = asNullableString(formData, "caregiverContactAddress");
   const notes = asNullableString(formData, "notes");
-
-  if (!memberId) {
-    throw new Error("Member is required.");
-  }
 
   if (!busNumber) {
     throw new Error("Bus assignment is required for all transport riders.");
@@ -198,7 +209,7 @@ export async function excludeTransportationManifestRiderAction(formData: FormDat
   const actor = await requireTransportationEditor();
   const busNumberOptions = await getConfiguredBusNumbers();
   const selectedDate = normalizeDateOnly(asString(formData, "selectedDate"));
-  const memberId = asString(formData, "memberId");
+  const memberId = await resolveTransportationMemberId(asString(formData, "memberId"), "excludeTransportationManifestRiderAction");
   const shift = normalizeShift(asString(formData, "shift"));
   const busNumber = normalizeBusNumber(asString(formData, "busNumber"), busNumberOptions);
   const transportType = normalizeTransportMode(asString(formData, "transportType"));
@@ -209,10 +220,6 @@ export async function excludeTransportationManifestRiderAction(formData: FormDat
   const caregiverContactPhone = asNullableString(formData, "caregiverContactPhone");
   const caregiverContactAddress = asNullableString(formData, "caregiverContactAddress");
   const notes = asNullableString(formData, "notes");
-
-  if (!memberId) {
-    throw new Error("Member is required.");
-  }
 
   await upsertAdjustment({
     date: selectedDate,
@@ -243,7 +250,7 @@ export async function reassignTransportationManifestBusAction(formData: FormData
   const failureHref = (message: string) =>
     buildStationHref({ selectedDate, shift, busFilter, error: message });
   const actor = await requireTransportationEditor();
-  const memberId = asString(formData, "memberId");
+  const memberId = await resolveTransportationMemberId(asString(formData, "memberId"), "reassignTransportationManifestBusAction");
   const busNumber = normalizeBusNumber(asString(formData, "busNumber"), busNumberOptions);
   const transportType = normalizeTransportMode(asString(formData, "transportType"));
   const busStopName = asNullableString(formData, "busStopName");
@@ -254,9 +261,6 @@ export async function reassignTransportationManifestBusAction(formData: FormData
   const caregiverContactAddress = asNullableString(formData, "caregiverContactAddress");
   const notes = asNullableString(formData, "notes");
 
-  if (!memberId) {
-    redirect(failureHref("Member is required."));
-  }
   if (!busNumber) {
     redirect(failureHref("Bus assignment is required."));
   }
@@ -320,13 +324,10 @@ export async function undoTransportationManifestAdjustmentAction(formData: FormD
 export async function copyForwardTransportationDetailsAction(formData: FormData) {
   try {
     await requireTransportationEditor();
-    const memberId = asString(formData, "memberId");
+    const memberId = await resolveTransportationMemberId(asString(formData, "memberId"), "copyForwardTransportationDetailsAction");
     const sourceDate = normalizeDateOnly(asString(formData, "sourceDate"));
     const targetDate = normalizeDateOnly(asString(formData, "targetDate"));
     const shift = normalizeShift(asString(formData, "shift"));
-    if (!memberId) {
-      return { ok: false as const, error: "Member is required." };
-    }
 
     const sourceManifest = await getTransportationManifestSupabase({
       selectedDate: sourceDate,

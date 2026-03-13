@@ -183,3 +183,5 @@ A module is complete only when all are true:
 - Do not fabricate fallback records after failed persistence.
 - Do not import `lib/mock*` in runtime production paths.
 - Do not rely on compatibility APIs containing `mock` naming as runtime architecture.
+
+No workflow may infer entity identity from mixed fields like linked_member_id without first passing through the shared canonical person resolver. Member workflows must operate on canonical member.id; lead workflows must operate on canonical lead.id.

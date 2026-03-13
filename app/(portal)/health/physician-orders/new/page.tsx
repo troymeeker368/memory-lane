@@ -86,6 +86,12 @@ export default async function NewPhysicianOrderPage({
   if (!memberId && !pofId) {
     return (
       <div className="space-y-4">
+        {saveError ? (
+          <Card>
+            <p className="text-sm font-semibold text-rose-700">Unable to save Physician Order.</p>
+            <p className="mt-1 text-sm text-muted">{saveError}</p>
+          </Card>
+        ) : null}
         <Card>
           <div className="flex items-center gap-2">
             <BackArrowButton fallbackHref="/health/physician-orders" forceFallback ariaLabel="Back to physician orders list" />

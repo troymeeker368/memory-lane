@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import type { CanonicalPersonRef } from "@/types/identity";
 
 function toCount(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -118,17 +119,45 @@ export async function getAssessmentMembers() {
     .in("stage", ["Tour", "Enrollment in Progress"])
     .order("member_name", { ascending: true });
 
-  const { data: members } = await supabase.from("members").select("id, display_name");
-  const memberByName = new Map((members ?? []).map((row: any) => [String(row.display_name).toLowerCase(), row.id]));
+  const leadIds = (leads ?? []).map((lead: any) => String(lead.id)).filter(Boolean);
+  let members: Array<{
+    id: string;
+    display_name: string | null;
+    status: "active" | "inactive" | null;
+    source_lead_id: string | null;
+  }> = [];
+  if (leadIds.length > 0) {
+    const { data: memberRows } = await supabase
+      .from("members")
+      .select("id, display_name, status, source_lead_id")
+      .in("source_lead_id", leadIds);
+    members = (
+      (memberRows ?? []) as Array<{
+        id: string;
+        display_name: string | null;
+        status: "active" | "inactive" | null;
+        source_lead_id: string | null;
+      }>
+    ).filter((row) => Boolean(row.source_lead_id));
+  }
+  const memberByLeadId = new Map(members.map((row) => [String(row.source_lead_id), row] as const));
 
-  return (leads ?? []).map((lead: any) => ({
-    id: lead.id,
-    display_name: lead.member_name,
-    lead_id: lead.id,
-    lead_stage: lead.stage,
-    lead_status: lead.status,
-    linked_member_id: memberByName.get(String(lead.member_name).toLowerCase()) ?? null
-  }));
+  return (leads ?? []).map((lead: any) => {
+    const linkedMember = memberByLeadId.get(String(lead.id)) ?? null;
+    const memberStatus = linkedMember?.status ?? null;
+    const canonicalRow = {
+      sourceType: linkedMember ? "member" : "lead",
+      leadId: String(lead.id),
+      memberId: linkedMember ? String(linkedMember.id) : null,
+      displayName: String(linkedMember?.display_name ?? lead.member_name ?? "Unknown Person"),
+      memberStatus,
+      leadStage: String(lead.stage ?? ""),
+      leadStatus: String(lead.status ?? ""),
+      enrollmentStatus: linkedMember ? (memberStatus === "active" ? "enrolled-active" : "enrolled-inactive") : "not-enrolled",
+      safeWorkflowType: linkedMember ? "hybrid" : "lead-only"
+    } satisfies CanonicalPersonRef;
+    return canonicalRow;
+  });
 }
 
 export async function getDocumentationSummary() {

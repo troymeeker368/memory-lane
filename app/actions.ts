@@ -24,6 +24,7 @@ import {
   canonicalLeadStatus
 } from "@/lib/canonical";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import {
   autoCreateDraftPhysicianOrderFromIntake,
   createIntakeAssessmentWithResponses
@@ -39,6 +40,7 @@ import { normalizeRoleKey } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import type { AuditAction } from "@/types/app";
+import type { CanonicalPersonSourceType } from "@/types/identity";
 
 function isPostgresColumnMissingError(error: unknown, columnName: string) {
   const candidate = error as { code?: string; message?: string } | null;
@@ -84,6 +86,25 @@ async function requireAdminEditor() {
     return { error: "Only admin can manage ancillary pricing." } as const;
   }
   return profile;
+}
+
+async function resolveActionMemberIdentity(input: {
+  actionLabel: string;
+  memberId?: string | null;
+  leadId?: string | null;
+  sourceType?: CanonicalPersonSourceType | null;
+  selectedRefId?: string | null;
+}) {
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: input.sourceType,
+      selectedId: input.selectedRefId,
+      memberId: input.memberId,
+      leadId: input.leadId
+    },
+    { actionLabel: input.actionLabel }
+  );
+  return canonical;
 }
 
 function leadProgressRank(stage: string, status: string) {
@@ -219,14 +240,26 @@ export async function createDailyActivityAction(raw: z.infer<typeof dailyActivit
     (payload.data.activity1 + payload.data.activity2 + payload.data.activity3 + payload.data.activity4 + payload.data.activity5) / 5
   );
 
-  const supabase = await createClient();
-  if (!payload.data.memberId) {
-    return { error: "Member is required." };
+  let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
+  try {
+    canonicalMember = await resolveActionMemberIdentity({
+      actionLabel: "createDailyActivityAction",
+      memberId: payload.data.memberId ?? null
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "createDailyActivityAction expected member.id." };
   }
+
+  if (!canonicalMember.memberId) {
+    return { error: "createDailyActivityAction expected member.id but canonical member resolution returned empty memberId." };
+  }
+  const memberId = canonicalMember.memberId;
+
+  const supabase = await createClient();
   const { data, error } = await supabase
     .from("daily_activity_logs")
     .insert({
-      member_id: payload.data.memberId,
+      member_id: memberId,
       activity_date: payload.data.activityDate,
       staff_user_id: profile.id,
       activity_1_level: payload.data.activity1,
@@ -517,6 +550,20 @@ export async function createAncillaryChargeAction(raw: z.infer<typeof ancillaryS
     return normalized.includes("late pick-up") || normalized.includes("late pickup");
   };
 
+  let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
+  try {
+    canonicalMember = await resolveActionMemberIdentity({
+      actionLabel: "createAncillaryChargeAction",
+      memberId: payload.data.memberId
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "createAncillaryChargeAction expected member.id." };
+  }
+  if (!canonicalMember.memberId) {
+    return { error: "createAncillaryChargeAction expected member.id but canonical member resolution returned empty memberId." };
+  }
+  const memberId = canonicalMember.memberId;
+
   const supabase = await createClient();
   const { data: category, error: categoryError } = await supabase
     .from("ancillary_charge_categories")
@@ -556,7 +603,7 @@ export async function createAncillaryChargeAction(raw: z.infer<typeof ancillaryS
   const duplicateBaseQuery = supabase
     .from("ancillary_charge_logs")
     .select("id")
-    .eq("member_id", payload.data.memberId)
+    .eq("member_id", memberId)
     .eq("category_id", payload.data.categoryId)
     .eq("service_date", payload.data.serviceDate);
   const duplicateQuery =
@@ -585,7 +632,7 @@ export async function createAncillaryChargeAction(raw: z.infer<typeof ancillaryS
   const { data, error } = await supabase
     .from("ancillary_charge_logs")
     .insert({
-      member_id: payload.data.memberId,
+      member_id: memberId,
       category_id: payload.data.categoryId,
       service_date: payload.data.serviceDate,
       late_pickup_time: latePickupTime,
@@ -726,12 +773,26 @@ export async function createToiletLogAction(raw: z.infer<typeof toiletSchema>) {
     return { error: "Invalid toilet log." };
   }
 
+  let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
+  try {
+    canonicalMember = await resolveActionMemberIdentity({
+      actionLabel: "createToiletLogAction",
+      memberId: payload.data.memberId
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "createToiletLogAction expected member.id." };
+  }
+  if (!canonicalMember.memberId) {
+    return { error: "createToiletLogAction expected member.id but canonical member resolution returned empty memberId." };
+  }
+  const memberId = canonicalMember.memberId;
+
   const profile = await getCurrentProfile();
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("toilet_logs")
     .insert({
-      member_id: payload.data.memberId,
+      member_id: memberId,
       event_at: payload.data.eventAt,
       briefs: payload.data.briefs,
       member_supplied: payload.data.memberSupplied,
@@ -760,7 +821,7 @@ export async function createToiletLogAction(raw: z.infer<typeof toiletSchema>) {
     }
     if (briefsCategory && !warning) {
       const ancillaryResult = await createAncillaryChargeAction({
-        memberId: payload.data.memberId,
+        memberId,
         categoryId: briefsCategory.id,
         serviceDate: payload.data.eventAt.slice(0, 10),
         latePickupTime: "",
@@ -795,12 +856,26 @@ export async function createShowerLogAction(raw: z.infer<typeof showerSchema>) {
     return { error: "Invalid shower log." };
   }
 
+  let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
+  try {
+    canonicalMember = await resolveActionMemberIdentity({
+      actionLabel: "createShowerLogAction",
+      memberId: payload.data.memberId
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "createShowerLogAction expected member.id." };
+  }
+  if (!canonicalMember.memberId) {
+    return { error: "createShowerLogAction expected member.id but canonical member resolution returned empty memberId." };
+  }
+  const memberId = canonicalMember.memberId;
+
   const profile = await getCurrentProfile();
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("shower_logs")
     .insert({
-      member_id: payload.data.memberId,
+      member_id: memberId,
       event_at: payload.data.eventAt,
       laundry: payload.data.laundry,
       briefs: payload.data.briefs,
@@ -832,19 +907,33 @@ export async function createTransportationLogAction(raw: z.infer<typeof transpor
     return { error: "Invalid transportation log." };
   }
 
+  let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
+  try {
+    canonicalMember = await resolveActionMemberIdentity({
+      actionLabel: "createTransportationLogAction",
+      memberId: payload.data.memberId
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "createTransportationLogAction expected member.id." };
+  }
+  if (!canonicalMember.memberId) {
+    return { error: "createTransportationLogAction expected member.id but canonical member resolution returned empty memberId." };
+  }
+  const memberId = canonicalMember.memberId;
+
   const profile = await getCurrentProfile();
   const supabase = await createClient();
   const { data: memberRow } = await supabase
     .from("members")
     .select("display_name")
-    .eq("id", payload.data.memberId)
+    .eq("id", memberId)
     .maybeSingle();
   const firstName = String(memberRow?.display_name ?? "").trim().split(/\s+/)[0] ?? "";
 
   const { data, error } = await supabase
     .from("transportation_logs")
     .insert({
-      member_id: payload.data.memberId,
+      member_id: memberId,
       first_name: firstName,
       period: payload.data.period,
       transport_type: payload.data.transportType,
@@ -862,7 +951,7 @@ export async function createTransportationLogAction(raw: z.infer<typeof transpor
     event_type: "transportation_logs",
     event_table: "transportation_logs",
     event_row_id: data.id,
-    member_id: payload.data.memberId,
+    member_id: memberId,
     staff_user_id: profile.id,
     event_at: toEasternISO()
   });
@@ -964,12 +1053,26 @@ export async function createBloodSugarLogAction(raw: z.infer<typeof bloodSugarSc
     return { error: "Invalid blood sugar log." };
   }
 
+  let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
+  try {
+    canonicalMember = await resolveActionMemberIdentity({
+      actionLabel: "createBloodSugarLogAction",
+      memberId: payload.data.memberId
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "createBloodSugarLogAction expected member.id." };
+  }
+  if (!canonicalMember.memberId) {
+    return { error: "createBloodSugarLogAction expected member.id but canonical member resolution returned empty memberId." };
+  }
+  const memberId = canonicalMember.memberId;
+
   const profile = await getCurrentProfile();
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("blood_sugar_logs")
     .insert({
-      member_id: payload.data.memberId,
+      member_id: memberId,
       checked_at: payload.data.checkedAt,
       reading_mg_dl: payload.data.readingMgDl,
       nurse_user_id: profile.id,
@@ -989,6 +1092,8 @@ const assessmentScoreSchema = z.union([z.literal(15), z.literal(10), z.literal(5
 
 const assessmentSchema = z
   .object({
+    sourceType: z.enum(["lead", "member"]).optional(),
+    selectedRefId: z.string().uuid().optional().or(z.literal("")),
     memberId: z.string().uuid().optional().or(z.literal("")),
     leadId: z.string().min(1),
     leadStage: z.string().optional().or(z.literal("")),
@@ -1098,33 +1203,60 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
   }
   const signerName = await getManagedUserSignatureName(profile.id, profile.full_name);
   const supabase = await createClient();
-
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  const candidateMemberId = payload.data.memberId?.trim() || payload.data.leadId.trim();
-  if (!candidateMemberId || !uuidPattern.test(candidateMemberId)) {
-    return { error: "A valid member is required for Intake Assessment persistence." };
+  if (process.env.NODE_ENV !== "production") {
+    console.info("[createAssessmentAction] selected identity payload", {
+      sourceType: payload.data.sourceType ?? "",
+      selectedRefId: payload.data.selectedRefId?.trim() ?? "",
+      memberId: payload.data.memberId?.trim() ?? "",
+      leadId: payload.data.leadId?.trim() ?? "",
+      leadStage: payload.data.leadStage?.trim() ?? "",
+      leadStatus: payload.data.leadStatus?.trim() ?? ""
+    });
   }
-  const effectiveMemberId = candidateMemberId;
 
-  const { data: memberRow, error: memberError } = await supabase
-    .from("members")
-    .select("id, display_name")
-    .eq("id", effectiveMemberId)
+  let canonicalIdentity: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
+  try {
+    canonicalIdentity = await resolveActionMemberIdentity({
+      actionLabel: "createAssessmentAction",
+      sourceType: payload.data.sourceType,
+      selectedRefId: payload.data.selectedRefId,
+      memberId: payload.data.memberId,
+      leadId: payload.data.leadId
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to resolve canonical intake identity." };
+  }
+
+  if (!canonicalIdentity.memberId) {
+    return { error: "createAssessmentAction expected member.id but canonical member resolution returned empty memberId." };
+  }
+  if (!canonicalIdentity.leadId) {
+    return { error: "createAssessmentAction expected lead.id but selected intake record is not linked to a canonical lead." };
+  }
+  if (process.env.NODE_ENV !== "production") {
+    console.info("[createAssessmentAction] canonical identity resolved", {
+      memberId: canonicalIdentity.memberId,
+      leadId: canonicalIdentity.leadId,
+      sourceType: canonicalIdentity.sourceType,
+      workflowType: canonicalIdentity.safeWorkflowType
+    });
+  }
+
+  const effectiveMemberId = canonicalIdentity.memberId;
+  const leadId = canonicalIdentity.leadId;
+  const { data: leadRow, error: leadLookupError } = await supabase
+    .from("leads")
+    .select("id, stage, status")
+    .eq("id", leadId)
     .maybeSingle();
-  if (memberError || !memberRow) {
-    return { error: "Selected member could not be found in Supabase." };
+  if (leadLookupError) {
+    return { error: `Unable to resolve canonical lead.id for intake assessment. ${leadLookupError.message}` };
   }
-
-  const leadIdCandidate = uuidPattern.test(payload.data.leadId) ? payload.data.leadId : null;
-  let leadId: string | null = null;
-  let leadStage: string | null = null;
-  let leadStatus: string | null = null;
-  if (leadIdCandidate) {
-    const { data: leadRow } = await supabase.from("leads").select("id, stage, status").eq("id", leadIdCandidate).maybeSingle();
-    leadId = leadRow?.id ?? null;
-    leadStage = leadRow?.stage ?? payload.data.leadStage ?? null;
-    leadStatus = leadRow?.status ?? payload.data.leadStatus ?? null;
+  if (!leadRow) {
+    return { error: "createAssessmentAction expected lead.id, but canonical lead lookup returned no row." };
   }
+  const leadStage = leadRow.stage ?? payload.data.leadStage ?? null;
+  const leadStatus = leadRow.status ?? payload.data.leadStatus ?? null;
 
   let created: any = null;
   try {
@@ -1229,7 +1361,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     const generated = await buildIntakeAssessmentPdfDataUrl(created.id);
     await saveGeneratedMemberPdfToFiles({
       memberId: effectiveMemberId,
-      memberName: memberRow.display_name,
+      memberName: resolvedMember.member.displayName || "Member",
       documentLabel: "Intake Assessment",
       documentSource: `Intake Assessment:${created.id}`,
       category: "Assessment",

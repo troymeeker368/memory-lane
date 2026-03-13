@@ -310,9 +310,25 @@ function getRequestPayloadSnapshotOrThrow(request: PofRequestRow) {
 }
 
 async function assertPhysicianOrderMember(physicianOrderId: string, memberId: string) {
+  console.info("[POF member lookup] Supabase lookup attempt", {
+    lookupField: "physician_orders.id",
+    lookupValue: physicianOrderId,
+    selectedMemberId: memberId
+  });
   const form = await getPhysicianOrderById(physicianOrderId, { serviceRole: true });
-  if (!form) throw new Error("Physician order was not found.");
-  if (form.memberId !== memberId) throw new Error("Physician order does not belong to the selected member.");
+  if (!form) {
+    throw new Error(`Physician order lookup failed for physician_orders.id=${physicianOrderId}.`);
+  }
+  if (form.memberId !== memberId) {
+    throw new Error(
+      `Physician order/member mismatch for physician_orders.id=${physicianOrderId}: selected member=${memberId}, order member=${form.memberId}.`
+    );
+  }
+  console.info("[POF member lookup] resolved", {
+    lookupField: "physician_orders.id",
+    lookupValue: physicianOrderId,
+    resolvedMemberId: form.memberId
+  });
   return form;
 }
 
