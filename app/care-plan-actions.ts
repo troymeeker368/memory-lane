@@ -19,7 +19,8 @@ const createCarePlanSchema = z
     careTeamNotes: z.string().default(""),
     caregiverName: z.string().min(1),
     caregiverEmail: z.string().email(),
-    signatureAttested: z.boolean()
+    signatureAttested: z.boolean(),
+    signatureImageDataUrl: z.string().min(1)
   })
   .superRefine((value, ctx) => {
     if (!value.noChangesNeeded && !value.modificationsRequired) {
@@ -43,6 +44,13 @@ const createCarePlanSchema = z
         message: "Electronic signature attestation is required."
       });
     }
+    if (!value.signatureImageDataUrl.trim().startsWith("data:image/")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["signatureImageDataUrl"],
+        message: "A valid drawn nurse/admin signature image is required."
+      });
+    }
   });
 
 export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSchema>) {
@@ -62,6 +70,7 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
     caregiverName: payload.data.caregiverName,
     caregiverEmail: payload.data.caregiverEmail,
     signatureAttested: payload.data.signatureAttested,
+    signatureImageDataUrl: payload.data.signatureImageDataUrl,
     actor: {
       id: user.userId,
       fullName: user.fullName,
@@ -88,7 +97,8 @@ const reviewCarePlanSchema = z
     careTeamNotes: z.string().default(""),
     caregiverName: z.string().min(1),
     caregiverEmail: z.string().email(),
-    signatureAttested: z.boolean()
+    signatureAttested: z.boolean(),
+    signatureImageDataUrl: z.string().min(1)
   })
   .superRefine((value, ctx) => {
     if (!value.noChangesNeeded && !value.modificationsRequired) {
@@ -112,6 +122,13 @@ const reviewCarePlanSchema = z
         message: "Electronic signature attestation is required."
       });
     }
+    if (!value.signatureImageDataUrl.trim().startsWith("data:image/")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["signatureImageDataUrl"],
+        message: "A valid drawn nurse/admin signature image is required."
+      });
+    }
   });
 
 export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSchema>) {
@@ -129,6 +146,7 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
     caregiverName: payload.data.caregiverName,
     caregiverEmail: payload.data.caregiverEmail,
     signatureAttested: payload.data.signatureAttested,
+    signatureImageDataUrl: payload.data.signatureImageDataUrl,
     actor: {
       id: user.userId,
       fullName: user.fullName,
@@ -148,13 +166,31 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
 
 const signCarePlanSchema = z.object({
   carePlanId: z.string().min(1),
-  attested: z.boolean()
+  attested: z.boolean(),
+  signatureImageDataUrl: z.string().min(1)
 });
 
 export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>) {
   const user = await requireCarePlanAuthorizedUser();
   const payload = signCarePlanSchema.safeParse(raw);
-  if (!payload.success) return { ok: false, error: "Care plan is required." } as const;
+  if (!payload.success) {
+    const attested = typeof (raw as { attested?: unknown }).attested === "boolean"
+      ? (raw as { attested?: boolean }).attested
+      : false;
+    if (!attested) {
+      return { ok: false, error: "Electronic signature attestation is required." } as const;
+    }
+    const signatureImageDataUrl = typeof (raw as { signatureImageDataUrl?: unknown }).signatureImageDataUrl === "string"
+      ? ((raw as { signatureImageDataUrl?: string }).signatureImageDataUrl ?? "").trim()
+      : "";
+    if (!signatureImageDataUrl) {
+      return { ok: false, error: "Draw nurse/admin signature before signing." } as const;
+    }
+    return { ok: false, error: "Care plan is required." } as const;
+  }
+  if (!payload.data.signatureImageDataUrl.trim().startsWith("data:image/")) {
+    return { ok: false, error: "A valid drawn nurse/admin signature image is required." } as const;
+  }
   const updated = await signCarePlanAsNurseAdmin({
     carePlanId: payload.data.carePlanId,
     actor: {
@@ -163,7 +199,8 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
       signatureName: user.signatureName,
       role: user.role
     },
-    attested: payload.data.attested
+    attested: payload.data.attested,
+    signatureImageDataUrl: payload.data.signatureImageDataUrl
   });
   revalidatePath(`/health/care-plans/${updated.id}`);
   revalidatePath(`/members/${updated.memberId}`);

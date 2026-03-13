@@ -221,8 +221,11 @@ export async function buildIntakeAssessmentPdfDataUrl(assessmentId: string) {
     `Completed: ${assessment.complete ? "Yes" : "No"}`,
     `Completed By: ${assessment.completed_by ?? "-"}`,
     `E-Sign Status: ${signature.status}`,
+    `Signer User ID: ${signature.signedByUserId ?? "-"}`,
     `Signed By: ${signature.signedByName ?? "-"}`,
     `Signed At: ${signature.signedAt ?? "-"}`,
+    `Signature Artifact Member File ID: ${signature.signatureArtifactMemberFileId ?? "-"}`,
+    `Signature Artifact Storage Path: ${signature.signatureArtifactStoragePath ?? "-"}`,
     `Created By: ${assessment.completed_by ?? "-"}`,
     `Created At: ${assessment.created_at}`
   ];

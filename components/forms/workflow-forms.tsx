@@ -12,6 +12,7 @@ import {
   createTransportationLogAction,
   updateLeadStatusAction
 } from "@/app/actions";
+import { EsignaturePad } from "@/components/signature/esignature-pad";
 import { Button } from "@/components/ui/button";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternDateTimeLocal } from "@/lib/timezone";
 import {
@@ -389,6 +390,7 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
     assessmentDate: today,
     completedBy: initialStaffName ?? "",
     signatureAttested: false,
+    signatureImageDataUrl: "",
     complete: true,
 
     feelingToday: "",
@@ -589,6 +591,7 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
     if (!form.leadId) errors.push("Linked Lead (Tour/EIP)");
     if (!form.completedBy.trim()) errors.push("Completed By");
     if (!form.signatureAttested) errors.push("Nurse E-Sign Attestation");
+    if (!form.signatureImageDataUrl) errors.push("Nurse E-Sign Capture");
     if (!form.assessmentDate.trim()) errors.push("Assessment Date");
     if (!form.feelingToday.trim()) errors.push("How member is feeling today");
     if (!form.healthLately.trim()) errors.push("Health lately");
@@ -907,6 +910,17 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
             aria-readonly="true"
           />
         </label>
+        <div className="mt-3">
+          <EsignaturePad
+            disabled={isPending}
+            onSignatureChange={(dataUrl) =>
+              setForm((current) => ({
+                ...current,
+                signatureImageDataUrl: dataUrl ?? ""
+              }))
+            }
+          />
+        </div>
         <label className="mt-3 flex items-start gap-2 text-sm">
           <input
             type="checkbox"
@@ -941,6 +955,7 @@ export function AssessmentForm({ members, initialMemberId, initialStaffName }: {
               assessmentDate: form.assessmentDate,
               completedBy: form.completedBy,
               signatureAttested: form.signatureAttested,
+              signatureImageDataUrl: form.signatureImageDataUrl,
               complete: form.complete,
               feelingToday: form.feelingToday,
               healthLately: form.healthLately,

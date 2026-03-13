@@ -40,6 +40,9 @@ type ModalState =
     }
   | null;
 
+type ModalField = "providerName" | "providerEmail" | "nurseName" | "fromEmail" | "expiresOnDate";
+type ModalFieldErrors = Partial<Record<ModalField, string>>;
+
 function statusBadgeClass(status: string) {
   const normalized = status.trim().toLowerCase();
   if (normalized === "signed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
@@ -75,6 +78,14 @@ function triggerDownload(url: string) {
   anchor.remove();
 }
 
+function includesManualSendLinkMessage(message: string) {
+  return message.includes("Copy and send this secure link manually:");
+}
+
+function isEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
 export function MemberCommandCenterPofSection({
   memberId,
   physicianOrders,
@@ -91,6 +102,8 @@ export function MemberCommandCenterPofSection({
   canCreatePhysicianOrders: boolean;
 }) {
   const [modalState, setModalState] = useState<ModalState>(null);
+  const [fieldErrors, setFieldErrors] = useState<ModalFieldErrors>({});
+  const [toast, setToast] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -107,6 +120,7 @@ export function MemberCommandCenterPofSection({
 
   function openSendModal(row: PhysicianOrderListRow) {
     setStatus(null);
+    setFieldErrors({});
     setModalState({
       mode: "send",
       physicianOrderId: row.id,
@@ -125,6 +139,7 @@ export function MemberCommandCenterPofSection({
 
   function openResendModal(row: PhysicianOrderListRow, request: PofRequestSummary) {
     setStatus(null);
+    setFieldErrors({});
     setModalState({
       mode: "resend",
       physicianOrderId: row.id,
@@ -141,8 +156,34 @@ export function MemberCommandCenterPofSection({
     });
   }
 
+  function validateModal(state: Exclude<ModalState, null>) {
+    const nextErrors: ModalFieldErrors = {};
+    if (!state.providerName.trim()) nextErrors.providerName = "Provider Name is required.";
+    if (!state.providerEmail.trim()) {
+      nextErrors.providerEmail = "Provider Email is required.";
+    } else if (!isEmail(state.providerEmail)) {
+      nextErrors.providerEmail = "Provider Email must be valid.";
+    }
+    if (!state.nurseName.trim()) nextErrors.nurseName = "Nurse Name is required.";
+    if (!state.fromEmail.trim()) {
+      nextErrors.fromEmail = "From Email is required.";
+    } else if (!isEmail(state.fromEmail)) {
+      nextErrors.fromEmail = "From Email must be valid.";
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(state.expiresOnDate.trim())) {
+      nextErrors.expiresOnDate = "Expiration Date is required.";
+    }
+    return nextErrors;
+  }
+
   function submitModal() {
     if (!modalState) return;
+    const validationErrors = validateModal(modalState);
+    setFieldErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) {
+      setToast({ kind: "error", message: "Please fix required fields before sending." });
+      return;
+    }
     startTransition(async () => {
       const formData = new FormData();
       formData.set("memberId", memberId);
@@ -164,9 +205,18 @@ export function MemberCommandCenterPofSection({
 
       if (!result.ok) {
         setStatus(`Error: ${result.error}`);
+        setToast({ kind: "error", message: result.error });
+        if (includesManualSendLinkMessage(result.error)) {
+          setModalState(null);
+          router.refresh();
+        }
         return;
       }
       setStatus(modalState.mode === "send" ? "POF signature request sent." : "POF signature request resent.");
+      setToast({
+        kind: "success",
+        message: modalState.mode === "send" ? "POF signature request sent." : "POF signature request resent."
+      });
       setModalState(null);
       router.refresh();
     });
@@ -184,9 +234,11 @@ export function MemberCommandCenterPofSection({
       });
       if (!result.ok) {
         setStatus(`Error: ${result.error}`);
+        setToast({ kind: "error", message: result.error });
         return;
       }
       setStatus("POF signature request voided.");
+      setToast({ kind: "success", message: "POF signature request voided." });
       router.refresh();
     });
   }
@@ -197,11 +249,29 @@ export function MemberCommandCenterPofSection({
       const result = await getSignedPofDownloadUrlAction({ requestId, memberId });
       if (!result.ok) {
         setStatus(`Error: ${result.error}`);
+        setToast({ kind: "error", message: result.error });
         return;
       }
       triggerDownload(result.signedUrl);
       setStatus("Signed PDF opened.");
+      setToast({ kind: "success", message: "Signed PDF opened." });
     });
+  }
+
+  async function onCopySignLink(url: string) {
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(url);
+        setStatus("Secure signing link copied.");
+        setToast({ kind: "success", message: "Secure signing link copied." });
+        return;
+      }
+    } catch {
+      // fallback handled below
+    }
+    window.prompt("Copy secure signing link:", url);
+    setStatus("Secure signing link ready to copy.");
+    setToast({ kind: "success", message: "Secure signing link ready to copy." });
   }
 
   return (
@@ -225,6 +295,7 @@ export function MemberCommandCenterPofSection({
               <th>Order Status</th>
               <th>E-Sign Status</th>
               <th>Provider</th>
+              <th>Provider Email</th>
               <th>Sent</th>
               <th>Signed</th>
               <th>Actions</th>
@@ -233,7 +304,7 @@ export function MemberCommandCenterPofSection({
           <tbody>
             {physicianOrders.length === 0 ? (
               <tr>
-                <td colSpan={7} className="text-sm text-muted">
+                <td colSpan={8} className="text-sm text-muted">
                   No physician orders saved for this member yet.
                 </td>
               </tr>
@@ -246,6 +317,7 @@ export function MemberCommandCenterPofSection({
                   request && (request.status === "draft" || request.status === "sent" || request.status === "opened" || request.status === "expired");
                 const canVoid = request && (request.status === "draft" || request.status === "sent" || request.status === "opened");
                 const canDownloadSigned = request && request.status === "signed";
+                const canCopySignLink = request && (request.status === "draft" || request.status === "sent" || request.status === "opened");
                 return (
                   <tr key={row.id}>
                     <td>
@@ -260,6 +332,7 @@ export function MemberCommandCenterPofSection({
                       </span>
                     </td>
                     <td>{request?.providerName ?? row.providerName ?? "-"}</td>
+                    <td className="text-xs text-muted">{request?.providerEmail ?? "-"}</td>
                     <td>{request?.sentAt ? formatDateTime(request.sentAt) : row.completedDate ? formatOptionalDate(row.completedDate) : "-"}</td>
                     <td>{request?.signedAt ? formatDateTime(request.signedAt) : row.signedDate ? formatOptionalDate(row.signedDate) : "-"}</td>
                     <td>
@@ -271,7 +344,7 @@ export function MemberCommandCenterPofSection({
                             onClick={() => openSendModal(row)}
                             disabled={isPending}
                           >
-                            Send for Signature
+                            Send POF for Signature
                           </button>
                         ) : null}
                         {canResend ? (
@@ -304,6 +377,16 @@ export function MemberCommandCenterPofSection({
                             Download Signed PDF
                           </button>
                         ) : null}
+                        {canCopySignLink ? (
+                          <button
+                            type="button"
+                            className="font-semibold text-brand"
+                            onClick={() => onCopySignLink(request!.signatureRequestUrl)}
+                            disabled={isPending}
+                          >
+                            Copy Sign Link
+                          </button>
+                        ) : null}
                         {request?.memberFileId ? (
                           <Link href={`/operations/member-command-center/${memberId}?tab=member-summary#files-documents`} className="font-semibold text-brand">
                             View in Member Files
@@ -320,6 +403,30 @@ export function MemberCommandCenterPofSection({
       </div>
 
       {status ? <p className="text-sm text-muted">{status}</p> : null}
+
+      {toast ? (
+        <div
+          className={`fixed right-4 top-4 z-[60] max-w-md rounded-lg border px-3 py-2 text-sm font-semibold shadow-lg ${
+            toast.kind === "success"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-rose-200 bg-rose-50 text-rose-700"
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <span>{toast.message}</span>
+            <button
+              type="button"
+              className="text-xs font-bold"
+              onClick={() => setToast(null)}
+              aria-label="Dismiss notification"
+            >
+              x
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {modalState ? (
         <div
@@ -348,8 +455,12 @@ export function MemberCommandCenterPofSection({
                 <input
                   className="mt-1 h-10 w-full rounded-lg border border-border px-3"
                   value={modalState.providerName}
-                  onChange={(event) => setModalState((prev) => (prev ? { ...prev, providerName: event.target.value } : prev))}
+                  onChange={(event) => {
+                    setFieldErrors((prev) => ({ ...prev, providerName: undefined }));
+                    setModalState((prev) => (prev ? { ...prev, providerName: event.target.value } : prev));
+                  }}
                 />
+                {fieldErrors.providerName ? <p className="mt-1 text-xs text-rose-700">{fieldErrors.providerName}</p> : null}
               </label>
               <label className="text-sm">
                 <span className="text-xs font-semibold text-muted">Provider Email</span>
@@ -357,8 +468,12 @@ export function MemberCommandCenterPofSection({
                   className="mt-1 h-10 w-full rounded-lg border border-border px-3"
                   type="email"
                   value={modalState.providerEmail}
-                  onChange={(event) => setModalState((prev) => (prev ? { ...prev, providerEmail: event.target.value } : prev))}
+                  onChange={(event) => {
+                    setFieldErrors((prev) => ({ ...prev, providerEmail: undefined }));
+                    setModalState((prev) => (prev ? { ...prev, providerEmail: event.target.value } : prev));
+                  }}
                 />
+                {fieldErrors.providerEmail ? <p className="mt-1 text-xs text-rose-700">{fieldErrors.providerEmail}</p> : null}
               </label>
               <label className="text-sm">
                 <span className="text-xs font-semibold text-muted">From Email</span>
@@ -366,16 +481,24 @@ export function MemberCommandCenterPofSection({
                   className="mt-1 h-10 w-full rounded-lg border border-border px-3"
                   type="email"
                   value={modalState.fromEmail}
-                  onChange={(event) => setModalState((prev) => (prev ? { ...prev, fromEmail: event.target.value } : prev))}
+                  onChange={(event) => {
+                    setFieldErrors((prev) => ({ ...prev, fromEmail: undefined }));
+                    setModalState((prev) => (prev ? { ...prev, fromEmail: event.target.value } : prev));
+                  }}
                 />
+                {fieldErrors.fromEmail ? <p className="mt-1 text-xs text-rose-700">{fieldErrors.fromEmail}</p> : null}
               </label>
               <label className="text-sm">
                 <span className="text-xs font-semibold text-muted">Nurse Name</span>
                 <input
                   className="mt-1 h-10 w-full rounded-lg border border-border px-3"
                   value={modalState.nurseName}
-                  onChange={(event) => setModalState((prev) => (prev ? { ...prev, nurseName: event.target.value } : prev))}
+                  onChange={(event) => {
+                    setFieldErrors((prev) => ({ ...prev, nurseName: undefined }));
+                    setModalState((prev) => (prev ? { ...prev, nurseName: event.target.value } : prev));
+                  }}
                 />
+                {fieldErrors.nurseName ? <p className="mt-1 text-xs text-rose-700">{fieldErrors.nurseName}</p> : null}
               </label>
               <label className="text-sm md:col-span-2">
                 <span className="text-xs font-semibold text-muted">Optional Message</span>
@@ -391,8 +514,12 @@ export function MemberCommandCenterPofSection({
                   className="mt-1 h-10 w-full rounded-lg border border-border px-3"
                   type="date"
                   value={modalState.expiresOnDate}
-                  onChange={(event) => setModalState((prev) => (prev ? { ...prev, expiresOnDate: event.target.value } : prev))}
+                  onChange={(event) => {
+                    setFieldErrors((prev) => ({ ...prev, expiresOnDate: undefined }));
+                    setModalState((prev) => (prev ? { ...prev, expiresOnDate: event.target.value } : prev));
+                  }}
                 />
+                {fieldErrors.expiresOnDate ? <p className="mt-1 text-xs text-rose-700">{fieldErrors.expiresOnDate}</p> : null}
               </label>
             </div>
 

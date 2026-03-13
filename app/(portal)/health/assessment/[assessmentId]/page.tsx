@@ -81,6 +81,10 @@ export default async function HealthAssessmentDetailPage({
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">E-Sign Status</p><p className="font-semibold">{assessment.signature_status ?? "unsigned"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed By</p><p className="font-semibold">{assessment.signed_by ?? "-"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed At</p><p className="font-semibold">{assessment.signed_at ? formatDateTime(assessment.signed_at) : "-"}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signer User ID</p><p className="font-semibold">{assessment.signed_by_user_id ?? "-"}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signature Artifact Member File ID</p><p className="font-semibold">{assessment.signature_artifact_member_file_id ?? "-"}</p></div>
+          <div className="rounded-lg border border-border p-3 md:col-span-2"><p className="text-xs text-muted">Signature Artifact Storage Path</p><p className="font-semibold break-all">{assessment.signature_artifact_storage_path ?? "-"}</p></div>
+          <div className="rounded-lg border border-border p-3 md:col-span-2"><p className="text-xs text-muted">Signature Metadata</p><p className="font-semibold break-all">{assessment.signature_metadata ? JSON.stringify(assessment.signature_metadata) : "{}"}</p></div>
         </div>
       </Card>
 

@@ -154,7 +154,7 @@ export default async function MemberCommandCenterDetailPage({
   const canViewMhpFromMcc = role === "admin" || role === "nurse";
   const canViewFaceSheet = role === "admin" || role === "manager" || role === "nurse";
   const canViewNameBadge = role === "admin" || role === "manager" || role === "nurse";
-  const canViewPhysicianOrders = role === "admin" || role === "nurse";
+  const canViewPhysicianOrders = role === "admin" || role === "nurse" || role === "manager";
   const canCreatePhysicianOrders = role === "admin" || role === "nurse";
   const { memberId } = await params;
   const query = await searchParams;

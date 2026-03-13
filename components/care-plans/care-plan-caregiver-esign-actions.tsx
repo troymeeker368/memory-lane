@@ -6,6 +6,7 @@ import {
   sendCarePlanToCaregiverAction,
   signCarePlanAction
 } from "@/app/care-plan-actions";
+import { EsignaturePad } from "@/components/signature/esignature-pad";
 import { toEasternDate } from "@/lib/timezone";
 
 function plusDays(baseDate: string, days: number) {
@@ -16,6 +17,7 @@ function plusDays(baseDate: string, days: number) {
 
 export function CarePlanCaregiverEsignActions({
   carePlanId,
+  nurseSignatureStatus,
   nurseSignedAt,
   caregiverName,
   caregiverEmail,
@@ -24,6 +26,7 @@ export function CarePlanCaregiverEsignActions({
   caregiverSignedAt
 }: {
   carePlanId: string;
+  nurseSignatureStatus: string;
   nurseSignedAt: string | null;
   caregiverName: string | null;
   caregiverEmail: string | null;
@@ -35,12 +38,15 @@ export function CarePlanCaregiverEsignActions({
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
   const [nurseAttested, setNurseAttested] = useState(false);
+  const [nurseSignatureImageDataUrl, setNurseSignatureImageDataUrl] = useState<string | null>(null);
   const [form, setForm] = useState({
     caregiverName: caregiverName ?? "",
     caregiverEmail: caregiverEmail ?? "",
     optionalMessage: "",
     expiresOnDate: plusDays(today, 14)
   });
+
+  const nurseSignatureReady = nurseSignatureStatus === "signed" && Boolean(nurseSignedAt);
 
   return (
     <div className="space-y-3 rounded-lg border border-border p-3">
@@ -49,7 +55,7 @@ export function CarePlanCaregiverEsignActions({
       <p className="text-sm">Current signing status: <span className="font-semibold">{caregiverSignatureStatus}</span></p>
       <p className="text-xs text-muted">Sent At: {caregiverSentAt ?? "-"} | Signed At: {caregiverSignedAt ?? "-"}</p>
 
-      {!nurseSignedAt ? (
+      {!nurseSignatureReady ? (
         <div className="space-y-2">
           <label className="flex items-start gap-2 text-sm">
             <input
@@ -62,10 +68,14 @@ export function CarePlanCaregiverEsignActions({
           <button
             type="button"
             className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
-            disabled={isPending || !nurseAttested}
+            disabled={isPending || !nurseAttested || !nurseSignatureImageDataUrl}
             onClick={() =>
               startTransition(async () => {
-                const result = await signCarePlanAction({ carePlanId, attested: nurseAttested });
+                const result = await signCarePlanAction({
+                  carePlanId,
+                  attested: nurseAttested,
+                  signatureImageDataUrl: nurseSignatureImageDataUrl ?? ""
+                });
                 if (!result.ok) {
                   setStatus(result.error);
                   return;
@@ -76,6 +86,7 @@ export function CarePlanCaregiverEsignActions({
           >
             {isPending ? "Signing..." : "Sign as Administrator/Designee"}
           </button>
+          <EsignaturePad disabled={isPending} onSignatureChange={setNurseSignatureImageDataUrl} />
         </div>
       ) : (
         <p className="text-sm">Nurse/Admin signature completed at: {nurseSignedAt}</p>
@@ -114,7 +125,7 @@ export function CarePlanCaregiverEsignActions({
         className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70"
         disabled={
           isPending ||
-          !nurseSignedAt ||
+          !nurseSignatureReady ||
           !form.caregiverName.trim() ||
           !form.caregiverEmail.trim() ||
           !form.expiresOnDate

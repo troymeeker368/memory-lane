@@ -7,7 +7,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import { buildCarePlanPdfDataUrl } from "@/lib/services/care-plan-pdf";
 import {
-  canSendCaregiverSignatureByNurseSignedAt,
+  canSendCaregiverSignatureByNurseSignatureState,
   resolvePublicCaregiverLinkState
 } from "@/lib/services/care-plan-esign-rules";
 import { getCarePlanById, type CaregiverSignatureStatus, type CarePlan } from "@/lib/services/care-plans";
@@ -197,7 +197,10 @@ async function markExpiredIfNeeded(input: {
 }
 
 export function canSendCaregiverSignature(plan: CarePlan) {
-  return canSendCaregiverSignatureByNurseSignedAt(plan.nurseSignedAt);
+  return canSendCaregiverSignatureByNurseSignatureState({
+    nurseSignatureStatus: plan.nurseSignatureStatus,
+    nurseSignedAt: plan.nurseSignedAt
+  });
 }
 
 async function sendSignatureEmail(input: {
@@ -559,8 +562,8 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     memberId: detail.carePlan.memberId,
     memberName: detail.carePlan.memberName,
     dataUrl: generated.dataUrl,
-    uploadedByUserId: detail.carePlan.nurseDesigneeUserId,
-    uploadedByName: detail.carePlan.nurseDesigneeName,
+    uploadedByUserId: detail.carePlan.nurseSignedByUserId ?? detail.carePlan.nurseDesigneeUserId,
+    uploadedByName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName,
     signedPdfStorageUri
   });
 

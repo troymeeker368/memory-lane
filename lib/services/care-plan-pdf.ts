@@ -196,8 +196,11 @@ export async function buildCarePlanPdfDataUrl(carePlanId: string, options?: { se
     `Next Due: ${carePlan.nextDueDate}`,
     `Status: ${carePlan.status}`,
     `Nurse/Admin E-Sign Status: ${carePlan.nurseSignatureStatus}`,
+    `Nurse/Admin Signer User ID: ${carePlan.nurseSignedByUserId ?? "-"}`,
     `Nurse/Admin Signed By: ${carePlan.nurseSignedByName ?? "-"}`,
-    `Nurse/Admin Signed At: ${carePlan.nurseSignedAt ?? "-"}`
+    `Nurse/Admin Signed At: ${carePlan.nurseSignedAt ?? "-"}`,
+    `Nurse/Admin Signature Artifact Member File ID: ${carePlan.nurseSignatureArtifactMemberFileId ?? "-"}`,
+    `Nurse/Admin Signature Artifact Storage Path: ${carePlan.nurseSignatureArtifactStoragePath ?? "-"}`
   ];
 
   summaryLines.forEach((line) => {

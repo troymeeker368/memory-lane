@@ -996,6 +996,7 @@ const assessmentSchema = z
     assessmentDate: z.string(),
     completedBy: z.string().min(1),
     signatureAttested: z.boolean(),
+    signatureImageDataUrl: z.string().min(1),
     complete: z.boolean(),
 
     feelingToday: z.string().min(1),
@@ -1074,6 +1075,13 @@ const assessmentSchema = z
         code: z.ZodIssueCode.custom,
         path: ["vitalsBp"],
         message: "BP must use systolic/diastolic format (e.g., 120/80)."
+      });
+    }
+    if (!val.signatureImageDataUrl.trim().startsWith("data:image/")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["signatureImageDataUrl"],
+        message: "A valid drawn nurse/admin signature image is required."
       });
     }
   });
@@ -1192,6 +1200,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
         signoffName: signerName
       },
       attested: payload.data.signatureAttested,
+      signatureImageDataUrl: payload.data.signatureImageDataUrl,
       metadata: {
         module: "intake-assessment",
         signedFrom: "createAssessmentAction"

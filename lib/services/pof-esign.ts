@@ -92,6 +92,7 @@ type SendPofSignatureInput = {
   providerEmail: string;
   nurseName: string;
   fromEmail: string;
+  appBaseUrl?: string | null;
   optionalMessage?: string | null;
   expiresOnDate: string;
   actor: { id: string; fullName: string };
@@ -104,6 +105,7 @@ type ResendPofSignatureInput = {
   providerEmail: string;
   nurseName: string;
   fromEmail: string;
+  appBaseUrl?: string | null;
   optionalMessage?: string | null;
   expiresOnDate: string;
   actor: { id: string; fullName: string };
@@ -267,14 +269,40 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#39;");
 }
 
-function buildAppBaseUrl() {
-  const value =
+function buildAppBaseUrl(requestBaseUrl?: string | null) {
+  const requested = clean(requestBaseUrl);
+  const explicit =
+    requested ??
     clean(process.env.NEXT_PUBLIC_APP_URL) ??
     clean(process.env.APP_URL) ??
     clean(process.env.NEXT_PUBLIC_SITE_URL) ??
-    clean(process.env.SITE_URL) ??
-    "http://localhost:3001";
-  return value.endsWith("/") ? value.slice(0, -1) : value;
+    clean(process.env.SITE_URL);
+  const vercelHost =
+    clean(process.env.VERCEL_PROJECT_PRODUCTION_URL) ??
+    clean(process.env.VERCEL_URL);
+
+  const hasProtocol = (value: string) => /^https?:\/\//i.test(value);
+  const normalize = (value: string) => {
+    const withProtocol = hasProtocol(value) ? value : `https://${value}`;
+    return withProtocol.endsWith("/") ? withProtocol.slice(0, -1) : withProtocol;
+  };
+
+  const resolved = explicit ? normalize(explicit) : vercelHost ? normalize(vercelHost) : null;
+  if (!resolved) {
+    if ((process.env.NODE_ENV ?? "").toLowerCase() === "production") {
+      throw new Error(
+        "POF e-sign public URL is not configured. Set NEXT_PUBLIC_APP_URL (or APP_URL/SITE_URL) so provider signature links are live."
+      );
+    }
+    return "http://localhost:3001";
+  }
+
+  const parsed = new URL(resolved);
+  const localhostHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
+  if (parsed.protocol === "http:" && !localhostHostnames.has(parsed.hostname)) {
+    parsed.protocol = "https:";
+  }
+  return parsed.toString().replace(/\/$/, "");
 }
 
 function isExpired(expiresAt: string) {
@@ -373,6 +401,14 @@ async function sendSignatureEmail(input: {
       detail = await response.text();
     } catch {
       detail = "";
+    }
+    if (
+      response.status === 403 &&
+      detail.toLowerCase().includes("you can only send testing emails to your own email address")
+    ) {
+      throw new Error(
+        "Resend is in test mode. Verify your sending domain in Resend and set CLINICAL_SENDER_EMAIL to that verified domain before sending live provider signature requests."
+      );
     }
     throw new Error(`Unable to deliver signature email (${response.status}). ${detail}`.trim());
   }
@@ -678,7 +714,7 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
 
   const token = generateSigningToken();
   const hashedToken = hashToken(token);
-  const signatureRequestUrl = `${buildAppBaseUrl()}/sign/pof/${token}`;
+  const signatureRequestUrl = `${buildAppBaseUrl(input.appBaseUrl)}/sign/pof/${token}`;
   const admin = createSupabaseAdminClient();
   const { error: createError } = await admin.from("pof_requests").insert({
     id: requestId,
@@ -725,16 +761,21 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     }
   });
 
-  await sendSignatureEmail({
-    toEmail: providerEmail!,
-    providerName: providerName!,
-    nurseName: nurseName!,
-    fromEmail: fromEmail!,
-    requestUrl: signatureRequestUrl,
-    expiresAt,
-    memberName: form.memberNameSnapshot,
-    optionalMessage
-  });
+  try {
+    await sendSignatureEmail({
+      toEmail: providerEmail!,
+      providerName: providerName!,
+      nurseName: nurseName!,
+      fromEmail: fromEmail!,
+      requestUrl: signatureRequestUrl,
+      expiresAt,
+      memberName: form.memberNameSnapshot,
+      optionalMessage
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unable to deliver signature email.";
+    throw new Error(`${reason} Request was saved as Draft. Copy and send this secure link manually: ${signatureRequestUrl}`);
+  }
 
   const sentAt = toEasternISO();
   const { error: sentError } = await admin
@@ -794,7 +835,7 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
   const expiresAt = toIsoAtEndOfDate(input.expiresOnDate);
   const token = generateSigningToken();
   const hashedToken = hashToken(token);
-  const signatureRequestUrl = `${buildAppBaseUrl()}/sign/pof/${token}`;
+  const signatureRequestUrl = `${buildAppBaseUrl(input.appBaseUrl)}/sign/pof/${token}`;
 
   const unsignedPdfBytes = await buildPofDocumentPdfBytes({
     form,
@@ -808,19 +849,49 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
     contentType: "application/pdf"
   });
 
-  await sendSignatureEmail({
-    toEmail: providerEmail!,
-    providerName: providerName!,
-    nurseName: nurseName!,
-    fromEmail: fromEmail!,
-    requestUrl: signatureRequestUrl,
-    expiresAt,
-    memberName: form.memberNameSnapshot,
-    optionalMessage
-  });
+  const preSendUpdatedAt = toEasternISO();
+  const admin = createSupabaseAdminClient();
+  const { error: preSendError } = await admin
+    .from("pof_requests")
+    .update({
+      provider_name: providerName,
+      provider_email: providerEmail,
+      nurse_name: nurseName,
+      from_email: fromEmail,
+      optional_message: optionalMessage,
+      status: "draft",
+      sent_at: null,
+      opened_at: null,
+      signed_at: null,
+      expires_at: expiresAt,
+      signature_request_token: hashedToken,
+      signature_request_url: signatureRequestUrl,
+      unsigned_pdf_url: unsignedStorageUri,
+      pof_payload_json: form,
+      updated_by_user_id: input.actor.id,
+      updated_by_name: input.actor.fullName,
+      updated_at: preSendUpdatedAt
+    })
+    .eq("id", input.requestId);
+  if (preSendError) throw new Error(preSendError.message);
+
+  try {
+    await sendSignatureEmail({
+      toEmail: providerEmail!,
+      providerName: providerName!,
+      nurseName: nurseName!,
+      fromEmail: fromEmail!,
+      requestUrl: signatureRequestUrl,
+      expiresAt,
+      memberName: form.memberNameSnapshot,
+      optionalMessage
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unable to deliver signature email.";
+    throw new Error(`${reason} Request was saved as Draft. Copy and send this secure link manually: ${signatureRequestUrl}`);
+  }
 
   const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
   const { error } = await admin
     .from("pof_requests")
     .update({

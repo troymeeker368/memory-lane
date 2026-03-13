@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 
 import { requireRoles } from "@/lib/auth";
 import {
@@ -20,6 +21,26 @@ function asOptionalString(formData: FormData, key: string) {
   return value.length > 0 ? value : null;
 }
 
+function clean(value: string | null | undefined) {
+  const normalized = (value ?? "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+async function resolveRequestAppBaseUrl() {
+  const headerMap = await headers();
+  const origin = clean(headerMap.get("origin"));
+  if (origin) return origin;
+
+  const forwardedHost = clean(headerMap.get("x-forwarded-host"));
+  const host = forwardedHost ?? clean(headerMap.get("host"));
+  if (!host) return null;
+  const forwardedProto = clean(headerMap.get("x-forwarded-proto"));
+  const proto =
+    forwardedProto?.split(",")[0]?.trim() ??
+    (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
+  return `${proto}://${host}`;
+}
+
 function revalidatePofRoutes(memberId: string, physicianOrderId?: string | null) {
   revalidatePath("/health");
   revalidatePath("/health/physician-orders");
@@ -32,7 +53,7 @@ function revalidatePofRoutes(memberId: string, physicianOrderId?: string | null)
 
 export async function sendPofSignatureRequestAction(formData: FormData) {
   try {
-    const profile = await requireRoles(["admin", "nurse"]);
+    const profile = await requireRoles(["admin", "nurse", "manager"]);
     const actorName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
     const memberId = asString(formData, "memberId");
     const physicianOrderId = asString(formData, "physicianOrderId");
@@ -47,6 +68,7 @@ export async function sendPofSignatureRequestAction(formData: FormData) {
       providerEmail: asString(formData, "providerEmail"),
       nurseName: asString(formData, "nurseName") || actorName,
       fromEmail: asString(formData, "fromEmail"),
+      appBaseUrl: await resolveRequestAppBaseUrl(),
       optionalMessage: asOptionalString(formData, "optionalMessage"),
       expiresOnDate: asString(formData, "expiresOnDate"),
       actor: {
@@ -66,7 +88,7 @@ export async function sendPofSignatureRequestAction(formData: FormData) {
 
 export async function resendPofSignatureRequestAction(formData: FormData) {
   try {
-    const profile = await requireRoles(["admin", "nurse"]);
+    const profile = await requireRoles(["admin", "nurse", "manager"]);
     const actorName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
     const requestId = asString(formData, "requestId");
     const memberId = asString(formData, "memberId");
@@ -82,6 +104,7 @@ export async function resendPofSignatureRequestAction(formData: FormData) {
       providerEmail: asString(formData, "providerEmail"),
       nurseName: asString(formData, "nurseName") || actorName,
       fromEmail: asString(formData, "fromEmail"),
+      appBaseUrl: await resolveRequestAppBaseUrl(),
       optionalMessage: asOptionalString(formData, "optionalMessage"),
       expiresOnDate: asString(formData, "expiresOnDate"),
       actor: {
@@ -106,7 +129,7 @@ export async function voidPofSignatureRequestAction(input: {
   reason?: string | null;
 }) {
   try {
-    const profile = await requireRoles(["admin", "nurse"]);
+    const profile = await requireRoles(["admin", "nurse", "manager"]);
     const actorName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
     const requestId = String(input.requestId ?? "").trim();
     const memberId = String(input.memberId ?? "").trim();
@@ -151,4 +174,3 @@ export async function getSignedPofDownloadUrlAction(input: { requestId: string; 
     } as const;
   }
 }
-

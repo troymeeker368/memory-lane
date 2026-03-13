@@ -10,6 +10,7 @@ import {
   type IntakeAssessmentSignatureState,
   type IntakeAssessmentSignatureStatus
 } from "@/lib/services/intake-assessment-esign-core";
+import { captureClinicalEsignArtifact } from "@/lib/services/clinical-esign-artifacts";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -156,6 +157,7 @@ export async function signIntakeAssessment(input: {
     signoffName?: string | null;
   };
   attested: boolean;
+  signatureImageDataUrl: string;
   signatureArtifactStoragePath?: string | null;
   signatureArtifactMemberFileId?: string | null;
   metadata?: Record<string, unknown>;
@@ -174,15 +176,33 @@ export async function signIntakeAssessment(input: {
   if (assessmentError) throw new Error(assessmentError.message);
   if (!assessment) throw new Error("Intake assessment not found.");
 
+  if (!cleanIntakeAssessmentSignatureValue(input.signatureImageDataUrl)) {
+    throw new Error("Nurse/Admin e-signature image is required.");
+  }
+  const artifact = await captureClinicalEsignArtifact({
+    domain: "intake-assessment",
+    recordId: assessment.id,
+    memberId: assessment.member_id,
+    signedByUserId: input.actor.id,
+    signedByName: input.actor.signoffName ?? input.actor.fullName,
+    signedAtIso: now,
+    signatureImageDataUrl: input.signatureImageDataUrl
+  });
+
   const persistence = buildIntakeAssessmentSignaturePersistence({
     assessmentId: assessment.id,
     memberId: assessment.member_id,
     actor: input.actor,
     attested: input.attested,
     signedAt: now,
-    signatureArtifactStoragePath: input.signatureArtifactStoragePath,
-    signatureArtifactMemberFileId: input.signatureArtifactMemberFileId,
-    metadata: input.metadata
+    signatureArtifactStoragePath:
+      artifact.signatureArtifactStoragePath ?? input.signatureArtifactStoragePath,
+    signatureArtifactMemberFileId:
+      artifact.signatureArtifactMemberFileId ?? input.signatureArtifactMemberFileId,
+    metadata: {
+      signatureCapture: "drawn-image",
+      ...(input.metadata ?? {})
+    }
   });
 
   const { error: upsertError } = await supabase

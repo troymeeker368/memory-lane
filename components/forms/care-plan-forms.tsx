@@ -8,6 +8,7 @@ import {
   reviewCarePlanAction
 } from "@/app/care-plan-actions";
 import { CarePlanSignatureBlock } from "@/components/care-plans/care-plan-signature-block";
+import { EsignaturePad } from "@/components/signature/esignature-pad";
 import { Button } from "@/components/ui/button";
 import {
   CARE_PLAN_LONG_TERM_LABEL,
@@ -82,7 +83,8 @@ export function NewCarePlanForm({
     careTeamNotes: "",
     caregiverName: "",
     caregiverEmail: "",
-    signatureAttested: false
+    signatureAttested: false,
+    signatureImageDataUrl: ""
   });
 
   return (
@@ -236,6 +238,17 @@ export function NewCarePlanForm({
           />
           <span>I attest this is my electronic signature and I am the authorized clinical signer for this Care Plan.</span>
         </label>
+        <div className="mt-3">
+          <EsignaturePad
+            disabled={isPending}
+            onSignatureChange={(dataUrl) =>
+              setForm((current) => ({
+                ...current,
+                signatureImageDataUrl: dataUrl ?? ""
+              }))
+            }
+          />
+        </div>
         <p className="text-xs text-muted">Signer identity is resolved server-side from the active authenticated nurse/admin session.</p>
       </div>
 
@@ -249,6 +262,7 @@ export function NewCarePlanForm({
           !form.caregiverName.trim() ||
           !form.caregiverEmail.trim() ||
           !form.signatureAttested ||
+          !form.signatureImageDataUrl ||
           (!form.noChangesNeeded && !form.modificationsRequired) ||
           (form.modificationsRequired && !form.modificationsDescription.trim())
         }
@@ -265,7 +279,8 @@ export function NewCarePlanForm({
               careTeamNotes: form.careTeamNotes,
               caregiverName: form.caregiverName,
               caregiverEmail: form.caregiverEmail,
-              signatureAttested: form.signatureAttested
+              signatureAttested: form.signatureAttested,
+              signatureImageDataUrl: form.signatureImageDataUrl
             });
             if (response.error) {
               setStatus(`Error: ${response.error}`);
@@ -313,7 +328,8 @@ export function CarePlanReviewForm({
     careTeamNotes,
     caregiverName: caregiverName ?? "",
     caregiverEmail: caregiverEmail ?? "",
-    signatureAttested: false
+    signatureAttested: false,
+    signatureImageDataUrl: ""
   });
 
   return (
@@ -423,6 +439,17 @@ export function CarePlanReviewForm({
           />
           <span>I attest this is my electronic signature and I am the authorized clinical signer for this Care Plan review.</span>
         </label>
+        <div className="mt-3">
+          <EsignaturePad
+            disabled={isPending}
+            onSignatureChange={(dataUrl) =>
+              setForm((current) => ({
+                ...current,
+                signatureImageDataUrl: dataUrl ?? ""
+              }))
+            }
+          />
+        </div>
         <p className="text-xs text-muted">Signer identity is resolved server-side from the active authenticated nurse/admin session.</p>
       </div>
 
@@ -434,6 +461,7 @@ export function CarePlanReviewForm({
           !form.caregiverName.trim() ||
           !form.caregiverEmail.trim() ||
           !form.signatureAttested ||
+          !form.signatureImageDataUrl ||
           (!form.noChangesNeeded && !form.modificationsRequired) ||
           (form.modificationsRequired && !form.modificationsDescription.trim())
         }
@@ -448,7 +476,8 @@ export function CarePlanReviewForm({
               careTeamNotes: form.careTeamNotes,
               caregiverName: form.caregiverName,
               caregiverEmail: form.caregiverEmail,
-              signatureAttested: form.signatureAttested
+              signatureAttested: form.signatureAttested,
+              signatureImageDataUrl: form.signatureImageDataUrl
             });
             if (response.error) {
               setStatus(`Error: ${response.error}`);

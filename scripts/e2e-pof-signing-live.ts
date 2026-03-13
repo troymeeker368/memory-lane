@@ -96,6 +96,7 @@ async function main() {
 
   const forcedOrderId = clean(process.env.POF_E2E_POF_ID);
   const forcedMemberId = clean(process.env.POF_E2E_MEMBER_ID);
+  const appBaseUrl = clean(process.env.POF_E2E_APP_URL) ?? clean(process.env.NEXT_PUBLIC_APP_URL);
   const providerName = clean(process.env.POF_E2E_PROVIDER_NAME) ?? "POF E2E Provider";
   const providerEmailCandidates = Array.from(
     new Set([clean(process.env.POF_E2E_PROVIDER_EMAIL), senderEmail, clean(actor.email)].filter((value): value is string => Boolean(value)))
@@ -154,6 +155,7 @@ async function main() {
           providerEmail,
           nurseName: actorName,
           fromEmail: senderEmail,
+          appBaseUrl,
           optionalMessage,
           expiresOnDate,
           actor: {

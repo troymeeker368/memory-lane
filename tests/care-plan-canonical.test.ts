@@ -10,7 +10,9 @@ import {
 } from "@/lib/services/care-plan-track-definitions";
 import { canAccessCarePlansForRole, isCarePlanAuthorizedRole } from "@/lib/services/care-plan-authorization";
 import {
+  canSendCaregiverSignatureByNurseSignatureState,
   canSendCaregiverSignatureByNurseSignedAt,
+  hasCanonicalNurseSignature,
   resolvePublicCaregiverLinkState
 } from "@/lib/services/care-plan-esign-rules";
 
@@ -58,6 +60,45 @@ test("caregiver send is blocked until nurse/admin signature is completed", () =>
 
   const allowed = canSendCaregiverSignatureByNurseSignedAt("2026-03-12T10:00:00.000Z");
   assert.equal(allowed.allowed, true);
+
+  const canonicalBlocked = canSendCaregiverSignatureByNurseSignatureState({
+    nurseSignatureStatus: "unsigned",
+    nurseSignedAt: "2026-03-12T10:00:00.000Z"
+  });
+  assert.equal(canonicalBlocked.allowed, false);
+
+  const canonicalAllowed = canSendCaregiverSignatureByNurseSignatureState({
+    nurseSignatureStatus: "signed",
+    nurseSignedAt: "2026-03-12T10:00:00.000Z"
+  });
+  assert.equal(canonicalAllowed.allowed, true);
+});
+
+test("canonical nurse signature helper requires status + signer + signed timestamp", () => {
+  assert.equal(
+    hasCanonicalNurseSignature({
+      nurseSignatureStatus: "unsigned",
+      nurseSignedByUserId: "user-1",
+      nurseSignedAt: "2026-03-12T10:00:00.000Z"
+    }),
+    false
+  );
+  assert.equal(
+    hasCanonicalNurseSignature({
+      nurseSignatureStatus: "signed",
+      nurseSignedByUserId: null,
+      nurseSignedAt: "2026-03-12T10:00:00.000Z"
+    }),
+    false
+  );
+  assert.equal(
+    hasCanonicalNurseSignature({
+      nurseSignatureStatus: "signed",
+      nurseSignedByUserId: "user-1",
+      nurseSignedAt: "2026-03-12T10:00:00.000Z"
+    }),
+    true
+  );
 });
 
 test("public caregiver signing link state requires valid status and non-expired token", () => {

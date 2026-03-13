@@ -10,6 +10,7 @@ import {
   type CarePlanNurseSignatureState,
   type CarePlanNurseSignatureStatus
 } from "@/lib/services/care-plan-nurse-esign-core";
+import { captureClinicalEsignArtifact } from "@/lib/services/clinical-esign-artifacts";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -88,11 +89,13 @@ export async function getCarePlanNurseSignatureState(
   const fallbackUserId =
     cleanCarePlanSignatureValue(carePlan.nurse_signed_by_user_id) ??
     cleanCarePlanSignatureValue(carePlan.nurse_designee_user_id);
+  const parsedStatus = parseCarePlanNurseSignatureStatus(carePlan.nurse_signature_status);
   const fallbackStatus =
-    parseCarePlanNurseSignatureStatus(carePlan.nurse_signature_status) === "signed" &&
-    !fallbackUserId
-      ? "unsigned"
-      : parseCarePlanNurseSignatureStatus(carePlan.nurse_signature_status);
+    parsedStatus === "unsigned" && fallbackUserId && cleanCarePlanSignatureValue(carePlan.nurse_signed_at)
+      ? "signed"
+      : parsedStatus === "signed" && !fallbackUserId
+        ? "unsigned"
+        : parsedStatus;
   const fallbackSignedAt = cleanCarePlanSignatureValue(carePlan.nurse_signed_at);
   const currentMetadata =
     carePlan.nurse_signature_metadata && typeof carePlan.nurse_signature_metadata === "object"
@@ -128,6 +131,7 @@ export async function signCarePlanNurseEsign(input: {
     signoffName?: string | null;
   };
   attested: boolean;
+  signatureImageDataUrl: string;
   signatureArtifactStoragePath?: string | null;
   signatureArtifactMemberFileId?: string | null;
   metadata?: Record<string, unknown>;
@@ -145,8 +149,20 @@ export async function signCarePlanNurseEsign(input: {
     .maybeSingle();
   if (carePlanError) throw new Error(carePlanError.message);
   if (!carePlan) throw new Error("Care plan not found.");
+  if (!cleanCarePlanSignatureValue(input.signatureImageDataUrl)) {
+    throw new Error("Nurse/Admin e-signature image is required.");
+  }
 
   const completionDate = cleanCarePlanSignatureValue(carePlan.review_date) ?? toEasternDate(now);
+  const artifact = await captureClinicalEsignArtifact({
+    domain: "care-plan",
+    recordId: carePlan.id,
+    memberId: carePlan.member_id,
+    signedByUserId: input.actor.id,
+    signedByName: input.actor.signoffName ?? input.actor.fullName,
+    signedAtIso: now,
+    signatureImageDataUrl: input.signatureImageDataUrl
+  });
   const persistence = buildCarePlanNurseSignaturePersistence({
     carePlanId: carePlan.id,
     memberId: carePlan.member_id,
@@ -154,9 +170,14 @@ export async function signCarePlanNurseEsign(input: {
     attested: input.attested,
     signedAt: now,
     completionDate,
-    signatureArtifactStoragePath: input.signatureArtifactStoragePath,
-    signatureArtifactMemberFileId: input.signatureArtifactMemberFileId,
-    metadata: input.metadata
+    signatureArtifactStoragePath:
+      artifact.signatureArtifactStoragePath ?? input.signatureArtifactStoragePath,
+    signatureArtifactMemberFileId:
+      artifact.signatureArtifactMemberFileId ?? input.signatureArtifactMemberFileId,
+    metadata: {
+      signatureCapture: "drawn-image",
+      ...(input.metadata ?? {})
+    }
   });
 
   const { error: upsertError } = await supabase

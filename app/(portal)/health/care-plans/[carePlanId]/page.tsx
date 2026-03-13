@@ -136,8 +136,12 @@ export default async function CarePlanDetailPage({
           administratorSignature={detail.carePlan.administratorSignature ?? detail.carePlan.nurseDesigneeName}
           administratorSignatureDate={detail.carePlan.administratorSignatureDate}
           nurseSignatureStatus={detail.carePlan.nurseSignatureStatus}
+          nurseSignedByUserId={detail.carePlan.nurseSignedByUserId}
           nurseSignedByName={detail.carePlan.nurseSignedByName}
           nurseSignedAt={detail.carePlan.nurseSignedAt}
+          nurseSignatureArtifactMemberFileId={detail.carePlan.nurseSignatureArtifactMemberFileId}
+          nurseSignatureArtifactStoragePath={detail.carePlan.nurseSignatureArtifactStoragePath}
+          nurseSignatureMetadata={detail.carePlan.nurseSignatureMetadata}
           caregiverSignatureStatus={detail.carePlan.caregiverSignatureStatus}
           caregiverSentAt={detail.carePlan.caregiverSentAt}
           caregiverViewedAt={detail.carePlan.caregiverViewedAt}
@@ -148,6 +152,7 @@ export default async function CarePlanDetailPage({
       <Card>
         <CarePlanCaregiverEsignActions
           carePlanId={detail.carePlan.id}
+          nurseSignatureStatus={detail.carePlan.nurseSignatureStatus}
           nurseSignedAt={detail.carePlan.nurseSignedAt}
           caregiverName={detail.carePlan.caregiverName}
           caregiverEmail={detail.carePlan.caregiverEmail}

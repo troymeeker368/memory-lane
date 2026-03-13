@@ -4,7 +4,10 @@ import {
   parseCarePlanNurseSignatureStatus,
   type CarePlanNurseSignatureStatus
 } from "@/lib/services/care-plan-nurse-esign-core";
-import { signCarePlanNurseEsign } from "@/lib/services/care-plan-nurse-esign";
+import {
+  getCarePlanNurseSignatureState,
+  signCarePlanNurseEsign
+} from "@/lib/services/care-plan-nurse-esign";
 import {
   CARE_PLAN_CARE_TEAM_NOTES_LABEL,
   CARE_PLAN_LONG_TERM_LABEL,
@@ -281,8 +284,12 @@ function toCarePlan(row: DbCarePlan): CarePlan {
   if (!row.member?.display_name) {
     throw new Error(`Care plan ${row.id} is missing required member linkage.`);
   }
-  const nurseSignatureStatus = parseCarePlanNurseSignatureStatus(row.nurse_signature_status);
   const nurseSignedByUserId = clean(row.nurse_signed_by_user_id) ?? clean(row.nurse_designee_user_id);
+  const parsedNurseSignatureStatus = parseCarePlanNurseSignatureStatus(row.nurse_signature_status);
+  const nurseSignatureStatus =
+    parsedNurseSignatureStatus === "unsigned" && nurseSignedByUserId && clean(row.nurse_signed_at)
+      ? "signed"
+      : parsedNurseSignatureStatus;
   const nurseSignedByName =
     clean(row.nurse_signed_by_name) ??
     clean(row.nurse_designee_name) ??
@@ -568,8 +575,25 @@ export async function getCarePlans(filters?: {
 
 export async function getCarePlanById(id: string, options?: { serviceRole?: boolean }) {
   const rows = await listCarePlanRows({ carePlanId: id, serviceRole: Boolean(options?.serviceRole) });
-  const carePlan = rows[0] ?? null;
-  if (!carePlan) return null;
+  const baseCarePlan = rows[0] ?? null;
+  if (!baseCarePlan) return null;
+  const signature = await getCarePlanNurseSignatureState(id, { serviceRole: Boolean(options?.serviceRole) });
+  const carePlan: CarePlan = {
+    ...baseCarePlan,
+    nurseSignatureStatus: signature.status,
+    nurseSignedByUserId: signature.signedByUserId,
+    nurseSignedByName: signature.signedByName,
+    nurseSignedAt: signature.signedAt ?? baseCarePlan.nurseSignedAt,
+    nurseSignatureArtifactStoragePath:
+      signature.signatureArtifactStoragePath ?? baseCarePlan.nurseSignatureArtifactStoragePath,
+    nurseSignatureArtifactMemberFileId:
+      signature.signatureArtifactMemberFileId ?? baseCarePlan.nurseSignatureArtifactMemberFileId,
+    nurseSignatureMetadata: signature.signatureMetadata,
+    completedBy: signature.signedByName ?? baseCarePlan.completedBy,
+    administratorSignature: signature.signedByName ?? baseCarePlan.administratorSignature,
+    nurseDesigneeUserId: signature.signedByUserId ?? baseCarePlan.nurseDesigneeUserId,
+    nurseDesigneeName: signature.signedByName ?? baseCarePlan.nurseDesigneeName
+  };
   const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
   const [{ data: historyRows, error: historyError }, { data: versionRows, error: versionsError }] = await Promise.all([
     supabase
@@ -691,6 +715,7 @@ export async function createCarePlan(input: {
   caregiverName?: string | null;
   caregiverEmail?: string | null;
   signatureAttested: boolean;
+  signatureImageDataUrl: string;
   actor: { id: string; fullName: string; signatureName: string; role: string };
 }) {
   const supabase = await createClient();
@@ -770,6 +795,7 @@ export async function createCarePlan(input: {
         signoffName: input.actor.signatureName
       },
       attested: input.signatureAttested,
+      signatureImageDataUrl: input.signatureImageDataUrl,
       metadata: {
         module: "care-plan",
         signedFrom: "createCarePlan"
@@ -816,6 +842,7 @@ export async function reviewCarePlan(input: {
   caregiverName?: string | null;
   caregiverEmail?: string | null;
   signatureAttested: boolean;
+  signatureImageDataUrl: string;
   actor: { id: string; fullName: string; signatureName: string; role: string };
 }) {
   const supabase = await createClient();
@@ -894,6 +921,7 @@ export async function reviewCarePlan(input: {
       signoffName: input.actor.signatureName
     },
     attested: input.signatureAttested,
+    signatureImageDataUrl: input.signatureImageDataUrl,
     metadata: {
       module: "care-plan",
       signedFrom: "reviewCarePlan"
@@ -937,6 +965,7 @@ export async function signCarePlanAsNurseAdmin(input: {
   carePlanId: string;
   actor: { id: string; fullName: string; signatureName: string; role: string };
   attested: boolean;
+  signatureImageDataUrl: string;
 }) {
   const supabase = await createClient();
   await signCarePlanNurseEsign({
@@ -948,6 +977,7 @@ export async function signCarePlanAsNurseAdmin(input: {
       signoffName: input.actor.signatureName
     },
     attested: input.attested,
+    signatureImageDataUrl: input.signatureImageDataUrl,
     metadata: {
       module: "care-plan",
       signedFrom: "signCarePlanAsNurseAdmin"

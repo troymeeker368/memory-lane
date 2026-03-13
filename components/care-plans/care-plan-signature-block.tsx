@@ -34,8 +34,12 @@ export function CarePlanSignatureBlock({
   administratorSignature,
   administratorSignatureDate,
   nurseSignatureStatus,
+  nurseSignedByUserId,
   nurseSignedByName,
   nurseSignedAt,
+  nurseSignatureArtifactMemberFileId,
+  nurseSignatureArtifactStoragePath,
+  nurseSignatureMetadata,
   caregiverSignatureStatus,
   caregiverSentAt,
   caregiverViewedAt,
@@ -48,8 +52,12 @@ export function CarePlanSignatureBlock({
   administratorSignature: string | null;
   administratorSignatureDate: string | null;
   nurseSignatureStatus?: string | null;
+  nurseSignedByUserId?: string | null;
   nurseSignedByName?: string | null;
   nurseSignedAt?: string | null;
+  nurseSignatureArtifactMemberFileId?: string | null;
+  nurseSignatureArtifactStoragePath?: string | null;
+  nurseSignatureMetadata?: Record<string, unknown> | null;
   caregiverSignatureStatus?: string | null;
   caregiverSentAt?: string | null;
   caregiverViewedAt?: string | null;
@@ -61,10 +69,16 @@ export function CarePlanSignatureBlock({
   return (
     <div className="space-y-3">
       {nurseSignatureStatus ? (
-        <p className="text-xs text-muted">
-          Nurse/Admin E-Sign Status: {nurseSignatureStatus} | Signed By: {canonicalSignerName ?? "-"} | Signed At:{" "}
-          {formatOptionalDate(canonicalSignedAt ?? null)}
-        </p>
+        <div className="space-y-1 text-xs text-muted">
+          <p>
+            Nurse/Admin E-Sign Status: {nurseSignatureStatus} | Signed By: {canonicalSignerName ?? "-"} | Signed At:{" "}
+            {formatOptionalDate(canonicalSignedAt ?? null)}
+          </p>
+          <p>Signer User ID: {nurseSignedByUserId ?? "-"}</p>
+          <p>Signature Artifact Member File ID: {nurseSignatureArtifactMemberFileId ?? "-"}</p>
+          <p>Signature Artifact Storage Path: {nurseSignatureArtifactStoragePath ?? "-"}</p>
+          <p>Signature Metadata: {nurseSignatureMetadata ? JSON.stringify(nurseSignatureMetadata) : "{}"}</p>
+        </div>
       ) : null}
       <SignatureRow
         leftLabel={CARE_PLAN_SIGNATURE_LABELS.completedBy}

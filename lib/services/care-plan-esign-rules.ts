@@ -41,10 +41,3 @@ export function hasCanonicalNurseSignature(input: {
 }) {
   return input.nurseSignatureStatus === "signed" && Boolean(input.nurseSignedByUserId) && Boolean(input.nurseSignedAt);
 }
-
-export function canSendCaregiverSignatureByNurseSignedAtLegacyCompatible(nurseSignedAt: string | null) {
-  if (!nurseSignedAt) {
-    return { allowed: false, reason: "Care plan must be signed by Nurse/Admin before caregiver send." } as const;
-  }
-  return { allowed: true } as const;
-}

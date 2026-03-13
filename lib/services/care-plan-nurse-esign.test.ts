@@ -3,29 +3,29 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 
 import {
-  buildIntakeAssessmentSignaturePersistence,
-  isAuthorizedIntakeAssessmentSignerRole
-} from "@/lib/services/intake-assessment-esign-core";
+  buildCarePlanNurseSignaturePersistence,
+  isAuthorizedCarePlanSignerRole
+} from "@/lib/services/care-plan-nurse-esign-core";
 
-test("typed signature placeholder text is removed from Intake Assessment form", () => {
-  const source = readFileSync("components/forms/workflow-forms.tsx", "utf8");
+test("typed signature placeholder text is removed from Care Plan forms", () => {
+  const source = readFileSync("components/forms/care-plan-forms.tsx", "utf8");
   assert.equal(source.toLowerCase().includes("replace typed signature"), false);
   assert.equal(source.toLowerCase().includes("pdf/e-sign integration"), false);
   assert.equal(source.includes("placeholder=\"Type full legal name\""), false);
   assert.equal(source.includes("EsignaturePad"), true);
 });
 
-test("intake assessment action requires a captured signature image payload", () => {
-  const source = readFileSync("app/actions.ts", "utf8");
+test("care plan actions require a captured signature image payload", () => {
+  const source = readFileSync("app/care-plan-actions.ts", "utf8");
   assert.equal(source.includes("signatureImageDataUrl: z.string().min(1)"), true);
   assert.equal(source.includes("signatureImageDataUrl: payload.data.signatureImageDataUrl"), true);
 });
 
-test("authorized nurse role can produce canonical intake e-sign persistence payload", () => {
-  assert.equal(isAuthorizedIntakeAssessmentSignerRole("nurse"), true);
+test("authorized nurse role can produce canonical care-plan nurse e-sign persistence payload", () => {
+  assert.equal(isAuthorizedCarePlanSignerRole("nurse"), true);
 
-  const signed = buildIntakeAssessmentSignaturePersistence({
-    assessmentId: "assessment-1",
+  const signed = buildCarePlanNurseSignaturePersistence({
+    carePlanId: "care-plan-1",
     memberId: "member-1",
     actor: {
       id: "user-1",
@@ -34,21 +34,22 @@ test("authorized nurse role can produce canonical intake e-sign persistence payl
       signoffName: "Nurse Full Name, RN"
     },
     attested: true,
-    signedAt: "2026-03-12T10:00:00.000Z"
+    signedAt: "2026-03-12T10:00:00.000Z",
+    completionDate: "2026-03-12"
   });
 
   assert.equal(signed.state.status, "signed");
   assert.equal(signed.state.signedByUserId, "user-1");
   assert.equal(signed.state.signedByName, "Nurse Full Name, RN");
   assert.equal(signed.signatureRow.signed_by_user_id, "user-1");
-  assert.equal(signed.assessmentUpdate.signed_by_user_id, "user-1");
+  assert.equal(signed.carePlanUpdate.nurse_signed_by_user_id, "user-1");
 });
 
-test("authorized admin role can produce canonical intake e-sign persistence payload", () => {
-  assert.equal(isAuthorizedIntakeAssessmentSignerRole("admin"), true);
+test("authorized admin role can produce canonical care-plan nurse e-sign persistence payload", () => {
+  assert.equal(isAuthorizedCarePlanSignerRole("admin"), true);
 
-  const signed = buildIntakeAssessmentSignaturePersistence({
-    assessmentId: "assessment-2",
+  const signed = buildCarePlanNurseSignaturePersistence({
+    carePlanId: "care-plan-2",
     memberId: "member-2",
     actor: {
       id: "user-2",
@@ -56,19 +57,20 @@ test("authorized admin role can produce canonical intake e-sign persistence payl
       role: "admin"
     },
     attested: true,
-    signedAt: "2026-03-12T10:05:00.000Z"
+    signedAt: "2026-03-12T10:05:00.000Z",
+    completionDate: "2026-03-12"
   });
 
   assert.equal(signed.state.signedByName, "Admin User");
   assert.equal(signed.state.signatureMetadata.signerRole, "admin");
 });
 
-test("unauthorized roles cannot sign intake assessment", () => {
-  assert.equal(isAuthorizedIntakeAssessmentSignerRole("manager"), false);
+test("unauthorized roles cannot sign care plans", () => {
+  assert.equal(isAuthorizedCarePlanSignerRole("manager"), false);
   assert.throws(
     () =>
-      buildIntakeAssessmentSignaturePersistence({
-        assessmentId: "assessment-3",
+      buildCarePlanNurseSignaturePersistence({
+        carePlanId: "care-plan-3",
         memberId: "member-3",
         actor: {
           id: "user-3",
@@ -76,15 +78,16 @@ test("unauthorized roles cannot sign intake assessment", () => {
           role: "manager"
         },
         attested: true,
-        signedAt: "2026-03-12T10:10:00.000Z"
+        signedAt: "2026-03-12T10:10:00.000Z",
+        completionDate: "2026-03-12"
       }),
     /Only nurse or admin users/
   );
 });
 
 test("signer identity resolves from authenticated actor, not client-submitted free text", () => {
-  const signed = buildIntakeAssessmentSignaturePersistence({
-    assessmentId: "assessment-4",
+  const signed = buildCarePlanNurseSignaturePersistence({
+    carePlanId: "care-plan-4",
     memberId: "member-4",
     actor: {
       id: "user-4",
@@ -94,6 +97,7 @@ test("signer identity resolves from authenticated actor, not client-submitted fr
     },
     attested: true,
     signedAt: "2026-03-12T10:15:00.000Z",
+    completionDate: "2026-03-12",
     metadata: {
       clientSubmittedSigner: "Bad Actor Name"
     }
@@ -103,9 +107,9 @@ test("signer identity resolves from authenticated actor, not client-submitted fr
   assert.notEqual(signed.state.signedByName, "Bad Actor Name");
 });
 
-test("signed state is consistent across canonical persistence/read payloads", () => {
-  const signed = buildIntakeAssessmentSignaturePersistence({
-    assessmentId: "assessment-5",
+test("signed state is consistent across canonical care-plan persistence payloads", () => {
+  const signed = buildCarePlanNurseSignaturePersistence({
+    carePlanId: "care-plan-5",
     memberId: "member-5",
     actor: {
       id: "user-5",
@@ -114,14 +118,16 @@ test("signed state is consistent across canonical persistence/read payloads", ()
     },
     attested: true,
     signedAt: "2026-03-12T10:20:00.000Z",
-    signatureArtifactStoragePath: "members/member-5/assessment/assessment-5/signed.pdf",
+    completionDate: "2026-03-12",
+    signatureArtifactStoragePath: "members/member-5/care-plans/care-plan-5/signed.pdf",
     signatureArtifactMemberFileId: "mf_123"
   });
 
-  assert.equal(signed.signatureRow.assessment_id, signed.state.assessmentId);
-  assert.equal(signed.assessmentUpdate.signed_by, signed.state.signedByName);
+  assert.equal(signed.signatureRow.care_plan_id, signed.state.carePlanId);
   assert.equal(signed.signatureRow.signed_at, signed.state.signedAt);
-  assert.equal(signed.state.signatureArtifactStoragePath, "members/member-5/assessment/assessment-5/signed.pdf");
+  assert.equal(signed.carePlanUpdate.nurse_signature_status, "signed");
+  assert.equal(signed.carePlanUpdate.nurse_signed_by_name, signed.state.signedByName);
+  assert.equal(signed.carePlanUpdate.completed_by, signed.state.signedByName);
+  assert.equal(signed.state.signatureArtifactStoragePath, "members/member-5/care-plans/care-plan-5/signed.pdf");
   assert.equal(signed.state.signatureArtifactMemberFileId, "mf_123");
-  assert.equal(signed.assessmentUpdate.signature_status, "signed");
 });
