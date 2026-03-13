@@ -8,12 +8,10 @@ import {
   type PhysicianOrderForm
 } from "@/lib/services/physician-orders-supabase";
 import {
-  buildDocumentCenterSenderHeader,
-  DOCUMENT_CENTER_LOGO_PUBLIC_URL,
-  DOCUMENT_CENTER_NAME,
-  getDocumentCenterSignatureHtml,
-  getDocumentCenterSignatureText
-} from "@/lib/services/document-branding";
+  facilityBranding,
+  getFacilitySignatureLines,
+  resolveFacilityLogoUrl
+} from "@/lib/config/facility-branding";
 import { buildPofDocumentPdfBytes } from "@/lib/services/pof-document-pdf";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -438,31 +436,32 @@ async function sendSignatureEmail(input: {
     throw new Error("Clinical sender email is missing or invalid. Configure CLINICAL_SENDER_EMAIL.");
   }
 
-  const subject = "Physician Order Form Signature Request \u2013 Town Square Fort Mill";
+  const subject = `Physician Order Form Signature Request \u2013 ${facilityBranding.facilityName}`;
   const expiresOn = new Intl.DateTimeFormat("en-US", {
     month: "long",
     day: "numeric",
     year: "numeric",
     timeZone: "America/New_York"
   }).format(new Date(input.expiresAt));
-  const signatureHtml = getDocumentCenterSignatureHtml();
-  const signatureText = getDocumentCenterSignatureText();
+  const signatureLines = getFacilitySignatureLines();
+  const signatureHtml = signatureLines.map((line) => escapeHtml(line)).join("<br/>");
+  const signatureText = signatureLines.join("\n");
   const optionalMessage = clean(input.optionalMessage);
   const providerNameEscaped = escapeHtml(input.providerName);
   const nurseNameEscaped = escapeHtml(input.nurseName);
   const memberNameEscaped = escapeHtml(input.memberName);
   const requestUrlEscaped = escapeHtml(input.requestUrl);
   const optionalMessageEscaped = optionalMessage ? escapeHtml(optionalMessage) : null;
-  const logoUrlEscaped = escapeHtml(DOCUMENT_CENTER_LOGO_PUBLIC_URL);
+  const logoUrlEscaped = escapeHtml(resolveFacilityLogoUrl());
   const titleEscaped = escapeHtml(subject);
-  const facilityNameEscaped = escapeHtml(DOCUMENT_CENTER_NAME);
+  const facilityNameEscaped = escapeHtml(facilityBranding.facilityName);
 
   const html = `
     <div style="background:#f3f8fc;padding:24px;font-family:Arial,sans-serif;color:#0f172a;">
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #d9e4ef;border-radius:14px;overflow:hidden;">
         <tr>
           <td style="padding:24px 24px 12px;">
-            <img src="${logoUrlEscaped}" alt="${facilityNameEscaped} logo" width="180" style="display:block;width:180px;max-width:100%;height:auto;"/>
+            <img src="${logoUrlEscaped}" alt="Town Square Fort Mill" width="180" style="display:block;width:180px;max-width:100%;height:auto;"/>
           </td>
         </tr>
         <tr>
@@ -486,7 +485,7 @@ async function sendSignatureEmail(input: {
         </tr>
         <tr>
           <td style="padding:18px 24px 0;">
-            <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">This request was sent by ${nurseNameEscaped} from Town Square Fort Mill.</p>
+            <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">This request was sent by ${nurseNameEscaped} from ${facilityNameEscaped}.</p>
             <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Please review and sign the document securely using the link below.</p>
           </td>
         </tr>
@@ -516,7 +515,7 @@ async function sendSignatureEmail(input: {
     `Hello ${input.providerName},`,
     "A Physician Order Form (POF) for the following member requires your review and signature.",
     `Member: ${input.memberName}`,
-    `This request was sent by ${input.nurseName} from Town Square Fort Mill.`,
+    `This request was sent by ${input.nurseName} from ${facilityBranding.facilityName}.`,
     "Please review and sign the document securely using the link below.",
     "Open Secure POF Signing Page",
     input.requestUrl,
@@ -530,7 +529,7 @@ async function sendSignatureEmail(input: {
     .join("\n");
 
   const response = await resend.emails.send({
-    from: buildDocumentCenterSenderHeader(clinicalSenderEmail),
+    from: `${facilityBranding.facilityName} <${clinicalSenderEmail}>`,
     to: [input.toEmail],
     subject,
     html,

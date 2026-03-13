@@ -1,36 +1,11 @@
 import { normalizeRoleKey } from "@/lib/permissions";
+import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";
 
 interface AncillaryScope {
   role?: AppRole;
   staffUserId?: string | null;
-}
-
-function isMissingSchemaObjectError(error: any) {
-  const code = String(error?.code ?? "");
-  const message = [
-    error?.message,
-    error?.details,
-    error?.hint
-  ]
-    .filter((value) => typeof value === "string" && value.trim().length > 0)
-    .join(" ")
-    .toLowerCase();
-
-  return (
-    code === "PGRST205" ||
-    code === "PGRST116" ||
-    code === "42P01" ||
-    code === "42703" ||
-    message.includes("schema cache") ||
-    message.includes("does not exist") ||
-    message.includes("could not find the table")
-  );
-}
-
-function buildMissingSchemaMessage(input: { objectName: string; migration: string }) {
-  return `Missing Supabase schema object public.${input.objectName}. Apply migration ${input.migration} (and any earlier unapplied migrations), then restart Supabase/PostgREST to refresh schema cache.`;
 }
 
 export async function getAncillarySummary(monthKey?: string, scope?: AncillaryScope) {

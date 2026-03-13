@@ -11,8 +11,17 @@ import {
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
 import { ensureMemberAttendanceScheduleSupabase } from "@/lib/services/member-command-center-supabase";
+import {
+  deleteAttendanceRecordSupabase,
+  getActiveMemberIdSupabase,
+  getAttendanceRecordSupabase,
+  setBillingAdjustmentExcludedSupabase,
+  updateScheduleMakeupBalanceSupabase,
+  upsertAttendanceRecordSupabase,
+  writeMakeupAuditLogSupabase,
+  type AttendanceRecordRow
+} from "@/lib/services/attendance-workflow-supabase";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
-import { createClient } from "@/lib/supabase/server";
 import { easternDateTimeLocalToISO, toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
 
@@ -71,18 +80,6 @@ function resolveAttendanceTimestamp(input: {
   return input.fallbackIso;
 }
 
-type AttendanceRecordRow = {
-  id: string;
-  member_id: string;
-  attendance_date: string;
-  status: "present" | "absent";
-  absent_reason: string | null;
-  absent_reason_other: string | null;
-  check_in_at: string | null;
-  check_out_at: string | null;
-  linked_adjustment_id: string | null;
-};
-
 type AttendanceScheduleRow = {
   id: string;
   member_id: string;
@@ -95,15 +92,7 @@ type AttendanceScheduleRow = {
 };
 
 async function getAttendanceRecord(memberId: string, attendanceDate: string) {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("attendance_records")
-    .select("id, member_id, attendance_date, status, absent_reason, absent_reason_other, check_in_at, check_out_at, linked_adjustment_id")
-    .eq("member_id", memberId)
-    .eq("attendance_date", attendanceDate)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  return (data as AttendanceRecordRow | null) ?? null;
+  return getAttendanceRecordSupabase(memberId, attendanceDate);
 }
 
 async function getMemberAttendanceSchedule(memberId: string) {
@@ -158,22 +147,12 @@ async function recordMakeupAuditLog(input: {
   actorUserId: string | null;
   actorRole: AppRole;
 }) {
-  const supabase = await createClient();
-  const { error } = await supabase.from("audit_logs").insert({
-    actor_user_id: input.actorUserId,
-    actor_role: input.actorRole,
-    action: "manager_review",
-    entity_type: "makeup_day",
-    entity_id: input.memberId,
-    details: {
-      attendanceDate: input.attendanceDate,
-      deltaDays: input.deltaDays,
-      source: input.source
-    }
-  });
-  if (error) {
+  try {
+    await writeMakeupAuditLogSupabase(input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.warn("[Attendance] Unable to write makeup audit log", {
-      message: error.message,
+      message,
       memberId: input.memberId,
       attendanceDate: input.attendanceDate
     });
@@ -198,17 +177,12 @@ async function applyScheduledAbsenceMakeupDelta(input: {
   if (nextBalance === currentBalance) return;
 
   const now = toEasternISO();
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("member_attendance_schedules")
-    .update({
-      make_up_days_available: nextBalance,
-      updated_by_user_id: actorUserIdOrNull(input.actor.id),
-      updated_by_name: input.actor.full_name,
-      updated_at: now
-    })
-    .eq("id", schedule.id);
-  if (error) throw new Error(error.message);
+  await updateScheduleMakeupBalanceSupabase({
+    scheduleId: schedule.id,
+    makeUpDaysAvailable: nextBalance,
+    actor: input.actor,
+    at: now
+  });
 
   await recordMakeupAuditLog({
     memberId: input.memberId,
@@ -233,48 +207,7 @@ async function upsertAttendanceRecord(input: {
   actor: { id: string; full_name: string };
   at: string;
 }) {
-  const supabase = await createClient();
-  if (input.existing) {
-    const { data, error } = await supabase
-      .from("attendance_records")
-      .update({
-        status: input.status,
-        absent_reason: input.absentReason,
-        absent_reason_other: input.absentReasonOther,
-        check_in_at: input.checkInAt,
-        check_out_at: input.checkOutAt,
-        notes: input.notes,
-        recorded_by_user_id: actorUserIdOrNull(input.actor.id),
-        recorded_by_name: input.actor.full_name,
-        updated_at: input.at
-      })
-      .eq("id", input.existing.id)
-      .select("id, member_id, attendance_date, status, absent_reason, absent_reason_other, check_in_at, check_out_at, linked_adjustment_id")
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    return (data as AttendanceRecordRow | null) ?? null;
-  }
-
-  const { data, error } = await supabase
-    .from("attendance_records")
-    .insert({
-      member_id: input.memberId,
-      attendance_date: input.attendanceDate,
-      status: input.status,
-      absent_reason: input.absentReason,
-      absent_reason_other: input.absentReasonOther,
-      check_in_at: input.checkInAt,
-      check_out_at: input.checkOutAt,
-      notes: input.notes,
-      recorded_by_user_id: actorUserIdOrNull(input.actor.id),
-      recorded_by_name: input.actor.full_name,
-      created_at: input.at,
-      updated_at: input.at
-    })
-    .select("id, member_id, attendance_date, status, absent_reason, absent_reason_other, check_in_at, check_out_at, linked_adjustment_id")
-    .single();
-  if (error) throw new Error(error.message);
-  return data as AttendanceRecordRow;
+  return upsertAttendanceRecordSupabase(input);
 }
 
 export async function saveAttendanceStatusAction(formData: FormData) {
@@ -302,16 +235,10 @@ export async function saveAttendanceStatusAction(formData: FormData) {
     if (requestedStatus === "clear") {
       const now = toEasternISO();
       if (existing?.linked_adjustment_id) {
-        const supabase = await createClient();
-        const { error } = await supabase
-          .from("billing_adjustments")
-          .update({
-            billing_status: "Excluded",
-            invoice_id: null,
-            updated_at: now
-          })
-          .eq("id", existing.linked_adjustment_id);
-        if (error) throw new Error(error.message);
+        await setBillingAdjustmentExcludedSupabase({
+          id: existing.linked_adjustment_id,
+          updatedAt: now
+        });
       }
 
       if (existingStatus === "absent") {
@@ -325,9 +252,7 @@ export async function saveAttendanceStatusAction(formData: FormData) {
       }
 
       if (existing) {
-        const supabase = await createClient();
-        const { error } = await supabase.from("attendance_records").delete().eq("id", existing.id);
-        if (error) throw new Error(error.message);
+        await deleteAttendanceRecordSupabase(existing.id);
       }
 
       revalidateAttendanceViews();
@@ -491,15 +416,8 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
     const useMakeupDay = asString(formData, "useMakeupDay").toLowerCase() === "yes";
     const checkInTime = asString(formData, "checkInTime");
 
-    const supabase = await createClient();
-    const { data: member, error: memberError } = await supabase
-      .from("members")
-      .select("id, status")
-      .eq("id", memberId)
-      .eq("status", "active")
-      .maybeSingle();
-    if (memberError) throw new Error(memberError.message);
-    if (!member) {
+    const activeMemberId = await getActiveMemberIdSupabase(memberId);
+    if (!activeMemberId) {
       throw new Error("Active member not found.");
     }
 
@@ -546,16 +464,12 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
         throw new Error("No makeup days are currently available for this member.");
       }
 
-      const { error: scheduleError } = await supabase
-        .from("member_attendance_schedules")
-        .update({
-          make_up_days_available: currentBalance - 1,
-          updated_by_user_id: actorUserIdOrNull(actor.id),
-          updated_by_name: actor.full_name,
-          updated_at: now
-        })
-        .eq("id", schedule.id);
-      if (scheduleError) throw new Error(scheduleError.message);
+      await updateScheduleMakeupBalanceSupabase({
+        scheduleId: schedule.id,
+        makeUpDaysAvailable: currentBalance - 1,
+        actor,
+        at: now
+      });
 
       await recordMakeupAuditLog({
         memberId,

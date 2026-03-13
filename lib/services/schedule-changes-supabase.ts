@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { toEasternISO } from "@/lib/timezone";
 
 export const SCHEDULE_CHANGE_TYPES = [
@@ -39,6 +40,21 @@ export interface ScheduleChangeRow {
   closed_at: string | null;
   closed_by: string | null;
   closed_by_user_id: string | null;
+}
+
+
+async function resolveScheduleMemberId(rawMemberId: string, actionLabel: string) {
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: rawMemberId
+    },
+    { actionLabel }
+  );
+  if (!canonical.memberId) {
+    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
+  }
+  return canonical.memberId;
 }
 
 type PostgrestErrorLike = {
@@ -119,7 +135,10 @@ export async function listScheduleChangesSupabase(input?: {
 }) {
   const supabase = await createClient();
   let query = supabase.from("schedule_changes").select("*").order("created_at", { ascending: false });
-  if (input?.memberId) query = query.eq("member_id", input.memberId);
+  if (input?.memberId) {
+    const canonicalMemberId = await resolveScheduleMemberId(input.memberId, "listScheduleChangesSupabase");
+    query = query.eq("member_id", canonicalMemberId);
+  }
   if (input?.status && input.status !== "all") query = query.eq("status", input.status);
   if (input?.changeType && input.changeType !== "all") query = query.eq("change_type", input.changeType);
   if (input?.effectiveDate) {
@@ -152,13 +171,21 @@ export async function listActiveScheduleChangesForMembersSupabase(input: {
   );
   if (memberIds.length === 0) return [] as ScheduleChangeRow[];
 
+  const canonicalMemberIds = Array.from(
+    new Set(
+      await Promise.all(
+        memberIds.map((memberId) => resolveScheduleMemberId(memberId, "listActiveScheduleChangesForMembersSupabase"))
+      )
+    )
+  );
+
   const startDate = normalizeOperationalDateOnly(input.startDate);
   const endDate = normalizeOperationalDateOnly(input.endDate);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("schedule_changes")
     .select("*")
-    .in("member_id", memberIds)
+    .in("member_id", canonicalMemberIds)
     .eq("status", "active")
     .lte("effective_start_date", endDate)
     .or(`effective_end_date.is.null,effective_end_date.gte.${startDate}`)
@@ -188,13 +215,14 @@ export async function createScheduleChangeSupabase(input: {
   enteredBy: string;
   enteredByUserId: string;
 }) {
+  const canonicalMemberId = await resolveScheduleMemberId(input.memberId, "createScheduleChangeSupabase");
   const supabase = await createClient();
   const now = toEasternISO();
   const originalDays = normalizeWeekdays(input.originalDays);
   const newDays = normalizeWeekdays(input.newDays);
   const payload = {
     id: `schedule-change-${randomUUID()}`,
-    member_id: input.memberId,
+    member_id: canonicalMemberId,
     change_type: input.changeType,
     effective_start_date: normalizeOperationalDateOnly(input.effectiveStartDate),
     effective_end_date: input.effectiveEndDate ? normalizeOperationalDateOnly(input.effectiveEndDate) : null,

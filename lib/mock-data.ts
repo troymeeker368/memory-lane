@@ -1,11 +1,10 @@
 import type { AppRole, UserProfile } from "@/types/app";
 import { getCurrentPayPeriod } from "@/lib/pay-period";
-import { getMockRole } from "@/lib/runtime";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import { getPermissionSource, normalizeRoleKey, resolveEffectivePermissionSet } from "@/lib/permissions";
 
 function defaultProfile(roleOverride?: AppRole): UserProfile {
-  const role = normalizeRoleKey(roleOverride ?? getMockRole());
+  const role = normalizeRoleKey(roleOverride ?? "program-assistant");
   return {
     id: "legacy-mock-profile",
     email: "legacy-mock-profile@memorylane.local",
@@ -24,7 +23,7 @@ export function getMockProfile(roleOverride?: AppRole, _selectedUserId?: string 
 }
 
 export function getMockUsersByRole(role?: AppRole) {
-  const normalizedRole = normalizeRoleKey(role ?? getMockRole());
+  const normalizedRole = normalizeRoleKey(role ?? "program-assistant");
   return [
     {
       id: "legacy-mock-profile",

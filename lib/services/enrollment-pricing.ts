@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 const PRICING_SCHEMA_MIGRATION = "0026_enrollment_pricing_module.sql";
@@ -147,32 +148,6 @@ function asDateOnly(value: string | null | undefined, fallback = toEasternDate()
   return `${year}-${month}-${day}`;
 }
 
-function isMissingSchemaObjectError(error: unknown) {
-  if (!error || typeof error !== "object") return false;
-  const code = String((error as { code?: string }).code ?? "");
-  const message = [
-    (error as { message?: string }).message,
-    (error as { details?: string }).details,
-    (error as { hint?: string }).hint
-  ]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .join(" ")
-    .toLowerCase();
-  return (
-    code === "PGRST205" ||
-    code === "PGRST116" ||
-    code === "42P01" ||
-    code === "42703" ||
-    message.includes("schema cache") ||
-    message.includes("does not exist") ||
-    message.includes("could not find the table")
-  );
-}
-
-function buildMissingSchemaMessage(objectName: string) {
-  return `Missing Supabase schema object public.${objectName}. Apply migration ${PRICING_SCHEMA_MIGRATION} (and any earlier unapplied migrations), then restart Supabase/PostgREST to refresh schema cache.`;
-}
-
 function mapCommunityFee(row: PricingCommunityFeeRow): EnrollmentPricingCommunityFee {
   return {
     id: row.id,
@@ -242,7 +217,12 @@ async function listActiveCommunityFeesForDate(effectiveDate: string) {
     .order("created_at", { ascending: false });
   if (error) {
     if (isMissingSchemaObjectError(error)) {
-      throw new Error(buildMissingSchemaMessage("enrollment_pricing_community_fees"));
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "enrollment_pricing_community_fees",
+          migration: PRICING_SCHEMA_MIGRATION
+        })
+      );
     }
     throw new Error(error.message);
   }
@@ -264,7 +244,12 @@ async function listActiveDailyRatesForDate(effectiveDate: string) {
     .order("created_at", { ascending: false });
   if (error) {
     if (isMissingSchemaObjectError(error)) {
-      throw new Error(buildMissingSchemaMessage("enrollment_pricing_daily_rates"));
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "enrollment_pricing_daily_rates",
+          migration: PRICING_SCHEMA_MIGRATION
+        })
+      );
     }
     throw new Error(error.message);
   }
@@ -283,7 +268,12 @@ export async function listEnrollmentPricingCommunityFees() {
     .order("created_at", { ascending: false });
   if (error) {
     if (isMissingSchemaObjectError(error)) {
-      throw new Error(buildMissingSchemaMessage("enrollment_pricing_community_fees"));
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "enrollment_pricing_community_fees",
+          migration: PRICING_SCHEMA_MIGRATION
+        })
+      );
     }
     throw new Error(error.message);
   }
@@ -303,7 +293,12 @@ export async function listEnrollmentPricingDailyRates() {
     .order("created_at", { ascending: false });
   if (error) {
     if (isMissingSchemaObjectError(error)) {
-      throw new Error(buildMissingSchemaMessage("enrollment_pricing_daily_rates"));
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "enrollment_pricing_daily_rates",
+          migration: PRICING_SCHEMA_MIGRATION
+        })
+      );
     }
     throw new Error(error.message);
   }
@@ -475,7 +470,12 @@ export async function createEnrollmentPricingCommunityFee(input: {
 
   if (error) {
     if (isMissingSchemaObjectError(error)) {
-      throw new Error(buildMissingSchemaMessage("enrollment_pricing_community_fees"));
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "enrollment_pricing_community_fees",
+          migration: PRICING_SCHEMA_MIGRATION
+        })
+      );
     }
     throw new Error(error.message);
   }
@@ -529,7 +529,12 @@ export async function updateEnrollmentPricingCommunityFee(input: {
 
   if (error) {
     if (isMissingSchemaObjectError(error)) {
-      throw new Error(buildMissingSchemaMessage("enrollment_pricing_community_fees"));
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "enrollment_pricing_community_fees",
+          migration: PRICING_SCHEMA_MIGRATION
+        })
+      );
     }
     throw new Error(error.message);
   }
@@ -638,7 +643,12 @@ export async function createEnrollmentPricingDailyRate(input: {
 
   if (error) {
     if (isMissingSchemaObjectError(error)) {
-      throw new Error(buildMissingSchemaMessage("enrollment_pricing_daily_rates"));
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "enrollment_pricing_daily_rates",
+          migration: PRICING_SCHEMA_MIGRATION
+        })
+      );
     }
     throw new Error(error.message);
   }
@@ -687,7 +697,12 @@ export async function updateEnrollmentPricingDailyRate(input: {
 
   if (error) {
     if (isMissingSchemaObjectError(error)) {
-      throw new Error(buildMissingSchemaMessage("enrollment_pricing_daily_rates"));
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "enrollment_pricing_daily_rates",
+          migration: PRICING_SCHEMA_MIGRATION
+        })
+      );
     }
     throw new Error(error.message);
   }

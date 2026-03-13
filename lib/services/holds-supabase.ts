@@ -1,6 +1,22 @@
 import { createClient } from "@/lib/supabase/server";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
+import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { toEasternISO } from "@/lib/timezone";
+
+
+async function resolveHoldMemberId(rawMemberId: string, actionLabel: string) {
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: rawMemberId
+    },
+    { actionLabel }
+  );
+  if (!canonical.memberId) {
+    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
+  }
+  return canonical.memberId;
+}
 
 export interface MemberHoldRow {
   id: string;
@@ -40,12 +56,13 @@ export async function createMemberHoldSupabase(input: {
   actorUserId: string;
   actorName: string;
 }) {
+  const canonicalMemberId = await resolveHoldMemberId(input.memberId, "createMemberHoldSupabase");
   const supabase = await createClient();
   const now = toEasternISO();
   const { data, error } = await supabase
     .from("member_holds")
     .insert({
-      member_id: input.memberId,
+      member_id: canonicalMemberId,
       start_date: normalizeOperationalDateOnly(input.startDate),
       end_date: input.endDate ? normalizeOperationalDateOnly(input.endDate) : null,
       status: "active",

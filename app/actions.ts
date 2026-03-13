@@ -1502,16 +1502,6 @@ export async function getMemberLookup() {
   return (data ?? []).map((row) => ({ id: row.id, display_name: row.display_name }));
 }
 
-// Backward-compatible aliases kept to avoid breaking older imports.
-export async function getMockStaffLookup() {
-  return getStaffLookup();
-}
-
-// Backward-compatible aliases kept to avoid breaking older imports.
-export async function getMockMemberLookup() {
-  return getMemberLookup();
-}
-
 export async function resolveStaffName(staffId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase.from("profiles").select("full_name").eq("id", staffId).maybeSingle();
