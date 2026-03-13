@@ -8,6 +8,7 @@ import { PortalNav } from "@/components/portal-nav";
 import { SignOutForm } from "@/components/sign-out-form";
 import { GlobalTablePaginator } from "@/components/ui/global-table-paginator";
 import { getDevRoleOverrideFromEnv, isDevelopmentMode } from "@/lib/runtime";
+import { countUnreadUserNotificationsForUser } from "@/lib/services/notifications";
 
 export default async function PortalLayout({
   children
@@ -17,6 +18,7 @@ export default async function PortalLayout({
   const profile = await getCurrentProfile();
   const showDevRoleSwitcher = isDevelopmentMode();
   const envRoleOverride = getDevRoleOverrideFromEnv();
+  const unreadNotifications = await countUnreadUserNotificationsForUser(profile.id);
 
   return (
     <div className="portal-shell mx-auto grid min-h-screen w-full max-w-7xl gap-4 p-3 md:grid-cols-[270px_minmax(0,1fr)] md:p-4">
@@ -49,7 +51,12 @@ export default async function PortalLayout({
             enabled={showDevRoleSwitcher}
             envRoleOverride={envRoleOverride}
           />
-          <GlobalTablePaginator />
+          <div className="flex items-center gap-3">
+            <Link href="/notifications" className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-brand hover:bg-slate-50">
+              Notifications{unreadNotifications > 0 ? ` (${unreadNotifications})` : ""}
+            </Link>
+            <GlobalTablePaginator />
+          </div>
         </div>
         {children}
       </main>

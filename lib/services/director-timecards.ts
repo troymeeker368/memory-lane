@@ -148,33 +148,9 @@ async function ensurePayPeriodsExist() {
     return (payPeriodsData ?? []) as Array<SupabasePayPeriod>;
   }
 
-  const current = getCurrentPayPeriod();
-  const periodSeeds = [];
-  for (let i = -6; i <= 6; i += 1) {
-    const startDate = addDays(current.startDate, i * 14);
-    const endDate = addDays(startDate, 13);
-    periodSeeds.push({
-      label: `${startDate} to ${endDate}`,
-      start_date: startDate,
-      end_date: endDate,
-      is_closed: i < -1,
-      created_at: toEasternISO(),
-      updated_at: toEasternISO()
-    });
-  }
-
-  const { error: seedError } = await supabase
-    .from("pay_periods")
-    .upsert(periodSeeds, { onConflict: "start_date,end_date" });
-  if (seedError) throw new Error(seedError.message);
-
-  const { data: refetchData, error: refetchError } = await supabase
-    .from("pay_periods")
-    .select("*")
-    .order("start_date", { ascending: false });
-  if (refetchError) throw new Error(refetchError.message);
-
-  return (refetchData ?? []) as Array<SupabasePayPeriod>;
+  throw new Error(
+    "No pay periods are configured in public.pay_periods. Configure canonical pay periods (migration/ops bootstrap) before using Director Timecards."
+  );
 }
 
 export async function getDirectorTimecardsWorkspace(filters?: {

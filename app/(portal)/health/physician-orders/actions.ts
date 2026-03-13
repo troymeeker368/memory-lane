@@ -1,11 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
+import { resendPofSignatureRequest, sendNewPofSignatureRequest } from "@/lib/services/pof-esign";
 import {
   OTIC_LATERALITY_OPTIONS,
   OPHTHALMIC_LATERALITY_OPTIONS,
@@ -279,6 +281,10 @@ function parseCareInformation(formData: FormData): PhysicianOrderCareInformation
 }
 
 function parseOperationalFlags(formData: FormData): PhysicianOrderOperationalFlags {
+  const toiletingAssistance = asString(formData, "adlToileting").toLowerCase();
+  const toiletingNeeds = asString(formData, "adlToiletingNeeds").toLowerCase();
+  const derivedBathroomAssistance = toiletingAssistance === "yes" || toiletingNeeds === "needs assistance";
+
   return {
     nutAllergy: asCheckbox(formData, "flagNutAllergy"),
     shellfishAllergy: asCheckbox(formData, "flagShellfishAllergy"),
@@ -287,7 +293,7 @@ function parseOperationalFlags(formData: FormData): PhysicianOrderOperationalFla
     oxygenRequirement: asCheckbox(formData, "flagOxygenRequirement"),
     dnr: asCheckbox(formData, "flagDnr"),
     noPhotos: asCheckbox(formData, "flagNoPhotos"),
-    bathroomAssistance: asCheckbox(formData, "flagBathroomAssistance")
+    bathroomAssistance: asCheckbox(formData, "flagBathroomAssistance") || derivedBathroomAssistance
   };
 }
 
@@ -338,6 +344,76 @@ async function resolvePofMemberId(rawMemberId: string, actionLabel: string) {
   return canonical.memberId;
 }
 
+function clean(value: string | null | undefined) {
+  const normalized = (value ?? "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+async function resolveRequestAppBaseUrl() {
+  const headerMap = await headers();
+  const origin = clean(headerMap.get("origin"));
+  if (origin) return origin;
+
+  const forwardedHost = clean(headerMap.get("x-forwarded-host"));
+  const host = forwardedHost ?? clean(headerMap.get("host"));
+  if (!host) return null;
+  const forwardedProto = clean(headerMap.get("x-forwarded-proto"));
+  const proto =
+    forwardedProto?.split(",")[0]?.trim() ??
+    (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
+  return `${proto}://${host}`;
+}
+
+async function persistPhysicianOrderDraftFromFormData(formData: FormData, actionLabel: string) {
+  const rawMemberId = asString(formData, "memberId");
+  if (!rawMemberId) throw new Error("Member is required.");
+  const pofId = asNullableString(formData, "pofId");
+  const memberId = await resolvePofMemberId(rawMemberId, actionLabel);
+
+  const profile = await requireRoles(["admin", "nurse"]);
+  const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
+
+  const providerNameFromForm = asNullableString(formData, "providerName");
+  const providerNameResolved = providerNameFromForm ?? actorDisplayName;
+  const diagnosisRows = parseDiagnosisRows(formData);
+  const allergyRows = parseAllergyRows(formData);
+  const standingOrders = parseStandingOrders(formData);
+
+  const saved = await savePhysicianOrderForm({
+    id: pofId,
+    memberId,
+    intakeAssessmentId: asNullableString(formData, "intakeAssessmentId"),
+    memberDobSnapshot: asNullableString(formData, "memberDob"),
+    sex: parseSex(asString(formData, "sex")),
+    levelOfCare: parseLevelOfCare(asString(formData, "levelOfCare")),
+    dnrSelected: asCheckbox(formData, "dnrSelected"),
+    vitalsBloodPressure: asNullableString(formData, "vitalsBloodPressure"),
+    vitalsPulse: asNullableString(formData, "vitalsPulse"),
+    vitalsOxygenSaturation:
+      asNullableString(formData, "vitalsOxygenSaturation") ??
+      asNullableString(formData, "vitalsTemperature"),
+    vitalsRespiration: asNullableString(formData, "vitalsRespiration"),
+    diagnosisRows,
+    diagnoses: diagnosisRows.map((row) => row.diagnosisName),
+    allergyRows,
+    allergies: allergyRows.map((row) => row.allergyName),
+    medications: parseMedicationRows(formData),
+    standingOrders,
+    careInformation: parseCareInformation(formData),
+    operationalFlags: parseOperationalFlags(formData),
+    providerName: providerNameResolved,
+    providerSignature: null,
+    providerSignatureDate: null,
+    status: "Draft",
+    actor: {
+      id: profile.id,
+      fullName: actorDisplayName
+    }
+  });
+
+  return { saved, profile, actorDisplayName, rawMemberId, pofId } as const;
+}
+
 export async function savePhysicianOrderFormAction(formData: FormData) {
   const rawMemberId = asString(formData, "memberId");
   const pofId = asNullableString(formData, "pofId");
@@ -350,56 +426,14 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
     redirect(`/health/physician-orders/new?${params.toString()}`);
   };
 
-  let memberId = "";
-  try {
-    memberId = await resolvePofMemberId(rawMemberId, "savePhysicianOrderFormAction");
-  } catch (error) {
-    redirectToFormWithError(error instanceof Error ? error.message : "Member is required.");
+  if (!rawMemberId) {
+    redirectToFormWithError("Member is required.");
   }
 
-  let destinationUrl = `/health/physician-orders/new?memberId=${encodeURIComponent(memberId)}`;
+  let destinationUrl = `/health/physician-orders/new?memberId=${encodeURIComponent(rawMemberId)}`;
 
   try {
-    const profile = await requireRoles(["admin", "nurse"]);
-    const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
-
-    const providerNameFromForm = asNullableString(formData, "providerName");
-    const providerNameResolved = providerNameFromForm ?? actorDisplayName;
-    const diagnosisRows = parseDiagnosisRows(formData);
-    const allergyRows = parseAllergyRows(formData);
-    const standingOrders = parseStandingOrders(formData);
-
-    const saved = await savePhysicianOrderForm({
-      id: pofId,
-      memberId,
-      intakeAssessmentId: asNullableString(formData, "intakeAssessmentId"),
-      memberDobSnapshot: asNullableString(formData, "memberDob"),
-      sex: parseSex(asString(formData, "sex")),
-      levelOfCare: parseLevelOfCare(asString(formData, "levelOfCare")),
-      dnrSelected: asCheckbox(formData, "dnrSelected"),
-      vitalsBloodPressure: asNullableString(formData, "vitalsBloodPressure"),
-      vitalsPulse: asNullableString(formData, "vitalsPulse"),
-      vitalsOxygenSaturation:
-        asNullableString(formData, "vitalsOxygenSaturation") ??
-        asNullableString(formData, "vitalsTemperature"),
-      vitalsRespiration: asNullableString(formData, "vitalsRespiration"),
-      diagnosisRows,
-      diagnoses: diagnosisRows.map((row) => row.diagnosisName),
-      allergyRows,
-      allergies: allergyRows.map((row) => row.allergyName),
-      medications: parseMedicationRows(formData),
-      standingOrders,
-      careInformation: parseCareInformation(formData),
-      operationalFlags: parseOperationalFlags(formData),
-      providerName: providerNameResolved,
-      providerSignature: null,
-      providerSignatureDate: null,
-      status: "Draft",
-      actor: {
-        id: profile.id,
-        fullName: actorDisplayName
-      }
-    });
+    const { saved } = await persistPhysicianOrderDraftFromFormData(formData, "savePhysicianOrderFormAction");
 
     revalidatePofRoutes(saved.memberId, saved.id);
     destinationUrl = `/health/physician-orders/${saved.id}`;
@@ -412,6 +446,72 @@ export async function savePhysicianOrderFormAction(formData: FormData) {
   }
 
   redirect(destinationUrl);
+}
+
+export async function saveAndDispatchPofSignatureRequestFromEditorAction(formData: FormData) {
+  try {
+    const { saved, profile, actorDisplayName } = await persistPhysicianOrderDraftFromFormData(
+      formData,
+      "saveAndDispatchPofSignatureRequestFromEditorAction"
+    );
+
+    const mode = asString(formData, "esignDispatchMode");
+    const providerName = asString(formData, "providerName") || saved.providerName || actorDisplayName;
+    const providerEmail = asString(formData, "esignProviderEmail");
+    const nurseName = asString(formData, "esignNurseName") || profile.full_name;
+    const fromEmail = asString(formData, "esignFromEmail");
+    const optionalMessage = asNullableString(formData, "esignOptionalMessage");
+    const expiresOnDate = asString(formData, "esignExpiresOnDate");
+
+    if (!providerEmail) return { ok: false, error: "Provider Email is required." } as const;
+    if (!nurseName.trim()) return { ok: false, error: "Nurse Name is required." } as const;
+    if (!fromEmail) return { ok: false, error: "From Email is required." } as const;
+    if (!expiresOnDate) return { ok: false, error: "Expiration Date is required." } as const;
+
+    if (mode === "resend") {
+      const requestId = asString(formData, "esignRequestId");
+      if (!requestId) return { ok: false, error: "Request ID is required for resend." } as const;
+      await resendPofSignatureRequest({
+        requestId,
+        memberId: saved.memberId,
+        providerName,
+        providerEmail,
+        nurseName,
+        fromEmail,
+        appBaseUrl: await resolveRequestAppBaseUrl(),
+        optionalMessage,
+        expiresOnDate,
+        actor: {
+          id: profile.id,
+          fullName: actorDisplayName
+        }
+      });
+    } else {
+      await sendNewPofSignatureRequest({
+        memberId: saved.memberId,
+        physicianOrderId: saved.id,
+        providerName,
+        providerEmail,
+        nurseName,
+        fromEmail,
+        appBaseUrl: await resolveRequestAppBaseUrl(),
+        optionalMessage,
+        expiresOnDate,
+        actor: {
+          id: profile.id,
+          fullName: actorDisplayName
+        }
+      });
+    }
+
+    revalidatePofRoutes(saved.memberId, saved.id);
+    return { ok: true, pofId: saved.id } as const;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to save and send POF signature request."
+    } as const;
+  }
 }
 
 export async function generatePhysicianOrderPdfAction(input: { pofId: string }) {

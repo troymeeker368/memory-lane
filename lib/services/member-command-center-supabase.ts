@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
-import { getStandardDailyRateForAttendanceDays } from "@/lib/services/billing-rate-tiers";
 import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans-supabase";
 
 export interface MccMemberRow {
@@ -288,6 +288,21 @@ type PostgrestErrorLike = {
   hint?: string | null;
 };
 
+type EnsureCanonicalMemberOptions = {
+  serviceRole?: boolean;
+  actor?: {
+    userId?: string | null;
+    name?: string | null;
+  };
+};
+
+async function getMccClient(options?: EnsureCanonicalMemberOptions) {
+  if (options?.serviceRole) {
+    return createSupabaseAdminClient();
+  }
+  return createClient();
+}
+
 function extractErrorText(error: PostgrestErrorLike | null | undefined) {
   return [error?.message, error?.details, error?.hint].filter(Boolean).join(" ").toLowerCase();
 }
@@ -477,13 +492,12 @@ function defaultCommandCenter(memberId: string): MemberCommandCenterRow {
 
 function defaultAttendanceSchedule(member: Pick<MccMemberRow, "id" | "enrollment_date">): MemberAttendanceScheduleRow {
   const now = new Date().toISOString();
-  const monday = true;
+  const monday = false;
   const tuesday = false;
-  const wednesday = true;
+  const wednesday = false;
   const thursday = false;
-  const friday = true;
-  const attendanceDaysPerWeek = [monday, tuesday, wednesday, thursday, friday].filter(Boolean).length;
-  const defaultRate = getStandardDailyRateForAttendanceDays(attendanceDaysPerWeek);
+  const friday = false;
+  const attendanceDaysPerWeek = 0;
   return {
     id: `attendance-${member.id}`,
     member_id: member.id,
@@ -543,12 +557,12 @@ function defaultAttendanceSchedule(member: Pick<MccMemberRow, "id" | "enrollment
     transport_friday_pm_door_to_door_address: null,
     transport_friday_pm_bus_number: null,
     transport_friday_pm_bus_stop: null,
-    daily_rate: defaultRate,
+    daily_rate: null,
     transportation_billing_status: "BillNormally",
     billing_rate_effective_date: member.enrollment_date,
     billing_notes: null,
     attendance_days_per_week: attendanceDaysPerWeek,
-    default_daily_rate: defaultRate,
+    default_daily_rate: null,
     use_custom_daily_rate: false,
     custom_daily_rate: null,
     make_up_days_available: 0,
@@ -734,9 +748,9 @@ export async function listMembersSupabase(filters?: { q?: string; status?: "all"
   );
 }
 
-export async function getMemberSupabase(memberId: string) {
+export async function getMemberSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberSupabase");
-  const supabase = await createClient();
+  const supabase = await getMccClient(options);
   const selectVariants = [
     "id, display_name, preferred_name, first_name, last_name, full_name, name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
     "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
@@ -789,9 +803,9 @@ export async function updateMemberSupabase(memberId: string, patch: Record<strin
   return (data as MccMemberRow | null) ?? null;
 }
 
-export async function ensureMemberCommandCenterProfileSupabase(memberId: string) {
+export async function ensureMemberCommandCenterProfileSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "ensureMemberCommandCenterProfileSupabase");
-  const supabase = await createClient();
+  const supabase = await getMccClient(options);
   const { data, error } = await supabase
     .from("member_command_centers")
     .select("*")
@@ -809,7 +823,11 @@ export async function ensureMemberCommandCenterProfileSupabase(memberId: string)
   const existing = Array.isArray(data) ? data[0] : null;
   if (existing) return existing as MemberCommandCenterRow;
 
-  const created = defaultCommandCenter(canonicalMemberId);
+  const created = {
+    ...defaultCommandCenter(canonicalMemberId),
+    updated_by_user_id: options?.actor?.userId ?? null,
+    updated_by_name: options?.actor?.name ?? null
+  };
   const { data: inserted, error: insertError } = await supabase
     .from("member_command_centers")
     .insert(created)
@@ -862,12 +880,13 @@ export async function ensureMemberCommandCenterProfileSupabase(memberId: string)
   return inserted as MemberCommandCenterRow;
 }
 
-export async function ensureMemberAttendanceScheduleSupabase(memberId: string) {
+export async function ensureMemberAttendanceScheduleSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "ensureMemberAttendanceScheduleSupabase");
-  const supabase = await createClient();
-  const member = await getMemberSupabase(canonicalMemberId);
-  if (!member) return null;
-  const scheduleSeed = defaultAttendanceSchedule(member);
+  const supabase = await getMccClient(options);
+  const member = await getMemberSupabase(canonicalMemberId, options);
+  if (!member) {
+    throw new Error(`ensureMemberAttendanceScheduleSupabase could not find member ${canonicalMemberId}.`);
+  }
   const { data, error } = await supabase
     .from("member_attendance_schedules")
     .select("*")
@@ -885,7 +904,11 @@ export async function ensureMemberAttendanceScheduleSupabase(memberId: string) {
   const existing = Array.isArray(data) ? data[0] : null;
   if (existing) return existing as MemberAttendanceScheduleRow;
 
-  const created = scheduleSeed;
+  const created = {
+    ...defaultAttendanceSchedule(member),
+    updated_by_user_id: options?.actor?.userId ?? null,
+    updated_by_name: options?.actor?.name ?? null
+  };
   const { data: inserted, error: insertError } = await supabase
     .from("member_attendance_schedules")
     .insert(created)

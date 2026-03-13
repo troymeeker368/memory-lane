@@ -22,6 +22,7 @@
     "seed:attendance": "tsx scripts/seed-supabase.ts --module attendance",
     "seed:health": "tsx scripts/seed-supabase.ts --module intake --module attendance",
     "e2e:pof-sign:live": "node -r ./scripts/shim-server-only.cjs ./node_modules/tsx/dist/cli.mjs scripts/e2e-pof-signing-live.ts",
+    "e2e:enrollment-packet:live": "node -r ./scripts/shim-server-only.cjs ./node_modules/tsx/dist/cli.mjs scripts/e2e-enrollment-packet-live.ts",
     "migrate:mock-to-supabase": "tsx scripts/seed-supabase.ts --legacy-only",
     "migrate:mock-to-supabase:reset": "tsx scripts/seed-supabase.ts --legacy-only --reset"
   },
@@ -30,6 +31,7 @@
     "@supabase/supabase-js": "^2.99.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "docx": "^9.6.1",
     "lucide-react": "^0.511.0",
     "next": "^15.5.12",
     "pdf-lib": "^1.17.1",

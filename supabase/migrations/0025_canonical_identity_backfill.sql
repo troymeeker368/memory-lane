@@ -17,8 +17,8 @@ normalized_leads as (
   from public.leads l
   where trim(coalesce(l.member_name, '')) <> ''
     and (
-      coalesce(lower(trim(l.status)), '') = 'won'
-      or coalesce(lower(trim(l.stage)), '') in ('closed - won', 'enrollment in progress')
+      coalesce(lower(trim(l.status::text)), '') = 'won'
+      or coalesce(lower(trim(l.stage::text)), '') in ('closed - won', 'enrollment in progress')
     )
     and not exists (
       select 1

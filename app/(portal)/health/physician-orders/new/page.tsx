@@ -1,6 +1,9 @@
 import { notFound } from "next/navigation";
 
-import { savePhysicianOrderFormAction } from "@/app/(portal)/health/physician-orders/actions";
+import {
+  saveAndDispatchPofSignatureRequestFromEditorAction,
+  savePhysicianOrderFormAction
+} from "@/app/(portal)/health/physician-orders/actions";
 import { PofAllergiesEditor } from "@/components/forms/pof-allergies-editor";
 import { PofDiagnosesEditor } from "@/components/forms/pof-diagnoses-editor";
 import { PofMedicationsEditor } from "@/components/forms/pof-medications-editor";
@@ -38,6 +41,29 @@ import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 function firstString(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0];
   return value;
+}
+
+function toDisplayNameFromEmail(email: string | null | undefined) {
+  const local = String(email ?? "").trim().split("@")[0] ?? "";
+  const withSpaces = local.replace(/[._-]+/g, " ").trim();
+  if (!withSpaces) return "";
+  return withSpaces
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function resolveNurseDefaultName(fullName: string | null | undefined, email: string | null | undefined) {
+  const normalizedFullName = String(fullName ?? "").trim();
+  if (normalizedFullName && normalizedFullName.includes(" ")) return normalizedFullName;
+  const fromEmail = toDisplayNameFromEmail(email);
+  if (fromEmail) return fromEmail;
+  return normalizedFullName || "Nurse";
+}
+
+function hasYesValue(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase() === "yes";
 }
 
 function CheckboxField({
@@ -152,7 +178,9 @@ export default async function NewPhysicianOrderPage({
     notFound();
   }
   const latestRequest = editing?.id ? (await listPofTimelineForPhysicianOrder(editing.id)).requests[0] ?? null : null;
+  const currentNurseName = resolveNurseDefaultName(profile.full_name, profile.email);
   const defaultFromEmail = profile.email?.trim() || getConfiguredClinicalSenderEmail();
+  const shouldDefaultBathroomAssistance = hasYesValue(draft.careInformation.adlProfile.toileting);
 
   return (
     <div className="space-y-4">
@@ -449,7 +477,7 @@ export default async function NewPhysicianOrderPage({
                       options={MHP_BOWEL_CONTINENCE_OPTIONS}
                     />
                     <SegmentedChoiceGroup
-                      label="Toileting"
+                      label="Toileting Assistance"
                       name="adlToileting"
                       defaultValue={draft.careInformation.adlProfile.toileting ?? ""}
                       options={MHP_TOILETING_OPTIONS}
@@ -502,9 +530,9 @@ export default async function NewPhysicianOrderPage({
                       defaultValue={draft.careInformation.adlProfile.medicationManagerName ?? ""}
                     />
                   </div>
-                  <textarea name="adlToiletingComments" defaultValue={draft.careInformation.adlProfile.toiletingComments ?? ""} placeholder="Toileting Comments" className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
-                  <textarea name="adlSpeechComments" defaultValue={draft.careInformation.adlProfile.speechComments ?? ""} placeholder="Speech Comments" className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
-                  <textarea name="adlHygieneGrooming" defaultValue={draft.careInformation.adlProfile.hygieneGrooming ?? ""} placeholder="Personal Appearance / Hygiene / Grooming" className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
+                  <input type="hidden" name="adlToiletingComments" defaultValue={draft.careInformation.adlProfile.toiletingComments ?? ""} />
+                  <input type="hidden" name="adlSpeechComments" defaultValue={draft.careInformation.adlProfile.speechComments ?? ""} />
+                  <input type="hidden" name="adlHygieneGrooming" defaultValue={draft.careInformation.adlProfile.hygieneGrooming ?? ""} />
                 </div>
               </div>
             </details>
@@ -572,7 +600,11 @@ export default async function NewPhysicianOrderPage({
             <CheckboxField name="flagOxygenRequirement" label="Oxygen requirement" defaultChecked={draft.operationalFlags.oxygenRequirement} />
             <CheckboxField name="flagDnr" label="DNR" defaultChecked={draft.operationalFlags.dnr} />
             <CheckboxField name="flagNoPhotos" label="No photos" defaultChecked={draft.operationalFlags.noPhotos} />
-            <CheckboxField name="flagBathroomAssistance" label="Bathroom assistance" defaultChecked={draft.operationalFlags.bathroomAssistance} />
+            <CheckboxField
+              name="flagBathroomAssistance"
+              label="Bathroom assistance"
+              defaultChecked={draft.operationalFlags.bathroomAssistance || shouldDefaultBathroomAssistance}
+            />
           </div>
         </Card>
 
@@ -588,11 +620,12 @@ export default async function NewPhysicianOrderPage({
               latestRequest={latestRequest}
               defaultProviderName={draft.providerName ?? ""}
               defaultProviderEmail={latestRequest?.providerEmail ?? ""}
-              defaultNurseName={latestRequest?.nurseName || profile.full_name}
-              defaultFromEmail={latestRequest?.fromEmail || defaultFromEmail}
+              defaultNurseName={currentNurseName}
+              defaultFromEmail={defaultFromEmail}
               defaultOptionalMessage={latestRequest?.optionalMessage ?? ""}
               signedProviderName={draft.providerName}
               signedAt={latestRequest?.signedAt ?? null}
+              saveAndDispatchAction={saveAndDispatchPofSignatureRequestFromEditorAction}
             />
           </div>
         </Card>

@@ -8,13 +8,17 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
 import { requireModuleAccess } from "@/lib/auth";
 import { canonicalLeadStage } from "@/lib/canonical";
+import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
 import { getLeadDetail } from "@/lib/services/relations";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ leadId: string }> }) {
   await requireModuleAccess("sales");
   const { leadId } = await params;
-  const detail = await getLeadDetail(leadId);
+  const [detail, pricingOverview] = await Promise.all([
+    getLeadDetail(leadId),
+    getEnrollmentPricingOverview()
+  ]);
 
   if (!detail) notFound();
 
@@ -43,6 +47,17 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
               leadId={lead.id}
               memberId={detail.canonicalMemberId ?? null}
               defaultCaregiverEmail={lead.caregiver_email}
+              pricingPreview={{
+                communityFeeAmount: pricingOverview.activeCommunityFee?.amount ?? null,
+                dailyRates: pricingOverview.activeDailyRates.map((tier) => ({
+                  id: tier.id,
+                  label: tier.label,
+                  minDaysPerWeek: tier.minDaysPerWeek,
+                  maxDaysPerWeek: tier.maxDaysPerWeek,
+                  dailyRate: tier.dailyRate
+                })),
+                issues: pricingOverview.issues
+              }}
             />
           </div>
         ) : null}

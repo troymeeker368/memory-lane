@@ -191,7 +191,7 @@
                   {
                       "staff_id":  "stf_3EE3313A",
                       "name":  "Robin Newell",
-                      "role":  "Staff",
+                      "role":  "Coordinator",
                       "active":  "1",
                       "email":  "",
                       "email_normalized":  ""
@@ -199,7 +199,7 @@
                   {
                       "staff_id":  "stf_2C8B398D",
                       "name":  "Trish Church",
-                      "role":  "Staff",
+                      "role":  "Nurse",
                       "active":  "1",
                       "email":  "",
                       "email_normalized":  ""
@@ -207,7 +207,7 @@
                   {
                       "staff_id":  "stf_9160CE9D",
                       "name":  "Daniel",
-                      "role":  "Staff",
+                      "role":  "Sales",
                       "active":  "1",
                       "email":  "",
                       "email_normalized":  ""
@@ -215,7 +215,7 @@
                   {
                       "staff_id":  "stf_EB85BA6B",
                       "name":  "Troy Meeker, BSN, RN, CDP",
-                      "role":  "Admin",
+                      "role":  "Manager",
                       "active":  "1",
                       "email":  "",
                       "email_normalized":  ""
@@ -239,7 +239,7 @@
                   {
                       "staff_id":  "stf_8B8A3A0C",
                       "name":  "Michelle Piscatelli, LPN, CDP",
-                      "role":  "Admin",
+                      "role":  "Director",
                       "active":  "1",
                       "email":  "",
                       "email_normalized":  ""

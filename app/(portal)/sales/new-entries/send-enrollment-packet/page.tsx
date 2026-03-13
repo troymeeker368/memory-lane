@@ -2,12 +2,16 @@ import { SalesEnrollmentPacketStandaloneAction } from "@/components/sales/sales-
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { listCanonicalMemberLinksForLeadIds } from "@/lib/services/canonical-person-ref";
+import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
 import { createClient } from "@/lib/supabase/server";
+
+export const dynamic = "force-dynamic";
 
 export default async function SendEnrollmentPacketStandalonePage() {
   await requireModuleAccess("sales");
   const supabase = await createClient();
-  const [{ data: leadsData, error: leadsError }, { data: membersData, error: membersError }] = await Promise.all([
+  const [pricingOverview, { data: leadsData, error: leadsError }, { data: membersData, error: membersError }] = await Promise.all([
+    getEnrollmentPricingOverview(),
     supabase
       .from("leads")
       .select("id, member_name, caregiver_email")
@@ -46,7 +50,21 @@ export default async function SendEnrollmentPacketStandalonePage() {
         </p>
       </Card>
       <Card>
-        <SalesEnrollmentPacketStandaloneAction leads={leads} members={members} />
+        <SalesEnrollmentPacketStandaloneAction
+          leads={leads}
+          members={members}
+          pricingPreview={{
+            communityFeeAmount: pricingOverview.activeCommunityFee?.amount ?? null,
+            dailyRates: pricingOverview.activeDailyRates.map((tier) => ({
+              id: tier.id,
+              label: tier.label,
+              minDaysPerWeek: tier.minDaysPerWeek,
+              maxDaysPerWeek: tier.maxDaysPerWeek,
+              dailyRate: tier.dailyRate
+            })),
+            issues: pricingOverview.issues
+          }}
+        />
       </Card>
     </div>
   );

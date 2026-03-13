@@ -923,8 +923,6 @@ const enrollmentPacketSendSchema = z.object({
   caregiverEmail: optionalString,
   requestedDays: z.array(z.string().min(1)).min(1),
   transportation: optionalString,
-  communityFee: z.number().min(0),
-  dailyRate: z.number().min(0),
   optionalMessage: optionalString
 });
 
@@ -961,8 +959,6 @@ export async function sendEnrollmentPacketAction(raw: z.infer<typeof enrollmentP
       caregiverEmail: payload.data.caregiverEmail || null,
       requestedDays: payload.data.requestedDays.map((day) => day.trim()).filter(Boolean),
       transportation: payload.data.transportation || null,
-      communityFee: payload.data.communityFee,
-      dailyRate: payload.data.dailyRate,
       optionalMessage: payload.data.optionalMessage || null,
       appBaseUrl: await resolveRequestAppBaseUrl()
     });

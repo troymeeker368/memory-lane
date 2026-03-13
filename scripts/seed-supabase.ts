@@ -1370,6 +1370,69 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
   const billing = buildBillingRows(db, staffMap);
   const carePlans = buildCarePlanRows(db, staffMap);
   const scheduleChanges = buildScheduleChanges(db, staffMap);
+  const pricingActor =
+    db.staff.find((row) => row.role === "admin" && row.active) ??
+    db.staff.find((row) => row.role === "director" && row.active) ??
+    db.staff.find((row) => row.role === "manager" && row.active) ??
+    db.staff[0];
+  const pricingActorUserId = pricingActor ? mapStaff(pricingActor.id) : null;
+  const pricingEffectiveStartDate = "2026-01-01";
+  const enrollmentPricingCommunityFees = [
+    {
+      id: stableUuid("seed:enrollment-pricing:community-fee:default"),
+      amount: 750,
+      effective_start_date: pricingEffectiveStartDate,
+      effective_end_date: null,
+      is_active: true,
+      notes: "Seeded default community fee for enrollment packet pricing.",
+      created_by: pricingActorUserId,
+      updated_by: pricingActorUserId
+    }
+  ];
+  const enrollmentPricingDailyRates = [
+    {
+      id: stableUuid("seed:enrollment-pricing:daily-rate:1day"),
+      label: "1 day/week",
+      min_days_per_week: 1,
+      max_days_per_week: 1,
+      daily_rate: 205,
+      effective_start_date: pricingEffectiveStartDate,
+      effective_end_date: null,
+      is_active: true,
+      display_order: 10,
+      notes: "Seeded default daily rate tier.",
+      created_by: pricingActorUserId,
+      updated_by: pricingActorUserId
+    },
+    {
+      id: stableUuid("seed:enrollment-pricing:daily-rate:2to3"),
+      label: "2-3 days/week",
+      min_days_per_week: 2,
+      max_days_per_week: 3,
+      daily_rate: 180,
+      effective_start_date: pricingEffectiveStartDate,
+      effective_end_date: null,
+      is_active: true,
+      display_order: 20,
+      notes: "Seeded default daily rate tier.",
+      created_by: pricingActorUserId,
+      updated_by: pricingActorUserId
+    },
+    {
+      id: stableUuid("seed:enrollment-pricing:daily-rate:4to5"),
+      label: "4-5 days/week",
+      min_days_per_week: 4,
+      max_days_per_week: 5,
+      daily_rate: 170,
+      effective_start_date: pricingEffectiveStartDate,
+      effective_end_date: null,
+      is_active: true,
+      display_order: 30,
+      notes: "Seeded default daily rate tier.",
+      created_by: pricingActorUserId,
+      updated_by: pricingActorUserId
+    }
+  ];
 
   return {
     sites: [{ id: SITE_ID, site_code: "SITE-ML-01", site_name: "Memory Lane Main Site", latitude: 34.98, longitude: -80.995, fence_radius_meters: 75 }],
@@ -1462,6 +1525,8 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
         updated_at: row.created_at
       }))
       .filter((row) => row.staff_user_id),
+    enrollmentPricingCommunityFees,
+    enrollmentPricingDailyRates,
     timePunchExceptions: derived.timePunchExceptions,
     dailyTimecards: derived.dailyTimecards,
     forgottenPunchRequests: derived.forgottenPunchRequests,
@@ -1617,13 +1682,127 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
   };
 }
 
+type SeedLeadIdentityRow = {
+  id: string;
+  stage: string;
+  memberName: string;
+  memberDob: string | null;
+  inquiryDate: string | null;
+  projectedStartDate: string | null;
+};
+
+function cleanText(value: unknown) {
+  const normalized = String(value ?? "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isIntakeSeedStage(stage: string) {
+  return stage === "Tour" || stage === "Enrollment in Progress";
+}
+
+function toSeedLeadIdentityRow(row: Record<string, unknown>): SeedLeadIdentityRow | null {
+  const id = cleanText(row.id);
+  if (!id) return null;
+  const stage = cleanText(row.stage);
+  if (!stage) return null;
+  const memberName = cleanText(row.member_name) ?? "Seed Intake Member";
+  return {
+    id,
+    stage,
+    memberName,
+    memberDob: asDateOnly(cleanText(row.member_dob)),
+    inquiryDate: asDateOnly(cleanText(row.inquiry_date)),
+    projectedStartDate: asDateOnly(cleanText(row.member_start_date))
+  };
+}
+
+async function ensureIntakeReadySeedMembers(
+  supabase: ReturnType<typeof createSupabaseAdminClient>,
+  options: {
+    existingTables: Map<string, boolean>;
+    leads: Record<string, unknown>[];
+  }
+) {
+  if (options.existingTables.get("members") === false || options.existingTables.get("leads") === false) {
+    return { intakeLeadCount: 0, alreadyLinkedCount: 0, upsertedCount: 0 };
+  }
+
+  const intakeLeads = options.leads
+    .map((row) => toSeedLeadIdentityRow(row))
+    .filter((row): row is SeedLeadIdentityRow => Boolean(row))
+    .filter((row) => isIntakeSeedStage(row.stage));
+  if (intakeLeads.length === 0) {
+    return { intakeLeadCount: 0, alreadyLinkedCount: 0, upsertedCount: 0 };
+  }
+
+  const leadIds = intakeLeads.map((lead) => lead.id);
+  const { data: linkedRows, error: linkedRowsError } = await supabase
+    .from("members")
+    .select("id, source_lead_id")
+    .in("source_lead_id", leadIds);
+  if (linkedRowsError) {
+    throw new Error(`Seed intake member-link lookup failed: ${linkedRowsError.message}`);
+  }
+  const linkedLeadIds = new Set(
+    (linkedRows ?? [])
+      .map((row) => cleanText((row as { source_lead_id?: string | null }).source_lead_id))
+      .filter((value): value is string => Boolean(value))
+  );
+
+  const memberRowsToUpsert = intakeLeads
+    .filter((lead) => !linkedLeadIds.has(lead.id))
+    .map((lead) => {
+      const enrollmentDate = lead.projectedStartDate ?? lead.inquiryDate ?? null;
+      const syntheticMemberId = stableUuid(`seed:intake-linked-member:${lead.id}`);
+      return {
+        id: syntheticMemberId,
+        display_name: lead.memberName,
+        status: "active",
+        enrollment_date: enrollmentDate,
+        dob: lead.memberDob,
+        source_lead_id: lead.id,
+        qr_code: `QR-${syntheticMemberId.slice(0, 8).toUpperCase()}`
+      };
+    });
+
+  if (memberRowsToUpsert.length === 0) {
+    return {
+      intakeLeadCount: intakeLeads.length,
+      alreadyLinkedCount: linkedLeadIds.size,
+      upsertedCount: 0
+    };
+  }
+
+  const upsertedCount = await upsertRows(
+    supabase,
+    "members",
+    memberRowsToUpsert as Record<string, unknown>[],
+    options.existingTables
+  );
+  return {
+    intakeLeadCount: intakeLeads.length,
+    alreadyLinkedCount: linkedLeadIds.size,
+    upsertedCount
+  };
+}
+
 async function resetForModules(
   supabase: ReturnType<typeof createSupabaseAdminClient>,
   modules: SeedModule[],
   existingTables: Map<string, boolean>
 ) {
   const tables = new Set<string>();
-  if (modules.includes("sales")) ["lead_stage_history", "lead_activities", "partner_activities", "leads", "referral_sources", "community_partner_organizations"].forEach((t) => tables.add(t));
+  if (modules.includes("sales"))
+    [
+      "lead_stage_history",
+      "lead_activities",
+      "partner_activities",
+      "leads",
+      "referral_sources",
+      "community_partner_organizations",
+      "enrollment_pricing_daily_rates",
+      "enrollment_pricing_community_fees"
+    ].forEach((t) => tables.add(t));
   if (modules.includes("intake"))
     [
       "care_plan_review_history",
@@ -1692,6 +1871,8 @@ async function resetForModules(
     "lead_stage_history",
     "lead_activities",
     "partner_activities",
+    "enrollment_pricing_daily_rates",
+    "enrollment_pricing_community_fees",
     "billing_coverages",
     "billing_invoice_lines",
     "billing_adjustments",
@@ -1810,6 +1991,8 @@ async function main() {
     { table: "billing_adjustments", rows: rows.billingAdjustments, module: "attendance" },
     { table: "billing_coverages", rows: rows.billingCoverages, module: "attendance" },
     { table: "billing_export_jobs", rows: rows.billingExportJobs, module: "attendance" },
+    { table: "enrollment_pricing_community_fees", rows: rows.enrollmentPricingCommunityFees, module: "sales" },
+    { table: "enrollment_pricing_daily_rates", rows: rows.enrollmentPricingDailyRates, module: "sales" },
     { table: "community_partner_organizations", rows: rows.partners, module: "sales" },
     { table: "referral_sources", rows: rows.referrals, module: "sales" },
     { table: "leads", rows: rows.leads, module: "sales" },
@@ -1870,6 +2053,18 @@ async function main() {
     moduleCounts.set(moduleKey, (moduleCounts.get(moduleKey) ?? 0) + inserted);
   }
 
+  let intakeSeedLinkSummary: {
+    intakeLeadCount: number;
+    alreadyLinkedCount: number;
+    upsertedCount: number;
+  } | null = null;
+  if (parsed.modules.includes("sales")) {
+    intakeSeedLinkSummary = await ensureIntakeReadySeedMembers(supabase, {
+      existingTables,
+      leads: rows.leads as Record<string, unknown>[]
+    });
+  }
+
   console.log("Supabase seed complete.");
   console.log(`Modules: ${parsed.modules.join(", ")}`);
   console.log(`Legacy only: ${parsed.legacyOnly ? "yes" : "no"}`);
@@ -1877,6 +2072,11 @@ async function main() {
   selected.forEach((item) => console.log(`${item.table}: ${tableCounts.get(item.table) ?? 0}`));
   for (const [module, count] of moduleCounts.entries()) {
     console.log(`module:${module}: ${count}`);
+  }
+  if (intakeSeedLinkSummary) {
+    console.log(
+      `intake-seed-member-links: intake_stage_leads=${intakeSeedLinkSummary.intakeLeadCount}, already_linked=${intakeSeedLinkSummary.alreadyLinkedCount}, upserted=${intakeSeedLinkSummary.upsertedCount}`
+    );
   }
 }
 

@@ -176,42 +176,23 @@ function toRole(rawRole: string): AppRole {
 }
 
 function ensureRoleCoverage(rows: MockStaff[]) {
-  const staff = [...rows];
-  const has = (role: AppRole) => staff.some((row) => row.role === role);
-
-  if (!has("program-assistant") && staff[0]) staff[0] = { ...staff[0], role: "program-assistant" };
-  if (!has("coordinator") && staff[1]) staff[1] = { ...staff[1], role: "coordinator" };
-  if (!has("nurse") && staff[2]) staff[2] = { ...staff[2], role: "nurse" };
-  if (!has("sales") && staff[3]) staff[3] = { ...staff[3], role: "sales" };
-  if (!has("manager") && staff[4]) staff[4] = { ...staff[4], role: "manager" };
-  if (!has("director") && staff[5]) staff[5] = { ...staff[5], role: "director" };
-  if (!has("admin") && staff[6]) staff[6] = { ...staff[6], role: "admin" };
-
-  const required: Array<{ role: AppRole; name: string; staffId: string }> = [
-    { role: "program-assistant", name: "Skyler Program Assistant", staffId: "stf_seed_program_assistant" },
-    { role: "coordinator", name: "Casey Coordinator", staffId: "stf_seed_coordinator" },
-    { role: "sales", name: "Sasha Sales", staffId: "stf_seed_sales" },
-    { role: "director", name: "Dakota Director", staffId: "stf_seed_director" },
-    { role: "admin", name: "Avery Admin", staffId: "stf_seed_admin" },
-    { role: "manager", name: "Morgan Manager", staffId: "stf_seed_manager" },
-    { role: "nurse", name: "Nora Nurse", staffId: "stf_seed_nurse" }
+  const requiredRoles: AppRole[] = [
+    "program-assistant",
+    "coordinator",
+    "nurse",
+    "sales",
+    "manager",
+    "director",
+    "admin"
   ];
-
-  required.forEach((item) => {
-    if (has(item.role)) return;
-    const emailSlug = slugify(item.name);
-    staff.push({
-      id: uuidFromKey(item.staffId),
-      staff_id: item.staffId,
-      full_name: item.name,
-      email: `${emailSlug}@memorylane.local`,
-      email_normalized: `${emailSlug}@memorylane.local`,
-      role: item.role,
-      active: true
-    });
-  });
-
-  return staff;
+  const missingRoles = requiredRoles.filter((role) => !rows.some((row) => row.role === role));
+  if (missingRoles.length > 0) {
+    throw new Error(
+      `Mock seed staff fixtures are missing required roles: ${missingRoles.join(", ")}. ` +
+        "Add canonical staff rows in fixtures instead of auto-fabricating fallback users."
+    );
+  }
+  return rows;
 }
 
 function buildStaff() {

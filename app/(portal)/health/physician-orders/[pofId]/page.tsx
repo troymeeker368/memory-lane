@@ -18,6 +18,25 @@ function firstString(value: string | string[] | undefined) {
   return value;
 }
 
+function toDisplayNameFromEmail(email: string | null | undefined) {
+  const local = String(email ?? "").trim().split("@")[0] ?? "";
+  const withSpaces = local.replace(/[._-]+/g, " ").trim();
+  if (!withSpaces) return "";
+  return withSpaces
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function resolveNurseDefaultName(fullName: string | null | undefined, email: string | null | undefined) {
+  const normalizedFullName = String(fullName ?? "").trim();
+  if (normalizedFullName && normalizedFullName.includes(" ")) return normalizedFullName;
+  const fromEmail = toDisplayNameFromEmail(email);
+  if (fromEmail) return fromEmail;
+  return normalizedFullName || "Nurse";
+}
+
 function yesNo(value: boolean) {
   return value ? "Yes" : "No";
 }
@@ -47,6 +66,7 @@ export default async function PhysicianOrderDetailPage({
   const history = await getPhysicianOrdersForMember(form.memberId);
   const pofTimeline = await listPofTimelineForPhysicianOrder(form.id);
   const latestRequest = pofTimeline.requests[0] ?? null;
+  const currentNurseName = resolveNurseDefaultName(profile.full_name, profile.email);
   const defaultFromEmail = profile.email?.trim() || getConfiguredClinicalSenderEmail();
   const backHref =
     source === "mhp"
@@ -117,8 +137,8 @@ export default async function PhysicianOrderDetailPage({
             latestRequest={latestRequest}
             defaultProviderName={form.providerName ?? ""}
             defaultProviderEmail={latestRequest?.providerEmail ?? ""}
-            defaultNurseName={latestRequest?.nurseName || profile.full_name}
-            defaultFromEmail={latestRequest?.fromEmail || defaultFromEmail}
+            defaultNurseName={currentNurseName}
+            defaultFromEmail={defaultFromEmail}
             defaultOptionalMessage={latestRequest?.optionalMessage ?? ""}
             signedProviderName={form.providerName}
             signedAt={latestRequest?.signedAt ?? null}

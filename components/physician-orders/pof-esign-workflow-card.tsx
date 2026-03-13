@@ -9,10 +9,22 @@ import {
   sendPofSignatureRequestAction,
   voidPofSignatureRequestAction
 } from "@/app/(portal)/operations/member-command-center/pof-actions";
-import type { PofRequestStatus, PofRequestSummary } from "@/lib/services/pof-esign";
 import { formatDateTime } from "@/lib/utils";
 
 export type PofWorkflowStatus = "draft" | "sent" | "opened" | "signed" | "expired" | "declined";
+type PofRequestStatus = PofWorkflowStatus;
+type PofRequestSummary = {
+  id: string;
+  status: PofRequestStatus;
+  providerName: string;
+  providerEmail: string;
+  nurseName: string;
+  fromEmail: string;
+  optionalMessage: string | null;
+  expiresAt: string;
+  signedAt: string | null;
+  memberFileId: string | null;
+};
 
 function normalizeWorkflowStatus(status: string | null | undefined): PofWorkflowStatus {
   const normalized = (status ?? "").trim().toLowerCase();
@@ -79,7 +91,8 @@ export function PofEsignWorkflowCard({
   defaultOptionalMessage,
   signedProviderName,
   signedAt,
-  showProviderNameInput = true
+  showProviderNameInput = true,
+  saveAndDispatchAction
 }: {
   memberId: string;
   physicianOrderId: string | null;
@@ -92,6 +105,7 @@ export function PofEsignWorkflowCard({
   signedProviderName?: string | null;
   signedAt?: string | null;
   showProviderNameInput?: boolean;
+  saveAndDispatchAction?: (formData: FormData) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const [providerName, setProviderName] = useState(defaultProviderName);
   const [providerEmail, setProviderEmail] = useState(defaultProviderEmail);
@@ -104,7 +118,7 @@ export function PofEsignWorkflowCard({
   const router = useRouter();
 
   const workflowStatus = useMemo<PofWorkflowStatus>(() => normalizeWorkflowStatus(latestRequest?.status), [latestRequest?.status]);
-  const canSend = Boolean(physicianOrderId) && (!latestRequest || canSendNewStatus(latestRequest.status));
+  const canSend = !latestRequest || canSendNewStatus(latestRequest.status);
   const canResend = Boolean(physicianOrderId) && Boolean(latestRequest && canResendStatus(latestRequest.status));
   const canVoid = Boolean(physicianOrderId) && Boolean(latestRequest && canVoidStatus(latestRequest.status));
   const canDownloadSigned = Boolean(latestRequest && latestRequest.status === "signed");
@@ -113,7 +127,6 @@ export function PofEsignWorkflowCard({
     : null;
 
   function validateSendFields() {
-    if (!physicianOrderId) return "Save draft first before sending for provider signature.";
     if (!providerName.trim()) return "Provider Name is required.";
     if (!providerEmail.trim()) return "Provider Email is required.";
     if (!isEmail(providerEmail)) return "Provider Email must be valid.";
@@ -132,6 +145,40 @@ export function PofEsignWorkflowCard({
     }
 
     startTransition(async () => {
+      const activeElement = typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
+      const editorForm = activeElement?.closest("form");
+
+      if (editorForm && saveAndDispatchAction) {
+        const draftAndSendData = new FormData(editorForm);
+        draftAndSendData.set("esignDispatchMode", mode);
+        draftAndSendData.set("esignProviderEmail", providerEmail.trim());
+        draftAndSendData.set("esignNurseName", nurseName.trim());
+        draftAndSendData.set("esignFromEmail", fromEmail.trim());
+        draftAndSendData.set("esignOptionalMessage", optionalMessage.trim());
+        draftAndSendData.set("esignExpiresOnDate", expiresOnDate.trim());
+        if (mode === "resend" && latestRequest) {
+          draftAndSendData.set("esignRequestId", latestRequest.id);
+        }
+
+        const persistedSend = await saveAndDispatchAction(draftAndSendData);
+        if (!persistedSend.ok) {
+          setStatusMessage(persistedSend.error ? persistedSend.error : "Unable to save and send POF signature request.");
+          return;
+        }
+        setStatusMessage(mode === "send" ? "POF signature request sent." : "POF signature request resent.");
+        if (mode === "send") {
+          router.push("/health");
+          return;
+        }
+        router.refresh();
+        return;
+      }
+
+      if (!physicianOrderId) {
+        setStatusMessage("Save draft first before sending for provider signature.");
+        return;
+      }
+
       const formData = new FormData();
       formData.set("memberId", memberId);
       formData.set("physicianOrderId", physicianOrderId!);
@@ -151,6 +198,10 @@ export function PofEsignWorkflowCard({
         return;
       }
       setStatusMessage(mode === "send" ? "POF signature request sent." : "POF signature request resent.");
+      if (mode === "send") {
+        router.push("/health");
+        return;
+      }
       router.refresh();
     });
   }
@@ -192,9 +243,7 @@ export function PofEsignWorkflowCard({
 
   const signedSummaryName = (signedProviderName ?? "").trim() || (latestRequest?.providerName ?? "").trim() || "-";
   const signedSummaryDate = signedAt ?? latestRequest?.signedAt ?? null;
-  const sendDisabledReason = !physicianOrderId
-    ? "Save draft first before sending for provider signature."
-    : latestRequest && !canSend
+  const sendDisabledReason = latestRequest && !canSend
       ? latestRequest.status === "draft" || latestRequest.status === "sent" || latestRequest.status === "opened"
         ? "A signature request is already active. Use Resend to deliver it again."
         : latestRequest.status === "expired"
@@ -252,6 +301,7 @@ export function PofEsignWorkflowCard({
           <span className="text-xs font-semibold text-muted">Provider Email</span>
           <input
             type="email"
+            name="esignProviderEmail"
             value={providerEmail}
             onChange={(event) => setProviderEmail(event.target.value)}
             className="h-10 w-full rounded-lg border border-border px-3"
@@ -260,6 +310,7 @@ export function PofEsignWorkflowCard({
         <label className="space-y-1 text-sm">
           <span className="text-xs font-semibold text-muted">Nurse Name</span>
           <input
+            name="esignNurseName"
             value={nurseName}
             onChange={(event) => setNurseName(event.target.value)}
             className="h-10 w-full rounded-lg border border-border px-3"
@@ -269,6 +320,7 @@ export function PofEsignWorkflowCard({
           <span className="text-xs font-semibold text-muted">From Email</span>
           <input
             type="email"
+            name="esignFromEmail"
             value={fromEmail}
             onChange={(event) => setFromEmail(event.target.value)}
             className="h-10 w-full rounded-lg border border-border px-3"
@@ -277,6 +329,7 @@ export function PofEsignWorkflowCard({
         <label className="space-y-1 text-sm md:col-span-2">
           <span className="text-xs font-semibold text-muted">Optional Message</span>
           <textarea
+            name="esignOptionalMessage"
             value={optionalMessage}
             onChange={(event) => setOptionalMessage(event.target.value)}
             className="min-h-20 w-full rounded-lg border border-border p-3 text-sm"
@@ -286,6 +339,7 @@ export function PofEsignWorkflowCard({
           <span className="text-xs font-semibold text-muted">Expiration Date</span>
           <input
             type="date"
+            name="esignExpiresOnDate"
             value={expiresOnDate}
             onChange={(event) => setExpiresOnDate(event.target.value)}
             className="h-10 w-full rounded-lg border border-border px-3"

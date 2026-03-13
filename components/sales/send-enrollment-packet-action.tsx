@@ -10,14 +10,28 @@ const WEEKDAY_OPTIONS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
 type WeekdayOption = (typeof WEEKDAY_OPTIONS)[number];
 
+type PricingPreview = {
+  communityFeeAmount: number | null;
+  dailyRates: Array<{
+    id: string;
+    label: string;
+    minDaysPerWeek: number;
+    maxDaysPerWeek: number;
+    dailyRate: number;
+  }>;
+  issues: string[];
+};
+
 export function SendEnrollmentPacketAction({
   leadId,
   memberId,
-  defaultCaregiverEmail
+  defaultCaregiverEmail,
+  pricingPreview
 }: {
   leadId: string;
   memberId?: string | null;
   defaultCaregiverEmail?: string | null;
+  pricingPreview: PricingPreview;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -25,8 +39,6 @@ export function SendEnrollmentPacketAction({
   const [caregiverEmail, setCaregiverEmail] = useState(defaultCaregiverEmail ?? "");
   const [requestedDays, setRequestedDays] = useState<WeekdayOption[]>(["Monday", "Wednesday", "Friday"]);
   const [transportation, setTransportation] = useState("Door to Door");
-  const [communityFee, setCommunityFee] = useState("0");
-  const [dailyRate, setDailyRate] = useState("0");
   const [optionalMessage, setOptionalMessage] = useState("");
   const router = useRouter();
 
@@ -42,18 +54,8 @@ export function SendEnrollmentPacketAction({
   };
 
   const onSend = () => {
-    const parsedCommunityFee = Number(communityFee);
-    const parsedDailyRate = Number(dailyRate);
     if (requestedDays.length === 0) {
       setStatus("Select at least one requested day.");
-      return;
-    }
-    if (!Number.isFinite(parsedCommunityFee) || parsedCommunityFee < 0) {
-      setStatus("Community fee must be 0 or greater.");
-      return;
-    }
-    if (!Number.isFinite(parsedDailyRate) || parsedDailyRate < 0) {
-      setStatus("Daily rate must be 0 or greater.");
       return;
     }
 
@@ -65,8 +67,6 @@ export function SendEnrollmentPacketAction({
         caregiverEmail,
         requestedDays,
         transportation,
-        communityFee: parsedCommunityFee,
-        dailyRate: parsedDailyRate,
         optionalMessage
       });
       if (!result.ok) {
@@ -137,25 +137,31 @@ export function SendEnrollmentPacketAction({
                 </select>
               </label>
 
-              <label className="space-y-1 text-sm">
-                <span className="text-xs font-semibold text-muted">Community Fee</span>
-                <input
-                  className="h-11 w-full rounded-lg border border-border px-3"
-                  value={communityFee}
-                  onChange={(event) => setCommunityFee(event.target.value)}
-                  disabled={isPending}
-                />
-              </label>
-
-              <label className="space-y-1 text-sm">
-                <span className="text-xs font-semibold text-muted">Daily Rate</span>
-                <input
-                  className="h-11 w-full rounded-lg border border-border px-3"
-                  value={dailyRate}
-                  onChange={(event) => setDailyRate(event.target.value)}
-                  disabled={isPending}
-                />
-              </label>
+              <div className="space-y-1 rounded-lg border border-border bg-slate-50 p-3 text-xs md:col-span-2">
+                <p className="font-semibold text-fg">Pricing Defaults (Operations &gt; Pricing)</p>
+                <p className="text-muted">
+                  Community Fee:{" "}
+                  {pricingPreview.communityFeeAmount == null ? "Not configured" : `$${pricingPreview.communityFeeAmount.toFixed(2)}`}
+                </p>
+                {pricingPreview.dailyRates.length > 0 ? (
+                  <ul className="space-y-1 text-muted">
+                    {pricingPreview.dailyRates.map((tier) => (
+                      <li key={tier.id}>
+                        {tier.label}: ${tier.dailyRate.toFixed(2)} / day ({tier.minDaysPerWeek}
+                        {tier.maxDaysPerWeek === tier.minDaysPerWeek ? "" : `-${tier.maxDaysPerWeek}`} day/week)
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-muted">No active daily rate tiers configured.</p>
+                )}
+                {pricingPreview.issues.map((issue) => (
+                  <p key={issue} className="font-semibold text-amber-700">
+                    {issue}
+                  </p>
+                ))}
+                <p className="text-muted">Daily rate is resolved at send time from requested days and active pricing tiers.</p>
+              </div>
 
               <label className="space-y-1 text-sm md:col-span-2">
                 <span className="text-xs font-semibold text-muted">Optional Message</span>

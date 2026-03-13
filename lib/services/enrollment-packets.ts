@@ -3,10 +3,14 @@ import "server-only";
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-
 import { resolveCanonicalLeadRef, resolveCanonicalMemberRef, resolveCanonicalPersonRef } from "@/lib/services/canonical-person-ref";
+import { buildCompletedEnrollmentPacketDocxData } from "@/lib/services/enrollment-packet-docx";
+import {
+  ensureMemberAttendanceScheduleSupabase,
+  ensureMemberCommandCenterProfileSupabase
+} from "@/lib/services/member-command-center-supabase";
 import { createUserNotification } from "@/lib/services/notifications";
+import { resolveEnrollmentPricingForRequestedDays } from "@/lib/services/enrollment-pricing";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -59,6 +63,9 @@ type EnrollmentPacketFieldsRow = {
   transportation: string | null;
   community_fee: number | null;
   daily_rate: number | null;
+  pricing_community_fee_id: string | null;
+  pricing_daily_rate_id: string | null;
+  pricing_snapshot: Record<string, unknown> | null;
   caregiver_name: string | null;
   caregiver_phone: string | null;
   caregiver_email: string | null;
@@ -616,8 +623,6 @@ export async function sendEnrollmentPacketRequest(input: {
   caregiverEmail?: string | null;
   requestedDays: string[];
   transportation: string | null;
-  communityFee: number;
-  dailyRate: number;
   optionalMessage?: string | null;
   appBaseUrl?: string | null;
 }) {
@@ -638,6 +643,9 @@ export async function sendEnrollmentPacketRequest(input: {
   const { member, lead } = await resolveSendContext({
     memberId: input.memberId,
     leadId: input.leadId
+  });
+  const resolvedPricing = await resolveEnrollmentPricingForRequestedDays({
+    requestedDays: input.requestedDays
   });
   const caregiverEmail = cleanEmail(input.caregiverEmail) ?? cleanEmail(lead?.caregiver_email);
   if (!isEmail(caregiverEmail)) throw new Error("Caregiver email is required.");
@@ -675,10 +683,13 @@ export async function sendEnrollmentPacketRequest(input: {
 
   const { error: fieldsError } = await admin.from("enrollment_packet_fields").insert({
     packet_id: requestId,
-    requested_days: input.requestedDays,
+    requested_days: resolvedPricing.requestedDays,
     transportation: clean(input.transportation),
-    community_fee: safeNumber(input.communityFee),
-    daily_rate: safeNumber(input.dailyRate),
+    community_fee: safeNumber(resolvedPricing.communityFeeAmount),
+    daily_rate: safeNumber(resolvedPricing.dailyRateAmount),
+    pricing_community_fee_id: resolvedPricing.communityFeeId,
+    pricing_daily_rate_id: resolvedPricing.dailyRateId,
+    pricing_snapshot: resolvedPricing.snapshot,
     caregiver_name: clean(lead?.caregiver_name),
     caregiver_phone: clean(lead?.caregiver_phone),
     caregiver_email: caregiverEmail,
@@ -711,7 +722,10 @@ export async function sendEnrollmentPacketRequest(input: {
     actorEmail: senderEmail,
     metadata: {
       memberId: member.id,
-      leadId: lead?.id ?? null
+      leadId: lead?.id ?? null,
+      pricingCommunityFeeId: resolvedPricing.communityFeeId,
+      pricingDailyRateId: resolvedPricing.dailyRateId,
+      pricingDaysPerWeek: resolvedPricing.daysPerWeek
     }
   });
 
@@ -976,69 +990,30 @@ async function ensureMccRows(input: {
   memberId: string;
   senderUserId: string;
   senderName: string;
-}) {
-  const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
-  const { data: profile, error: profileError } = await admin
-    .from("member_command_centers")
-    .select("*")
-    .eq("member_id", input.memberId)
-    .maybeSingle();
-  if (profileError && !isRowFoundError(profileError)) throw new Error(profileError.message);
-  let profileRow = profile as Record<string, unknown> | null;
-  if (!profileRow) {
-    const id = `mcc-${randomUUID().replace(/-/g, "")}`;
-    const { data: created, error: createError } = await admin
-      .from("member_command_centers")
-      .insert({
-        id,
-        member_id: input.memberId,
-        updated_by_user_id: input.senderUserId,
-        updated_by_name: input.senderName,
-        created_at: now,
-        updated_at: now
-      })
-      .select("*")
-      .single();
-    if (createError) throw new Error(createError.message);
-    profileRow = (created ?? null) as Record<string, unknown> | null;
-  }
-
-  const { data: schedule, error: scheduleError } = await admin
-    .from("member_attendance_schedules")
-    .select("*")
-    .eq("member_id", input.memberId)
-    .maybeSingle();
-  if (scheduleError && !isRowFoundError(scheduleError)) throw new Error(scheduleError.message);
-  let scheduleRow = schedule as Record<string, unknown> | null;
-  if (!scheduleRow) {
-    const id = `attendance-${randomUUID().replace(/-/g, "")}`;
-    const { data: created, error: createError } = await admin
-      .from("member_attendance_schedules")
-      .insert({
-        id,
-        member_id: input.memberId,
-        monday: false,
-        tuesday: false,
-        wednesday: false,
-        thursday: false,
-        friday: false,
-        full_day: true,
-        transportation_billing_status: "BillNormally",
-        make_up_days_available: 0,
-        use_custom_daily_rate: false,
-        updated_by_user_id: input.senderUserId,
-        updated_by_name: input.senderName,
-        created_at: now,
-        updated_at: now
-      })
-      .select("*")
-      .single();
-    if (createError) throw new Error(createError.message);
-    scheduleRow = (created ?? null) as Record<string, unknown> | null;
-  }
-  if (!profileRow || !scheduleRow) throw new Error("Unable to ensure MCC baseline records.");
-  return { profileRow, scheduleRow };
+}): Promise<{
+  profileRow: Record<string, unknown>;
+  scheduleRow: Record<string, unknown>;
+}> {
+  const [profileRow, scheduleRow] = await Promise.all([
+    ensureMemberCommandCenterProfileSupabase(input.memberId, {
+      serviceRole: true,
+      actor: {
+        userId: input.senderUserId,
+        name: input.senderName
+      }
+    }),
+    ensureMemberAttendanceScheduleSupabase(input.memberId, {
+      serviceRole: true,
+      actor: {
+        userId: input.senderUserId,
+        name: input.senderName
+      }
+    })
+  ]);
+  return {
+    profileRow: profileRow as unknown as Record<string, unknown>,
+    scheduleRow: scheduleRow as unknown as Record<string, unknown>
+  };
 }
 
 async function importPacketDataToMcc(input: {
@@ -1248,81 +1223,35 @@ async function importPacketDataToMcc(input: {
   return { populated, conflicts };
 }
 
-async function buildCompletedPacketPdfData(input: {
+async function buildCompletedPacketDocxData(input: {
   memberName: string;
   request: EnrollmentPacketRequestRow;
   fields: EnrollmentPacketFieldsRow;
   caregiverSignatureName: string;
   senderSignatureName: string;
 }) {
-  const pdf = await PDFDocument.create();
-  const page = pdf.addPage([612, 792]);
-  const regular = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const now = toEasternISO();
-  const blue = rgb(0.09, 0.24, 0.55);
-  let y = 752;
-
-  page.drawText("Memory Lane Enrollment Packet", { x: 36, y, size: 18, font: bold, color: blue });
-  y -= 24;
-  page.drawText(`Member: ${input.memberName}`, { x: 36, y, size: 11, font: regular });
-  y -= 14;
-  page.drawText(`Packet ID: ${input.request.id}`, { x: 36, y, size: 10, font: regular });
-  y -= 14;
-  page.drawText(`Completed At: ${toEasternDate(now)} ${now.slice(11, 19)} ET`, { x: 36, y, size: 10, font: regular });
-  y -= 22;
-  page.drawText("Enrollment Inputs", { x: 36, y, size: 12, font: bold, color: blue });
-  y -= 16;
-  page.drawText(`Requested Days: ${(input.fields.requested_days ?? []).join(", ") || "-"}`, { x: 36, y, size: 10, font: regular });
-  y -= 13;
-  page.drawText(`Transportation: ${input.fields.transportation ?? "-"}`, { x: 36, y, size: 10, font: regular });
-  y -= 13;
-  page.drawText(`Community Fee: $${safeNumber(input.fields.community_fee).toFixed(2)}`, { x: 36, y, size: 10, font: regular });
-  y -= 13;
-  page.drawText(`Daily Rate: $${safeNumber(input.fields.daily_rate).toFixed(2)}`, { x: 36, y, size: 10, font: regular });
-  y -= 22;
-  page.drawText("Caregiver Information", { x: 36, y, size: 12, font: bold, color: blue });
-  y -= 16;
-  page.drawText(`Name: ${input.fields.caregiver_name ?? "-"}`, { x: 36, y, size: 10, font: regular });
-  y -= 13;
-  page.drawText(`Phone: ${input.fields.caregiver_phone ?? "-"}`, { x: 36, y, size: 10, font: regular });
-  y -= 13;
-  page.drawText(`Email: ${input.fields.caregiver_email ?? "-"}`, { x: 36, y, size: 10, font: regular });
-  y -= 13;
-  page.drawText(
-    `Address: ${[input.fields.caregiver_address_line1, input.fields.caregiver_city, input.fields.caregiver_state, input.fields.caregiver_zip].filter(Boolean).join(", ") || "-"}`,
-    { x: 36, y, size: 10, font: regular, maxWidth: 530 }
-  );
-  y -= 30;
-  page.drawText("Included Packet Forms", { x: 36, y, size: 12, font: bold, color: blue });
-  y -= 16;
-  const packetForms = [
-    "1. TS Welcome Checklist",
-    "2. Face Sheet and Biography",
-    "3. Membership Agreement",
-    "3a. Membership Agreement Exhibit A",
-    "4. Notice of Privacy Practices",
-    "5. Statement of Rights of Adult Day Care Participants",
-    "6. Photo Consent",
-    "7. Ancillary Charges Notice",
-    "8. Insurance and POA Upload",
-    "TSFM Welcome Guide"
-  ];
-  packetForms.forEach((line) => {
-    page.drawText(`- ${line}`, { x: 48, y, size: 9, font: regular });
-    y -= 12;
+  return buildCompletedEnrollmentPacketDocxData({
+    memberName: input.memberName,
+    packetId: input.request.id,
+    requestedDays: input.fields.requested_days ?? [],
+    transportation: input.fields.transportation,
+    communityFee: safeNumber(input.fields.community_fee),
+    dailyRate: safeNumber(input.fields.daily_rate),
+    caregiverName: input.fields.caregiver_name,
+    caregiverPhone: input.fields.caregiver_phone,
+    caregiverEmail: input.fields.caregiver_email,
+    caregiverAddressLine1: input.fields.caregiver_address_line1,
+    caregiverAddressLine2: input.fields.caregiver_address_line2,
+    caregiverCity: input.fields.caregiver_city,
+    caregiverState: input.fields.caregiver_state,
+    caregiverZip: input.fields.caregiver_zip,
+    secondaryContactName: input.fields.secondary_contact_name,
+    secondaryContactPhone: input.fields.secondary_contact_phone,
+    secondaryContactEmail: input.fields.secondary_contact_email,
+    secondaryContactRelationship: input.fields.secondary_contact_relationship,
+    caregiverSignatureName: input.caregiverSignatureName,
+    senderSignatureName: input.senderSignatureName
   });
-  y -= 18;
-  page.drawText(`Sender Signature Applied: ${input.senderSignatureName}`, { x: 36, y, size: 10, font: bold });
-  y -= 13;
-  page.drawText(`Caregiver Signature Applied: ${input.caregiverSignatureName}`, { x: 36, y, size: 10, font: bold });
-
-  const bytes = Buffer.from(await pdf.save());
-  return {
-    bytes,
-    dataUrl: `data:application/pdf;base64,${bytes.toString("base64")}`,
-    fileName: `Enrollment Packet Completed - ${safeFileName(input.memberName)} - ${toEasternDate(now)}.pdf`
-  };
 }
 
 export async function savePublicEnrollmentPacketProgress(input: {
@@ -1498,7 +1427,7 @@ export async function submitPublicEnrollmentPacket(input: {
 
   const refreshedFields = await loadPacketFields(request.id);
   if (!refreshedFields) throw new Error("Enrollment packet fields are missing.");
-  const packetPdf = await buildCompletedPacketPdfData({
+  const packetDocx = await buildCompletedPacketDocxData({
     memberName: member.display_name,
     request,
     fields: refreshedFields,
@@ -1508,13 +1437,13 @@ export async function submitPublicEnrollmentPacket(input: {
   const finalPacketArtifact = await insertUploadAndFile({
     packetId: request.id,
     memberId: member.id,
-    fileName: packetPdf.fileName,
-    contentType: "application/pdf",
-    bytes: packetPdf.bytes,
+    fileName: packetDocx.fileName,
+    contentType: packetDocx.contentType,
+    bytes: packetDocx.bytes,
     uploadCategory: "completed_packet",
     uploadedByUserId: null,
     uploadedByName: caregiverTypedName,
-    dataUrl: packetPdf.dataUrl
+    dataUrl: packetDocx.dataUrl
   });
 
   const { error: completedError } = await admin
