@@ -1403,7 +1403,6 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     actor: { id: profile.id, fullName: profile.full_name, signoffName: signerName }
   });
 
-  let pdfWarning: string | null = null;
   try {
     const generated = await buildIntakeAssessmentPdfDataUrl(created.id);
     await saveGeneratedMemberPdfToFiles({
@@ -1422,7 +1421,10 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown PDF generation error.";
-    pdfWarning = `Assessment saved, but Intake Assessment PDF could not be saved to member files (${message}).`;
+    return {
+      error: `Intake Assessment was created, but saving its PDF to member files failed (${message}).`,
+      assessmentId: created.id
+    };
   }
 
   revalidatePath("/health");
@@ -1435,7 +1437,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
   revalidatePath(`/operations/member-command-center/${effectiveMemberId}`);
   revalidatePath(`/members/${effectiveMemberId}`);
   revalidatePath(`/reports/assessments/${created.id}`);
-  return pdfWarning ? { ok: true, assessmentId: created.id, warning: pdfWarning } : { ok: true, assessmentId: created.id };
+  return { ok: true, assessmentId: created.id };
 }
 
 const leadActivitySchema = z
@@ -1597,7 +1599,7 @@ export async function updateDailyActivityAction(raw: z.infer<typeof updateDailyA
   );
 
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data: updatedRows, error } = await supabase
     .from("daily_activity_logs")
     .update({
       activity_1_level: payload.data.activity1,
@@ -1611,8 +1613,17 @@ export async function updateDailyActivityAction(raw: z.infer<typeof updateDailyA
       activity_5_level: payload.data.activity5,
       missing_reason_5: payload.data.activity5 === 0 ? payload.data.reasonMissing5?.trim() ?? null : null,
       notes: payload.data.notes ?? null
-    });
+    })
+    .eq("id", payload.data.id)
+    .select("id");
   if (error) return { error: error.message };
+  const updatedCount = updatedRows?.length ?? 0;
+  if (updatedCount === 0) {
+    throw new Error(`Daily activity log update failed: no row found for id ${payload.data.id}.`);
+  }
+  if (updatedCount > 1) {
+    throw new Error(`Daily activity log update failed: expected exactly one row for id ${payload.data.id}, affected ${updatedCount}.`);
+  }
   await insertAudit("manager_review", "daily_activity_log", payload.data.id, { participation });
   revalidatePath("/documentation/activity");
   revalidatePath("/documentation");

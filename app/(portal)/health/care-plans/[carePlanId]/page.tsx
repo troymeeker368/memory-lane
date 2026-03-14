@@ -47,6 +47,7 @@ export default async function CarePlanDetailPage({
   const detail = await getCarePlanById(carePlanId);
   if (!detail) redirect("/health/care-plans/list");
 
+  const detailMode = typeof query.view === "string" && query.view === "detail";
   const reviewMode = typeof query.view === "string" && query.view === "review";
   const requestedReturnTo = typeof query.returnTo === "string" ? query.returnTo : null;
   const returnTo = requestedReturnTo && requestedReturnTo.startsWith("/") ? requestedReturnTo : null;
@@ -148,20 +149,22 @@ export default async function CarePlanDetailPage({
         />
       </Card>
 
-      <Card>
-        <CarePlanCaregiverEsignActions
-          carePlanId={detail.carePlan.id}
-          nurseSignatureStatus={detail.carePlan.nurseSignatureStatus}
-          nurseSignedAt={detail.carePlan.nurseSignedAt}
-          caregiverName={detail.carePlan.caregiverName}
-          caregiverEmail={detail.carePlan.caregiverEmail}
-          caregiverSignatureStatus={detail.carePlan.caregiverSignatureStatus}
-          caregiverSentAt={detail.carePlan.caregiverSentAt}
-          caregiverViewedAt={detail.carePlan.caregiverViewedAt}
-          caregiverSignedAt={detail.carePlan.caregiverSignedAt}
-          finalMemberFileId={detail.carePlan.finalMemberFileId}
-        />
-      </Card>
+      {!detailMode ? (
+        <Card>
+          <CarePlanCaregiverEsignActions
+            carePlanId={detail.carePlan.id}
+            nurseSignatureStatus={detail.carePlan.nurseSignatureStatus}
+            nurseSignedAt={detail.carePlan.nurseSignedAt}
+            caregiverName={detail.carePlan.caregiverName}
+            caregiverEmail={detail.carePlan.caregiverEmail}
+            caregiverSignatureStatus={detail.carePlan.caregiverSignatureStatus}
+            caregiverSentAt={detail.carePlan.caregiverSentAt}
+            caregiverViewedAt={detail.carePlan.caregiverViewedAt}
+            caregiverSignedAt={detail.carePlan.caregiverSignedAt}
+            finalMemberFileId={detail.carePlan.finalMemberFileId}
+          />
+        </Card>
+      ) : null}
 
       <Card className="table-wrap">
         <CardTitle>Review History</CardTitle>
@@ -213,7 +216,7 @@ export default async function CarePlanDetailPage({
         </div>
       </Card>
 
-      {reviewForm}
+      {!detailMode ? reviewForm : null}
     </div>
   );
 }

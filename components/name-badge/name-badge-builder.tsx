@@ -29,13 +29,62 @@ interface BadgeViewModel {
   indicators: BadgeIndicatorView[];
 }
 
-function triggerDownload(dataUrl: string, fileName: string) {
+function dataUrlToBlob(dataUrl: string) {
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex < 0) {
+    throw new Error("Invalid PDF payload.");
+  }
+  const meta = dataUrl.slice(0, commaIndex);
+  const base64 = dataUrl.slice(commaIndex + 1);
+  const mimeMatch = /data:([^;]+);base64/i.exec(meta);
+  const mimeType = mimeMatch?.[1] ?? "application/octet-stream";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
+async function triggerDownload(dataUrl: string, fileName: string) {
+  const blob = dataUrlToBlob(dataUrl);
+  if ("showSaveFilePicker" in window) {
+    try {
+      const handle = await (window as Window & {
+        showSaveFilePicker?: (options?: {
+          suggestedName?: string;
+          types?: Array<{ description: string; accept: Record<string, string[]> }>;
+        }) => Promise<{
+          createWritable: () => Promise<{
+            write: (data: Blob) => Promise<void>;
+            close: () => Promise<void>;
+          }>;
+        }>;
+      }).showSaveFilePicker?.({
+        suggestedName: fileName,
+        types: [{ description: "PDF Document", accept: { "application/pdf": [".pdf"] } }]
+      });
+      if (handle) {
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return;
+      }
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : "";
+      if (name === "AbortError") return;
+    }
+  }
+
+  const blobUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
-  anchor.href = dataUrl;
+  anchor.href = blobUrl;
   anchor.download = fileName;
+  anchor.style.display = "none";
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 }
 
 export function NameBadgeBuilder({
@@ -64,9 +113,9 @@ export function NameBadgeBuilder({
     const length = text.length || 1;
     // Approximate Helvetica Bold width factor for uppercase/mixed names.
     const estimatedWidthFactor = 0.58;
-    const availableWidthPx = 330;
+    const availableWidthPx = 320;
     const fitSize = availableWidthPx / (length * estimatedWidthFactor);
-    return Math.max(20, Math.min(30, fitSize));
+    return Math.max(18, Math.min(24, fitSize));
   }, [memberDisplayName]);
 
   function toggleIndicator(key: string) {
@@ -92,7 +141,7 @@ export function NameBadgeBuilder({
         setStatus(`Error: ${result?.error ?? "Unable to generate badge."}`);
         return;
       }
-      triggerDownload(result.dataUrl, result.fileName);
+      await triggerDownload(result.dataUrl, result.fileName);
       if (printAfterDownload) {
         window.print();
       }

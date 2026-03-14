@@ -10,6 +10,47 @@ import {
   submitPublicEnrollmentPacket
 } from "@/lib/services/enrollment-packets";
 
+type PublicEnrollmentPacketUploadCategory =
+  | "insurance"
+  | "poa"
+  | "supporting"
+  | "medicare_card"
+  | "private_insurance"
+  | "supplemental_insurance"
+  | "poa_guardianship"
+  | "dnr_dni_advance_directive";
+
+const MAX_ENROLLMENT_PACKET_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_ENROLLMENT_PACKET_UPLOAD_MB = MAX_ENROLLMENT_PACKET_UPLOAD_BYTES / (1024 * 1024);
+const ALLOWED_ENROLLMENT_PACKET_UPLOAD_LABEL = "PDF, DOC, DOCX, JPG, JPEG, PNG, HEIC, HEIF, WEBP, GIF, TIF, TIFF";
+const ALLOWED_ENROLLMENT_PACKET_UPLOAD_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/heic",
+  "image/heif",
+  "image/webp",
+  "image/gif",
+  "image/tiff"
+]);
+const ENROLLMENT_PACKET_UPLOAD_EXTENSION_TO_MIME: Record<string, string> = {
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  heic: "image/heic",
+  heif: "image/heif",
+  webp: "image/webp",
+  gif: "image/gif",
+  tif: "image/tiff",
+  tiff: "image/tiff"
+};
+
 function asString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
 }
@@ -25,41 +66,69 @@ function parseIntakePayload(formData: FormData) {
   }
 }
 
+function extractUploadExtension(fileName: string) {
+  const normalized = fileName.trim().toLowerCase();
+  const index = normalized.lastIndexOf(".");
+  if (index < 0 || index === normalized.length - 1) return null;
+  return normalized.slice(index + 1);
+}
+
+function resolveUploadContentType(entry: File) {
+  const providedType = entry.type.trim().toLowerCase();
+  if (providedType && ALLOWED_ENROLLMENT_PACKET_UPLOAD_MIME_TYPES.has(providedType)) {
+    return providedType;
+  }
+
+  const extension = extractUploadExtension(entry.name);
+  if (!extension) return null;
+  const inferredType = ENROLLMENT_PACKET_UPLOAD_EXTENSION_TO_MIME[extension];
+  if (!inferredType) return null;
+
+  if (!providedType || providedType === "application/octet-stream" || providedType === inferredType) {
+    return inferredType;
+  }
+
+  return null;
+}
+
+function validateEnrollmentPacketUpload(entry: File, category: PublicEnrollmentPacketUploadCategory) {
+  const normalizedName = entry.name.trim();
+  const fileName = normalizedName || `${category}-${Date.now()}`;
+
+  if (entry.size > MAX_ENROLLMENT_PACKET_UPLOAD_BYTES) {
+    throw new Error(`"${fileName}" is too large. Maximum file size is ${MAX_ENROLLMENT_PACKET_UPLOAD_MB}MB.`);
+  }
+
+  const contentType = resolveUploadContentType(entry);
+  if (!contentType) {
+    throw new Error(
+      `"${fileName}" has an unsupported file type. Allowed file types: ${ALLOWED_ENROLLMENT_PACKET_UPLOAD_LABEL}.`
+    );
+  }
+
+  return { fileName, contentType };
+}
+
 async function parseFileUploads(
   formData: FormData,
   key: string,
-  category:
-    | "insurance"
-    | "poa"
-    | "supporting"
-    | "medicare_card"
-    | "private_insurance"
-    | "supplemental_insurance"
-    | "poa_guardianship"
-    | "dnr_dni_advance_directive"
+  category: PublicEnrollmentPacketUploadCategory
 ) {
   const entries = formData.getAll(key);
   const uploads: Array<{
     fileName: string;
     contentType: string;
     bytes: Buffer;
-    category:
-      | "insurance"
-      | "poa"
-      | "supporting"
-      | "medicare_card"
-      | "private_insurance"
-      | "supplemental_insurance"
-      | "poa_guardianship"
-      | "dnr_dni_advance_directive";
+    category: PublicEnrollmentPacketUploadCategory;
   }> = [];
   for (const entry of entries) {
     if (!(entry instanceof File)) continue;
     if (entry.size <= 0) continue;
+    const { fileName, contentType } = validateEnrollmentPacketUpload(entry, category);
     const bytes = Buffer.from(await entry.arrayBuffer());
     uploads.push({
-      fileName: entry.name || `${category}-${Date.now()}`,
-      contentType: entry.type || "application/octet-stream",
+      fileName,
+      contentType,
       bytes,
       category
     });

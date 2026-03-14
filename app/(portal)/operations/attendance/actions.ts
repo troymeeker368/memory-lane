@@ -12,13 +12,12 @@ import {
 } from "@/lib/services/expected-attendance-supabase";
 import { ensureMemberAttendanceScheduleSupabase } from "@/lib/services/member-command-center-supabase";
 import {
+  applyMakeupBalanceDeltaWithAuditSupabase,
   deleteAttendanceRecordSupabase,
   getActiveMemberIdSupabase,
   getAttendanceRecordSupabase,
   setBillingAdjustmentExcludedSupabase,
-  updateScheduleMakeupBalanceSupabase,
   upsertAttendanceRecordSupabase,
-  writeMakeupAuditLogSupabase,
   type AttendanceRecordRow
 } from "@/lib/services/attendance-workflow-supabase";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
@@ -27,14 +26,6 @@ import type { AppRole } from "@/types/app";
 
 function asString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
-}
-
-function isUuid(value: string | null | undefined) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value ?? ""));
-}
-
-function actorUserIdOrNull(value: string | null | undefined) {
-  return isUuid(value) ? String(value) : null;
 }
 
 async function resolveAttendanceMemberId(rawMemberId: string, actionLabel: string) {
@@ -139,26 +130,6 @@ async function resolveMemberExpectedAttendanceForDate(input: {
   };
 }
 
-async function recordMakeupAuditLog(input: {
-  memberId: string;
-  attendanceDate: string;
-  deltaDays: number;
-  source: string;
-  actorUserId: string | null;
-  actorRole: AppRole;
-}) {
-  try {
-    await writeMakeupAuditLogSupabase(input);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn("[Attendance] Unable to write makeup audit log", {
-      message,
-      memberId: input.memberId,
-      attendanceDate: input.attendanceDate
-    });
-  }
-}
-
 async function applyScheduledAbsenceMakeupDelta(input: {
   memberId: string;
   attendanceDate: string;
@@ -172,25 +143,14 @@ async function applyScheduledAbsenceMakeupDelta(input: {
   });
   if (!resolution.isScheduled) return;
 
-  const currentBalance = Math.max(0, Number(schedule.make_up_days_available ?? 0));
-  const nextBalance = Math.max(0, currentBalance + input.deltaDays);
-  if (nextBalance === currentBalance) return;
-
-  const now = toEasternISO();
-  await updateScheduleMakeupBalanceSupabase({
+  await applyMakeupBalanceDeltaWithAuditSupabase({
     scheduleId: schedule.id,
-    makeUpDaysAvailable: nextBalance,
-    actor: input.actor,
-    at: now
-  });
-
-  await recordMakeupAuditLog({
     memberId: input.memberId,
     attendanceDate: input.attendanceDate,
     deltaDays: input.deltaDays,
     source: input.source,
-    actorUserId: actorUserIdOrNull(input.actor.id),
-    actorRole: input.actor.role
+    actor: input.actor,
+    at: toEasternISO()
   });
 }
 
@@ -459,25 +419,15 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
     });
 
     if (useMakeupDay) {
-      const currentBalance = Math.max(0, Number(schedule.make_up_days_available ?? 0));
-      if (currentBalance < 1) {
-        throw new Error("No makeup days are currently available for this member.");
-      }
-
-      await updateScheduleMakeupBalanceSupabase({
+      await applyMakeupBalanceDeltaWithAuditSupabase({
         scheduleId: schedule.id,
-        makeUpDaysAvailable: currentBalance - 1,
-        actor,
-        at: now
-      });
-
-      await recordMakeupAuditLog({
         memberId,
         attendanceDate,
         deltaDays: -1,
         source: "unscheduled-attendance",
-        actorUserId: actorUserIdOrNull(actor.id),
-        actorRole: actor.role
+        actor,
+        at: now,
+        failIfInsufficient: true
       });
     }
 

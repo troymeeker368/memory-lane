@@ -145,7 +145,7 @@ function isMissingTableError(error: { code?: string | null; message?: string | n
 async function discoverExistingTables(supabase: ReturnType<typeof createSupabaseAdminClient>, tables: string[]) {
   const entries = await Promise.all(
     [...new Set(tables)].map(async (table) => {
-      const { error } = await supabase.from(table).select("id", { count: "exact", head: true }).limit(1);
+      const { error } = await supabase.from(table).select("*", { count: "exact", head: true }).limit(1);
       if (!error) return [table, true] as const;
       if (isMissingTableError(error, table)) return [table, false] as const;
       throw new Error(`Unable to inspect table ${table}: ${error.message}`);
@@ -176,11 +176,26 @@ async function upsertRows(
     }
   }
   const normalizedRows = [...dedupedById.values(), ...withoutId];
+  const conflictTargetByTable: Record<string, string> = {
+    physician_orders: "member_id,version_number",
+    enrollment_packet_sender_signatures: "user_id",
+    intake_assessment_signatures: "assessment_id",
+    pof_signatures: "pof_request_id",
+    pof_medications: "physician_order_id,source_medication_id",
+    mar_schedules: "member_id,pof_medication_id,scheduled_time",
+    member_health_profiles: "member_id"
+  };
+  const conflictTarget = conflictTargetByTable[table] ?? "id";
   let inserted = 0;
   for (let i = 0; i < normalizedRows.length; i += BATCH_SIZE) {
     const batch = normalizedRows.slice(i, i + BATCH_SIZE);
-    let { error } = await supabase.from(table).upsert(batch, { onConflict: "id" });
-    if (error?.message?.toLowerCase().includes("no unique or exclusion constraint matching the on conflict specification")) {
+    let { error } = await supabase.from(table).upsert(batch, { onConflict: conflictTarget });
+    const onConflictMessage = error?.message?.toLowerCase() ?? "";
+    if (
+      onConflictMessage.includes("no unique or exclusion constraint matching the on conflict specification") ||
+      onConflictMessage.includes("column \"id\" does not exist") ||
+      onConflictMessage.includes("id does not exist")
+    ) {
       const retry = await supabase.from(table).upsert(batch);
       error = retry.error;
       if (error?.message?.toLowerCase().includes("no unique or exclusion constraint matching the on conflict specification")) {
@@ -258,109 +273,361 @@ function buildIntakeCascade(db: SeededDb, staffMap: Map<string, string>) {
   const byMemberDiagnoses = new Map<string, unknown[]>();
   const byMemberAllergies = new Map<string, unknown[]>();
   const byMemberMeds = new Map<string, unknown[]>();
+  const byMemberProviders = new Map<string, SeededDb["memberProviders"][number][]>();
+  const byMemberAssessment = new Map<string, SeededDb["assessments"][number]>();
+  const byMemberMhp = new Map<string, SeededDb["memberHealthProfiles"][number]>();
   db.memberDiagnoses.forEach((row) => byMemberDiagnoses.set(row.member_id, [...(byMemberDiagnoses.get(row.member_id) ?? []), row]));
   db.memberAllergies.forEach((row) => byMemberAllergies.set(row.member_id, [...(byMemberAllergies.get(row.member_id) ?? []), row]));
   db.memberMedications.forEach((row) => byMemberMeds.set(row.member_id, [...(byMemberMeds.get(row.member_id) ?? []), row]));
+  db.memberProviders.forEach((row) =>
+    byMemberProviders.set(row.member_id, [...(byMemberProviders.get(row.member_id) ?? []), row])
+  );
+  db.assessments.forEach((row) => {
+    const current = byMemberAssessment.get(row.member_id);
+    if (!current || current.assessment_date < row.assessment_date) byMemberAssessment.set(row.member_id, row);
+  });
+  db.memberHealthProfiles.forEach((row) => byMemberMhp.set(row.member_id, row));
 
   const pofRows: Record<string, unknown>[] = [];
   const mhpRows: Record<string, unknown>[] = [];
+  const activeSignedOrderByMember = new Map<string, string>();
   db.members.forEach((member, idx) => {
     const signedId = stableUuid(`pof-signed-${member.id}`);
     const oldSignedId = stableUuid(`pof-old-${member.id}`);
     const draftId = stableUuid(`pof-draft-${member.id}`);
     const sentId = stableUuid(`pof-sent-${member.id}`);
+    const sourceAssessment = byMemberAssessment.get(member.id) ?? null;
+    const sourceMhp = byMemberMhp.get(member.id) ?? null;
+    const sourceMhpRecord = sourceMhp ? (sourceMhp as unknown as Record<string, unknown>) : {};
     const memberNameSnapshot = member.display_name ?? null;
     const memberDobSnapshot = member.dob ?? null;
     const diagnoses = byMemberDiagnoses.get(member.id) ?? [];
     const allergies = byMemberAllergies.get(member.id) ?? [];
     const medications = byMemberMeds.get(member.id) ?? [];
-    const sourceAssessment = db.assessments.find((row) => row.member_id === member.id) ?? null;
-    const actor = sourceAssessment?.created_by_user_id ? staffMap.get(sourceAssessment.created_by_user_id) ?? null : null;
+    const provider = (byMemberProviders.get(member.id) ?? [])[0] ?? null;
+    const actorUserId = sourceAssessment?.created_by_user_id ? staffMap.get(sourceAssessment.created_by_user_id) ?? null : null;
+    const actorName = sourceAssessment?.created_by_name ?? sourceAssessment?.completed_by ?? provider?.created_by_name ?? "Clinical Seed";
+    const signedDate = asDateOnly(
+      sourceAssessment?.assessment_date,
+      member.latest_assessment_date ?? member.enrollment_date ?? addDays("2026-02-01", -(idx + 7))
+    ) as string;
+    const sentDate = addDays(signedDate, -2);
+    const draftDate = addDays(signedDate, -4);
+    const providerName = provider?.provider_name ?? sourceMhp?.provider_name ?? "Dr. Morgan White";
 
-    if (idx < 4) {
-      pofRows.push({
-        id: oldSignedId,
-        member_id: member.id,
-        intake_assessment_id: sourceAssessment?.id ?? null,
-        version_number: 1,
-        status: "superseded",
-        is_active_signed: false,
-        superseded_by: signedId,
-        member_name_snapshot: memberNameSnapshot,
-        member_dob_snapshot: memberDobSnapshot,
-        diagnoses,
-        allergies,
-        medications,
-        created_by_user_id: actor,
-        updated_by_user_id: actor
-      });
-    }
-
-    pofRows.push({
-      id: signedId,
-      member_id: member.id,
-      intake_assessment_id: sourceAssessment?.id ?? null,
-      version_number: idx < 4 ? 2 : 1,
-      status: "signed",
-      is_active_signed: true,
-      member_name_snapshot: memberNameSnapshot,
-      member_dob_snapshot: memberDobSnapshot,
-      diagnoses,
-      allergies,
-      medications,
-      created_by_user_id: actor,
-      updated_by_user_id: actor
+    const medicationPayload = medications.map((med, medIdx) => {
+      const medRow = med as Record<string, unknown>;
+      const timeSeed = medIdx % 3 === 0 ? "09:00" : medIdx % 3 === 1 ? "13:00" : "17:00";
+      const statusText = String(medRow.medication_status ?? "").toLowerCase();
+      const active = statusText !== "inactive";
+      return {
+        id: cleanText(medRow.id) ?? stableUuid(`pof-med-payload:${member.id}:${medIdx}`),
+        name: cleanText(medRow.medication_name) ?? `Medication ${medIdx + 1}`,
+        quantity: cleanText(medRow.quantity),
+        dose: cleanText(medRow.dose),
+        route: cleanText(medRow.route),
+        frequency: cleanText(medRow.frequency),
+        givenAtCenter: active,
+        givenAtCenterTime24h: active ? timeSeed : null,
+        prn: String(medRow.frequency ?? "").toLowerCase().includes("prn"),
+        prnInstructions: String(medRow.frequency ?? "").toLowerCase().includes("prn")
+          ? "Use as clinically indicated."
+          : null,
+        startDate: asDateOnly(cleanText(medRow.date_started), signedDate),
+        endDate: asDateOnly(cleanText(medRow.inactivated_at)),
+        active,
+        provider: providerName,
+        instructions: cleanText(medRow.comments),
+        comments: cleanText(medRow.comments)
+      };
     });
 
-    if (idx >= 4 && idx < 8) {
+    const pushOrder = (input: {
+      id: string;
+      status: "draft" | "sent" | "signed" | "superseded";
+      versionNumber: number;
+      isActiveSigned: boolean;
+      supersededBy?: string | null;
+      createdDate: string;
+      sentDate: string | null;
+      signedDate: string | null;
+      effectiveDate: string | null;
+    }) => {
       pofRows.push({
-        id: sentId,
+        id: input.id,
         member_id: member.id,
         intake_assessment_id: sourceAssessment?.id ?? null,
-        version_number: 3,
-        status: "sent",
-        is_active_signed: false,
+        version_number: input.versionNumber,
+        status: input.status,
+        is_active_signed: input.isActiveSigned,
+        superseded_by: input.supersededBy ?? null,
+        superseded_at: input.status === "superseded" ? toIsoAt(signedDate, 8, 0) : null,
+        sent_at: input.sentDate ? toIsoAt(input.sentDate, 10, 0) : null,
+        signed_at: input.signedDate ? toIsoAt(input.signedDate, 14, 0) : null,
+        effective_at: input.effectiveDate ? toIsoAt(input.effectiveDate, 15, 0) : null,
+        next_renewal_due_date: input.signedDate ? addDays(input.signedDate, 365) : null,
         member_name_snapshot: memberNameSnapshot,
         member_dob_snapshot: memberDobSnapshot,
+        sex: sourceMhp?.gender ?? (idx % 2 === 0 ? "Female" : "Male"),
+        level_of_care:
+          member.latest_assessment_track === "Track 3"
+            ? "High support"
+            : member.latest_assessment_track === "Track 2"
+              ? "Moderate support"
+              : "Routine support",
+        dnr_selected: (member.code_status ?? sourceAssessment?.code_status ?? "Full Code").toUpperCase().includes("DNR"),
+        vitals_blood_pressure: sourceAssessment?.vitals_bp ?? null,
+        vitals_pulse: sourceAssessment?.vitals_hr ? String(sourceAssessment.vitals_hr) : null,
+        vitals_oxygen_saturation: sourceAssessment?.vitals_o2_percent ? `${sourceAssessment.vitals_o2_percent}%` : null,
+        vitals_respiration: sourceAssessment?.vitals_rr ? String(sourceAssessment.vitals_rr) : null,
         diagnoses,
         allergies,
-        medications,
-        created_by_user_id: actor,
-        updated_by_user_id: actor
+        medications: medicationPayload,
+        standing_orders: [
+          { id: stableUuid(`standing-order:${member.id}:fall-risk`), text: "Fall risk precautions while ambulating." },
+          { id: stableUuid(`standing-order:${member.id}:hydration`), text: "Encourage hydration throughout attendance day." }
+        ],
+        diet_order: {
+          dietType: sourceAssessment?.diet_type ?? member.diet_type ?? sourceMhp?.diet_type ?? "Regular",
+          dietOther: sourceAssessment?.diet_other ?? null,
+          restrictions: sourceAssessment?.diet_restrictions_notes ?? member.diet_restrictions_notes ?? null
+        },
+        mobility_order: {
+          mobilitySteadiness: sourceAssessment?.mobility_steadiness ?? member.mobility_status ?? null,
+          mobilityAids: sourceAssessment?.mobility_aids ?? member.mobility_aids ?? null
+        },
+        adl_support: {
+          dressingSupport: sourceAssessment?.dressing_support_status ?? member.dressing_support_status ?? null,
+          toiletingNeeds: sourceAssessment?.incontinence_products ?? member.incontinence_products ?? null
+        },
+        continence_support: {
+          bladder: sourceMhp?.bladder_continence ?? null,
+          bowel: sourceMhp?.bowel_continence ?? null
+        },
+        behavior_orientation: {
+          orientationDobVerified: sourceAssessment?.orientation_dob_verified ?? member.orientation_dob_verified ?? null,
+          orientationCityVerified: sourceAssessment?.orientation_city_verified ?? member.orientation_city_verified ?? null,
+          socialTriggers: sourceAssessment?.social_triggers ?? member.social_triggers ?? null
+        },
+        clinical_support: {
+          medicationManagement: sourceAssessment?.medication_management_status ?? member.medication_management_status ?? null,
+          assistiveDevices: sourceAssessment?.assistive_devices ?? member.assistive_devices ?? null
+        },
+        nutrition_orders: {
+          joySparks: sourceAssessment?.joy_sparks ?? member.joy_sparks ?? cleanText(sourceMhpRecord.joy_sparks) ?? null
+        },
+        operational_flags: {
+          transportAppropriate: sourceAssessment?.transport_appropriate ?? member.transport_appropriate ?? null,
+          sourceAssessmentTrack: member.latest_assessment_track ?? null
+        },
+        provider_name: providerName,
+        provider_signature: input.status === "signed" ? providerName : null,
+        provider_signature_date: input.status === "signed" && input.signedDate ? input.signedDate : null,
+        signed_by_name: input.status === "signed" ? providerName : null,
+        signature_metadata:
+          input.status === "signed"
+            ? { seeded: true, source: "seed:v3", signedVia: "seeded-provider-signature" }
+            : { seeded: true, source: "seed:v3" },
+        created_by_user_id: actorUserId,
+        created_by_name: actorName,
+        updated_by_user_id: actorUserId,
+        updated_by_name: actorName,
+        created_at: toIsoAt(input.createdDate, 9, 0),
+        updated_at: toIsoAt(input.signedDate ?? input.sentDate ?? input.createdDate, 16, 0)
       });
-    }
-    if (idx >= 8 && idx < 12) {
-      pofRows.push({
-        id: draftId,
-        member_id: member.id,
-        intake_assessment_id: sourceAssessment?.id ?? null,
-        version_number: 3,
-        status: "draft",
-        is_active_signed: false,
-        member_name_snapshot: memberNameSnapshot,
-        member_dob_snapshot: memberDobSnapshot,
-        diagnoses,
-        allergies,
-        medications,
-        created_by_user_id: actor,
-        updated_by_user_id: actor
+    };
+
+    if (idx < 4) {
+      pushOrder({
+        id: oldSignedId,
+        status: "superseded",
+        versionNumber: 1,
+        isActiveSigned: false,
+        supersededBy: signedId,
+        createdDate: addDays(signedDate, -45),
+        sentDate: addDays(signedDate, -41),
+        signedDate: addDays(signedDate, -40),
+        effectiveDate: addDays(signedDate, -39)
       });
     }
 
+    pushOrder({
+      id: signedId,
+      status: "signed",
+      versionNumber: idx < 4 ? 2 : 1,
+      isActiveSigned: true,
+      createdDate: addDays(signedDate, -5),
+      sentDate,
+      signedDate,
+      effectiveDate: addDays(signedDate, 1)
+    });
+
+    if (idx >= 4 && idx < 9) {
+      pushOrder({
+        id: sentId,
+        status: "sent",
+        versionNumber: 3,
+        isActiveSigned: false,
+        createdDate: draftDate,
+        sentDate: addDays(draftDate, 1),
+        signedDate: null,
+        effectiveDate: null
+      });
+    }
+    if (idx >= 9 && idx < 13) {
+      pushOrder({
+        id: draftId,
+        status: "draft",
+        versionNumber: 3,
+        isActiveSigned: false,
+        createdDate: draftDate,
+        sentDate: null,
+        signedDate: null,
+        effectiveDate: null
+      });
+    }
+
+    activeSignedOrderByMember.set(member.id, signedId);
+
+    const sourceAssessmentDate = asDateOnly(
+      cleanText(sourceMhpRecord.source_assessment_at) ?? sourceAssessment?.assessment_date ?? member.latest_assessment_date
+    );
+
     mhpRows.push({
-      id: stableUuid(`mhp-${member.id}`),
+      id: isUuid(cleanText(sourceMhpRecord.id)) ? cleanText(sourceMhpRecord.id) : stableUuid(`mhp-${member.id}`),
       member_id: member.id,
       active_physician_order_id: signedId,
       diagnoses,
       allergies,
-      medications,
-      profile_notes: member.personal_notes ?? null,
-      joy_sparks: member.joy_sparks ?? null,
+      medications: medicationPayload,
+      diet:
+        sourceMhpRecord.diet && typeof sourceMhpRecord.diet === "object"
+          ? sourceMhpRecord.diet
+          : {
+              type: sourceMhp?.diet_type ?? sourceAssessment?.diet_type ?? member.diet_type ?? "Regular",
+              restrictions: sourceMhp?.dietary_restrictions ?? sourceAssessment?.diet_restrictions_notes ?? null
+            },
+      mobility:
+        sourceMhpRecord.mobility && typeof sourceMhpRecord.mobility === "object"
+          ? sourceMhpRecord.mobility
+          : {
+              ambulation: sourceMhp?.ambulation ?? sourceAssessment?.mobility_steadiness ?? member.mobility_status ?? null,
+              aids: cleanText(sourceMhpRecord.mobility_aids) ?? sourceAssessment?.mobility_aids ?? member.mobility_aids ?? null
+            },
+      adl_support:
+        sourceMhpRecord.adl_support && typeof sourceMhpRecord.adl_support === "object"
+          ? sourceMhpRecord.adl_support
+          : {
+              dressing: sourceMhp?.dressing ?? sourceAssessment?.dressing_support_status ?? null,
+              medicationManagement: sourceAssessment?.medication_management_status ?? member.medication_management_status ?? null
+            },
+      continence:
+        sourceMhpRecord.continence && typeof sourceMhpRecord.continence === "object"
+          ? sourceMhpRecord.continence
+          : {
+              toiletingNeeds: sourceMhp?.toileting_needs ?? sourceAssessment?.incontinence_products ?? member.incontinence_products ?? null
+            },
+      behavior_orientation:
+        sourceMhpRecord.behavior_orientation && typeof sourceMhpRecord.behavior_orientation === "object"
+          ? sourceMhpRecord.behavior_orientation
+          : {
+              orientationDob: sourceMhp?.orientation_dob ?? (member.orientation_dob_verified ? member.dob : null),
+              orientationCity: sourceMhp?.orientation_city ?? (member.orientation_city_verified ? member.city : null),
+              socialTriggers: sourceAssessment?.social_triggers ?? member.social_triggers ?? null
+            },
+      clinical_support:
+        sourceMhpRecord.clinical_support && typeof sourceMhpRecord.clinical_support === "object"
+          ? sourceMhpRecord.clinical_support
+          : {
+              codeStatus: sourceMhp?.code_status ?? sourceAssessment?.code_status ?? member.code_status ?? "Full Code"
+            },
+      operational_flags:
+        sourceMhpRecord.operational_flags && typeof sourceMhpRecord.operational_flags === "object"
+          ? sourceMhpRecord.operational_flags
+          : { source: "seed:v3" },
+      gender: sourceMhp?.gender ?? (idx % 2 === 0 ? "Female" : "Male"),
+      payor: sourceMhp?.payor ?? null,
+      original_referral_source: sourceMhp?.original_referral_source ?? null,
+      photo_consent: sourceMhp?.photo_consent ?? true,
+      profile_image_url: sourceMhp?.profile_image_url ?? null,
+      primary_caregiver_name: sourceMhp?.primary_caregiver_name ?? null,
+      primary_caregiver_phone: sourceMhp?.primary_caregiver_phone ?? null,
+      responsible_party_name: sourceMhp?.responsible_party_name ?? null,
+      responsible_party_phone: sourceMhp?.responsible_party_phone ?? null,
+      provider_name: sourceMhp?.provider_name ?? providerName,
+      provider_phone: sourceMhp?.provider_phone ?? provider?.provider_phone ?? null,
+      important_alerts: sourceMhp?.important_alerts ?? member.social_triggers ?? null,
+      diet_type: sourceMhp?.diet_type ?? sourceAssessment?.diet_type ?? member.diet_type ?? null,
+      dietary_restrictions: sourceMhp?.dietary_restrictions ?? sourceAssessment?.diet_restrictions_notes ?? member.diet_restrictions_notes ?? null,
+      swallowing_difficulty: sourceMhp?.swallowing_difficulty ?? null,
+      diet_texture: sourceMhp?.diet_texture ?? null,
+      supplements: sourceMhp?.supplements ?? null,
+      foods_to_omit: sourceMhp?.foods_to_omit ?? null,
+      ambulation: sourceMhp?.ambulation ?? sourceAssessment?.mobility_steadiness ?? member.mobility_status ?? null,
+      transferring: sourceMhp?.transferring ?? null,
+      bathing: sourceMhp?.bathing ?? null,
+      dressing: sourceMhp?.dressing ?? sourceAssessment?.dressing_support_status ?? member.dressing_support_status ?? null,
+      eating: sourceMhp?.eating ?? null,
+      bladder_continence: sourceMhp?.bladder_continence ?? null,
+      bowel_continence: sourceMhp?.bowel_continence ?? null,
+      toileting: sourceMhp?.toileting ?? null,
+      toileting_needs: sourceMhp?.toileting_needs ?? sourceAssessment?.incontinence_products ?? member.incontinence_products ?? null,
+      toileting_comments: sourceMhp?.toileting_comments ?? null,
+      hearing: sourceMhp?.hearing ?? null,
+      vision: sourceMhp?.vision ?? null,
+      dental: sourceMhp?.dental ?? null,
+      speech_verbal_status: sourceMhp?.speech_verbal_status ?? null,
+      speech_comments: sourceMhp?.speech_comments ?? null,
+      personal_appearance_hygiene_grooming: sourceMhp?.personal_appearance_hygiene_grooming ?? null,
+      may_self_medicate: sourceMhp?.may_self_medicate ?? null,
+      medication_manager_name: sourceMhp?.medication_manager_name ?? null,
+      orientation_dob: sourceMhp?.orientation_dob ?? (member.orientation_dob_verified ? member.dob : null),
+      orientation_city: sourceMhp?.orientation_city ?? (member.orientation_city_verified ? member.city : null),
+      orientation_current_year: sourceMhp?.orientation_current_year ?? null,
+      orientation_former_occupation: sourceMhp?.orientation_former_occupation ?? null,
+      memory_impairment: sourceMhp?.memory_impairment ?? null,
+      memory_severity: sourceMhp?.memory_severity ?? null,
+      wandering: sourceMhp?.wandering ?? false,
+      combative_disruptive: sourceMhp?.combative_disruptive ?? false,
+      sleep_issues: sourceMhp?.sleep_issues ?? false,
+      self_harm_unsafe: sourceMhp?.self_harm_unsafe ?? false,
+      impaired_judgement: sourceMhp?.impaired_judgement ?? false,
+      delirium: sourceMhp?.delirium ?? false,
+      disorientation: sourceMhp?.disorientation ?? false,
+      agitation_resistive: sourceMhp?.agitation_resistive ?? false,
+      screaming_loud_noises: sourceMhp?.screaming_loud_noises ?? false,
+      exhibitionism_disrobing: sourceMhp?.exhibitionism_disrobing ?? false,
+      exit_seeking: sourceMhp?.exit_seeking ?? false,
+      cognitive_behavior_comments: sourceMhp?.cognitive_behavior_comments ?? sourceAssessment?.social_triggers ?? null,
+      code_status: sourceMhp?.code_status ?? sourceAssessment?.code_status ?? member.code_status ?? null,
+      dnr: sourceMhp?.dnr ?? (member.code_status ?? sourceAssessment?.code_status ?? "").toUpperCase().includes("DNR"),
+      dni: sourceMhp?.dni ?? false,
+      polst_molst_colst: sourceMhp?.polst_molst_colst ?? null,
+      hospice: sourceMhp?.hospice ?? false,
+      advanced_directives_obtained: sourceMhp?.advanced_directives_obtained ?? null,
+      power_of_attorney: sourceMhp?.power_of_attorney ?? null,
+      hospital_preference: sourceMhp?.hospital_preference ?? null,
+      legal_comments: sourceMhp?.legal_comments ?? null,
+      oxygen_use: cleanText(sourceMhpRecord.oxygen_use),
+      mental_health_history: cleanText(sourceMhpRecord.mental_health_history),
+      falls_history: cleanText(sourceMhpRecord.falls_history),
+      physical_health_problems: cleanText(sourceMhpRecord.physical_health_problems),
+      communication_style: cleanText(sourceMhpRecord.communication_style),
+      mobility_aids: cleanText(sourceMhpRecord.mobility_aids) ?? sourceMhp?.ambulation ?? null,
+      incontinence_products: cleanText(sourceMhpRecord.incontinence_products),
+      glasses_hearing_aids_cataracts: cleanText(sourceMhpRecord.glasses_hearing_aids_cataracts),
+      intake_notes: cleanText(sourceMhpRecord.intake_notes),
+      source_assessment_id: sourceAssessment?.id ?? cleanText(sourceMhpRecord.source_assessment_id),
+      source_assessment_at: sourceAssessmentDate ? toIsoAt(sourceAssessmentDate, 12, 0) : null,
+      updated_by_user_id: actorUserId,
+      updated_by_name: actorName,
+      profile_notes: cleanText(sourceMhpRecord.profile_notes) ?? member.personal_notes ?? null,
+      joy_sparks: cleanText(sourceMhpRecord.joy_sparks) ?? member.joy_sparks ?? null,
       last_synced_at: new Date().toISOString()
     });
   });
 
-  return { pofRows, mhpRows };
+  return { pofRows, mhpRows, activeSignedOrderByMember };
 }
 
 function withMemberCohort(db: SeededDb) {
@@ -2057,29 +2324,880 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
     }
   ];
 
+  const firstMappedUserId = [...staffMap.values()][0] ?? null;
+  const salesActor =
+    db.staff.find((row) => row.role === "sales" && row.active) ??
+    db.staff.find((row) => row.role === "coordinator" && row.active) ??
+    db.staff.find((row) => row.role === "manager" && row.active) ??
+    db.staff[0];
+  const nurseActor =
+    db.staff.find((row) => row.role === "nurse" && row.active) ??
+    db.staff.find((row) => row.role === "director" && row.active) ??
+    db.staff[0];
+  const coordinatorActor =
+    db.staff.find((row) => row.role === "coordinator" && row.active) ??
+    db.staff.find((row) => row.role === "manager" && row.active) ??
+    db.staff[0];
+  const salesActorUserId = (salesActor ? mapStaff(salesActor.id) : null) ?? firstMappedUserId;
+  const nurseActorUserId = (nurseActor ? mapStaff(nurseActor.id) : null) ?? firstMappedUserId;
+  const coordinatorActorUserId = (coordinatorActor ? mapStaff(coordinatorActor.id) : null) ?? firstMappedUserId;
+  if (!salesActorUserId || !nurseActorUserId || !coordinatorActorUserId) {
+    throw new Error("Seed workflow actor mapping is missing profile ids.");
+  }
+
+  const normalizeRequestedDays = (schedule: SeededDb["memberAttendanceSchedules"][number] | undefined) => {
+    const days: string[] = [];
+    if (schedule?.monday) days.push("Monday");
+    if (schedule?.tuesday) days.push("Tuesday");
+    if (schedule?.wednesday) days.push("Wednesday");
+    if (schedule?.thursday) days.push("Thursday");
+    if (schedule?.friday) days.push("Friday");
+    return days.length > 0 ? days : ["Monday", "Wednesday", "Friday"];
+  };
+
+  const toRecordRows = (value: unknown): Record<string, unknown>[] => {
+    if (!Array.isArray(value)) return [];
+    return value.filter(
+      (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row)
+    );
+  };
+
+  const parseTime24h = (value: string | null | undefined) => {
+    const normalized = String(value ?? "").trim();
+    const match = /^(\d{1,2}):(\d{2})$/.exec(normalized);
+    if (!match) return null;
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return { hour, minute };
+  };
+
+  const today = asDateOnly(new Date().toISOString(), "2026-03-01") as string;
+  const memberById = new Map(db.members.map((row) => [row.id, row] as const));
+  const leadById = new Map(salesSeed.leads.map((row) => [row.id, row] as const));
+  const scheduleByMember = new Map(db.memberAttendanceSchedules.map((row) => [row.member_id, row] as const));
+  const contactByMember = new Map<string, SeededDb["memberContacts"][number]>();
+  db.memberContacts.forEach((row) => {
+    if (!contactByMember.has(row.member_id)) contactByMember.set(row.member_id, row);
+  });
+
+  const workflowMemberFiles: Record<string, unknown>[] = [];
+  const intakeAssessmentSignatures: Record<string, unknown>[] = [];
+  const intakeAssessments = db.assessments.map((row, idx) => {
+    const signed = row.complete && idx % 7 !== 0;
+    const signedAt = signed ? toIsoAt(asDateOnly(row.assessment_date, addDays(today, -21)) as string, 16, 10) : null;
+    const signerUserId = signed ? mapStaff(row.created_by_user_id) ?? nurseActorUserId : null;
+    const signerName = signed ? row.signed_by || row.completed_by || nurseActor?.full_name || "Clinical Nurse" : null;
+    const signatureFileId = signed ? stableUuid(`seed:member-file:intake-signature:${row.id}`) : null;
+    if (signed && signatureFileId) {
+      workflowMemberFiles.push({
+        id: signatureFileId,
+        member_id: row.member_id,
+        file_name: `intake-assessment-signature-${row.id.slice(0, 8)}.png`,
+        file_type: "image/png",
+        file_data_url: `storage://member-documents/members/${row.member_id}/intake/${row.id}/signature.png`,
+        category: "Intake Assessment",
+        category_other: null,
+        document_source: "intake-assessment-esign",
+        uploaded_by_user_id: signerUserId,
+        uploaded_by_name: signerName,
+        uploaded_at: signedAt,
+        updated_at: signedAt
+      });
+      intakeAssessmentSignatures.push({
+        id: stableUuid(`seed:intake-signature:${row.id}`),
+        assessment_id: row.id,
+        member_id: row.member_id,
+        signed_by_user_id: signerUserId,
+        signed_by_name: signerName,
+        signed_at: signedAt,
+        status: "signed",
+        signature_artifact_storage_path: `members/${row.member_id}/intake/${row.id}/signature.png`,
+        signature_artifact_member_file_id: signatureFileId,
+        signature_metadata: {
+          seeded: true,
+          seededSource: "seed:v3"
+        },
+        created_at: signedAt,
+        updated_at: signedAt
+      });
+    }
+
+    return {
+      id: row.id,
+      member_id: row.member_id,
+      lead_id: row.lead_id ?? salesSeed.memberLeadByMemberId.get(row.member_id) ?? null,
+      assessment_date: row.assessment_date,
+      status: row.complete ? "completed" : "draft",
+      completed_by_user_id: mapStaff(row.created_by_user_id),
+      completed_by: row.completed_by,
+      signed_by: signerName ?? row.signed_by,
+      complete: row.complete,
+      feeling_today: row.feeling_today,
+      health_lately: row.health_lately,
+      allergies: row.allergies,
+      code_status: row.code_status,
+      orientation_dob_verified: row.orientation_dob_verified,
+      orientation_city_verified: row.orientation_city_verified,
+      orientation_year_verified: row.orientation_year_verified,
+      orientation_occupation_verified: row.orientation_occupation_verified,
+      orientation_notes: row.orientation_notes,
+      medication_management_status: row.medication_management_status,
+      dressing_support_status: row.dressing_support_status,
+      assistive_devices: row.assistive_devices,
+      incontinence_products: row.incontinence_products,
+      on_site_medication_use: row.on_site_medication_use,
+      on_site_medication_list: row.on_site_medication_list,
+      independence_notes: row.independence_notes,
+      diet_type: row.diet_type,
+      diet_other: row.diet_other,
+      diet_restrictions_notes: row.diet_restrictions_notes,
+      mobility_steadiness: row.mobility_steadiness,
+      falls_history: row.falls_history,
+      mobility_aids: row.mobility_aids,
+      mobility_safety_notes: row.mobility_safety_notes,
+      overwhelmed_by_noise: row.overwhelmed_by_noise,
+      social_triggers: row.social_triggers,
+      emotional_wellness_notes: row.emotional_wellness_notes,
+      joy_sparks: row.joy_sparks,
+      personal_notes: row.personal_notes,
+      score_orientation_general_health: row.score_orientation_general_health,
+      score_daily_routines_independence: row.score_daily_routines_independence,
+      score_nutrition_dietary_needs: row.score_nutrition_dietary_needs,
+      score_mobility_safety: row.score_mobility_safety,
+      score_social_emotional_wellness: row.score_social_emotional_wellness,
+      total_score: row.total_score,
+      recommended_track: row.recommended_track,
+      admission_review_required: row.admission_review_required,
+      transport_can_enter_exit_vehicle: row.transport_can_enter_exit_vehicle,
+      transport_assistance_level: row.transport_assistance_level,
+      transport_mobility_aid: row.transport_mobility_aid,
+      transport_can_remain_seated_buckled: row.transport_can_remain_seated_buckled,
+      transport_behavior_concern: row.transport_behavior_concern,
+      transport_appropriate: row.transport_appropriate,
+      transport_notes: row.transport_notes,
+      vitals_hr: row.vitals_hr,
+      vitals_bp: row.vitals_bp,
+      vitals_o2_percent: row.vitals_o2_percent,
+      vitals_rr: row.vitals_rr,
+      notes: row.notes,
+      signed_by_user_id: signerUserId,
+      signed_at: signedAt,
+      signature_status: signed ? "signed" : "unsigned",
+      signature_metadata: {
+        seeded: true,
+        seededSource: "seed:v3"
+      },
+      created_at: row.created_at,
+      updated_at: row.created_at
+    };
+  });
+
+  const baseMemberFiles = db.memberFiles.map((row) => ({
+    ...row,
+    uploaded_by_user_id: mapStaff(row.uploaded_by_user_id)
+  }));
+
+  const pofRequests: Record<string, unknown>[] = [];
+  const pofSignatures: Record<string, unknown>[] = [];
+  const pofDocumentEvents: Record<string, unknown>[] = [];
+  const pofMedications: Record<string, unknown>[] = [];
+  const marSchedules: Record<string, unknown>[] = [];
+  const marAdministrations: Record<string, unknown>[] = [];
+  const activeSignedOrders = intake.pofRows
+    .filter((row) => cleanText((row as { status?: unknown }).status) === "signed" && Boolean((row as { is_active_signed?: unknown }).is_active_signed))
+    .map((row) => row as Record<string, unknown>);
+
+  activeSignedOrders.forEach((order, idx) => {
+    const orderId = cleanText(order.id);
+    const memberId = cleanText(order.member_id);
+    if (!orderId || !memberId) return;
+    const member = memberById.get(memberId);
+    if (!member) return;
+
+    const leadId = salesSeed.memberLeadByMemberId.get(memberId) ?? null;
+    const lead = leadId ? leadById.get(leadId) ?? null : null;
+    const contact = contactByMember.get(memberId) ?? null;
+    const providerName = cleanText(order.provider_name) ?? "Dr. Morgan White";
+    const providerEmail = lead?.caregiver_email ? `provider+${lead.id.slice(0, 8)}@exampleclinic.org` : `provider${idx + 1}@exampleclinic.org`;
+    const requestId = stableUuid(`seed:pof-request:${orderId}`);
+    const requestTokenHash = createHash("sha256").update(`seed:pof-token:${requestId}`).digest("hex");
+    const createdDate = addDays(asDateOnly(cleanText(order.signed_at), today) as string, -7);
+    const sentDate = addDays(createdDate, 1);
+    const openedDate = addDays(createdDate, 2);
+    const signedDate = addDays(createdDate, 3);
+    const requestStatus: "draft" | "sent" | "opened" | "signed" | "declined" | "expired" =
+      idx % 6 === 0 ? "signed" : idx % 6 === 1 ? "opened" : idx % 6 === 2 ? "sent" : idx % 6 === 3 ? "declined" : idx % 6 === 4 ? "expired" : "draft";
+    const unsignedFileId = stableUuid(`seed:member-file:pof-unsigned:${requestId}`);
+    const signedFileId = stableUuid(`seed:member-file:pof-signed:${requestId}`);
+    const sentAtIso = requestStatus === "draft" ? null : toIsoAt(sentDate, 10, 20);
+    const openedAtIso = requestStatus === "opened" || requestStatus === "signed" ? toIsoAt(openedDate, 8, 35) : null;
+    const signedAtIso = requestStatus === "signed" ? toIsoAt(signedDate, 12, 5) : null;
+    const unsignedStoragePath = `members/${memberId}/pof/${orderId}/requests/${requestId}/unsigned.pdf`;
+    const signedStoragePath = `members/${memberId}/pof/${orderId}/requests/${requestId}/signed.pdf`;
+
+    workflowMemberFiles.push({
+      id: unsignedFileId,
+      member_id: memberId,
+      file_name: `pof-${orderId.slice(0, 8)}-unsigned.pdf`,
+      file_type: "application/pdf",
+      file_data_url: `storage://member-documents/${unsignedStoragePath}`,
+      category: "Physician Orders",
+      category_other: null,
+      document_source: "pof-esign",
+      uploaded_by_user_id: nurseActorUserId,
+      uploaded_by_name: nurseActor?.full_name ?? "Clinical Nurse",
+      uploaded_at: toIsoAt(createdDate, 10, 0),
+      updated_at: toIsoAt(createdDate, 10, 0)
+    });
+    if (requestStatus === "signed") {
+      workflowMemberFiles.push({
+        id: signedFileId,
+        member_id: memberId,
+        file_name: `pof-${orderId.slice(0, 8)}-signed.pdf`,
+        file_type: "application/pdf",
+        file_data_url: `storage://member-documents/${signedStoragePath}`,
+        category: "Physician Orders",
+        category_other: null,
+        document_source: "pof-esign",
+        uploaded_by_user_id: nurseActorUserId,
+        uploaded_by_name: nurseActor?.full_name ?? "Clinical Nurse",
+        uploaded_at: signedAtIso,
+        updated_at: signedAtIso
+      });
+    }
+
+    pofRequests.push({
+      id: requestId,
+      physician_order_id: orderId,
+      member_id: memberId,
+      provider_name: providerName,
+      provider_email: providerEmail,
+      nurse_name: nurseActor?.full_name ?? "Clinical Nurse",
+      from_email: "clinical@memorylane.local",
+      sent_by_user_id: nurseActorUserId,
+      status: requestStatus,
+      optional_message: "Seeded provider signature workflow request.",
+      sent_at: sentAtIso,
+      opened_at: openedAtIso,
+      signed_at: signedAtIso,
+      expires_at: toIsoAt(addDays(createdDate, 14), 23, 59),
+      signature_request_token: requestTokenHash,
+      signature_request_url: `http://localhost:3001/sign/pof/${requestTokenHash.slice(0, 48)}`,
+      unsigned_pdf_url: `storage://member-documents/${unsignedStoragePath}`,
+      signed_pdf_url: requestStatus === "signed" ? `storage://member-documents/${signedStoragePath}` : null,
+      member_file_id: requestStatus === "signed" ? signedFileId : unsignedFileId,
+      pof_payload_json: {
+        id: orderId,
+        memberId,
+        memberNameSnapshot: member.display_name,
+        diagnosisRows: toRecordRows(order.diagnoses),
+        allergyRows: toRecordRows(order.allergies),
+        medications: toRecordRows(order.medications),
+        standingOrders: toRecordRows(order.standing_orders),
+        careInformation: {
+          providerName
+        },
+        operationalFlags: order.operational_flags ?? {}
+      },
+      created_by_user_id: nurseActorUserId,
+      created_by_name: nurseActor?.full_name ?? "Clinical Nurse",
+      created_at: toIsoAt(createdDate, 9, 30),
+      updated_by_user_id: nurseActorUserId,
+      updated_by_name: nurseActor?.full_name ?? "Clinical Nurse",
+      updated_at: signedAtIso ?? openedAtIso ?? sentAtIso ?? toIsoAt(createdDate, 9, 45)
+    });
+
+    pofDocumentEvents.push({
+      id: stableUuid(`seed:pof-document-event:${requestId}:created`),
+      document_type: "pof_request",
+      document_id: requestId,
+      member_id: memberId,
+      physician_order_id: orderId,
+      event_type: "created",
+      actor_type: "user",
+      actor_user_id: nurseActorUserId,
+      actor_name: nurseActor?.full_name ?? "Clinical Nurse",
+      actor_email: "clinical@memorylane.local",
+      actor_ip: null,
+      actor_user_agent: null,
+      metadata: { seeded: true, source: "seed:v3" },
+      created_at: toIsoAt(createdDate, 9, 31)
+    });
+    if (requestStatus !== "draft") {
+      pofDocumentEvents.push({
+        id: stableUuid(`seed:pof-document-event:${requestId}:sent`),
+        document_type: "pof_request",
+        document_id: requestId,
+        member_id: memberId,
+        physician_order_id: orderId,
+        event_type: "sent",
+        actor_type: "user",
+        actor_user_id: nurseActorUserId,
+        actor_name: nurseActor?.full_name ?? "Clinical Nurse",
+        actor_email: "clinical@memorylane.local",
+        actor_ip: null,
+        actor_user_agent: null,
+        metadata: {
+          caregiverEmail: cleanText(lead?.caregiver_email) ?? cleanText(contact?.email)
+        },
+        created_at: sentAtIso
+      });
+    }
+    if (openedAtIso) {
+      pofDocumentEvents.push({
+        id: stableUuid(`seed:pof-document-event:${requestId}:opened`),
+        document_type: "pof_request",
+        document_id: requestId,
+        member_id: memberId,
+        physician_order_id: orderId,
+        event_type: "opened",
+        actor_type: "provider",
+        actor_user_id: null,
+        actor_name: providerName,
+        actor_email: providerEmail,
+        actor_ip: "198.51.100.11",
+        actor_user_agent: "Seeded Provider Browser",
+        metadata: {},
+        created_at: openedAtIso
+      });
+    }
+    if (requestStatus === "signed" && signedAtIso) {
+      pofSignatures.push({
+        id: stableUuid(`seed:pof-signature:${requestId}`),
+        pof_request_id: requestId,
+        provider_typed_name: providerName,
+        provider_signature_image_url: `storage://member-documents/members/${memberId}/pof/${orderId}/requests/${requestId}/provider-signature.png`,
+        provider_ip: "198.51.100.11",
+        provider_user_agent: "Seeded Provider Browser",
+        signed_at: signedAtIso,
+        created_at: signedAtIso,
+        updated_at: signedAtIso
+      });
+      pofDocumentEvents.push({
+        id: stableUuid(`seed:pof-document-event:${requestId}:signed`),
+        document_type: "pof_request",
+        document_id: requestId,
+        member_id: memberId,
+        physician_order_id: orderId,
+        event_type: "signed",
+        actor_type: "provider",
+        actor_user_id: null,
+        actor_name: providerName,
+        actor_email: providerEmail,
+        actor_ip: "198.51.100.11",
+        actor_user_agent: "Seeded Provider Browser",
+        metadata: {
+          memberFileId: signedFileId
+        },
+        created_at: signedAtIso
+      });
+    }
+    if (requestStatus === "declined") {
+      pofDocumentEvents.push({
+        id: stableUuid(`seed:pof-document-event:${requestId}:declined`),
+        document_type: "pof_request",
+        document_id: requestId,
+        member_id: memberId,
+        physician_order_id: orderId,
+        event_type: "declined",
+        actor_type: "provider",
+        actor_user_id: null,
+        actor_name: providerName,
+        actor_email: providerEmail,
+        actor_ip: "198.51.100.11",
+        actor_user_agent: "Seeded Provider Browser",
+        metadata: {
+          reason: "Needs medication clarification before signing."
+        },
+        created_at: toIsoAt(addDays(createdDate, 3), 11, 40)
+      });
+    }
+    if (requestStatus === "expired") {
+      pofDocumentEvents.push({
+        id: stableUuid(`seed:pof-document-event:${requestId}:expired`),
+        document_type: "pof_request",
+        document_id: requestId,
+        member_id: memberId,
+        physician_order_id: orderId,
+        event_type: "expired",
+        actor_type: "system",
+        actor_user_id: null,
+        actor_name: "System",
+        actor_email: null,
+        actor_ip: null,
+        actor_user_agent: null,
+        metadata: {},
+        created_at: toIsoAt(addDays(createdDate, 15), 0, 5)
+      });
+    }
+
+    const medicationRows = toRecordRows(order.medications);
+    medicationRows.forEach((medication, medIdx) => {
+      const sourceMedicationId = cleanText(medication.id) ?? `med-${medIdx + 1}`;
+      const pofMedicationId = stableUuid(`seed:pof-medication:${orderId}:${sourceMedicationId}`);
+      const givenAtCenter = String(medication.givenAtCenter ?? "true").toLowerCase() !== "false";
+      const active = String(medication.active ?? "true").toLowerCase() !== "false";
+      const prn = String(medication.prn ?? "false").toLowerCase() === "true";
+      const scheduledTimesRaw = Array.isArray(medication.scheduled_times)
+        ? medication.scheduled_times
+        : Array.isArray(medication.scheduledTimes)
+          ? medication.scheduledTimes
+          : cleanText(medication.givenAtCenterTime24h)
+            ? [cleanText(medication.givenAtCenterTime24h)]
+            : [];
+      const normalizedTimes = scheduledTimesRaw
+        .map((entry) => cleanText(entry))
+        .filter((entry): entry is string => Boolean(entry));
+      const scheduledTimes = normalizedTimes.length > 0 ? normalizedTimes : [medIdx % 2 === 0 ? "09:00" : "13:00"];
+      const medicationStartDate = asDateOnly(cleanText(medication.startDate) ?? cleanText(medication.date_started), addDays(today, -14)) as string;
+      const medicationEndDate = asDateOnly(cleanText(medication.endDate));
+
+      pofMedications.push({
+        id: pofMedicationId,
+        physician_order_id: orderId,
+        member_id: memberId,
+        source_medication_id: sourceMedicationId,
+        medication_name: cleanText(medication.name) ?? cleanText(medication.medication_name) ?? `Medication ${medIdx + 1}`,
+        strength: cleanText(medication.quantity),
+        dose: cleanText(medication.dose),
+        route: cleanText(medication.route) ?? "PO",
+        frequency: cleanText(medication.frequency) ?? "Daily",
+        scheduled_times: scheduledTimes,
+        given_at_center: givenAtCenter,
+        prn,
+        prn_instructions: prn ? cleanText(medication.prnInstructions) ?? "Use PRN as clinically indicated." : null,
+        start_date: medicationStartDate,
+        end_date: medicationEndDate,
+        active,
+        provider: providerName,
+        instructions: cleanText(medication.instructions),
+        created_by_user_id: nurseActorUserId,
+        created_by_name: nurseActor?.full_name ?? "Clinical Nurse",
+        updated_by_user_id: nurseActorUserId,
+        updated_by_name: nurseActor?.full_name ?? "Clinical Nurse",
+        created_at: toIsoAt(medicationStartDate, 8, 0),
+        updated_at: toIsoAt(medicationStartDate, 8, 0)
+      });
+
+      if (givenAtCenter && active) {
+        scheduledTimes.forEach((timeValue, scheduleIdx) => {
+          const parsedTime = parseTime24h(timeValue);
+          if (!parsedTime) return;
+          const scheduleDate = addDays(today, -(scheduleIdx % 3));
+          const scheduleId = stableUuid(`seed:mar-schedule:${pofMedicationId}:${timeValue}`);
+          const scheduledAt = toIsoAt(scheduleDate, parsedTime.hour, parsedTime.minute);
+          marSchedules.push({
+            id: scheduleId,
+            member_id: memberId,
+            pof_medication_id: pofMedicationId,
+            medication_name: cleanText(medication.name) ?? cleanText(medication.medication_name) ?? `Medication ${medIdx + 1}`,
+            dose: cleanText(medication.dose),
+            route: cleanText(medication.route) ?? "PO",
+            scheduled_time: scheduledAt,
+            frequency: cleanText(medication.frequency) ?? "Daily",
+            instructions: cleanText(medication.instructions),
+            prn,
+            active: true,
+            start_date: medicationStartDate,
+            end_date: medicationEndDate,
+            created_at: toIsoAt(scheduleDate, 7, 0),
+            updated_at: toIsoAt(scheduleDate, 7, 0)
+          });
+
+          const notGiven = (idx + medIdx + scheduleIdx) % 5 === 0;
+          marAdministrations.push({
+            id: stableUuid(`seed:mar-admin:${scheduleId}`),
+            member_id: memberId,
+            pof_medication_id: pofMedicationId,
+            mar_schedule_id: scheduleId,
+            administration_date: scheduleDate,
+            scheduled_time: scheduledAt,
+            medication_name: cleanText(medication.name) ?? cleanText(medication.medication_name) ?? `Medication ${medIdx + 1}`,
+            dose: cleanText(medication.dose),
+            route: cleanText(medication.route) ?? "PO",
+            status: notGiven ? "Not Given" : "Given",
+            not_given_reason: notGiven ? "Absent" : null,
+            prn_reason: null,
+            notes: notGiven ? "Member absent at scheduled administration time." : "Administered per schedule.",
+            administered_by: nurseActor?.full_name ?? "Clinical Nurse",
+            administered_by_user_id: nurseActorUserId,
+            administered_at: toIsoAt(scheduleDate, parsedTime.hour, Math.min(parsedTime.minute + 18, 59)),
+            source: "scheduled",
+            prn_outcome: null,
+            prn_outcome_assessed_at: null,
+            prn_followup_note: null,
+            created_at: toIsoAt(scheduleDate, parsedTime.hour, Math.min(parsedTime.minute + 20, 59)),
+            updated_at: toIsoAt(scheduleDate, parsedTime.hour, Math.min(parsedTime.minute + 20, 59))
+          });
+        });
+      }
+
+      if (prn && active && medIdx % 2 === 0) {
+        const prnDate = addDays(today, -(idx % 4));
+        const prnOutcome = idx % 3 === 0 ? "Ineffective" : "Effective";
+        marAdministrations.push({
+          id: stableUuid(`seed:mar-admin-prn:${pofMedicationId}`),
+          member_id: memberId,
+          pof_medication_id: pofMedicationId,
+          mar_schedule_id: null,
+          administration_date: prnDate,
+          scheduled_time: null,
+          medication_name: cleanText(medication.name) ?? cleanText(medication.medication_name) ?? `Medication ${medIdx + 1}`,
+          dose: cleanText(medication.dose),
+          route: cleanText(medication.route) ?? "PO",
+          status: "Given",
+          not_given_reason: null,
+          prn_reason: "Breakthrough anxiety symptoms.",
+          notes: "PRN administered after behavioral escalation.",
+          administered_by: nurseActor?.full_name ?? "Clinical Nurse",
+          administered_by_user_id: nurseActorUserId,
+          administered_at: toIsoAt(prnDate, 14, 10),
+          source: "prn",
+          prn_outcome: prnOutcome,
+          prn_outcome_assessed_at: toIsoAt(prnDate, 15, 5),
+          prn_followup_note: prnOutcome === "Ineffective" ? "Escalated to provider for follow-up." : null,
+          created_at: toIsoAt(prnDate, 14, 12),
+          updated_at: toIsoAt(prnDate, 15, 5)
+        });
+      }
+    });
+  });
+
+  const enrollmentPacketRequests: Record<string, unknown>[] = [];
+  const enrollmentPacketFields: Record<string, unknown>[] = [];
+  const enrollmentPacketEvents: Record<string, unknown>[] = [];
+  const enrollmentPacketSignatures: Record<string, unknown>[] = [];
+  const enrollmentPacketSenderSignatures: Record<string, unknown>[] = [
+    {
+      user_id: salesActorUserId,
+      signature_name: salesActor?.full_name ?? "Sales Coordinator",
+      signature_blob: "data:image/png;base64,c2VlZGVkLXNpZ25hdHVyZQ==",
+      created_at: toIsoAt(addDays(today, -90), 9, 0),
+      updated_at: toIsoAt(addDays(today, -90), 9, 0)
+    }
+  ];
+  const enrollmentPacketUploads: Record<string, unknown>[] = [];
+  const userNotifications: Record<string, unknown>[] = [];
+
+  const enrollmentMembers = db.members.filter((member) => member.status === "active");
+
+  enrollmentMembers.slice(0, TARGET_MEMBER_COUNT).forEach((member, idx) => {
+    const leadId = salesSeed.memberLeadByMemberId.get(member.id) ?? null;
+    const lead = leadId ? leadById.get(leadId) ?? null : null;
+    const schedule = scheduleByMember.get(member.id);
+    const contact = contactByMember.get(member.id) ?? null;
+    const requestedDays = normalizeRequestedDays(schedule);
+    const daysPerWeek = requestedDays.length;
+    const dailyRateTier =
+      enrollmentPricingDailyRates.find(
+        (row) => Number(row.min_days_per_week) <= daysPerWeek && Number(row.max_days_per_week) >= daysPerWeek
+      ) ?? enrollmentPricingDailyRates[enrollmentPricingDailyRates.length - 1];
+    const communityFeeRow = enrollmentPricingCommunityFees[0];
+    const packetId = stableUuid(`seed:enrollment-packet:${member.id}`);
+    const packetTokenHash = createHash("sha256").update(`seed:enrollment-packet-token:${packetId}`).digest("hex");
+    const packetStatus: "draft" | "prepared" | "sent" | "opened" | "partially_completed" | "completed" | "filed" =
+      idx % 7 === 0
+        ? "filed"
+        : idx % 7 === 1
+          ? "completed"
+          : idx % 7 === 2
+            ? "partially_completed"
+            : idx % 7 === 3
+              ? "opened"
+              : idx % 7 === 4
+                ? "sent"
+                : idx % 7 === 5
+                  ? "prepared"
+                  : "draft";
+    const createdDate = addDays(today, -(35 + idx));
+    const sentAt = ["sent", "opened", "partially_completed", "completed", "filed"].includes(packetStatus)
+      ? toIsoAt(addDays(createdDate, 1), 11, 0)
+      : null;
+    const completedAt = ["completed", "filed"].includes(packetStatus) ? toIsoAt(addDays(createdDate, 4), 15, 40) : null;
+    const caregiverEmail = cleanText(lead?.caregiver_email) ?? cleanText(contact?.email) ?? `caregiver${idx + 1}@example.org`;
+    const primaryContactName = cleanText(lead?.caregiver_name) ?? cleanText(contact?.contact_name) ?? `Caregiver ${idx + 1}`;
+    const primaryContactPhone = cleanText(lead?.caregiver_phone) ?? cleanText(contact?.cellular_number) ?? `803-555-${String(7100 + idx).slice(-4)}`;
+    const completedPacketFileId = stableUuid(`seed:member-file:enrollment-packet:${packetId}:completed`);
+    const insuranceFileId = stableUuid(`seed:member-file:enrollment-packet:${packetId}:insurance`);
+
+    workflowMemberFiles.push({
+      id: insuranceFileId,
+      member_id: member.id,
+      file_name: `insurance-card-${member.id.slice(0, 8)}.pdf`,
+      file_type: "application/pdf",
+      file_data_url: `storage://member-documents/members/${member.id}/enrollment/${packetId}/insurance-card.pdf`,
+      category: "Insurance",
+      category_other: null,
+      document_source: "enrollment-packet",
+      uploaded_by_user_id: salesActorUserId,
+      uploaded_by_name: salesActor?.full_name ?? "Sales Coordinator",
+      uploaded_at: toIsoAt(addDays(createdDate, 1), 12, 15),
+      updated_at: toIsoAt(addDays(createdDate, 1), 12, 15)
+    });
+    if (packetStatus === "completed" || packetStatus === "filed") {
+      workflowMemberFiles.push({
+        id: completedPacketFileId,
+        member_id: member.id,
+        file_name: `enrollment-packet-${packetId.slice(0, 8)}-completed.pdf`,
+        file_type: "application/pdf",
+        file_data_url: `storage://member-documents/members/${member.id}/enrollment/${packetId}/completed-packet.pdf`,
+        category: "Enrollment Packet",
+        category_other: null,
+        document_source: "enrollment-packet",
+        uploaded_by_user_id: salesActorUserId,
+        uploaded_by_name: salesActor?.full_name ?? "Sales Coordinator",
+        uploaded_at: completedAt,
+        updated_at: completedAt
+      });
+    }
+
+    enrollmentPacketRequests.push({
+      id: packetId,
+      member_id: member.id,
+      lead_id: leadId,
+      sender_user_id: salesActorUserId,
+      caregiver_email: caregiverEmail,
+      status: packetStatus,
+      token: packetTokenHash,
+      token_expires_at: toIsoAt(addDays(createdDate, 14), 23, 59),
+      created_at: toIsoAt(createdDate, 10, 30),
+      sent_at: sentAt,
+      completed_at: completedAt,
+      updated_at: completedAt ?? sentAt ?? toIsoAt(createdDate, 10, 30)
+    });
+
+    enrollmentPacketFields.push({
+      id: stableUuid(`seed:enrollment-packet-fields:${packetId}`),
+      packet_id: packetId,
+      requested_days: requestedDays,
+      transportation: schedule?.transportation_required ? schedule.transportation_mode ?? "Door to Door" : "Family Transport",
+      community_fee: Number(communityFeeRow.amount),
+      daily_rate: Number(dailyRateTier.daily_rate),
+      pricing_community_fee_id: communityFeeRow.id,
+      pricing_daily_rate_id: dailyRateTier.id,
+      pricing_snapshot: {
+        seeded: true,
+        requestedDays,
+        daysPerWeek,
+        communityFee: Number(communityFeeRow.amount),
+        dailyRate: Number(dailyRateTier.daily_rate)
+      },
+      caregiver_name: primaryContactName,
+      caregiver_phone: primaryContactPhone,
+      caregiver_email: caregiverEmail,
+      caregiver_address_line1: cleanText(contact?.street_address) ?? `${180 + idx} Oak Ave`,
+      caregiver_address_line2: null,
+      caregiver_city: cleanText(contact?.city) ?? member.city ?? "Fort Mill",
+      caregiver_state: cleanText(contact?.state) ?? "SC",
+      caregiver_zip: cleanText(contact?.zip) ?? `297${String((idx % 60) + 10).padStart(2, "0")}`,
+      secondary_contact_name: idx % 2 === 0 ? `Secondary Contact ${idx + 1}` : null,
+      secondary_contact_phone: idx % 2 === 0 ? `803-555-${String(7200 + idx).slice(-4)}` : null,
+      secondary_contact_email: idx % 2 === 0 ? `secondary${idx + 1}@example.org` : null,
+      secondary_contact_relationship: idx % 2 === 0 ? "Sibling" : null,
+      notes: "Seeded enrollment packet with realistic caregiver and pricing details.",
+      intake_payload: {
+        requestedAttendanceDays: requestedDays,
+        transportationPreference: schedule?.transportation_required ? schedule.transportation_mode ?? "Door to Door" : "Family Transport",
+        primaryContactName,
+        primaryContactPhone,
+        primaryContactEmail: caregiverEmail,
+        memberLegalFirstName: cleanText(member.display_name?.split(" ").slice(0, -1).join(" ")) ?? cleanText(member.display_name),
+        memberLegalLastName: cleanText(member.display_name?.split(" ").slice(-1).join(" ")),
+        memberPreferredName: cleanText(member.display_name?.split(" ").slice(0, 1).join(" ")),
+        memberSsnLast4: String(1000 + (idx % 8999)).slice(-4),
+        primaryDiagnosis: cleanText(member.latest_assessment_track) ?? "Track 2 Support Needs",
+        allergiesSummary: "See allergies section in chart.",
+        pharmacy: idx % 2 === 0 ? "Walgreens Fort Mill" : "CVS Rock Hill",
+        pcpName: "Dr. Morgan White",
+        pcpPhone: "803-555-3000",
+        livingSituation: idx % 3 === 0 ? "Lives with daughter" : "Lives with spouse",
+        insuranceSummaryReference: `INS-${packetId.slice(0, 8).toUpperCase()}`
+      },
+      created_at: toIsoAt(createdDate, 10, 32),
+      updated_at: completedAt ?? sentAt ?? toIsoAt(createdDate, 10, 32)
+    });
+
+    if (packetStatus !== "draft") {
+      enrollmentPacketEvents.push({
+        id: stableUuid(`seed:enrollment-packet-event:${packetId}:prepared`),
+        packet_id: packetId,
+        event_type: "prepared",
+        actor_user_id: salesActorUserId,
+        actor_email: "sales@memorylane.local",
+        timestamp: toIsoAt(createdDate, 10, 33),
+        metadata: {
+          seeded: true
+        }
+      });
+    }
+    if (sentAt) {
+      enrollmentPacketEvents.push({
+        id: stableUuid(`seed:enrollment-packet-event:${packetId}:sent`),
+        packet_id: packetId,
+        event_type: "Enrollment Packet Sent",
+        actor_user_id: salesActorUserId,
+        actor_email: "sales@memorylane.local",
+        timestamp: sentAt,
+        metadata: {
+          caregiverEmail
+        }
+      });
+      userNotifications.push({
+        id: stableUuid(`seed:user-notification:${packetId}:sent`),
+        recipient_user_id: salesActorUserId,
+        title: "Enrollment Packet Sent",
+        message: `${member.display_name} enrollment packet sent to ${caregiverEmail}.`,
+        entity_type: "enrollment_packet_request",
+        entity_id: packetId,
+        read_at: idx % 2 === 0 ? toIsoAt(addDays(createdDate, 2), 9, 0) : null,
+        metadata: {
+          memberId: member.id,
+          leadId
+        },
+        created_at: sentAt
+      });
+    }
+    if (packetStatus === "opened" || packetStatus === "partially_completed" || packetStatus === "completed" || packetStatus === "filed") {
+      enrollmentPacketEvents.push({
+        id: stableUuid(`seed:enrollment-packet-event:${packetId}:opened`),
+        packet_id: packetId,
+        event_type: "opened",
+        actor_user_id: null,
+        actor_email: caregiverEmail,
+        timestamp: toIsoAt(addDays(createdDate, 2), 8, 20),
+        metadata: {}
+      });
+    }
+    if (packetStatus === "partially_completed" || packetStatus === "completed" || packetStatus === "filed") {
+      enrollmentPacketEvents.push({
+        id: stableUuid(`seed:enrollment-packet-event:${packetId}:partial`),
+        packet_id: packetId,
+        event_type: "partially_completed",
+        actor_user_id: null,
+        actor_email: caregiverEmail,
+        timestamp: toIsoAt(addDays(createdDate, 3), 13, 10),
+        metadata: {}
+      });
+    }
+    if (completedAt) {
+      enrollmentPacketEvents.push({
+        id: stableUuid(`seed:enrollment-packet-event:${packetId}:completed`),
+        packet_id: packetId,
+        event_type: "completed",
+        actor_user_id: null,
+        actor_email: caregiverEmail,
+        timestamp: completedAt,
+        metadata: {}
+      });
+    }
+    if (packetStatus === "filed") {
+      enrollmentPacketEvents.push({
+        id: stableUuid(`seed:enrollment-packet-event:${packetId}:filed`),
+        packet_id: packetId,
+        event_type: "filed",
+        actor_user_id: coordinatorActorUserId,
+        actor_email: "coordinator@memorylane.local",
+        timestamp: toIsoAt(addDays(createdDate, 5), 11, 45),
+        metadata: {}
+      });
+    }
+
+    enrollmentPacketSignatures.push({
+      id: stableUuid(`seed:enrollment-packet-signature:${packetId}:sender`),
+      packet_id: packetId,
+      signer_name: salesActor?.full_name ?? "Sales Coordinator",
+      signer_email: "sales@memorylane.local",
+      signer_role: "sender_staff",
+      signature_blob: "data:image/png;base64,c2VlZGVkLXNlbmRlci1zaWduYXR1cmU=",
+      ip_address: null,
+      signed_at: toIsoAt(createdDate, 10, 31),
+      created_at: toIsoAt(createdDate, 10, 31),
+      updated_at: toIsoAt(createdDate, 10, 31)
+    });
+    if (packetStatus === "completed" || packetStatus === "filed") {
+      enrollmentPacketSignatures.push({
+        id: stableUuid(`seed:enrollment-packet-signature:${packetId}:caregiver`),
+        packet_id: packetId,
+        signer_name: primaryContactName,
+        signer_email: caregiverEmail,
+        signer_role: "caregiver",
+        signature_blob: "data:image/png;base64,c2VlZGVkLWNhcmVnaXZlci1zaWduYXR1cmU=",
+        ip_address: "198.51.100.42",
+        signed_at: completedAt,
+        created_at: completedAt,
+        updated_at: completedAt
+      });
+      enrollmentPacketUploads.push({
+        id: stableUuid(`seed:enrollment-packet-upload:${packetId}:completed`),
+        packet_id: packetId,
+        member_id: member.id,
+        file_path: `members/${member.id}/enrollment/${packetId}/completed-packet.pdf`,
+        file_name: `enrollment-packet-${packetId.slice(0, 8)}-completed.pdf`,
+        file_type: "application/pdf",
+        upload_category: "completed_packet",
+        member_file_id: completedPacketFileId,
+        uploaded_at: completedAt
+      });
+    }
+
+    enrollmentPacketUploads.push({
+      id: stableUuid(`seed:enrollment-packet-upload:${packetId}:insurance`),
+      packet_id: packetId,
+      member_id: member.id,
+      file_path: `members/${member.id}/enrollment/${packetId}/insurance-card.pdf`,
+      file_name: `insurance-card-${member.id.slice(0, 8)}.pdf`,
+      file_type: "application/pdf",
+      upload_category: "insurance",
+      member_file_id: insuranceFileId,
+      uploaded_at: toIsoAt(addDays(createdDate, 1), 12, 15)
+    });
+  });
+
+  const memberFiles = (() => {
+    const deduped = new Map<string, Record<string, unknown>>();
+    [...baseMemberFiles, ...workflowMemberFiles].forEach((row) => {
+      const id = cleanText(row.id);
+      if (!id) return;
+      deduped.set(id, row);
+    });
+    return [...deduped.values()];
+  })();
+
   return {
     sites: [{ id: SITE_ID, site_code: "SITE-ML-01", site_name: "Memory Lane Main Site", latitude: 34.98, longitude: -80.995, fence_radius_meters: 75 }],
-    members: db.members.map((row) => ({
-      id: row.id,
-      display_name: row.display_name,
-      status: row.status,
-      qr_code: row.qr_code,
-      enrollment_date: row.enrollment_date,
-      dob: row.dob,
-      source_lead_id: salesSeed.memberLeadByMemberId.get(row.id) ?? null,
-      discharge_date: row.discharge_date,
-      discharge_reason: row.discharge_reason,
-      discharge_disposition: row.discharge_disposition,
-      locker_number: row.locker_number,
-      city: row.city,
-      code_status: row.code_status,
-      discharged_by: row.discharged_by,
-      latest_assessment_id: null,
-      latest_assessment_date: row.latest_assessment_date,
-      latest_assessment_score: row.latest_assessment_score,
-      latest_assessment_track: row.latest_assessment_track,
-      latest_assessment_admission_review_required: row.latest_assessment_admission_review_required
-    })),
+    members: db.members.map((row, idx) => {
+      const nameParts = row.display_name.trim().split(/\s+/g);
+      const legalFirstName = nameParts.slice(0, -1).join(" ") || nameParts[0] || row.display_name;
+      const legalLastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : "Member";
+      const preferredName = nameParts[0] ?? row.display_name;
+      return {
+        id: row.id,
+        display_name: row.display_name,
+        status: row.status,
+        qr_code: row.qr_code,
+        enrollment_date: row.enrollment_date,
+        dob: row.dob,
+        source_lead_id: salesSeed.memberLeadByMemberId.get(row.id) ?? null,
+        discharge_date: row.discharge_date,
+        discharge_reason: row.discharge_reason,
+        discharge_disposition: row.discharge_disposition,
+        locker_number: row.locker_number,
+        city: row.city,
+        code_status: row.code_status,
+        discharged_by: row.discharged_by,
+        latest_assessment_id: row.latest_assessment_id,
+        latest_assessment_date: row.latest_assessment_date,
+        latest_assessment_score: row.latest_assessment_score,
+        latest_assessment_track: row.latest_assessment_track,
+        latest_assessment_admission_review_required: row.latest_assessment_admission_review_required,
+        preferred_name: preferredName,
+        legal_first_name: legalFirstName,
+        legal_last_name: legalLastName,
+        ssn_last4: String(1000 + ((idx * 37) % 8999)).slice(-4)
+      };
+    }),
     payPeriods: db.payPeriods.map((row) => ({ id: ensureUuid(row.id, `pay-period:${row.id}`), label: row.label, start_date: row.start_date, end_date: row.end_date, is_closed: row.is_closed })),
     timePunches: db.timePunches.map((row) => ({ id: row.id, staff_user_id: mapStaff(row.staff_user_id), site_id: SITE_ID, punch_type: row.punch_type, punch_at: row.punch_at, ...parseLatLng(row.punch_lat_long), distance_meters: row.distance_meters, within_fence: row.within_fence, note: row.note, created_at: row.punch_at })).filter((row) => row.staff_user_id),
     punches: db.punches
@@ -2159,6 +3277,12 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
     documentationAssignments: derived.documentationAssignments,
     documentationEvents: derived.documentationEvents,
     marEntries: derived.marEntries,
+    pofRequests,
+    pofSignatures,
+    pofDocumentEvents,
+    pofMedications,
+    marSchedules,
+    marAdministrations,
     partners: partnerRows,
     referrals: referralRows,
     leads: salesSeed.leads.map((row) => ({ id: row.id, status: normalizeLeadStatus(String(row.status)), stage: row.stage, stage_updated_at: row.stage_updated_at, inquiry_date: row.inquiry_date, tour_date: row.tour_date, tour_completed: row.tour_completed, discovery_date: row.discovery_date, member_start_date: row.member_start_date, caregiver_name: row.caregiver_name, caregiver_relationship: row.caregiver_relationship, caregiver_email: row.caregiver_email, caregiver_phone: row.caregiver_phone, member_name: row.member_name, member_dob: row.member_dob, lead_source: row.lead_source, lead_source_other: row.lead_source_other, referral_name: row.referral_name, likelihood: row.likelihood, next_follow_up_date: row.next_follow_up_date, next_follow_up_type: row.next_follow_up_type, notes_summary: row.notes_summary, lost_reason: row.lost_reason, closed_date: row.closed_date, partner_id: row.partner_id, referral_source_id: row.referral_source_id, created_by_user_id: mapStaff(row.created_by_user_id), created_by_name: row.created_by_name, created_at: row.created_at, updated_at: row.created_at })),
@@ -2180,7 +3304,15 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
       lead_id: row.lead_id
     })),
     stageHistory: salesSeed.leadStageHistory.map((row) => ({ id: row.id, lead_id: row.lead_id, from_stage: row.from_stage, to_stage: row.to_stage, from_status: String(row.from_status ?? "").toLowerCase() || null, to_status: String(row.to_status).toLowerCase(), changed_by_user_id: mapStaff(row.changed_by_user_id), changed_by_name: row.changed_by_name, reason: row.reason, source: row.source, changed_at: row.changed_at, created_at: row.changed_at })),
-    intakeAssessments: db.assessments.map((row) => ({ id: row.id, member_id: row.member_id, lead_id: row.lead_id ?? salesSeed.memberLeadByMemberId.get(row.member_id) ?? null, assessment_date: row.assessment_date, status: row.complete ? "completed" : "draft", completed_by_user_id: mapStaff(row.created_by_user_id), completed_by: row.completed_by, signed_by: row.signed_by, complete: row.complete, total_score: row.total_score, recommended_track: row.recommended_track, admission_review_required: row.admission_review_required, notes: row.notes, created_at: row.created_at, updated_at: row.created_at })),
+    enrollmentPacketRequests,
+    enrollmentPacketFields,
+    enrollmentPacketEvents,
+    enrollmentPacketSignatures,
+    enrollmentPacketSenderSignatures,
+    enrollmentPacketUploads,
+    userNotifications,
+    intakeAssessments,
+    intakeAssessmentSignatures,
     assessmentResponses: db.assessmentResponses.map((row) => ({ id: row.id, assessment_id: row.assessment_id, member_id: row.member_id, field_key: row.field_key, field_label: row.field_label, section_type: row.section_type, field_value: row.field_value, field_value_type: row.field_value_type, created_at: row.created_at })),
     physicianOrders: intake.pofRows,
     memberHealthProfiles: intake.mhpRows,
@@ -2207,7 +3339,7 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
     })),
     memberCommandCenters: db.memberCommandCenters.map((row) => ({
       ...row,
-      source_assessment_id: null,
+      source_assessment_id: row.source_assessment_id ?? null,
       updated_by_user_id: mapStaff(row.updated_by_user_id)
     })),
     memberAttendanceSchedules: db.memberAttendanceSchedules.map((row) => ({
@@ -2218,10 +3350,7 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
       ...row,
       created_by_user_id: mapStaff(row.created_by_user_id)
     })),
-    memberFiles: db.memberFiles.map((row) => ({
-      ...row,
-      uploaded_by_user_id: mapStaff(row.uploaded_by_user_id)
-    })),
+    memberFiles,
     busStopDirectory: db.busStopDirectory.map((row) => ({
       ...row,
       created_by_user_id: mapStaff(row.created_by_user_id)
@@ -2337,9 +3466,15 @@ function buildSeedValidationSummary(rows: ReturnType<typeof buildRows>): SeedVal
   const contactMemberIds = buildIdSet(rows.memberContacts as Array<Record<string, unknown>>, "member_id");
   const fileMemberIds = buildIdSet(rows.memberFiles as Array<Record<string, unknown>>, "member_id");
   const intakeMemberIds = buildIdSet(rows.intakeAssessments as Array<Record<string, unknown>>, "member_id");
+  const intakeSignedMemberIds = buildIdSet(rows.intakeAssessmentSignatures as Array<Record<string, unknown>>, "member_id");
   const pofMemberIds = buildIdSet(rows.physicianOrders as Array<Record<string, unknown>>, "member_id");
+  const pofRequestMemberIds = buildIdSet(rows.pofRequests as Array<Record<string, unknown>>, "member_id");
+  const pofMedicationMemberIds = buildIdSet(rows.pofMedications as Array<Record<string, unknown>>, "member_id");
+  const marScheduleMemberIds = buildIdSet(rows.marSchedules as Array<Record<string, unknown>>, "member_id");
+  const marAdministrationMemberIds = buildIdSet(rows.marAdministrations as Array<Record<string, unknown>>, "member_id");
   const mhpMemberIds = buildIdSet(rows.memberHealthProfiles as Array<Record<string, unknown>>, "member_id");
   const carePlanMemberIds = buildIdSet(rows.carePlans as Array<Record<string, unknown>>, "member_id");
+  const enrollmentPacketMemberIds = buildIdSet(rows.enrollmentPacketRequests as Array<Record<string, unknown>>, "member_id");
 
   const leadActivityLeadIds = buildIdSet(rows.leadActivities as Array<Record<string, unknown>>, "lead_id");
   const leadHistoryLeadIds = buildIdSet(rows.stageHistory as Array<Record<string, unknown>>, "lead_id");
@@ -2364,7 +3499,12 @@ function buildSeedValidationSummary(rows: ReturnType<typeof buildRows>): SeedVal
 
   const moduleCounts: Array<{ label: string; count: number }> = [
     { label: "intake_assessments", count: rows.intakeAssessments.length },
+    { label: "intake_assessment_signatures", count: rows.intakeAssessmentSignatures.length },
     { label: "physician_orders", count: rows.physicianOrders.length },
+    { label: "pof_requests", count: rows.pofRequests.length },
+    { label: "pof_medications", count: rows.pofMedications.length },
+    { label: "mar_schedules", count: rows.marSchedules.length },
+    { label: "mar_administrations", count: rows.marAdministrations.length },
     { label: "member_health_profiles", count: rows.memberHealthProfiles.length },
     { label: "care_plans", count: rows.carePlans.length },
     { label: "member_diagnoses", count: rows.memberDiagnoses.length },
@@ -2377,6 +3517,9 @@ function buildSeedValidationSummary(rows: ReturnType<typeof buildRows>): SeedVal
     { label: "member_contacts", count: rows.memberContacts.length },
     { label: "member_files", count: rows.memberFiles.length },
     { label: "member_command_centers", count: rows.memberCommandCenters.length },
+    { label: "enrollment_packet_requests", count: rows.enrollmentPacketRequests.length },
+    { label: "enrollment_packet_uploads", count: rows.enrollmentPacketUploads.length },
+    { label: "user_notifications", count: rows.userNotifications.length },
     { label: "member_billing_settings", count: rows.memberBillingSettings.length },
     { label: "billing_invoices", count: rows.billingInvoices.length }
   ];
@@ -2387,9 +3530,15 @@ function buildSeedValidationSummary(rows: ReturnType<typeof buildRows>): SeedVal
     missingForMembers("members_missing_contacts", contactMemberIds, members),
     missingForMembers("members_missing_files", fileMemberIds, members),
     missingForMembers("members_missing_intake_assessment", intakeMemberIds, members),
+    missingForMembers("members_missing_intake_signature", intakeSignedMemberIds, activeMembers),
     missingForMembers("members_missing_physician_order", pofMemberIds, members),
+    missingForMembers("members_missing_pof_request", pofRequestMemberIds, activeMembers),
+    missingForMembers("members_missing_pof_medications", pofMedicationMemberIds, activeMembers),
+    missingForMembers("members_missing_mar_schedule", marScheduleMemberIds, activeMembers),
+    missingForMembers("members_missing_mar_administration", marAdministrationMemberIds, activeMembers),
     missingForMembers("members_missing_member_health_profile", mhpMemberIds, members),
     missingForMembers("active_members_missing_care_plan", carePlanMemberIds, activeMembers),
+    missingForMembers("members_missing_enrollment_packet", enrollmentPacketMemberIds, activeMembers),
     missingForLeads("leads_missing_activity_history", leadActivityLeadIds),
     missingForLeads("leads_missing_stage_history", leadHistoryLeadIds)
   ];
@@ -2541,6 +3690,13 @@ async function resetForModules(
       "leads",
       "referral_sources",
       "community_partner_organizations",
+      "enrollment_packet_uploads",
+      "enrollment_packet_signatures",
+      "enrollment_packet_events",
+      "enrollment_packet_fields",
+      "enrollment_packet_requests",
+      "enrollment_packet_sender_signatures",
+      "user_notifications",
       "enrollment_pricing_daily_rates",
       "enrollment_pricing_community_fees"
     ].forEach((t) => tables.add(t));
@@ -2559,8 +3715,15 @@ async function resetForModules(
       "member_diagnoses",
       "member_health_profiles",
       "physician_orders",
+      "pof_signatures",
+      "document_events",
+      "pof_requests",
+      "pof_medications",
+      "mar_schedules",
+      "mar_administrations",
       "assessment_responses",
       "intake_assessments",
+      "intake_assessment_signatures",
       "mar_entries"
     ].forEach((t) => tables.add(t));
   if (modules.includes("attendance"))
@@ -2609,6 +3772,20 @@ async function resetForModules(
       "sites"
     ].forEach((t) => tables.add(t));
   const order = [
+    "enrollment_packet_uploads",
+    "enrollment_packet_signatures",
+    "enrollment_packet_events",
+    "enrollment_packet_fields",
+    "enrollment_packet_requests",
+    "enrollment_packet_sender_signatures",
+    "user_notifications",
+    "pof_signatures",
+    "document_events",
+    "pof_requests",
+    "mar_administrations",
+    "mar_schedules",
+    "pof_medications",
+    "intake_assessment_signatures",
     "lead_stage_history",
     "lead_activities",
     "partner_activities",
@@ -2740,9 +3917,23 @@ async function main() {
     { table: "lead_activities", rows: rows.leadActivities, module: "sales" },
     { table: "partner_activities", rows: rows.partnerActivities, module: "sales" },
     { table: "lead_stage_history", rows: rows.stageHistory, module: "sales" },
+    { table: "enrollment_packet_requests", rows: rows.enrollmentPacketRequests, module: "sales" },
+    { table: "enrollment_packet_fields", rows: rows.enrollmentPacketFields, module: "sales" },
+    { table: "enrollment_packet_events", rows: rows.enrollmentPacketEvents, module: "sales" },
+    { table: "enrollment_packet_signatures", rows: rows.enrollmentPacketSignatures, module: "sales" },
+    { table: "enrollment_packet_sender_signatures", rows: rows.enrollmentPacketSenderSignatures, module: "sales" },
+    { table: "enrollment_packet_uploads", rows: rows.enrollmentPacketUploads, module: "sales" },
+    { table: "user_notifications", rows: rows.userNotifications, module: "sales" },
     { table: "intake_assessments", rows: rows.intakeAssessments, module: "intake" },
+    { table: "intake_assessment_signatures", rows: rows.intakeAssessmentSignatures, module: "intake" },
     { table: "assessment_responses", rows: rows.assessmentResponses, module: "intake" },
     { table: "physician_orders", rows: rows.physicianOrders, module: "intake" },
+    { table: "pof_requests", rows: rows.pofRequests, module: "intake" },
+    { table: "pof_signatures", rows: rows.pofSignatures, module: "intake" },
+    { table: "document_events", rows: rows.pofDocumentEvents, module: "intake" },
+    { table: "pof_medications", rows: rows.pofMedications, module: "intake" },
+    { table: "mar_schedules", rows: rows.marSchedules, module: "intake" },
+    { table: "mar_administrations", rows: rows.marAdministrations, module: "intake" },
     { table: "member_health_profiles", rows: rows.memberHealthProfiles, module: "intake" },
     { table: "care_plans", rows: rows.carePlans, module: "intake" },
     { table: "care_plan_sections", rows: rows.carePlanSections, module: "intake" },

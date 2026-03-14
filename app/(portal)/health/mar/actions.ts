@@ -220,7 +220,6 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
       }
     });
 
-    let saveWarning: string | null = null;
     if (payload.data.saveToMemberFiles) {
       try {
         await saveGeneratedMemberPdfToFiles({
@@ -239,7 +238,13 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
           replaceExistingByDocumentSource: true
         });
       } catch (error) {
-        saveWarning = error instanceof Error ? error.message : "Unable to save report to member files.";
+        return {
+          ok: false,
+          error:
+            error instanceof Error
+              ? `MAR report generation succeeded, but saving to member files failed: ${error.message}`
+              : "MAR report generation succeeded, but saving to member files failed."
+        } as const;
       }
     }
 
@@ -257,7 +262,6 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
       ok: true,
       fileName: generated.fileName,
       dataUrl: generated.dataUrl,
-      warning: saveWarning,
       reportMeta: {
         hasMedicationRecords: generated.report.dataQuality.hasMedicationRecords,
         hasMarDataForMonth: generated.report.dataQuality.hasMarDataForMonth,

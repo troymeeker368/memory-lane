@@ -51,16 +51,36 @@ function revalidatePofRoutes(memberId: string, physicianOrderId?: string | null)
   revalidatePath(`/members/${memberId}`);
 }
 
+function logPofActionDiagnostics(
+  action: "send" | "resend",
+  input: {
+    memberId?: string;
+    physicianOrderId?: string;
+    requestId?: string;
+    providerEmail?: string;
+    optionalMessage?: string | null;
+  }
+) {
+  console.info(`[POF action:${action}] request received`, {
+    hasMemberId: Boolean(clean(input.memberId)),
+    hasPhysicianOrderId: Boolean(clean(input.physicianOrderId)),
+    hasRequestId: Boolean(clean(input.requestId)),
+    hasProviderEmail: Boolean(clean(input.providerEmail)),
+    hasOptionalMessage: Boolean(clean(input.optionalMessage))
+  });
+}
+
 export async function sendPofSignatureRequestAction(formData: FormData) {
   try {
     const profile = await requireRoles(["admin", "nurse", "manager"]);
     const actorName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
     const memberId = asString(formData, "memberId");
     const physicianOrderId = asString(formData, "physicianOrderId");
-    console.info("[sendPofSignatureRequestAction] selected payload", {
+    logPofActionDiagnostics("send", {
       memberId,
       physicianOrderId,
-      providerEmail: asString(formData, "providerEmail")
+      providerEmail: asString(formData, "providerEmail"),
+      optionalMessage: asOptionalString(formData, "optionalMessage")
     });
     if (!memberId || !physicianOrderId) {
       return { ok: false, error: "Member and POF are required." } as const;
@@ -98,11 +118,12 @@ export async function resendPofSignatureRequestAction(formData: FormData) {
     const requestId = asString(formData, "requestId");
     const memberId = asString(formData, "memberId");
     const physicianOrderId = asString(formData, "physicianOrderId");
-    console.info("[resendPofSignatureRequestAction] selected payload", {
+    logPofActionDiagnostics("resend", {
       requestId,
       memberId,
       physicianOrderId,
-      providerEmail: asString(formData, "providerEmail")
+      providerEmail: asString(formData, "providerEmail"),
+      optionalMessage: asOptionalString(formData, "optionalMessage")
     });
     if (!requestId || !memberId || !physicianOrderId) {
       return { ok: false, error: "Request, member, and POF are required." } as const;

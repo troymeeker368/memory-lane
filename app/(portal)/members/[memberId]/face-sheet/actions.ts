@@ -198,33 +198,40 @@ export async function generateMemberFaceSheetPdfAction(input: { memberId: string
     return { ok: false, error: "Member is required." } as const;
   }
 
-  const built = await buildFaceSheetPdf(memberId);
-  if ("error" in built) {
-    return { ok: false, error: built.error } as const;
+  try {
+    const built = await buildFaceSheetPdf(memberId);
+    if ("error" in built) {
+      return { ok: false, error: built.error } as const;
+    }
+
+    const saved = await saveGeneratedMemberPdfToFiles({
+      memberId,
+      memberName: built.faceSheet.member.name,
+      documentLabel: "Face Sheet",
+      documentSource: "Face Sheet Generator",
+      category: "Health Unit",
+      dataUrl: built.dataUrl,
+      uploadedBy: {
+        id: profile.id,
+        name: profile.full_name
+      },
+      generatedAtIso: toEasternISO()
+    });
+
+    revalidatePath(`/members/${memberId}/face-sheet`);
+    revalidatePath(`/operations/member-command-center/${memberId}`);
+    revalidatePath(`/health/member-health-profiles/${memberId}`);
+
+    return {
+      ok: true,
+      fileName: saved.fileName,
+      dataUrl: built.dataUrl
+    } as const;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to generate face sheet PDF."
+    } as const;
   }
-
-  const saved = await saveGeneratedMemberPdfToFiles({
-    memberId,
-    memberName: built.faceSheet.member.name,
-    documentLabel: "Face Sheet",
-    documentSource: "Face Sheet Generator",
-    category: "Health Unit",
-    dataUrl: built.dataUrl,
-    uploadedBy: {
-      id: profile.id,
-      name: profile.full_name
-    },
-    generatedAtIso: toEasternISO()
-  });
-
-  revalidatePath(`/members/${memberId}/face-sheet`);
-  revalidatePath(`/operations/member-command-center/${memberId}`);
-  revalidatePath(`/health/member-health-profiles/${memberId}`);
-
-  return {
-    ok: true,
-    fileName: saved.fileName,
-    dataUrl: built.dataUrl
-  } as const;
 }
 

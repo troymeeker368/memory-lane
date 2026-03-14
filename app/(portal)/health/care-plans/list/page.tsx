@@ -89,7 +89,10 @@ export default async function CarePlansListPage({
                 <td><StatusLink status={plan.status} href={plan.actionHref} /></td>
                 <td>{plan.completedBy ?? "-"}</td>
                 <td>
-                  <Link className="font-semibold text-brand" href={plan.openHref}>
+                  <Link
+                    className="font-semibold text-brand"
+                    href={plan.hasExistingPlan ? `${plan.openHref}?view=detail` : plan.openHref}
+                  >
                     {plan.hasExistingPlan ? "Detail" : "Create"}
                   </Link>
                 </td>

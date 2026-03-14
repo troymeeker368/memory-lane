@@ -315,8 +315,8 @@ function getRequestPayloadSnapshotOrThrow(request: PofRequestRow) {
 async function assertPhysicianOrderMember(physicianOrderId: string, memberId: string) {
   console.info("[POF member lookup] Supabase lookup attempt", {
     lookupField: "physician_orders.id",
-    lookupValue: physicianOrderId,
-    selectedMemberId: memberId
+    hasPhysicianOrderId: Boolean(clean(physicianOrderId)),
+    hasMemberId: Boolean(clean(memberId))
   });
   const form = await getPhysicianOrderById(physicianOrderId, { serviceRole: true });
   if (!form) {
@@ -329,8 +329,7 @@ async function assertPhysicianOrderMember(physicianOrderId: string, memberId: st
   }
   console.info("[POF member lookup] resolved", {
     lookupField: "physician_orders.id",
-    lookupValue: physicianOrderId,
-    resolvedMemberId: form.memberId
+    matchedSelectedMember: true
   });
   return form;
 }
@@ -1250,7 +1249,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     .eq("id", request.physician_order_id);
   if (physicianOrderUpdateError) throw new Error(physicianOrderUpdateError.message);
 
-  await signPhysicianOrder(
+  const postSign = await signPhysicianOrder(
     request.physician_order_id,
     {
       id: request.sent_by_user_id,
@@ -1258,7 +1257,8 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     },
     {
       serviceRole: true,
-      signedAtIso: now
+      signedAtIso: now,
+      pofRequestId: request.id
     }
   );
 
@@ -1288,7 +1288,14 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     actorName: providerTypedName,
     actorEmail: request.provider_email,
     actorIp: clean(input.providerIp),
-    actorUserAgent: clean(input.providerUserAgent)
+    actorUserAgent: clean(input.providerUserAgent),
+    metadata: {
+      postSignStatus: postSign.postSignStatus,
+      postSignQueueId: postSign.queueId,
+      postSignAttemptCount: postSign.attemptCount,
+      postSignNextRetryAt: postSign.nextRetryAt,
+      postSignLastError: postSign.lastError
+    }
   });
 
   return {

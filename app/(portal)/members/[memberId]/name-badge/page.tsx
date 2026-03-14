@@ -11,6 +11,19 @@ function firstString(value: string | string[] | undefined) {
   return value;
 }
 
+function normalizeBadgeLoadError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("bad gateway") ||
+    normalized.includes("error code 502") ||
+    normalized.includes("<!doctype html>")
+  ) {
+    return "Supabase is temporarily unavailable (502 Bad Gateway). Please wait a minute and reload this badge.";
+  }
+  return "Unable to load badge details right now. Please refresh and try again.";
+}
+
 export default async function MemberNameBadgePage({
   params,
   searchParams
@@ -27,8 +40,19 @@ export default async function MemberNameBadgePage({
       ? `/health/member-health-profiles/${memberId}`
       : `/operations/member-command-center/${memberId}?tab=member-summary`;
 
-  const badge = await getMemberNameBadgeDetail(memberId);
-  if (!badge) notFound();
+  let badge: Awaited<ReturnType<typeof getMemberNameBadgeDetail>> = null;
+  let loadError = "";
+  try {
+    badge = await getMemberNameBadgeDetail(memberId);
+  } catch (error) {
+    loadError = normalizeBadgeLoadError(error);
+    console.error("[NameBadge] page load failed", {
+      memberId,
+      loadError
+    });
+  }
+  if (!loadError && !badge) notFound();
+  const resolvedBadge = badge;
 
   return (
     <div className="name-badge-page space-y-4">
@@ -40,7 +64,13 @@ export default async function MemberNameBadgePage({
           </Link>
         </div>
       </div>
-      <NameBadgeBuilder memberId={memberId} badge={badge} />
+      {loadError ? (
+        <div className="rounded-lg border border-[#f0b6b6] bg-[#fff6f6] px-4 py-3 text-sm text-[#7f1d1d]">
+          {loadError}
+        </div>
+      ) : resolvedBadge ? (
+        <NameBadgeBuilder memberId={memberId} badge={resolvedBadge} />
+      ) : null}
     </div>
   );
 }

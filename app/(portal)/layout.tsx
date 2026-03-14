@@ -44,12 +44,6 @@ export default async function PortalLayout({
           ) : null}
         </div>
         <PortalNav role={profile.role} permissions={profile.permissions} />
-        {showDevRoleSwitcher ? (
-          <div className="space-y-2 rounded-lg border border-white/25 bg-white/10 p-2">
-            <p className="text-xs font-semibold text-white/90">Dev Role Switcher</p>
-            <DevAuthBootstrapPanel accounts={devAccounts} />
-          </div>
-        ) : null}
         <SignOutForm />
       </aside>
       <main className="space-y-4 pb-10">
@@ -65,6 +59,12 @@ export default async function PortalLayout({
             <GlobalTablePaginator />
           </div>
         </div>
+        {showDevRoleSwitcher ? (
+          <section className="space-y-2 rounded-lg border border-border bg-white px-3 py-3">
+            <p className="text-xs font-semibold text-muted">Dev Role Switcher</p>
+            <DevAuthBootstrapPanel accounts={devAccounts} />
+          </section>
+        ) : null}
         {children}
       </main>
     </div>

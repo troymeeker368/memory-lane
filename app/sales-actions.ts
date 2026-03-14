@@ -24,6 +24,10 @@ import {
   sendEnrollmentPacketRequest,
   upsertEnrollmentPacketSenderSignatureProfile
 } from "@/lib/services/enrollment-packets";
+import {
+  applyLeadStageTransitionWithMemberUpsertSupabase,
+  createLeadWithMemberConversionSupabase
+} from "@/lib/services/sales-lead-conversion-supabase";
 import { applyLeadStageTransitionSupabase } from "@/lib/services/sales-lead-stage-supabase";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternDateTimeLocal, toEasternISO } from "@/lib/timezone";
@@ -342,14 +346,89 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
     };
 
     let leadId = payload.data.leadId?.trim() || "";
+    let canonicalMemberId: string | null = null;
+    let wonConversionHandled = false;
     if (leadId) {
       try {
-        leadId = (await resolveSalesLeadId(leadId, "saveSalesLeadAction")).leadId;
+        const canonicalLead = await resolveSalesLeadId(leadId, "saveSalesLeadAction");
+        leadId = canonicalLead.leadId;
+        canonicalMemberId = canonicalLead.memberId;
       } catch (error) {
         return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
       }
       try {
-        await applyLeadStageTransitionSupabase({
+        if (status === "Won") {
+          await applyLeadStageTransitionWithMemberUpsertSupabase({
+            leadId,
+            requestedStage: stage,
+            requestedStatus: status,
+            actorUserId: profile.id,
+            actorName: profile.full_name,
+            source: "saveSalesLeadAction",
+            reason: "Lead updated from sales intake form.",
+            memberDisplayName: payload.data.memberName.trim(),
+            memberDob: payload.data.memberDob?.trim() || null,
+            memberEnrollmentDate: payload.data.memberStartDate?.trim() || toEasternDate(),
+            existingMemberId: canonicalMemberId,
+            additionalLeadPatch: leadPatch
+          });
+          wonConversionHandled = true;
+        } else {
+          await applyLeadStageTransitionSupabase({
+            leadId,
+            requestedStage: stage,
+            requestedStatus: status,
+            actorUserId: profile.id,
+            actorName: profile.full_name,
+            source: "saveSalesLeadAction",
+            reason: "Lead updated from sales intake form.",
+            additionalLeadPatch: leadPatch
+          });
+        }
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Unable to update lead." };
+      }
+    } else {
+      if (status === "Won") {
+        try {
+          const conversion = await createLeadWithMemberConversionSupabase({
+            requestedStage: stage,
+            requestedStatus: status,
+            createdByUserId: profile.id,
+            actorUserId: profile.id,
+            actorName: profile.full_name,
+            source: "saveSalesLeadAction",
+            reason: "Lead updated from sales intake form.",
+            memberDisplayName: payload.data.memberName.trim(),
+            memberDob: payload.data.memberDob?.trim() || null,
+            memberEnrollmentDate: payload.data.memberStartDate?.trim() || toEasternDate(),
+            leadPatch
+          });
+          leadId = conversion.leadId;
+          wonConversionHandled = true;
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : "Unable to create and convert lead." };
+        }
+      } else {
+        const { data, error } = await supabase
+          .from("leads")
+          .insert({
+            ...leadPatch,
+            status: dbStatus,
+            created_by_user_id: profile.id
+          })
+          .select("id")
+          .single();
+        if (error) return { error: error.message };
+        leadId = data.id;
+      }
+    }
+
+    if (status === "Won" && !wonConversionHandled) {
+      const enrollmentDate = payload.data.memberStartDate?.trim() || toEasternDate();
+      try {
+        const canonicalLead = await resolveSalesLeadId(leadId, "saveSalesLeadAction:closed-won");
+        await applyLeadStageTransitionWithMemberUpsertSupabase({
           leadId,
           requestedStage: stage,
           requestedStatus: status,
@@ -357,49 +436,13 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
           actorName: profile.full_name,
           source: "saveSalesLeadAction",
           reason: "Lead updated from sales intake form.",
-          additionalLeadPatch: leadPatch
+          memberDisplayName: payload.data.memberName.trim(),
+          memberDob: payload.data.memberDob?.trim() || null,
+          memberEnrollmentDate: enrollmentDate,
+          existingMemberId: canonicalLead.memberId
         });
       } catch (error) {
-        return { error: error instanceof Error ? error.message : "Unable to update lead." };
-      }
-    } else {
-      const { data, error } = await supabase
-        .from("leads")
-        .insert({
-          ...leadPatch,
-          status: dbStatus,
-          created_by_user_id: profile.id
-        })
-        .select("id")
-        .single();
-      if (error) return { error: error.message };
-      leadId = data.id;
-    }
-
-    if (status === "Won") {
-      const enrollmentDate = payload.data.memberStartDate?.trim() || toEasternDate();
-      const canonicalLead = await resolveSalesLeadId(leadId, "saveSalesLeadAction:closed-won");
-      if (canonicalLead.memberId) {
-        const { error: memberUpdateError } = await supabase
-          .from("members")
-          .update({
-            display_name: payload.data.memberName.trim(),
-            status: "active",
-            enrollment_date: enrollmentDate,
-            dob: payload.data.memberDob?.trim() || null,
-            updated_at: toEasternISO()
-          })
-          .eq("id", canonicalLead.memberId);
-        if (memberUpdateError) return { error: memberUpdateError.message };
-      } else {
-        const { error: memberInsertError } = await supabase.from("members").insert({
-          display_name: payload.data.memberName.trim(),
-          status: "active",
-          enrollment_date: enrollmentDate,
-          dob: payload.data.memberDob?.trim() || null,
-          source_lead_id: leadId
-        });
-        if (memberInsertError) return { error: memberInsertError.message };
+        return { error: error instanceof Error ? error.message : "Unable to convert lead to member." };
       }
     }
 
@@ -455,37 +498,9 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
     }
 
     const enrollmentDate = lead.member_start_date?.trim() || toEasternDate();
-    let memberId = canonicalMemberIdFromLead ?? "";
-    if (memberId) {
-      const { error: memberUpdateError } = await supabase
-        .from("members")
-        .update({
-          display_name: lead.member_name,
-          status: "active",
-          enrollment_date: enrollmentDate,
-          dob: lead.member_dob ?? null,
-          updated_at: toEasternISO()
-        })
-        .eq("id", memberId);
-      if (memberUpdateError) return { error: memberUpdateError.message };
-    } else {
-      const { data: insertedMember, error: memberInsertError } = await supabase
-        .from("members")
-        .insert({
-          display_name: lead.member_name,
-          status: "active",
-          enrollment_date: enrollmentDate,
-          dob: lead.member_dob ?? null,
-          source_lead_id: lead.id
-        })
-        .select("id")
-        .single();
-      if (memberInsertError) return { error: memberInsertError.message };
-      memberId = insertedMember.id;
-    }
-
+    let memberId = "";
     try {
-      await applyLeadStageTransitionSupabase({
+      const conversion = await applyLeadStageTransitionWithMemberUpsertSupabase({
         leadId: lead.id,
         requestedStage: "Closed - Won",
         requestedStatus: "Won",
@@ -493,12 +508,17 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
         actorName: profile.full_name,
         source: "enrollMemberFromLeadAction",
         reason: "Enrollment in progress lead converted to member.",
+        memberDisplayName: String(lead.member_name ?? "").trim(),
+        memberDob: lead.member_dob ?? null,
+        memberEnrollmentDate: enrollmentDate,
+        existingMemberId: canonicalMemberIdFromLead,
         additionalLeadPatch: {
           member_start_date: enrollmentDate
         }
       });
+      memberId = conversion.memberId;
     } catch (error) {
-      return { error: error instanceof Error ? error.message : "Unable to transition lead to Closed - Won." };
+      return { error: error instanceof Error ? error.message : "Unable to convert lead to member." };
     }
 
     const { error: auditInsertError } = await supabase.from("audit_logs").insert({

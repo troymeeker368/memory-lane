@@ -513,6 +513,236 @@ function physicianOrdersTableRequiredError() {
   return new Error("Physician Orders storage is not available. Run Supabase migration 0006_intake_pof_mhp_supabase.sql.");
 }
 
+type PofPostSignSyncStep = "mhp_mcc" | "mar_medications" | "mar_schedules";
+type PofPostSignSyncQueueStatus = "queued" | "completed";
+type PofPostSignSyncQueueRow = {
+  id: string;
+  physician_order_id: string;
+  member_id: string;
+  pof_request_id: string | null;
+  status: PofPostSignSyncQueueStatus;
+  attempt_count: number;
+  next_retry_at: string | null;
+};
+
+export type SignPhysicianOrderResult = {
+  postSignStatus: "synced" | "queued";
+  queueId: string;
+  attemptCount: number;
+  nextRetryAt: string | null;
+  lastError: string | null;
+};
+
+function isMissingPofPostSignQueueTableError(error: PostgrestErrorLike | null | undefined) {
+  const text = extractErrorText(error);
+  if (!text) return false;
+  if (error?.code === "PGRST205") return text.includes("pof_post_sign_sync_queue");
+  return (
+    text.includes("pof_post_sign_sync_queue") &&
+    (text.includes("schema cache") || text.includes("does not exist") || text.includes("relation"))
+  );
+}
+
+function pofPostSignQueueTableRequiredError() {
+  return new Error(
+    "POF post-sign sync queue storage is not available. Run Supabase migration 0031_pof_post_sign_sync_queue.sql."
+  );
+}
+
+function computePostSignRetryAt(attemptCount: number, nowIso: string) {
+  const clampedAttempt = Math.max(1, Math.floor(attemptCount));
+  const delayMinutes = Math.min(60, 5 * 2 ** (clampedAttempt - 1));
+  const next = new Date(Date.parse(nowIso) + delayMinutes * 60 * 1000);
+  return next.toISOString();
+}
+
+function buildPostSignSyncError(step: PofPostSignSyncStep, error: unknown) {
+  const base = error instanceof Error ? error.message : "Unknown post-sign sync error.";
+  if (step === "mhp_mcc") return `MHP/MCC sync failed: ${base}`;
+  if (step === "mar_medications") return `MAR medication sync failed: ${base}`;
+  return `MAR schedule sync failed: ${base}`;
+}
+
+async function loadPostSignQueueRow(
+  pofId: string,
+  options?: {
+    serviceRole?: boolean;
+  }
+) {
+  const supabase = await createClient({ serviceRole: options?.serviceRole });
+  const { data, error } = await supabase
+    .from("pof_post_sign_sync_queue")
+    .select("id, physician_order_id, member_id, pof_request_id, status, attempt_count, next_retry_at")
+    .eq("physician_order_id", pofId)
+    .maybeSingle();
+  if (error) {
+    if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
+    throw new Error(error.message);
+  }
+  return (data as PofPostSignSyncQueueRow | null) ?? null;
+}
+
+async function ensurePostSignQueueRow(input: {
+  pofId: string;
+  memberId: string;
+  pofRequestId?: string | null;
+  signatureCompletedAt: string;
+  actor: { id: string; fullName: string };
+  serviceRole?: boolean;
+}) {
+  const supabase = await createClient({ serviceRole: input.serviceRole });
+  const existing = await loadPostSignQueueRow(input.pofId, { serviceRole: input.serviceRole });
+  const requestId = clean(input.pofRequestId);
+  if (existing) {
+    if (requestId && existing.pof_request_id !== requestId) {
+      const { error: updateError } = await supabase
+        .from("pof_post_sign_sync_queue")
+        .update({
+          pof_request_id: requestId,
+          queued_by_user_id: input.actor.id,
+          queued_by_name: input.actor.fullName
+        })
+        .eq("id", existing.id);
+      if (updateError) {
+        if (isMissingPofPostSignQueueTableError(updateError)) throw pofPostSignQueueTableRequiredError();
+        throw new Error(updateError.message);
+      }
+      const refreshed = await loadPostSignQueueRow(input.pofId, { serviceRole: input.serviceRole });
+      if (!refreshed) throw new Error("POF post-sign sync queue row disappeared after update.");
+      return refreshed;
+    }
+    return existing;
+  }
+
+  const { error: insertError } = await supabase.from("pof_post_sign_sync_queue").insert({
+    physician_order_id: input.pofId,
+    member_id: input.memberId,
+    pof_request_id: requestId,
+    status: "queued",
+    attempt_count: 0,
+    next_retry_at: input.signatureCompletedAt,
+    last_error: null,
+    last_error_at: null,
+    last_failed_step: null,
+    signature_completed_at: input.signatureCompletedAt,
+    queued_by_user_id: input.actor.id,
+    queued_by_name: input.actor.fullName,
+    resolved_at: null,
+    resolved_by_user_id: null,
+    resolved_by_name: null
+  });
+  if (insertError) {
+    if (isMissingPofPostSignQueueTableError(insertError)) throw pofPostSignQueueTableRequiredError();
+    throw new Error(insertError.message);
+  }
+  const created = await loadPostSignQueueRow(input.pofId, { serviceRole: input.serviceRole });
+  if (!created) throw new Error("Unable to create POF post-sign sync queue row.");
+  return created;
+}
+
+async function markPostSignQueueCompleted(input: {
+  queueId: string;
+  attemptCount: number;
+  actor: { id: string | null; fullName: string | null };
+  completedAt: string;
+  pofRequestId?: string | null;
+  serviceRole?: boolean;
+}) {
+  const supabase = await createClient({ serviceRole: input.serviceRole });
+  const requestId = clean(input.pofRequestId);
+  const payload = {
+    status: "completed",
+    attempt_count: input.attemptCount,
+    last_attempt_at: input.completedAt,
+    next_retry_at: null,
+    last_error: null,
+    last_error_at: null,
+    last_failed_step: null,
+    ...(requestId ? { pof_request_id: requestId } : {}),
+    resolved_at: input.completedAt,
+    resolved_by_user_id: clean(input.actor.id),
+    resolved_by_name: clean(input.actor.fullName)
+  };
+  const { error } = await supabase
+    .from("pof_post_sign_sync_queue")
+    .update(payload)
+    .eq("id", input.queueId);
+  if (error) {
+    if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
+    throw new Error(error.message);
+  }
+}
+
+async function markPostSignQueueQueued(input: {
+  queueId: string;
+  attemptCount: number;
+  step: PofPostSignSyncStep;
+  errorMessage: string;
+  nextRetryAt: string;
+  pofRequestId?: string | null;
+  actor: { id: string | null; fullName: string | null };
+  queuedAt: string;
+  serviceRole?: boolean;
+}) {
+  const supabase = await createClient({ serviceRole: input.serviceRole });
+  const requestId = clean(input.pofRequestId);
+  const payload = {
+    status: "queued",
+    attempt_count: input.attemptCount,
+    last_attempt_at: input.queuedAt,
+    next_retry_at: input.nextRetryAt,
+    last_error: input.errorMessage,
+    last_error_at: input.queuedAt,
+    last_failed_step: input.step,
+    ...(requestId ? { pof_request_id: requestId } : {}),
+    queued_by_user_id: clean(input.actor.id),
+    queued_by_name: clean(input.actor.fullName),
+    resolved_at: null,
+    resolved_by_user_id: null,
+    resolved_by_name: null
+  };
+  const { error } = await supabase
+    .from("pof_post_sign_sync_queue")
+    .update(payload)
+    .eq("id", input.queueId);
+  if (error) {
+    if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
+    throw new Error(error.message);
+  }
+}
+
+async function runPostSignSyncCascade(input: {
+  pofId: string;
+  memberId: string;
+  syncTimestamp: string;
+  serviceRole?: boolean;
+}) {
+  let step: PofPostSignSyncStep = "mhp_mcc";
+  try {
+    await syncMemberHealthProfileFromSignedPhysicianOrder(input.pofId, { serviceRole: input.serviceRole });
+    step = "mar_medications";
+    await syncPofMedicationsFromSignedOrder({ physicianOrderId: input.pofId, serviceRole: input.serviceRole ?? true });
+    step = "mar_schedules";
+    const scheduleStartDate = toEasternDate(input.syncTimestamp);
+    const scheduleEndDate = addDaysDateOnly(scheduleStartDate, 30);
+    await generateMarSchedulesForMember({
+      memberId: input.memberId,
+      startDate: scheduleStartDate,
+      endDate: scheduleEndDate,
+      serviceRole: input.serviceRole ?? true
+    });
+    return {
+      ok: true as const
+    };
+  } catch (error) {
+    return {
+      ok: false as const,
+      step,
+      errorMessage: buildPostSignSyncError(step, error)
+    };
+  }
+}
+
 async function resolvePhysicianOrderMemberId(rawMemberId: string, actionLabel: string) {
   const canonical = await resolveCanonicalMemberRef(
     {
@@ -1008,13 +1238,23 @@ export async function signPhysicianOrder(
   options?: {
     serviceRole?: boolean;
     signedAtIso?: string;
+    pofRequestId?: string | null;
   }
-) {
+): Promise<SignPhysicianOrderResult> {
   const supabase = await createClient({ serviceRole: options?.serviceRole });
   const row = await getPhysicianOrderById(pofId, { serviceRole: options?.serviceRole });
   if (!row) throw new Error("Physician order not found.");
 
   const now = options?.signedAtIso ?? toEasternISO();
+  const queue = await ensurePostSignQueueRow({
+    pofId,
+    memberId: row.memberId,
+    pofRequestId: options?.pofRequestId,
+    signatureCompletedAt: now,
+    actor,
+    serviceRole: options?.serviceRole
+  });
+
   const { error: supersedeError } = await supabase
     .from("physician_orders")
     .update({
@@ -1055,16 +1295,131 @@ export async function signPhysicianOrder(
     throw new Error(signError.message);
   }
 
-  await syncMemberHealthProfileFromSignedPhysicianOrder(pofId, { serviceRole: options?.serviceRole });
-  await syncPofMedicationsFromSignedOrder({ physicianOrderId: pofId, serviceRole: options?.serviceRole ?? true });
-  const scheduleStartDate = toEasternDate(now);
-  const scheduleEndDate = addDaysDateOnly(scheduleStartDate, 30);
-  await generateMarSchedulesForMember({
+  const attemptCount = Math.max(0, Number(queue.attempt_count ?? 0)) + 1;
+  const postSign = await runPostSignSyncCascade({
+    pofId,
     memberId: row.memberId,
-    startDate: scheduleStartDate,
-    endDate: scheduleEndDate,
-    serviceRole: options?.serviceRole ?? true
+    syncTimestamp: now,
+    serviceRole: options?.serviceRole
   });
+
+  if (postSign.ok) {
+    await markPostSignQueueCompleted({
+      queueId: queue.id,
+      attemptCount,
+      actor,
+      completedAt: now,
+      pofRequestId: options?.pofRequestId,
+      serviceRole: options?.serviceRole
+    });
+    return {
+      postSignStatus: "synced",
+      queueId: queue.id,
+      attemptCount,
+      nextRetryAt: null,
+      lastError: null
+    };
+  }
+
+  const nextRetryAt = computePostSignRetryAt(attemptCount, now);
+  await markPostSignQueueQueued({
+    queueId: queue.id,
+    attemptCount,
+    step: postSign.step,
+    errorMessage: postSign.errorMessage,
+    nextRetryAt,
+    pofRequestId: options?.pofRequestId,
+    actor,
+    queuedAt: now,
+    serviceRole: options?.serviceRole
+  });
+  return {
+    postSignStatus: "queued",
+    queueId: queue.id,
+    attemptCount,
+    nextRetryAt,
+    lastError: postSign.errorMessage
+  };
+}
+
+export async function retryQueuedPhysicianOrderPostSignSync(input?: {
+  limit?: number;
+  serviceRole?: boolean;
+  actor?: { id: string; fullName: string };
+}) {
+  const serviceRole = input?.serviceRole ?? true;
+  const now = toEasternISO();
+  const limit = Math.min(100, Math.max(1, input?.limit ?? 25));
+  const supabase = await createClient({ serviceRole });
+  const { data, error } = await supabase
+    .from("pof_post_sign_sync_queue")
+    .select("id, physician_order_id, member_id, pof_request_id, status, attempt_count, next_retry_at")
+    .eq("status", "queued")
+    .order("next_retry_at", { ascending: true })
+    .limit(limit);
+  if (error) {
+    if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
+    throw new Error(error.message);
+  }
+
+  const actor = input?.actor ?? {
+    id: null,
+    fullName: "System Post-Sign Sync Retry"
+  };
+
+  const rows = ((data ?? []) as PofPostSignSyncQueueRow[]).filter((row) => {
+    const retryAt = clean(row.next_retry_at);
+    if (!retryAt) return true;
+    return Date.parse(retryAt) <= Date.parse(now);
+  });
+
+  let processed = 0;
+  let succeeded = 0;
+  let queued = 0;
+
+  for (const row of rows) {
+    processed += 1;
+    const attemptCount = Math.max(0, Number(row.attempt_count ?? 0)) + 1;
+    const postSign = await runPostSignSyncCascade({
+      pofId: row.physician_order_id,
+      memberId: row.member_id,
+      syncTimestamp: now,
+      serviceRole
+    });
+
+    if (postSign.ok) {
+      await markPostSignQueueCompleted({
+        queueId: row.id,
+        attemptCount,
+        actor,
+        completedAt: now,
+        pofRequestId: row.pof_request_id,
+        serviceRole
+      });
+      succeeded += 1;
+      continue;
+    }
+
+    const nextRetryAt = computePostSignRetryAt(attemptCount, now);
+    await markPostSignQueueQueued({
+      queueId: row.id,
+      attemptCount,
+      step: postSign.step,
+      errorMessage: postSign.errorMessage,
+      nextRetryAt,
+      pofRequestId: row.pof_request_id,
+      actor,
+      queuedAt: now,
+      serviceRole
+    });
+    queued += 1;
+  }
+
+  return {
+    processed,
+    succeeded,
+    queued
+  };
 }
 
 function toMemberAllergyGroup(value: PhysicianOrderAllergy["allergyGroup"]) {

@@ -576,7 +576,7 @@ export function CarePlanReviewForm({
               router.push(returnTo);
               return;
             }
-            router.back();
+            router.push(`/health/care-plans/${carePlanId}`);
           })
         }
       >

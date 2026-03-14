@@ -173,8 +173,8 @@ th {
 
 .name-badge-preview {
   position: relative;
-  width: 378px;
-  height: 321px;
+  width: 100mm;
+  height: 85mm;
   margin: 0 auto;
   border: 1px solid #d1d8e3;
   border-radius: 6px;
@@ -187,10 +187,10 @@ th {
 
 .name-badge-logo {
   position: absolute;
-  top: 30px;
+  top: 7.9mm;
   left: 50%;
   transform: translateX(-50%);
-  width: 160px;
+  width: 42.3mm;
   height: auto;
   object-fit: contain;
   z-index: 1;
@@ -198,29 +198,31 @@ th {
 
 .name-badge-member-name {
   position: absolute;
-  top: 114px;
-  left: 24px;
-  right: 24px;
+  top: 31.25mm;
+  left: 6.3mm;
+  right: 6.3mm;
   margin: 0;
-  line-height: 1.1;
+  line-height: 1.05;
   font-size: 28px;
   font-weight: 700;
   color: #1f2937;
   text-align: center;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   overflow: hidden;
-  min-height: 36px;
+  max-height: 11.5mm;
   z-index: 1;
 }
 
 .name-badge-locker {
   position: absolute;
-  top: 170px;
-  left: 24px;
-  right: 24px;
+  top: 47.66mm;
+  left: 6.3mm;
+  right: 6.3mm;
   margin: 0;
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   letter-spacing: 0.03em;
   color: #1b3e93;
   text-align: center;
@@ -229,9 +231,9 @@ th {
 
 .name-badge-divider {
   position: absolute;
-  top: 218px;
-  left: 24px;
-  right: 24px;
+  top: 59.84mm;
+  left: 6.3mm;
+  right: 6.3mm;
   margin: 0;
   border-top: 1.5px solid #1b3e93;
   z-index: 1;
@@ -239,9 +241,9 @@ th {
 
 .name-badge-icons {
   position: absolute;
-  top: 230px;
-  left: 24px;
-  right: 24px;
+  top: 63.55mm;
+  left: 6.3mm;
+  right: 6.3mm;
   margin: 0;
   display: flex;
   flex-wrap: wrap;

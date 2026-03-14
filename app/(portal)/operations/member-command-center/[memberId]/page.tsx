@@ -337,8 +337,6 @@ export default async function MemberCommandCenterDetailPage({
               <Link
                 href={`/members/${detail.member.id}/name-badge?from=mcc`}
                 className="inline-flex h-9 items-center rounded-lg bg-brand px-3 text-xs font-semibold text-white hover:bg-[#12357e]"
-                target="_blank"
-                rel="noopener noreferrer"
               >
                 Generate Name Badge
               </Link>

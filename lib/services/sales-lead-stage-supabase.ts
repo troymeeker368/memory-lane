@@ -38,7 +38,7 @@ function normalizeCanonicalStage(stage: string): CanonicalLeadStage {
   return "Inquiry";
 }
 
-function resolveCanonicalLeadTransition(input: {
+export function resolveCanonicalLeadTransition(input: {
   requestedStage: string;
   requestedStatus: string;
 }) {

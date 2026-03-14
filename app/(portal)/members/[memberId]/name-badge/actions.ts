@@ -20,14 +20,16 @@ const BADGE_LAYOUT = {
   sidePaddingMm: 6.3,
   logoTopMm: 7.9,
   logoWidthMm: 42.3,
-  nameTopMm: 30.2,
-  nameMaxSizePt: 22,
-  nameMinSizePt: 14,
-  lockerTopMm: 45.1,
-  lockerSizePt: 13,
-  dividerTopMm: 57.7,
+  nameTopMm: 31.25,
+  nameMaxSizePt: 18,
+  nameMinSizePt: 12,
+  nameLineHeight: 1.05,
+  nameMaxLines: 2,
+  lockerTopMm: 47.66,
+  lockerSizePt: 10.8,
+  dividerTopMm: 59.84,
   dividerThicknessPt: 1.5,
-  iconsTopMm: 60.9,
+  iconsTopMm: 63.55,
   iconSizeMm: 9.5,
   iconGapMm: 2.1,
   textBadgeWidthMm: 11.9
@@ -41,8 +43,95 @@ function toPageYFromTop(pageHeight: number, topMm: number, heightPoints = 0) {
   return pageHeight - toPoints(topMm) - heightPoints;
 }
 
+interface WidthMeasurer {
+  widthOfTextAtSize: (text: string, size: number) => number;
+}
+
+function trimLineToWidthWithEllipsis(
+  text: string,
+  maxWidth: number,
+  font: WidthMeasurer,
+  fontSize: number
+) {
+  const ellipsis = "...";
+  const trimmed = text.trim();
+  if (!trimmed) return ellipsis;
+  if (font.widthOfTextAtSize(trimmed, fontSize) <= maxWidth) return trimmed;
+  if (font.widthOfTextAtSize(ellipsis, fontSize) > maxWidth) return "";
+
+  let next = trimmed;
+  while (next.length > 0 && font.widthOfTextAtSize(`${next}${ellipsis}`, fontSize) > maxWidth) {
+    next = next.slice(0, -1).trimEnd();
+  }
+  return next ? `${next}${ellipsis}` : ellipsis;
+}
+
+function wrapTextByWords(
+  text: string,
+  maxWidth: number,
+  font: WidthMeasurer,
+  fontSize: number,
+  maxLines: number
+) {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return { lines: [] as string[], truncated: false };
+  }
+
+  const words = normalized.split(" ");
+  const lines: string[] = [];
+  let currentLine = "";
+  let index = 0;
+
+  while (index < words.length && lines.length < maxLines) {
+    const word = words[index];
+    const candidate = currentLine ? `${currentLine} ${word}` : word;
+
+    if (font.widthOfTextAtSize(candidate, fontSize) <= maxWidth) {
+      currentLine = candidate;
+      index += 1;
+      continue;
+    }
+
+    if (!currentLine) {
+      currentLine = word;
+      index += 1;
+    }
+
+    lines.push(currentLine);
+    currentLine = "";
+  }
+
+  if (currentLine && lines.length < maxLines) {
+    lines.push(currentLine);
+  }
+
+  const truncated = index < words.length;
+  if (truncated && lines.length > 0) {
+    lines[lines.length - 1] = trimLineToWidthWithEllipsis(lines[lines.length - 1], maxWidth, font, fontSize);
+  }
+
+  return { lines, truncated };
+}
+
 function roleCanGenerate(role: string) {
   return role === "admin" || role === "manager" || role === "nurse";
+}
+
+function normalizeBadgeErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("bad gateway") ||
+    normalized.includes("error code 502") ||
+    normalized.includes("<!doctype html>")
+  ) {
+    return "Supabase is temporarily unavailable (502 Bad Gateway). Please wait a minute and try again.";
+  }
+  if (normalized.includes("fetch failed") || normalized.includes("network")) {
+    return "Unable to reach Supabase right now. Please check connectivity and try again.";
+  }
+  return message || "Unable to generate badge right now. Please try again.";
 }
 
 function imagePathFromPublicSrc(src: string) {
@@ -79,6 +168,7 @@ async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([pageWidth, pageHeight]);
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const fontRegular = await pdf.embedFont(StandardFonts.Helvetica);
   const brandBlue = rgb(0.106, 0.243, 0.576);
 
   const logoWidth = toPoints(BADGE_LAYOUT.logoWidthMm);
@@ -108,29 +198,52 @@ async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?
 
   const availableNameWidth = pageWidth - sidePadding * 2;
   let nameFontSize = BADGE_LAYOUT.nameMaxSizePt;
+  let wrappedName = wrapTextByWords(
+    memberDisplayName,
+    availableNameWidth,
+    fontBold,
+    nameFontSize,
+    BADGE_LAYOUT.nameMaxLines
+  );
   while (
     nameFontSize > BADGE_LAYOUT.nameMinSizePt &&
-    fontBold.widthOfTextAtSize(memberDisplayName, nameFontSize) > availableNameWidth
+    (wrappedName.truncated ||
+      wrappedName.lines.some((line) => fontBold.widthOfTextAtSize(line, nameFontSize) > availableNameWidth))
   ) {
     nameFontSize -= 1;
+    wrappedName = wrapTextByWords(
+      memberDisplayName,
+      availableNameWidth,
+      fontBold,
+      nameFontSize,
+      BADGE_LAYOUT.nameMaxLines
+    );
   }
-  const nameTextWidth = fontBold.widthOfTextAtSize(memberDisplayName, nameFontSize);
-  page.drawText(memberDisplayName, {
-    x: Math.max(sidePadding, (pageWidth - nameTextWidth) / 2),
-    y: toPageYFromTop(pageHeight, BADGE_LAYOUT.nameTopMm, nameFontSize),
-    size: nameFontSize,
-    font: fontBold,
-    color: rgb(0.1, 0.1, 0.1)
+  const nameTopY = pageHeight - toPoints(BADGE_LAYOUT.nameTopMm);
+  const nameLineHeight = nameFontSize * BADGE_LAYOUT.nameLineHeight;
+  const linesToRender =
+    wrappedName.lines.length > 0
+      ? wrappedName.lines.slice(0, BADGE_LAYOUT.nameMaxLines)
+      : [trimLineToWidthWithEllipsis(memberDisplayName, availableNameWidth, fontBold, nameFontSize)];
+  linesToRender.forEach((line, index) => {
+    const nameTextWidth = fontBold.widthOfTextAtSize(line, nameFontSize);
+    page.drawText(line, {
+      x: Math.max(sidePadding, (pageWidth - nameTextWidth) / 2),
+      y: nameTopY - nameFontSize - index * nameLineHeight,
+      size: nameFontSize,
+      font: fontBold,
+      color: rgb(0.1, 0.1, 0.1)
+    });
   });
 
   const lockerLabel = badge.member.lockerNumber ? `LOCKER ${badge.member.lockerNumber}` : "LOCKER ##";
   const lockerSize = BADGE_LAYOUT.lockerSizePt;
-  const lockerWidth = fontBold.widthOfTextAtSize(lockerLabel, lockerSize);
+  const lockerWidth = fontRegular.widthOfTextAtSize(lockerLabel, lockerSize);
   page.drawText(lockerLabel, {
     x: (pageWidth - lockerWidth) / 2,
     y: toPageYFromTop(pageHeight, BADGE_LAYOUT.lockerTopMm, lockerSize),
     size: lockerSize,
-    font: fontBold,
+    font: fontRegular,
     color: brandBlue
   });
 
@@ -217,24 +330,44 @@ export async function generateMemberNameBadgePdfAction(input: {
     return { ok: false, error: "Member is required." } as const;
   }
 
-  const built = await buildNameBadgePdfDataUrl(memberId, input.selectedIndicatorKeys);
+  let built: Awaited<ReturnType<typeof buildNameBadgePdfDataUrl>>;
+  try {
+    built = await buildNameBadgePdfDataUrl(memberId, input.selectedIndicatorKeys);
+  } catch (error) {
+    const message = normalizeBadgeErrorMessage(error);
+    console.error("[NameBadge] generateMemberNameBadgePdfAction build failed", {
+      memberId,
+      message
+    });
+    return { ok: false, error: message } as const;
+  }
   if ("error" in built) {
     return { ok: false, error: built.error } as const;
   }
 
-  const saved = await saveGeneratedMemberPdfToFiles({
-    memberId,
-    memberName: built.badge.member.displayName ?? "Member",
-    documentLabel: "Name Badge",
-    documentSource: "Name Badge Generator",
-    category: "Name Badge",
-    dataUrl: built.dataUrl,
-    uploadedBy: {
-      id: profile.id,
-      name: profile.full_name
-    },
-    generatedAtIso: toEasternISO()
-  });
+  let saved: Awaited<ReturnType<typeof saveGeneratedMemberPdfToFiles>>;
+  try {
+    saved = await saveGeneratedMemberPdfToFiles({
+      memberId,
+      memberName: built.badge.member.displayName ?? "Member",
+      documentLabel: "Name Badge",
+      documentSource: "Name Badge Generator",
+      category: "Name Badge",
+      dataUrl: built.dataUrl,
+      uploadedBy: {
+        id: profile.id,
+        name: profile.full_name
+      },
+      generatedAtIso: toEasternISO()
+    });
+  } catch (error) {
+    const message = normalizeBadgeErrorMessage(error);
+    console.error("[NameBadge] generateMemberNameBadgePdfAction save failed", {
+      memberId,
+      message
+    });
+    return { ok: false, error: message } as const;
+  }
 
   revalidatePath(`/members/${memberId}/name-badge`);
   revalidatePath(`/operations/member-command-center/${memberId}`);

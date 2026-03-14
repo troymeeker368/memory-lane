@@ -25,7 +25,7 @@ export function isProductionNodeEnv() {
 
 export function isDevAuthBypassEnabled() {
   if (isProductionNodeEnv()) return false;
-  return parseBooleanEnv(process.env.ENABLE_DEV_AUTH_BYPASS);
+  return parseBooleanEnv(process.env.ENABLE_DEV_AUTH_BYPASS ?? process.env.NEXT_PUBLIC_ENABLE_AUTH_BYPASS);
 }
 
 export function getPublicAppUrl() {

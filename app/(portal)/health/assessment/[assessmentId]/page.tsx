@@ -72,8 +72,8 @@ export default async function HealthAssessmentDetailPage({
 
       {pdfSaveFailed ? (
         <Card>
-          <p className="text-sm font-semibold text-amber-700">Assessment saved, but the PDF could not be saved to member files.</p>
-          <p className="mt-1 text-xs text-muted">Please retry from the assessment workflow or generate the document again after resolving file-generation issues.</p>
+          <p className="text-sm font-semibold text-amber-700">Intake Assessment was created, but its PDF was not saved to member files.</p>
+          <p className="mt-1 text-xs text-muted">Use Download PDF to retry member-files persistence after resolving the underlying issue.</p>
         </Card>
       ) : null}
 

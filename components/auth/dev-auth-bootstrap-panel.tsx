@@ -28,15 +28,27 @@ export function DevAuthBootstrapPanel({ accounts }: { accounts: DevAuthBootstrap
 
   return (
     <div className="space-y-3">
-      {accounts.map((account) => (
-        <form action={formAction} key={`${account.role}:${account.email}`}>
-          <input type="hidden" name="email" value={account.email} />
-          <Button type="submit" disabled={pending} className="w-full justify-between">
-            <span>{account.label}</span>
-            <span className="text-xs font-medium text-white/80">{account.email}</span>
-          </Button>
-        </form>
-      ))}
+      <form action={formAction} className="space-y-2">
+        <label className="block text-xs font-semibold text-muted" htmlFor="dev-auth-bootstrap-email">
+          Select account
+        </label>
+        <select
+          id="dev-auth-bootstrap-email"
+          name="email"
+          defaultValue={accounts[0].email}
+          className="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm text-slate-900"
+          disabled={pending}
+        >
+          {accounts.map((account) => (
+            <option key={`${account.role}:${account.email}`} value={account.email}>
+              {account.label} ({account.email})
+            </option>
+          ))}
+        </select>
+        <Button type="submit" disabled={pending} className="w-full">
+          {pending ? "Switching..." : "Switch Role"}
+        </Button>
+      </form>
       {state.error ? <p className="text-sm text-danger">{state.error}</p> : null}
       {state.message ? <p className="text-sm text-[#0f2943]">{state.message}</p> : null}
     </div>

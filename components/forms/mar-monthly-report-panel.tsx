@@ -97,14 +97,14 @@ export function MarMonthlyReportPanel({
       setPreviewOpen(true);
       setStatus(
         nextWarnings.length > 0
-          ? `Preview ready with ${nextWarnings.length} data-quality warning${nextWarnings.length === 1 ? "" : "s"}.`
-          : "Preview ready."
+          ? `Preview ready${saveToMemberFiles ? " and saved to member files" : ""} with ${nextWarnings.length} data-quality warning${nextWarnings.length === 1 ? "" : "s"}.`
+          : `Preview ready${saveToMemberFiles ? " and saved to member files." : "."}`
       );
       return;
     }
 
     triggerDownload(result.dataUrl, result.fileName);
-    setStatus(result.warning ? `Downloaded. Save warning: ${result.warning}` : "Report downloaded successfully.");
+    setStatus(saveToMemberFiles ? "Report downloaded and saved to member files." : "Report downloaded successfully.");
   }
 
   return (

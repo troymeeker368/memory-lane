@@ -5,10 +5,35 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { syncMhpToCommandCenter as syncMhpToCommandCenterService } from "@/lib/services/member-profile-sync";
 import {
-  ensureMemberHealthProfileSupabase
-} from "@/lib/services/member-health-profiles-supabase";
-import { createClient } from "@/lib/supabase/server";
+  countMemberDiagnosesSupabase,
+  createMemberAllergySupabase,
+  createMemberDiagnosisSupabase,
+  createMemberEquipmentSupabase,
+  createMemberMedicationSupabase,
+  createMemberNoteSupabase,
+  createMemberProviderSupabase,
+  deleteMemberAllergySupabase,
+  deleteMemberDiagnosisSupabase,
+  deleteMemberEquipmentSupabase,
+  deleteMemberMedicationSupabase,
+  deleteMemberNoteSupabase,
+  deleteMemberProviderSupabase,
+  getMemberTrackForMhpSupabase,
+  touchMemberHealthProfileSupabase,
+  updateMemberAllergySupabase,
+  updateMemberDiagnosisSupabase,
+  updateMemberEquipmentSupabase,
+  updateMemberFromMhpSupabase,
+  updateMemberHealthProfileByMemberIdSupabase,
+  updateMemberMedicationSupabase,
+  updateMemberNoteSupabase,
+  updateMemberProviderSupabase,
+  upsertHospitalPreferenceDirectoryFromMhpSupabase,
+  upsertProviderDirectoryFromMhpSupabase
+} from "@/lib/services/member-health-profiles-write-supabase";
+import { ensureMemberHealthProfileSupabase } from "@/lib/services/member-health-profiles-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 function asString(formData: FormData, key: string) {
@@ -75,21 +100,6 @@ function resolveProviderSpecialty(formData: FormData) {
   };
 }
 
-const TABLE_MAP = {
-  members: "members",
-  memberHealthProfiles: "member_health_profiles",
-  providerDirectory: "provider_directory",
-  hospitalPreferenceDirectory: "hospital_preference_directory",
-  memberDiagnoses: "member_diagnoses",
-  memberMedications: "member_medications",
-  memberAllergies: "member_allergies",
-  memberProviders: "member_providers",
-  memberEquipment: "member_equipment",
-  memberNotes: "member_notes"
-} as const;
-
-type TableKey = keyof typeof TABLE_MAP;
-
 function isUuid(value: string | null | undefined) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value ?? ""));
 }
@@ -98,106 +108,19 @@ function toNullableUuid(value: string | null | undefined) {
   return isUuid(value) ? String(value) : null;
 }
 
-async function getHealthProfileContext() {
-  const supabase = await createClient();
-  const [providerDirectoryResult, hospitalDirectoryResult, diagnosesResult, membersResult] = await Promise.all([
-    supabase.from("provider_directory").select("*"),
-    supabase.from("hospital_preference_directory").select("*"),
-    supabase.from("member_diagnoses").select("*"),
-    supabase.from("members").select("*")
-  ]);
-
-  if (providerDirectoryResult.error) throw new Error(providerDirectoryResult.error.message);
-  if (hospitalDirectoryResult.error) throw new Error(hospitalDirectoryResult.error.message);
-  if (diagnosesResult.error) throw new Error(diagnosesResult.error.message);
-  if (membersResult.error) throw new Error(membersResult.error.message);
-
-  return {
-    providerDirectory: providerDirectoryResult.data ?? [],
-    hospitalPreferenceDirectory: hospitalDirectoryResult.data ?? [],
-    memberDiagnoses: diagnosesResult.data ?? [],
-    members: membersResult.data ?? []
-  };
-}
-
-async function insertHealthRow<K extends TableKey>(key: K, record: Record<string, unknown>) {
-  const supabase = await createClient();
-  const { data, error } = await supabase.from(TABLE_MAP[key]).insert(record).select("*").single();
-  if (error) throw new Error(error.message);
-  return data;
-}
-
-async function updateHealthRow<K extends TableKey>(key: K, id: string, patch: Record<string, unknown>) {
-  const supabase = await createClient();
-  const { data, error } = await supabase.from(TABLE_MAP[key]).update(patch).eq("id", id).select("*").maybeSingle();
-  if (error) throw new Error(error.message);
-  return data;
-}
-
-async function deleteHealthRow<K extends TableKey>(key: K, id: string) {
-  const supabase = await createClient();
-  const { data, error } = await supabase.from(TABLE_MAP[key]).delete().eq("id", id).select("*").maybeSingle();
-  if (error) throw new Error(error.message);
-  return data;
-}
-
 async function syncMhpToCommandCenter(
   memberId: string,
-  actor: { id: string; fullName: string },
+  actor: { id: string; full_name?: string; fullName?: string },
   at?: string
 ) {
-  const now = at ?? toEasternISO();
-  const profile = await ensureMemberHealthProfileSupabase(memberId);
-  const supabase = await createClient();
-  const { data: existing, error: existingError } = await supabase
-    .from("member_command_centers")
-    .select("id")
-    .eq("member_id", memberId)
-    .maybeSingle();
-  if (existingError) throw new Error(existingError.message);
-
-  const patch = {
-    member_id: memberId,
-    gender: profile.gender,
-    payor: profile.payor,
-    original_referral_source: profile.original_referral_source,
-    photo_consent: profile.photo_consent,
-    profile_image_url: profile.profile_image_url,
-    code_status: profile.code_status,
-    dnr: profile.dnr,
-    dni: profile.dni,
-    polst_molst_colst: profile.polst_molst_colst,
-    hospice: profile.hospice,
-    advanced_directives_obtained: profile.advanced_directives_obtained,
-    power_of_attorney: profile.power_of_attorney,
-    legal_comments: profile.legal_comments,
-    diet_type: profile.diet_type,
-    dietary_preferences_restrictions: profile.dietary_restrictions,
-    swallowing_difficulty: profile.swallowing_difficulty,
-    supplements: profile.supplements,
-    foods_to_omit: profile.foods_to_omit,
-    diet_texture: profile.diet_texture,
-    command_center_notes: profile.important_alerts,
-    updated_by_user_id: toNullableUuid(actor.id),
-    updated_by_name: actor.fullName,
-    updated_at: now
-  };
-
-  if (existing?.id) {
-    const { error } = await supabase.from("member_command_centers").update(patch).eq("id", existing.id);
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await supabase.from("member_command_centers").insert({
-      ...patch,
-      created_at: now
-    });
-    if (error) throw new Error(error.message);
-  }
-
-  if (profile.code_status) {
-    const { error: memberError } = await supabase.from("members").update({ code_status: profile.code_status }).eq("id", memberId);
-    if (memberError) throw new Error(memberError.message);
-  }
+  await syncMhpToCommandCenterService(
+    memberId,
+    {
+      actorUserId: actor.id,
+      actorName: actor.full_name ?? actor.fullName ?? null
+    },
+    at
+  );
 }
 
 async function upsertProviderDirectoryFromValues(input: {
@@ -209,36 +132,17 @@ async function upsertProviderDirectoryFromValues(input: {
   actor: { id: string; full_name: string };
   now: string;
 }) {
-  const normalizedProviderName = input.providerName.trim();
-  if (!normalizedProviderName) return;
-
-  const db = await getHealthProfileContext();
-  const existing = db.providerDirectory.find(
-    (row) => row.provider_name.trim().toLowerCase() === normalizedProviderName.toLowerCase()
-  );
-
-  if (existing) {
-    await updateHealthRow("providerDirectory", existing.id, {
-      provider_name: normalizedProviderName,
-      specialty: input.specialty ?? existing.specialty ?? null,
-      specialty_other: input.specialtyOther ?? existing.specialty_other ?? null,
-      practice_name: input.practiceName ?? existing.practice_name ?? null,
-      provider_phone: input.providerPhone ?? existing.provider_phone ?? null,
-      updated_at: input.now
-    });
-    return;
-  }
-
-  await insertHealthRow("providerDirectory", {
-    provider_name: normalizedProviderName,
+  await upsertProviderDirectoryFromMhpSupabase({
+    providerName: input.providerName,
     specialty: input.specialty,
-    specialty_other: input.specialtyOther,
-    practice_name: input.practiceName,
-    provider_phone: input.providerPhone,
-    created_by_user_id: toNullableUuid(input.actor.id),
-    created_by_name: input.actor.full_name,
-    created_at: input.now,
-    updated_at: input.now
+    specialtyOther: input.specialtyOther,
+    practiceName: input.practiceName,
+    providerPhone: input.providerPhone,
+    actor: {
+      actorUserId: input.actor.id,
+      actorName: input.actor.full_name
+    },
+    atIso: input.now
   });
 }
 
@@ -247,28 +151,13 @@ async function upsertHospitalPreferenceDirectoryFromValue(input: {
   actor: { id: string; full_name: string };
   now: string;
 }) {
-  const normalizedHospitalName = (input.hospitalName ?? "").trim();
-  if (!normalizedHospitalName) return;
-
-  const db = await getHealthProfileContext();
-  const existing = db.hospitalPreferenceDirectory.find(
-    (row) => row.hospital_name.trim().toLowerCase() === normalizedHospitalName.toLowerCase()
-  );
-
-  if (existing) {
-    await updateHealthRow("hospitalPreferenceDirectory", existing.id, {
-      hospital_name: normalizedHospitalName,
-      updated_at: input.now
-    });
-    return;
-  }
-
-  await insertHealthRow("hospitalPreferenceDirectory", {
-    hospital_name: normalizedHospitalName,
-    created_by_user_id: toNullableUuid(input.actor.id),
-    created_by_name: input.actor.full_name,
-    created_at: input.now,
-    updated_at: input.now
+  await upsertHospitalPreferenceDirectoryFromMhpSupabase({
+    hospitalName: input.hospitalName,
+    actor: {
+      actorUserId: input.actor.id,
+      actorName: input.actor.full_name
+    },
+    atIso: input.now
   });
 }
 
@@ -299,12 +188,13 @@ async function asUploadedImageDataUrl(formData: FormData, key: string, fallback:
 }
 
 async function touchMhpProfile(memberId: string, actor: { id: string; full_name: string }, at?: string) {
-  const now = at ?? toEasternISO();
-  const profile = await ensureMemberHealthProfileSupabase(memberId);
-  await updateHealthRow("memberHealthProfiles", profile.id, {
-    updated_at: now,
-    updated_by_user_id: toNullableUuid(actor.id),
-    updated_by_name: actor.full_name
+  await touchMemberHealthProfileSupabase({
+    memberId,
+    actor: {
+      actorUserId: actor.id,
+      actorName: actor.full_name
+    },
+    atIso: at
   });
 }
 
@@ -322,7 +212,7 @@ export async function saveMhpOverviewAction(formData: FormData) {
   const responsiblePartyPhone = sameAsPrimary ? primaryCaregiverPhone : asNullableString(formData, "responsiblePartyPhone");
   const memberDob = asNullableString(formData, "memberDob");
 
-  await updateHealthRow("memberHealthProfiles", profile.id, {
+  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
     gender: asNullableString(formData, "gender"),
     payor: asNullableString(formData, "payor"),
     original_referral_source: asNullableString(formData, "originalReferralSource"),
@@ -336,10 +226,10 @@ export async function saveMhpOverviewAction(formData: FormData) {
     updated_at: now,
     updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
-  });
-  await updateHealthRow("members", memberId, {
+  }});
+  await updateMemberFromMhpSupabase({ memberId, patch: {
     dob: memberDob
-  });
+  }});
   await syncMhpToCommandCenter(
     memberId,
     {
@@ -362,12 +252,12 @@ export async function updateMhpPhotoAction(formData: FormData) {
   const profile = await ensureMemberHealthProfileSupabase(memberId);
   const profileImageUrl = await asUploadedImageDataUrl(formData, "photoFile", profile.profile_image_url ?? null);
 
-  await updateHealthRow("memberHealthProfiles", profile.id, {
+  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
     profile_image_url: profileImageUrl,
     updated_at: now,
     updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
-  });
+  }});
   await syncMhpToCommandCenter(
     memberId,
     {
@@ -386,12 +276,11 @@ export async function saveMhpMedicalAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const profile = await ensureMemberHealthProfileSupabase(memberId);
   const dietType = asString(formData, "dietType");
   const dietTypeOther = asNullableString(formData, "dietTypeOther");
   const normalizedDietType = dietType === "Other" ? (dietTypeOther ?? "Other") : (dietType || null);
 
-  await updateHealthRow("memberHealthProfiles", profile.id, {
+  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
     diet_type: normalizedDietType,
     dietary_restrictions: asNullableString(formData, "dietaryRestrictions"),
     swallowing_difficulty: asNullableString(formData, "swallowingDifficulty"),
@@ -401,7 +290,7 @@ export async function saveMhpMedicalAction(formData: FormData) {
     updated_at: now,
     updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
-  });
+  }});
   await syncMhpToCommandCenter(
     memberId,
     {
@@ -420,9 +309,8 @@ export async function saveMhpFunctionalAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const profile = await ensureMemberHealthProfileSupabase(memberId);
 
-  await updateHealthRow("memberHealthProfiles", profile.id, {
+  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
     ambulation: asNullableString(formData, "ambulation"),
     transferring: asNullableString(formData, "transferring"),
     bathing: asNullableString(formData, "bathing"),
@@ -444,7 +332,7 @@ export async function saveMhpFunctionalAction(formData: FormData) {
     updated_at: now,
     updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
-  });
+  }});
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=functional`);
@@ -455,9 +343,8 @@ export async function saveMhpCognitiveBehaviorAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const profile = await ensureMemberHealthProfileSupabase(memberId);
 
-  await updateHealthRow("memberHealthProfiles", profile.id, {
+  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
     orientation_dob: asNullableString(formData, "orientationDob"),
     orientation_city: asNullableString(formData, "orientationCity"),
     orientation_current_year: asNullableString(formData, "orientationCurrentYear"),
@@ -479,7 +366,7 @@ export async function saveMhpCognitiveBehaviorAction(formData: FormData) {
     updated_at: now,
     updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
-  });
+  }});
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=cognitive-behavioral`);
@@ -490,12 +377,11 @@ export async function saveMhpLegalAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const profile = await ensureMemberHealthProfileSupabase(memberId);
   const codeStatus = asNullableString(formData, "codeStatus");
   const computedDnr = codeStatus === "DNR" ? true : codeStatus === "Full Code" ? false : asNullableBool(formData, "dnr");
   const hospitalPreference = asNullableString(formData, "hospitalPreference");
 
-  await updateHealthRow("memberHealthProfiles", profile.id, {
+  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
     code_status: codeStatus,
     dnr: computedDnr,
     dni: asNullableBool(formData, "dni"),
@@ -508,7 +394,7 @@ export async function saveMhpLegalAction(formData: FormData) {
     updated_at: now,
     updated_by_user_id: toNullableUuid(actor.id),
     updated_by_name: actor.full_name
-  });
+  }});
   await upsertHospitalPreferenceDirectoryFromValue({
     hospitalName: hospitalPreference,
     actor,
@@ -532,10 +418,9 @@ export async function addMhpDiagnosisAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const db = await getHealthProfileContext();
-  const existingDiagnosisCount = db.memberDiagnoses.filter((row) => row.member_id === memberId).length;
+  const existingDiagnosisCount = await countMemberDiagnosesSupabase(memberId);
   const diagnosisType = existingDiagnosisCount === 0 ? "primary" : "secondary";
-  await insertHealthRow("memberDiagnoses", {
+  await createMemberDiagnosisSupabase({
     member_id: memberId,
     diagnosis_type: diagnosisType,
     diagnosis_name: asString(formData, "diagnosisName"),
@@ -568,7 +453,7 @@ export async function updateMhpDiagnosisAction(formData: FormData) {
   if (!memberId || !diagnosisId) return;
   const now = toEasternISO();
 
-  await updateHealthRow("memberDiagnoses", diagnosisId, {
+  await updateMemberDiagnosisSupabase(diagnosisId, {
     diagnosis_name: asString(formData, "diagnosisName"),
     diagnosis_code: null,
     date_added: asString(formData, "diagnosisDate"),
@@ -595,14 +480,13 @@ export async function addMhpDiagnosisInlineAction(formData: FormData) {
   if (!memberId) return { ok: false, error: "Member is required." };
 
   const now = toEasternISO();
-  const db = await getHealthProfileContext();
-  const existingDiagnosisCount = db.memberDiagnoses.filter((row) => row.member_id === memberId).length;
+  const existingDiagnosisCount = await countMemberDiagnosesSupabase(memberId);
   const diagnosisType = existingDiagnosisCount === 0 ? "primary" : "secondary";
   const diagnosisName = asString(formData, "diagnosisName");
   const diagnosisDate = asString(formData, "diagnosisDate") || now.slice(0, 10);
   if (!diagnosisName) return { ok: false, error: "Diagnosis is required." };
 
-  const created = await insertHealthRow("memberDiagnoses", {
+  const created = await createMemberDiagnosisSupabase({
     member_id: memberId,
     diagnosis_type: diagnosisType,
     diagnosis_name: diagnosisName,
@@ -640,7 +524,7 @@ export async function updateMhpDiagnosisInlineAction(formData: FormData) {
   if (!diagnosisName || !diagnosisDate) return { ok: false, error: "Diagnosis and date are required." };
 
   const now = toEasternISO();
-  const updated = await updateHealthRow("memberDiagnoses", diagnosisId, {
+  const updated = await updateMemberDiagnosisSupabase(diagnosisId, {
     diagnosis_name: diagnosisName,
     diagnosis_code: null,
     date_added: diagnosisDate,
@@ -672,7 +556,7 @@ export async function addMhpMedicationAction(formData: FormData) {
   const parsedLaterality = parseRouteLaterality(route, formData);
   if (!parsedLaterality.ok) return;
 
-  await insertHealthRow("memberMedications", {
+  await createMemberMedicationSupabase({
     member_id: memberId,
     medication_name: asString(formData, "medicationName"),
     date_started: asString(formData, "dateStarted") || toEasternDate(),
@@ -706,7 +590,7 @@ export async function updateMhpMedicationAction(formData: FormData) {
   const parsedLaterality = parseRouteLaterality(route, formData);
   if (!parsedLaterality.ok) return;
 
-  await updateHealthRow("memberMedications", medicationId, {
+  await updateMemberMedicationSupabase(medicationId, {
     medication_name: asString(formData, "medicationName"),
     date_started: asString(formData, "dateStarted") || toEasternDate(),
     dose: asNullableString(formData, "dose"),
@@ -730,7 +614,7 @@ export async function addMhpAllergyAction(formData: FormData) {
   if (!memberId) return;
   const now = toEasternISO();
 
-  await insertHealthRow("memberAllergies", {
+  await createMemberAllergySupabase({
     member_id: memberId,
     allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: asString(formData, "allergyName"),
@@ -754,7 +638,7 @@ export async function updateMhpAllergyAction(formData: FormData) {
   if (!memberId || !allergyId) return;
   const now = toEasternISO();
 
-  await updateHealthRow("memberAllergies", allergyId, {
+  await updateMemberAllergySupabase(allergyId, {
     allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: asString(formData, "allergyName"),
     severity: asNullableString(formData, "allergySeverity"),
@@ -777,7 +661,7 @@ export async function addMhpProviderAction(formData: FormData) {
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = asNullableString(formData, "providerPhone");
   const providerName = asString(formData, "providerName");
-  await insertHealthRow("memberProviders", {
+  await createMemberProviderSupabase({
     member_id: memberId,
     provider_name: providerName,
     specialty: specialty.specialty,
@@ -815,7 +699,7 @@ export async function updateMhpProviderAction(formData: FormData) {
   const providerName = asString(formData, "providerName");
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = asNullableString(formData, "providerPhone");
-  await updateHealthRow("memberProviders", providerId, {
+  await updateMemberProviderSupabase(providerId, {
     provider_name: providerName,
     specialty: specialty.specialty,
     specialty_other: specialty.specialty_other,
@@ -844,7 +728,7 @@ export async function deleteMhpDiagnosisInlineAction(formData: FormData) {
   const diagnosisId = asString(formData, "diagnosisId");
   if (!memberId || !diagnosisId) return { ok: false, error: "Missing diagnosis reference." };
   const now = toEasternISO();
-  const deleted = await deleteHealthRow("memberDiagnoses", diagnosisId);
+  const deleted = await deleteMemberDiagnosisSupabase(diagnosisId);
   if (!deleted) return { ok: false, error: "Diagnosis not found." };
   await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
@@ -857,7 +741,7 @@ export async function deleteMhpProviderAction(formData: FormData) {
   const providerId = asString(formData, "providerId");
   if (!memberId || !providerId) return;
   const now = toEasternISO();
-  const deleted = await deleteHealthRow("memberProviders", providerId);
+  const deleted = await deleteMemberProviderSupabase(providerId);
   if (!deleted) return;
   await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
@@ -870,7 +754,7 @@ export async function deleteMhpMedicationAction(formData: FormData) {
   const medicationId = asString(formData, "medicationId");
   if (!memberId || !medicationId) return;
   const now = toEasternISO();
-  const deleted = await deleteHealthRow("memberMedications", medicationId);
+  const deleted = await deleteMemberMedicationSupabase(medicationId);
   if (!deleted) return;
   await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
@@ -883,7 +767,7 @@ export async function deleteMhpAllergyAction(formData: FormData) {
   const allergyId = asString(formData, "allergyId");
   if (!memberId || !allergyId) return;
   const now = toEasternISO();
-  const deleted = await deleteHealthRow("memberAllergies", allergyId);
+  const deleted = await deleteMemberAllergySupabase(allergyId);
   if (!deleted) return;
   await touchMhpProfile(memberId, actor, now);
   await syncMhpToCommandCenter(
@@ -909,7 +793,7 @@ export async function addMhpProviderInlineAction(formData: FormData) {
   const specialty = resolveProviderSpecialty(formData);
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = asNullableString(formData, "providerPhone");
-  const created = await insertHealthRow("memberProviders", {
+  const created = await createMemberProviderSupabase({
     member_id: memberId,
     provider_name: providerName,
     specialty: specialty.specialty,
@@ -945,7 +829,7 @@ export async function deleteMhpProviderInlineAction(formData: FormData) {
   if (!memberId || !providerId) return { ok: false, error: "Missing provider reference." };
 
   const now = toEasternISO();
-  const deleted = await deleteHealthRow("memberProviders", providerId);
+  const deleted = await deleteMemberProviderSupabase(providerId);
   if (!deleted) return { ok: false, error: "Provider not found." };
 
   await touchMhpProfile(memberId, actor, now);
@@ -965,7 +849,7 @@ export async function updateMhpProviderInlineAction(formData: FormData) {
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = asNullableString(formData, "providerPhone");
   const now = toEasternISO();
-  const updated = await updateHealthRow("memberProviders", providerId, {
+  const updated = await updateMemberProviderSupabase(providerId, {
     provider_name: providerName,
     specialty: specialty.specialty,
     specialty_other: specialty.specialty_other,
@@ -1001,7 +885,7 @@ export async function addMhpMedicationInlineAction(formData: FormData) {
   if (!parsedLaterality.ok) return { ok: false, error: parsedLaterality.error };
 
   const now = toEasternISO();
-  const created = await insertHealthRow("memberMedications", {
+  const created = await createMemberMedicationSupabase({
     member_id: memberId,
     medication_name: medicationName,
     date_started: asString(formData, "dateStarted") || toEasternDate(),
@@ -1045,7 +929,7 @@ export async function updateMhpMedicationInlineAction(formData: FormData) {
   if (!parsedLaterality.ok) return { ok: false, error: parsedLaterality.error };
 
   const now = toEasternISO();
-  const updated = await updateHealthRow("memberMedications", medicationId, {
+  const updated = await updateMemberMedicationSupabase(medicationId, {
     medication_name: medicationName,
     date_started: asString(formData, "dateStarted") || toEasternDate(),
     dose: asNullableString(formData, "dose"),
@@ -1071,7 +955,7 @@ export async function deleteMhpMedicationInlineAction(formData: FormData) {
   if (!memberId || !medicationId) return { ok: false, error: "Missing medication reference." };
 
   const now = toEasternISO();
-  const deleted = await deleteHealthRow("memberMedications", medicationId);
+  const deleted = await deleteMemberMedicationSupabase(medicationId);
   if (!deleted) return { ok: false, error: "Medication not found." };
 
   await touchMhpProfile(memberId, actor, now);
@@ -1087,7 +971,7 @@ export async function inactivateMhpMedicationInlineAction(formData: FormData) {
 
   const now = toEasternISO();
   const today = toEasternDate();
-  const updated = await updateHealthRow("memberMedications", medicationId, {
+  const updated = await updateMemberMedicationSupabase(medicationId, {
     medication_status: "inactive",
     inactivated_at: today,
     updated_at: now
@@ -1107,7 +991,7 @@ export async function reactivateMhpMedicationInlineAction(formData: FormData) {
 
   const now = toEasternISO();
   const today = toEasternDate();
-  const updated = await updateHealthRow("memberMedications", medicationId, {
+  const updated = await updateMemberMedicationSupabase(medicationId, {
     medication_status: "active",
     date_started: today,
     inactivated_at: null,
@@ -1128,7 +1012,7 @@ export async function addMhpAllergyInlineAction(formData: FormData) {
   if (!allergyName) return { ok: false, error: "Allergy is required." };
 
   const now = toEasternISO();
-  const created = await insertHealthRow("memberAllergies", {
+  const created = await createMemberAllergySupabase({
     member_id: memberId,
     allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: allergyName,
@@ -1152,7 +1036,7 @@ export async function deleteMhpAllergyInlineAction(formData: FormData) {
   if (!memberId || !allergyId) return { ok: false, error: "Missing allergy reference." };
 
   const now = toEasternISO();
-  const deleted = await deleteHealthRow("memberAllergies", allergyId);
+  const deleted = await deleteMemberAllergySupabase(allergyId);
   if (!deleted) return { ok: false, error: "Allergy not found." };
 
   await touchMhpProfile(memberId, actor, now);
@@ -1177,7 +1061,7 @@ export async function updateMhpAllergyInlineAction(formData: FormData) {
   if (!allergyName) return { ok: false, error: "Allergy is required." };
 
   const now = toEasternISO();
-  const updated = await updateHealthRow("memberAllergies", allergyId, {
+  const updated = await updateMemberAllergySupabase(allergyId, {
     allergy_group: parseAllergyGroup(formData, "allergyGroup"),
     allergy_name: allergyName,
     severity: asNullableString(formData, "allergySeverity"),
@@ -1205,7 +1089,7 @@ export async function addMhpEquipmentAction(formData: FormData) {
   if (!memberId) return;
   const now = toEasternISO();
 
-  await insertHealthRow("memberEquipment", {
+  await createMemberEquipmentSupabase({
     member_id: memberId,
     equipment_type: asString(formData, "equipmentType"),
     provider_source: null,
@@ -1229,7 +1113,7 @@ export async function updateMhpEquipmentAction(formData: FormData) {
   if (!memberId || !equipmentId) return;
   const now = toEasternISO();
 
-  await updateHealthRow("memberEquipment", equipmentId, {
+  await updateMemberEquipmentSupabase(equipmentId, {
     equipment_type: asString(formData, "equipmentType"),
     provider_source: null,
     status: asNullableString(formData, "equipmentStatus") ?? "Active",
@@ -1250,7 +1134,7 @@ export async function addMhpEquipmentInlineAction(formData: FormData) {
   if (!equipmentType) return { ok: false, error: "Equipment type is required." };
 
   const now = toEasternISO();
-  const created = await insertHealthRow("memberEquipment", {
+  const created = await createMemberEquipmentSupabase({
     member_id: memberId,
     equipment_type: equipmentType,
     provider_source: null,
@@ -1273,7 +1157,7 @@ export async function updateMhpEquipmentInlineAction(formData: FormData) {
   if (!memberId || !equipmentId) return { ok: false, error: "Missing equipment reference." };
 
   const now = toEasternISO();
-  const updated = await updateHealthRow("memberEquipment", equipmentId, {
+  const updated = await updateMemberEquipmentSupabase(equipmentId, {
     equipment_type: asString(formData, "equipmentType"),
     provider_source: null,
     status: asNullableString(formData, "equipmentStatus") ?? "Active",
@@ -1294,7 +1178,7 @@ export async function deleteMhpEquipmentInlineAction(formData: FormData) {
   if (!memberId || !equipmentId) return { ok: false, error: "Missing equipment reference." };
 
   const now = toEasternISO();
-  const deleted = await deleteHealthRow("memberEquipment", equipmentId);
+  const deleted = await deleteMemberEquipmentSupabase(equipmentId);
   if (!deleted) return { ok: false, error: "Equipment not found." };
 
   await touchMhpProfile(memberId, actor, now);
@@ -1308,7 +1192,7 @@ export async function addMhpNoteAction(formData: FormData) {
   if (!memberId) return;
   const now = toEasternISO();
 
-  await insertHealthRow("memberNotes", {
+  await createMemberNoteSupabase({
     member_id: memberId,
     note_type: asString(formData, "noteType") || "General",
     note_text: asString(formData, "noteText"),
@@ -1330,7 +1214,7 @@ export async function updateMhpNoteAction(formData: FormData) {
   if (!memberId || !noteId) return;
   const now = toEasternISO();
 
-  await updateHealthRow("memberNotes", noteId, {
+  await updateMemberNoteSupabase(noteId, {
     note_type: asString(formData, "noteType") || "General",
     note_text: asString(formData, "noteText"),
     updated_at: now
@@ -1349,7 +1233,7 @@ export async function addMhpNoteInlineAction(formData: FormData) {
   if (!noteText) return { ok: false, error: "Note text is required." };
 
   const now = toEasternISO();
-  const created = await insertHealthRow("memberNotes", {
+  const created = await createMemberNoteSupabase({
     member_id: memberId,
     note_type: asString(formData, "noteType") || "General",
     note_text: noteText,
@@ -1372,7 +1256,7 @@ export async function updateMhpNoteInlineAction(formData: FormData) {
   if (!noteText) return { ok: false, error: "Note text is required." };
 
   const now = toEasternISO();
-  const updated = await updateHealthRow("memberNotes", noteId, {
+  const updated = await updateMemberNoteSupabase(noteId, {
     note_type: asString(formData, "noteType") || "General",
     note_text: noteText,
     updated_at: now
@@ -1391,7 +1275,7 @@ export async function deleteMhpNoteInlineAction(formData: FormData) {
   if (!memberId || !noteId) return { ok: false, error: "Missing note reference." };
 
   const now = toEasternISO();
-  const deleted = await deleteHealthRow("memberNotes", noteId);
+  const deleted = await deleteMemberNoteSupabase(noteId);
   if (!deleted) return { ok: false, error: "Note not found." };
 
   await touchMhpProfile(memberId, actor, now);
@@ -1408,19 +1292,18 @@ export async function updateMhpTrackInlineAction(formData: FormData) {
   const allowedTracks = new Set(["Track 1", "Track 2", "Track 3"]);
   if (!allowedTracks.has(track)) return { ok: false, error: "Invalid track." };
 
-  const db = await getHealthProfileContext();
-  const member = db.members.find((row) => row.id === memberId);
+  const member = await getMemberTrackForMhpSupabase(memberId);
   if (!member) return { ok: false, error: "Member not found." };
 
   const changed = (member.latest_assessment_track ?? "") !== track;
   if (!changed) return { ok: true, changed: false, track };
 
   const now = toEasternISO();
-  await updateHealthRow("members", memberId, {
+  await updateMemberFromMhpSupabase({ memberId, patch: {
     latest_assessment_track: track
-  });
+  }});
 
-  await insertHealthRow("memberNotes", {
+  await createMemberNoteSupabase({
     member_id: memberId,
     note_type: "Care Plan",
     note_text: `Track changed to ${track}. Care plan review requested.`,
@@ -1435,6 +1318,8 @@ export async function updateMhpTrackInlineAction(formData: FormData) {
 
   return { ok: true, changed: true, track };
 }
+
+
 
 
 
