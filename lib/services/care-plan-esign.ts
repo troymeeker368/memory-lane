@@ -1,7 +1,6 @@
 import "server-only";
 
-import { Buffer } from "node:buffer";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -16,9 +15,15 @@ import {
   resolvePublicCaregiverLinkState
 } from "@/lib/services/care-plan-esign-rules";
 import { getCarePlanById, type CaregiverSignatureStatus, type CarePlan } from "@/lib/services/care-plans";
-import { logSystemEvent } from "@/lib/services/system-event-service";
+import {
+  buildDatedPdfFileName,
+  parseDataUrlPayload,
+  parseMemberDocumentStorageUri,
+  uploadMemberDocumentObject,
+  upsertMemberFileByDocumentSource
+} from "@/lib/services/member-files";
+import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 
-const STORAGE_BUCKET = "member-documents";
 const TOKEN_BYTE_LENGTH = 32;
 
 export type CarePlanSignatureEventType =
@@ -112,42 +117,6 @@ function toIsoAtEndOfDate(dateOnly: string) {
     throw new Error("Expiration date is invalid.");
   }
   return expires.toISOString();
-}
-
-function parseDataUrl(dataUrl: string) {
-  const normalized = dataUrl.trim();
-  const match = /^data:([^;]+);base64,(.+)$/.exec(normalized);
-  if (!match) throw new Error("Invalid data URL payload.");
-  return {
-    contentType: match[1],
-    bytes: Buffer.from(match[2], "base64")
-  };
-}
-
-function getStorageUri(path: string) {
-  return `storage://${STORAGE_BUCKET}/${path}`;
-}
-
-function parseStorageUri(uri: string | null | undefined) {
-  const normalized = clean(uri);
-  if (!normalized) return null;
-  const prefix = `storage://${STORAGE_BUCKET}/`;
-  if (!normalized.startsWith(prefix)) return null;
-  return normalized.slice(prefix.length);
-}
-
-function nextMemberFileId() {
-  return `mf_${randomUUID().replace(/-/g, "")}`;
-}
-
-async function uploadToStorage(input: { objectPath: string; bytes: Buffer; contentType: string }) {
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin.storage.from(STORAGE_BUCKET).upload(input.objectPath, input.bytes, {
-    contentType: input.contentType,
-    upsert: true
-  });
-  if (error) throw new Error(error.message);
-  return getStorageUri(input.objectPath);
 }
 
 async function createCarePlanSignatureEvent(input: {
@@ -469,60 +438,26 @@ async function upsertFinalSignedMemberFile(input: {
   uploadedByName: string | null;
   signedPdfStorageUri: string | null;
 }) {
-  const admin = createSupabaseAdminClient();
   const now = toEasternISO();
-  const fileName = `Care Plan Final Signed - ${input.memberName} - ${toEasternDate(now)}.pdf`;
+  const fileName = buildDatedPdfFileName("Care Plan Final Signed", input.memberName, now);
   const documentSource = `Care Plan Final Signed:${input.carePlanId}`;
-
-  const { data: existing, error: existingError } = await admin
-    .from("member_files")
-    .select("id")
-    .eq("member_id", input.memberId)
-    .eq("document_source", documentSource)
-    .maybeSingle();
-  if (existingError) throw new Error(existingError.message);
-
-  if (existing) {
-    const { error: updateError } = await admin
-      .from("member_files")
-      .update({
-        file_name: fileName,
-        file_type: "application/pdf",
-        file_data_url: input.dataUrl,
-        storage_object_path: parseStorageUri(input.signedPdfStorageUri),
-        category: "Care Plan",
-        category_other: null,
-        document_source: documentSource,
-        care_plan_id: input.carePlanId,
-        uploaded_by_user_id: input.uploadedByUserId,
-        uploaded_by_name: input.uploadedByName,
-        uploaded_at: now,
-        updated_at: now
-      })
-      .eq("id", existing.id);
-    if (updateError) throw new Error(updateError.message);
-    return String(existing.id);
-  }
-
-  const memberFileId = nextMemberFileId();
-  const { error: insertError } = await admin.from("member_files").insert({
-    id: memberFileId,
-    member_id: input.memberId,
-    file_name: fileName,
-    file_type: "application/pdf",
-    file_data_url: input.dataUrl,
-    storage_object_path: parseStorageUri(input.signedPdfStorageUri),
+  const result = await upsertMemberFileByDocumentSource({
+    memberId: input.memberId,
+    documentSource,
+    fileName,
+    fileType: "application/pdf",
+    dataUrl: input.dataUrl,
+    storageObjectPath: parseMemberDocumentStorageUri(input.signedPdfStorageUri),
     category: "Care Plan",
-    category_other: null,
-    document_source: documentSource,
-    care_plan_id: input.carePlanId,
-    uploaded_by_user_id: input.uploadedByUserId,
-    uploaded_by_name: input.uploadedByName,
-    uploaded_at: now,
-    updated_at: now
+    uploadedByUserId: input.uploadedByUserId,
+    uploadedByName: input.uploadedByName,
+    uploadedAtIso: now,
+    updatedAtIso: now,
+    additionalColumns: {
+      care_plan_id: input.carePlanId
+    }
   });
-  if (insertError) throw new Error(insertError.message);
-  return memberFileId;
+  return result.id;
 }
 
 export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanSignatureInput) {
@@ -532,7 +467,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
   if (!caregiverTypedName) throw new Error("Typed caregiver name is required.");
   if (!input.attested) throw new Error("Attestation is required before signing.");
 
-  const signature = parseDataUrl(input.signatureImageDataUrl);
+  const signature = parseDataUrlPayload(input.signatureImageDataUrl);
   if (!signature.contentType.startsWith("image/")) {
     throw new Error("Signature image format is invalid.");
   }
@@ -555,7 +490,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
   const now = toEasternISO();
   const day = toEasternDate(now);
   const signaturePath = `members/${detail.carePlan.memberId}/care-plans/${detail.carePlan.id}/caregiver-signature.png`;
-  const signatureUri = await uploadToStorage({
+  const signatureUri = await uploadMemberDocumentObject({
     objectPath: signaturePath,
     bytes: signature.bytes,
     contentType: signature.contentType
@@ -579,9 +514,9 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
 
   try {
     const generated = await buildCarePlanPdfDataUrl(detail.carePlan.id, { serviceRole: true });
-    const parsedPdf = parseDataUrl(generated.dataUrl);
+    const parsedPdf = parseDataUrlPayload(generated.dataUrl);
     const signedPdfStoragePath = `members/${detail.carePlan.memberId}/care-plans/${detail.carePlan.id}/final-signed.pdf`;
-    const signedPdfStorageUri = await uploadToStorage({
+    const signedPdfStorageUri = await uploadMemberDocumentObject({
       objectPath: signedPdfStoragePath,
       bytes: parsedPdf.bytes,
       contentType: "application/pdf"
@@ -626,16 +561,18 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
       }
     });
 
-    await logSystemEvent({
-      event_type: "care_plan_caregiver_signed",
-      entity_type: "care_plan",
-      entity_id: detail.carePlan.id,
-      actor_type: "caregiver",
-      metadata: {
-        member_id: detail.carePlan.memberId,
-        final_member_file_id: finalMemberFileId,
-        caregiver_email: detail.carePlan.caregiverEmail,
-        signature_image_url: signatureUri
+    await recordWorkflowMilestone({
+      event: {
+        event_type: "care_plan_caregiver_signed",
+        entity_type: "care_plan",
+        entity_id: detail.carePlan.id,
+        actor_type: "caregiver",
+        metadata: {
+          member_id: detail.carePlan.memberId,
+          final_member_file_id: finalMemberFileId,
+          caregiver_email: detail.carePlan.caregiverEmail,
+          signature_image_url: signatureUri
+        }
       }
     });
 

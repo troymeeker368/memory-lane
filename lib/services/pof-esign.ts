@@ -7,9 +7,15 @@ import {
   processSignedPhysicianOrderPostSignSync,
   type PhysicianOrderForm
 } from "@/lib/services/physician-orders-supabase";
-import { logSystemEvent } from "@/lib/services/system-event-service";
+import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import { buildPofSignatureRequestTemplate } from "@/lib/email/templates/pof-signature-request";
-import { createUserNotification } from "@/lib/services/notifications";
+import {
+  MEMBER_DOCUMENTS_BUCKET,
+  nextMemberFileId,
+  parseDataUrlPayload,
+  parseMemberDocumentStorageUri,
+  uploadMemberDocumentObject
+} from "@/lib/services/member-files";
 import { buildPofDocumentPdfBytes } from "@/lib/services/pof-document-pdf";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -19,7 +25,6 @@ import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/ti
 export const POF_REQUEST_STATUS_VALUES = ["draft", "sent", "opened", "signed", "declined", "expired"] as const;
 export type PofRequestStatus = (typeof POF_REQUEST_STATUS_VALUES)[number];
 
-const STORAGE_BUCKET = "member-documents";
 const TOKEN_BYTE_LENGTH = 32;
 const RPC_FINALIZE_POF_SIGNATURE = "rpc_finalize_pof_signature";
 
@@ -319,30 +324,6 @@ function generateSigningToken() {
   return randomBytes(TOKEN_BYTE_LENGTH).toString("hex");
 }
 
-function getStorageUri(path: string) {
-  return `storage://${STORAGE_BUCKET}/${path}`;
-}
-
-function parseStorageUri(uri: string | null | undefined) {
-  const normalized = clean(uri);
-  if (!normalized) return null;
-  const prefix = `storage://${STORAGE_BUCKET}/`;
-  if (!normalized.startsWith(prefix)) return null;
-  return normalized.slice(prefix.length);
-}
-
-function parseDataUrl(dataUrl: string) {
-  const normalized = dataUrl.trim();
-  const match = /^data:([^;]+);base64,(.+)$/.exec(normalized);
-  if (!match) {
-    throw new Error("Invalid data URL payload.");
-  }
-  return {
-    contentType: match[1],
-    bytes: Buffer.from(match[2], "base64")
-  };
-}
-
 function clonePofPayloadSnapshot(form: PhysicianOrderForm): PhysicianOrderForm {
   return JSON.parse(JSON.stringify(form)) as PhysicianOrderForm;
 }
@@ -438,40 +419,22 @@ function isExpired(expiresAt: string) {
   return Date.now() > expiryMs;
 }
 
-function nextMemberFileId() {
-  return `mf_${randomUUID().replace(/-/g, "")}`;
-}
-
-async function uploadToStorage(input: {
-  objectPath: string;
-  bytes: Buffer;
-  contentType: string;
-}) {
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin.storage.from(STORAGE_BUCKET).upload(input.objectPath, input.bytes, {
-    contentType: input.contentType,
-    upsert: true
-  });
-  if (error) throw new Error(error.message);
-  return getStorageUri(input.objectPath);
-}
-
 async function createSignedStorageUrl(storageUri: string, expiresInSeconds = 60 * 15) {
-  const objectPath = parseStorageUri(storageUri);
+  const objectPath = parseMemberDocumentStorageUri(storageUri);
   if (!objectPath) throw new Error("Storage object path is invalid.");
   const admin = createSupabaseAdminClient();
-  const { data, error } = await admin.storage.from(STORAGE_BUCKET).createSignedUrl(objectPath, expiresInSeconds);
+  const { data, error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).createSignedUrl(objectPath, expiresInSeconds);
   if (error || !data?.signedUrl) throw new Error(error?.message ?? "Unable to create signed document URL.");
   return data.signedUrl;
 }
 
 async function downloadStorageAssetOrThrow(storageUri: string, label: string) {
-  const objectPath = parseStorageUri(storageUri);
+  const objectPath = parseMemberDocumentStorageUri(storageUri);
   if (!objectPath) {
     throw new Error(`${label} storage path is invalid.`);
   }
   const admin = createSupabaseAdminClient();
-  const { data, error } = await admin.storage.from(STORAGE_BUCKET).download(objectPath);
+  const { data, error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).download(objectPath);
   if (error || !data) {
     throw new Error(`${label} is missing in storage. Unable to generate signed PDF artifact.`);
   }
@@ -842,7 +805,7 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     metaLines: [`Request ID: ${requestId}`, "Status: Pending Provider Signature"]
   });
   const unsignedPath = `members/${input.memberId}/pof/${input.physicianOrderId}/requests/${requestId}/unsigned.pdf`;
-  const unsignedStorageUri = await uploadToStorage({
+  const unsignedStorageUri = await uploadMemberDocumentObject({
     objectPath: unsignedPath,
     bytes: unsignedPdfBytes,
     contentType: "application/pdf"
@@ -987,7 +950,7 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
     metaLines: [`Request ID: ${request.id}`, "Status: Pending Provider Signature"]
   });
   const unsignedPath = `members/${input.memberId}/pof/${request.physician_order_id}/requests/${request.id}/unsigned.pdf`;
-  const unsignedStorageUri = await uploadToStorage({
+  const unsignedStorageUri = await uploadMemberDocumentObject({
     objectPath: unsignedPath,
     bytes: unsignedPdfBytes,
     contentType: "application/pdf"
@@ -1199,7 +1162,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
   if (!providerTypedName) throw new Error("Typed provider name is required.");
   if (!input.attested) throw new Error("Attestation is required before signing.");
 
-  const signature = parseDataUrl(input.signatureImageDataUrl);
+  const signature = parseDataUrlPayload(input.signatureImageDataUrl);
   if (!signature.contentType.startsWith("image/")) {
     throw new Error("Signature image format is invalid.");
   }
@@ -1219,7 +1182,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
   const day = toEasternDate(now);
   const snapshot = getRequestPayloadSnapshotOrThrow(request);
   const signaturePath = `members/${request.member_id}/pof/${request.physician_order_id}/requests/${request.id}/provider-signature.png`;
-  const signatureUri = await uploadToStorage({
+  const signatureUri = await uploadMemberDocumentObject({
     objectPath: signaturePath,
     bytes: signature.bytes,
     contentType: signature.contentType
@@ -1241,7 +1204,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     signedAt: now
   });
   const signedPdfPath = `members/${request.member_id}/pof/${request.physician_order_id}/requests/${request.id}/signed.pdf`;
-  const signedPdfUri = await uploadToStorage({
+  const signedPdfUri = await uploadMemberDocumentObject({
     objectPath: signedPdfPath,
     bytes: signedPdfBytes,
     contentType: "application/pdf"
@@ -1270,7 +1233,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
       p_member_file_id: nextMemberFileId(),
       p_member_file_name: memberFileName,
       p_member_file_data_url: signedPdfDataUrl,
-      p_member_file_storage_object_path: parseStorageUri(signedPdfUri),
+      p_member_file_storage_object_path: parseMemberDocumentStorageUri(signedPdfUri),
       p_actor_user_id: request.sent_by_user_id,
       p_actor_name: request.nurse_name,
       p_signed_at: now,
@@ -1302,34 +1265,35 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     serviceRole: true
   });
 
-  await logSystemEvent({
-    event_type: "physician_order_signed",
-    entity_type: "physician_order",
-    entity_id: finalized.physician_order_id,
-    actor_type: "provider",
-    metadata: {
-      member_id: finalized.member_id,
-      pof_request_id: finalized.request_id,
-      member_file_id: finalized.member_file_id,
-      queue_id: finalized.queue_id,
-      post_sign_status: postSignResult.postSignStatus,
-      post_sign_attempt_count: postSignResult.attemptCount,
-      post_sign_next_retry_at: postSignResult.nextRetryAt
-    }
-  });
-
-  await createUserNotification({
-    recipientUserId: request.sent_by_user_id,
-    title: "POF Signed",
-    message: `POF signed for ${snapshot.memberNameSnapshot}`,
-    entityType: "pof_request",
-    entityId: request.id,
-    metadata: {
-      memberId: request.member_id,
-      physicianOrderId: request.physician_order_id,
-      requestId: request.id
+  await recordWorkflowMilestone({
+    event: {
+      event_type: "physician_order_signed",
+      entity_type: "physician_order",
+      entity_id: finalized.physician_order_id,
+      actor_type: "provider",
+      metadata: {
+        member_id: finalized.member_id,
+        pof_request_id: finalized.request_id,
+        member_file_id: finalized.member_file_id,
+        queue_id: finalized.queue_id,
+        post_sign_status: postSignResult.postSignStatus,
+        post_sign_attempt_count: postSignResult.attemptCount,
+        post_sign_next_retry_at: postSignResult.nextRetryAt
+      }
     },
-    serviceRole: true
+    notification: {
+      recipientUserId: request.sent_by_user_id,
+      title: "POF Signed",
+      message: `POF signed for ${snapshot.memberNameSnapshot}`,
+      entityType: "pof_request",
+      entityId: request.id,
+      metadata: {
+        memberId: request.member_id,
+        physicianOrderId: request.physician_order_id,
+        requestId: request.id
+      },
+      serviceRole: true
+    }
   });
 
   return {

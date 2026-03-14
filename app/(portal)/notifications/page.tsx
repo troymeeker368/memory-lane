@@ -10,12 +10,20 @@ import { formatDateTime } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 function getNotificationLink(notification: UserNotification) {
-  if (notification.entityType !== "enrollment_packet_request") return null;
   const metadata = notification.metadata ?? {};
-  const memberId = typeof metadata.memberId === "string" ? metadata.memberId : null;
-  const leadId = typeof metadata.leadId === "string" ? metadata.leadId : null;
-  if (leadId) return `/sales/leads/${leadId}`;
-  if (memberId) return `/operations/member-command-center/${memberId}`;
+  if (notification.entityType === "enrollment_packet_request") {
+    const memberId = typeof metadata.memberId === "string" ? metadata.memberId : null;
+    const leadId = typeof metadata.leadId === "string" ? metadata.leadId : null;
+    if (leadId) return `/sales/leads/${leadId}`;
+    if (memberId) return `/operations/member-command-center/${memberId}`;
+    return null;
+  }
+  if (notification.entityType === "pof_request") {
+    const physicianOrderId = typeof metadata.physicianOrderId === "string" ? metadata.physicianOrderId : null;
+    const memberId = typeof metadata.memberId === "string" ? metadata.memberId : null;
+    if (physicianOrderId) return `/health/physician-orders/${physicianOrderId}`;
+    if (memberId) return `/operations/member-command-center/${memberId}`;
+  }
   return null;
 }
 

@@ -14,7 +14,7 @@ export type UserNotification = {
   createdAt: string;
 };
 
-type CreateUserNotificationInput = {
+export type CreateUserNotificationInput = {
   recipientUserId: string;
   title: string;
   message: string;

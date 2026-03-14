@@ -1,10 +1,14 @@
+import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
-type MemberFileCategory =
+export const MEMBER_DOCUMENTS_BUCKET = "member-documents";
+
+export type MemberFileCategory =
   | "Health Unit"
   | "Legal"
   | "Admin"
@@ -33,16 +37,16 @@ type SaveGeneratedMemberPdfInput = {
   replaceExistingByDocumentSource?: boolean;
 };
 
-function safeFileName(value: string) {
+export function safeFileName(value: string) {
   return value.replace(/[<>:"/\\|?*]/g, "").trim();
 }
 
-function basePdfFileName(documentLabel: string, memberName: string, whenIso: string) {
+export function buildDatedPdfFileName(documentLabel: string, memberName: string, whenIso: string, extension = ".pdf") {
   const day = toEasternDate(whenIso);
-  return `${safeFileName(documentLabel)} - ${safeFileName(memberName)} - ${day}.pdf`;
+  return `${safeFileName(documentLabel)} - ${safeFileName(memberName)} - ${day}${extension}`;
 }
 
-function withDuplicateSuffix(fileName: string, timestampIso: string) {
+export function withDuplicateFileSuffix(fileName: string, timestampIso: string) {
   const extension = ".pdf";
   if (!fileName.toLowerCase().endsWith(extension)) return fileName;
   const root = fileName.slice(0, -extension.length);
@@ -50,8 +54,101 @@ function withDuplicateSuffix(fileName: string, timestampIso: string) {
   return `${root} - ${suffix}${extension}`;
 }
 
-function nextMemberFileId() {
+export function nextMemberFileId() {
   return `mf_${randomUUID().replace(/-/g, "")}`;
+}
+
+export function parseDataUrlPayload(dataUrl: string, errorMessage = "Invalid data URL payload.") {
+  const normalized = dataUrl.trim();
+  const match = /^data:([^;]+);base64,(.+)$/.exec(normalized);
+  if (!match) throw new Error(errorMessage);
+  return {
+    contentType: match[1],
+    bytes: Buffer.from(match[2], "base64")
+  };
+}
+
+export function buildMemberDocumentStorageUri(objectPath: string) {
+  return `storage://${MEMBER_DOCUMENTS_BUCKET}/${objectPath}`;
+}
+
+export function parseMemberDocumentStorageUri(storageUri: string | null | undefined) {
+  const normalized = String(storageUri ?? "").trim();
+  if (!normalized) return null;
+  const prefix = `storage://${MEMBER_DOCUMENTS_BUCKET}/`;
+  if (!normalized.startsWith(prefix)) return null;
+  return normalized.slice(prefix.length);
+}
+
+export async function uploadMemberDocumentObject(input: {
+  objectPath: string;
+  bytes: Buffer;
+  contentType: string;
+}) {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).upload(input.objectPath, input.bytes, {
+    contentType: input.contentType,
+    upsert: true
+  });
+  if (error) throw new Error(error.message);
+  return buildMemberDocumentStorageUri(input.objectPath);
+}
+
+export async function upsertMemberFileByDocumentSource(input: {
+  memberId: string;
+  documentSource: string;
+  fileName: string;
+  fileType: string;
+  dataUrl?: string | null;
+  storageObjectPath?: string | null;
+  category: string;
+  categoryOther?: string | null;
+  uploadedByUserId?: string | null;
+  uploadedByName?: string | null;
+  uploadedAtIso?: string | null;
+  updatedAtIso?: string | null;
+  additionalColumns?: Record<string, unknown>;
+  supabase?: any;
+}) {
+  const now = input.updatedAtIso ?? input.uploadedAtIso ?? toEasternISO();
+  const admin = input.supabase ?? createSupabaseAdminClient();
+  const { data: existing, error: existingError } = await admin
+    .from("member_files")
+    .select("id")
+    .eq("member_id", input.memberId)
+    .eq("document_source", input.documentSource)
+    .maybeSingle();
+  if (existingError) throw new Error(existingError.message);
+
+  const patch = {
+    file_name: input.fileName,
+    file_type: input.fileType,
+    file_data_url: input.dataUrl ?? null,
+    storage_object_path: input.storageObjectPath ?? null,
+    category: input.category,
+    category_other: input.categoryOther ?? null,
+    document_source: input.documentSource,
+    uploaded_by_user_id: input.uploadedByUserId ?? null,
+    uploaded_by_name: input.uploadedByName ?? null,
+    uploaded_at: input.uploadedAtIso ?? now,
+    updated_at: now,
+    ...(input.additionalColumns ?? {})
+  };
+
+  if (existing?.id) {
+    const { error: updateError } = await admin.from("member_files").update(patch).eq("id", String(existing.id));
+    if (updateError) throw new Error(updateError.message);
+    return { id: String(existing.id), created: false as const };
+  }
+
+  const memberFileId = nextMemberFileId();
+  const { error: insertError } = await admin.from("member_files").insert({
+    id: memberFileId,
+    member_id: input.memberId,
+    ...patch
+  });
+  if (insertError) throw new Error(insertError.message);
+  return { id: memberFileId, created: true as const };
 }
 
 export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPdfInput) {
@@ -71,7 +168,8 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
   }
   const memberId = canonical.memberId;
   const supabase = await createClient();
-  const defaultName = safeFileName(input.fileNameOverride ?? "") || basePdfFileName(input.documentLabel, input.memberName, now);
+  const defaultName =
+    safeFileName(input.fileNameOverride ?? "") || buildDatedPdfFileName(input.documentLabel, input.memberName, now);
   const categoryOther = input.category === "Other" ? input.categoryOther ?? null : null;
 
   if (input.replaceExistingByDocumentSource) {
@@ -133,7 +231,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
   }
 
   const hasConflict = (duplicateRows ?? []).length > 0;
-  const fileName = hasConflict ? withDuplicateSuffix(defaultName, now) : defaultName;
+  const fileName = hasConflict ? withDuplicateFileSuffix(defaultName, now) : defaultName;
 
   const { data: created, error: createError } = await supabase
     .from("member_files")

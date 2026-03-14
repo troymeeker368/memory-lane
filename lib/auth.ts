@@ -283,9 +283,21 @@ export async function requireNavItemAccess(
 
 export async function requireRoles(roles: AppRole[]): Promise<UserProfile> {
   const profile = await getCurrentProfile();
-  const normalizedAllowedRoles = roles.map((role) => normalizeRoleKey(role));
-  if (!normalizedAllowedRoles.includes(normalizeRoleKey(profile.role))) {
+  if (!hasAnyRole(profile.role, roles)) {
     redirect("/unauthorized");
+  }
+  return profile;
+}
+
+export function hasAnyRole(role: string | null | undefined, roles: AppRole[]) {
+  const normalizedAllowedRoles = roles.map((allowedRole) => normalizeRoleKey(allowedRole));
+  return normalizedAllowedRoles.includes(normalizeRoleKey(role ?? ""));
+}
+
+export async function getCurrentProfileForRolesOrError(roles: AppRole[], errorMessage: string) {
+  const profile = await getCurrentProfile();
+  if (!hasAnyRole(profile.role, roles)) {
+    return { error: errorMessage } as const;
   }
   return profile;
 }

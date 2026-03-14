@@ -21,14 +21,19 @@ import {
   normalizeEnrollmentDateOnly
 } from "@/lib/services/enrollment-packet-proration";
 import { validateEnrollmentPacketCompletion } from "@/lib/services/enrollment-packet-public-schema";
-import { createUserNotification } from "@/lib/services/notifications";
+import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import { resolveEnrollmentPricingForRequestedDays } from "@/lib/services/enrollment-pricing";
-import { logSystemEvent } from "@/lib/services/system-event-service";
+import {
+  parseDataUrlPayload,
+  parseMemberDocumentStorageUri,
+  safeFileName,
+  uploadMemberDocumentObject,
+  upsertMemberFileByDocumentSource
+} from "@/lib/services/member-files";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
-const STORAGE_BUCKET = "member-documents";
 const TOKEN_BYTE_LENGTH = 32;
 const STAFF_TRANSPORTATION_OPTIONS = ["None", "Door to Door", "Bus Stop", "Mixed"] as const;
 
@@ -360,16 +365,6 @@ function generateSigningToken() {
   return randomBytes(TOKEN_BYTE_LENGTH).toString("hex");
 }
 
-function parseDataUrl(dataUrl: string) {
-  const normalized = dataUrl.trim();
-  const match = /^data:([^;]+);base64,(.+)$/.exec(normalized);
-  if (!match) throw new Error("Invalid data URL payload.");
-  return {
-    contentType: match[1],
-    bytes: Buffer.from(match[2], "base64")
-  };
-}
-
 function isExpired(expiresAt: string) {
   const expiresMs = Date.parse(expiresAt);
   if (Number.isNaN(expiresMs)) return true;
@@ -403,31 +398,11 @@ function buildAppBaseUrl(requestBaseUrl?: string | null) {
   return parsed.toString().replace(/\/$/, "");
 }
 
-function getStorageUri(objectPath: string) {
-  return `storage://${STORAGE_BUCKET}/${objectPath}`;
-}
-
-function parseStorageUri(storageUri: string | null | undefined) {
-  const normalized = clean(storageUri);
-  if (!normalized) return null;
-  const prefix = `storage://${STORAGE_BUCKET}/`;
-  if (!normalized.startsWith(prefix)) return null;
-  return normalized.slice(prefix.length);
-}
-
-function nextMemberFileId() {
-  return `mf_${randomUUID().replace(/-/g, "")}`;
-}
-
 function slugify(value: string) {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-}
-
-function safeFileName(value: string) {
-  return value.replace(/[<>:"/\\|?*]/g, "").trim();
 }
 
 function isRowFoundError(error: unknown) {
@@ -448,20 +423,6 @@ function throwEnrollmentPacketSchemaError(error: unknown, objectName: string) {
 
   const message = error instanceof Error ? error.message : String(error);
   throw new Error(message);
-}
-
-async function uploadToStorage(input: {
-  objectPath: string;
-  bytes: Buffer;
-  contentType: string;
-}) {
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin.storage.from(STORAGE_BUCKET).upload(input.objectPath, input.bytes, {
-    contentType: input.contentType,
-    upsert: true
-  });
-  if (error) throw new Error(error.message);
-  return getStorageUri(input.objectPath);
 }
 
 async function getMemberById(memberId: string) {
@@ -754,7 +715,7 @@ export async function upsertEnrollmentPacketSenderSignatureProfile(input: {
   const signatureName = clean(input.signatureName);
   if (!userId) throw new Error("User ID is required.");
   if (!signatureName) throw new Error("Signature name is required.");
-  const signature = parseDataUrl(input.signatureImageDataUrl);
+  const signature = parseDataUrlPayload(input.signatureImageDataUrl);
   if (!signature.contentType.startsWith("image/")) {
     throw new Error("Sender signature image must be a valid image.");
   }
@@ -1243,44 +1204,23 @@ async function upsertMemberFileBySource(input: {
   packetId: string;
 }) {
   const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
-  const { data: existing, error: existingError } = await admin
-    .from("member_files")
-    .select("id")
-    .eq("member_id", input.memberId)
-    .eq("document_source", input.documentSource)
-    .maybeSingle();
-  if (existingError && !isRowFoundError(existingError)) throw new Error(existingError.message);
-
-  const patch = {
-    file_name: input.fileName,
-    file_type: input.fileType,
-    file_data_url: input.dataUrl,
-    storage_object_path: parseStorageUri(input.storageUri),
+  const result = await upsertMemberFileByDocumentSource({
+    memberId: input.memberId,
+    documentSource: input.documentSource,
+    fileName: input.fileName,
+    fileType: input.fileType,
+    dataUrl: input.dataUrl,
+    storageObjectPath: parseMemberDocumentStorageUri(input.storageUri),
     category: input.category,
-    category_other: null,
-    document_source: input.documentSource,
-    uploaded_by_user_id: input.uploadedByUserId,
-    uploaded_by_name: input.uploadedByName,
-    uploaded_at: now,
-    updated_at: now,
-    enrollment_packet_request_id: input.packetId
-  };
-
-  if (existing) {
-    const { error: updateError } = await admin.from("member_files").update(patch).eq("id", String(existing.id));
-    if (updateError) throw new Error(updateError.message);
-    return String(existing.id);
-  }
-
-  const memberFileId = nextMemberFileId();
-  const { error: insertError } = await admin.from("member_files").insert({
-    id: memberFileId,
-    member_id: input.memberId,
-    ...patch
+    uploadedByUserId: input.uploadedByUserId,
+    uploadedByName: input.uploadedByName,
+    uploadedAtIso: now,
+    updatedAtIso: now,
+    additionalColumns: {
+      enrollment_packet_request_id: input.packetId
+    }
   });
-  if (insertError) throw new Error(insertError.message);
-  return memberFileId;
+  return result.id;
 }
 
 async function insertUploadAndFile(input: {
@@ -1296,7 +1236,7 @@ async function insertUploadAndFile(input: {
 }) {
   const safeName = safeFileName(input.fileName) || `upload-${randomUUID()}`;
   const objectPath = `members/${input.memberId}/enrollment-packets/${input.packetId}/${input.uploadCategory}/${randomUUID()}-${slugify(safeName)}`;
-  const storageUri = await uploadToStorage({
+  const storageUri = await uploadMemberDocumentObject({
     objectPath,
     bytes: input.bytes,
     contentType: input.contentType
@@ -1530,7 +1470,7 @@ export async function submitPublicEnrollmentPacket(input: {
   if (!normalizedToken) throw new Error("Signature token is required.");
   if (!caregiverTypedName) throw new Error("Typed caregiver name is required.");
   if (!input.attested) throw new Error("Electronic signature attestation is required.");
-  const signature = parseDataUrl(input.caregiverSignatureImageDataUrl);
+  const signature = parseDataUrlPayload(input.caregiverSignatureImageDataUrl);
   if (!signature.contentType.startsWith("image/")) throw new Error("Caregiver signature format is invalid.");
 
   const request = await loadRequestByToken(normalizedToken);
@@ -1758,38 +1698,39 @@ export async function submitPublicEnrollmentPacket(input: {
     });
   }
 
-  await createUserNotification({
-    recipientUserId: request.sender_user_id,
-    title: "Enrollment Packet Completed",
-    message: `Enrollment packet completed for ${member.display_name}`,
-    entityType: "enrollment_packet_request",
-    entityId: request.id,
-    metadata: {
-      memberId: member.id,
-      leadId: request.lead_id,
-      packetId: request.id
+  await recordWorkflowMilestone({
+    event: {
+      event_type: "enrollment_packet_completed",
+      entity_type: "enrollment_packet_request",
+      entity_id: request.id,
+      actor_type: "user",
+      actor_id: request.sender_user_id,
+      metadata: {
+        member_id: member.id,
+        lead_id: request.lead_id,
+        caregiver_signature_name: caregiverTypedName,
+        initiated_by_user_id: request.sender_user_id,
+        initiated_by_name: senderSignatureName,
+        completed_at: now,
+        filed_at: filedAt,
+        status: "filed",
+        mapping_run_id: downstreamMapping.mappingRunId,
+        downstream_systems_updated: downstreamMapping.downstreamSystemsUpdated,
+        conflicts_requiring_review: downstreamMapping.conflictsRequiringReview
+      }
     },
-    serviceRole: true
-  });
-
-  await logSystemEvent({
-    event_type: "enrollment_packet_completed",
-    entity_type: "enrollment_packet_request",
-    entity_id: request.id,
-    actor_type: "user",
-    actor_id: request.sender_user_id,
-    metadata: {
-      member_id: member.id,
-      lead_id: request.lead_id,
-      caregiver_signature_name: caregiverTypedName,
-      initiated_by_user_id: request.sender_user_id,
-      initiated_by_name: senderSignatureName,
-      completed_at: now,
-      filed_at: filedAt,
-      status: "filed",
-      mapping_run_id: downstreamMapping.mappingRunId,
-      downstream_systems_updated: downstreamMapping.downstreamSystemsUpdated,
-      conflicts_requiring_review: downstreamMapping.conflictsRequiringReview
+    notification: {
+      recipientUserId: request.sender_user_id,
+      title: "Enrollment Packet Completed",
+      message: `Enrollment packet completed for ${member.display_name}`,
+      entityType: "enrollment_packet_request",
+      entityId: request.id,
+      metadata: {
+        memberId: member.id,
+        leadId: request.lead_id,
+        packetId: request.id
+      },
+      serviceRole: true
     }
   });
 

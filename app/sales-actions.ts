@@ -24,6 +24,7 @@ import {
   sendEnrollmentPacketRequest,
   upsertEnrollmentPacketSenderSignatureProfile
 } from "@/lib/services/enrollment-packets";
+import { createSalesLeadActivity, salesLeadActivityInputSchema } from "@/lib/services/sales-lead-activities";
 import {
   applyLeadStageTransitionWithMemberUpsertSupabase,
   createLeadWithMemberConversionSupabase
@@ -63,7 +64,6 @@ function revalidateSalesLeadViews(leadId?: string) {
   if (leadId) {
     revalidatePath(`/sales/leads/${leadId}`);
     revalidatePath(`/sales/leads/${leadId}/edit`);
-    revalidatePath(`/sales/pipeline/leads/${leadId}`);
   }
 }
 
@@ -565,124 +565,32 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
     revalidatePath(`/health/member-health-profiles/${memberId}`);
     return { ok: true, leadId: lead.id, memberId };}
 
-const leadActivitySchema = z
-  .object({
-    leadId: z.string().min(1),
-    activityAt: optionalString,
-    activityType: z.enum(LEAD_ACTIVITY_TYPES),
-    outcome: z.enum(LEAD_ACTIVITY_OUTCOMES),
-    lostReason: z.enum(LEAD_LOST_REASON_OPTIONS).optional().or(z.literal("")),
-    notes: optionalString,
-    nextFollowUpDate: optionalString,
-    nextFollowUpType: z.enum(LEAD_FOLLOW_UP_TYPES).optional().or(z.literal("")),
-    partnerId: optionalString,
-    referralSourceId: optionalString
-  })
-  .superRefine((val, ctx) => {
-    if (val.outcome === "Not a fit" && !val.lostReason) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["lostReason"],
-        message: "Lost reason is required when outcome is Not a fit."
-      });
-    }
-  });
-
-export async function createSalesLeadActivityAction(raw: z.infer<typeof leadActivitySchema>) {
+export async function createSalesLeadActivityAction(raw: z.infer<typeof salesLeadActivityInputSchema>) {
   await requireSalesRoles();
-  const payload = leadActivitySchema.safeParse(raw);
+  const payload = salesLeadActivityInputSchema.safeParse(raw);
   if (!payload.success) {
     return { error: "Invalid lead activity." };
   }
 
-    let leadId = "";
-    try {
-      leadId = (await resolveSalesLeadId(payload.data.leadId, "createSalesLeadActivityAction")).leadId;
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
-    }
-
-      const supabase = await createClient();
-    const profile = await getCurrentProfile();
-    const { data: lead, error: leadError } = await supabase
-      .from("leads")
-      .select("id, member_name, stage, status, partner_id, referral_source_id")
-      .eq("id", leadId)
-      .maybeSingle();
-    if (leadError) return { error: leadError.message };
-    if (!lead) return { error: "Lead not found." };
-
-    const partnerId = payload.data.partnerId?.trim() || lead.partner_id || null;
-    const referralSourceId = payload.data.referralSourceId?.trim() || lead.referral_source_id || null;
-    const { error: insertError } = await supabase.from("lead_activities").insert({
-      lead_id: leadId,
-      member_name: lead.member_name,
-      activity_at: payload.data.activityAt || toEasternISO(),
-      activity_type: payload.data.activityType,
-      outcome: payload.data.outcome,
-      lost_reason: payload.data.lostReason || null,
-      notes: payload.data.notes || null,
-      next_follow_up_date: payload.data.nextFollowUpDate || null,
-      next_follow_up_type: payload.data.nextFollowUpType || null,
-      completed_by_user_id: profile.id,
-      completed_by_name: profile.full_name,
-      partner_id: partnerId,
-      referral_source_id: referralSourceId
+  const profile = await getCurrentProfile();
+  let created;
+  try {
+    created = await createSalesLeadActivity({
+      activity: payload.data,
+      actor: {
+        id: profile.id,
+        fullName: profile.full_name,
+        role: profile.role
+      },
+      source: "createSalesLeadActivityAction"
     });
-    if (insertError) return { error: insertError.message };
-
-    if (payload.data.outcome === "Not a fit") {
-      try {
-        await applyLeadStageTransitionSupabase({
-          leadId: lead.id,
-          requestedStage: "Closed - Lost",
-          requestedStatus: "Lost",
-          actorUserId: profile.id,
-          actorName: profile.full_name,
-          source: "createSalesLeadActivityAction",
-          reason: "Lead activity outcome marked as Not a fit.",
-          additionalLeadPatch: {
-            lost_reason: payload.data.lostReason || null,
-            next_follow_up_date: null,
-            next_follow_up_type: null
-          }
-        });
-      } catch (error) {
-        return { error: error instanceof Error ? error.message : "Unable to transition lead to Closed - Lost." };
-      }
-    }
-
-    if (payload.data.outcome === "Enrollment completed" || payload.data.outcome === "Member start confirmed") {
-      try {
-        await applyLeadStageTransitionSupabase({
-          leadId: lead.id,
-          requestedStage: "Closed - Won",
-          requestedStatus: "Won",
-          actorUserId: profile.id,
-          actorName: profile.full_name,
-          source: "createSalesLeadActivityAction",
-          reason: `Lead activity outcome: ${payload.data.outcome}.`
-        });
-      } catch (error) {
-        return { error: error instanceof Error ? error.message : "Unable to transition lead to Closed - Won." };
-      }
-    }
-
-    await supabase.from("audit_logs").insert({
-      actor_user_id: profile.id,
-      actor_role: normalizeRoleKey(profile.role),
-      action: "create_log",
-      entity_type: "lead_activity",
-      entity_id: leadId,
-      details: {
-        activityType: payload.data.activityType,
-        outcome: payload.data.outcome
-      }
-    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create lead activity." };
+  }
 
     revalidatePath("/sales/activities");
     revalidatePath("/sales/new-entries/log-lead-activity");
-    revalidatePath(`/sales/leads/${lead.id}`);
+    revalidatePath(`/sales/leads/${created.leadId}`);
     revalidatePath("/sales/pipeline/leads-table");
     revalidatePath("/sales/pipeline/by-stage");
     return { ok: true };}

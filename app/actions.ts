@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { createSalesLeadActivityAction, saveSalesLeadAction } from "@/app/sales-actions";
-import { getCurrentProfile } from "@/lib/auth";
+import { getCurrentProfile, getCurrentProfileForRolesOrError } from "@/lib/auth";
 import { signInAction as canonicalSignInAction } from "@/lib/actions/auth";
 import {
   LEAD_ACTIVITY_OUTCOMES,
@@ -26,6 +26,7 @@ import {
   canonicalLeadStatus
 } from "@/lib/canonical";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
+import { createAncillaryChargeSupabase, updateToiletLogWithAncillarySync } from "@/lib/services/ancillary-write-supabase";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import {
   autoCreateDraftPhysicianOrderFromIntake,
@@ -37,7 +38,9 @@ import {
   isAuthorizedIntakeAssessmentSignerRole,
   signIntakeAssessment
 } from "@/lib/services/intake-assessment-esign";
-import { calculateLatePickupFee, getOperationalSettings, parseBusNumbersInput, updateOperationalSettings } from "@/lib/services/operations-settings";
+import { parseBusNumbersInput, updateOperationalSettings } from "@/lib/services/operations-settings";
+import { updateMemberStatusSupabase } from "@/lib/services/member-status-supabase";
+import { legacyLeadActivityInputSchema, normalizeLegacyLeadActivityInput } from "@/lib/services/sales-lead-activities";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -45,23 +48,18 @@ import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import type { AuditAction } from "@/types/app";
 import type { CanonicalPersonSourceType } from "@/types/identity";
 
+type ActionErrorResult = {
+  error: string;
+  ok?: never;
+};
+
+type ActionSuccessResult<T extends object = {}> = {
+  ok: true;
+  error?: undefined;
+} & T;
+
 export async function signInAction(formData: FormData) {
   return canonicalSignInAction(formData);
-}
-
-function isPostgresColumnMissingError(error: unknown, columnName: string) {
-  const candidate = error as { code?: string; message?: string } | null;
-  return (
-    candidate?.code === "42703" &&
-    typeof candidate.message === "string" &&
-    candidate.message.toLowerCase().includes(columnName.toLowerCase())
-  );
-}
-
-function schemaDependencyError(details: string) {
-  return {
-    error: `Missing Supabase schema dependency: ${details}`
-  } as const;
 }
 
 async function insertAudit(action: AuditAction, entityType: string, entityId: string | null, details: Record<string, unknown>) {
@@ -79,20 +77,11 @@ async function insertAudit(action: AuditAction, entityType: string, entityId: st
 }
 
 async function requireManagerAdminEditor() {
-  const profile = await getCurrentProfile();
-  const role = normalizeRoleKey(profile.role);
-  if (role !== "admin" && role !== "manager" && role !== "director") {
-    return { error: "Only manager/director/admin can edit submitted entries." } as const;
-  }
-  return profile;
+  return getCurrentProfileForRolesOrError(["admin", "manager", "director"], "Only manager/director/admin can edit submitted entries.");
 }
 
 async function requireAdminEditor() {
-  const profile = await getCurrentProfile();
-  if (profile.role !== "admin") {
-    return { error: "Only admin can manage ancillary pricing." } as const;
-  }
-  return profile;
+  return getCurrentProfileForRolesOrError(["admin"], "Only admin can manage ancillary pricing.");
 }
 
 async function resolveActionMemberIdentity(input: {
@@ -521,133 +510,36 @@ const ancillarySchema = z.object({
   sourceEntityId: z.string().optional()
 });
 
-export async function createAncillaryChargeAction(raw: z.infer<typeof ancillarySchema>) {
+export async function createAncillaryChargeAction(
+  raw: z.infer<typeof ancillarySchema>
+): Promise<ActionErrorResult | ActionSuccessResult<{ ancillaryChargeId: string }>> {
   const payload = ancillarySchema.safeParse(raw);
   if (!payload.success) {
     return { error: "Invalid ancillary charge." };
   }
 
   const profile = await getCurrentProfile();
-  const isLatePickupCategory = (categoryName?: string | null) => {
-    const normalized = (categoryName ?? "").toLowerCase();
-    return normalized.includes("late pick-up") || normalized.includes("late pickup");
-  };
-
-  let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
+  let created;
   try {
-    canonicalMember = await resolveActionMemberIdentity({
-      actionLabel: "createAncillaryChargeAction",
-      memberId: payload.data.memberId
+    created = await createAncillaryChargeSupabase({
+      memberId: payload.data.memberId,
+      categoryId: payload.data.categoryId,
+      serviceDate: payload.data.serviceDate,
+      latePickupTime: payload.data.latePickupTime ?? null,
+      notes: payload.data.notes ?? null,
+      sourceEntity: payload.data.sourceEntity ?? null,
+      sourceEntityId: payload.data.sourceEntityId ?? null,
+      actorUserId: profile.id
     });
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "createAncillaryChargeAction expected member.id." };
-  }
-  if (!canonicalMember.memberId) {
-    return { error: "createAncillaryChargeAction expected member.id but canonical member resolution returned empty memberId." };
-  }
-  const memberId = canonicalMember.memberId;
-
-  const supabase = await createClient();
-  const { data: category, error: categoryError } = await supabase
-    .from("ancillary_charge_categories")
-    .select("id, name, price_cents")
-    .eq("id", payload.data.categoryId)
-    .maybeSingle();
-  if (categoryError) {
-    return { error: categoryError.message };
-  }
-  if (!category) {
-    return { error: "Ancillary charge category not found." };
+    return { error: error instanceof Error ? error.message : "Unable to create ancillary charge." };
   }
 
-  const requiresLatePickupTime = isLatePickupCategory(category?.name);
-  if (requiresLatePickupTime && !payload.data.latePickupTime?.trim()) {
-    return { error: "Late pick-up time is required for late pick-up charges." };
-  }
-
-  const latePickupTime = requiresLatePickupTime ? payload.data.latePickupTime?.trim() || null : null;
-  let amountCents = Number(category.price_cents ?? 0);
-  if (requiresLatePickupTime) {
-    const fee = calculateLatePickupFee({
-      latePickupTime: latePickupTime ?? "",
-      rules: (await getOperationalSettings()).latePickupRules
-    });
-    if (!fee) {
-      return { error: "Invalid late pick-up time." };
-    }
-    if (fee.amountCents <= 0) {
-      return { error: "Selected pick-up time is not later than the configured late threshold." };
-    }
-    amountCents = fee.amountCents;
-  }
-
-  const sourceEntity = payload.data.sourceEntity?.trim() || null;
-  const sourceEntityId = payload.data.sourceEntityId?.trim() || null;
-  const duplicateBaseQuery = supabase
-    .from("ancillary_charge_logs")
-    .select("id")
-    .eq("member_id", memberId)
-    .eq("category_id", payload.data.categoryId)
-    .eq("service_date", payload.data.serviceDate);
-  const duplicateQuery =
-    sourceEntity || sourceEntityId
-      ? duplicateBaseQuery.eq("source_entity", sourceEntity).eq("source_entity_id", sourceEntityId)
-      : duplicateBaseQuery.is("source_entity", null).is("source_entity_id", null);
-  const { data: duplicate, error: duplicateError } = await duplicateQuery.limit(1).maybeSingle();
-  if (duplicateError) {
-    if (
-      isPostgresColumnMissingError(duplicateError, "source_entity") ||
-      isPostgresColumnMissingError(duplicateError, "source_entity_id")
-    ) {
-      return schemaDependencyError(
-        "public.ancillary_charge_logs requires source_entity text and source_entity_id text for de-duplication and workflow linkage."
-      );
-    }
-    return { error: duplicateError.message };
-  }
-  if (duplicate) {
-    return { error: "Duplicate ancillary charge detected for this member/date/category/source." };
-  }
-
-  const quantity = 1;
-  const unitRate = Number((amountCents / 100).toFixed(2));
-  const amount = Number((unitRate * quantity).toFixed(2));
-  const { data, error } = await supabase
-    .from("ancillary_charge_logs")
-    .insert({
-      member_id: memberId,
-      category_id: payload.data.categoryId,
-      service_date: payload.data.serviceDate,
-      late_pickup_time: latePickupTime,
-      staff_user_id: profile.id,
-      notes: payload.data.notes ?? null,
-      source_entity: sourceEntity,
-      source_entity_id: sourceEntityId,
-      quantity,
-      unit_rate: unitRate,
-      amount,
-      billing_status: "Unbilled"
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    if (
-      isPostgresColumnMissingError(error, "source_entity") ||
-      isPostgresColumnMissingError(error, "source_entity_id")
-    ) {
-      return schemaDependencyError(
-        "public.ancillary_charge_logs requires source_entity text and source_entity_id text for workflow linkage."
-      );
-    }
-    return { error: error.message };
-  }
-
-  await insertAudit("create_log", "ancillary_charge", data.id, payload.data);
+  await insertAudit("create_log", "ancillary_charge", created.ancillaryChargeId, payload.data);
   revalidatePath("/ancillary");
   revalidatePath("/documentation/ancillary");
   revalidatePath("/reports/monthly-ancillary");
-  return { ok: true, ancillaryChargeId: data.id };
+  return { ok: true, ancillaryChargeId: created.ancillaryChargeId };
 }
 
 const ancillaryPricingSchema = z.object({
@@ -655,7 +547,9 @@ const ancillaryPricingSchema = z.object({
   unitPriceDollars: z.coerce.number().min(0).max(9999)
 });
 
-export async function updateAncillaryCategoryPriceAction(raw: z.infer<typeof ancillaryPricingSchema>) {
+export async function updateAncillaryCategoryPriceAction(
+  raw: z.infer<typeof ancillaryPricingSchema>
+): Promise<ActionErrorResult | ActionSuccessResult> {
   const payload = ancillaryPricingSchema.safeParse(raw);
   if (!payload.success) {
     return { error: "Invalid ancillary pricing update." };
@@ -699,7 +593,9 @@ const operationalSettingsSchema = z.object({
   latePickupAdditionalMinutesCap: z.coerce.number().int().min(0).max(240)
 });
 
-export async function updateOperationalSettingsAction(raw: z.infer<typeof operationalSettingsSchema>) {
+export async function updateOperationalSettingsAction(
+  raw: z.infer<typeof operationalSettingsSchema>
+): Promise<ActionErrorResult | ActionSuccessResult<{ settings: Awaited<ReturnType<typeof updateOperationalSettings>> }>> {
   const payload = operationalSettingsSchema.safeParse(raw);
   if (!payload.success) {
     return { error: "Invalid operations settings update." };
@@ -1392,44 +1288,13 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
   return { ok: true, assessmentId: created.id };
 }
 
-const leadActivitySchema = z
-  .object({
-    leadId: z.string(),
-    activityType: z.enum(LEAD_ACTIVITY_TYPES),
-    outcome: z.enum(LEAD_ACTIVITY_OUTCOMES),
-    lostReason: z.enum(LEAD_LOST_REASON_OPTIONS).optional().or(z.literal("")),
-    nextFollowUpDate: z.string().optional().or(z.literal("")),
-    nextFollowUpType: z.enum(LEAD_FOLLOW_UP_TYPES).optional().or(z.literal("")),
-    notes: z.string().max(500).optional()
-  })
-  .superRefine((val, ctx) => {
-    if (val.outcome === "Not a fit" && !val.lostReason) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["lostReason"],
-        message: "Lost reason is required when outcome is Not a fit."
-      });
-    }
-  });
-
-export async function createLeadActivityAction(raw: z.infer<typeof leadActivitySchema>) {
-  const payload = leadActivitySchema.safeParse(raw);
+export async function createLeadActivityAction(raw: z.infer<typeof legacyLeadActivityInputSchema>) {
+  const payload = legacyLeadActivityInputSchema.safeParse(raw);
   if (!payload.success) {
     return { error: "Invalid lead activity." };
   }
 
-  return createSalesLeadActivityAction({
-    leadId: payload.data.leadId,
-    activityAt: "",
-    activityType: payload.data.activityType,
-    outcome: payload.data.outcome,
-    lostReason: payload.data.lostReason || "",
-    notes: payload.data.notes ?? "",
-    nextFollowUpDate: payload.data.nextFollowUpDate || "",
-    nextFollowUpType: payload.data.nextFollowUpType || "",
-    partnerId: "",
-    referralSourceId: ""
-  });
+  return createSalesLeadActivityAction(normalizeLegacyLeadActivityInput(payload.data));
 }
 
 const leadStatusSchema = z.object({
@@ -1590,110 +1455,30 @@ export async function updateToiletLogAction(raw: z.infer<typeof updateSimpleSche
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
 
-  const supabase = await createClient();
-  const { data: existingRow, error: existingError } = await supabase
-    .from("toilet_logs")
-    .select("id, member_id, event_at, member_supplied")
-    .eq("id", payload.data.id)
-    .maybeSingle();
-  if (existingError) return { error: existingError.message };
-  if (!existingRow) return { error: "Record not found." };
-
-  const memberSupplied = payload.data.memberSupplied ?? Boolean(existingRow.member_supplied);
-  const { error } = await supabase
-    .from("toilet_logs")
-    .update({
+  let result;
+  try {
+    result = await updateToiletLogWithAncillarySync({
+      toiletLogId: payload.data.id,
       notes: payload.data.notes ?? null,
-      use_type: payload.data.useType,
+      useType: payload.data.useType,
       briefs: payload.data.briefs,
-      member_supplied: memberSupplied
-    })
-    .eq("id", payload.data.id);
-  if (error) return { error: error.message };
-
-  const shouldHaveBriefsCharge = payload.data.briefs && !memberSupplied;
-  let warning: string | null = null;
-  if (shouldHaveBriefsCharge) {
-    const { data: briefsCategory, error: briefsCategoryError } = await supabase
-      .from("ancillary_charge_categories")
-      .select("id")
-      .ilike("name", "briefs")
-      .maybeSingle();
-    if (briefsCategoryError) {
-      warning = `Toilet log updated, but briefs ancillary category lookup failed (${briefsCategoryError.message}).`;
-    }
-
-    if (briefsCategory && !warning) {
-      const { data: existingCharge, error: chargeLookupError } = await supabase
-        .from("ancillary_charge_logs")
-        .select("id")
-        .eq("source_entity", "toiletLogs")
-        .eq("source_entity_id", payload.data.id)
-        .eq("category_id", briefsCategory.id)
-        .maybeSingle();
-      if (chargeLookupError) {
-        if (
-          isPostgresColumnMissingError(chargeLookupError, "source_entity") ||
-          isPostgresColumnMissingError(chargeLookupError, "source_entity_id")
-        ) {
-          warning =
-            "Toilet log updated, but linked ancillary sync requires public.ancillary_charge_logs columns source_entity text and source_entity_id text.";
-        } else {
-          warning = `Toilet log updated, but linked ancillary lookup failed (${chargeLookupError.message}).`;
-        }
-      }
-
-      if (!existingCharge && !warning) {
-        const ancillaryResult = await createAncillaryChargeAction({
-          memberId: existingRow.member_id,
-          categoryId: briefsCategory.id,
-          serviceDate: String(existingRow.event_at).slice(0, 10),
-          latePickupTime: "",
-          notes: "Auto-generated from Toilet Log edit (briefs changed and not member supplied)",
-          sourceEntity: "toiletLogs",
-          sourceEntityId: payload.data.id
-        });
-        if ("error" in ancillaryResult) {
-          warning = `Toilet log updated, but linked ancillary charge could not be created (${ancillaryResult.error}).`;
-        }
-      }
-    }
-  } else {
-    const { data: linkedCharges, error: linkedError } = await supabase
-      .from("ancillary_charge_logs")
-      .select("id")
-      .eq("source_entity", "toiletLogs")
-      .eq("source_entity_id", payload.data.id);
-    if (linkedError) {
-      if (
-        isPostgresColumnMissingError(linkedError, "source_entity") ||
-        isPostgresColumnMissingError(linkedError, "source_entity_id")
-      ) {
-        warning =
-          "Toilet log updated, but linked ancillary sync requires public.ancillary_charge_logs columns source_entity text and source_entity_id text.";
-      } else {
-        warning = `Toilet log updated, but linked ancillary lookup failed (${linkedError.message}).`;
-      }
-    }
-    const chargeIds = !warning ? (linkedCharges ?? []).map((row) => row.id) : [];
-    if (chargeIds.length > 0) {
-      const { error: deleteChargeError } = await supabase.from("ancillary_charge_logs").delete().in("id", chargeIds);
-      if (deleteChargeError) {
-        warning = `Toilet log updated, but linked ancillary removal failed (${deleteChargeError.message}).`;
-      }
-    }
+      memberSupplied: payload.data.memberSupplied,
+      actorUserId: editor.id
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to update toilet log." };
   }
 
   await insertAudit("manager_review", "toilet_log", payload.data.id, {
     useType: payload.data.useType,
     briefs: payload.data.briefs,
-    memberSupplied
+    memberSupplied: result.memberSupplied
   });
   revalidatePath("/documentation/toilet");
   revalidatePath("/documentation");
   revalidatePath("/ancillary");
   revalidatePath("/reports/monthly-ancillary");
-  return warning ? { ok: true, warning } : { ok: true };
+  return result.warning ? { ok: true, warning: result.warning } : { ok: true };
 }
 
 export async function updateShowerLogAction(raw: z.infer<typeof updateSimpleSchema> & { laundry: boolean; briefs: boolean }) {
@@ -1780,7 +1565,7 @@ export async function setAncillaryReconciliationAction(raw: {
   id: string;
   status: "open" | "reconciled" | "void";
   note?: string;
-}) {
+}): Promise<ActionErrorResult | ActionSuccessResult> {
   const payload = z
     .object({
       id: z.string(),
@@ -1874,7 +1659,7 @@ export async function setMemberStatusAction(raw: {
   status: "active" | "inactive";
   dischargeReason?: string;
   dischargeDisposition?: string;
-}) {
+}): Promise<ActionErrorResult | ActionSuccessResult> {
   const payload = z
     .object({
       memberId: z.string().min(1),
@@ -1904,21 +1689,16 @@ export async function setMemberStatusAction(raw: {
 
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const supabase = await createClient();
-  const { data: updated, error } = await supabase
-    .from("members")
-    .update({
+  try {
+    await updateMemberStatusSupabase({
+      memberId: payload.data.memberId,
       status: payload.data.status,
-      discharge_reason: payload.data.dischargeReason ?? null,
-      discharge_disposition: payload.data.dischargeDisposition ?? null,
-      discharge_date: payload.data.status === "inactive" ? toEasternDate() : null,
-      updated_at: toEasternISO()
-    })
-    .eq("id", payload.data.memberId)
-    .select("id")
-    .maybeSingle();
-  if (error) return { error: error.message };
-  if (!updated) return { error: "Member not found." };
+      dischargeReason: payload.data.dischargeReason ?? null,
+      dischargeDisposition: payload.data.dischargeDisposition ?? null
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to update member status." };
+  }
   await insertAudit("manager_review", "member", payload.data.memberId, {
     status: payload.data.status,
     dischargeReason: payload.data.dischargeReason ?? null,
@@ -1940,7 +1720,9 @@ export async function setMemberStatusAction(raw: {
   return { ok: true };
 }
 
-export async function deleteWorkflowRecordAction(raw: { entity: string; id: string }) {
+export async function deleteWorkflowRecordAction(
+  raw: { entity: string; id: string }
+): Promise<ActionErrorResult | ActionSuccessResult> {
   const payload = z.object({ entity: z.string(), id: z.string() }).safeParse(raw);
   if (!payload.success) return { error: "Invalid delete request." };
   const editor = await requireManagerAdminEditor();
