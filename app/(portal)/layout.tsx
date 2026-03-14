@@ -3,6 +3,9 @@ import Link from "next/link";
 import Image from "next/image";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { isDevAuthBypassEnabled } from "@/lib/runtime";
+import { listDevAuthBootstrapAccounts } from "@/lib/services/staff-auth";
+import { DevAuthBootstrapPanel } from "@/components/auth/dev-auth-bootstrap-panel";
 import { PortalNav } from "@/components/portal-nav";
 import { SignOutForm } from "@/components/sign-out-form";
 import { GlobalTablePaginator } from "@/components/ui/global-table-paginator";
@@ -15,6 +18,8 @@ export default async function PortalLayout({
 }) {
   const profile = await getCurrentProfile();
   const unreadNotifications = await countUnreadUserNotificationsForUser(profile.id);
+  const showDevRoleSwitcher = isDevAuthBypassEnabled();
+  const devAccounts = showDevRoleSwitcher ? await listDevAuthBootstrapAccounts() : [];
 
   return (
     <div className="portal-shell mx-auto grid min-h-screen w-full max-w-7xl gap-4 p-3 md:grid-cols-[270px_minmax(0,1fr)] md:p-4">
@@ -32,8 +37,19 @@ export default async function PortalLayout({
           </Link>
           <p className="text-xs font-semibold text-white/90">Current User:</p>
           <p className="mt-1 text-sm font-semibold text-white">{profile.full_name}</p>
+          {showDevRoleSwitcher ? (
+            <p className="mt-1 text-[11px] text-white/80">
+              dev-debug: role={profile.role} id={profile.id}
+            </p>
+          ) : null}
         </div>
         <PortalNav role={profile.role} permissions={profile.permissions} />
+        {showDevRoleSwitcher ? (
+          <div className="space-y-2 rounded-lg border border-white/25 bg-white/10 p-2">
+            <p className="text-xs font-semibold text-white/90">Dev Role Switcher</p>
+            <DevAuthBootstrapPanel accounts={devAccounts} />
+          </div>
+        ) : null}
         <SignOutForm />
       </aside>
       <main className="space-y-4 pb-10">

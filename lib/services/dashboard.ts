@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export async function getDashboardStats(userId: string) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const operationsDate = getOperationsTodayDate();
 
   const today = new Date();
@@ -50,7 +50,7 @@ export async function getDashboardStats(userId: string) {
 }
 
 export async function getDashboardAlerts() {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
 
   const { data: overdueCarePlan, error: overdueCarePlanError } = await supabase
     .from("documentation_tracker")

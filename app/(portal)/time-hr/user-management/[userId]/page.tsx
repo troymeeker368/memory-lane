@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { updateManagedUserStatusAction } from "@/lib/actions/user-management";
+import {
+  resendManagedUserInviteAction,
+  sendManagedUserInviteAction,
+  sendManagedUserResetAction,
+  toggleManagedUserLoginAccessAction,
+  updateManagedUserStatusAction
+} from "@/lib/actions/user-management";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
@@ -66,24 +72,49 @@ export default async function ManagedUserDetailPage({
         <CardTitle>User Details</CardTitle>
         <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
           <p><span className="font-semibold">Role:</span> {getRoleLabel(user.role)}</p>
-          <p><span className="font-semibold">Status:</span> {user.status}</p>
+          <p><span className="font-semibold">Staff Status:</span> {user.status}</p>
+          <p><span className="font-semibold">Auth Status:</span> {user.authStatus}</p>
           <p><span className="font-semibold">Permission Source:</span> {user.permissionSource}</p>
           <p><span className="font-semibold">Credentials:</span> {user.credentials ?? "-"}</p>
           <p><span className="font-semibold">Phone:</span> {user.phone ?? "-"}</p>
           <p><span className="font-semibold">Title:</span> {user.title ?? "-"}</p>
           <p><span className="font-semibold">Department:</span> {user.department ?? "-"}</p>
           <p><span className="font-semibold">Default Landing:</span> {user.defaultLanding}</p>
-          <p><span className="font-semibold">Last Login:</span> {formatOptionalDateTime(user.lastLogin)}</p>
+          <p><span className="font-semibold">Invited At:</span> {formatOptionalDateTime(user.invitedAt)}</p>
+          <p><span className="font-semibold">Password Set At:</span> {formatOptionalDateTime(user.passwordSetAt)}</p>
+          <p><span className="font-semibold">Last Sign In:</span> {formatOptionalDateTime(user.lastSignInAt ?? user.lastLogin)}</p>
+          <p><span className="font-semibold">Login Disabled At:</span> {formatOptionalDateTime(user.disabledAt)}</p>
           <p><span className="font-semibold">Updated:</span> {formatDateTime(user.updatedAt)}</p>
         </div>
 
-        <form action={updateManagedUserStatusAction} className="mt-4">
-          <input type="hidden" name="userId" value={user.id} />
-          <input type="hidden" name="nextStatus" value={user.status === "active" ? "inactive" : "active"} />
-          <button type="submit" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
-            {user.status === "active" ? "Deactivate User" : "Reactivate User"}
-          </button>
-        </form>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <form action={user.invitedAt ? resendManagedUserInviteAction : sendManagedUserInviteAction}>
+            <input type="hidden" name="userId" value={user.id} />
+            <button type="submit" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
+              {user.invitedAt ? "Resend Invite" : "Send Invite"}
+            </button>
+          </form>
+          <form action={sendManagedUserResetAction}>
+            <input type="hidden" name="userId" value={user.id} />
+            <button type="submit" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold text-brand">
+              Send Reset Link
+            </button>
+          </form>
+          <form action={toggleManagedUserLoginAccessAction}>
+            <input type="hidden" name="userId" value={user.id} />
+            <input type="hidden" name="disabled" value={user.authStatus === "disabled" ? "false" : "true"} />
+            <button type="submit" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold text-brand">
+              {user.authStatus === "disabled" ? "Re-enable Login" : "Disable Login"}
+            </button>
+          </form>
+          <form action={updateManagedUserStatusAction}>
+            <input type="hidden" name="userId" value={user.id} />
+            <input type="hidden" name="nextStatus" value={user.status === "active" ? "inactive" : "active"} />
+            <button type="submit" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold text-brand">
+              {user.status === "active" ? "Deactivate User" : "Reactivate User"}
+            </button>
+          </form>
+        </div>
       </Card>
 
       <Card className="table-wrap">

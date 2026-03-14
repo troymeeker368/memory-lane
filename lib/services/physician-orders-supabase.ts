@@ -1056,14 +1056,14 @@ export async function signPhysicianOrder(
   }
 
   await syncMemberHealthProfileFromSignedPhysicianOrder(pofId, { serviceRole: options?.serviceRole });
-  await syncPofMedicationsFromSignedOrder({ physicianOrderId: pofId, serviceRole: options?.serviceRole });
+  await syncPofMedicationsFromSignedOrder({ physicianOrderId: pofId, serviceRole: options?.serviceRole ?? true });
   const scheduleStartDate = toEasternDate(now);
   const scheduleEndDate = addDaysDateOnly(scheduleStartDate, 30);
   await generateMarSchedulesForMember({
     memberId: row.memberId,
     startDate: scheduleStartDate,
     endDate: scheduleEndDate,
-    serviceRole: options?.serviceRole
+    serviceRole: options?.serviceRole ?? true
   });
 }
 

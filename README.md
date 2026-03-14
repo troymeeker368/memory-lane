@@ -106,3 +106,16 @@ Helpers:
 - `netstat -ano | findstr :3001`
 - `taskkill /PID <PID> /F`
 
+## Auth Environment Variables
+
+- `NEXT_PUBLIC_APP_URL` (required): canonical public app URL used in invite/reset links.
+- `RESEND_API_KEY` (required for invite/reset delivery): API key for branded staff auth emails.
+- `CLINICAL_SENDER_EMAIL` (required for invite/reset delivery): sender mailbox used for branded staff auth emails.
+- `ENABLE_DEV_AUTH_BYPASS` (optional, default `false`): enables `/dev/auth` bootstrap only when `NODE_ENV` is not `production`.
+- `DEV_AUTH_BOOTSTRAP_PASSWORD` (optional, default `SeedDataOnly!123`): password used by `/dev/auth` when per-user values are not configured.
+- `DEV_AUTH_BOOTSTRAP_USERS_JSON` (optional): JSON array of `{ "email", "password", "role", "label" }` bootstrap accounts for `/dev/auth`.
+
+Production safety rules:
+- `/dev/auth` is hard-disabled when `NODE_ENV=production` even if `ENABLE_DEV_AUTH_BYPASS=true`.
+- Staff invite/reset/set-password flows always use real Supabase auth sessions and preserve canonical role/permission enforcement.
+

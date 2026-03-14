@@ -1,6 +1,12 @@
 import Link from "next/link";
 
-import { updateManagedUserStatusAction } from "@/lib/actions/user-management";
+import {
+  resendManagedUserInviteAction,
+  sendManagedUserInviteAction,
+  sendManagedUserResetAction,
+  toggleManagedUserLoginAccessAction,
+  updateManagedUserStatusAction
+} from "@/lib/actions/user-management";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getUserManagementMetrics, listManagedUsers } from "@/lib/services/user-management";
@@ -50,7 +56,7 @@ export default async function UserManagementPage({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle>User Management</CardTitle>
-            <p className="mt-1 text-sm text-muted">Admin-only user administration for role, status, and module access.</p>
+            <p className="mt-1 text-sm text-muted">Admin-only user administration for role, status, permissions, invites, resets, and login access.</p>
           </div>
           <Link href="/time-hr/user-management/new" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
             Add User
@@ -102,8 +108,9 @@ export default async function UserManagementPage({
               <th>Name</th>
               <th>Email</th>
               <th>Role</th>
-              <th>Status</th>
-              <th>Last Login</th>
+              <th>Staff Status</th>
+              <th>Auth Status</th>
+              <th>Last Sign In</th>
               <th>Department</th>
               <th>Actions</th>
             </tr>
@@ -123,12 +130,44 @@ export default async function UserManagementPage({
                     {user.status}
                   </span>
                 </td>
-                <td>{formatOptionalDateTime(user.lastLogin)}</td>
+                <td>
+                  <span
+                    className={`rounded px-2 py-1 text-xs font-semibold ${
+                      user.authStatus === "active"
+                        ? "bg-[#99CC33]/20 text-[#3f6d12]"
+                        : user.authStatus === "invited"
+                          ? "bg-sky-100 text-sky-700"
+                          : "bg-rose-100 text-rose-700"
+                    }`}
+                  >
+                    {user.authStatus}
+                  </span>
+                </td>
+                <td>{formatOptionalDateTime(user.lastSignInAt ?? user.lastLogin)}</td>
                 <td>{user.department ?? "-"}</td>
                 <td>
                   <div className="flex flex-wrap gap-2">
                     <Link className="text-xs font-semibold text-brand" href={`/time-hr/user-management/${user.id}/edit`}>Edit</Link>
                     <Link className="text-xs font-semibold text-brand" href={`/time-hr/user-management/${user.id}/permissions`}>Permissions</Link>
+                    <form action={user.invitedAt ? resendManagedUserInviteAction : sendManagedUserInviteAction}>
+                      <input type="hidden" name="userId" value={user.id} />
+                      <button type="submit" className="text-xs font-semibold text-brand">
+                        {user.invitedAt ? "Resend Invite" : "Send Invite"}
+                      </button>
+                    </form>
+                    <form action={sendManagedUserResetAction}>
+                      <input type="hidden" name="userId" value={user.id} />
+                      <button type="submit" className="text-xs font-semibold text-brand">
+                        Send Reset Link
+                      </button>
+                    </form>
+                    <form action={toggleManagedUserLoginAccessAction}>
+                      <input type="hidden" name="userId" value={user.id} />
+                      <input type="hidden" name="disabled" value={user.authStatus === "disabled" ? "false" : "true"} />
+                      <button type="submit" className="text-xs font-semibold text-brand">
+                        {user.authStatus === "disabled" ? "Re-enable Login" : "Disable Login"}
+                      </button>
+                    </form>
                     <form action={updateManagedUserStatusAction}>
                       <input type="hidden" name="userId" value={user.id} />
                       <input type="hidden" name="nextStatus" value={user.status === "active" ? "inactive" : "active"} />

@@ -15,6 +15,7 @@ export interface MarTodayRow {
   marScheduleId: string;
   memberId: string;
   memberName: string;
+  memberPhotoUrl: string | null;
   pofMedicationId: string;
   medicationName: string;
   dose: string | null;
@@ -73,6 +74,7 @@ export interface MarPrnOption {
 
 export interface MarWorkflowSnapshot {
   today: MarTodayRow[];
+  overdueToday: MarTodayRow[];
   notGivenToday: MarAdministrationHistoryRow[];
   history: MarAdministrationHistoryRow[];
   prnLog: MarAdministrationHistoryRow[];

@@ -65,7 +65,7 @@ const prnOutcomeSchema = z
 
 async function insertAudit(action: string, entityType: string, entityId: string | null, details: Record<string, unknown>) {
   const profile = await getCurrentProfile();
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   await supabase.from("audit_logs").insert({
     actor_user_id: profile.id,
     actor_role: profile.role,
@@ -95,6 +95,7 @@ export async function recordScheduledMarAdministrationAction(raw: z.infer<typeof
       status: payload.data.status,
       notGivenReason: payload.data.notGivenReason ?? null,
       notes: payload.data.notes ?? null,
+      serviceRole: true,
       actor: {
         userId: profile.id,
         fullName: profile.full_name
@@ -128,6 +129,7 @@ export async function recordPrnMarAdministrationAction(raw: z.infer<typeof prnAd
       prnReason: payload.data.prnReason,
       notes: payload.data.notes ?? null,
       administeredAtIso: payload.data.administeredAtIso ?? null,
+      serviceRole: true,
       actor: {
         userId: profile.id,
         fullName: profile.full_name
@@ -160,6 +162,7 @@ export async function recordPrnOutcomeAction(raw: z.infer<typeof prnOutcomeSchem
       prnOutcome: payload.data.prnOutcome as MarPrnOutcome,
       prnFollowupNote: payload.data.prnFollowupNote ?? null,
       outcomeAssessedAtIso: payload.data.outcomeAssessedAtIso ?? null,
+      serviceRole: true,
       actor: {
         userId: profile.id,
         fullName: profile.full_name

@@ -27,6 +27,13 @@ type MemberIdentityRow = {
   source_lead_id: string | null;
 };
 
+type PostgrestErrorLike = {
+  code?: string | null;
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+};
+
 export type CanonicalMemberLink = {
   leadId: string;
   memberId: string;
@@ -54,6 +61,17 @@ function normalizeSourceType(value: string | null | undefined): CanonicalPersonS
 function debugCanonicalIdentity(event: string, payload: Record<string, unknown>) {
   if (process.env.NODE_ENV === "production") return;
   console.info(`[canonical-person-ref] ${event}`, payload);
+}
+
+function isRlsRecursionOrTimeoutError(error: PostgrestErrorLike | null | undefined) {
+  const code = String(error?.code ?? "");
+  const text = [error?.message, error?.details, error?.hint].filter(Boolean).join(" ").toLowerCase();
+  return (
+    code === "54001" ||
+    code === "57014" ||
+    text.includes("stack depth limit exceeded") ||
+    text.includes("canceling statement due to statement timeout")
+  );
 }
 
 function buildIdentityErrorMessage(input: {
@@ -117,7 +135,12 @@ async function getMemberById(memberId: string, serviceRole = false) {
     .select("id, display_name, status, source_lead_id")
     .eq("id", memberId)
     .maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (!serviceRole && isRlsRecursionOrTimeoutError(error)) {
+      return await getMemberById(memberId, true);
+    }
+    throw new Error(error.message);
+  }
   return (data as MemberIdentityRow | null) ?? null;
 }
 
@@ -128,7 +151,12 @@ async function getLeadById(leadId: string, serviceRole = false) {
     .select("id, member_name, stage, status")
     .eq("id", leadId)
     .maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (!serviceRole && isRlsRecursionOrTimeoutError(error)) {
+      return await getLeadById(leadId, true);
+    }
+    throw new Error(error.message);
+  }
   return (data as LeadIdentityRow | null) ?? null;
 }
 
@@ -139,7 +167,12 @@ async function getMemberByLeadId(leadId: string, serviceRole = false) {
     .select("id, display_name, status, enrollment_date, dob, source_lead_id")
     .eq("source_lead_id", leadId)
     .maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (!serviceRole && isRlsRecursionOrTimeoutError(error)) {
+      return await getMemberByLeadId(leadId, true);
+    }
+    throw new Error(error.message);
+  }
   return (data as MemberIdentityRow | null) ?? null;
 }
 

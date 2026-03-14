@@ -5,7 +5,7 @@ import { toEasternDate, toEasternISO } from "@/lib/timezone";
 export async function getHealthSnapshot() {
   const supabase = await createClient();
   const [marSnapshot, { data: bloodSugarHistory, error: bloodError }, { data: members, error: membersError }] = await Promise.all([
-    getMarWorkflowSnapshot({ historyLimit: 150, prnLimit: 150 }),
+    getMarWorkflowSnapshot({ historyLimit: 150, prnLimit: 150, serviceRole: true }),
     supabase
       .from("v_blood_sugar_logs_detailed")
       .select("id, member_id, member_name, checked_at, reading_mg_dl, nurse_name, notes")

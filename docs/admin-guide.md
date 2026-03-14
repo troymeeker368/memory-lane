@@ -18,6 +18,11 @@ This guide documents production admin operations that must remain Supabase-canon
    - `admin`
 4. Set `active = true` to permit access.
 5. Add `public.user_permissions` overrides only when custom overrides are intentionally required.
+6. Keep staff auth lifecycle fields aligned on `public.profiles`:
+   - `auth_user_id` (maps to `auth.users.id`)
+   - `status` (`invited` | `active` | `disabled`)
+   - `invited_at`, `password_set_at`, `last_sign_in_at`, `disabled_at`
+   - `is_active`
 
 Example:
 
@@ -81,4 +86,5 @@ Do not bypass canonical e-sign services when creating, signing, or voiding reque
 
 - `public.audit_logs` stores privileged action traceability.
 - `public.document_events` stores POF e-sign lifecycle traceability.
+- `public.staff_auth_events` stores invite/reset/password/disable lifecycle traceability.
 - Keep retention and export controls aligned with compliance requirements.

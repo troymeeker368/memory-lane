@@ -79,6 +79,12 @@ export interface UserProfile {
   full_name: string;
   role: AppRole;
   active: boolean;
+  status?: "invited" | "active" | "disabled";
+  is_active?: boolean;
+  invited_at?: string | null;
+  password_set_at?: string | null;
+  last_sign_in_at?: string | null;
+  disabled_at?: string | null;
   staff_id: string | null;
   permissions: PermissionSet;
   has_custom_permissions?: boolean;
@@ -89,6 +95,7 @@ export type UserStatus = "active" | "inactive";
 
 export interface ManagedUser {
   id: string;
+  authUserId: string;
   firstName: string;
   lastName: string;
   displayName: string;
@@ -96,6 +103,12 @@ export interface ManagedUser {
   email: string;
   role: AppRole;
   status: UserStatus;
+  authStatus: "invited" | "active" | "disabled";
+  invitedAt: string | null;
+  passwordSetAt: string | null;
+  lastSignInAt: string | null;
+  disabledAt: string | null;
+  isActive: boolean;
   phone: string | null;
   title: string | null;
   department: string | null;

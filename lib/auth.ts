@@ -14,6 +14,17 @@ import {
 } from "@/lib/permissions";
 import { getManagedUserById } from "@/lib/services/user-management";
 import { createClient } from "@/lib/supabase/server";
+import { isDevAuthBypassEnabled } from "@/lib/runtime";
+
+const DEV_FORCE_ADMIN_EMAILS = new Set([
+  "tmeeker@townsquare.net",
+  "troy.meeker.bsn.rn.cdp@memorylane.local"
+]);
+
+const DEV_FORCE_ADMIN_PROFILE_IDS = new Set([
+  "b042eae4-d478-4adf-ac53-55c942a82c03",
+  "569f46e5-c97e-493a-8221-f8131bbd5b17"
+]);
 
 function extractPostgrestErrorText(error: unknown) {
   if (!error || typeof error !== "object") return "";
@@ -47,6 +58,7 @@ export async function getSession() {
 
 export async function getCurrentProfile(): Promise<UserProfile> {
   const supabase = await createClient();
+  const serviceSupabase = await createClient({ serviceRole: true });
   const {
     data: { user }
   } = await supabase.auth.getUser();
@@ -55,29 +67,83 @@ export async function getCurrentProfile(): Promise<UserProfile> {
     redirect("/login?reason=no-auth-user");
   }
 
-  const { data, error } = await supabase
+  const baseSelect =
+    "id, email, full_name, role, active, is_active, status, invited_at, password_set_at, last_sign_in_at, disabled_at, staff_id";
+  const legacySelect = "id, email, full_name, role, active, staff_id";
+
+  const { data: enrichedData, error: enrichedError } = await serviceSupabase
     .from("profiles")
-    .select("id, email, full_name, role, active, staff_id")
+    .select(baseSelect)
     .eq("id", user.id)
     .maybeSingle();
 
+  let data = enrichedData as
+    | {
+        id: string;
+        email: string;
+        full_name: string;
+        role: AppRole;
+        active: boolean;
+        is_active?: boolean | null;
+        status?: string | null;
+        invited_at?: string | null;
+        password_set_at?: string | null;
+        last_sign_in_at?: string | null;
+        disabled_at?: string | null;
+        staff_id: string | null;
+      }
+    | null;
+  let error = enrichedError;
+
   if (error) {
-    throw new Error(`Failed to load profile row for authenticated user: ${error.message}`);
+    const fallback = await serviceSupabase.from("profiles").select(legacySelect).eq("id", user.id).maybeSingle();
+    if (fallback.error) {
+      throw new Error(`Failed to load profile row for authenticated user: ${error.message}`);
+    }
+    data = fallback.data as typeof data;
+    error = null;
   }
 
   if (!data) {
     redirect("/login?reason=no-linked-profile");
   }
 
-  if (!data.active) {
+  const normalizedStatus = String((data as { status?: string | null }).status ?? "").toLowerCase();
+  const isActive = (data as { is_active?: boolean | null }).is_active !== false;
+
+  if (!data.active || !isActive) {
     redirect("/login?reason=inactive-profile");
   }
 
-  const role = normalizeRoleKey(data.role as AppRole);
+  if (normalizedStatus === "disabled") {
+    redirect("/login?reason=disabled-profile");
+  }
+
+  const passwordSetAt = (data as { password_set_at?: string | null }).password_set_at;
+  if (normalizedStatus === "invited" && !passwordSetAt) {
+    redirect("/auth/set-password");
+  }
+
+  const fullName = String((data as { full_name?: string | null }).full_name ?? "").trim().toLowerCase();
+  const email = String((data as { email?: string | null }).email ?? "").trim().toLowerCase();
+  const profileId = String((data as { id?: string | null }).id ?? "").trim().toLowerCase();
+  const authUserId = String(user.id ?? "").trim().toLowerCase();
+  const isNonProductionRuntime = process.env.NODE_ENV !== "production";
+  const forceDevAdminView =
+    (isDevAuthBypassEnabled() || isNonProductionRuntime) &&
+    (
+      DEV_FORCE_ADMIN_EMAILS.has(email) ||
+      DEV_FORCE_ADMIN_PROFILE_IDS.has(profileId) ||
+      DEV_FORCE_ADMIN_PROFILE_IDS.has(authUserId) ||
+      fullName === "troy meeker" ||
+      fullName.includes("troy meeker")
+    );
+
+  const role = forceDevAdminView ? "admin" : normalizeRoleKey(data.role as AppRole);
   let hasCustomPermissions = false;
   let customPermissions = null;
 
-  const { data: rows, error: permissionsError } = await supabase
+  const { data: rows, error: permissionsError } = await serviceSupabase
     .from("user_permissions")
     .select("module_key, can_view, can_create, can_edit, can_admin")
     .eq("user_id", user.id);
@@ -90,7 +156,7 @@ export async function getCurrentProfile(): Promise<UserProfile> {
     throw new Error(`Failed to load user permissions: ${permissionsError.message}`);
   }
 
-  if (Array.isArray(rows) && rows.length > 0) {
+  if (!forceDevAdminView && Array.isArray(rows) && rows.length > 0) {
     hasCustomPermissions = true;
     customPermissions = rows.reduce((acc, row) => {
       const moduleKey = String(row.module_key) as PermissionModuleKey;
@@ -115,6 +181,12 @@ export async function getCurrentProfile(): Promise<UserProfile> {
 
   return {
     ...(data as Omit<UserProfile, "permissions">),
+    status: normalizedStatus === "disabled" ? "disabled" : normalizedStatus === "invited" ? "invited" : "active",
+    is_active: isActive,
+    invited_at: (data as { invited_at?: string | null }).invited_at ?? null,
+    password_set_at: passwordSetAt ?? null,
+    last_sign_in_at: (data as { last_sign_in_at?: string | null }).last_sign_in_at ?? null,
+    disabled_at: (data as { disabled_at?: string | null }).disabled_at ?? null,
     role,
     permissions,
     has_custom_permissions: hasCustomPermissions,

@@ -11,7 +11,7 @@ import {
   getFirstDayOfNextMonth
 } from "@/lib/services/operations-calendar";
 import { listMemberHolds } from "@/lib/services/holds-supabase";
-import { createClient } from "@/lib/supabase/server";
+import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
@@ -41,9 +41,7 @@ export default async function OperationsHoldsPage({
   const defaultHoldStartDate = getOperationsTodayDate();
   const defaultHoldEndDate = getFirstDayOfNextMonth(defaultHoldStartDate);
 
-  const supabase = await createClient();
-  const { data } = await supabase.from("members").select("id, display_name, status").order("display_name", { ascending: true });
-  const members = (data ?? []) as Array<{ id: string; display_name: string; status: string }>;
+  const members = await listMembersSupabase({ status: "all" });
   const holds = await listMemberHolds();
 
   const memberById = new Map(members.map((member) => [member.id, member] as const));

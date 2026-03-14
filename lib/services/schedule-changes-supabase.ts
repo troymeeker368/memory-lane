@@ -49,7 +49,7 @@ async function resolveScheduleMemberId(rawMemberId: string, actionLabel: string)
       sourceType: "member",
       memberId: rawMemberId
     },
-    { actionLabel }
+    { actionLabel, serviceRole: true }
   );
   if (!canonical.memberId) {
     throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);

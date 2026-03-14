@@ -70,16 +70,24 @@ type MarAdministrationLinkRow = {
   mar_schedule_id: string | null;
 };
 
+type MemberPhotoRow = {
+  member_id: string;
+  profile_image_url: string | null;
+};
+
 const TIME_24H_PATTERN = /^(\d{1,2}):(\d{2})$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_GENERATION_DAYS = 45;
-const MAR_SCHEMA_MIGRATION = "0028_pof_seeded_mar_workflow.sql";
+const MAR_BASE_SCHEMA_MIGRATION = "0028_pof_seeded_mar_workflow.sql";
+const MAR_OVERDUE_VIEW_MIGRATION = "0030_mar_overdue_view.sql";
 
 type MarSchemaObjectName =
   | "pof_medications"
   | "mar_schedules"
   | "mar_administrations"
+  | "member_command_centers"
   | "v_mar_today"
+  | "v_mar_overdue_today"
   | "v_mar_not_given_today"
   | "v_mar_administration_history"
   | "v_mar_prn_log"
@@ -96,13 +104,18 @@ function toSupabaseErrorMessage(error: unknown): string {
   return "Unknown Supabase error.";
 }
 
+function toMemberPhotoLookup(rows: MemberPhotoRow[]): Map<string, string | null> {
+  return new Map(rows.map((row) => [row.member_id, clean(row.profile_image_url)] as const));
+}
+
 function throwMarSupabaseError(error: unknown, objectName: MarSchemaObjectName) {
   if (!error) return;
+  const migration = objectName === "v_mar_overdue_today" ? MAR_OVERDUE_VIEW_MIGRATION : MAR_BASE_SCHEMA_MIGRATION;
   if (isMissingSchemaObjectError(error)) {
     throw new Error(
       `${buildMissingSchemaMessage({
         objectName,
-        migration: MAR_SCHEMA_MIGRATION
+        migration
       })} Original error: ${toSupabaseErrorMessage(error)}`
     );
   }
@@ -218,6 +231,12 @@ function normalizeGenerationWindow(startDate?: string | null, endDate?: string |
   return { startDate: start, endDate: end };
 }
 
+function isDateWithinMedicationWindow(dateValue: string, startDate?: string | null, endDate?: string | null) {
+  if (startDate && compareDate(startDate, dateValue) > 0) return false;
+  if (endDate && compareDate(endDate, dateValue) < 0) return false;
+  return true;
+}
+
 function readField(record: Record<string, unknown>, keys: string[]): unknown {
   for (const key of keys) {
     if (Object.prototype.hasOwnProperty.call(record, key)) {
@@ -250,7 +269,8 @@ async function resolveMarMemberId(memberId: string, actionLabel: string, service
 }
 
 async function getActiveSignedOrders(input?: { memberId?: string | null; serviceRole?: boolean }) {
-  const supabase = await createClient({ serviceRole: input?.serviceRole });
+  const serviceRole = input?.serviceRole ?? true;
+  const supabase = await createClient({ serviceRole });
   let query = supabase
     .from("physician_orders")
     .select("id, member_id")
@@ -355,6 +375,7 @@ function mapMarTodayRow(row: Record<string, unknown>): MarTodayRow | null {
     marScheduleId,
     memberId,
     memberName,
+    memberPhotoUrl: clean(row.member_photo_url),
     pofMedicationId,
     medicationName,
     dose: clean(row.dose),
@@ -380,7 +401,8 @@ export async function syncPofMedicationsFromSignedOrder(input: {
   physicianOrderId: string;
   serviceRole?: boolean;
 }) {
-  const supabase = await createClient({ serviceRole: input.serviceRole });
+  const serviceRole = input.serviceRole ?? true;
+  const supabase = await createClient({ serviceRole });
   const { data, error } = await supabase
     .from("physician_orders")
     .select(
@@ -461,12 +483,13 @@ export async function generateMarSchedulesForMember(input: {
   endDate?: string | null;
   serviceRole?: boolean;
 }) {
-  const memberId = await resolveMarMemberId(input.memberId, "generateMarSchedulesForMember", input.serviceRole);
+  const serviceRole = input.serviceRole ?? true;
+  const memberId = await resolveMarMemberId(input.memberId, "generateMarSchedulesForMember", serviceRole);
   const { startDate, endDate } = normalizeGenerationWindow(input.startDate, input.endDate);
   const { startIso, endIso } = toIsoBounds(startDate, endDate);
-  const supabase = await createClient({ serviceRole: input.serviceRole });
+  const supabase = await createClient({ serviceRole });
 
-  const activeOrders = await getActiveSignedOrders({ memberId, serviceRole: input.serviceRole });
+  const activeOrders = await getActiveSignedOrders({ memberId, serviceRole });
   const activeOrderIds = activeOrders.map((row) => row.id);
 
   if (activeOrderIds.length === 0) {
@@ -504,7 +527,7 @@ export async function generateMarSchedulesForMember(input: {
   }
 
   await Promise.all(
-    activeOrderIds.map((orderId) => syncPofMedicationsFromSignedOrder({ physicianOrderId: orderId, serviceRole: input.serviceRole }))
+    activeOrderIds.map((orderId) => syncPofMedicationsFromSignedOrder({ physicianOrderId: orderId, serviceRole }))
   );
 
   const { data: pofRows, error: pofRowsError } = await supabase
@@ -515,6 +538,7 @@ export async function generateMarSchedulesForMember(input: {
     .eq("member_id", memberId)
     .eq("active", true)
     .eq("given_at_center", true)
+    .eq("prn", false)
     .in("physician_order_id", activeOrderIds);
   if (pofRowsError) throwMarSupabaseError(pofRowsError, "pof_medications");
   const medicationRows = (pofRows ?? []) as PofMedicationRow[];
@@ -636,8 +660,9 @@ export async function generateMarSchedulesForMember(input: {
 }
 
 export async function syncTodayMarSchedules(options?: { serviceRole?: boolean }) {
+  const serviceRole = options?.serviceRole ?? true;
   const today = toEasternDate();
-  const activeOrders = await getActiveSignedOrders({ serviceRole: options?.serviceRole });
+  const activeOrders = await getActiveSignedOrders({ serviceRole });
   const memberIds = Array.from(new Set(activeOrders.map((row) => row.member_id)));
   await Promise.all(
     memberIds.map((memberId) =>
@@ -645,7 +670,7 @@ export async function syncTodayMarSchedules(options?: { serviceRole?: boolean })
         memberId,
         startDate: today,
         endDate: today,
-        serviceRole: options?.serviceRole
+        serviceRole
       })
     )
   );
@@ -656,14 +681,17 @@ export async function getMarWorkflowSnapshot(options?: {
   historyLimit?: number;
   prnLimit?: number;
 }) {
-  await syncTodayMarSchedules({ serviceRole: options?.serviceRole });
+  const serviceRole = options?.serviceRole ?? true;
+  await syncTodayMarSchedules({ serviceRole });
+  const todayDate = toEasternDate();
 
   const historyLimit = Math.max(10, Math.min(options?.historyLimit ?? 200, 500));
   const prnLimit = Math.max(10, Math.min(options?.prnLimit ?? 200, 500));
-  const supabase = await createClient({ serviceRole: options?.serviceRole });
+  const supabase = await createClient({ serviceRole });
 
   const [
     { data: todayRowsRaw, error: todayError },
+    { data: overdueRowsRaw, error: overdueError },
     { data: notGivenRowsRaw, error: notGivenError },
     { data: historyRowsRaw, error: historyError },
     { data: prnRowsRaw, error: prnError },
@@ -673,16 +701,18 @@ export async function getMarWorkflowSnapshot(options?: {
     activeOrdersResult
   ] = await Promise.all([
     supabase.from("v_mar_today").select("*").order("scheduled_time", { ascending: true }),
+    supabase.from("v_mar_overdue_today").select("*").order("scheduled_time", { ascending: true }),
     supabase.from("v_mar_not_given_today").select("*").order("administered_at", { ascending: false }),
     supabase.from("v_mar_administration_history").select("*").order("administered_at", { ascending: false }).limit(historyLimit),
     supabase.from("v_mar_prn_log").select("*").order("administered_at", { ascending: false }).limit(prnLimit),
     supabase.from("v_mar_prn_given_awaiting_outcome").select("*").order("administered_at", { ascending: false }).limit(prnLimit),
     supabase.from("v_mar_prn_effective").select("*").order("administered_at", { ascending: false }).limit(prnLimit),
     supabase.from("v_mar_prn_ineffective").select("*").order("administered_at", { ascending: false }).limit(prnLimit),
-    getActiveSignedOrders({ serviceRole: options?.serviceRole })
+    getActiveSignedOrders({ serviceRole })
   ]);
 
   if (todayError) throwMarSupabaseError(todayError, "v_mar_today");
+  if (overdueError) throwMarSupabaseError(overdueError, "v_mar_overdue_today");
   if (notGivenError) throwMarSupabaseError(notGivenError, "v_mar_not_given_today");
   if (historyError) throwMarSupabaseError(historyError, "v_mar_administration_history");
   if (prnError) throwMarSupabaseError(prnError, "v_mar_prn_log");
@@ -692,6 +722,9 @@ export async function getMarWorkflowSnapshot(options?: {
 
   const activeOrderIds = activeOrdersResult.map((row) => row.id);
   const today = (todayRowsRaw ?? [])
+    .map((row: unknown) => mapMarTodayRow((row ?? {}) as Record<string, unknown>))
+    .filter((row): row is MarTodayRow => Boolean(row));
+  const overdueToday = (overdueRowsRaw ?? [])
     .map((row: unknown) => mapMarTodayRow((row ?? {}) as Record<string, unknown>))
     .filter((row): row is MarTodayRow => Boolean(row));
   const notGivenToday = (notGivenRowsRaw ?? [])
@@ -718,7 +751,7 @@ export async function getMarWorkflowSnapshot(options?: {
     const [{ data: pofRows, error: pofError }, { data: memberRows, error: memberError }] = await Promise.all([
       supabase
         .from("pof_medications")
-        .select("id, member_id, medication_name, dose, route, prn_instructions")
+        .select("id, member_id, medication_name, dose, route, prn_instructions, start_date, end_date")
         .eq("active", true)
         .eq("given_at_center", true)
         .eq("prn", true)
@@ -732,7 +765,17 @@ export async function getMarWorkflowSnapshot(options?: {
       (memberRows ?? []).map((row: { id: string; display_name: string }) => [row.id, row.display_name] as const)
     );
     prnMedicationOptions = (pofRows ?? [])
-      .map((row: { id: string; member_id: string; medication_name: string; dose: string | null; route: string | null; prn_instructions: string | null }) => ({
+      .filter((row: { start_date: string | null; end_date: string | null }) =>
+        isDateWithinMedicationWindow(todayDate, row.start_date, row.end_date)
+      )
+      .map((row: {
+        id: string;
+        member_id: string;
+        medication_name: string;
+        dose: string | null;
+        route: string | null;
+        prn_instructions: string | null;
+      }) => ({
         pofMedicationId: row.id,
         memberId: row.member_id,
         memberName: memberNameById.get(row.member_id) ?? "Member",
@@ -748,8 +791,26 @@ export async function getMarWorkflowSnapshot(options?: {
       });
   }
 
+  const memberIdsForPhotos = Array.from(new Set([...today.map((row) => row.memberId), ...overdueToday.map((row) => row.memberId)]));
+  if (memberIdsForPhotos.length > 0) {
+    const { data: photoRows, error: photoError } = await supabase
+      .from("member_command_centers")
+      .select("member_id, profile_image_url")
+      .in("member_id", memberIdsForPhotos);
+    if (photoError) throwMarSupabaseError(photoError, "member_command_centers");
+
+    const photoByMemberId = toMemberPhotoLookup((photoRows ?? []) as MemberPhotoRow[]);
+    today.forEach((row) => {
+      row.memberPhotoUrl = photoByMemberId.get(row.memberId) ?? null;
+    });
+    overdueToday.forEach((row) => {
+      row.memberPhotoUrl = photoByMemberId.get(row.memberId) ?? null;
+    });
+  }
+
   return {
     today,
+    overdueToday,
     notGivenToday,
     history,
     prnLog,
@@ -840,6 +901,7 @@ export async function documentScheduledMarAdministration(input: {
     .select("id")
     .single();
   if (insertError) throwMarSupabaseError(insertError, "mar_administrations");
+  if (!inserted?.id) throw new Error("Unable to save scheduled MAR administration.");
 
   return {
     administrationId: inserted.id as string,
@@ -925,6 +987,7 @@ export async function documentPrnMarAdministration(input: {
     .select("id")
     .single();
   if (insertError) throwMarSupabaseError(insertError, "mar_administrations");
+  if (!inserted?.id) throw new Error("Unable to save PRN MAR administration.");
 
   return {
     administrationId: inserted.id as string,
@@ -980,6 +1043,7 @@ export async function documentPrnOutcomeAssessment(input: {
     .select("id")
     .single();
   if (updateError) throwMarSupabaseError(updateError, "mar_administrations");
+  if (!updated?.id) throw new Error("Unable to save PRN outcome documentation.");
 
   return {
     administrationId: updated.id as string,

@@ -14,10 +14,11 @@ export default async function MarWorkflowPage() {
   let snapshot: Awaited<ReturnType<typeof getMarWorkflowSnapshot>> | null = null;
   let loadError: string | null = null;
   try {
-    snapshot = await getMarWorkflowSnapshot({ historyLimit: 250, prnLimit: 250 });
+    snapshot = await getMarWorkflowSnapshot({ historyLimit: 250, prnLimit: 250, serviceRole: true });
   } catch (error) {
     loadError = error instanceof Error ? error.message : "Unable to load MAR workflow.";
   }
+  const isSchemaDependencyError = Boolean(loadError && loadError.toLowerCase().includes("missing supabase schema object"));
 
   return (
     <div className="space-y-4">
@@ -38,13 +39,14 @@ export default async function MarWorkflowPage() {
 
       {loadError ? (
         <Card>
-          <CardTitle>MAR Schema Dependency Missing</CardTitle>
+          <CardTitle>{isSchemaDependencyError ? "MAR Schema Dependency Missing" : "Unable to Load MAR Workflow"}</CardTitle>
           <p className="mt-1 text-sm text-danger">{loadError}</p>
         </Card>
       ) : snapshot ? (
         <MarWorkflowBoard
           canDocument={canDocument}
           todayRows={snapshot.today}
+          overdueRows={snapshot.overdueToday}
           notGivenRows={snapshot.notGivenToday}
           historyRows={snapshot.history}
           prnRows={snapshot.prnLog}

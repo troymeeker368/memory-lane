@@ -1,4 +1,5 @@
 import type { ReportDateRange } from "@/lib/services/report-date-range";
+import { canonicalLeadStage, canonicalLeadStatus } from "@/lib/canonical";
 import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
@@ -593,8 +594,8 @@ export async function getOnDemandReportData(input: {
     if (error) throw new Error(error.message);
     const stageCounts = new Map<string, { total: number; won: number; lost: number }>();
     (data ?? []).forEach((row: any) => {
-      const stage = String(row.stage ?? "Unknown");
-      const status = String(row.status ?? "").toLowerCase();
+      const stage = canonicalLeadStage(String(row.stage ?? "Inquiry"));
+      const status = canonicalLeadStatus(String(row.status ?? "Open"), stage).toLowerCase();
       const current = stageCounts.get(stage) ?? { total: 0, won: 0, lost: 0 };
       current.total += 1;
       if (status === "won") current.won += 1;

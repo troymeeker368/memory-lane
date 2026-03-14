@@ -17,6 +17,10 @@ function isInvalidUuidFilterError(message: string) {
   return message.toLowerCase().includes("invalid input syntax for type uuid");
 }
 
+function isStackDepthLimitError(message: string | null | undefined) {
+  return /stack depth limit exceeded/i.test(String(message ?? ""));
+}
+
 function summarizePunches(punches: { punch_type: "in" | "out"; punch_at: string }[]) {
   const ordered = [...punches].sort((a, b) => (a.punch_at > b.punch_at ? 1 : -1));
   let total = 0;
@@ -80,7 +84,19 @@ export async function getMemberDetail(
   const canViewCarePlans = canAccessCarePlansForRole(normalizedRole);
   const staffUserId = scope?.staffUserId ?? null;
 
-  const [
+  const loadMemberRelations = async (client: Awaited<ReturnType<typeof createClient>>) =>
+    Promise.all([
+      client.from("daily_activity_logs").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
+      client.from("toilet_logs").select("*").eq("member_id", canonicalMemberId).order("event_at", { ascending: false }),
+      client.from("shower_logs").select("*").eq("member_id", canonicalMemberId).order("event_at", { ascending: false }),
+      client.from("transportation_logs").select("*").eq("member_id", canonicalMemberId).order("service_date", { ascending: false }),
+      client.from("blood_sugar_logs").select("*").eq("member_id", canonicalMemberId).order("checked_at", { ascending: false }),
+      client.from("ancillary_charge_logs").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
+      client.from("intake_assessments").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
+      client.from("member_photo_uploads").select("*").eq("member_id", canonicalMemberId).order("uploaded_at", { ascending: false })
+    ]);
+
+  let [
     dailyActivitiesResult,
     toiletsResult,
     showersResult,
@@ -89,16 +105,32 @@ export async function getMemberDetail(
     ancillaryResult,
     assessmentsResult,
     photosResult
-  ] = await Promise.all([
-    supabase.from("daily_activity_logs").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
-    supabase.from("toilet_logs").select("*").eq("member_id", canonicalMemberId).order("event_at", { ascending: false }),
-    supabase.from("shower_logs").select("*").eq("member_id", canonicalMemberId).order("event_at", { ascending: false }),
-    supabase.from("transportation_logs").select("*").eq("member_id", canonicalMemberId).order("service_date", { ascending: false }),
-    supabase.from("blood_sugar_logs").select("*").eq("member_id", canonicalMemberId).order("checked_at", { ascending: false }),
-    supabase.from("ancillary_charge_logs").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
-    supabase.from("intake_assessments").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
-    supabase.from("member_photo_uploads").select("*").eq("member_id", canonicalMemberId).order("uploaded_at", { ascending: false })
-  ]);
+  ] = await loadMemberRelations(supabase);
+
+  const hasStackDepthResult = [
+    dailyActivitiesResult.error?.message,
+    toiletsResult.error?.message,
+    showersResult.error?.message,
+    transportationResult.error?.message,
+    bloodSugarResult.error?.message,
+    ancillaryResult.error?.message,
+    assessmentsResult.error?.message,
+    photosResult.error?.message
+  ].some((message) => isStackDepthLimitError(message));
+
+  if (hasStackDepthResult) {
+    const serviceSupabase = await createClient({ serviceRole: true });
+    [
+      dailyActivitiesResult,
+      toiletsResult,
+      showersResult,
+      transportationResult,
+      bloodSugarResult,
+      ancillaryResult,
+      assessmentsResult,
+      photosResult
+    ] = await loadMemberRelations(serviceSupabase);
+  }
 
   if (dailyActivitiesResult.error) throw new Error(dailyActivitiesResult.error.message);
   if (toiletsResult.error) throw new Error(toiletsResult.error.message);

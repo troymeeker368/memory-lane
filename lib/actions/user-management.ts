@@ -10,7 +10,11 @@ import {
   createManagedUser,
   getManagedUserById,
   resetManagedUserPermissionsToRoleDefaults,
+  resendManagedUserInvite,
+  sendManagedUserInvite,
+  sendManagedUserPasswordReset,
   setManagedUserStatus,
+  setManagedUserLoginDisabled,
   updateManagedUser,
   updateManagedUserPermissions
 } from "@/lib/services/user-management";
@@ -35,7 +39,7 @@ const userSchema = z.object({
 });
 
 async function requireUserManagementAdmin() {
-  await requireRoles(["admin"]);
+  return await requireRoles(["admin"]);
 }
 
 function parseUserFromFormData(formData: FormData) {
@@ -169,4 +173,50 @@ export async function resetManagedUserPermissionsAction(formData: FormData) {
   revalidatePath("/time-hr/user-management");
   revalidatePath(`/time-hr/user-management/${userId}`);
   redirect(`/time-hr/user-management/${userId}/permissions`);
+}
+
+export async function sendManagedUserInviteAction(formData: FormData) {
+  const profile = await requireUserManagementAdmin();
+  const userId = String(formData.get("userId") ?? "").trim();
+  if (!userId) return;
+
+  await sendManagedUserInvite(userId, profile.id);
+
+  revalidatePath("/time-hr/user-management");
+  revalidatePath(`/time-hr/user-management/${userId}`);
+}
+
+export async function resendManagedUserInviteAction(formData: FormData) {
+  const profile = await requireUserManagementAdmin();
+  const userId = String(formData.get("userId") ?? "").trim();
+  if (!userId) return;
+
+  await resendManagedUserInvite(userId, profile.id);
+
+  revalidatePath("/time-hr/user-management");
+  revalidatePath(`/time-hr/user-management/${userId}`);
+}
+
+export async function sendManagedUserResetAction(formData: FormData) {
+  const profile = await requireUserManagementAdmin();
+  const userId = String(formData.get("userId") ?? "").trim();
+  if (!userId) return;
+
+  await sendManagedUserPasswordReset(userId, profile.id);
+
+  revalidatePath("/time-hr/user-management");
+  revalidatePath(`/time-hr/user-management/${userId}`);
+}
+
+export async function toggleManagedUserLoginAccessAction(formData: FormData) {
+  const profile = await requireUserManagementAdmin();
+  const userId = String(formData.get("userId") ?? "").trim();
+  const disabledRaw = String(formData.get("disabled") ?? "").trim().toLowerCase();
+  if (!userId) return;
+
+  const disabled = disabledRaw === "true" || disabledRaw === "1" || disabledRaw === "yes" || disabledRaw === "on";
+  await setManagedUserLoginDisabled(userId, profile.id, disabled);
+
+  revalidatePath("/time-hr/user-management");
+  revalidatePath(`/time-hr/user-management/${userId}`);
 }

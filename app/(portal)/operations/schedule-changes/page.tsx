@@ -7,8 +7,11 @@ import {
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import {
+  ensureMemberAttendanceScheduleSupabase,
+  listMembersSupabase
+} from "@/lib/services/member-command-center-supabase";
 import { listScheduleChangesSupabase, SCHEDULE_WEEKDAY_KEYS } from "@/lib/services/schedule-changes-supabase";
-import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 const CHANGE_TYPES = [
@@ -65,29 +68,17 @@ export default async function OperationsScheduleChangesPage({
   const successMessage = firstString(params.success) ?? "";
   const errorMessage = firstString(params.error) ?? "";
 
-  const supabase = await createClient();
-  const { data: membersData, error: membersError } = await supabase
-    .from("members")
-    .select("id, display_name, status")
-    .order("display_name", { ascending: true });
-  if (membersError) throw new Error(`Unable to load members for schedule changes: ${membersError.message}`);
-  const members = ((membersData ?? []) as Array<{ id: string; display_name: string; status: string }>)
-    .filter((row) => row.status === "active")
-    .sort((left, right) => left.display_name.localeCompare(right.display_name, undefined, { sensitivity: "base" }));
+  const members = await listMembersSupabase({ status: "active" });
   const selectedMemberId = members.some((row) => row.id === requestedMemberId)
     ? requestedMemberId
     : (members[0]?.id ?? "");
-  const [{ data: schedulesData, error: schedulesError }, scheduleChanges] = await Promise.all([
+  const [selectedMemberSchedule, scheduleChanges] = await Promise.all([
     selectedMemberId
-      ? supabase.from("member_attendance_schedules").select("*").eq("member_id", selectedMemberId).maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
+      ? ensureMemberAttendanceScheduleSupabase(selectedMemberId)
+      : Promise.resolve(null),
     listScheduleChangesSupabase({ status: "all", limit: 200 })
   ]);
-  if (schedulesError) throw new Error(`Unable to load member attendance schedule: ${schedulesError.message}`);
-  const memberById = new Map(
-    ((membersData ?? []) as Array<{ id: string; display_name: string; status: string }>).map((row) => [row.id, row] as const)
-  );
-  const selectedMemberSchedule = schedulesData as Record<string, unknown> | null;
+  const memberById = new Map(members.map((row) => [row.id, row] as const));
   const selectedMemberDays = selectedMemberSchedule
     ? SCHEDULE_WEEKDAY_KEYS.filter((day) => Boolean(selectedMemberSchedule[day]))
     : [];

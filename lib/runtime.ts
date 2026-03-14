@@ -1,30 +1,11 @@
-function isExplicitlyTrue(value: string | undefined) {
-  return value?.trim().toLowerCase() === "true";
+function clean(value: string | null | undefined) {
+  const normalized = (value ?? "").trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
-function isExplicitlyFalse(value: string | undefined) {
-  return value?.trim().toLowerCase() === "false";
-}
-
-// Compatibility export:
-// older middleware bundles may still reference these during hot reload.
-export function isAuthBypassEnabled() {
-  const bypassEnv = process.env.NEXT_PUBLIC_ENABLE_AUTH_BYPASS;
-  if (typeof bypassEnv === "string") {
-    return isExplicitlyTrue(bypassEnv);
-  }
-
-  const legacyAuthEnv = process.env.NEXT_PUBLIC_ENABLE_AUTH;
-  if (isExplicitlyFalse(legacyAuthEnv)) {
-    return true;
-  }
-
-  return false;
-}
-
-// Compatibility export for older import paths.
-export function isAuthEnforced() {
-  return !isAuthBypassEnabled();
+function parseBooleanEnv(value: string | null | undefined) {
+  const normalized = clean(value)?.toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
 export function getSupabaseEnv() {
@@ -36,4 +17,37 @@ export function getSupabaseEnv() {
   }
 
   return { url, anonKey };
+}
+
+export function isProductionNodeEnv() {
+  return process.env.NODE_ENV === "production";
+}
+
+export function isDevAuthBypassEnabled() {
+  if (isProductionNodeEnv()) return false;
+  return parseBooleanEnv(process.env.ENABLE_DEV_AUTH_BYPASS);
+}
+
+export function getPublicAppUrl() {
+  const resolved =
+    clean(process.env.NEXT_PUBLIC_APP_URL) ??
+    clean(process.env.APP_URL) ??
+    clean(process.env.NEXT_PUBLIC_SITE_URL) ??
+    clean(process.env.SITE_URL);
+
+  if (!resolved) {
+    throw new Error(
+      "Public app URL is not configured. Set NEXT_PUBLIC_APP_URL (or APP_URL/SITE_URL) so auth links are canonical."
+    );
+  }
+
+  return resolved.replace(/\/+$/, "");
+}
+
+export function getDevAuthBootstrapPassword() {
+  return clean(process.env.DEV_AUTH_BOOTSTRAP_PASSWORD) ?? "SeedDataOnly!123";
+}
+
+export function getDevAuthBootstrapUsersJson() {
+  return clean(process.env.DEV_AUTH_BOOTSTRAP_USERS_JSON);
 }

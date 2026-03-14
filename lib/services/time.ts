@@ -91,13 +91,21 @@ function roleCanSeeAllPunches(role: AppRole) {
   return normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director";
 }
 
-async function loadSupabaseCanonicalPunchRows(input: {
-  staffUserId?: string | null;
-  role?: AppRole;
-  period?: PayPeriod;
-  limit?: number;
-}) {
-  const supabase = await createClient();
+function isStackDepthLimitError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+  return /stack depth limit exceeded/i.test(message);
+}
+
+function buildPunchesQuery(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  input: {
+    staffUserId?: string | null;
+    role?: AppRole;
+    period?: PayPeriod;
+    limit?: number;
+  }
+) {
   let query = supabase
     .from("punches")
     .select("id, employee_id, employee_name, timestamp, type, source, status, note, linked_time_punch_id")
@@ -118,7 +126,23 @@ async function loadSupabaseCanonicalPunchRows(input: {
     query = query.limit(input.limit);
   }
 
-  const { data: punchesData, error: punchesError } = await query;
+  return query;
+}
+
+async function loadSupabaseCanonicalPunchRows(input: {
+  staffUserId?: string | null;
+  role?: AppRole;
+  period?: PayPeriod;
+  limit?: number;
+}) {
+  let supabase = await createClient();
+  let { data: punchesData, error: punchesError } = await buildPunchesQuery(supabase, input);
+  if (punchesError && isStackDepthLimitError(punchesError)) {
+    supabase = await createClient({ serviceRole: true });
+    const retry = await buildPunchesQuery(supabase, input);
+    punchesData = retry.data;
+    punchesError = retry.error;
+  }
   if (punchesError) throw new Error(punchesError.message);
   const punchRows = (punchesData ?? []) as SupabasePunchRow[];
 
@@ -127,10 +151,19 @@ async function loadSupabaseCanonicalPunchRows(input: {
     .filter((value): value is string => Boolean(value));
   const geofenceByLinkedId = new Map<string, { within_fence: boolean; distance_meters: number | null; note: string | null }>();
   if (linkedIds.length > 0) {
-    const { data: geofenceRows, error: geofenceError } = await supabase
+    let { data: geofenceRows, error: geofenceError } = await supabase
       .from("time_punches")
       .select("id, within_fence, distance_meters, note")
       .in("id", linkedIds);
+    if (geofenceError && isStackDepthLimitError(geofenceError)) {
+      const serviceSupabase = await createClient({ serviceRole: true });
+      const retry = await serviceSupabase
+        .from("time_punches")
+        .select("id, within_fence, distance_meters, note")
+        .in("id", linkedIds);
+      geofenceRows = retry.data;
+      geofenceError = retry.error;
+    }
     if (geofenceError) throw new Error(geofenceError.message);
     (geofenceRows ?? []).forEach((row: any) => {
       geofenceByLinkedId.set(String(row.id), {

@@ -2,23 +2,17 @@ import { SalesEnrollmentPacketStandaloneAction } from "@/components/sales/sales-
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
-import { createClient } from "@/lib/supabase/server";
+import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 
 export const dynamic = "force-dynamic";
 
 export default async function SendEnrollmentPacketStandalonePage() {
   await requireModuleAccess("sales");
-  const supabase = await createClient();
-  const [pricingOverview, { data: leadsData, error: leadsError }] = await Promise.all([
+  const [pricingOverview, workflows] = await Promise.all([
     getEnrollmentPricingOverview(),
-    supabase
-      .from("leads")
-      .select("id, member_name, caregiver_email")
-      .order("created_at", { ascending: false })
-      .limit(500)
+    getSalesWorkflows()
   ]);
-  if (leadsError) throw new Error(leadsError.message);
-  const leads = (leadsData ?? []).map((row: any) => ({
+  const leads = workflows.openLeads.slice(0, 500).map((row: any) => ({
     id: String(row.id),
     memberName: String(row.member_name ?? ""),
     caregiverEmail: typeof row.caregiver_email === "string" ? row.caregiver_email : null

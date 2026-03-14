@@ -5,7 +5,7 @@ export async function getClinicalOverview() {
   const supabase = await createClient();
 
   const [marSnapshot, { data: bloodSugar, error: bloodSugarError }] = await Promise.all([
-    getMarWorkflowSnapshot({ historyLimit: 150, prnLimit: 150 }),
+    getMarWorkflowSnapshot({ historyLimit: 150, prnLimit: 150, serviceRole: true }),
     supabase
       .from("v_blood_sugar_logs_detailed")
       .select("id, checked_at, member_name, reading_mg_dl, nurse_name, notes")

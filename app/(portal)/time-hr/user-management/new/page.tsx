@@ -13,7 +13,7 @@ export default async function NewManagedUserPage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <CardTitle>Add User</CardTitle>
-            <p className="mt-1 text-sm text-muted">Create a new app user and assign a baseline role.</p>
+            <p className="mt-1 text-sm text-muted">Create a new app user, assign role access, then send a set-password invite.</p>
           </div>
           <BackArrowButton fallbackHref="/time-hr/user-management" ariaLabel="Back to user list" />
         </div>
