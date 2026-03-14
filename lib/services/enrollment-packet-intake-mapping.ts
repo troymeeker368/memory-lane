@@ -218,6 +218,28 @@ function normalizeTransportationRequired(value: string | null | undefined): bool
   return null;
 }
 
+function toYesLikeBoolean(value: string | null | undefined): boolean | null {
+  const normalized = clean(value)?.toLowerCase();
+  if (!normalized) return null;
+  if (["yes", "y", "true", "1"].includes(normalized)) return true;
+  if (["no", "n", "false", "0"].includes(normalized)) return false;
+  return null;
+}
+
+function impliesAssistance(value: string | null | undefined) {
+  const normalized = clean(value)?.toLowerCase();
+  if (!normalized) return false;
+  if (normalized.includes("independent")) return false;
+  return (
+    normalized.includes("assist") ||
+    normalized.includes("dependent") ||
+    normalized.includes("wheelchair") ||
+    normalized.includes("prompt") ||
+    normalized.includes("transfer") ||
+    normalized.includes("help")
+  );
+}
+
 function attendanceDaysFromRequestedDays(days: string[]) {
   const normalized = new Set(days.map((day) => day.trim().toLowerCase()));
   return {
@@ -925,6 +947,29 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       if (error) throw new Error(error.message);
     }
 
+    const behavioralRiskSelections = payload.behavioralObservations
+      .map((value) => clean(value))
+      .filter((value): value is string => Boolean(value));
+    const medicationDuringDayRequired =
+      toYesLikeBoolean(payload.medicationNeededDuringDay) === true || clean(payload.medicationNamesDuringDay) != null;
+    const oxygenUseRequired =
+      toYesLikeBoolean(payload.oxygenUse) === true ||
+      clean(payload.oxygenFlowRate) != null ||
+      clean(payload.oxygenUse)?.toLowerCase().includes("oxygen") === true;
+    const fallsHistoryYes = toYesLikeBoolean(payload.fallsHistory) === true;
+    const recentFalls = toYesLikeBoolean(payload.fallsWithinLast3Months) === true;
+    const mobilityAssistanceRequired = [
+      payload.adlMobilityLevel,
+      payload.adlTransferLevel,
+      payload.adlToiletingLevel,
+      payload.adlBathingLevel,
+      payload.adlDressingLevel,
+      payload.adlEatingLevel,
+      payload.mobilityTransferStatus,
+      payload.toiletingBathingAssistance,
+      payload.dressingFeedingIndependence
+    ].some((value) => impliesAssistance(value));
+
     const pofPrefillPayload = {
       providerName: clean(payload.pcpName),
       providerPhone: clean(payload.pcpPhone),
@@ -943,6 +988,23 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
         caneWalkerUse: clean(payload.caneWalkerUse),
         wheelchairUse: clean(payload.wheelchairUse)
       },
+      adlSnapshot: {
+        ambulation: clean(payload.adlMobilityLevel),
+        transfers: clean(payload.adlTransferLevel),
+        toileting: clean(payload.adlToiletingLevel),
+        bathing: clean(payload.adlBathingLevel),
+        dressing: clean(payload.adlDressingLevel),
+        eating: clean(payload.adlEatingLevel),
+        continence: clean(payload.adlContinenceLevel)
+      },
+      behavioralRiskSelections,
+      medicationDuringDayRequired,
+      oxygenUseRequired,
+      fallsHistoryYes,
+      recentFalls,
+      mobilityAssistanceRequired,
+      sourceLabel: "Caregiver Provided Intake",
+      caregiverProvidedBy: clean(payload.primaryContactName),
       diagnosisPlaceholders: clean(payload.diagnosisPlaceholders),
       intakeNotes: joinParts([
         clean(payload.intakeClinicalNotes),
@@ -987,7 +1049,18 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       "allergiesSummary",
       "dietaryRestrictions",
       "oxygenUse",
+      "oxygenFlowRate",
+      "medicationNeededDuringDay",
       "medicationNamesDuringDay",
+      "fallsHistory",
+      "fallsWithinLast3Months",
+      "behavioralObservations",
+      "adlMobilityLevel",
+      "adlTransferLevel",
+      "adlToiletingLevel",
+      "adlBathingLevel",
+      "adlDressingLevel",
+      "adlEatingLevel",
       "mobilityTransferStatus",
       "diagnosisPlaceholders",
       "intakeClinicalNotes"

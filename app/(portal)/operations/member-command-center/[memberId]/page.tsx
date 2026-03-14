@@ -360,6 +360,44 @@ export default async function MemberCommandCenterDetailPage({
         />
       </Card>
 
+      {canViewMhpFromMcc && detail.enrollmentPacketIntakeAlert?.reviewRequired ? (
+        <Card className="border-amber-300 bg-amber-50" id="enrollment-intake-alert">
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-amber-900">
+              Enrollment packet completed by caregiver. Review intake details before finalizing MHP.
+            </p>
+            <p className="text-xs text-amber-900">
+              Source: {detail.enrollmentPacketIntakeAlert.sourceLabel}
+              {detail.enrollmentPacketIntakeAlert.caregiverName ? ` | Caregiver: ${detail.enrollmentPacketIntakeAlert.caregiverName}` : ""}
+              {detail.enrollmentPacketIntakeAlert.importedAt ? ` | Completed: ${formatDateTime(detail.enrollmentPacketIntakeAlert.importedAt)}` : ""}
+              {detail.enrollmentPacketIntakeAlert.initiatedByName ? ` | Initiated by: ${detail.enrollmentPacketIntakeAlert.initiatedByName}` : ""}
+            </p>
+            {detail.enrollmentPacketIntakeAlert.riskSignals.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {detail.enrollmentPacketIntakeAlert.riskSignals.map((signal) => (
+                  <span key={signal} className="rounded-full border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-900">
+                    {signal}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-3 text-xs font-semibold">
+              <Link href={`/operations/member-command-center/${detail.member.id}?tab=demographics-contacts`} className="text-brand">
+                View packet in Member Files
+              </Link>
+              <Link href={`/health/physician-orders/new?memberId=${detail.member.id}`} className="text-brand">
+                Review imported data in POF
+              </Link>
+              {canViewMhpFromMcc ? (
+                <Link href={`/health/member-health-profiles/${detail.member.id}`} className="text-brand">
+                  Review MHP imported fields
+                </Link>
+              ) : null}
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
       <Card>
         <div className="flex flex-wrap gap-2">
           {MCC_TABS.map((item) => (

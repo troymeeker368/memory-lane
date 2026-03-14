@@ -1691,6 +1691,8 @@ export async function submitPublicEnrollmentPacket(input: {
     eventType: "Enrollment Packet Completed",
     actorEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
     metadata: {
+      caregiverSignatureName: caregiverTypedName,
+      completedAt: now,
       signatureArtifactMemberFileId: signatureArtifact.memberFileId,
       finalPacketMemberFileId: finalPacketArtifact.memberFileId
     }
@@ -1731,6 +1733,11 @@ export async function submitPublicEnrollmentPacket(input: {
     eventType: "filed",
     actorUserId: request.sender_user_id,
     metadata: {
+      caregiverSignatureName: caregiverTypedName,
+      initiatedByUserId: request.sender_user_id,
+      initiatedByName: senderSignatureName,
+      completedAt: now,
+      filedAt,
       downstreamSystemsUpdated: downstreamMapping.downstreamSystemsUpdated,
       conflictsRequiringReview: downstreamMapping.conflictsRequiringReview,
       mappingRunId: downstreamMapping.mappingRunId
@@ -1774,6 +1781,11 @@ export async function submitPublicEnrollmentPacket(input: {
     metadata: {
       member_id: member.id,
       lead_id: request.lead_id,
+      caregiver_signature_name: caregiverTypedName,
+      initiated_by_user_id: request.sender_user_id,
+      initiated_by_name: senderSignatureName,
+      completed_at: now,
+      filed_at: filedAt,
       status: "filed",
       mapping_run_id: downstreamMapping.mappingRunId,
       downstream_systems_updated: downstreamMapping.downstreamSystemsUpdated,

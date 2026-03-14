@@ -24,6 +24,11 @@ import { generateMarSchedulesForMember, syncPofMedicationsFromSignedOrder } from
 import { type IntakeAssessmentForPofPrefill, mapIntakeAssessmentToPofPrefill } from "@/lib/services/intake-to-pof-mapping";
 import type { IntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
 import { logSystemEvent } from "@/lib/services/system-event-service";
+import {
+  deriveEnrollmentPacketPofRiskSignals,
+  getLatestEnrollmentPacketPofStagingSummary,
+  markEnrollmentPacketPofStagingReviewed
+} from "@/lib/services/enrollment-packet-intake-staging";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export {
@@ -171,6 +176,16 @@ export interface PhysicianOrderOperationalFlags {
   bathroomAssistance: boolean;
 }
 
+export interface EnrollmentPacketPrefillMeta {
+  stagingId: string;
+  packetId: string;
+  sourceLabel: string;
+  importedAt: string | null;
+  caregiverName: string | null;
+  initiatedByName: string | null;
+  riskSignals: string[];
+}
+
 export interface PhysicianOrderForm {
   id: string;
   memberId: string;
@@ -211,6 +226,7 @@ export interface PhysicianOrderForm {
   updatedByUserId: string | null;
   updatedByName: string | null;
   updatedAt: string;
+  enrollmentPacketPrefill: EnrollmentPacketPrefillMeta | null;
 }
 
 export interface PhysicianOrderIndexRow {
@@ -254,8 +270,9 @@ export interface PhysicianOrderSaveInput {
   actor: { id: string; fullName: string };
 }
 
-function clean(value: string | null | undefined) {
-  const normalized = (value ?? "").trim();
+function clean(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
 }
 
@@ -814,7 +831,8 @@ function rowToForm(row: any): PhysicianOrderForm {
     supersededByPofId: row.superseded_by,
     updatedByUserId: row.updated_by_user_id,
     updatedByName: row.updated_by_name,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    enrollmentPacketPrefill: null
   };
 }
 
@@ -929,6 +947,114 @@ export async function getPhysicianOrderById(
   return data ? rowToForm(data) : null;
 }
 
+function setIfBlank(current: string | null | undefined, fallback: unknown) {
+  const currentValue = clean(current);
+  if (currentValue) return currentValue;
+  return clean(fallback);
+}
+
+function payloadBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  const normalized = clean(value)?.toLowerCase();
+  if (!normalized) return null;
+  if (["yes", "y", "true", "1"].includes(normalized)) return true;
+  if (["no", "n", "false", "0"].includes(normalized)) return false;
+  return null;
+}
+
+function payloadStringArray(value: unknown) {
+  if (!Array.isArray(value)) return [] as string[];
+  return value.map((item) => clean(item)).filter((item): item is string => Boolean(item));
+}
+
+function buildEnrollmentPacketRiskNote(prefillPayload: Record<string, unknown>) {
+  const derived = deriveEnrollmentPacketPofRiskSignals(prefillPayload);
+  if (derived.riskSignals.length === 0) return null;
+  return `Caregiver intake flags: ${derived.riskSignals.join(" | ")}`;
+}
+
+function applyEnrollmentPacketPrefillToDraft(input: {
+  careInformation: PhysicianOrderCareInformation;
+  operationalFlags: PhysicianOrderOperationalFlags;
+  prefillPayload: Record<string, unknown>;
+}) {
+  const careInformation = { ...input.careInformation, adlProfile: { ...input.careInformation.adlProfile } };
+  const operationalFlags = { ...input.operationalFlags };
+  const prefill = input.prefillPayload;
+
+  const medicationDuringDayRequired =
+    payloadBoolean(prefill.medicationDuringDayRequired) === true || clean(prefill.medicationsDuringDay) != null;
+  const oxygenUseRequired =
+    payloadBoolean(prefill.oxygenUseRequired) === true ||
+    clean(prefill.oxygenUse) != null ||
+    clean(prefill.oxygenFlowRate) != null;
+  const mobilityAssistanceRequired =
+    payloadBoolean(prefill.mobilityAssistanceRequired) === true || clean(prefill.mobilitySupport) != null;
+
+  if (medicationDuringDayRequired) {
+    careInformation.medAdministrationNurse = true;
+    careInformation.personalCareMedication = true;
+  }
+  if (oxygenUseRequired) {
+    careInformation.breathingOxygenTank = true;
+    careInformation.breathingRoomAir = false;
+    careInformation.breathingOxygenLiters = setIfBlank(careInformation.breathingOxygenLiters, prefill.oxygenFlowRate);
+    operationalFlags.oxygenRequirement = true;
+  }
+  if (mobilityAssistanceRequired) {
+    operationalFlags.bathroomAssistance = true;
+  }
+
+  const adlSnapshot =
+    prefill.adlSnapshot && typeof prefill.adlSnapshot === "object"
+      ? (prefill.adlSnapshot as Record<string, unknown>)
+      : {};
+  careInformation.adlProfile.ambulation = setIfBlank(careInformation.adlProfile.ambulation, adlSnapshot.ambulation);
+  careInformation.adlProfile.transferring = setIfBlank(careInformation.adlProfile.transferring, adlSnapshot.transfers);
+  careInformation.adlProfile.toileting = setIfBlank(careInformation.adlProfile.toileting, adlSnapshot.toileting);
+  careInformation.adlProfile.bathing = setIfBlank(careInformation.adlProfile.bathing, adlSnapshot.bathing);
+  careInformation.adlProfile.dressing = setIfBlank(careInformation.adlProfile.dressing, adlSnapshot.dressing);
+  careInformation.adlProfile.eating = setIfBlank(careInformation.adlProfile.eating, adlSnapshot.eating);
+  careInformation.adlProfile.bladderContinence = setIfBlank(
+    careInformation.adlProfile.bladderContinence,
+    adlSnapshot.continence
+  );
+  careInformation.adlProfile.bowelContinence = setIfBlank(careInformation.adlProfile.bowelContinence, adlSnapshot.continence);
+
+  const adlSupport =
+    prefill.adlSupport && typeof prefill.adlSupport === "object" ? (prefill.adlSupport as Record<string, unknown>) : {};
+  careInformation.adlProfile.toiletingNeeds = setIfBlank(
+    careInformation.adlProfile.toiletingNeeds,
+    adlSupport.toiletingBathingAssistance
+  );
+  careInformation.adlProfile.toiletingComments = setIfBlank(
+    careInformation.adlProfile.toiletingComments,
+    adlSupport.toiletingBathingAssistance
+  );
+
+  const behavioralSelections = payloadStringArray(prefill.behavioralRiskSelections).map((value) => value.toLowerCase());
+  if (behavioralSelections.includes("wandering")) {
+    careInformation.inappropriateBehaviorWanderer = true;
+  }
+  if (behavioralSelections.includes("aggression") || behavioralSelections.includes("agitation")) {
+    careInformation.inappropriateBehaviorAggression = true;
+  }
+  if (behavioralSelections.includes("confusion")) {
+    careInformation.disorientedIntermittently = true;
+  }
+
+  const riskNote = buildEnrollmentPacketRiskNote(prefill);
+  if (riskNote) {
+    const existing = clean(careInformation.orientationProfile.cognitiveBehaviorComments);
+    careInformation.orientationProfile.cognitiveBehaviorComments = existing ? `${existing} | ${riskNote}` : riskNote;
+  }
+
+  return {
+    careInformation,
+    operationalFlags
+  };
+}
+
 export async function buildNewPhysicianOrderDraft(input: {
   memberId: string;
   actor: { id: string; fullName: string; signoffName?: string | null };
@@ -950,6 +1076,24 @@ export async function buildNewPhysicianOrderDraft(input: {
   }
 
   const mapped = latestIntake ? mapIntakeAssessmentToPofPrefill(latestIntake as IntakeAssessmentForPofPrefill) : null;
+  const enrollmentPacketPrefill = await getLatestEnrollmentPacketPofStagingSummary(memberId);
+  const shouldApplyEnrollmentPacketPrefill = Boolean(enrollmentPacketPrefill?.reviewRequired);
+  const baseCareInformation = mapped
+    ? ({ ...defaultCareInformation(), ...mapped.careInformation } as PhysicianOrderCareInformation)
+    : defaultCareInformation();
+  const baseOperationalFlags = mapped
+    ? ({ ...defaultOperationalFlags(), ...mapped.operationalFlags } as PhysicianOrderOperationalFlags)
+    : defaultOperationalFlags();
+  const staged = shouldApplyEnrollmentPacketPrefill
+    ? applyEnrollmentPacketPrefillToDraft({
+        careInformation: baseCareInformation,
+        operationalFlags: baseOperationalFlags,
+        prefillPayload: enrollmentPacketPrefill!.prefillPayload
+      })
+    : {
+        careInformation: baseCareInformation,
+        operationalFlags: baseOperationalFlags
+      };
   const now = toEasternISO();
 
   return {
@@ -971,12 +1115,8 @@ export async function buildNewPhysicianOrderDraft(input: {
     allergies: mapped?.allergyRows.map((row) => row.allergyName) ?? [],
     medications: [],
     standingOrders: [...POF_STANDING_ORDER_OPTIONS],
-    careInformation: mapped
-      ? ({ ...defaultCareInformation(), ...mapped.careInformation } as PhysicianOrderCareInformation)
-      : defaultCareInformation(),
-    operationalFlags: mapped
-      ? ({ ...defaultOperationalFlags(), ...mapped.operationalFlags } as PhysicianOrderOperationalFlags)
-      : defaultOperationalFlags(),
+    careInformation: staged.careInformation,
+    operationalFlags: staged.operationalFlags,
     providerName: clean(input.actor.signoffName) ?? input.actor.fullName,
     providerSignature: clean(input.actor.signoffName) ?? input.actor.fullName,
     providerSignatureDate: null,
@@ -995,7 +1135,18 @@ export async function buildNewPhysicianOrderDraft(input: {
     supersededByPofId: null,
     updatedByUserId: input.actor.id,
     updatedByName: input.actor.fullName,
-    updatedAt: now
+    updatedAt: now,
+    enrollmentPacketPrefill: shouldApplyEnrollmentPacketPrefill
+      ? {
+          stagingId: enrollmentPacketPrefill!.stagingId,
+          packetId: enrollmentPacketPrefill!.packetId,
+          sourceLabel: enrollmentPacketPrefill!.sourceLabel,
+          importedAt: enrollmentPacketPrefill!.importedAt,
+          caregiverName: enrollmentPacketPrefill!.caregiverName,
+          initiatedByName: enrollmentPacketPrefill!.initiatedByName,
+          riskSignals: enrollmentPacketPrefill!.riskSignals
+        }
+      : null
   };
 }
 
@@ -1213,6 +1364,11 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
     }
     const saved = await getPhysicianOrderById(existing.id);
     if (!saved) throw new Error("Unable to load saved physician order.");
+    await markEnrollmentPacketPofStagingReviewed({
+      memberId: canonicalMemberId,
+      actorUserId: input.actor.id,
+      actorName: input.actor.fullName
+    });
     return saved;
   }
 
@@ -1238,6 +1394,11 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
   }
   const saved = await getPhysicianOrderById(data.id);
   if (!saved) throw new Error("Unable to load saved physician order.");
+  await markEnrollmentPacketPofStagingReviewed({
+    memberId: canonicalMemberId,
+    actorUserId: input.actor.id,
+    actorName: input.actor.fullName
+  });
   return saved;
 }
 

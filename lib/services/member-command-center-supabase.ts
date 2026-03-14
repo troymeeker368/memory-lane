@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans-supabase";
+import { getLatestEnrollmentPacketPofStagingSummary } from "@/lib/services/enrollment-packet-intake-staging";
 
 export interface MccMemberRow {
   id: string;
@@ -1293,7 +1294,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterDetailSupabase");
   const member = await getMemberSupabase(canonicalMemberId);
   if (!member) return null;
-  const [profile, schedule, contacts, files, busStopDirectory, mhpAllergies, carePlanSummary, carePlans] = await Promise.all([
+  const [profile, schedule, contacts, files, busStopDirectory, mhpAllergies, carePlanSummary, carePlans, enrollmentPacketIntakeAlert] = await Promise.all([
     ensureMemberCommandCenterProfileSupabase(canonicalMemberId),
     ensureMemberAttendanceScheduleSupabase(canonicalMemberId),
     listMemberContactsSupabase(canonicalMemberId),
@@ -1301,7 +1302,8 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     listBusStopDirectorySupabase(),
     listMemberAllergiesSupabase(canonicalMemberId),
     getMemberCarePlanSummary(canonicalMemberId),
-    getCarePlansForMember(canonicalMemberId)
+    getCarePlansForMember(canonicalMemberId),
+    getLatestEnrollmentPacketPofStagingSummary(canonicalMemberId)
   ]);
   const supabase = await createClient();
   const { count, error } = await supabase
@@ -1337,6 +1339,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     assessmentsCount: safeAssessmentsCount,
     carePlansCount: carePlans.length,
     carePlanSummary,
+    enrollmentPacketIntakeAlert,
     age: calculateAgeYears(member.dob),
     monthsEnrolled: calculateMonthsEnrolled(schedule?.enrollment_date ?? member.enrollment_date)
   };

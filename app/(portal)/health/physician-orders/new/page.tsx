@@ -197,6 +197,26 @@ export default async function NewPhysicianOrderPage({
             Prefilled from Intake Assessment: <span className="font-semibold">{draft.intakeAssessmentId}</span>
           </p>
         ) : null}
+        {draft.enrollmentPacketPrefill ? (
+          <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+            <p className="font-semibold">
+              Prefilled from {draft.enrollmentPacketPrefill.sourceLabel}
+              {draft.enrollmentPacketPrefill.importedAt ? ` on ${formatDateTime(draft.enrollmentPacketPrefill.importedAt)}` : ""}.
+            </p>
+            <p>
+              Review these caregiver-provided intake values before sending the physician order.
+              {draft.enrollmentPacketPrefill.caregiverName ? ` Caregiver: ${draft.enrollmentPacketPrefill.caregiverName}.` : ""}
+              {draft.enrollmentPacketPrefill.initiatedByName
+                ? ` Packet initiated by: ${draft.enrollmentPacketPrefill.initiatedByName}.`
+                : ""}
+            </p>
+            {draft.enrollmentPacketPrefill.riskSignals.length > 0 ? (
+              <p className="mt-1">
+                Flags: <span className="font-semibold">{draft.enrollmentPacketPrefill.riskSignals.join(" | ")}</span>
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {editing ? (
           <p className="mt-1 text-xs text-muted">
             Status: {editing.status} | Created by {editing.createdByName} on {formatDateTime(editing.createdAt)}

@@ -5,6 +5,10 @@ import {
   getMemberHealthProfileIndexSupabase,
   type MhpTab
 } from "@/lib/services/member-health-profiles-supabase";
+import { mapCodeStatusToDnr } from "@/lib/services/intake-pof-shared";
+import { updateMemberHealthProfileByMemberIdSupabase } from "@/lib/services/member-health-profiles-write-supabase";
+import { createClient } from "@/lib/supabase/server";
+import { toEasternISO } from "@/lib/timezone";
 
 export { MHP_TABS, type MhpTab };
 
@@ -23,13 +27,85 @@ export async function getMemberHealthProfileDetail(memberId: string) {
   return getMemberHealthProfileDetailSupabase(memberId);
 }
 
-export async function prefillMemberHealthProfileFromAssessment(_input: {
+function clean(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function toNullableUuid(value: string | null | undefined) {
+  const normalized = clean(value);
+  if (!normalized) return null;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)
+    ? normalized
+    : null;
+}
+
+function combineText(parts: Array<string | null | undefined>, separator = " | ") {
+  const joined = parts
+    .map((part) => clean(part))
+    .filter((part): part is string => Boolean(part))
+    .join(separator);
+  return joined.length > 0 ? joined : null;
+}
+
+export async function prefillMemberHealthProfileFromAssessment(input: {
   memberId: string;
   assessmentId: string;
   actorUserId: string;
   actorName: string;
 }) {
-  throw new Error(
-    "Prefill from assessment now requires Supabase intake-to-health-profile mapping. TODO schema dependency: public.intake_assessments + normalized MHP mapping table."
-  );
+  const supabase = await createClient();
+  const { data: assessment, error } = await supabase
+    .from("intake_assessments")
+    .select(
+      "id, member_id, assessment_date, code_status, diet_type, diet_other, diet_restrictions_notes, mobility_aids, assistive_devices, incontinence_products, emotional_wellness_notes, social_triggers, orientation_notes, health_lately, joy_sparks, notes, personal_notes, falls_history, signed_at"
+    )
+    .eq("id", input.assessmentId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!assessment) throw new Error("Assessment not found.");
+  if (String(assessment.member_id) !== input.memberId) {
+    throw new Error("Assessment/member mismatch.");
+  }
+
+  const sourceAssessmentAt =
+    clean(String(assessment.signed_at ?? "")) ??
+    (clean(String(assessment.assessment_date ?? "")) ? `${String(assessment.assessment_date)}T12:00:00.000Z` : null) ??
+    toEasternISO();
+
+  return updateMemberHealthProfileByMemberIdSupabase({
+    memberId: input.memberId,
+    patch: {
+      source_assessment_id: input.assessmentId,
+      source_assessment_at: sourceAssessmentAt,
+      code_status: clean(String(assessment.code_status ?? "")),
+      dnr: mapCodeStatusToDnr(clean(String(assessment.code_status ?? ""))),
+      diet_type: clean(String(assessment.diet_type ?? "")),
+      dietary_restrictions: combineText([
+        String(assessment.diet_restrictions_notes ?? ""),
+        String(assessment.diet_other ?? "")
+      ]),
+      mobility_aids: combineText([
+        String(assessment.mobility_aids ?? ""),
+        String(assessment.assistive_devices ?? "")
+      ], ", "),
+      incontinence_products: clean(String(assessment.incontinence_products ?? "")),
+      falls_history: clean(String(assessment.falls_history ?? "")),
+      mental_health_history: combineText([
+        String(assessment.emotional_wellness_notes ?? ""),
+        String(assessment.social_triggers ?? "")
+      ]),
+      communication_style: clean(String(assessment.orientation_notes ?? "")),
+      physical_health_problems: clean(String(assessment.health_lately ?? "")),
+      joy_sparks: combineText([String(assessment.joy_sparks ?? ""), String(assessment.personal_notes ?? "")]),
+      intake_notes: clean(String(assessment.notes ?? "")),
+      important_alerts: combineText([
+        String(assessment.health_lately ?? ""),
+        String(assessment.notes ?? "")
+      ]),
+      updated_by_user_id: toNullableUuid(input.actorUserId),
+      updated_by_name: clean(input.actorName),
+      updated_at: toEasternISO()
+    }
+  });
 }

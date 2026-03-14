@@ -39,7 +39,7 @@ This document defines canonical ownership boundaries by domain so implementation
 - `lib/services/mar-shared.ts`
   - Shared MAR enums/types for administration status integrity.
 - `lib/services/member-profile-sync.ts`
-  - Cross-profile sync boundary (MHP -> MCC path implemented; reverse path currently intentionally blocked).
+  - Cross-profile sync boundary for MHP <-> MCC synchronization and POF-driven profile cascade orchestration.
 
 ## Domain Ownership
 
@@ -89,6 +89,7 @@ This document defines canonical ownership boundaries by domain so implementation
 - Canonical services:
   - `lib/services/enrollment-packets.ts`
   - `lib/services/enrollment-packet-intake-mapping.ts`
+  - `lib/services/enrollment-packet-intake-staging.ts`
   - `lib/services/enrollment-packet-intake-payload.ts`
   - `lib/services/enrollment-packet-public-schema.ts`
 - Key workflows:
@@ -96,6 +97,7 @@ This document defines canonical ownership boundaries by domain so implementation
   - caregiver public progress save
   - caregiver signature submit
   - packet filing + downstream mapping
+  - staging review queue for downstream POF/MHP/MCC prefill
 - Upstream dependencies:
   - Leads
   - Members
@@ -256,6 +258,7 @@ This document defines canonical ownership boundaries by domain so implementation
   - Members
   - MHP for selected sync fields
   - Intake-derived metadata
+  - Enrollment packet intake staging alerts
 - Downstream consumers:
   - Attendance / Transportation operations
   - Billing calculations
@@ -481,6 +484,8 @@ This document defines canonical ownership boundaries by domain so implementation
   - Leads + Members + System Events
 - Enrollment Packet completion/finalization
   - Enrollment Packets + Member Files + MCC/MHP/POF staging + Notifications + Lead Activities
+- Enrollment Packet staging review and prefill consumption
+  - Enrollment Packets + POF draft creation + MCC awareness surfaces + System Events
 - Intake completion/sign
   - Intake + Member Files (signature artifacts) + POF draft creation path
 - POF signing
@@ -611,4 +616,3 @@ Lifecycle notes:
 - Public token flow logic outside canonical service boundaries.
 - New schema dependencies without forward-only migrations.
 - Runtime mock/in-memory/file-backed persistence in production paths.
-
