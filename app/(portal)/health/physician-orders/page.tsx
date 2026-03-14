@@ -25,37 +25,26 @@ export default async function PhysicianOrdersIndexPage({
   const q = firstString(query.q) ?? "";
 
   let canonicalMemberId = memberId;
-  let loadError: string | null = null;
   if (memberId) {
-    try {
-      const canonical = await resolveCanonicalMemberRef(
-        {
-          sourceType: "member",
-          memberId,
-          selectedId: memberId
-        },
-        { actionLabel: "PhysicianOrdersIndexPage" }
-      );
-      canonicalMemberId = canonical.memberId ?? "";
-    } catch (error) {
-      canonicalMemberId = "";
-      loadError = error instanceof Error ? error.message : "Invalid member identity filter.";
-    }
+    const canonical = await resolveCanonicalMemberRef(
+      {
+        sourceType: "member",
+        memberId,
+        selectedId: memberId
+      },
+      { actionLabel: "PhysicianOrdersIndexPage" }
+    );
+    canonicalMemberId = canonical.memberId ?? "";
   }
 
-  let rows: Awaited<ReturnType<typeof getPhysicianOrders>> = [];
-  try {
-    rows = await getPhysicianOrders({
-      memberId: canonicalMemberId || undefined,
-      status:
-        status === "Draft" || status === "Sent" || status === "Signed" || status === "Expired" || status === "Superseded"
-          ? status
-          : "all",
-      q
-    });
-  } catch (error) {
-    loadError = loadError ?? (error instanceof Error ? error.message : "Unable to load physician orders.");
-  }
+  const rows = await getPhysicianOrders({
+    memberId: canonicalMemberId || undefined,
+    status:
+      status === "Draft" || status === "Sent" || status === "Signed" || status === "Expired" || status === "Superseded"
+        ? status
+        : "all",
+    q
+  });
   const supabase = await createClient();
   const { data: memberRows, error: memberRowsError } = await supabase
     .from("members")
@@ -128,7 +117,6 @@ export default async function PhysicianOrdersIndexPage({
             </Link>
           </div>
         </form>
-        {loadError ? <p className="mt-2 text-xs font-semibold text-rose-700">{loadError}</p> : null}
         <p className="mt-2 text-xs text-muted">Total: {rows.length}</p>
       </Card>
 

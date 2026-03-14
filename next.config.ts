@@ -20,7 +20,6 @@ const nextConfig: NextConfig = {
         "**/.git/**",
         "**/.next/**",
         "**/node_modules/**",
-        "**/.mock-state/**",
         "**/uploads/**",
         "**/imports/**",
         "**/*.xlsx",

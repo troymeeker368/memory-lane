@@ -3,11 +3,9 @@ import Link from "next/link";
 import Image from "next/image";
 
 import { getCurrentProfile } from "@/lib/auth";
-import { DevRoleSwitcher } from "@/components/dev-role-switcher";
 import { PortalNav } from "@/components/portal-nav";
 import { SignOutForm } from "@/components/sign-out-form";
 import { GlobalTablePaginator } from "@/components/ui/global-table-paginator";
-import { getDevRoleOverrideFromEnv, isDevelopmentMode } from "@/lib/runtime";
 import { countUnreadUserNotificationsForUser } from "@/lib/services/notifications";
 
 export default async function PortalLayout({
@@ -16,8 +14,6 @@ export default async function PortalLayout({
   children: React.ReactNode;
 }) {
   const profile = await getCurrentProfile();
-  const showDevRoleSwitcher = isDevelopmentMode();
-  const envRoleOverride = getDevRoleOverrideFromEnv();
   const unreadNotifications = await countUnreadUserNotificationsForUser(profile.id);
 
   return (
@@ -46,11 +42,6 @@ export default async function PortalLayout({
             <p className="text-sm font-semibold text-brand">Memory Lane</p>
             <p className="text-xs text-muted">Operations Portal</p>
           </div>
-          <DevRoleSwitcher
-            currentRole={profile.role}
-            enabled={showDevRoleSwitcher}
-            envRoleOverride={envRoleOverride}
-          />
           <div className="flex items-center gap-3">
             <Link href="/notifications" className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-brand hover:bg-slate-50">
               Notifications{unreadNotifications > 0 ? ` (${unreadNotifications})` : ""}

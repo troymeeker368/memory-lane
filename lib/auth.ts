@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import type { AppRole, ModuleKey, PermissionModuleKey, UserProfile } from "@/types/app";
@@ -13,15 +12,6 @@ import {
   PERMISSION_MODULES,
   resolveEffectivePermissionSet
 } from "@/lib/permissions";
-import {
-  DEV_ROLE_COOKIE_KEY,
-  LEGACY_DEV_ROLE_COOKIE_KEY,
-  getAuthBypassRole,
-  getDevRoleOverrideFromEnv,
-  isAuthBypassEnabled,
-  isDevelopmentMode,
-  resolveDevRoleOverride
-} from "@/lib/runtime";
 import { getManagedUserById } from "@/lib/services/user-management";
 import { createClient } from "@/lib/supabase/server";
 
@@ -55,71 +45,7 @@ export async function getSession() {
   return user;
 }
 
-async function getDevRoleOverride(): Promise<AppRole | null> {
-  const envRoleOverride = getDevRoleOverrideFromEnv();
-  if (envRoleOverride) {
-    return envRoleOverride;
-  }
-
-  if (!isDevelopmentMode()) {
-    return null;
-  }
-
-  const cookieStore = await cookies();
-  const cookieRoleValue =
-    cookieStore.get(DEV_ROLE_COOKIE_KEY)?.value ??
-    cookieStore.get(LEGACY_DEV_ROLE_COOKIE_KEY)?.value ??
-    null;
-
-  return resolveDevRoleOverride(cookieRoleValue);
-}
-
 export async function getCurrentProfile(): Promise<UserProfile> {
-  if (isAuthBypassEnabled()) {
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY;
-    if (!serviceRoleKey) {
-      throw new Error(
-        "Auth bypass mode is enabled, but SUPABASE_SERVICE_ROLE_KEY is missing. Set it before using bypass mode."
-      );
-    }
-
-    const bypassClient = await createClient({ serviceRole: true });
-    const { data: profileRows, error: profileLookupError } = await bypassClient
-      .from("profiles")
-      .select("id, email, full_name, role, active, staff_id")
-      .eq("active", true)
-      .limit(1);
-
-    if (profileLookupError) {
-      throw new Error(
-        `Auth bypass mode is enabled, but profile lookup failed: ${profileLookupError.message}`
-      );
-    }
-
-    const devRoleOverride = await getDevRoleOverride();
-    const effectiveRole = devRoleOverride ?? getAuthBypassRole();
-    const permissions = resolveEffectivePermissionSet({
-      role: effectiveRole,
-      hasCustomPermissions: false,
-      customPermissions: null
-    });
-
-    if (Array.isArray(profileRows) && profileRows.length > 0) {
-      const profile = profileRows[0];
-      return {
-        ...(profile as Omit<UserProfile, "permissions">),
-        role: effectiveRole,
-        permissions,
-        has_custom_permissions: false,
-        permission_source: getPermissionSource(false)
-      };
-    }
-
-    throw new Error(
-      "Auth bypass mode is enabled, but no active profile rows were found in public.profiles. Seed/create an active profile row or disable bypass."
-    );
-  }
-
   const supabase = await createClient();
   const {
     data: { user }
@@ -148,8 +74,6 @@ export async function getCurrentProfile(): Promise<UserProfile> {
   }
 
   const role = normalizeRoleKey(data.role as AppRole);
-  const devRoleOverride = await getDevRoleOverride();
-  const effectiveRole = devRoleOverride ?? role;
   let hasCustomPermissions = false;
   let customPermissions = null;
 
@@ -183,20 +107,18 @@ export async function getCurrentProfile(): Promise<UserProfile> {
     }, {} as UserProfile["permissions"]);
   }
 
-  const effectiveHasCustomPermissions = devRoleOverride ? false : hasCustomPermissions;
-  const effectiveCustomPermissions = devRoleOverride ? null : customPermissions;
   const permissions = resolveEffectivePermissionSet({
-    role: effectiveRole,
-    hasCustomPermissions: effectiveHasCustomPermissions,
-    customPermissions: effectiveCustomPermissions
+    role,
+    hasCustomPermissions,
+    customPermissions
   });
 
   return {
     ...(data as Omit<UserProfile, "permissions">),
-    role: effectiveRole,
+    role,
     permissions,
-    has_custom_permissions: effectiveHasCustomPermissions,
-    permission_source: getPermissionSource(effectiveHasCustomPermissions)
+    has_custom_permissions: hasCustomPermissions,
+    permission_source: getPermissionSource(hasCustomPermissions)
   };
 }
 

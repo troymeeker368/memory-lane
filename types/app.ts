@@ -7,7 +7,7 @@ export type CanonicalAppRole =
   | "director"
   | "admin";
 
-// Keep legacy "staff" compatibility for persisted mock state and older cookies.
+// Keep legacy "staff" compatibility for existing persisted role data.
 export type AppRole = CanonicalAppRole | "staff";
 
 export type NavGroup = "Documentation" | "Operations" | "Reports" | "Time & HR" | "Sales Activities" | "Health Unit";

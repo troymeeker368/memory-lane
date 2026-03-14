@@ -10,6 +10,7 @@ import {
   type MarWorkflowSnapshot
 } from "@/lib/services/mar-shared";
 import { createClient } from "@/lib/supabase/server";
+import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export { MAR_NOT_GIVEN_REASON_OPTIONS, MAR_PRN_OUTCOME_OPTIONS };
@@ -72,6 +73,41 @@ type MarAdministrationLinkRow = {
 const TIME_24H_PATTERN = /^(\d{1,2}):(\d{2})$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_GENERATION_DAYS = 45;
+const MAR_SCHEMA_MIGRATION = "0028_pof_seeded_mar_workflow.sql";
+
+type MarSchemaObjectName =
+  | "pof_medications"
+  | "mar_schedules"
+  | "mar_administrations"
+  | "v_mar_today"
+  | "v_mar_not_given_today"
+  | "v_mar_administration_history"
+  | "v_mar_prn_log"
+  | "v_mar_prn_given_awaiting_outcome"
+  | "v_mar_prn_effective"
+  | "v_mar_prn_ineffective";
+
+function toSupabaseErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") return "Unknown Supabase error.";
+  const candidate = error as { message?: string };
+  if (typeof candidate.message === "string" && candidate.message.trim().length > 0) {
+    return candidate.message;
+  }
+  return "Unknown Supabase error.";
+}
+
+function throwMarSupabaseError(error: unknown, objectName: MarSchemaObjectName) {
+  if (!error) return;
+  if (isMissingSchemaObjectError(error)) {
+    throw new Error(
+      `${buildMissingSchemaMessage({
+        objectName,
+        migration: MAR_SCHEMA_MIGRATION
+      })} Original error: ${toSupabaseErrorMessage(error)}`
+    );
+  }
+  throw new Error(toSupabaseErrorMessage(error));
+}
 
 function clean(value: unknown): string | null {
   const normalized = typeof value === "string" ? value.trim() : "";
@@ -414,7 +450,7 @@ export async function syncPofMedicationsFromSignedOrder(input: {
   const { error: upsertError } = await supabase
     .from("pof_medications")
     .upsert(upsertRows, { onConflict: "physician_order_id,source_medication_id" });
-  if (upsertError) throw new Error(upsertError.message);
+  if (upsertError) throwMarSupabaseError(upsertError, "pof_medications");
 
   return { synced: upsertRows.length };
 }
@@ -441,7 +477,7 @@ export async function generateMarSchedulesForMember(input: {
       .eq("active", true)
       .gte("scheduled_time", startIso)
       .lte("scheduled_time", endIso);
-    if (scheduleError) throw new Error(scheduleError.message);
+    if (scheduleError) throwMarSupabaseError(scheduleError, "mar_schedules");
 
     const activeScheduleIds = (scheduleRows ?? []).map((row: { id: string }) => row.id);
     if (activeScheduleIds.length > 0) {
@@ -449,7 +485,7 @@ export async function generateMarSchedulesForMember(input: {
         .from("mar_administrations")
         .select("mar_schedule_id")
         .in("mar_schedule_id", activeScheduleIds);
-      if (documentedError) throw new Error(documentedError.message);
+      if (documentedError) throwMarSupabaseError(documentedError, "mar_administrations");
 
       const documentedIds = new Set(
         (documentedRows ?? [])
@@ -459,7 +495,7 @@ export async function generateMarSchedulesForMember(input: {
       const idsToDeactivate = activeScheduleIds.filter((id) => !documentedIds.has(id));
       if (idsToDeactivate.length > 0) {
         const { error: deactivateError } = await supabase.from("mar_schedules").update({ active: false }).in("id", idsToDeactivate);
-        if (deactivateError) throw new Error(deactivateError.message);
+        if (deactivateError) throwMarSupabaseError(deactivateError, "mar_schedules");
       }
       return { inserted: 0, reactivated: 0, deactivated: idsToDeactivate.length };
     }
@@ -480,7 +516,7 @@ export async function generateMarSchedulesForMember(input: {
     .eq("active", true)
     .eq("given_at_center", true)
     .in("physician_order_id", activeOrderIds);
-  if (pofRowsError) throw new Error(pofRowsError.message);
+  if (pofRowsError) throwMarSupabaseError(pofRowsError, "pof_medications");
   const medicationRows = (pofRows ?? []) as PofMedicationRow[];
 
   const expectedRows = medicationRows.flatMap((medication) => {
@@ -524,7 +560,7 @@ export async function generateMarSchedulesForMember(input: {
     .eq("member_id", memberId)
     .gte("scheduled_time", startIso)
     .lte("scheduled_time", endIso);
-  if (existingRowsError) throw new Error(existingRowsError.message);
+  if (existingRowsError) throwMarSupabaseError(existingRowsError, "mar_schedules");
 
   const schedules = (existingRows ?? []) as MarScheduleRow[];
   const scheduleByKey = new Map<string, MarScheduleRow>();
@@ -541,7 +577,7 @@ export async function generateMarSchedulesForMember(input: {
       .from("mar_administrations")
       .select("mar_schedule_id")
       .in("mar_schedule_id", existingScheduleIds);
-    if (documentedError) throw new Error(documentedError.message);
+    if (documentedError) throwMarSupabaseError(documentedError, "mar_administrations");
     (documentedRows ?? []).forEach((row: MarAdministrationLinkRow) => {
       const scheduleId = clean(row.mar_schedule_id);
       if (scheduleId) documentedIds.add(scheduleId);
@@ -558,7 +594,7 @@ export async function generateMarSchedulesForMember(input: {
   if (rowsToInsert.length > 0) {
     const { error: insertError } = await supabase.from("mar_schedules").insert(rowsToInsert);
     if (insertError && insertError.code !== "23505") {
-      throw new Error(insertError.message);
+      throwMarSupabaseError(insertError, "mar_schedules");
     }
   }
 
@@ -574,7 +610,7 @@ export async function generateMarSchedulesForMember(input: {
 
   if (idsToReactivate.length > 0) {
     const { error: reactivateError } = await supabase.from("mar_schedules").update({ active: true }).in("id", idsToReactivate);
-    if (reactivateError) throw new Error(reactivateError.message);
+    if (reactivateError) throwMarSupabaseError(reactivateError, "mar_schedules");
   }
 
   const idsToDeactivate = schedules
@@ -589,7 +625,7 @@ export async function generateMarSchedulesForMember(input: {
 
   if (idsToDeactivate.length > 0) {
     const { error: deactivateError } = await supabase.from("mar_schedules").update({ active: false }).in("id", idsToDeactivate);
-    if (deactivateError) throw new Error(deactivateError.message);
+    if (deactivateError) throwMarSupabaseError(deactivateError, "mar_schedules");
   }
 
   return {
@@ -646,13 +682,13 @@ export async function getMarWorkflowSnapshot(options?: {
     getActiveSignedOrders({ serviceRole: options?.serviceRole })
   ]);
 
-  if (todayError) throw new Error(todayError.message);
-  if (notGivenError) throw new Error(notGivenError.message);
-  if (historyError) throw new Error(historyError.message);
-  if (prnError) throw new Error(prnError.message);
-  if (prnAwaitingError) throw new Error(prnAwaitingError.message);
-  if (prnEffectiveError) throw new Error(prnEffectiveError.message);
-  if (prnIneffectiveError) throw new Error(prnIneffectiveError.message);
+  if (todayError) throwMarSupabaseError(todayError, "v_mar_today");
+  if (notGivenError) throwMarSupabaseError(notGivenError, "v_mar_not_given_today");
+  if (historyError) throwMarSupabaseError(historyError, "v_mar_administration_history");
+  if (prnError) throwMarSupabaseError(prnError, "v_mar_prn_log");
+  if (prnAwaitingError) throwMarSupabaseError(prnAwaitingError, "v_mar_prn_given_awaiting_outcome");
+  if (prnEffectiveError) throwMarSupabaseError(prnEffectiveError, "v_mar_prn_effective");
+  if (prnIneffectiveError) throwMarSupabaseError(prnIneffectiveError, "v_mar_prn_ineffective");
 
   const activeOrderIds = activeOrdersResult.map((row) => row.id);
   const today = (todayRowsRaw ?? [])
@@ -689,7 +725,7 @@ export async function getMarWorkflowSnapshot(options?: {
         .in("physician_order_id", activeOrderIds),
       supabase.from("members").select("id, display_name").in("id", Array.from(new Set(activeOrdersResult.map((row) => row.member_id))))
     ]);
-    if (pofError) throw new Error(pofError.message);
+    if (pofError) throwMarSupabaseError(pofError, "pof_medications");
     if (memberError) throw new Error(memberError.message);
 
     const memberNameById = new Map(
@@ -755,7 +791,7 @@ export async function documentScheduledMarAdministration(input: {
     .select("id, member_id, pof_medication_id, medication_name, dose, route, scheduled_time")
     .eq("id", input.marScheduleId)
     .maybeSingle();
-  if (scheduleError) throw new Error(scheduleError.message);
+  if (scheduleError) throwMarSupabaseError(scheduleError, "mar_schedules");
   if (!scheduleRowData) throw new Error("MAR schedule not found.");
 
   const scheduleRow = scheduleRowData as {
@@ -773,7 +809,7 @@ export async function documentScheduledMarAdministration(input: {
     .select("id")
     .eq("mar_schedule_id", input.marScheduleId)
     .maybeSingle();
-  if (existingAdministrationError) throw new Error(existingAdministrationError.message);
+  if (existingAdministrationError) throwMarSupabaseError(existingAdministrationError, "mar_administrations");
   if (existingAdministration?.id) {
     throw new Error("This MAR dose has already been documented.");
   }
@@ -803,7 +839,7 @@ export async function documentScheduledMarAdministration(input: {
     })
     .select("id")
     .single();
-  if (insertError) throw new Error(insertError.message);
+  if (insertError) throwMarSupabaseError(insertError, "mar_administrations");
 
   return {
     administrationId: inserted.id as string,
@@ -832,7 +868,7 @@ export async function documentPrnMarAdministration(input: {
     .select("id, physician_order_id, member_id, medication_name, dose, route, active, given_at_center, prn")
     .eq("id", input.pofMedicationId)
     .maybeSingle();
-  if (medicationError) throw new Error(medicationError.message);
+  if (medicationError) throwMarSupabaseError(medicationError, "pof_medications");
   if (!medicationData) throw new Error("Selected PRN medication was not found.");
 
   const medication = medicationData as {
@@ -888,7 +924,7 @@ export async function documentPrnMarAdministration(input: {
     })
     .select("id")
     .single();
-  if (insertError) throw new Error(insertError.message);
+  if (insertError) throwMarSupabaseError(insertError, "mar_administrations");
 
   return {
     administrationId: inserted.id as string,
@@ -919,7 +955,7 @@ export async function documentPrnOutcomeAssessment(input: {
     .select("id, member_id, source, status")
     .eq("id", input.administrationId)
     .maybeSingle();
-  if (existingError) throw new Error(existingError.message);
+  if (existingError) throwMarSupabaseError(existingError, "mar_administrations");
   if (!existingData) throw new Error("PRN administration entry not found.");
 
   const existing = existingData as {
@@ -943,7 +979,7 @@ export async function documentPrnOutcomeAssessment(input: {
     .eq("id", input.administrationId)
     .select("id")
     .single();
-  if (updateError) throw new Error(updateError.message);
+  if (updateError) throwMarSupabaseError(updateError, "mar_administrations");
 
   return {
     administrationId: updated.id as string,

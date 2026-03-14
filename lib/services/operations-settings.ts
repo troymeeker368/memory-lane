@@ -28,6 +28,29 @@ const DEFAULT_OPERATIONAL_SETTINGS: OperationalSettings = {
 const OPERATIONAL_SETTINGS_MISSING_TABLE_ERROR =
   "Missing Supabase table public.operations_settings. Required columns: id text primary key, bus_numbers text[] not null, makeup_policy text not null, late_pickup_grace_start_time text not null, late_pickup_first_window_minutes integer not null, late_pickup_first_window_fee_cents integer not null, late_pickup_additional_per_minute_cents integer not null, late_pickup_additional_minutes_cap integer not null, created_at timestamptz not null default now(), updated_at timestamptz not null default now().";
 
+const OPERATIONAL_SETTINGS_SELECT_COLUMNS =
+  "id, bus_numbers, makeup_policy, late_pickup_grace_start_time, late_pickup_first_window_minutes, late_pickup_first_window_fee_cents, late_pickup_additional_per_minute_cents, late_pickup_additional_minutes_cap";
+
+function defaultOperationalSettingsRow() {
+  return {
+    id: "default",
+    bus_numbers: [...DEFAULT_OPERATIONAL_SETTINGS.busNumbers],
+    makeup_policy: DEFAULT_OPERATIONAL_SETTINGS.makeupPolicy,
+    late_pickup_grace_start_time: DEFAULT_OPERATIONAL_SETTINGS.latePickupRules.graceStartTime,
+    late_pickup_first_window_minutes: DEFAULT_OPERATIONAL_SETTINGS.latePickupRules.firstWindowMinutes,
+    late_pickup_first_window_fee_cents: DEFAULT_OPERATIONAL_SETTINGS.latePickupRules.firstWindowFeeCents,
+    late_pickup_additional_per_minute_cents: DEFAULT_OPERATIONAL_SETTINGS.latePickupRules.additionalPerMinuteCents,
+    late_pickup_additional_minutes_cap: DEFAULT_OPERATIONAL_SETTINGS.latePickupRules.additionalMinutesCap
+  };
+}
+
+function throwOperationalSettingsError(error: { code?: string; message: string }): never {
+  if (error.code === "42P01") {
+    throw new Error(OPERATIONAL_SETTINGS_MISSING_TABLE_ERROR);
+  }
+  throw new Error(error.message);
+}
+
 function normalizeBusNumbers(values: string[]) {
   const normalized = Array.from(
     new Set(
@@ -73,25 +96,24 @@ export async function getOperationalSettings(): Promise<OperationalSettings> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("operations_settings")
-    .select(
-      "id, bus_numbers, makeup_policy, late_pickup_grace_start_time, late_pickup_first_window_minutes, late_pickup_first_window_fee_cents, late_pickup_additional_per_minute_cents, late_pickup_additional_minutes_cap"
-    )
+    .select(OPERATIONAL_SETTINGS_SELECT_COLUMNS)
     .eq("id", "default")
     .maybeSingle();
 
   if (error) {
-    if ((error as { code?: string }).code === "42P01") {
-      throw new Error(OPERATIONAL_SETTINGS_MISSING_TABLE_ERROR);
-    }
-    throw new Error(error.message);
+    throwOperationalSettingsError(error as { code?: string; message: string });
   }
 
   if (!data) {
-    return {
-      ...DEFAULT_OPERATIONAL_SETTINGS,
-      busNumbers: [...DEFAULT_OPERATIONAL_SETTINGS.busNumbers],
-      latePickupRules: { ...DEFAULT_OPERATIONAL_SETTINGS.latePickupRules }
-    };
+    const { data: created, error: createError } = await supabase
+      .from("operations_settings")
+      .upsert(defaultOperationalSettingsRow(), { onConflict: "id" })
+      .select(OPERATIONAL_SETTINGS_SELECT_COLUMNS)
+      .single();
+    if (createError) {
+      throwOperationalSettingsError(createError as { code?: string; message: string });
+    }
+    return normalizeSettingsRow(created);
   }
 
   return normalizeSettingsRow(data);
@@ -137,10 +159,7 @@ export async function updateOperationalSettings(input: {
   );
 
   if (error) {
-    if ((error as { code?: string }).code === "42P01") {
-      throw new Error(OPERATIONAL_SETTINGS_MISSING_TABLE_ERROR);
-    }
-    throw new Error(error.message);
+    throwOperationalSettingsError(error as { code?: string; message: string });
   }
 
   return next;

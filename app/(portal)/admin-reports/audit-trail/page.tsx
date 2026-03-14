@@ -12,9 +12,12 @@ function parseDetails(details: unknown) {
   if (typeof details === "string") {
     try {
       const parsed = JSON.parse(details);
-      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-    } catch {
-      return {};
+      if (parsed && typeof parsed === "object") {
+        return parsed as Record<string, unknown>;
+      }
+      throw new Error("Audit detail payload must deserialize to an object.");
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : "Invalid audit detail payload.");
     }
   }
   return {};

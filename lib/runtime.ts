@@ -1,43 +1,3 @@
-import type { AppRole } from "../types/app";
-import { normalizeRoleKey } from "./permissions";
-
-const APP_ROLE_VALUES: AppRole[] = ["program-assistant", "coordinator", "nurse", "sales", "manager", "director", "admin", "staff"];
-const DEV_OVERRIDE_ROLE_VALUES: AppRole[] = [
-  "program-assistant",
-  "coordinator",
-  "nurse",
-  "manager",
-  "director",
-  "admin"
-];
-
-export const DEV_ROLE_COOKIE_KEY = "ml_dev_role";
-export const DEV_ROLE_STORAGE_KEY = "memory_lane_dev_role";
-export const LEGACY_DEV_ROLE_COOKIE_KEY = "ml_mock_role";
-
-export function isAppRole(value: string | null | undefined): value is AppRole {
-  return Boolean(value && APP_ROLE_VALUES.includes(value as AppRole));
-}
-
-export function hasSupabaseEnv() {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-}
-
-export function isDevelopmentMode() {
-  return process.env.NODE_ENV !== "production";
-}
-
-export function resolveDevRoleOverride(value: string | null | undefined): AppRole | null {
-  if (!value) return null;
-  const normalizedRole = normalizeRoleKey(value);
-  return DEV_OVERRIDE_ROLE_VALUES.includes(normalizedRole) ? normalizedRole : null;
-}
-
-export function getDevRoleOverrideFromEnv(): AppRole | null {
-  if (!isDevelopmentMode()) return null;
-  return resolveDevRoleOverride(process.env.DEV_ROLE_OVERRIDE);
-}
-
 function isExplicitlyTrue(value: string | undefined) {
   return value?.trim().toLowerCase() === "true";
 }
@@ -46,14 +6,14 @@ function isExplicitlyFalse(value: string | undefined) {
   return value?.trim().toLowerCase() === "false";
 }
 
+// Compatibility export:
+// older middleware bundles may still reference these during hot reload.
 export function isAuthBypassEnabled() {
   const bypassEnv = process.env.NEXT_PUBLIC_ENABLE_AUTH_BYPASS;
   if (typeof bypassEnv === "string") {
     return isExplicitlyTrue(bypassEnv);
   }
 
-  // Backwards compatibility:
-  // historically NEXT_PUBLIC_ENABLE_AUTH=false implied bypass mode.
   const legacyAuthEnv = process.env.NEXT_PUBLIC_ENABLE_AUTH;
   if (isExplicitlyFalse(legacyAuthEnv)) {
     return true;
@@ -62,13 +22,9 @@ export function isAuthBypassEnabled() {
   return false;
 }
 
+// Compatibility export for older import paths.
 export function isAuthEnforced() {
   return !isAuthBypassEnabled();
-}
-
-export function getAuthBypassRole(): AppRole {
-  const envRole = process.env.NEXT_PUBLIC_AUTH_BYPASS_ROLE as AppRole | undefined;
-  return isAppRole(envRole) ? normalizeRoleKey(envRole) : "admin";
 }
 
 export function getSupabaseEnv() {

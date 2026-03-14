@@ -2,14 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import type { SetAllCookies } from "@supabase/ssr";
 
-import { getSupabaseEnv, isAuthEnforced } from "../runtime";
+import { getSupabaseEnv } from "../runtime";
 
 export async function updateSession(request: NextRequest) {
-  if (!isAuthEnforced()) {
-    // Explicit auth bypass mode: skip auth redirects.
-    return NextResponse.next({ request });
-  }
-
   const { url, anonKey } = getSupabaseEnv();
 
   const response = NextResponse.next({ request });

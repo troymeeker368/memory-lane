@@ -11,7 +11,13 @@ export default async function MarWorkflowPage() {
   const profile = await requireModuleAccess("health");
   const canDocument =
     profile.role === "admin" || profile.role === "nurse" || profile.role === "manager" || profile.role === "director";
-  const snapshot = await getMarWorkflowSnapshot({ historyLimit: 250, prnLimit: 250 });
+  let snapshot: Awaited<ReturnType<typeof getMarWorkflowSnapshot>> | null = null;
+  let loadError: string | null = null;
+  try {
+    snapshot = await getMarWorkflowSnapshot({ historyLimit: 250, prnLimit: 250 });
+  } catch (error) {
+    loadError = error instanceof Error ? error.message : "Unable to load MAR workflow.";
+  }
 
   return (
     <div className="space-y-4">
@@ -30,17 +36,24 @@ export default async function MarWorkflowPage() {
         </div>
       </Card>
 
-      <MarWorkflowBoard
-        canDocument={canDocument}
-        todayRows={snapshot.today}
-        notGivenRows={snapshot.notGivenToday}
-        historyRows={snapshot.history}
-        prnRows={snapshot.prnLog}
-        prnAwaitingOutcomeRows={snapshot.prnAwaitingOutcome}
-        prnEffectiveRows={snapshot.prnEffective}
-        prnIneffectiveRows={snapshot.prnIneffective}
-        prnMedicationOptions={snapshot.prnMedicationOptions}
-      />
+      {loadError ? (
+        <Card>
+          <CardTitle>MAR Schema Dependency Missing</CardTitle>
+          <p className="mt-1 text-sm text-danger">{loadError}</p>
+        </Card>
+      ) : snapshot ? (
+        <MarWorkflowBoard
+          canDocument={canDocument}
+          todayRows={snapshot.today}
+          notGivenRows={snapshot.notGivenToday}
+          historyRows={snapshot.history}
+          prnRows={snapshot.prnLog}
+          prnAwaitingOutcomeRows={snapshot.prnAwaitingOutcome}
+          prnEffectiveRows={snapshot.prnEffective}
+          prnIneffectiveRows={snapshot.prnIneffective}
+          prnMedicationOptions={snapshot.prnMedicationOptions}
+        />
+      ) : null}
     </div>
   );
 }

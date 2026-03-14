@@ -18,6 +18,7 @@ import {
 import { mapEnrollmentPacketToDownstream } from "@/lib/services/enrollment-packet-intake-mapping";
 import { createUserNotification } from "@/lib/services/notifications";
 import { resolveEnrollmentPricingForRequestedDays } from "@/lib/services/enrollment-pricing";
+import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -346,6 +347,20 @@ function isRowFoundError(error: unknown) {
   return code === "PGRST116";
 }
 
+function throwEnrollmentPacketSchemaError(error: unknown, objectName: string) {
+  if (isMissingSchemaObjectError(error)) {
+    throw new Error(
+      buildMissingSchemaMessage({
+        objectName,
+        migration: "0027_enrollment_packet_intake_mapping.sql"
+      })
+    );
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  throw new Error(message);
+}
+
 async function uploadToStorage(input: {
   objectPath: string;
   bytes: Buffer;
@@ -412,7 +427,7 @@ async function loadPacketFields(packetId: string) {
     .select("*")
     .eq("packet_id", packetId)
     .maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) throwEnrollmentPacketSchemaError(error, "enrollment_packet_fields");
   return (data as EnrollmentPacketFieldsRow | null) ?? null;
 }
 
@@ -803,7 +818,7 @@ export async function sendEnrollmentPacketRequest(input: {
     created_at: now,
     updated_at: now
   });
-  if (fieldsError) throw new Error(fieldsError.message);
+  if (fieldsError) throwEnrollmentPacketSchemaError(fieldsError, "enrollment_packet_fields");
 
   const { error: signatureError } = await admin.from("enrollment_packet_signatures").insert({
     packet_id: requestId,
@@ -1098,7 +1113,22 @@ async function insertUploadAndFile(input: {
     member_file_id: memberFileId,
     uploaded_at: toEasternISO()
   });
-  if (error) throw new Error(error.message);
+  if (error) {
+    const text = String(error.message ?? "").toLowerCase();
+    if (
+      text.includes("enrollment_packet_uploads_upload_category_check") ||
+      text.includes("upload_category") ||
+      isMissingSchemaObjectError(error)
+    ) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "enrollment_packet_uploads",
+          migration: "0027_enrollment_packet_intake_mapping.sql"
+        })
+      );
+    }
+    throw new Error(error.message);
+  }
   return { storageUri, memberFileId };
 }
 
@@ -1192,7 +1222,7 @@ export async function savePublicEnrollmentPacketProgress(input: {
       updated_at: now
     })
     .eq("packet_id", context.request.id);
-  if (fieldsError) throw new Error(fieldsError.message);
+  if (fieldsError) throwEnrollmentPacketSchemaError(fieldsError, "enrollment_packet_fields");
 
   const adminReq = createSupabaseAdminClient();
   const { data: progressRow, error: progressError } = await adminReq
