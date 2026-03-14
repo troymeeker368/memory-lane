@@ -11,7 +11,8 @@ type SeedModule = "sales" | "intake" | "attendance";
 const VALID_MODULES: SeedModule[] = ["sales", "intake", "attendance"];
 const SITE_ID = "11111111-1111-4111-8111-111111111111";
 const BATCH_SIZE = 250;
-const TARGET_MEMBER_COUNT = 10;
+const TARGET_MEMBER_COUNT = 15;
+const TARGET_LEAD_COUNT = 15;
 const WEEKDAY_OPTIONS = ["monday", "tuesday", "wednesday", "thursday", "friday"] as const;
 const LEGACY_DEPENDENCY_TABLES = new Set(["pay_periods", "time_punches"]);
 
@@ -363,10 +364,34 @@ function buildIntakeCascade(db: SeededDb, staffMap: Map<string, string>) {
 }
 
 function withMemberCohort(db: SeededDb) {
+  const today = asDateOnly(new Date().toISOString(), "2026-01-01") as string;
   const activeMembers = db.members.filter((row) => row.status === "active");
   const inactiveMembers = db.members.filter((row) => row.status !== "active");
-  const activeTarget = Math.min(Math.max(10, TARGET_MEMBER_COUNT - 2), activeMembers.length);
-  const selectedMembers = [...activeMembers.slice(0, activeTarget), ...inactiveMembers.slice(0, TARGET_MEMBER_COUNT - activeTarget)];
+  const selectedBaseMembers = [...activeMembers, ...inactiveMembers].slice(0, TARGET_MEMBER_COUNT);
+  const selectedMembers = selectedBaseMembers.map((member, idx) => {
+    const normalizedEnrollment = member.enrollment_date ?? addDays(today, -(90 + idx * 6));
+    if (idx < Math.max(0, TARGET_MEMBER_COUNT - 3)) {
+      return {
+        ...member,
+        status: "active" as const,
+        enrollment_date: normalizedEnrollment,
+        discharge_date: null,
+        discharge_reason: null,
+        discharge_disposition: null,
+        discharged_by: null
+      };
+    }
+    const dischargeDate = addDays(today, -(12 + idx * 3));
+    return {
+      ...member,
+      status: "inactive" as const,
+      enrollment_date: normalizedEnrollment,
+      discharge_date: dischargeDate,
+      discharge_reason: idx % 2 === 0 ? "Higher Level of Care" : "Family Choice",
+      discharge_disposition: idx % 2 === 0 ? "Skilled Nursing Transition" : "Home With Family",
+      discharged_by: "Seed Workflow"
+    };
+  });
   const memberIdSet = new Set(selectedMembers.map((row) => row.id));
   const hasMember = (id: string | null | undefined) => Boolean(id && memberIdSet.has(id));
 
@@ -409,6 +434,580 @@ function withMemberCohort(db: SeededDb) {
     memberProviders: db.memberProviders.filter((row) => hasMember(row.member_id)),
     memberEquipment: db.memberEquipment.filter((row) => hasMember(row.member_id)),
     memberNotes: db.memberNotes.filter((row) => hasMember(row.member_id))
+  };
+}
+
+type LeadFlow =
+  | "new-inquiry"
+  | "follow-up-pending"
+  | "tour-scheduled"
+  | "toured"
+  | "packet-sent"
+  | "packet-completed"
+  | "nurture"
+  | "lost"
+  | "converted";
+
+type SeedLeadScenario = {
+  key: string;
+  flow: LeadFlow;
+  stage: string;
+  status: "Open" | "Won" | "Lost" | "Nurture";
+  leadSource: string;
+  likelihood: string;
+  caregiverRelationship: string;
+  preferredSchedule: string;
+  transportationInterest: string;
+  payerInterest: string;
+  summary: string;
+  lostReason?: string | null;
+  convertedMemberOffset?: number;
+};
+
+type SeedLeadPackage = {
+  leads: SeededDb["leads"];
+  leadActivities: SeededDb["leadActivities"];
+  leadStageHistory: SeededDb["leadStageHistory"];
+  partnerActivities: SeededDb["partnerActivities"];
+  memberLeadByMemberId: Map<string, string>;
+};
+
+type SeedLeadActivityStep = {
+  dayOffset: number;
+  activityType: string;
+  outcome: string;
+  notes: string;
+  nextFollowUpType: string | null;
+  nextFollowUpOffset: number | null;
+  lostReason: string | null;
+};
+
+type SeedLeadStageStep = {
+  stage: string;
+  status: "open" | "won" | "lost";
+  dayOffset: number;
+  reason: string;
+};
+
+const SEED_LEAD_SCENARIOS: SeedLeadScenario[] = [
+  {
+    key: "lead-01-new-inquiry",
+    flow: "new-inquiry",
+    stage: "Inquiry",
+    status: "Open",
+    leadSource: "Website",
+    likelihood: "Warm",
+    caregiverRelationship: "Daughter",
+    preferredSchedule: "Mon/Wed/Fri full day",
+    transportationInterest: "Interested in door-to-door transportation.",
+    payerInterest: "Private pay, may apply for VA aid.",
+    summary: "Initial web intake request from caregiver."
+  },
+  {
+    key: "lead-02-follow-up-pending",
+    flow: "follow-up-pending",
+    stage: "Inquiry",
+    status: "Open",
+    leadSource: "Phone",
+    likelihood: "Warm",
+    caregiverRelationship: "Son",
+    preferredSchedule: "Tue/Thu mornings",
+    transportationInterest: "Family transport for now.",
+    payerInterest: "Long-term care policy review pending.",
+    summary: "Requested call-back after physician visit."
+  },
+  {
+    key: "lead-03-tour-scheduled",
+    flow: "tour-scheduled",
+    stage: "Tour",
+    status: "Open",
+    leadSource: "Referral",
+    likelihood: "Hot",
+    caregiverRelationship: "Spouse",
+    preferredSchedule: "Mon-Fri, likely 3 days/week",
+    transportationInterest: "Needs bus stop pickup option.",
+    payerInterest: "Private pay confirmed.",
+    summary: "Tour booked with spouse and daughter."
+  },
+  {
+    key: "lead-04-toured",
+    flow: "toured",
+    stage: "Tour",
+    status: "Open",
+    leadSource: "Hospital/Provider",
+    likelihood: "Hot",
+    caregiverRelationship: "Daughter",
+    preferredSchedule: "Mon/Tue/Thu",
+    transportationInterest: "Transportation needed both ways.",
+    payerInterest: "Family support with supplemental benefits.",
+    summary: "Tour completed and clinical fit appears strong."
+  },
+  {
+    key: "lead-05-packet-sent",
+    flow: "packet-sent",
+    stage: "Enrollment in Progress",
+    status: "Open",
+    leadSource: "Community Event",
+    likelihood: "Hot",
+    caregiverRelationship: "Niece",
+    preferredSchedule: "Mon/Wed/Fri",
+    transportationInterest: "Door-to-door requested due mobility concerns.",
+    payerInterest: "Private pay with respite grant inquiry.",
+    summary: "Enrollment packet sent after successful tour."
+  },
+  {
+    key: "lead-06-packet-completed",
+    flow: "packet-completed",
+    stage: "Enrollment in Progress",
+    status: "Open",
+    leadSource: "Referral",
+    likelihood: "Hot",
+    caregiverRelationship: "Daughter",
+    preferredSchedule: "Tue/Thu/Fri",
+    transportationInterest: "Caregiver requests PM return only.",
+    payerInterest: "Long-term care insurance in progress.",
+    summary: "Packet completed and pending final intake review."
+  },
+  {
+    key: "lead-07-nurture-1",
+    flow: "nurture",
+    stage: "Nurture",
+    status: "Nurture",
+    leadSource: "Google",
+    likelihood: "Warm",
+    caregiverRelationship: "Friend",
+    preferredSchedule: "Considering 2 days/week in summer.",
+    transportationInterest: "Not needed yet.",
+    payerInterest: "Exploring available benefits.",
+    summary: "Family not ready yet, requested monthly follow-up."
+  },
+  {
+    key: "lead-08-nurture-2",
+    flow: "nurture",
+    stage: "Nurture",
+    status: "Nurture",
+    leadSource: "Walk-in",
+    likelihood: "Cold",
+    caregiverRelationship: "Spouse",
+    preferredSchedule: "Undecided",
+    transportationInterest: "Unsure, dependent on move plans.",
+    payerInterest: "Budget review in progress.",
+    summary: "Nurture cadence established for future enrollment."
+  },
+  {
+    key: "lead-09-closed-lost-1",
+    flow: "lost",
+    stage: "Closed - Lost",
+    status: "Lost",
+    leadSource: "Referral",
+    likelihood: "Warm",
+    caregiverRelationship: "Son",
+    preferredSchedule: "Mon-Fri",
+    transportationInterest: "Needed but out-of-area route.",
+    payerInterest: "Price-sensitive decision.",
+    summary: "Lead chose another center closer to home.",
+    lostReason: "Chose competitor"
+  },
+  {
+    key: "lead-10-closed-lost-2",
+    flow: "lost",
+    stage: "Closed - Lost",
+    status: "Lost",
+    leadSource: "Facebook/Instagram",
+    likelihood: "Cold",
+    caregiverRelationship: "Daughter",
+    preferredSchedule: "2 afternoons/week",
+    transportationInterest: "Would require PM pickup only.",
+    payerInterest: "Unable to support private-pay start.",
+    summary: "Family deferred due financial constraints.",
+    lostReason: "Price"
+  },
+  {
+    key: "lead-11-converted-1",
+    flow: "converted",
+    stage: "Closed - Won",
+    status: "Won",
+    leadSource: "Referral",
+    likelihood: "Hot",
+    caregiverRelationship: "Daughter",
+    preferredSchedule: "Mon/Wed/Fri",
+    transportationInterest: "Transportation requested both ways.",
+    payerInterest: "Private pay + family contribution.",
+    summary: "Converted after packet completion and intake approval.",
+    convertedMemberOffset: 0
+  },
+  {
+    key: "lead-12-converted-2",
+    flow: "converted",
+    stage: "Closed - Won",
+    status: "Won",
+    leadSource: "Hospital/Provider",
+    likelihood: "Hot",
+    caregiverRelationship: "Son",
+    preferredSchedule: "Tue/Thu/Fri",
+    transportationInterest: "Door-to-door AM pickup required.",
+    payerInterest: "VA and private-pay blend.",
+    summary: "Converted with discharge planner handoff complete.",
+    convertedMemberOffset: 1
+  },
+  {
+    key: "lead-13-converted-3",
+    flow: "converted",
+    stage: "Closed - Won",
+    status: "Won",
+    leadSource: "Website",
+    likelihood: "Hot",
+    caregiverRelationship: "Spouse",
+    preferredSchedule: "Mon-Thu mornings",
+    transportationInterest: "Family drops off, center returns PM.",
+    payerInterest: "Long-term care plan activated.",
+    summary: "Converted after clinical review and caregiver education.",
+    convertedMemberOffset: 2
+  },
+  {
+    key: "lead-14-converted-4",
+    flow: "converted",
+    stage: "Closed - Won",
+    status: "Won",
+    leadSource: "Community Event",
+    likelihood: "Warm",
+    caregiverRelationship: "Niece",
+    preferredSchedule: "Mon/Wed",
+    transportationInterest: "Bus stop pickup approved.",
+    payerInterest: "Family self-pay arrangement.",
+    summary: "Converted following trial-day completion.",
+    convertedMemberOffset: 3
+  },
+  {
+    key: "lead-15-converted-5",
+    flow: "converted",
+    stage: "Closed - Won",
+    status: "Won",
+    leadSource: "Referral",
+    likelihood: "Hot",
+    caregiverRelationship: "Daughter",
+    preferredSchedule: "Tue/Thu",
+    transportationInterest: "Door-to-door both ways.",
+    payerInterest: "Private pay with billing autopay.",
+    summary: "Converted after final enrollment packet signatures.",
+    convertedMemberOffset: 4
+  }
+];
+
+const SEED_LEAD_PROSPECTS = [
+  { memberName: "Evelyn Archer", memberDob: "1945-06-17", caregiverName: "Monica Archer" },
+  { memberName: "Jerome Baldwin", memberDob: "1939-11-04", caregiverName: "Andre Baldwin" },
+  { memberName: "Patricia Cole", memberDob: "1948-03-23", caregiverName: "Lena Cole" },
+  { memberName: "Robert Denson", memberDob: "1942-01-12", caregiverName: "Isaiah Denson" },
+  { memberName: "Nora Everett", memberDob: "1947-09-27", caregiverName: "Dana Everett" },
+  { memberName: "Louis Freeman", memberDob: "1941-02-03", caregiverName: "Kara Freeman" },
+  { memberName: "Gloria Hines", memberDob: "1940-08-15", caregiverName: "Devin Hines" },
+  { memberName: "Harold Ingram", memberDob: "1938-12-09", caregiverName: "Tasha Ingram" },
+  { memberName: "Clara Jordan", memberDob: "1946-10-30", caregiverName: "Monique Jordan" },
+  { memberName: "Samuel Knox", memberDob: "1943-04-11", caregiverName: "Elijah Knox" }
+];
+
+function seedLeadActivitySteps(flow: LeadFlow, lostReason: string | null): SeedLeadActivityStep[] {
+  if (flow === "new-inquiry") {
+    return [
+      { dayOffset: 0, activityType: "Discovery", outcome: "Inquiry received", notes: "Initial inquiry received and basic needs captured.", nextFollowUpType: "Call", nextFollowUpOffset: 2, lostReason: null },
+      { dayOffset: 2, activityType: "Call", outcome: "Call attempted", notes: "Attempted caregiver callback and left detailed note.", nextFollowUpType: "Voicemail", nextFollowUpOffset: 4, lostReason: null },
+      { dayOffset: 4, activityType: "Voicemail", outcome: "Voicemail left", notes: "Requested preferred time window for consult.", nextFollowUpType: "Call", nextFollowUpOffset: 7, lostReason: null }
+    ];
+  }
+  if (flow === "follow-up-pending") {
+    return [
+      { dayOffset: 0, activityType: "Discovery", outcome: "Inquiry received", notes: "Caregiver asked for callback after specialist appointment.", nextFollowUpType: "Call", nextFollowUpOffset: 2, lostReason: null },
+      { dayOffset: 2, activityType: "Call", outcome: "Call completed", notes: "Discussed clinical profile and trial-day expectations.", nextFollowUpType: "Email", nextFollowUpOffset: 5, lostReason: null },
+      { dayOffset: 5, activityType: "Email", outcome: "Follow-up email sent", notes: "Sent service overview, pricing, and day-program calendar.", nextFollowUpType: "Call", nextFollowUpOffset: 9, lostReason: null }
+    ];
+  }
+  if (flow === "tour-scheduled") {
+    return [
+      { dayOffset: 0, activityType: "Discovery", outcome: "Inquiry received", notes: "Referral intake complete with caregiver details.", nextFollowUpType: "Call", nextFollowUpOffset: 1, lostReason: null },
+      { dayOffset: 1, activityType: "Call", outcome: "Call completed", notes: "Caregiver confirmed transportation and diet questions.", nextFollowUpType: "Tour", nextFollowUpOffset: 4, lostReason: null },
+      { dayOffset: 4, activityType: "Tour", outcome: "Tour scheduled", notes: "Tour booked with caregiver and responsible party.", nextFollowUpType: "Tour", nextFollowUpOffset: 7, lostReason: null }
+    ];
+  }
+  if (flow === "toured") {
+    return [
+      { dayOffset: 0, activityType: "Discovery", outcome: "Inquiry received", notes: "Hospital referral triaged and accepted.", nextFollowUpType: "Tour", nextFollowUpOffset: 4, lostReason: null },
+      { dayOffset: 4, activityType: "Tour", outcome: "Tour scheduled", notes: "On-site tour prepared with clinical and operations leads.", nextFollowUpType: "Tour", nextFollowUpOffset: 8, lostReason: null },
+      { dayOffset: 8, activityType: "Tour", outcome: "Tour completed", notes: "Caregiver attended and reviewed enrollment packet checklist.", nextFollowUpType: "Email", nextFollowUpOffset: 10, lostReason: null },
+      { dayOffset: 10, activityType: "Email", outcome: "Follow-up email sent", notes: "Sent next steps and intake timeline.", nextFollowUpType: "Call", nextFollowUpOffset: 14, lostReason: null }
+    ];
+  }
+  if (flow === "packet-sent") {
+    return [
+      { dayOffset: 0, activityType: "Discovery", outcome: "Inquiry received", notes: "Community event lead triaged same day.", nextFollowUpType: "Tour", nextFollowUpOffset: 4, lostReason: null },
+      { dayOffset: 6, activityType: "Tour", outcome: "Tour completed", notes: "Tour completed with favorable clinical fit.", nextFollowUpType: "Email", nextFollowUpOffset: 8, lostReason: null },
+      { dayOffset: 8, activityType: "Email", outcome: "Enrollment packet sent", notes: "Enrollment packet delivered via secure email.", nextFollowUpType: "Call", nextFollowUpOffset: 11, lostReason: null }
+    ];
+  }
+  if (flow === "packet-completed") {
+    return [
+      { dayOffset: 0, activityType: "Discovery", outcome: "Inquiry received", notes: "Referral lead entered with strong urgency.", nextFollowUpType: "Tour", nextFollowUpOffset: 4, lostReason: null },
+      { dayOffset: 5, activityType: "Tour", outcome: "Tour completed", notes: "Family agreed to begin enrollment workflow.", nextFollowUpType: "Email", nextFollowUpOffset: 7, lostReason: null },
+      { dayOffset: 7, activityType: "Email", outcome: "Enrollment packet sent", notes: "Packet issued with intake and physician-order instructions.", nextFollowUpType: "Follow-up", nextFollowUpOffset: 10, lostReason: null },
+      { dayOffset: 10, activityType: "Follow-up", outcome: "Enrollment packet completed", notes: "Packet returned complete; pending final admission date.", nextFollowUpType: "Call", nextFollowUpOffset: 13, lostReason: null }
+    ];
+  }
+  if (flow === "nurture") {
+    return [
+      { dayOffset: 0, activityType: "Discovery", outcome: "Inquiry received", notes: "Intro call logged and goals reviewed.", nextFollowUpType: "Call", nextFollowUpOffset: 3, lostReason: null },
+      { dayOffset: 3, activityType: "Call", outcome: "Call completed", notes: "Family requested delayed start and ongoing education.", nextFollowUpType: "Email", nextFollowUpOffset: 7, lostReason: null },
+      { dayOffset: 7, activityType: "Email", outcome: "Follow-up email sent", notes: "Nurture resources sent for caregiver planning.", nextFollowUpType: "Call", nextFollowUpOffset: 21, lostReason: null }
+    ];
+  }
+  if (flow === "lost") {
+    return [
+      { dayOffset: 0, activityType: "Discovery", outcome: "Inquiry received", notes: "Lead qualified and added to active follow-up queue.", nextFollowUpType: "Call", nextFollowUpOffset: 2, lostReason: null },
+      { dayOffset: 2, activityType: "Call", outcome: "Call completed", notes: "Reviewed schedule and transportation constraints.", nextFollowUpType: "Tour", nextFollowUpOffset: 5, lostReason: null },
+      { dayOffset: 5, activityType: "Tour", outcome: "Tour completed", notes: "Family toured but remained undecided.", nextFollowUpType: "Follow-up", nextFollowUpOffset: 8, lostReason: null },
+      { dayOffset: 8, activityType: "Follow-up", outcome: "Not interested / closed lost", notes: "Case closed after final caregiver decision.", nextFollowUpType: null, nextFollowUpOffset: null, lostReason }
+    ];
+  }
+  return [
+    { dayOffset: 0, activityType: "Discovery", outcome: "Inquiry received", notes: "Lead accepted for rapid intake workflow.", nextFollowUpType: "Tour", nextFollowUpOffset: 4, lostReason: null },
+    { dayOffset: 4, activityType: "Tour", outcome: "Tour completed", notes: "Tour completed with caregiver and responsible party.", nextFollowUpType: "Email", nextFollowUpOffset: 7, lostReason: null },
+    { dayOffset: 7, activityType: "Email", outcome: "Enrollment packet sent", notes: "Packet sent with intake assessment packet and POF checklist.", nextFollowUpType: "Follow-up", nextFollowUpOffset: 11, lostReason: null },
+    { dayOffset: 11, activityType: "Follow-up", outcome: "Enrollment packet completed", notes: "Packet returned complete and clinically reviewed.", nextFollowUpType: "Call", nextFollowUpOffset: 14, lostReason: null },
+    { dayOffset: 14, activityType: "Discovery", outcome: "Converted to member", notes: "Lead converted and linked to canonical enrolled member.", nextFollowUpType: null, nextFollowUpOffset: null, lostReason: null }
+  ];
+}
+
+function seedLeadStageSteps(flow: LeadFlow, finalStage: string): SeedLeadStageStep[] {
+  if (flow === "converted") {
+    return [
+      { stage: "Inquiry", status: "open", dayOffset: 0, reason: "Inquiry logged." },
+      { stage: "Tour", status: "open", dayOffset: 4, reason: "Tour scheduled and completed." },
+      { stage: "Enrollment in Progress", status: "open", dayOffset: 8, reason: "Enrollment packet workflow started." },
+      { stage: "Closed - Won", status: "won", dayOffset: 15, reason: "Converted to enrolled member." }
+    ];
+  }
+  if (flow === "lost") {
+    return [
+      { stage: "Inquiry", status: "open", dayOffset: 0, reason: "Inquiry logged." },
+      { stage: "Tour", status: "open", dayOffset: 4, reason: "Tour workflow initiated." },
+      { stage: "Closed - Lost", status: "lost", dayOffset: 9, reason: "Lead closed as lost." }
+    ];
+  }
+  if (flow === "packet-sent" || flow === "packet-completed") {
+    return [
+      { stage: "Inquiry", status: "open", dayOffset: 0, reason: "Inquiry logged." },
+      { stage: "Tour", status: "open", dayOffset: 4, reason: "Tour completed." },
+      { stage: "Enrollment in Progress", status: "open", dayOffset: 8, reason: "Enrollment packet workflow in progress." }
+    ];
+  }
+  if (flow === "tour-scheduled" || flow === "toured") {
+    return [
+      { stage: "Inquiry", status: "open", dayOffset: 0, reason: "Inquiry logged." },
+      { stage: "Tour", status: "open", dayOffset: 4, reason: "Tour stage entered." }
+    ];
+  }
+  if (flow === "nurture") {
+    return [
+      { stage: "Inquiry", status: "open", dayOffset: 0, reason: "Inquiry logged." },
+      { stage: "Nurture", status: "open", dayOffset: 7, reason: "Placed in nurture cadence." }
+    ];
+  }
+  return [{ stage: finalStage, status: "open", dayOffset: 0, reason: "Lead opened." }];
+}
+
+function buildLeadSeedPackage(db: SeededDb): SeedLeadPackage {
+  const today = asDateOnly(new Date().toISOString(), "2026-01-01") as string;
+  const salesOwners =
+    db.staff.filter((row) => row.active && ["sales", "admin", "manager", "director"].includes(row.role)) ?? [];
+  const ownerPool = salesOwners.length > 0 ? salesOwners : db.staff;
+  const partnerPool = db.partners.slice(0, 24);
+  const referralPool = db.referralSources.slice(0, 36);
+  const referralsByPartner = new Map<string, SeededDb["referralSources"]>();
+  referralPool.forEach((row) => {
+    referralsByPartner.set(row.partner_id, [...(referralsByPartner.get(row.partner_id) ?? []), row]);
+  });
+
+  const activeMembers = db.members.filter((row) => row.status === "active");
+  const convertedMembers = (activeMembers.length > 0 ? activeMembers : db.members).slice(0, 5);
+  const contactsByMember = new Map<string, SeededDb["memberContacts"]>();
+  db.memberContacts.forEach((row) => {
+    contactsByMember.set(row.member_id, [...(contactsByMember.get(row.member_id) ?? []), row]);
+  });
+
+  const leads: SeededDb["leads"] = [];
+  const leadActivities: SeededDb["leadActivities"] = [];
+  const leadStageHistory: SeededDb["leadStageHistory"] = [];
+  const partnerActivities: SeededDb["partnerActivities"] = [];
+  const memberLeadByMemberId = new Map<string, string>();
+  const scenarios = SEED_LEAD_SCENARIOS.slice(0, TARGET_LEAD_COUNT);
+
+  let prospectCursor = 0;
+  scenarios.forEach((scenario, idx) => {
+    const owner = ownerPool[idx % ownerPool.length] ?? db.staff[0];
+    if (!owner) return;
+
+    const inquiryDate = addDays(today, -(88 - idx * 4));
+    const stageSteps = seedLeadStageSteps(scenario.flow, scenario.stage);
+    const finalStep = stageSteps[stageSteps.length - 1] ?? { dayOffset: 0, stage: scenario.stage, status: "open", reason: "Seed lead stage" };
+    const partnerNeeded =
+      scenario.leadSource === "Referral" ||
+      scenario.leadSource === "Hospital/Provider" ||
+      scenario.leadSource === "Community Event";
+    const partner = partnerNeeded && partnerPool.length > 0 ? partnerPool[idx % partnerPool.length] : null;
+    const partnerReferrals = partner ? referralsByPartner.get(partner.partner_id) ?? [] : [];
+    const referral =
+      partnerNeeded && partnerReferrals.length > 0
+        ? partnerReferrals[idx % partnerReferrals.length]
+        : partnerNeeded && referralPool.length > 0
+          ? referralPool[idx % referralPool.length]
+          : null;
+
+    const convertedMember =
+      scenario.convertedMemberOffset !== undefined && convertedMembers.length > 0
+        ? convertedMembers[scenario.convertedMemberOffset % convertedMembers.length]
+        : null;
+    const fallbackProspect = SEED_LEAD_PROSPECTS[prospectCursor % SEED_LEAD_PROSPECTS.length];
+    if (!convertedMember) {
+      prospectCursor += 1;
+    }
+
+    const memberContacts = convertedMember ? contactsByMember.get(convertedMember.id) ?? [] : [];
+    const primaryContact = memberContacts[0] ?? null;
+    const caregiverName =
+      primaryContact?.contact_name ??
+      (convertedMember ? `Caregiver for ${convertedMember.display_name.split(" ")[0]}` : fallbackProspect.caregiverName);
+    const caregiverEmail =
+      primaryContact?.email ??
+      `${caregiverName.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "") || `caregiver${idx + 1}`}@example.com`;
+    const caregiverPhone =
+      primaryContact?.cellular_number ?? primaryContact?.home_number ?? `803-555-${String(3200 + idx).slice(-4)}`;
+    const memberName = convertedMember?.display_name ?? fallbackProspect.memberName;
+    const memberDob = asDateOnly(convertedMember?.dob ?? fallbackProspect.memberDob, null);
+
+    const leadId = stableUuid(`seed:v2:lead:${scenario.key}`);
+    if (convertedMember) {
+      memberLeadByMemberId.set(convertedMember.id, leadId);
+    }
+
+    const activitySteps = seedLeadActivitySteps(scenario.flow, scenario.lostReason ?? null);
+    const leadCreatedAt = toIsoAt(inquiryDate, 9 + (idx % 4), 10 + ((idx * 7) % 40));
+    const nextFollowUpActivity = [...activitySteps]
+      .reverse()
+      .find((step) => step.nextFollowUpType !== null && step.nextFollowUpOffset !== null);
+    const nextFollowUpDate =
+      scenario.status === "Open" || scenario.status === "Nurture"
+        ? addDays(inquiryDate, nextFollowUpActivity?.nextFollowUpOffset ?? 14)
+        : null;
+    const nextFollowUpType =
+      scenario.status === "Open" || scenario.status === "Nurture" ? nextFollowUpActivity?.nextFollowUpType ?? "Call" : null;
+    const stageUpdatedAt = toIsoAt(addDays(inquiryDate, finalStep.dayOffset), 15, 0);
+    const hasTour = scenario.flow !== "new-inquiry" && scenario.flow !== "follow-up-pending" && scenario.flow !== "nurture";
+    const tourDate = hasTour ? addDays(inquiryDate, 4) : null;
+    const tourCompleted =
+      scenario.flow !== "new-inquiry" &&
+      scenario.flow !== "follow-up-pending" &&
+      scenario.flow !== "tour-scheduled" &&
+      scenario.flow !== "nurture";
+    const discoveryDate = addDays(inquiryDate, 1);
+    const projectedStartDate = scenario.flow === "packet-completed" || scenario.flow === "converted" ? addDays(inquiryDate, 24 + (idx % 8)) : null;
+    const closedDate = scenario.status === "Won" || scenario.status === "Lost" ? addDays(inquiryDate, finalStep.dayOffset) : null;
+
+    leads.push({
+      id: leadId,
+      lead_id: `LD-SEED-${String(idx + 1).padStart(3, "0")}`,
+      created_at: leadCreatedAt,
+      created_by_user_id: owner.id,
+      created_by_name: owner.full_name,
+      status: scenario.status,
+      stage: scenario.stage,
+      stage_updated_at: stageUpdatedAt,
+      inquiry_date: inquiryDate,
+      tour_date: tourDate,
+      tour_completed: hasTour ? tourCompleted : false,
+      discovery_date: discoveryDate,
+      member_start_date: projectedStartDate,
+      caregiver_name: caregiverName,
+      caregiver_relationship: scenario.caregiverRelationship,
+      caregiver_email: caregiverEmail,
+      caregiver_phone: caregiverPhone,
+      member_name: memberName,
+      member_dob: memberDob,
+      lead_source: scenario.leadSource,
+      lead_source_other: scenario.leadSource === "Other" ? "Community partner outreach" : null,
+      referral_name: referral?.contact_name ?? null,
+      likelihood: scenario.likelihood,
+      next_follow_up_date: nextFollowUpDate,
+      next_follow_up_type: nextFollowUpType,
+      notes_summary: `${scenario.summary} Preferred schedule: ${scenario.preferredSchedule}. Transportation: ${scenario.transportationInterest} Payer: ${scenario.payerInterest}`,
+      lost_reason: scenario.status === "Lost" ? scenario.lostReason ?? "Other" : null,
+      closed_date: closedDate,
+      partner_id: partner?.partner_id ?? null,
+      referral_source_id: referral?.referral_source_id ?? null
+    });
+
+    activitySteps.forEach((step, activityIdx) => {
+      leadActivities.push({
+        id: stableUuid(`seed:v2:lead-activity:${leadId}:${activityIdx}`),
+        activity_id: `LA-SEED-${String(idx + 1).padStart(3, "0")}-${activityIdx + 1}`,
+        lead_id: leadId,
+        member_name: memberName,
+        activity_at: toIsoAt(addDays(inquiryDate, step.dayOffset), 10 + (activityIdx % 5), (idx * 7 + activityIdx * 11) % 60),
+        activity_type: step.activityType,
+        outcome: step.outcome,
+        lost_reason: step.lostReason,
+        notes: step.notes,
+        next_follow_up_date: step.nextFollowUpOffset !== null ? addDays(inquiryDate, step.nextFollowUpOffset) : null,
+        next_follow_up_type: step.nextFollowUpType,
+        completed_by_user_id: owner.id,
+        completed_by_name: owner.full_name,
+        partner_id: partner?.partner_id ?? null,
+        referral_source_id: referral?.referral_source_id ?? null
+      });
+    });
+
+    stageSteps.forEach((step, stageIdx) => {
+      const fromStep = stageIdx > 0 ? stageSteps[stageIdx - 1] : null;
+      leadStageHistory.push({
+        id: stableUuid(`seed:v2:lead-stage:${leadId}:${stageIdx}`),
+        lead_id: leadId,
+        from_stage: fromStep?.stage ?? null,
+        to_stage: step.stage,
+        from_status: fromStep?.status ?? null,
+        to_status: step.status,
+        changed_at: toIsoAt(addDays(inquiryDate, step.dayOffset), 16, (idx * 5 + stageIdx * 9) % 60),
+        changed_by_user_id: owner.id,
+        changed_by_name: owner.full_name,
+        reason: step.reason,
+        source: "seed:v2"
+      });
+    });
+
+    if (partner && referral) {
+      partnerActivities.push({
+        id: stableUuid(`seed:v2:partner-activity:${leadId}`),
+        partner_activity_id: `PA-SEED-${String(idx + 1).padStart(3, "0")}`,
+        referral_source_id: referral.referral_source_id,
+        partner_id: partner.partner_id,
+        organization_name: partner.organization_name,
+        contact_name: referral.contact_name,
+        activity_at: toIsoAt(addDays(inquiryDate, 2), 11, (idx * 3) % 60),
+        activity_type: "Follow-up",
+        notes: "Referral partner touchpoint tied to seeded lead progression.",
+        completed_by: owner.full_name,
+        next_follow_up_date: addDays(inquiryDate, 21),
+        next_follow_up_type: "Call",
+        last_touched: addDays(inquiryDate, 2),
+        lead_id: leadId,
+        completed_by_user_id: owner.id
+      });
+    }
+  });
+
+  return {
+    leads,
+    leadActivities,
+    leadStageHistory,
+    partnerActivities,
+    memberLeadByMemberId
   };
 }
 
@@ -460,7 +1059,7 @@ function buildScheduleChanges(db: SeededDb, staffMap: Map<string, string>) {
   const enteredBy = coordinator?.full_name ?? "Coordinator";
   const today = asDateOnly(new Date().toISOString(), "2026-01-01") as string;
   const scheduleByMember = new Map(db.memberAttendanceSchedules.map((row) => [row.member_id, row] as const));
-  const activeMembers = db.members.filter((row) => row.status === "active").slice(0, 10);
+  const activeMembers = db.members.filter((row) => row.status === "active").slice(0, TARGET_MEMBER_COUNT);
 
   return activeMembers.map((member, idx) => {
     const schedule = scheduleByMember.get(member.id);
@@ -531,7 +1130,7 @@ function buildCarePlanRows(db: SeededDb, staffMap: Map<string, string>) {
   const actorUserId = actor ? staffMap.get(actor.id) ?? null : null;
   const actorName = actor?.full_name ?? "Clinical Lead";
   const today = asDateOnly(new Date().toISOString(), "2026-01-01") as string;
-  const members = db.members.filter((row) => row.status === "active").slice(0, 8);
+  const members = db.members.filter((row) => row.status === "active").slice(0, TARGET_MEMBER_COUNT);
 
   const carePlans: Record<string, unknown>[] = [];
   const carePlanSections: Record<string, unknown>[] = [];
@@ -698,7 +1297,7 @@ function buildBillingRows(db: SeededDb, staffMap: Map<string, string>) {
 
   const settingsByMember = new Map(db.memberBillingSettings.map((row) => [row.member_id, row] as const));
   const scheduleByMember = new Map(db.memberAttendanceSchedules.map((row) => [row.member_id, row] as const));
-  const activeMembers = db.members.filter((row) => row.status === "active").slice(0, 10);
+  const activeMembers = db.members.filter((row) => row.status === "active").slice(0, TARGET_MEMBER_COUNT);
   const billedMemberIds = new Set(activeMembers.map((row) => row.id));
 
   const billingAdjustments: Record<string, unknown>[] = [];
@@ -1364,14 +1963,28 @@ function buildDerivedRows(db: SeededDb, staffMap: Map<string, string>) {
 function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
   const db = withMemberCohort(sourceDb);
   const mapStaff = (id: string | null | undefined) => (id ? staffMap.get(id) ?? null : null);
+  const salesSeed = buildLeadSeedPackage(db);
+  const seededPartnerIds = new Set(
+    [...salesSeed.leads, ...salesSeed.leadActivities, ...salesSeed.partnerActivities]
+      .map((row) => cleanText((row as { partner_id?: string | null }).partner_id))
+      .filter((value): value is string => Boolean(value))
+  );
+  const seededReferralIds = new Set(
+    [...salesSeed.leads, ...salesSeed.leadActivities, ...salesSeed.partnerActivities]
+      .map((row) => cleanText((row as { referral_source_id?: string | null }).referral_source_id))
+      .filter((value): value is string => Boolean(value))
+  );
   const partnerByExternalId = new Map<string, string>();
   const referralByExternalId = new Map<string, string>();
 
-  const partnerRows = db.partners.map((row) => {
+  const scopedPartners = db.partners.filter((row) => seededPartnerIds.has(row.partner_id));
+  const scopedReferrals = db.referralSources.filter((row) => seededReferralIds.has(row.referral_source_id));
+
+  const partnerRows = scopedPartners.map((row) => {
     partnerByExternalId.set(row.partner_id, row.id);
     return { id: row.id, partner_id: row.partner_id, organization_name: row.organization_name, category: row.referral_source_category, active: row.active };
   });
-  const referralRows = db.referralSources.map((row) => {
+  const referralRows = scopedReferrals.map((row) => {
     referralByExternalId.set(row.referral_source_id, row.id);
     return { id: row.id, referral_source_id: row.referral_source_id, partner_id: partnerByExternalId.get(row.partner_id) ?? null, contact_name: row.contact_name, organization_name: row.organization_name, active: row.active };
   });
@@ -1453,6 +2066,7 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
       qr_code: row.qr_code,
       enrollment_date: row.enrollment_date,
       dob: row.dob,
+      source_lead_id: salesSeed.memberLeadByMemberId.get(row.id) ?? null,
       discharge_date: row.discharge_date,
       discharge_reason: row.discharge_reason,
       discharge_disposition: row.discharge_disposition,
@@ -1547,9 +2161,9 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
     marEntries: derived.marEntries,
     partners: partnerRows,
     referrals: referralRows,
-    leads: db.leads.map((row) => ({ id: row.id, status: normalizeLeadStatus(String(row.status)), stage: row.stage, stage_updated_at: row.stage_updated_at, inquiry_date: row.inquiry_date, tour_date: row.tour_date, tour_completed: row.tour_completed, discovery_date: row.discovery_date, member_start_date: row.member_start_date, caregiver_name: row.caregiver_name, caregiver_relationship: row.caregiver_relationship, caregiver_email: row.caregiver_email, caregiver_phone: row.caregiver_phone, member_name: row.member_name, member_dob: row.member_dob, lead_source: row.lead_source, lead_source_other: row.lead_source_other, referral_name: row.referral_name, likelihood: row.likelihood, next_follow_up_date: row.next_follow_up_date, next_follow_up_type: row.next_follow_up_type, notes_summary: row.notes_summary, lost_reason: row.lost_reason, closed_date: row.closed_date, partner_id: row.partner_id, referral_source_id: row.referral_source_id, created_by_user_id: mapStaff(row.created_by_user_id), created_by_name: row.created_by_name, created_at: row.created_at, updated_at: row.created_at })),
-    leadActivities: db.leadActivities.map((row) => ({ id: row.id, lead_id: row.lead_id, member_name: row.member_name, activity_at: row.activity_at, activity_type: row.activity_type, outcome: row.outcome, lost_reason: row.lost_reason, notes: row.notes, next_follow_up_date: row.next_follow_up_date, next_follow_up_type: row.next_follow_up_type, completed_by_user_id: mapStaff(row.completed_by_user_id), completed_by_name: row.completed_by_name, partner_id: row.partner_id, referral_source_id: row.referral_source_id })),
-    partnerActivities: db.partnerActivities.map((row) => ({
+    leads: salesSeed.leads.map((row) => ({ id: row.id, status: normalizeLeadStatus(String(row.status)), stage: row.stage, stage_updated_at: row.stage_updated_at, inquiry_date: row.inquiry_date, tour_date: row.tour_date, tour_completed: row.tour_completed, discovery_date: row.discovery_date, member_start_date: row.member_start_date, caregiver_name: row.caregiver_name, caregiver_relationship: row.caregiver_relationship, caregiver_email: row.caregiver_email, caregiver_phone: row.caregiver_phone, member_name: row.member_name, member_dob: row.member_dob, lead_source: row.lead_source, lead_source_other: row.lead_source_other, referral_name: row.referral_name, likelihood: row.likelihood, next_follow_up_date: row.next_follow_up_date, next_follow_up_type: row.next_follow_up_type, notes_summary: row.notes_summary, lost_reason: row.lost_reason, closed_date: row.closed_date, partner_id: row.partner_id, referral_source_id: row.referral_source_id, created_by_user_id: mapStaff(row.created_by_user_id), created_by_name: row.created_by_name, created_at: row.created_at, updated_at: row.created_at })),
+    leadActivities: salesSeed.leadActivities.map((row) => ({ id: row.id, lead_id: row.lead_id, member_name: row.member_name, activity_at: row.activity_at, activity_type: row.activity_type, outcome: row.outcome, lost_reason: row.lost_reason, notes: row.notes, next_follow_up_date: row.next_follow_up_date, next_follow_up_type: row.next_follow_up_type, completed_by_user_id: mapStaff(row.completed_by_user_id), completed_by_name: row.completed_by_name, partner_id: row.partner_id, referral_source_id: row.referral_source_id })),
+    partnerActivities: salesSeed.partnerActivities.map((row) => ({
       id: row.id,
       referral_source_id: row.referral_source_id ? (referralByExternalId.get(row.referral_source_id) ?? null) : null,
       partner_id: row.partner_id ? (partnerByExternalId.get(row.partner_id) ?? null) : null,
@@ -1565,8 +2179,8 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
       last_touched: row.last_touched,
       lead_id: row.lead_id
     })),
-    stageHistory: db.leadStageHistory.map((row) => ({ id: row.id, lead_id: row.lead_id, from_stage: row.from_stage, to_stage: row.to_stage, from_status: String(row.from_status ?? "").toLowerCase() || null, to_status: String(row.to_status).toLowerCase(), changed_by_user_id: mapStaff(row.changed_by_user_id), changed_by_name: row.changed_by_name, reason: row.reason, source: row.source, changed_at: row.changed_at, created_at: row.changed_at })),
-    intakeAssessments: db.assessments.map((row) => ({ id: row.id, member_id: row.member_id, lead_id: row.lead_id, assessment_date: row.assessment_date, status: row.complete ? "completed" : "draft", completed_by_user_id: mapStaff(row.created_by_user_id), completed_by: row.completed_by, signed_by: row.signed_by, complete: row.complete, total_score: row.total_score, recommended_track: row.recommended_track, admission_review_required: row.admission_review_required, notes: row.notes, created_at: row.created_at, updated_at: row.created_at })),
+    stageHistory: salesSeed.leadStageHistory.map((row) => ({ id: row.id, lead_id: row.lead_id, from_stage: row.from_stage, to_stage: row.to_stage, from_status: String(row.from_status ?? "").toLowerCase() || null, to_status: String(row.to_status).toLowerCase(), changed_by_user_id: mapStaff(row.changed_by_user_id), changed_by_name: row.changed_by_name, reason: row.reason, source: row.source, changed_at: row.changed_at, created_at: row.changed_at })),
+    intakeAssessments: db.assessments.map((row) => ({ id: row.id, member_id: row.member_id, lead_id: row.lead_id ?? salesSeed.memberLeadByMemberId.get(row.member_id) ?? null, assessment_date: row.assessment_date, status: row.complete ? "completed" : "draft", completed_by_user_id: mapStaff(row.created_by_user_id), completed_by: row.completed_by, signed_by: row.signed_by, complete: row.complete, total_score: row.total_score, recommended_track: row.recommended_track, admission_review_required: row.admission_review_required, notes: row.notes, created_at: row.created_at, updated_at: row.created_at })),
     assessmentResponses: db.assessmentResponses.map((row) => ({ id: row.id, assessment_id: row.assessment_id, member_id: row.member_id, field_key: row.field_key, field_label: row.field_label, section_type: row.section_type, field_value: row.field_value, field_value_type: row.field_value_type, created_at: row.created_at })),
     physicianOrders: intake.pofRows,
     memberHealthProfiles: intake.mhpRows,
@@ -1690,6 +2304,123 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
       created_by_user_id: mapStaff(row.created_by_user_id)
     }))
   };
+}
+
+type SeedValidationSummary = {
+  totalLeads: number;
+  totalMembers: number;
+  convertedLeads: number;
+  stageCounts: Map<string, number>;
+  moduleCounts: Array<{ label: string; count: number }>;
+  missing: Array<{ label: string; count: number; samples: string[] }>;
+};
+
+function buildIdSet(rows: Array<Record<string, unknown>>, key: string) {
+  return new Set(rows.map((row) => cleanText(row[key])).filter((value): value is string => Boolean(value)));
+}
+
+function buildSeedValidationSummary(rows: ReturnType<typeof buildRows>): SeedValidationSummary {
+  const members = rows.members as Array<{ id: string; display_name: string; status: string; source_lead_id?: string | null }>;
+  const leads = rows.leads as Array<{ id: string; stage: string }>;
+
+  const stageCounts = new Map<string, number>();
+  leads.forEach((row) => stageCounts.set(row.stage, (stageCounts.get(row.stage) ?? 0) + 1));
+
+  const convertedLeadIds = new Set(
+    members.map((row) => cleanText(row.source_lead_id)).filter((value): value is string => Boolean(value))
+  );
+  const convertedLeads = leads.filter((row) => convertedLeadIds.has(row.id)).length;
+
+  const activeMembers = members.filter((row) => row.status === "active");
+  const commandCenterMemberIds = buildIdSet(rows.memberCommandCenters as Array<Record<string, unknown>>, "member_id");
+  const scheduleMemberIds = buildIdSet(rows.memberAttendanceSchedules as Array<Record<string, unknown>>, "member_id");
+  const contactMemberIds = buildIdSet(rows.memberContacts as Array<Record<string, unknown>>, "member_id");
+  const fileMemberIds = buildIdSet(rows.memberFiles as Array<Record<string, unknown>>, "member_id");
+  const intakeMemberIds = buildIdSet(rows.intakeAssessments as Array<Record<string, unknown>>, "member_id");
+  const pofMemberIds = buildIdSet(rows.physicianOrders as Array<Record<string, unknown>>, "member_id");
+  const mhpMemberIds = buildIdSet(rows.memberHealthProfiles as Array<Record<string, unknown>>, "member_id");
+  const carePlanMemberIds = buildIdSet(rows.carePlans as Array<Record<string, unknown>>, "member_id");
+
+  const leadActivityLeadIds = buildIdSet(rows.leadActivities as Array<Record<string, unknown>>, "lead_id");
+  const leadHistoryLeadIds = buildIdSet(rows.stageHistory as Array<Record<string, unknown>>, "lead_id");
+
+  const missingForMembers = (label: string, memberIdSet: Set<string>, scope: Array<{ id: string; display_name: string }>) => {
+    const missing = scope.filter((row) => !memberIdSet.has(row.id));
+    return {
+      label,
+      count: missing.length,
+      samples: missing.slice(0, 4).map((row) => row.display_name)
+    };
+  };
+
+  const missingForLeads = (label: string, leadIdSet: Set<string>) => {
+    const missing = leads.filter((row) => !leadIdSet.has(row.id));
+    return {
+      label,
+      count: missing.length,
+      samples: missing.slice(0, 4).map((row) => row.stage)
+    };
+  };
+
+  const moduleCounts: Array<{ label: string; count: number }> = [
+    { label: "intake_assessments", count: rows.intakeAssessments.length },
+    { label: "physician_orders", count: rows.physicianOrders.length },
+    { label: "member_health_profiles", count: rows.memberHealthProfiles.length },
+    { label: "care_plans", count: rows.carePlans.length },
+    { label: "member_diagnoses", count: rows.memberDiagnoses.length },
+    { label: "member_medications", count: rows.memberMedications.length },
+    { label: "member_allergies", count: rows.memberAllergies.length },
+    { label: "lead_activities", count: rows.leadActivities.length },
+    { label: "lead_stage_history", count: rows.stageHistory.length },
+    { label: "member_attendance_schedules", count: rows.memberAttendanceSchedules.length },
+    { label: "attendance_records", count: rows.attendanceRecords.length },
+    { label: "member_contacts", count: rows.memberContacts.length },
+    { label: "member_files", count: rows.memberFiles.length },
+    { label: "member_command_centers", count: rows.memberCommandCenters.length },
+    { label: "member_billing_settings", count: rows.memberBillingSettings.length },
+    { label: "billing_invoices", count: rows.billingInvoices.length }
+  ];
+
+  const missing = [
+    missingForMembers("members_missing_command_center", commandCenterMemberIds, members),
+    missingForMembers("members_missing_schedule", scheduleMemberIds, activeMembers),
+    missingForMembers("members_missing_contacts", contactMemberIds, members),
+    missingForMembers("members_missing_files", fileMemberIds, members),
+    missingForMembers("members_missing_intake_assessment", intakeMemberIds, members),
+    missingForMembers("members_missing_physician_order", pofMemberIds, members),
+    missingForMembers("members_missing_member_health_profile", mhpMemberIds, members),
+    missingForMembers("active_members_missing_care_plan", carePlanMemberIds, activeMembers),
+    missingForLeads("leads_missing_activity_history", leadActivityLeadIds),
+    missingForLeads("leads_missing_stage_history", leadHistoryLeadIds)
+  ];
+
+  return {
+    totalLeads: leads.length,
+    totalMembers: members.length,
+    convertedLeads,
+    stageCounts,
+    moduleCounts,
+    missing
+  };
+}
+
+function printSeedValidationSummary(summary: SeedValidationSummary) {
+  console.log("validation:seeded_leads=" + summary.totalLeads);
+  console.log("validation:seeded_members=" + summary.totalMembers);
+  console.log("validation:converted_leads=" + summary.convertedLeads);
+  [...summary.stageCounts.entries()]
+    .sort((left, right) => left[0].localeCompare(right[0]))
+    .forEach(([stage, count]) => console.log(`validation:lead_stage:${stage}=${count}`));
+  summary.moduleCounts.forEach((entry) => console.log(`validation:${entry.label}=${entry.count}`));
+  const missingCounts = summary.missing.filter((entry) => entry.count > 0);
+  if (missingCounts.length === 0) {
+    console.log("validation:missing_relationships=none");
+    return;
+  }
+  missingCounts.forEach((entry) => {
+    const sampleSuffix = entry.samples.length > 0 ? ` sample=[${entry.samples.join(", ")}]` : "";
+    console.log(`validation:${entry.label}=${entry.count}${sampleSuffix}`);
+  });
 }
 
 type SeedLeadIdentityRow = {
@@ -1959,6 +2690,7 @@ async function main() {
 
   const workload: Array<{ table: string; rows: Record<string, unknown>[]; module: SeedModule | "core"; legacy?: boolean }> = [
     { table: "sites", rows: rows.sites, module: "core" },
+    { table: "leads", rows: rows.leads, module: "core" },
     { table: "members", rows: rows.members, module: "core" },
     { table: "pay_periods", rows: rows.payPeriods, module: "attendance" },
     { table: "time_punches", rows: rows.timePunches, module: "attendance" },
@@ -2005,7 +2737,6 @@ async function main() {
     { table: "enrollment_pricing_daily_rates", rows: rows.enrollmentPricingDailyRates, module: "sales" },
     { table: "community_partner_organizations", rows: rows.partners, module: "sales" },
     { table: "referral_sources", rows: rows.referrals, module: "sales" },
-    { table: "leads", rows: rows.leads, module: "sales" },
     { table: "lead_activities", rows: rows.leadActivities, module: "sales" },
     { table: "partner_activities", rows: rows.partnerActivities, module: "sales" },
     { table: "lead_stage_history", rows: rows.stageHistory, module: "sales" },
@@ -2063,18 +2794,6 @@ async function main() {
     moduleCounts.set(moduleKey, (moduleCounts.get(moduleKey) ?? 0) + inserted);
   }
 
-  let intakeSeedLinkSummary: {
-    intakeLeadCount: number;
-    alreadyLinkedCount: number;
-    upsertedCount: number;
-  } | null = null;
-  if (parsed.modules.includes("sales")) {
-    intakeSeedLinkSummary = await ensureIntakeReadySeedMembers(supabase, {
-      existingTables,
-      leads: rows.leads as Record<string, unknown>[]
-    });
-  }
-
   console.log("Supabase seed complete.");
   console.log(`Modules: ${parsed.modules.join(", ")}`);
   console.log(`Legacy only: ${parsed.legacyOnly ? "yes" : "no"}`);
@@ -2083,11 +2802,7 @@ async function main() {
   for (const [module, count] of moduleCounts.entries()) {
     console.log(`module:${module}: ${count}`);
   }
-  if (intakeSeedLinkSummary) {
-    console.log(
-      `intake-seed-member-links: intake_stage_leads=${intakeSeedLinkSummary.intakeLeadCount}, already_linked=${intakeSeedLinkSummary.alreadyLinkedCount}, upserted=${intakeSeedLinkSummary.upsertedCount}`
-    );
-  }
+  printSeedValidationSummary(buildSeedValidationSummary(rows));
 }
 
 main().catch((error) => {

@@ -106,6 +106,28 @@ Helpers:
 - `netstat -ano | findstr :3001`
 - `taskkill /PID <PID> /F`
 
+## Canonical Seed Data
+
+Single entry point:
+- `npm run seed`
+- Optional clean reseed: `npm run reseed`
+
+What gets seeded:
+- exactly 15 leads across mixed pipeline states (`Inquiry`, `Tour`, `Enrollment in Progress`, `Nurture`, `Closed - Lost`, `Closed - Won`)
+- exactly 15 enrolled members (mixed active/inactive status)
+- lead activity timelines and stage-history events for every lead
+- downstream canonical records for intake, POF/MHP, care plans, diagnoses, medications, allergies, attendance, transportation, billing, files, command center, and documentation timelines
+
+Lead conversion representation:
+- converted leads are linked canonically through `members.source_lead_id`
+- converted member intake rows also carry `intake_assessments.lead_id` when applicable
+- conversion visibility is therefore resolver/UI-safe and does not depend on name matching
+
+Idempotency:
+- deterministic seed identifiers are generated for leads, members, activities, stage history, and downstream rows
+- seed writes are upserts on canonical ids, so reruns update existing seeded records instead of creating duplicate chains
+- seed output prints a validation summary including lead/member totals, lead-stage distribution, converted lead count, downstream row counts, and missing relationship checks
+
 ## Auth Environment Variables
 
 - `NEXT_PUBLIC_APP_URL` (required): canonical public app URL used in invite/reset links.

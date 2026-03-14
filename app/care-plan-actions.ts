@@ -224,7 +224,7 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
   });
   revalidatePath(`/health/care-plans/${updated.id}`);
   revalidatePath(`/members/${updated.memberId}`);
-  return { ok: true } as const;
+  return { ok: true, status: updated.caregiverSignatureStatus } as const;
 }
 
 const sendCaregiverSignatureSchema = z.object({

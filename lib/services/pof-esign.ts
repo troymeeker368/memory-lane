@@ -294,7 +294,9 @@ function parsePofPayloadSnapshot(value: unknown): PhysicianOrderForm | null {
   if (!Array.isArray(candidate.diagnosisRows)) return null;
   if (!Array.isArray(candidate.allergyRows)) return null;
   if (!Array.isArray(candidate.medications)) return null;
+  if (!Array.isArray(candidate.standingOrders)) return null;
   if (!candidate.careInformation || typeof candidate.careInformation !== "object") return null;
+  if (!Array.isArray((candidate.careInformation as { nutritionDiets?: unknown }).nutritionDiets)) return null;
   if (!candidate.operationalFlags || typeof candidate.operationalFlags !== "object") return null;
   return candidate as PhysicianOrderForm;
 }
@@ -400,6 +402,37 @@ async function createSignedStorageUrl(storageUri: string, expiresInSeconds = 60 
   const { data, error } = await admin.storage.from(STORAGE_BUCKET).createSignedUrl(objectPath, expiresInSeconds);
   if (error || !data?.signedUrl) throw new Error(error?.message ?? "Unable to create signed document URL.");
   return data.signedUrl;
+}
+
+async function downloadStorageAssetOrThrow(storageUri: string, label: string) {
+  const objectPath = parseStorageUri(storageUri);
+  if (!objectPath) {
+    throw new Error(`${label} storage path is invalid.`);
+  }
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin.storage.from(STORAGE_BUCKET).download(objectPath);
+  if (error || !data) {
+    throw new Error(`${label} is missing in storage. Unable to generate signed PDF artifact.`);
+  }
+  const bytes = Buffer.from(await data.arrayBuffer());
+  if (bytes.byteLength === 0) {
+    throw new Error(`${label} is empty in storage. Unable to generate signed PDF artifact.`);
+  }
+  return {
+    bytes,
+    contentType: clean(data.type) ?? "application/octet-stream",
+    objectPath
+  };
+}
+
+function parseProviderCredentials(name: string | null | undefined) {
+  const normalized = clean(name);
+  if (!normalized) return null;
+  const trailingParen = /\(([^)]+)\)\s*$/.exec(normalized);
+  if (trailingParen && clean(trailingParen[1])) return clean(trailingParen[1])!;
+  const trailingComma = /,\s*([a-zA-Z][a-zA-Z.\s]{1,16})$/.exec(normalized);
+  if (trailingComma && clean(trailingComma[1])) return clean(trailingComma[1])!;
+  return null;
 }
 
 async function sendSignatureEmail(input: {
@@ -579,6 +612,7 @@ async function setPhysicianOrderSentState(input: {
 async function buildSignedPdfBytes(input: {
   pofPayload: PhysicianOrderForm;
   providerTypedName: string;
+  providerCredentials?: string | null;
   signatureImageBytes: Buffer;
   signatureContentType: string;
   signedAt: string;
@@ -592,6 +626,7 @@ async function buildSignedPdfBytes(input: {
     ],
     signature: {
       providerTypedName: input.providerTypedName,
+      providerCredentials: clean(input.providerCredentials),
       signedAt: input.signedAt,
       signatureImageBytes: input.signatureImageBytes,
       signatureContentType: input.signatureContentType
@@ -1121,11 +1156,19 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     contentType: signature.contentType
   });
 
+  const signatureArtifact = await downloadStorageAssetOrThrow(signatureUri, "Provider signature image artifact");
+  if (!signatureArtifact.contentType.startsWith("image/")) {
+    throw new Error(
+      `Provider signature image artifact has invalid content type (${signatureArtifact.contentType}).`
+    );
+  }
+
   const signedPdfBytes = await buildSignedPdfBytes({
     pofPayload: snapshot,
     providerTypedName: providerTypedName!,
-    signatureImageBytes: signature.bytes,
-    signatureContentType: signature.contentType,
+    providerCredentials: parseProviderCredentials(snapshot.providerName) ?? parseProviderCredentials(providerTypedName),
+    signatureImageBytes: signatureArtifact.bytes,
+    signatureContentType: signatureArtifact.contentType,
     signedAt: now
   });
   const signedPdfPath = `members/${request.member_id}/pof/${request.physician_order_id}/requests/${request.id}/signed.pdf`;

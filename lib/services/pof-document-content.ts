@@ -1,4 +1,7 @@
-import type { PhysicianOrderForm } from "@/lib/services/physician-orders-supabase";
+import type {
+  PhysicianOrderForm,
+  PhysicianOrderMedication
+} from "@/lib/services/physician-orders-supabase";
 
 export type PofDocumentRow = {
   label: string;
@@ -7,12 +10,35 @@ export type PofDocumentRow = {
   alwaysShow?: boolean;
 };
 
-export type PofDocumentSection = {
+export type PofDocumentTableColumn = {
+  key: string;
+  label: string;
+  widthWeight?: number;
+};
+
+export type PofDocumentTableRow = {
+  id: string;
+  cells: Record<string, string>;
+};
+
+type PofDocumentSectionBase = {
   title: string;
-  rows: PofDocumentRow[];
   sectionKey?: string;
   alwaysShow?: boolean;
 };
+
+export type PofDocumentFieldSection = PofDocumentSectionBase & {
+  layout: "fields";
+  rows: PofDocumentRow[];
+};
+
+export type PofDocumentTableSection = PofDocumentSectionBase & {
+  layout: "table";
+  columns: PofDocumentTableColumn[];
+  rows: PofDocumentTableRow[];
+};
+
+export type PofDocumentSection = PofDocumentFieldSection | PofDocumentTableSection;
 
 export type PofDocumentFilterConfig = {
   hideNonMeaningfulValues?: boolean;
@@ -23,9 +49,17 @@ export type PofDocumentFilterConfig = {
 
 const DEFAULT_NON_MEANINGFUL_VALUES = ["", "-", "no", "n/a", "na", "none"];
 
-function valueOrDash(value: string | null | undefined) {
+function clean(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
-  return normalized.length > 0 ? normalized : "-";
+  return normalized.length > 0 ? normalized : null;
+}
+
+function valueOrDash(value: string | null | undefined) {
+  return clean(value) ?? "-";
+}
+
+function tableCellOrDash(value: string | null | undefined) {
+  return clean(value) ?? "-";
 }
 
 function yesNo(value: boolean | null | undefined) {
@@ -36,11 +70,6 @@ function yesNo(value: boolean | null | undefined) {
 function selectedList(entries: Array<{ label: string; value: boolean }>) {
   const selected = entries.filter((entry) => entry.value).map((entry) => entry.label);
   return selected.length > 0 ? selected.join(", ") : "-";
-}
-
-function joinedOrDash(values: string[] | null | undefined) {
-  const normalized = (values ?? []).map((value) => value.trim()).filter(Boolean);
-  return normalized.length > 0 ? normalized.join(", ") : "-";
 }
 
 function normalizeNutritionDiets(values: string[] | null | undefined) {
@@ -54,8 +83,65 @@ function normalizedToken(value: string) {
   return value.trim().toLowerCase();
 }
 
-function rowIdentity(section: PofDocumentSection, row: PofDocumentRow) {
+function rowIdentity(section: PofDocumentFieldSection, row: PofDocumentRow) {
   return `${section.sectionKey ?? section.title}::${row.fieldKey ?? row.label}`;
+}
+
+function isMeaningfulTableCell(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return false;
+  return normalized !== "-";
+}
+
+function joinPresent(values: Array<string | null | undefined>, separator = "; ") {
+  const normalized = values.map((value) => clean(value)).filter((value): value is string => Boolean(value));
+  return normalized.length > 0 ? normalized.join(separator) : null;
+}
+
+function titleCase(value: string | null | undefined) {
+  const normalized = clean(value);
+  if (!normalized) return "-";
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function formatMedicationDose(row: PhysicianOrderMedication) {
+  return tableCellOrDash(joinPresent([row.dose, row.quantity, row.strength, row.form], " "));
+}
+
+function formatMedicationRoute(row: PhysicianOrderMedication) {
+  const route = clean(row.route);
+  const laterality = clean(row.routeLaterality);
+  if (!route && !laterality) return "-";
+  if (!laterality) return route!;
+  if (!route) return laterality;
+  return `${route} (${laterality})`;
+}
+
+function formatMedicationFrequency(row: PhysicianOrderMedication) {
+  const schedule = (row.scheduledTimes ?? []).map((value) => clean(value)).filter((value): value is string => Boolean(value));
+  const parts: string[] = [];
+  const frequency = clean(row.frequency);
+  if (frequency) parts.push(frequency);
+  if (schedule.length > 0) parts.push(`Times: ${schedule.join(", ")}`);
+  if (row.prn) parts.push("PRN");
+  return parts.length > 0 ? parts.join(" | ") : "-";
+}
+
+function formatMedicationNotes(row: PhysicianOrderMedication) {
+  return tableCellOrDash(
+    joinPresent(
+      [
+        row.instructions ? `Instructions: ${row.instructions}` : null,
+        row.comments ? `Notes: ${row.comments}` : null,
+        row.prnInstructions ? `PRN Instructions: ${row.prnInstructions}` : null,
+        row.givenAtCenter ? `Administered at center${clean(row.givenAtCenterTime24h) ? ` (${row.givenAtCenterTime24h})` : ""}` : null,
+        row.startDate ? `Start: ${row.startDate}` : null,
+        row.endDate ? `End: ${row.endDate}` : null,
+        row.provider ? `Ordering Provider: ${row.provider}` : null
+      ],
+      "; "
+    )
+  );
 }
 
 export function isMeaningfulDocumentValue(
@@ -84,6 +170,14 @@ export function filterPofDocumentSections(sections: PofDocumentSection[], config
   return sections.flatMap((section) => {
     if (isSectionAlwaysShown(section)) return [section];
 
+    if (section.layout === "table") {
+      const rows = section.rows.filter((row) =>
+        section.columns.some((column) => isMeaningfulTableCell(row.cells[column.key]))
+      );
+      if (rows.length === 0) return [];
+      return [{ ...section, rows }];
+    }
+
     const rows = section.rows.filter((row) => {
       if (row.alwaysShow) return true;
       const identity = rowIdentity(section, row);
@@ -103,8 +197,69 @@ export function buildPofDocumentSections(form: PhysicianOrderForm, config?: PofD
   const adl = care.adlProfile;
   const orientation = care.orientationProfile;
 
+  const diagnosisRows: PofDocumentTableRow[] = form.diagnosisRows.map((row, index) => ({
+    id: clean(row.id) ?? `diagnosis-${index + 1}`,
+    cells: {
+      type: titleCase(row.diagnosisType),
+      diagnosis: tableCellOrDash(row.diagnosisName),
+      code: tableCellOrDash(row.diagnosisCode)
+    }
+  }));
+
+  const allergyRows: PofDocumentTableRow[] = form.allergyRows.map((row, index) => ({
+    id: clean(row.id) ?? `allergy-${index + 1}`,
+    cells: {
+      allergen: tableCellOrDash(row.allergyName),
+      category: tableCellOrDash(titleCase(row.allergyGroup)),
+      severity: tableCellOrDash(row.severity),
+      notes: tableCellOrDash(row.comments)
+    }
+  }));
+
+  const medicationRows: PofDocumentTableRow[] = form.medications.map((row, index) => ({
+    id: clean(row.id) ?? `medication-${index + 1}`,
+    cells: {
+      medication: tableCellOrDash(row.name),
+      dose: formatMedicationDose(row),
+      route: tableCellOrDash(formatMedicationRoute(row)),
+      frequency: tableCellOrDash(formatMedicationFrequency(row)),
+      notes: formatMedicationNotes(row)
+    }
+  }));
+
+  const serviceOrderRows: PofDocumentTableRow[] = Array.from(
+    new Set((form.standingOrders ?? []).map((value) => value.trim()).filter(Boolean))
+  ).map((order, index) => ({
+    id: `service-order-${index + 1}`,
+    cells: {
+      order: order
+    }
+  }));
+
+  const dietRows: PofDocumentTableRow[] = [
+    ...normalizeNutritionDiets(care.nutritionDiets).map((diet, index) => ({
+      id: `diet-${index + 1}`,
+      cells: {
+        diet: diet,
+        notes: "-"
+      }
+    })),
+    ...(clean(care.nutritionDietOther)
+      ? [
+          {
+            id: "diet-other",
+            cells: {
+              diet: "Other",
+              notes: clean(care.nutritionDietOther)!
+            }
+          }
+        ]
+      : [])
+  ];
+
   const sections: PofDocumentSection[] = [
     {
+      layout: "fields",
       sectionKey: "identification-medical-orders",
       title: "Identification / Medical Orders",
       rows: [
@@ -124,56 +279,50 @@ export function buildPofDocumentSections(form: PhysicianOrderForm, config?: PofD
       ]
     },
     {
+      layout: "table",
       sectionKey: "diagnoses",
       title: "Diagnoses",
-      rows:
-        form.diagnosisRows.length > 0
-          ? form.diagnosisRows.flatMap((row, index) => [
-              { label: `Diagnosis ${index + 1} Type`, value: valueOrDash(row.diagnosisType) },
-              { label: `Diagnosis ${index + 1} Name`, value: valueOrDash(row.diagnosisName) }
-            ])
-          : [{ label: "Diagnoses", value: "-" }]
+      columns: [
+        { key: "type", label: "Type", widthWeight: 0.8 },
+        { key: "diagnosis", label: "Diagnosis", widthWeight: 2.4 },
+        { key: "code", label: "Code", widthWeight: 1 }
+      ],
+      rows: diagnosisRows
     },
     {
+      layout: "table",
       sectionKey: "allergies",
       title: "Allergies",
-      rows:
-        form.allergyRows.length > 0
-          ? form.allergyRows.flatMap((row, index) => [
-              { label: `Allergy ${index + 1} Group`, value: valueOrDash(row.allergyGroup) },
-              { label: `Allergy ${index + 1} Name`, value: valueOrDash(row.allergyName) },
-              { label: `Allergy ${index + 1} Severity`, value: valueOrDash(row.severity) },
-              { label: `Allergy ${index + 1} Comments`, value: valueOrDash(row.comments) }
-            ])
-          : [{ label: "Allergies", value: "-" }]
+      columns: [
+        { key: "allergen", label: "Allergen", widthWeight: 1.8 },
+        { key: "category", label: "Category", widthWeight: 1.1 },
+        { key: "severity", label: "Severity", widthWeight: 0.9 },
+        { key: "notes", label: "Notes", widthWeight: 2.2 }
+      ],
+      rows: allergyRows
     },
     {
+      layout: "table",
       sectionKey: "medications",
       title: "Medications",
-      rows:
-        form.medications.length > 0
-          ? form.medications.flatMap((row, index) => [
-              { label: `Medication ${index + 1} Name`, value: valueOrDash(row.name) },
-              { label: `Medication ${index + 1} Dose`, value: valueOrDash(row.dose) },
-              { label: `Medication ${index + 1} Quantity`, value: valueOrDash(row.quantity) },
-              { label: `Medication ${index + 1} Form`, value: valueOrDash(row.form) },
-              {
-                label: `Medication ${index + 1} Route`,
-                value: row.routeLaterality ? `${valueOrDash(row.route)} (${row.routeLaterality})` : valueOrDash(row.route)
-              },
-              { label: `Medication ${index + 1} Frequency`, value: valueOrDash(row.frequency) },
-              { label: `Medication ${index + 1} Given at Center`, value: row.givenAtCenter ? "Yes" : "No" },
-              { label: `Medication ${index + 1} Given Time (24h)`, value: valueOrDash(row.givenAtCenterTime24h) },
-              { label: `Medication ${index + 1} Comments`, value: valueOrDash(row.comments) }
-            ])
-          : [{ label: "Medications", value: "-" }]
+      columns: [
+        { key: "medication", label: "Medication", widthWeight: 1.8 },
+        { key: "dose", label: "Dose", widthWeight: 1.2 },
+        { key: "route", label: "Route", widthWeight: 1.1 },
+        { key: "frequency", label: "Frequency", widthWeight: 1.4 },
+        { key: "notes", label: "Indication / Notes", widthWeight: 2.8 }
+      ],
+      rows: medicationRows
     },
     {
-      sectionKey: "standing-orders",
-      title: "Standing Orders",
-      rows: [{ label: "Standing Orders", value: joinedOrDash(form.standingOrders) }]
+      layout: "table",
+      sectionKey: "service-orders",
+      title: "Treatment / Service Orders",
+      columns: [{ key: "order", label: "Order / Service", widthWeight: 1 }],
+      rows: serviceOrderRows
     },
     {
+      layout: "fields",
       sectionKey: "behavior-orientation",
       title: "Behavior & Orientation",
       rows: [
@@ -210,6 +359,7 @@ export function buildPofDocumentSections(form: PhysicianOrderForm, config?: PofD
       ]
     },
     {
+      layout: "fields",
       sectionKey: "adls-mobility",
       title: "ADLs & Mobility",
       rows: [
@@ -248,6 +398,7 @@ export function buildPofDocumentSections(form: PhysicianOrderForm, config?: PofD
       ]
     },
     {
+      layout: "fields",
       sectionKey: "clinical-support",
       title: "Clinical Support",
       rows: [
@@ -259,13 +410,20 @@ export function buildPofDocumentSections(form: PhysicianOrderForm, config?: PofD
       ]
     },
     {
-      sectionKey: "nutrition-joy",
-      title: "Nutrition & Joy Sparks",
-      rows: [
-        { label: "Nutrition / Diet", value: joinedOrDash(normalizeNutritionDiets(care.nutritionDiets)) },
-        { label: "Nutrition Diet Other", value: valueOrDash(care.nutritionDietOther) },
-        { label: "Additional Information to Help Spark Joy", value: valueOrDash(care.joySparksNotes) }
-      ]
+      layout: "table",
+      sectionKey: "diet-restrictions",
+      title: "Diet / Restrictions",
+      columns: [
+        { key: "diet", label: "Diet / Restriction", widthWeight: 1.4 },
+        { key: "notes", label: "Notes", widthWeight: 2.6 }
+      ],
+      rows: dietRows
+    },
+    {
+      layout: "fields",
+      sectionKey: "joy-sparks",
+      title: "Joy Sparks",
+      rows: [{ label: "Additional Information to Help Spark Joy", value: valueOrDash(care.joySparksNotes) }]
     }
   ];
 

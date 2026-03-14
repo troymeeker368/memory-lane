@@ -9,6 +9,7 @@ import {
   getCarePlanNurseSignatureState,
   signCarePlanNurseEsign
 } from "@/lib/services/care-plan-nurse-esign";
+import { getDefaultCaregiverSignatureExpiresOnDate } from "@/lib/services/care-plan-esign-rules";
 import {
   CARE_PLAN_CARE_TEAM_NOTES_LABEL,
   CARE_PLAN_LONG_TERM_LABEL,
@@ -854,6 +855,51 @@ function sanitizeCaregiverEmail(value: string | null | undefined) {
   return normalized.toLowerCase();
 }
 
+async function finalizeCaregiverDispatchAfterNurseSignature(input: {
+  carePlanId: string;
+  actor: { id: string; fullName: string; signatureName: string };
+}) {
+  const signedRows = await listCarePlanRows({ carePlanId: input.carePlanId });
+  const signedCarePlan = signedRows[0];
+  if (!signedCarePlan) throw new Error("Care plan could not be loaded after nurse/admin signature.");
+
+  const hasCaregiverContact =
+    Boolean(clean(signedCarePlan.caregiverName)) && Boolean(clean(signedCarePlan.caregiverEmail));
+  const shouldAutoSend = hasCaregiverContact && signedCarePlan.caregiverSignatureStatus !== "signed";
+
+  if (shouldAutoSend) {
+    const { sendCarePlanToCaregiverForSignature } = await import("@/lib/services/care-plan-esign");
+    return sendCarePlanToCaregiverForSignature({
+      carePlanId: signedCarePlan.id,
+      caregiverName: signedCarePlan.caregiverName!,
+      caregiverEmail: signedCarePlan.caregiverEmail!,
+      optionalMessage: null,
+      expiresOnDate: getDefaultCaregiverSignatureExpiresOnDate(),
+      actor: {
+        id: input.actor.id,
+        fullName: input.actor.fullName,
+        signatureName: input.actor.signatureName
+      }
+    });
+  }
+
+  const supabase = await createClient();
+  const { error: touchError } = await supabase
+    .from("care_plans")
+    .update({
+      updated_by_user_id: input.actor.id,
+      updated_by_name: input.actor.fullName,
+      updated_at: toEasternISO()
+    })
+    .eq("id", input.carePlanId);
+  if (touchError) throw new Error(touchError.message);
+
+  const refreshedRows = await listCarePlanRows({ carePlanId: input.carePlanId });
+  const refreshed = refreshedRows[0];
+  if (!refreshed) throw new Error("Care plan could not be reloaded after nurse/admin signature.");
+  return refreshed;
+}
+
 export async function createCarePlan(input: {
   memberId: string;
   track: CarePlanTrack;
@@ -979,22 +1025,14 @@ export async function createCarePlan(input: {
     careTeamNotes: input.careTeamNotes,
     sections: normalizedSections
   });
-
-  await supabase
-    .from("care_plans")
-    .update({
-      caregiver_signature_status: "ready_to_send",
-      caregiver_signature_error: null,
-      updated_by_user_id: input.actor.id,
-      updated_by_name: input.actor.fullName,
-      updated_at: toEasternISO()
-    })
-    .eq("id", createdCarePlanId);
-
-  const refreshed = await listCarePlanRows({ carePlanId: createdCarePlanId });
-  const signedCarePlan = refreshed[0];
-  if (!signedCarePlan) throw new Error("Care plan could not be reloaded after signature.");
-  return signedCarePlan;
+  return finalizeCaregiverDispatchAfterNurseSignature({
+    carePlanId: createdCarePlanId,
+    actor: {
+      id: input.actor.id,
+      fullName: input.actor.fullName,
+      signatureName: input.actor.signatureName
+    }
+  });
 }
 
 export async function reviewCarePlan(input: {
@@ -1108,16 +1146,6 @@ export async function reviewCarePlan(input: {
     careTeamNotes: input.careTeamNotes,
     sections: normalizedSections
   });
-  await supabase
-    .from("care_plans")
-    .update({
-      caregiver_signature_status: "ready_to_send",
-      caregiver_signature_error: null,
-      updated_by_user_id: input.actor.id,
-      updated_by_name: input.actor.fullName,
-      updated_at: toEasternISO()
-    })
-    .eq("id", input.carePlanId);
   const { error: historyError } = await supabase.from("care_plan_review_history").insert({
     care_plan_id: input.carePlanId,
     review_date: input.reviewDate,
@@ -1131,11 +1159,14 @@ export async function reviewCarePlan(input: {
     created_at: now
   });
   if (historyError) throw new Error(historyError.message);
-
-  const refreshed = await listCarePlanRows({ carePlanId: input.carePlanId });
-  const signedCarePlan = refreshed[0];
-  if (!signedCarePlan) throw new Error("Care plan could not be reloaded after review signature.");
-  return signedCarePlan;
+  return finalizeCaregiverDispatchAfterNurseSignature({
+    carePlanId: input.carePlanId,
+    actor: {
+      id: input.actor.id,
+      fullName: input.actor.fullName,
+      signatureName: input.actor.signatureName
+    }
+  });
 }
 
 export async function signCarePlanAsNurseAdmin(input: {
@@ -1144,13 +1175,6 @@ export async function signCarePlanAsNurseAdmin(input: {
   attested: boolean;
   signatureImageDataUrl: string;
 }) {
-  const supabase = await createClient();
-  const { data: existingPlan, error: existingPlanError } = await supabase
-    .from("care_plans")
-    .select("caregiver_name, caregiver_email, caregiver_signature_status")
-    .eq("id", input.carePlanId)
-    .maybeSingle();
-  if (existingPlanError) throw new Error(existingPlanError.message);
   await signCarePlanNurseEsign({
     carePlanId: input.carePlanId,
     actor: {
@@ -1166,33 +1190,14 @@ export async function signCarePlanAsNurseAdmin(input: {
       signedFrom: "signCarePlanAsNurseAdmin"
     }
   });
-
-  const now = toEasternISO();
-  const canSetReadyToSend =
-    Boolean(clean(existingPlan?.caregiver_name)) &&
-    Boolean(clean(existingPlan?.caregiver_email)) &&
-    existingPlan?.caregiver_signature_status !== "sent" &&
-    existingPlan?.caregiver_signature_status !== "viewed" &&
-    existingPlan?.caregiver_signature_status !== "signed";
-  const touchPayload: Record<string, unknown> = {
-    updated_by_user_id: input.actor.id,
-    updated_by_name: input.actor.fullName,
-    updated_at: now
-  };
-  if (canSetReadyToSend) {
-    touchPayload.caregiver_signature_status = "ready_to_send";
-    touchPayload.caregiver_signature_error = null;
-  }
-  const { error: touchError } = await supabase
-    .from("care_plans")
-    .update(touchPayload)
-    .eq("id", input.carePlanId);
-  if (touchError) throw new Error(touchError.message);
-
-  const refreshed = await listCarePlanRows({ carePlanId: input.carePlanId });
-  const signedCarePlan = refreshed[0];
-  if (!signedCarePlan) throw new Error("Care plan could not be reloaded after nurse/admin signature.");
-  return signedCarePlan;
+  return finalizeCaregiverDispatchAfterNurseSignature({
+    carePlanId: input.carePlanId,
+    actor: {
+      id: input.actor.id,
+      fullName: input.actor.fullName,
+      signatureName: input.actor.signatureName
+    }
+  });
 }
 
 export async function updateCarePlanCaregiverContact(input: {

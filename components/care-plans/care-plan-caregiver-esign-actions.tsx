@@ -7,15 +7,11 @@ import {
   signCarePlanAction
 } from "@/app/care-plan-actions";
 import { EsignaturePad } from "@/components/signature/esignature-pad";
-import { getCaregiverSignatureStatusLabel } from "@/lib/services/care-plan-esign-rules";
+import {
+  getCaregiverSignatureStatusLabel,
+  getDefaultCaregiverSignatureExpiresOnDate
+} from "@/lib/services/care-plan-esign-rules";
 import type { CaregiverSignatureStatus } from "@/lib/services/care-plans";
-import { toEasternDate } from "@/lib/timezone";
-
-function plusDays(baseDate: string, days: number) {
-  const date = new Date(`${baseDate}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
 
 export function CarePlanCaregiverEsignActions({
   carePlanId,
@@ -40,7 +36,7 @@ export function CarePlanCaregiverEsignActions({
   caregiverSignedAt: string | null;
   finalMemberFileId: string | null;
 }) {
-  const today = useMemo(() => toEasternDate(), []);
+  const defaultExpiry = useMemo(() => getDefaultCaregiverSignatureExpiresOnDate(), []);
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
   const [nurseAttested, setNurseAttested] = useState(false);
@@ -49,7 +45,7 @@ export function CarePlanCaregiverEsignActions({
     caregiverName: caregiverName ?? "",
     caregiverEmail: caregiverEmail ?? "",
     optionalMessage: "",
-    expiresOnDate: plusDays(today, 14)
+    expiresOnDate: defaultExpiry
   });
 
   const nurseSignatureReady = nurseSignatureStatus === "signed" && Boolean(nurseSignedAt);
@@ -108,7 +104,10 @@ export function CarePlanCaregiverEsignActions({
                   setStatus(result.error);
                   return;
                 }
-                setStatus("Nurse/Admin signature saved. Caregiver request is ready to send.");
+                const statusLabel = getCaregiverSignatureStatusLabel(
+                  result.status as CaregiverSignatureStatus
+                );
+                setStatus(`Nurse/Admin signature saved. Caregiver workflow status: ${statusLabel}.`);
               })
             }
           >

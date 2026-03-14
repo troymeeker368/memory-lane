@@ -12,6 +12,7 @@ import { canAccessCarePlansForRole, isCarePlanAuthorizedRole } from "@/lib/servi
 import {
   canSendCaregiverSignatureByNurseSignatureState,
   canSendCaregiverSignatureByNurseSignedAt,
+  getDefaultCaregiverSignatureExpiresOnDate,
   hasCanonicalNurseSignature,
   resolvePublicCaregiverLinkState
 } from "@/lib/services/care-plan-esign-rules";
@@ -111,6 +112,10 @@ test("public caregiver signing link state requires valid status and non-expired 
   assert.equal(resolvePublicCaregiverLinkState({ status: "expired", expiresAt: future }), "expired");
   assert.equal(resolvePublicCaregiverLinkState({ status: "sent", expiresAt: past }), "expired");
   assert.equal(resolvePublicCaregiverLinkState({ status: "not_requested", expiresAt: future }), "invalid");
+});
+
+test("default caregiver signature expiry uses canonical 14-day window", () => {
+  assert.equal(getDefaultCaregiverSignatureExpiresOnDate("2026-03-01"), "2026-03-15");
 });
 
 test("legacy template wording does not appear in canonical care-plan definitions", () => {

@@ -1,4 +1,20 @@
 import type { CaregiverSignatureStatus } from "@/lib/services/care-plans";
+import { toEasternDate } from "@/lib/timezone";
+
+export const CARE_PLAN_CAREGIVER_SIGNATURE_EXPIRY_DAYS = 14;
+
+export function getDefaultCaregiverSignatureExpiresOnDate(baseDate: string = toEasternDate()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(baseDate)) {
+    throw new Error("Base date must be a valid YYYY-MM-DD value.");
+  }
+
+  const date = new Date(`${baseDate}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Base date is invalid.");
+  }
+  date.setUTCDate(date.getUTCDate() + CARE_PLAN_CAREGIVER_SIGNATURE_EXPIRY_DAYS);
+  return date.toISOString().slice(0, 10);
+}
 
 function isExpired(expiresAt: string | null | undefined) {
   if (!expiresAt) return false;

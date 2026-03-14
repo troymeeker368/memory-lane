@@ -1,8 +1,10 @@
 import Link from "next/link";
 
+import { MarMonthlyReportPanel } from "@/components/forms/mar-monthly-report-panel";
 import { MarWorkflowBoard } from "@/components/forms/mar-workflow-board";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { getMarMonthlyReportMemberOptions } from "@/lib/services/mar-monthly-report";
 import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +13,13 @@ export default async function MarWorkflowPage() {
   const profile = await requireModuleAccess("health");
   const canDocument =
     profile.role === "admin" || profile.role === "nurse" || profile.role === "manager" || profile.role === "director";
+  let reportMemberOptions: Awaited<ReturnType<typeof getMarMonthlyReportMemberOptions>> = [];
+  let reportOptionsLoadError: string | null = null;
+  try {
+    reportMemberOptions = await getMarMonthlyReportMemberOptions({ serviceRole: true });
+  } catch (error) {
+    reportOptionsLoadError = error instanceof Error ? error.message : "Unable to load MAR report member options.";
+  }
   let snapshot: Awaited<ReturnType<typeof getMarWorkflowSnapshot>> | null = null;
   let loadError: string | null = null;
   try {
@@ -36,6 +45,15 @@ export default async function MarWorkflowPage() {
           </Link>
         </div>
       </Card>
+
+      {reportOptionsLoadError ? (
+        <Card>
+          <CardTitle>Unable to Load MAR Report Generator</CardTitle>
+          <p className="mt-1 text-sm text-danger">{reportOptionsLoadError}</p>
+        </Card>
+      ) : (
+        <MarMonthlyReportPanel canGenerate={canDocument} memberOptions={reportMemberOptions} />
+      )}
 
       {loadError ? (
         <Card>

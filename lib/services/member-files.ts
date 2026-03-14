@@ -19,6 +19,7 @@ type SaveGeneratedMemberPdfInput = {
   memberId: string;
   memberName: string;
   documentLabel: string;
+  fileNameOverride?: string | null;
   documentSource: string;
   carePlanId?: string | null;
   category: MemberFileCategory;
@@ -70,7 +71,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
   }
   const memberId = canonical.memberId;
   const supabase = await createClient();
-  const defaultName = basePdfFileName(input.documentLabel, input.memberName, now);
+  const defaultName = safeFileName(input.fileNameOverride ?? "") || basePdfFileName(input.documentLabel, input.memberName, now);
   const categoryOther = input.category === "Other" ? input.categoryOther ?? null : null;
 
   if (input.replaceExistingByDocumentSource) {

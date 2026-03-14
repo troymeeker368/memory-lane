@@ -4,6 +4,9 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
+import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
+import { MAR_MONTHLY_REPORT_TYPES } from "@/lib/services/mar-monthly-report";
+import { buildMarMonthlyReportPdfDataUrl } from "@/lib/services/mar-monthly-report-pdf";
 import {
   documentPrnMarAdministration,
   documentPrnOutcomeAssessment,
@@ -11,6 +14,7 @@ import {
 } from "@/lib/services/mar-workflow";
 import { MAR_NOT_GIVEN_REASON_OPTIONS, MAR_PRN_OUTCOME_OPTIONS, type MarPrnOutcome } from "@/lib/services/mar-shared";
 import { createClient } from "@/lib/supabase/server";
+import { toEasternISO } from "@/lib/timezone";
 
 const scheduledAdministrationSchema = z
   .object({
@@ -62,6 +66,13 @@ const prnOutcomeSchema = z
       });
     }
   });
+
+const monthlyMarReportSchema = z.object({
+  memberId: z.string().uuid(),
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  reportType: z.enum(MAR_MONTHLY_REPORT_TYPES),
+  saveToMemberFiles: z.boolean().optional().default(false)
+});
 
 async function insertAudit(action: string, entityType: string, entityId: string | null, details: Record<string, unknown>) {
   const profile = await getCurrentProfile();
@@ -180,5 +191,84 @@ export async function recordPrnOutcomeAction(raw: z.infer<typeof prnOutcomeSchem
     return { ok: true };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save PRN outcome." };
+  }
+}
+
+function marReportTypeLabel(reportType: z.infer<typeof monthlyMarReportSchema>["reportType"]) {
+  if (reportType === "detail") return "Detail";
+  if (reportType === "exceptions") return "Exceptions";
+  return "Summary";
+}
+
+export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof monthlyMarReportSchema>) {
+  const payload = monthlyMarReportSchema.safeParse(raw);
+  if (!payload.success) return { ok: false, error: "Invalid MAR monthly report input." } as const;
+
+  const profile = await requireRoles(["admin", "manager", "director", "nurse"]);
+  const generatedAtIso = toEasternISO();
+
+  try {
+    const generated = await buildMarMonthlyReportPdfDataUrl({
+      memberId: payload.data.memberId,
+      month: payload.data.month,
+      reportType: payload.data.reportType,
+      generatedAtIso,
+      serviceRole: true,
+      generatedBy: {
+        name: profile.full_name,
+        role: profile.role
+      }
+    });
+
+    let saveWarning: string | null = null;
+    if (payload.data.saveToMemberFiles) {
+      try {
+        await saveGeneratedMemberPdfToFiles({
+          memberId: generated.report.member.id,
+          memberName: generated.report.member.fullName,
+          documentLabel: `MAR ${marReportTypeLabel(payload.data.reportType)} ${payload.data.month}`,
+          fileNameOverride: generated.fileName,
+          documentSource: `MAR Monthly Report:${generated.report.member.id}:${payload.data.month}:${payload.data.reportType}`,
+          category: "Health Unit",
+          dataUrl: generated.dataUrl,
+          uploadedBy: {
+            id: profile.id,
+            name: profile.full_name
+          },
+          generatedAtIso,
+          replaceExistingByDocumentSource: true
+        });
+      } catch (error) {
+        saveWarning = error instanceof Error ? error.message : "Unable to save report to member files.";
+      }
+    }
+
+    await insertAudit("create_log", "mar_monthly_report", generated.report.member.id, {
+      memberId: generated.report.member.id,
+      month: payload.data.month,
+      reportType: payload.data.reportType,
+      generatedAtIso,
+      savedToMemberFiles: payload.data.saveToMemberFiles,
+      partialRecordsDetected: generated.report.dataQuality.partialRecordsDetected
+    });
+
+    revalidateMarRoutes(generated.report.member.id);
+    return {
+      ok: true,
+      fileName: generated.fileName,
+      dataUrl: generated.dataUrl,
+      warning: saveWarning,
+      reportMeta: {
+        hasMedicationRecords: generated.report.dataQuality.hasMedicationRecords,
+        hasMarDataForMonth: generated.report.dataQuality.hasMarDataForMonth,
+        partialRecordsDetected: generated.report.dataQuality.partialRecordsDetected,
+        warnings: generated.report.dataQuality.warnings
+      }
+    } as const;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to generate monthly MAR report."
+    } as const;
   }
 }
