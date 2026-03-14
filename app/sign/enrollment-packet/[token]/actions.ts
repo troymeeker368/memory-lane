@@ -12,9 +12,11 @@ import {
 } from "@/lib/services/enrollment-packets";
 
 type PublicEnrollmentPacketUploadCategory =
-  | "insurance"
-  | "supporting"
-  | "poa_guardianship";
+  | "medicare_card"
+  | "private_insurance"
+  | "supplemental_insurance"
+  | "poa_guardianship"
+  | "dnr_dni_advance_directive";
 
 const MAX_ENROLLMENT_PACKET_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_ENROLLMENT_PACKET_UPLOAD_MB = MAX_ENROLLMENT_PACKET_UPLOAD_BYTES / (1024 * 1024);
@@ -145,6 +147,10 @@ export async function savePublicEnrollmentPacketProgressAction(formData: FormDat
       caregiverPhone: asPhone(formData, "caregiverPhone"),
       caregiverEmail: asString(formData, "caregiverEmail"),
       primaryContactAddress: asString(formData, "primaryContactAddress"),
+      primaryContactAddressLine1: asString(formData, "primaryContactAddressLine1"),
+      primaryContactCity: asString(formData, "primaryContactCity"),
+      primaryContactState: asString(formData, "primaryContactState"),
+      primaryContactZip: asString(formData, "primaryContactZip"),
       caregiverAddressLine1: asString(formData, "caregiverAddressLine1"),
       caregiverAddressLine2: asString(formData, "caregiverAddressLine2"),
       caregiverCity: asString(formData, "caregiverCity"),
@@ -155,6 +161,10 @@ export async function savePublicEnrollmentPacketProgressAction(formData: FormDat
       secondaryContactEmail: asString(formData, "secondaryContactEmail"),
       secondaryContactRelationship: asString(formData, "secondaryContactRelationship"),
       secondaryContactAddress: asString(formData, "secondaryContactAddress"),
+      secondaryContactAddressLine1: asString(formData, "secondaryContactAddressLine1"),
+      secondaryContactCity: asString(formData, "secondaryContactCity"),
+      secondaryContactState: asString(formData, "secondaryContactState"),
+      secondaryContactZip: asString(formData, "secondaryContactZip"),
       notes: asString(formData, "notes"),
       intakePayload
     });
@@ -175,10 +185,13 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
     const caregiverUserAgent = headerMap.get("user-agent");
     const intakePayload = parseIntakePayload(formData);
 
-    const [insuranceCardUploads, idUploads, legalDocumentUploads] = await Promise.all([
-      parseFileUploads(formData, "insuranceCardUploads", "insurance"),
-      parseFileUploads(formData, "idUploads", "supporting"),
-      parseFileUploads(formData, "legalDocumentUploads", "poa_guardianship")
+    const [medicareCardUploads, primaryInsuranceCardUploads, secondaryInsuranceCardUploads, poaUploads, dnrUploads, advanceDirectiveUploads] = await Promise.all([
+      parseFileUploads(formData, "medicareCardUploads", "medicare_card"),
+      parseFileUploads(formData, "primaryInsuranceCardUploads", "private_insurance"),
+      parseFileUploads(formData, "secondaryInsuranceCardUploads", "supplemental_insurance"),
+      parseFileUploads(formData, "poaUploads", "poa_guardianship"),
+      parseFileUploads(formData, "dnrUploads", "dnr_dni_advance_directive"),
+      parseFileUploads(formData, "advanceDirectiveUploads", "dnr_dni_advance_directive")
     ]);
 
     await submitPublicEnrollmentPacket({
@@ -192,6 +205,10 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       caregiverPhone: asPhone(formData, "caregiverPhone"),
       caregiverEmail: asString(formData, "caregiverEmail"),
       primaryContactAddress: asString(formData, "primaryContactAddress"),
+      primaryContactAddressLine1: asString(formData, "primaryContactAddressLine1"),
+      primaryContactCity: asString(formData, "primaryContactCity"),
+      primaryContactState: asString(formData, "primaryContactState"),
+      primaryContactZip: asString(formData, "primaryContactZip"),
       caregiverAddressLine1: asString(formData, "caregiverAddressLine1"),
       caregiverAddressLine2: asString(formData, "caregiverAddressLine2"),
       caregiverCity: asString(formData, "caregiverCity"),
@@ -202,9 +219,20 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       secondaryContactEmail: asString(formData, "secondaryContactEmail"),
       secondaryContactRelationship: asString(formData, "secondaryContactRelationship"),
       secondaryContactAddress: asString(formData, "secondaryContactAddress"),
+      secondaryContactAddressLine1: asString(formData, "secondaryContactAddressLine1"),
+      secondaryContactCity: asString(formData, "secondaryContactCity"),
+      secondaryContactState: asString(formData, "secondaryContactState"),
+      secondaryContactZip: asString(formData, "secondaryContactZip"),
       notes: asString(formData, "notes"),
       intakePayload,
-      uploads: [...insuranceCardUploads, ...idUploads, ...legalDocumentUploads]
+      uploads: [
+        ...medicareCardUploads,
+        ...primaryInsuranceCardUploads,
+        ...secondaryInsuranceCardUploads,
+        ...poaUploads,
+        ...dnrUploads,
+        ...advanceDirectiveUploads
+      ]
     });
     return { ok: true } as const;
   } catch (error) {

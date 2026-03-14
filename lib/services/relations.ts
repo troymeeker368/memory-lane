@@ -13,6 +13,8 @@ function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+const NEVER_MATCH_UUID = "00000000-0000-0000-0000-000000000000";
+
 function isInvalidUuidFilterError(message: string) {
   return message.toLowerCase().includes("invalid input syntax for type uuid");
 }
@@ -260,12 +262,14 @@ export async function getLeadDetail(leadId: string) {
 
   let partnerActivitiesQuery = supabase.from("partner_activities").select("*").order("activity_at", { ascending: false }).limit(200);
   const partnerFilters = [
-    `lead_id.eq.${lead.id}`,
-    partner?.partner_id ? `partner_id.eq.${partner.partner_id}` : null,
-    referralSource?.referral_source_id ? `referral_source_id.eq.${referralSource.referral_source_id}` : null
+    isUuid(String(lead.id ?? "")) ? `lead_id.eq.${lead.id}` : null,
+    isUuid(String(partner?.id ?? "")) ? `partner_id.eq.${partner?.id}` : null,
+    isUuid(String(referralSource?.id ?? "")) ? `referral_source_id.eq.${referralSource?.id}` : null
   ].filter(Boolean);
   if (partnerFilters.length > 0) {
     partnerActivitiesQuery = partnerActivitiesQuery.or(partnerFilters.join(","));
+  } else {
+    partnerActivitiesQuery = partnerActivitiesQuery.eq("lead_id", NEVER_MATCH_UUID);
   }
 
   const { data: partnerActivities, error: partnerActivitiesError } = await partnerActivitiesQuery;
@@ -305,36 +309,49 @@ export async function getPartnerDetail(partnerId: string) {
   if (referralError) throw new Error(referralError.message);
 
   const sourceIds = (referralSources ?? []).map((source: any) => String(source.referral_source_id ?? source.id));
+  const sourceUuidIds = (referralSources ?? [])
+    .map((source: any) => String(source.id ?? ""))
+    .filter((id) => isUuid(id));
 
-  let leadsQuery = supabase.from("leads").select("*").order("created_at", { ascending: false }).limit(200);
-  const leadFilters = [
-    `partner_id.eq.${partnerKey}`,
-    ...sourceIds.map((id) => `referral_source_id.eq.${id}`)
-  ];
-  if (leadFilters.length > 0) {
-    leadsQuery = leadsQuery.or(leadFilters.join(","));
+  const leadFilters = [`partner_id.eq.${partnerKey}`, ...sourceIds.map((id) => `referral_source_id.eq.${id}`)];
+  let { data: leads, error: leadsError } = await supabase
+    .from("leads")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(200)
+    .or(leadFilters.join(","));
+  if (leadsError && isInvalidUuidFilterError(leadsError.message)) {
+    const fallback = await supabase
+      .from("leads")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200)
+      .eq("partner_id", partnerKey);
+    leads = fallback.data;
+    leadsError = fallback.error;
   }
-  const { data: leads, error: leadsError } = await leadsQuery;
   if (leadsError) throw new Error(leadsError.message);
 
-  const leadIds = (leads ?? []).map((lead: any) => String(lead.id));
+  const leadIds = (leads ?? []).map((lead: any) => String(lead.id)).filter((id) => isUuid(id));
 
   let leadActivitiesQuery = supabase.from("lead_activities").select("*").order("activity_at", { ascending: false }).limit(200);
   if (leadIds.length > 0) {
     leadActivitiesQuery = leadActivitiesQuery.in("lead_id", leadIds);
   } else {
-    leadActivitiesQuery = leadActivitiesQuery.eq("lead_id", "__none__");
+    leadActivitiesQuery = leadActivitiesQuery.eq("lead_id", NEVER_MATCH_UUID);
   }
   const { data: leadActivities, error: leadActivitiesError } = await leadActivitiesQuery;
   if (leadActivitiesError) throw new Error(leadActivitiesError.message);
 
   const partnerActivityFilters = [
-    `partner_id.eq.${partnerKey}`,
-    ...sourceIds.map((id) => `referral_source_id.eq.${id}`)
-  ];
+    isUuid(String(partner.id ?? "")) ? `partner_id.eq.${partner.id}` : null,
+    ...sourceUuidIds.map((id) => `referral_source_id.eq.${id}`)
+  ].filter(Boolean) as string[];
   let partnerActivitiesQuery = supabase.from("partner_activities").select("*").order("activity_at", { ascending: false }).limit(200);
   if (partnerActivityFilters.length > 0) {
     partnerActivitiesQuery = partnerActivitiesQuery.or(partnerActivityFilters.join(","));
+  } else {
+    partnerActivitiesQuery = partnerActivitiesQuery.eq("lead_id", NEVER_MATCH_UUID);
   }
   const { data: partnerActivities, error: partnerActivitiesError } = await partnerActivitiesQuery;
   if (partnerActivitiesError) throw new Error(partnerActivitiesError.message);
@@ -363,7 +380,9 @@ export async function getReferralSourceDetail(sourceId: string) {
   if (!referralSource) return null;
 
   const sourceKey = String(referralSource.referral_source_id ?? referralSource.id);
+  const sourceUuid = isUuid(String(referralSource.id ?? "")) ? String(referralSource.id) : null;
   const partnerKey = String(referralSource.partner_id ?? "");
+  const partnerUuid = isUuid(partnerKey) ? partnerKey : null;
 
   const partnerPromise = partnerKey
     ? (() => {
@@ -375,26 +394,32 @@ export async function getReferralSourceDetail(sourceId: string) {
       })()
     : Promise.resolve({ data: null, error: null } as const);
 
-  const leadsQuery = supabase
-    .from("leads")
-    .select("*")
-    .or(`referral_source_id.eq.${sourceKey},partner_id.eq.${partnerKey}`)
-    .order("created_at", { ascending: false })
-    .limit(200);
+  const leadQueryFilters = [
+    sourceKey ? `referral_source_id.eq.${sourceKey}` : null,
+    partnerKey ? `partner_id.eq.${partnerKey}` : null
+  ].filter(Boolean) as string[];
 
-  const leadActivitiesQuery = supabase
-    .from("lead_activities")
-    .select("*")
-    .or(`referral_source_id.eq.${sourceKey}`)
-    .order("activity_at", { ascending: false })
-    .limit(200);
+  const leadsQueryBase = supabase.from("leads").select("*").order("created_at", { ascending: false }).limit(200);
+  const leadsQuery =
+    leadQueryFilters.length > 0 ? leadsQueryBase.or(leadQueryFilters.join(",")) : leadsQueryBase.eq("id", NEVER_MATCH_UUID);
 
-  const partnerActivitiesQuery = supabase
-    .from("partner_activities")
-    .select("*")
-    .or(`referral_source_id.eq.${sourceKey},partner_id.eq.${partnerKey}`)
-    .order("activity_at", { ascending: false })
-    .limit(200);
+  let leadActivitiesQuery = supabase.from("lead_activities").select("*").order("activity_at", { ascending: false }).limit(200);
+  if (sourceUuid) {
+    leadActivitiesQuery = leadActivitiesQuery.eq("referral_source_id", sourceUuid);
+  } else {
+    leadActivitiesQuery = leadActivitiesQuery.eq("lead_id", NEVER_MATCH_UUID);
+  }
+
+  let partnerActivitiesQuery = supabase.from("partner_activities").select("*").order("activity_at", { ascending: false }).limit(200);
+  const referralActivityFilters = [
+    sourceUuid ? `referral_source_id.eq.${sourceUuid}` : null,
+    partnerUuid ? `partner_id.eq.${partnerUuid}` : null
+  ].filter(Boolean) as string[];
+  if (referralActivityFilters.length > 0) {
+    partnerActivitiesQuery = partnerActivitiesQuery.or(referralActivityFilters.join(","));
+  } else {
+    partnerActivitiesQuery = partnerActivitiesQuery.eq("lead_id", NEVER_MATCH_UUID);
+  }
 
   const [partnerResult, leadsResult, leadActivitiesResult, partnerActivitiesResult] = await Promise.all([
     partnerPromise,
@@ -404,6 +429,19 @@ export async function getReferralSourceDetail(sourceId: string) {
   ]);
 
   if (partnerResult.error) throw new Error(partnerResult.error.message);
+  if (leadsResult.error && isInvalidUuidFilterError(leadsResult.error.message)) {
+    const fallback = partnerKey
+      ? await supabase.from("leads").select("*").eq("partner_id", partnerKey).order("created_at", { ascending: false }).limit(200)
+      : await supabase.from("leads").select("*").eq("id", NEVER_MATCH_UUID).order("created_at", { ascending: false }).limit(200);
+    if (fallback.error) throw new Error(fallback.error.message);
+    return {
+      referralSource,
+      partner: partnerResult.data ?? null,
+      leads: fallback.data ?? [],
+      leadActivities: leadActivitiesResult.data ?? [],
+      partnerActivities: partnerActivitiesResult.data ?? []
+    };
+  }
   if (leadsResult.error) throw new Error(leadsResult.error.message);
   if (leadActivitiesResult.error) throw new Error(leadActivitiesResult.error.message);
   if (partnerActivitiesResult.error) throw new Error(partnerActivitiesResult.error.message);

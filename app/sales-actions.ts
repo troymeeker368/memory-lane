@@ -75,6 +75,12 @@ function normalizeText(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
 }
 
+function isUuid(value: string | null | undefined) {
+  const normalized = (value ?? "").trim();
+  if (!normalized) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized);
+}
+
 function makeShortId(prefix: string) {
   const random = Math.random().toString(16).slice(2, 10);
   return `${prefix}-${random}`;
@@ -312,7 +318,7 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
       ? await supabase
           .from("community_partner_organizations")
           .select("id, partner_id")
-          .or(`id.eq.${requestedPartner},partner_id.eq.${requestedPartner}`)
+          .or([isUuid(requestedPartner) ? `id.eq.${requestedPartner}` : null, `partner_id.eq.${requestedPartner}`].filter(Boolean).join(","))
           .maybeSingle()
       : { data: null, error: null };
     if (selectedPartnerResult.error) return { error: selectedPartnerResult.error.message };
@@ -321,7 +327,7 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
       ? await supabase
           .from("referral_sources")
           .select("id, partner_id, referral_source_id, contact_name")
-          .or(`id.eq.${requestedSource},referral_source_id.eq.${requestedSource}`)
+          .or([isUuid(requestedSource) ? `id.eq.${requestedSource}` : null, `referral_source_id.eq.${requestedSource}`].filter(Boolean).join(","))
           .maybeSingle()
       : { data: null, error: null };
     if (selectedReferralSourceResult.error) return { error: selectedReferralSourceResult.error.message };
@@ -766,12 +772,12 @@ export async function createPartnerActivityAction(raw: z.infer<typeof partnerAct
       supabase
         .from("community_partner_organizations")
         .select("id, partner_id, organization_name")
-        .or(`id.eq.${payload.data.partnerId},partner_id.eq.${payload.data.partnerId}`)
+        .or([isUuid(payload.data.partnerId) ? `id.eq.${payload.data.partnerId}` : null, `partner_id.eq.${payload.data.partnerId}`].filter(Boolean).join(","))
         .maybeSingle(),
       supabase
         .from("referral_sources")
         .select("id, partner_id, contact_name, referral_source_id")
-        .or(`id.eq.${payload.data.referralSourceId},referral_source_id.eq.${payload.data.referralSourceId}`)
+        .or([isUuid(payload.data.referralSourceId) ? `id.eq.${payload.data.referralSourceId}` : null, `referral_source_id.eq.${payload.data.referralSourceId}`].filter(Boolean).join(","))
         .maybeSingle()
     ]);
     if (partnerError) return { error: partnerError.message };
@@ -880,7 +886,7 @@ export async function createReferralSourceAction(raw: z.infer<typeof referralSou
   const { data: partner, error: partnerError } = await supabase
     .from("community_partner_organizations")
     .select("id, partner_id, organization_name")
-    .or(`id.eq.${payload.data.partnerId},partner_id.eq.${payload.data.partnerId}`)
+    .or([isUuid(payload.data.partnerId) ? `id.eq.${payload.data.partnerId}` : null, `partner_id.eq.${payload.data.partnerId}`].filter(Boolean).join(","))
     .maybeSingle();
   if (partnerError) return { error: partnerError.message };
   if (!partner) return { error: "Select a valid organization first." };
@@ -957,7 +963,7 @@ const enrollmentPacketSendSchema = z.object({
   caregiverEmail: optionalString,
   requestedStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   requestedDays: z.array(z.string().min(1)).min(1),
-  transportation: z.enum(["Door to Door", "Bus Stop", "Mixed"]),
+  transportation: z.enum(["None", "Door to Door", "Bus Stop", "Mixed"]),
   communityFee: z.number().finite().nonnegative().optional().nullable(),
   dailyRate: z.number().finite().nonnegative().optional().nullable(),
   totalInitialEnrollmentAmount: z.number().finite().nonnegative().optional().nullable(),

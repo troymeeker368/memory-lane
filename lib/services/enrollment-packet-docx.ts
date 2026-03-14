@@ -6,7 +6,15 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 import { formatPhoneDisplay } from "@/lib/phone";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
-import type { EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
+import {
+  ENROLLMENT_PACKET_INTAKE_ARRAY_KEYS,
+  ENROLLMENT_PACKET_INTAKE_TEXT_KEYS,
+  type EnrollmentPacketIntakePayload
+} from "@/lib/services/enrollment-packet-intake-payload";
+import {
+  ENROLLMENT_PACKET_SECTIONS,
+  formatEnrollmentPacketValue
+} from "@/lib/services/enrollment-packet-public-schema";
 
 type CompletedEnrollmentPacketDocxInput = {
   memberName: string;
@@ -65,6 +73,43 @@ function wrapText(text: string, maxChars = 105) {
   return lines.length > 0 ? lines : ["-"];
 }
 
+function toTitleCaseFromKey(key: string) {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (value) => value.toUpperCase());
+}
+
+function displayPacketFieldValue(
+  payload: EnrollmentPacketIntakePayload,
+  key: (typeof ENROLLMENT_PACKET_INTAKE_TEXT_KEYS)[number] | (typeof ENROLLMENT_PACKET_INTAKE_ARRAY_KEYS)[number]
+) {
+  const raw = payload[key];
+  if (Array.isArray(raw)) {
+    return raw.length > 0 ? raw.join(", ") : "-";
+  }
+
+  if (typeof raw !== "string") return "-";
+  const normalized = raw.trim();
+  if (!normalized) return "-";
+
+  if (
+    key === "primaryContactPhone" ||
+    key === "secondaryContactPhone" ||
+    key === "pcpPhone" ||
+    key === "pharmacyPhone" ||
+    key === "pcpFax" ||
+    key === "physicianPhone" ||
+    key === "physicianFax"
+  ) {
+    return formatPhoneDisplay(normalized) || normalized;
+  }
+
+  return normalized;
+}
+
 export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnrollmentPacketDocxInput) {
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
@@ -118,18 +163,28 @@ export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnr
   drawRow("Secondary Contact Phone", clean(formatPhoneDisplay(input.secondaryContactPhone)));
   drawRow("Secondary Contact Email", clean(input.secondaryContactEmail));
 
-  drawTitle("Enrollment Data Snapshot");
-  const intakeRows: Array<[string, string]> = [
-    ["Member DOB", clean(input.intakePayload.memberDob)],
-    ["Member Gender", clean(input.intakePayload.memberGender)],
-    ["Requested Start Date", clean(input.intakePayload.requestedStartDate)],
-    ["Total Initial Enrollment Amount", clean(input.intakePayload.totalInitialEnrollmentAmount)],
-    ["PCP", clean(input.intakePayload.pcpName)],
-    ["Pharmacy", clean(input.intakePayload.pharmacy)],
-    ["Photo Consent", clean(input.intakePayload.photoConsentChoice)],
-    ["Payment Method", clean(input.intakePayload.paymentMethodSelection)]
-  ];
-  intakeRows.forEach(([label, value]) => drawRow(label, value));
+  drawTitle("Enrollment Form Data Record");
+  drawRow("Record Scope", "All captured enrollment form fields at time of caregiver submission.");
+
+  const renderedKeys = new Set<string>();
+
+  ENROLLMENT_PACKET_SECTIONS.forEach((section) => {
+    drawTitle(section.title);
+    section.fields.forEach((field) => {
+      renderedKeys.add(field.key);
+      drawRow(field.label, formatEnrollmentPacketValue(input.intakePayload[field.key]));
+    });
+  });
+
+  const additionalKeys = [...ENROLLMENT_PACKET_INTAKE_TEXT_KEYS, ...ENROLLMENT_PACKET_INTAKE_ARRAY_KEYS].filter(
+    (key) => !renderedKeys.has(key)
+  );
+  if (additionalKeys.length > 0) {
+    drawTitle("Additional Captured Fields");
+    additionalKeys.forEach((key) => {
+      drawRow(toTitleCaseFromKey(key), displayPacketFieldValue(input.intakePayload, key));
+    });
+  }
 
   drawTitle("Signatures");
   drawRow("Sender Signature Applied", clean(input.senderSignatureName));

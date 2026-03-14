@@ -85,6 +85,94 @@ Migration rules:
 - If email delivery fails, the workflow must not be marked sent.
 - If artifacts are not saved (for example Member Files), completion claims are forbidden.
 
+## Shared RPC Standard
+
+Memory Lane uses shared RPC-backed services for high-risk workflows.
+
+Simple CRUD operations may use canonical services directly, but the following workflows must use shared RPC or transaction-backed service operations:
+- lifecycle transitions
+- multi-table writes
+- signature completion workflows
+- downstream synchronization cascades
+- workflows that write to both database and storage
+
+Examples:
+- lead -> member conversion
+- enrollment packet completion
+- physician orders (POF) signing
+- medication propagation to MHP
+- MAR generation
+- care plan finalization
+
+Server actions must call services, and services may internally call RPC where atomic execution is required.
+
+## ACID Transaction Requirements
+
+Multi-step workflows must maintain ACID guarantees.
+
+Requirements:
+- Atomicity - workflows that perform multiple writes must complete entirely or fail entirely.
+- Consistency - system invariants must remain valid after execution.
+- Isolation - concurrent requests must not corrupt lifecycle state.
+- Durability - once a workflow returns success, required artifacts and records must be persisted.
+
+Success must never be returned if required downstream persistence fails.
+
+## Idempotency and Replay Safety
+
+All workflows reachable from public links or asynchronous triggers must be idempotent.
+
+Examples:
+- enrollment packet completion
+- caregiver e-signature links
+- POF signature flows
+- document uploads
+- lead -> member conversion
+
+Repeated submissions must not create duplicate canonical records.
+
+Implement protections using:
+- unique constraints
+- lifecycle state checks
+- idempotency tokens where appropriate
+
+## System Event Logging
+
+All significant lifecycle events must be logged.
+
+Logging must occur only in the service layer.
+
+UI components and server actions must never write directly to the event log.
+
+Events should be recorded for workflows such as:
+- lead conversion
+- enrollment packet sent/completed
+- intake creation
+- POF signing
+- medication propagation
+- MAR generation
+- care plan creation and signature
+- member archival
+
+## Required Nightly Architecture Audits
+
+The system runs automated architecture audits that enforce these rules.
+
+Audits include:
+- Supabase RLS & Security Audit
+- Production Readiness Audit
+- Canonicality Sweep
+- Schema Migration Safety Audit
+- Shared Resolver Drift Check
+- Shared RPC Architecture Audit
+- ACID Transaction Safety Audit
+- Idempotency & Duplicate Submission Audit
+- Workflow Lifecycle Simulation Audit
+- Referential Integrity & Cascade Audit
+- Query Performance Audit
+
+Agents must assume these audits will run and enforce architectural rules.
+
 ## Required Shared Domains
 
 The following domains require canonical shared resolver/service logic:

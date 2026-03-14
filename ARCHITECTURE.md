@@ -81,6 +81,126 @@ Required integrity examples:
 - if artifact save fails, do not mark as completed
 - if canonical downstream sync fails, surface explicit error
 
+## Shared RPC Standard
+
+Memory Lane distinguishes between simple service CRUD and transactional workflows.
+
+Use canonical services for:
+- single-table writes
+- simple updates
+- read operations
+
+Use shared RPC or transactional service operations for:
+- multi-table writes
+- lifecycle transitions
+- downstream synchronization
+- signature completion workflows
+- workflows requiring atomic execution
+
+This ensures transactional integrity across clinical workflows.
+
+## ACID Transaction Safety
+
+Multi-step workflows must preserve ACID guarantees.
+
+Examples of workflows requiring atomic behavior:
+- enrollment packet completion
+- physician order signing
+- medication propagation to MHP
+- MAR schedule generation
+- care plan finalization
+
+Partial completion is forbidden.
+
+If downstream persistence fails, the entire workflow must fail.
+
+## Idempotency and Replay Safety
+
+Public token workflows and asynchronous operations must be replay-safe.
+
+Duplicate submissions must not produce duplicate canonical records.
+
+Examples:
+- enrollment packet submissions
+- caregiver e-signature completion
+- POF signing links
+- document upload flows
+
+Idempotency may be enforced through:
+- unique constraints
+- lifecycle state guards
+- idempotency tokens
+
+## Referential Integrity and Lifecycle Cascades
+
+Memory Lane uses strict lifecycle cascades.
+
+Canonical workflow chain:
+
+Lead
+-> Enrollment Packet
+-> Member
+-> Intake Assessment
+-> Physician Orders (POF)
+-> Member Health Profile
+-> Member Command Center
+-> Care Plans
+-> MAR / Clinical Activity
+
+The system must guarantee:
+- no orphan records
+- correct downstream propagation
+- no duplicate active canonical records
+- valid lifecycle state transitions
+
+## System Event Logging
+
+All lifecycle events are recorded in the `system_events` table.
+
+Event logs provide:
+- debugging traceability
+- operational analytics
+- compliance audit trails
+- cascade verification
+
+Events must be written only from canonical services.
+
+Key workflow events that must be logged:
+- lead -> member conversion
+- enrollment packet sent and completed
+- intake assessment created
+- physician orders (POF) signed
+- medication propagation to MHP
+- MAR schedule generation
+- care plan creation and signature
+- caregiver e-signature events
+- member archival or deletion
+
+Canonical service owners for event writes:
+- `member-service`
+- `lead-service`
+- `intake-service`
+- `physician-orders-service`
+- `care-plan-service`
+- `mar-service`
+
+Service-layer usage example:
+
+```ts
+import { logSystemEvent } from "@/lib/services/system-event-service";
+
+await logSystemEvent({
+  event_type: "lead_member_conversion_completed",
+  entity_type: "lead",
+  entity_id: leadId,
+  actor_type: "user",
+  actor_id: actorUserId,
+  metadata: { member_id: memberId, source: "sales-workflow" },
+  request_id: requestId,
+  correlation_id: correlationId
+});
+```
+
 ## Canonical Shared Domains
 
 The following domains require shared resolver/service ownership:

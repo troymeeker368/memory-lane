@@ -11,7 +11,7 @@ import {
 } from "@/lib/services/enrollment-packet-proration";
 
 const WEEKDAY_OPTIONS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as const;
-const STAFF_TRANSPORTATION_OPTIONS = ["Door to Door", "Bus Stop", "Mixed"] as const;
+const STAFF_TRANSPORTATION_OPTIONS = ["None", "Door to Door", "Bus Stop", "Mixed"] as const;
 type WeekdayOption = (typeof WEEKDAY_OPTIONS)[number];
 type StaffTransportationOption = (typeof STAFF_TRANSPORTATION_OPTIONS)[number];
 
@@ -49,7 +49,7 @@ export function SendEnrollmentPacketAction({
   const [caregiverEmail, setCaregiverEmail] = useState(defaultCaregiverEmail ?? "");
   const [requestedStartDate, setRequestedStartDate] = useState(defaultRequestedStartDate ?? todayDateString());
   const [requestedDays, setRequestedDays] = useState<WeekdayOption[]>([]);
-  const [transportation, setTransportation] = useState<StaffTransportationOption>("Door to Door");
+  const [transportation, setTransportation] = useState<StaffTransportationOption>("None");
   const [optionalMessage, setOptionalMessage] = useState("");
   const [communityFee, setCommunityFee] = useState<string>(
     pricingPreview.communityFeeAmount == null ? "" : pricingPreview.communityFeeAmount.toFixed(2)
@@ -59,10 +59,7 @@ export function SendEnrollmentPacketAction({
   const [communityFeeEdited, setCommunityFeeEdited] = useState(false);
   const [dailyRateEdited, setDailyRateEdited] = useState(false);
   const [initialAmountEdited, setInitialAmountEdited] = useState(false);
-  const [sentResult, setSentResult] = useState<{
-    requestId: string;
-    requestUrl: string;
-  } | null>(null);
+  const [sentResult, setSentResult] = useState(false);
   const submitGuardRef = useRef(false);
   const router = useRouter();
   const isWorking = isPending || isSubmitting;
@@ -187,10 +184,7 @@ export function SendEnrollmentPacketAction({
           return;
         }
 
-        setSentResult({
-          requestId: result.requestId,
-          requestUrl: result.requestUrl
-        });
+        setSentResult(true);
         setStatus(null);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Unable to send enrollment packet.");
@@ -216,17 +210,13 @@ export function SendEnrollmentPacketAction({
                 <p className="text-sm text-muted">
                   The enrollment packet was sent and is now in the signature workflow.
                 </p>
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-                  Request ID: <span className="font-semibold">{sentResult.requestId}</span>
-                </div>
-                <p className="text-xs text-muted break-all">Secure link: {sentResult.requestUrl}</p>
                 <div className="mt-4 flex justify-end">
                   <button
                     type="button"
                     className="rounded-lg border border-border px-4 py-2 text-sm font-semibold"
                     onClick={() => {
                       setIsOpen(false);
-                      setSentResult(null);
+                      setSentResult(false);
                       router.refresh();
                     }}
                     disabled={isWorking}

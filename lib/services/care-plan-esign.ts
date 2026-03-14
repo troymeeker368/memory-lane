@@ -16,6 +16,7 @@ import {
   resolvePublicCaregiverLinkState
 } from "@/lib/services/care-plan-esign-rules";
 import { getCarePlanById, type CaregiverSignatureStatus, type CarePlan } from "@/lib/services/care-plans";
+import { logSystemEvent } from "@/lib/services/system-event-service";
 
 const STORAGE_BUCKET = "member-documents";
 const TOKEN_BYTE_LENGTH = 32;
@@ -622,6 +623,19 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
       metadata: {
         finalMemberFileId,
         signatureImageUrl: signatureUri
+      }
+    });
+
+    await logSystemEvent({
+      event_type: "care_plan_caregiver_signed",
+      entity_type: "care_plan",
+      entity_id: detail.carePlan.id,
+      actor_type: "caregiver",
+      metadata: {
+        member_id: detail.carePlan.memberId,
+        final_member_file_id: finalMemberFileId,
+        caregiver_email: detail.carePlan.caregiverEmail,
+        signature_image_url: signatureUri
       }
     });
 

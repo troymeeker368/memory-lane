@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import { logSystemEvent } from "@/lib/services/system-event-service";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 import {
@@ -121,7 +122,22 @@ export async function applyLeadStageTransitionWithMemberUpsertSupabase(input: {
     args
   });
 
-  return toLeadConversionResult(data);
+  const result = toLeadConversionResult(data);
+  await logSystemEvent({
+    event_type: "lead_member_conversion_completed",
+    entity_type: "lead",
+    entity_id: result.leadId,
+    actor_type: "user",
+    actor_id: input.actorUserId,
+    metadata: {
+      member_id: result.memberId,
+      source: input.source,
+      to_stage: result.toStage,
+      to_status: result.toStatus
+    }
+  });
+
+  return result;
 }
 
 export async function createLeadWithMemberConversionSupabase(input: {
@@ -165,5 +181,20 @@ export async function createLeadWithMemberConversionSupabase(input: {
     args
   });
 
-  return toLeadConversionResult(data);
+  const result = toLeadConversionResult(data);
+  await logSystemEvent({
+    event_type: "lead_member_conversion_completed",
+    entity_type: "lead",
+    entity_id: result.leadId,
+    actor_type: "user",
+    actor_id: input.actorUserId,
+    metadata: {
+      member_id: result.memberId,
+      source: input.source,
+      to_stage: result.toStage,
+      to_status: result.toStatus
+    }
+  });
+
+  return result;
 }

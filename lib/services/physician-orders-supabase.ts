@@ -23,6 +23,7 @@ import { ensureMemberCommandCenterProfileSupabase } from "@/lib/services/member-
 import { generateMarSchedulesForMember, syncPofMedicationsFromSignedOrder } from "@/lib/services/mar-workflow";
 import { type IntakeAssessmentForPofPrefill, mapIntakeAssessmentToPofPrefill } from "@/lib/services/intake-to-pof-mapping";
 import type { IntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
+import { logSystemEvent } from "@/lib/services/system-event-service";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export {
@@ -1267,6 +1268,19 @@ export async function processSignedPhysicianOrderPostSignSync(input: {
       pofRequestId: input.pofRequestId,
       serviceRole: input.serviceRole
     });
+    await logSystemEvent({
+      event_type: "pof_post_sign_sync_completed",
+      entity_type: "physician_order",
+      entity_id: input.pofId,
+      actor_type: "user",
+      actor_id: input.actor.id,
+      metadata: {
+        member_id: input.memberId,
+        queue_id: input.queueId,
+        attempt_count: attemptCount,
+        pof_request_id: clean(input.pofRequestId)
+      }
+    });
     return {
       postSignStatus: "synced",
       queueId: input.queueId,
@@ -1287,6 +1301,22 @@ export async function processSignedPhysicianOrderPostSignSync(input: {
     actor: input.actor,
     queuedAt: input.signedAtIso,
     serviceRole: input.serviceRole
+    });
+  await logSystemEvent({
+    event_type: "pof_post_sign_sync_queued_for_retry",
+    entity_type: "physician_order",
+    entity_id: input.pofId,
+    actor_type: "user",
+    actor_id: input.actor.id,
+    metadata: {
+      member_id: input.memberId,
+      queue_id: input.queueId,
+      attempt_count: attemptCount,
+      failed_step: postSign.step,
+      next_retry_at: nextRetryAt,
+      last_error: postSign.errorMessage,
+      pof_request_id: clean(input.pofRequestId)
+    }
   });
   return {
     postSignStatus: "queued",

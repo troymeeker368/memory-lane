@@ -105,7 +105,8 @@ const MCC_STRING_MAP: StringMap[] = [
   { sourceField: "pcpAddress", targetField: "pcp_address" },
   { sourceField: "pharmacy", targetField: "pharmacy" },
   { sourceField: "livingSituation", targetField: "living_situation" },
-  { sourceField: "insuranceSummaryReference", targetField: "insurance_summary_reference" }
+  { sourceField: "insuranceSummaryReference", targetField: "insurance_summary_reference" },
+  { sourceField: "branchOfService", targetField: "veteran_branch" }
 ];
 
 const MHP_STRING_MAP: StringMap[] = [
@@ -119,13 +120,14 @@ const MHP_STRING_MAP: StringMap[] = [
   { sourceField: "physicalHealthProblems", targetField: "physical_health_problems" },
   { sourceField: "behavioralNotes", targetField: "cognitive_behavior_comments" },
   { sourceField: "communicationStyle", targetField: "communication_style" },
-  { sourceField: "mobilityTransferStatus", targetField: "ambulation" },
-  { sourceField: "mobilityTransferStatus", targetField: "transferring" },
+  { sourceField: "adlMobilityLevel", targetField: "ambulation" },
+  { sourceField: "adlTransferLevel", targetField: "transferring" },
   { sourceField: "toiletingBathingAssistance", targetField: "bathing" },
   { sourceField: "toiletingBathingAssistance", targetField: "toileting" },
   { sourceField: "continenceStatus", targetField: "bladder_continence" },
   { sourceField: "continenceStatus", targetField: "bowel_continence" },
   { sourceField: "incontinenceProducts", targetField: "incontinence_products" },
+  { sourceField: "hearingStatus", targetField: "hearing" },
   { sourceField: "dressingFeedingIndependence", targetField: "dressing" },
   { sourceField: "dressingFeedingIndependence", targetField: "eating" },
   { sourceField: "dentures", targetField: "dental" },
@@ -177,6 +179,20 @@ function parseBoolLike(value: string | null | undefined): boolean | null {
   return null;
 }
 
+function parsePhotoConsentChoice(value: string | null | undefined): boolean | null {
+  const normalized = clean(value)?.toLowerCase();
+  if (!normalized) return null;
+  if (normalized.includes("do not")) return false;
+  if (normalized.includes("do permit")) return true;
+  if (normalized.includes("permit")) return true;
+  return null;
+}
+
+function hasSelection(values: string[], expected: string) {
+  const target = expected.trim().toLowerCase();
+  return values.some((value) => value.trim().toLowerCase() === target);
+}
+
 function normalizeGender(value: string | null | undefined): "M" | "F" | null {
   const normalized = clean(value)?.toLowerCase();
   if (!normalized) return null;
@@ -185,13 +201,20 @@ function normalizeGender(value: string | null | undefined): "M" | "F" | null {
   return null;
 }
 
-function normalizeTransportationMode(value: string | null | undefined): "Door to Door" | "Bus Stop" | "Mixed" | null {
+function normalizeTransportationMode(value: string | null | undefined): "Door to Door" | "Bus Stop" | null {
   const normalized = clean(value)?.toLowerCase();
   if (!normalized) return null;
-  if (normalized.includes("mixed")) return "Mixed";
   if (normalized.includes("door")) return "Door to Door";
   if (normalized.includes("bus")) return "Bus Stop";
   if (normalized === "yes") return "Door to Door";
+  return null;
+}
+
+function normalizeTransportationRequired(value: string | null | undefined): boolean | null {
+  const normalized = clean(value)?.toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "none" || normalized === "no") return false;
+  if (normalized.includes("door") || normalized.includes("bus") || normalized.includes("mixed")) return true;
   return null;
 }
 
@@ -536,6 +559,16 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       sourceValue: parseBoolLike(payload.veteranStatus),
       existingValue: mccProfile.is_veteran
     });
+    applyFillBlankBoolean({
+      records,
+      patch: mccPatch,
+      targetSystem: "mcc",
+      targetTable: "member_command_centers",
+      targetField: "photo_consent",
+      sourceField: "photoConsentChoice",
+      sourceValue: parsePhotoConsentChoice(payload.photoConsentChoice),
+      existingValue: mccProfile.photo_consent
+    });
 
     if (Object.keys(mccPatch).length > 3) {
       const { error } = await admin.from("member_command_centers").update(mccPatch).eq("id", mccProfile.id);
@@ -600,6 +633,9 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       });
     }
 
+    const normalizedTransportationMode = normalizeTransportationMode(payload.transportationPreference);
+    const normalizedTransportationRequired = normalizeTransportationRequired(payload.transportationPreference);
+
     applyFillBlankString({
       records,
       patch: attendancePatch,
@@ -607,13 +643,20 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       targetTable: "member_attendance_schedules",
       targetField: "transportation_mode",
       sourceField: "transportationPreference",
-      sourceValue: normalizeTransportationMode(payload.transportationPreference),
+      sourceValue: normalizedTransportationMode,
       existingValue: attendanceSchedule.transportation_mode
     });
 
-    if (attendancePatch.transportation_mode) {
-      attendancePatch.transportation_required = true;
-    }
+    applyFillBlankBoolean({
+      records,
+      patch: attendancePatch,
+      targetSystem: "mcc",
+      targetTable: "member_attendance_schedules",
+      targetField: "transportation_required",
+      sourceField: "transportationPreference",
+      sourceValue: normalizedTransportationRequired,
+      existingValue: attendanceSchedule.transportation_required
+    });
 
     if (attendanceSchedule.daily_rate == null && input.fields.daily_rate != null) {
       attendancePatch.daily_rate = Number(input.fields.daily_rate);
@@ -664,10 +707,10 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
         cellular_number: clean(payload.primaryContactPhone),
         work_number: null,
         home_number: null,
-        street_address: clean(payload.primaryContactAddress) ?? clean(payload.memberAddressLine1),
-        city: clean(payload.memberCity),
-        state: clean(payload.memberState),
-        zip: clean(payload.memberZip),
+        street_address: clean(payload.primaryContactAddressLine1) ?? clean(payload.primaryContactAddress) ?? clean(payload.memberAddressLine1),
+        city: clean(payload.primaryContactCity) ?? clean(payload.memberCity),
+        state: clean(payload.primaryContactState) ?? clean(payload.memberState),
+        zip: clean(payload.primaryContactZip) ?? clean(payload.memberZip),
         created_by_user_id: input.senderUserId,
         created_by_name: input.senderName,
         created_at: now,
@@ -707,10 +750,10 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
           cellular_number: clean(payload.secondaryContactPhone),
           work_number: null,
           home_number: null,
-          street_address: clean(payload.secondaryContactAddress),
-          city: null,
-          state: null,
-          zip: null,
+          street_address: clean(payload.secondaryContactAddressLine1) ?? clean(payload.secondaryContactAddress),
+          city: clean(payload.secondaryContactCity),
+          state: clean(payload.secondaryContactState),
+          zip: clean(payload.secondaryContactZip),
           created_by_user_id: input.senderUserId,
           created_by_name: input.senderName,
           created_at: now,
@@ -780,6 +823,101 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       sourceField: "mobilityAids",
       sourceValue: [payload.caneWalkerUse, payload.wheelchairUse].filter(Boolean).join(" | "),
       existingValue: (mhpRow as Record<string, unknown>).mobility_aids
+    });
+
+    const hasUrinaryIncontinence = hasSelection(payload.continenceSelections, "Urinary Incontinence");
+    const hasBowelIncontinence = hasSelection(payload.continenceSelections, "Bowel Incontinence");
+    const hasContinentSelection = hasSelection(payload.continenceSelections, "Continent");
+
+    const bladderContinenceFromSelections =
+      payload.continenceSelections.length === 0
+        ? clean(payload.continenceStatus)
+        : hasUrinaryIncontinence
+          ? "Urinary Incontinence"
+          : hasContinentSelection
+            ? "Continent"
+            : clean(payload.continenceStatus);
+    const bowelContinenceFromSelections =
+      payload.continenceSelections.length === 0
+        ? clean(payload.continenceStatus)
+        : hasBowelIncontinence
+          ? "Bowel Incontinence"
+          : hasContinentSelection
+            ? "Continent"
+            : clean(payload.continenceStatus);
+
+    applyFillBlankString({
+      records,
+      patch: mhpPatch,
+      targetSystem: "mhp",
+      targetTable: "member_health_profiles",
+      targetField: "bladder_continence",
+      sourceField: "continenceSelections",
+      sourceValue: bladderContinenceFromSelections,
+      existingValue: (mhpRow as Record<string, unknown>).bladder_continence
+    });
+    applyFillBlankString({
+      records,
+      patch: mhpPatch,
+      targetSystem: "mhp",
+      targetTable: "member_health_profiles",
+      targetField: "bowel_continence",
+      sourceField: "continenceSelections",
+      sourceValue: bowelContinenceFromSelections,
+      existingValue: (mhpRow as Record<string, unknown>).bowel_continence
+    });
+
+    const hasBehaviorSelections = payload.behavioralObservations.length > 0;
+
+    applyFillBlankBoolean({
+      records,
+      patch: mhpPatch,
+      targetSystem: "mhp",
+      targetTable: "member_health_profiles",
+      targetField: "wandering",
+      sourceField: "behavioralObservations",
+      sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Wandering") : null,
+      existingValue: (mhpRow as Record<string, unknown>).wandering
+    });
+    applyFillBlankBoolean({
+      records,
+      patch: mhpPatch,
+      targetSystem: "mhp",
+      targetTable: "member_health_profiles",
+      targetField: "combative_disruptive",
+      sourceField: "behavioralObservations",
+      sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Aggression") : null,
+      existingValue: (mhpRow as Record<string, unknown>).combative_disruptive
+    });
+    applyFillBlankBoolean({
+      records,
+      patch: mhpPatch,
+      targetSystem: "mhp",
+      targetTable: "member_health_profiles",
+      targetField: "disorientation",
+      sourceField: "behavioralObservations",
+      sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Confusion") : null,
+      existingValue: (mhpRow as Record<string, unknown>).disorientation
+    });
+    applyFillBlankBoolean({
+      records,
+      patch: mhpPatch,
+      targetSystem: "mhp",
+      targetTable: "member_health_profiles",
+      targetField: "agitation_resistive",
+      sourceField: "behavioralObservations",
+      sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Agitation") : null,
+      existingValue: (mhpRow as Record<string, unknown>).agitation_resistive
+    });
+    applyFillBlankBoolean({
+      records,
+      patch: mhpPatch,
+      targetSystem: "mhp",
+      targetTable: "member_health_profiles",
+      targetField: "sleep_issues",
+      sourceField: "behavioralObservations",
+      sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Sundowning") : null,
+      existingValue: (mhpRow as Record<string, unknown>).sleep_issues
     });
 
     if (Object.keys(mhpPatch).length > 3) {

@@ -23,13 +23,14 @@ import {
 import { validateEnrollmentPacketCompletion } from "@/lib/services/enrollment-packet-public-schema";
 import { createUserNotification } from "@/lib/services/notifications";
 import { resolveEnrollmentPricingForRequestedDays } from "@/lib/services/enrollment-pricing";
+import { logSystemEvent } from "@/lib/services/system-event-service";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 const STORAGE_BUCKET = "member-documents";
 const TOKEN_BYTE_LENGTH = 32;
-const STAFF_TRANSPORTATION_OPTIONS = ["Door to Door", "Bus Stop", "Mixed"] as const;
+const STAFF_TRANSPORTATION_OPTIONS = ["None", "Door to Door", "Bus Stop", "Mixed"] as const;
 
 type StaffTransportationOption = (typeof STAFF_TRANSPORTATION_OPTIONS)[number];
 
@@ -56,6 +57,20 @@ export type EnrollmentPacketRequestSummary = {
   createdAt: string;
   sentAt: string | null;
   completedAt: string | null;
+};
+
+export type CompletedEnrollmentPacketListItem = EnrollmentPacketRequestSummary & {
+  memberName: string;
+  leadMemberName: string | null;
+  senderName: string | null;
+};
+
+export type CompletedEnrollmentPacketFilters = {
+  limit?: number;
+  status?: "completed" | "filed" | "all";
+  fromDate?: string | null;
+  toDate?: string | null;
+  search?: string | null;
 };
 
 type EnrollmentPacketRequestRow = {
@@ -107,6 +122,7 @@ type MemberRow = {
 type LeadRow = {
   id: string;
   member_name: string | null;
+  member_dob: string | null;
   member_start_date: string | null;
   referral_name: string | null;
   caregiver_email: string | null;
@@ -192,7 +208,7 @@ function normalizeStaffTransportation(value: string | null | undefined): StaffTr
     return normalized as StaffTransportationOption;
   }
 
-  throw new Error("Transportation must be Door to Door, Bus Stop, or Mixed.");
+  throw new Error("Transportation must be None, Door to Door, Bus Stop, or Mixed.");
 }
 
 function splitMemberName(fullName: string | null | undefined) {
@@ -243,6 +259,10 @@ function mergePublicProgressPayload(input: {
   caregiverPhone?: string | null;
   caregiverEmail?: string | null;
   primaryContactAddress?: string | null;
+  primaryContactAddressLine1?: string | null;
+  primaryContactCity?: string | null;
+  primaryContactState?: string | null;
+  primaryContactZip?: string | null;
   caregiverAddressLine1?: string | null;
   caregiverAddressLine2?: string | null;
   caregiverCity?: string | null;
@@ -253,6 +273,10 @@ function mergePublicProgressPayload(input: {
   secondaryContactEmail?: string | null;
   secondaryContactRelationship?: string | null;
   secondaryContactAddress?: string | null;
+  secondaryContactAddressLine1?: string | null;
+  secondaryContactCity?: string | null;
+  secondaryContactState?: string | null;
+  secondaryContactZip?: string | null;
   notes?: string | null;
 }) {
   return normalizeEnrollmentPacketIntakePayload({
@@ -261,6 +285,13 @@ function mergePublicProgressPayload(input: {
     primaryContactName: clean(input.caregiverName) ?? input.storedPayload.primaryContactName,
     primaryContactPhone: clean(input.caregiverPhone) ?? input.storedPayload.primaryContactPhone,
     primaryContactEmail: cleanEmail(input.caregiverEmail) ?? input.storedPayload.primaryContactEmail,
+    primaryContactAddressLine1:
+      clean(input.primaryContactAddressLine1) ??
+      clean(input.primaryContactAddress) ??
+      input.storedPayload.primaryContactAddressLine1,
+    primaryContactCity: clean(input.primaryContactCity) ?? input.storedPayload.primaryContactCity,
+    primaryContactState: clean(input.primaryContactState) ?? input.storedPayload.primaryContactState,
+    primaryContactZip: clean(input.primaryContactZip) ?? input.storedPayload.primaryContactZip,
     primaryContactAddress: clean(input.primaryContactAddress) ?? input.storedPayload.primaryContactAddress,
     memberAddressLine1: clean(input.caregiverAddressLine1) ?? input.storedPayload.memberAddressLine1,
     memberAddressLine2: clean(input.caregiverAddressLine2) ?? input.storedPayload.memberAddressLine2,
@@ -272,6 +303,13 @@ function mergePublicProgressPayload(input: {
     secondaryContactEmail: cleanEmail(input.secondaryContactEmail) ?? input.storedPayload.secondaryContactEmail,
     secondaryContactRelationship:
       clean(input.secondaryContactRelationship) ?? input.storedPayload.secondaryContactRelationship,
+    secondaryContactAddressLine1:
+      clean(input.secondaryContactAddressLine1) ??
+      clean(input.secondaryContactAddress) ??
+      input.storedPayload.secondaryContactAddressLine1,
+    secondaryContactCity: clean(input.secondaryContactCity) ?? input.storedPayload.secondaryContactCity,
+    secondaryContactState: clean(input.secondaryContactState) ?? input.storedPayload.secondaryContactState,
+    secondaryContactZip: clean(input.secondaryContactZip) ?? input.storedPayload.secondaryContactZip,
     secondaryContactAddress: clean(input.secondaryContactAddress) ?? input.storedPayload.secondaryContactAddress,
     additionalNotes: clean(input.notes) ?? input.storedPayload.additionalNotes
   });
@@ -442,7 +480,7 @@ async function getLeadById(leadId: string) {
   const { data, error } = await admin
     .from("leads")
     .select(
-      "id, member_name, member_start_date, referral_name, caregiver_email, caregiver_name, caregiver_relationship, caregiver_phone"
+      "id, member_name, member_dob, member_start_date, referral_name, caregiver_email, caregiver_name, caregiver_relationship, caregiver_phone"
     )
     .eq("id", leadId)
     .maybeSingle();
@@ -599,6 +637,99 @@ export async function listEnrollmentPacketRequestsForLead(leadId: string) {
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
   return ((data ?? []) as EnrollmentPacketRequestRow[]).map((row) => toSummary(row));
+}
+
+export async function listCompletedEnrollmentPacketRequests(
+  filters: CompletedEnrollmentPacketFilters = {}
+): Promise<CompletedEnrollmentPacketListItem[]> {
+  const safeLimit = Math.max(1, Math.min(500, Math.trunc(filters.limit ?? 200)));
+  const normalizedStatus = filters.status === "completed" || filters.status === "filed" ? filters.status : "all";
+  const fromDate = clean(filters.fromDate);
+  const toDate = clean(filters.toDate);
+  const searchNeedle = clean(filters.search)?.toLowerCase() ?? null;
+
+  const admin = createSupabaseAdminClient();
+  let query = admin
+    .from("enrollment_packet_requests")
+    .select("*")
+    .order("completed_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+  if (normalizedStatus === "all") {
+    query = query.in("status", ["completed", "filed"]);
+  } else {
+    query = query.eq("status", normalizedStatus);
+  }
+  if (fromDate) {
+    query = query.gte("completed_at", `${fromDate}T00:00:00`);
+  }
+  if (toDate) {
+    query = query.lte("completed_at", `${toDate}T23:59:59`);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as EnrollmentPacketRequestRow[];
+  if (rows.length === 0) return [];
+
+  const memberIds = Array.from(new Set(rows.map((row) => row.member_id).filter(Boolean)));
+  const leadIds = Array.from(new Set(rows.map((row) => row.lead_id).filter((value): value is string => Boolean(value))));
+  const senderIds = Array.from(new Set(rows.map((row) => row.sender_user_id).filter(Boolean)));
+
+  const memberNames = new Map<string, string>();
+  if (memberIds.length > 0) {
+    const { data: members, error: membersError } = await admin.from("members").select("id, display_name").in("id", memberIds);
+    if (membersError) throw new Error(membersError.message);
+    for (const row of (members ?? []) as Array<{ id: string; display_name: string | null }>) {
+      memberNames.set(String(row.id), clean(row.display_name) ?? "Unknown member");
+    }
+  }
+
+  const leadNames = new Map<string, string>();
+  if (leadIds.length > 0) {
+    const { data: leads, error: leadsError } = await admin.from("leads").select("id, member_name").in("id", leadIds);
+    if (leadsError) throw new Error(leadsError.message);
+    for (const row of (leads ?? []) as Array<{ id: string; member_name: string | null }>) {
+      leadNames.set(String(row.id), clean(row.member_name) ?? "Unknown lead");
+    }
+  }
+
+  const senderNames = new Map<string, string>();
+  if (senderIds.length > 0) {
+    const { data: senders, error: sendersError } = await admin.from("profiles").select("id, full_name").in("id", senderIds);
+    if (sendersError) throw new Error(sendersError.message);
+    for (const row of (senders ?? []) as Array<{ id: string; full_name: string | null }>) {
+      senderNames.set(String(row.id), clean(row.full_name) ?? "Unknown staff");
+    }
+  }
+
+  const items = rows.map((row) => {
+    const summary = toSummary(row);
+    return {
+      ...summary,
+      memberName: memberNames.get(row.member_id) ?? "Unknown member",
+      leadMemberName: row.lead_id ? leadNames.get(row.lead_id) ?? null : null,
+      senderName: senderNames.get(row.sender_user_id) ?? null
+    };
+  });
+
+  if (!searchNeedle) return items;
+
+  return items.filter((item) => {
+    const haystack = [
+      item.memberName,
+      item.leadMemberName,
+      item.caregiverEmail,
+      item.senderName,
+      item.senderUserId,
+      item.memberId,
+      item.leadId
+    ]
+      .map((value) => clean(value)?.toLowerCase())
+      .filter((value): value is string => Boolean(value));
+    return haystack.some((value) => value.includes(searchNeedle));
+  });
 }
 
 export async function getEnrollmentPacketSenderSignatureProfile(userId: string) {
@@ -886,6 +1017,7 @@ export async function sendEnrollmentPacketRequest(input: {
     intake_payload: normalizeEnrollmentPacketIntakePayload({
       memberLegalFirstName: memberNameParts.firstName,
       memberLegalLastName: memberNameParts.lastName,
+      memberDob: clean(lead?.member_dob),
       requestedAttendanceDays: resolvedPricing.requestedDays,
       requestedStartDate,
       transportationPreference: staffTransportation,
@@ -1262,6 +1394,10 @@ export async function savePublicEnrollmentPacketProgress(input: {
   caregiverPhone?: string | null;
   caregiverEmail?: string | null;
   primaryContactAddress?: string | null;
+  primaryContactAddressLine1?: string | null;
+  primaryContactCity?: string | null;
+  primaryContactState?: string | null;
+  primaryContactZip?: string | null;
   caregiverAddressLine1?: string | null;
   caregiverAddressLine2?: string | null;
   caregiverCity?: string | null;
@@ -1272,6 +1408,10 @@ export async function savePublicEnrollmentPacketProgress(input: {
   secondaryContactEmail?: string | null;
   secondaryContactRelationship?: string | null;
   secondaryContactAddress?: string | null;
+  secondaryContactAddressLine1?: string | null;
+  secondaryContactCity?: string | null;
+  secondaryContactState?: string | null;
+  secondaryContactZip?: string | null;
   notes?: string | null;
   intakePayload?: Partial<Record<string, unknown>> | null;
 }) {
@@ -1284,6 +1424,10 @@ export async function savePublicEnrollmentPacketProgress(input: {
     caregiverPhone: input.caregiverPhone,
     caregiverEmail: input.caregiverEmail,
     primaryContactAddress: input.primaryContactAddress,
+    primaryContactAddressLine1: input.primaryContactAddressLine1,
+    primaryContactCity: input.primaryContactCity,
+    primaryContactState: input.primaryContactState,
+    primaryContactZip: input.primaryContactZip,
     caregiverAddressLine1: input.caregiverAddressLine1,
     caregiverAddressLine2: input.caregiverAddressLine2,
     caregiverCity: input.caregiverCity,
@@ -1294,6 +1438,10 @@ export async function savePublicEnrollmentPacketProgress(input: {
     secondaryContactEmail: input.secondaryContactEmail,
     secondaryContactRelationship: input.secondaryContactRelationship,
     secondaryContactAddress: input.secondaryContactAddress,
+    secondaryContactAddressLine1: input.secondaryContactAddressLine1,
+    secondaryContactCity: input.secondaryContactCity,
+    secondaryContactState: input.secondaryContactState,
+    secondaryContactZip: input.secondaryContactZip,
     notes: input.notes
   });
   const now = toEasternISO();
@@ -1304,11 +1452,11 @@ export async function savePublicEnrollmentPacketProgress(input: {
       caregiver_name: mergedPayload.primaryContactName,
       caregiver_phone: mergedPayload.primaryContactPhone,
       caregiver_email: cleanEmail(mergedPayload.primaryContactEmail),
-      caregiver_address_line1: mergedPayload.primaryContactAddress ?? mergedPayload.memberAddressLine1,
+      caregiver_address_line1: mergedPayload.primaryContactAddressLine1 ?? mergedPayload.primaryContactAddress ?? mergedPayload.memberAddressLine1,
       caregiver_address_line2: mergedPayload.memberAddressLine2,
-      caregiver_city: mergedPayload.memberCity,
-      caregiver_state: mergedPayload.memberState,
-      caregiver_zip: mergedPayload.memberZip,
+      caregiver_city: mergedPayload.primaryContactCity ?? mergedPayload.memberCity,
+      caregiver_state: mergedPayload.primaryContactState ?? mergedPayload.memberState,
+      caregiver_zip: mergedPayload.primaryContactZip ?? mergedPayload.memberZip,
       secondary_contact_name: mergedPayload.secondaryContactName,
       secondary_contact_phone: mergedPayload.secondaryContactPhone,
       secondary_contact_email: cleanEmail(mergedPayload.secondaryContactEmail),
@@ -1355,6 +1503,10 @@ export async function submitPublicEnrollmentPacket(input: {
   caregiverPhone?: string | null;
   caregiverEmail?: string | null;
   primaryContactAddress?: string | null;
+  primaryContactAddressLine1?: string | null;
+  primaryContactCity?: string | null;
+  primaryContactState?: string | null;
+  primaryContactZip?: string | null;
   caregiverAddressLine1?: string | null;
   caregiverAddressLine2?: string | null;
   caregiverCity?: string | null;
@@ -1365,6 +1517,10 @@ export async function submitPublicEnrollmentPacket(input: {
   secondaryContactEmail?: string | null;
   secondaryContactRelationship?: string | null;
   secondaryContactAddress?: string | null;
+  secondaryContactAddressLine1?: string | null;
+  secondaryContactCity?: string | null;
+  secondaryContactState?: string | null;
+  secondaryContactZip?: string | null;
   notes?: string | null;
   intakePayload?: Partial<Record<string, unknown>> | null;
   uploads?: PacketFileUpload[];
@@ -1392,6 +1548,10 @@ export async function submitPublicEnrollmentPacket(input: {
     caregiverPhone: input.caregiverPhone,
     caregiverEmail: input.caregiverEmail,
     primaryContactAddress: input.primaryContactAddress,
+    primaryContactAddressLine1: input.primaryContactAddressLine1,
+    primaryContactCity: input.primaryContactCity,
+    primaryContactState: input.primaryContactState,
+    primaryContactZip: input.primaryContactZip,
     caregiverAddressLine1: input.caregiverAddressLine1,
     caregiverAddressLine2: input.caregiverAddressLine2,
     caregiverCity: input.caregiverCity,
@@ -1402,6 +1562,10 @@ export async function submitPublicEnrollmentPacket(input: {
     secondaryContactEmail: input.secondaryContactEmail,
     secondaryContactRelationship: input.secondaryContactRelationship,
     secondaryContactAddress: input.secondaryContactAddress,
+    secondaryContactAddressLine1: input.secondaryContactAddressLine1,
+    secondaryContactCity: input.secondaryContactCity,
+    secondaryContactState: input.secondaryContactState,
+    secondaryContactZip: input.secondaryContactZip,
     notes: input.notes,
     intakePayload: input.intakePayload
   });
@@ -1599,6 +1763,22 @@ export async function submitPublicEnrollmentPacket(input: {
       packetId: request.id
     },
     serviceRole: true
+  });
+
+  await logSystemEvent({
+    event_type: "enrollment_packet_completed",
+    entity_type: "enrollment_packet_request",
+    entity_id: request.id,
+    actor_type: "user",
+    actor_id: request.sender_user_id,
+    metadata: {
+      member_id: member.id,
+      lead_id: request.lead_id,
+      status: "filed",
+      mapping_run_id: downstreamMapping.mappingRunId,
+      downstream_systems_updated: downstreamMapping.downstreamSystemsUpdated,
+      conflicts_requiring_review: downstreamMapping.conflictsRequiringReview
+    }
   });
 
   return {

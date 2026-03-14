@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 
+import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { PofDocumentRender } from "@/components/physician-orders/pof-document-render";
 import { PofPublicSignForm } from "@/components/physician-orders/pof-public-sign-form";
 import { Card, CardTitle } from "@/components/ui/card";
@@ -23,8 +24,9 @@ export default async function PublicPofSigningPage({
 
   if (context.state === "invalid") {
     return (
-      <div className="mx-auto max-w-3xl p-4">
-          <Card>
+      <div className="mx-auto max-w-3xl space-y-4 p-4">
+        <DocumentBrandHeader title="Physician Order Form Signature" />
+        <Card>
           <CardTitle>Invalid Signature Link</CardTitle>
           <p className="mt-2 text-sm text-muted">This POF signing link is invalid. Contact your care team for a new link.</p>
         </Card>
@@ -34,7 +36,8 @@ export default async function PublicPofSigningPage({
 
   if (context.state === "expired") {
     return (
-      <div className="mx-auto max-w-3xl p-4">
+      <div className="mx-auto max-w-3xl space-y-4 p-4">
+        <DocumentBrandHeader title="Physician Order Form Signature" />
         <Card>
           <CardTitle>Signature Link Expired</CardTitle>
           <p className="mt-2 text-sm text-muted">
@@ -47,7 +50,8 @@ export default async function PublicPofSigningPage({
 
   if (context.state === "declined") {
     return (
-      <div className="mx-auto max-w-3xl p-4">
+      <div className="mx-auto max-w-3xl space-y-4 p-4">
+        <DocumentBrandHeader title="Physician Order Form Signature" />
         <Card>
           <CardTitle>Signature Request Voided</CardTitle>
           <p className="mt-2 text-sm text-muted">This signing request was voided. Contact your care team for guidance.</p>
@@ -58,7 +62,8 @@ export default async function PublicPofSigningPage({
 
   if (context.state === "signed") {
     return (
-      <div className="mx-auto max-w-3xl p-4">
+      <div className="mx-auto max-w-3xl space-y-4 p-4">
+        <DocumentBrandHeader title="Physician Order Form Signature" />
         <Card>
           <CardTitle>Already Signed</CardTitle>
           <p className="mt-2 text-sm text-muted">This POF was already signed on {context.request.signedAt ? formatDateTime(context.request.signedAt) : "a previous date"}.</p>
@@ -71,6 +76,13 @@ export default async function PublicPofSigningPage({
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 p-4">
+      <DocumentBrandHeader
+        title="Physician Order Form Signature"
+        metaLines={[
+          `Provider: ${request.providerName}`,
+          `Expires: ${formatDateTime(request.expiresAt)}`
+        ]}
+      />
       <Card>
         <CardTitle>Physician Order Form Signature</CardTitle>
         <p className="mt-2 text-sm text-muted">

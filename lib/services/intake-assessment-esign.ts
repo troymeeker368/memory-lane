@@ -11,6 +11,7 @@ import {
   type IntakeAssessmentSignatureStatus
 } from "@/lib/services/intake-assessment-esign-core";
 import { captureClinicalEsignArtifact } from "@/lib/services/clinical-esign-artifacts";
+import { logSystemEvent } from "@/lib/services/system-event-service";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -215,6 +216,19 @@ export async function signIntakeAssessment(input: {
     .update(persistence.assessmentUpdate)
     .eq("id", assessment.id);
   if (assessmentUpdateError) throw new Error(assessmentUpdateError.message);
+
+  await logSystemEvent({
+    event_type: "intake_assessment_signed",
+    entity_type: "intake_assessment",
+    entity_id: assessment.id,
+    actor_type: "user",
+    actor_id: input.actor.id,
+    metadata: {
+      member_id: assessment.member_id,
+      signature_status: persistence.state.status,
+      signature_artifact_member_file_id: persistence.state.signatureArtifactMemberFileId
+    }
+  });
 
   return persistence.state;
 }

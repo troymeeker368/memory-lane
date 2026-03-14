@@ -73,23 +73,47 @@ Every change must pass all checks:
 
 Any `No` blocks merge.
 
-## Current Compliance Status (As of 2026-03-13)
+## Architecture Guardrail Rules
 
-This repository is not yet fully compliant with the standard above.
-Current blockers:
+Memory Lane follows several architectural guardrails:
+- Supabase is the only runtime database.
+- All database writes occur through canonical services.
+- UI components and server actions never perform direct Supabase writes.
+- Shared RPC is used for transactional workflows.
+- Lifecycle events are logged through the system event log.
 
-1. Server-action write paths still bypass canonical domain services in multiple modules.
-   - `app/actions.ts`
-   - `app/sales-actions.ts`
-   - `app/(portal)/health/member-health-profiles/actions.ts`
-2. Canonical identity resolver still permits ambiguous fallback inference when identity type is not explicit.
-   - `lib/services/canonical-person-ref.ts`
-3. Enrollment packet send context accepts lead and member inputs without enforcing a strict linkage invariant when both are provided.
-   - `lib/services/enrollment-packets.ts`
-4. Reporting workflow includes explicit placeholder paths that indicate incomplete live wiring.
-   - `lib/services/activity-snapshots.ts`
+## Production Assurance Pipeline
 
-Until these blockers are remediated, claim only partial production-readiness.
+Memory Lane runs nightly automated audits to maintain architectural integrity.
+
+The nightly safety pipeline performs:
+1. Supabase RLS & Security Audit
+2. Production Readiness Audit
+3. Canonicality Sweep
+4. Schema Migration Safety Audit
+5. Shared Resolver Drift Check
+6. Shared RPC Architecture Audit
+7. ACID Transaction Safety Audit
+8. Idempotency & Duplicate Submission Audit
+9. Workflow Lifecycle Simulation Audit
+10. Referential Integrity & Cascade Audit
+11. Query Performance Audit
+12. Safe Auto-Fix Pass
+13. Codex Fix Prompt Generator
+
+These automated audits detect architectural drift and maintain system integrity.
+
+## System Event Logging
+
+Memory Lane records lifecycle events in the `system_events` table.
+
+This enables:
+- debugging of workflow cascades
+- operational analytics
+- clinical audit trails
+- system integrity monitoring
+
+Events are written from canonical services.
 
 ## Local Development Rules
 

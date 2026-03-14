@@ -7,7 +7,9 @@ import {
   processSignedPhysicianOrderPostSignSync,
   type PhysicianOrderForm
 } from "@/lib/services/physician-orders-supabase";
+import { logSystemEvent } from "@/lib/services/system-event-service";
 import { buildPofSignatureRequestTemplate } from "@/lib/email/templates/pof-signature-request";
+import { createUserNotification } from "@/lib/services/notifications";
 import { buildPofDocumentPdfBytes } from "@/lib/services/pof-document-pdf";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -1286,7 +1288,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
   }
   const finalized = toRpcFinalizePofSignatureRow(finalizedRaw);
 
-  await processSignedPhysicianOrderPostSignSync({
+  const postSignResult = await processSignedPhysicianOrderPostSignSync({
     pofId: finalized.physician_order_id,
     memberId: finalized.member_id,
     queueId: finalized.queue_id,
@@ -1297,6 +1299,36 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     },
     signedAtIso: now,
     pofRequestId: finalized.request_id,
+    serviceRole: true
+  });
+
+  await logSystemEvent({
+    event_type: "physician_order_signed",
+    entity_type: "physician_order",
+    entity_id: finalized.physician_order_id,
+    actor_type: "provider",
+    metadata: {
+      member_id: finalized.member_id,
+      pof_request_id: finalized.request_id,
+      member_file_id: finalized.member_file_id,
+      queue_id: finalized.queue_id,
+      post_sign_status: postSignResult.postSignStatus,
+      post_sign_attempt_count: postSignResult.attemptCount,
+      post_sign_next_retry_at: postSignResult.nextRetryAt
+    }
+  });
+
+  await createUserNotification({
+    recipientUserId: request.sent_by_user_id,
+    title: "POF Signed",
+    message: `POF signed for ${snapshot.memberNameSnapshot}`,
+    entityType: "pof_request",
+    entityId: request.id,
+    metadata: {
+      memberId: request.member_id,
+      physicianOrderId: request.physician_order_id,
+      requestId: request.id
+    },
     serviceRole: true
   });
 

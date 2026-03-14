@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 
+import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { EnrollmentPacketPublicForm } from "@/components/enrollment-packets/enrollment-packet-public-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getPublicEnrollmentPacketContext } from "@/lib/services/enrollment-packets";
@@ -18,7 +19,8 @@ export default async function PublicEnrollmentPacketPage({
 
   if (context.state === "invalid") {
     return (
-      <div className="mx-auto max-w-3xl p-4">
+      <div className="mx-auto max-w-3xl space-y-4 p-4">
+        <DocumentBrandHeader title="Enrollment Packet Signature" />
         <Card>
           <CardTitle>Invalid Enrollment Packet Link</CardTitle>
           <p className="mt-2 text-sm text-muted">This enrollment packet link is invalid. Contact your care team for a new secure link.</p>
@@ -29,7 +31,8 @@ export default async function PublicEnrollmentPacketPage({
 
   if (context.state === "expired") {
     return (
-      <div className="mx-auto max-w-3xl p-4">
+      <div className="mx-auto max-w-3xl space-y-4 p-4">
+        <DocumentBrandHeader title="Enrollment Packet Signature" />
         <Card>
           <CardTitle>Enrollment Packet Link Expired</CardTitle>
           <p className="mt-2 text-sm text-muted">This secure link has expired. Contact your care team for a new enrollment packet link.</p>
@@ -40,7 +43,8 @@ export default async function PublicEnrollmentPacketPage({
 
   if (context.state === "completed") {
     return (
-      <div className="mx-auto max-w-3xl p-4">
+      <div className="mx-auto max-w-3xl space-y-4 p-4">
+        <DocumentBrandHeader title="Enrollment Packet Signature" />
         <Card>
           <CardTitle>Enrollment Packet Already Submitted</CardTitle>
           <p className="mt-2 text-sm text-muted">This enrollment packet has already been completed. You may close this page.</p>
@@ -51,6 +55,7 @@ export default async function PublicEnrollmentPacketPage({
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-4">
+      <DocumentBrandHeader title="Enrollment Packet Signature" />
       <Card>
         <CardTitle>Enrollment Packet for {context.memberName}</CardTitle>
         <p className="mt-2 text-sm text-muted">

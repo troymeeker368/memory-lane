@@ -21,6 +21,7 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "medicareNumber",
   "privateInsuranceName",
   "privateInsurancePolicyNumber",
+  "vaBenefits",
   "veteranStatus",
   "tricareNumber",
   "memberRepresentativeGuardianPoa",
@@ -31,11 +32,19 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "primaryContactPhone",
   "primaryContactEmail",
   "primaryContactAddress",
+  "primaryContactAddressLine1",
+  "primaryContactCity",
+  "primaryContactState",
+  "primaryContactZip",
   "secondaryContactName",
   "secondaryContactRelationship",
   "secondaryContactPhone",
   "secondaryContactEmail",
   "secondaryContactAddress",
+  "secondaryContactAddressLine1",
+  "secondaryContactCity",
+  "secondaryContactState",
+  "secondaryContactZip",
   "pcpName",
   "pcpPhone",
   "pcpFax",
@@ -74,6 +83,7 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "feedsSelf",
   "dressingFeedingIndependence",
   "adlMobilityLevel",
+  "adlTransferLevel",
   "adlToiletingLevel",
   "adlBathingLevel",
   "adlDressingLevel",
@@ -135,8 +145,25 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "cardExpiration",
   "cardCvv",
   "cardBillingAddress",
+  "cardBillingAddressLine1",
+  "cardBillingCity",
+  "cardBillingState",
+  "cardBillingZip",
+  "cardUsePrimaryContactAddress",
   "communityFee",
   "totalInitialEnrollmentAmount",
+  "membershipMemberSignatureName",
+  "membershipMemberSignatureDate",
+  "membershipMemberSignatureRole",
+  "membershipGuarantorSignatureName",
+  "membershipGuarantorSignatureDate",
+  "membershipGuarantorSignatureRole",
+  "exhibitAMemberSignatureName",
+  "exhibitAMemberSignatureDate",
+  "exhibitAMemberSignatureRole",
+  "exhibitAGuarantorSignatureName",
+  "exhibitAGuarantorSignatureDate",
+  "exhibitAGuarantorSignatureRole",
   "guarantorSignatureName",
   "guarantorSignatureDate",
   "privacyAcknowledgmentSignatureName",
@@ -167,7 +194,8 @@ export const ENROLLMENT_PACKET_INTAKE_ARRAY_KEYS = [
   "livingSituationOptions",
   "petTypes",
   "behavioralObservations",
-  "dentureTypes"
+  "dentureTypes",
+  "continenceSelections"
 ] as const;
 
 export type EnrollmentPacketIntakeTextKey = (typeof ENROLLMENT_PACKET_INTAKE_TEXT_KEYS)[number];
@@ -285,6 +313,18 @@ export function normalizeEnrollmentPacketIntakePayload(raw: RawPayload | null | 
     normalized.memberRepresentativeGuardianPoa = normalized.guardianPoaStatus;
   }
 
+  if (!normalized.insuranceSummaryReference) {
+    normalized.insuranceSummaryReference = joinParts(
+      [
+        normalized.medicareNumber ? `Medicare: ${normalized.medicareNumber}` : null,
+        normalized.privateInsuranceName ? `Private Insurance: ${normalized.privateInsuranceName}` : null,
+        normalized.privateInsurancePolicyNumber ? `Policy: ${normalized.privateInsurancePolicyNumber}` : null,
+        normalized.tricareNumber ? `Tricare: ${normalized.tricareNumber}` : null
+      ],
+      " | "
+    );
+  }
+
   if (!normalized.pcpName) normalized.pcpName = normalized.physicianName;
   if (!normalized.pcpPhone) normalized.pcpPhone = normalized.physicianPhone;
   if (!normalized.pcpFax) normalized.pcpFax = normalized.physicianFax;
@@ -312,8 +352,14 @@ export function normalizeEnrollmentPacketIntakePayload(raw: RawPayload | null | 
     normalized.behavioralNotes = normalized.behavioralObservations.join(", ");
   }
 
-  if (!normalized.mobilityTransferStatus && normalized.adlMobilityLevel) {
-    normalized.mobilityTransferStatus = normalized.adlMobilityLevel;
+  if (!normalized.mobilityTransferStatus) {
+    normalized.mobilityTransferStatus = joinParts(
+      [
+        normalized.adlMobilityLevel ? `Ambulation: ${normalized.adlMobilityLevel}` : null,
+        normalized.adlTransferLevel ? `Transfers: ${normalized.adlTransferLevel}` : null
+      ],
+      " | "
+    );
   }
 
   if (!normalized.toiletingBathingAssistance) {
@@ -323,8 +369,56 @@ export function normalizeEnrollmentPacketIntakePayload(raw: RawPayload | null | 
     ]);
   }
 
-  if (!normalized.continenceStatus && normalized.adlContinenceLevel) {
-    normalized.continenceStatus = normalized.adlContinenceLevel;
+  if (!normalized.continenceStatus) {
+    if (normalized.continenceSelections.length > 0) {
+      normalized.continenceStatus = normalized.continenceSelections.join(", ");
+    } else if (normalized.adlContinenceLevel) {
+      normalized.continenceStatus = normalized.adlContinenceLevel;
+    }
+  }
+
+  if (!normalized.vaBenefits) {
+    normalized.vaBenefits = normalized.veteranStatus;
+  }
+
+  if (!normalized.primaryContactAddressLine1) {
+    normalized.primaryContactAddressLine1 = normalized.primaryContactAddress;
+  }
+  if (!normalized.primaryContactAddress) {
+    normalized.primaryContactAddress = normalized.primaryContactAddressLine1;
+  }
+  if (!normalized.primaryContactCity) {
+    normalized.primaryContactCity = normalized.memberCity;
+  }
+  if (!normalized.primaryContactState) {
+    normalized.primaryContactState = normalized.memberState;
+  }
+  if (!normalized.primaryContactZip) {
+    normalized.primaryContactZip = normalized.memberZip;
+  }
+
+  if (!normalized.secondaryContactAddressLine1) {
+    normalized.secondaryContactAddressLine1 = normalized.secondaryContactAddress;
+  }
+  if (!normalized.secondaryContactAddress) {
+    normalized.secondaryContactAddress = normalized.secondaryContactAddressLine1;
+  }
+
+  if (toYesNoLike(normalized.cardUsePrimaryContactAddress) === "Yes") {
+    normalized.cardBillingAddressLine1 = normalized.cardBillingAddressLine1 ?? normalized.primaryContactAddressLine1;
+    normalized.cardBillingCity = normalized.cardBillingCity ?? normalized.primaryContactCity;
+    normalized.cardBillingState = normalized.cardBillingState ?? normalized.primaryContactState;
+    normalized.cardBillingZip = normalized.cardBillingZip ?? normalized.primaryContactZip;
+  }
+
+  if (!normalized.cardBillingAddress) {
+    normalized.cardBillingAddress = joinParts(
+      [
+        normalized.cardBillingAddressLine1,
+        joinParts([normalized.cardBillingCity, normalized.cardBillingState, normalized.cardBillingZip], ", ")
+      ],
+      ", "
+    );
   }
 
   if (!normalized.dressesSelf && normalized.adlDressingLevel) {
