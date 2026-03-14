@@ -3,12 +3,25 @@ import type { PhysicianOrderForm } from "@/lib/services/physician-orders-supabas
 export type PofDocumentRow = {
   label: string;
   value: string;
+  fieldKey?: string;
+  alwaysShow?: boolean;
 };
 
 export type PofDocumentSection = {
   title: string;
   rows: PofDocumentRow[];
+  sectionKey?: string;
+  alwaysShow?: boolean;
 };
+
+export type PofDocumentFilterConfig = {
+  hideNonMeaningfulValues?: boolean;
+  nonMeaningfulValues?: string[];
+  alwaysShowFields?: string[];
+  alwaysShowSections?: string[];
+};
+
+const DEFAULT_NON_MEANINGFUL_VALUES = ["", "-", "no", "n/a", "na", "none"];
 
 function valueOrDash(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
@@ -37,13 +50,62 @@ function normalizeNutritionDiets(values: string[] | null | undefined) {
   return normalized.filter((value) => value.toLowerCase() !== "regular");
 }
 
-export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentSection[] {
+function normalizedToken(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function rowIdentity(section: PofDocumentSection, row: PofDocumentRow) {
+  return `${section.sectionKey ?? section.title}::${row.fieldKey ?? row.label}`;
+}
+
+export function isMeaningfulDocumentValue(
+  value: string | null | undefined,
+  config?: { nonMeaningfulValues?: string[] }
+) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return false;
+  const blocked = new Set(
+    [...DEFAULT_NON_MEANINGFUL_VALUES, ...(config?.nonMeaningfulValues ?? [])].map((entry) => normalizedToken(entry))
+  );
+  return !blocked.has(normalizedToken(normalized));
+}
+
+export function filterPofDocumentSections(sections: PofDocumentSection[], config?: PofDocumentFilterConfig) {
+  if (config?.hideNonMeaningfulValues === false) return sections;
+
+  const alwaysShowFields = new Set((config?.alwaysShowFields ?? []).map((entry) => normalizedToken(entry)));
+  const alwaysShowSections = new Set((config?.alwaysShowSections ?? []).map((entry) => normalizedToken(entry)));
+
+  const isSectionAlwaysShown = (section: PofDocumentSection) =>
+    section.alwaysShow ||
+    alwaysShowSections.has(normalizedToken(section.title)) ||
+    (section.sectionKey ? alwaysShowSections.has(normalizedToken(section.sectionKey)) : false);
+
+  return sections.flatMap((section) => {
+    if (isSectionAlwaysShown(section)) return [section];
+
+    const rows = section.rows.filter((row) => {
+      if (row.alwaysShow) return true;
+      const identity = rowIdentity(section, row);
+      if (alwaysShowFields.has(normalizedToken(identity))) return true;
+      if (alwaysShowFields.has(normalizedToken(row.label))) return true;
+      if (row.fieldKey && alwaysShowFields.has(normalizedToken(row.fieldKey))) return true;
+      return isMeaningfulDocumentValue(row.value, { nonMeaningfulValues: config?.nonMeaningfulValues });
+    });
+
+    if (rows.length === 0) return [];
+    return [{ ...section, rows }];
+  });
+}
+
+export function buildPofDocumentSections(form: PhysicianOrderForm, config?: PofDocumentFilterConfig): PofDocumentSection[] {
   const care = form.careInformation;
   const adl = care.adlProfile;
   const orientation = care.orientationProfile;
 
-  return [
+  const sections: PofDocumentSection[] = [
     {
+      sectionKey: "identification-medical-orders",
       title: "Identification / Medical Orders",
       rows: [
         { label: "Member", value: valueOrDash(form.memberNameSnapshot) },
@@ -62,6 +124,7 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
       ]
     },
     {
+      sectionKey: "diagnoses",
       title: "Diagnoses",
       rows:
         form.diagnosisRows.length > 0
@@ -72,6 +135,7 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
           : [{ label: "Diagnoses", value: "-" }]
     },
     {
+      sectionKey: "allergies",
       title: "Allergies",
       rows:
         form.allergyRows.length > 0
@@ -84,6 +148,7 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
           : [{ label: "Allergies", value: "-" }]
     },
     {
+      sectionKey: "medications",
       title: "Medications",
       rows:
         form.medications.length > 0
@@ -104,10 +169,12 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
           : [{ label: "Medications", value: "-" }]
     },
     {
+      sectionKey: "standing-orders",
       title: "Standing Orders",
       rows: [{ label: "Standing Orders", value: joinedOrDash(form.standingOrders) }]
     },
     {
+      sectionKey: "behavior-orientation",
       title: "Behavior & Orientation",
       rows: [
         { label: "Disoriented Constantly", value: yesNo(care.disorientedConstantly) },
@@ -115,8 +182,23 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
         { label: "Inappropriate Behavior - Wanderer", value: yesNo(care.inappropriateBehaviorWanderer) },
         { label: "Inappropriate Behavior - Verbal Aggression", value: yesNo(care.inappropriateBehaviorVerbalAggression) },
         { label: "Inappropriate Behavior - Aggression", value: yesNo(care.inappropriateBehaviorAggression) },
-        { label: "Activities / Social", value: selectedList([{ label: "Passive", value: care.activitiesPassive }, { label: "Active", value: care.activitiesActive }, { label: "Group Participation", value: care.activitiesGroupParticipation }, { label: "Prefers Alone", value: care.activitiesPrefersAlone }]) },
-        { label: "Stimulation", value: selectedList([{ label: "Afraid Loud Noises", value: care.stimulationAfraidLoudNoises }, { label: "Easily Overwhelmed", value: care.stimulationEasilyOverwhelmed }, { label: "Adapts Easily", value: care.stimulationAdaptsEasily }]) },
+        {
+          label: "Activities / Social",
+          value: selectedList([
+            { label: "Passive", value: care.activitiesPassive },
+            { label: "Active", value: care.activitiesActive },
+            { label: "Group Participation", value: care.activitiesGroupParticipation },
+            { label: "Prefers Alone", value: care.activitiesPrefersAlone }
+          ])
+        },
+        {
+          label: "Stimulation",
+          value: selectedList([
+            { label: "Afraid Loud Noises", value: care.stimulationAfraidLoudNoises },
+            { label: "Easily Overwhelmed", value: care.stimulationEasilyOverwhelmed },
+            { label: "Adapts Easily", value: care.stimulationAdaptsEasily }
+          ])
+        },
         { label: "Orientation DOB", value: valueOrDash(orientation.orientationDob) },
         { label: "Orientation City", value: valueOrDash(orientation.orientationCity) },
         { label: "Orientation Current Year", value: valueOrDash(orientation.orientationCurrentYear) },
@@ -128,6 +210,7 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
       ]
     },
     {
+      sectionKey: "adls-mobility",
       title: "ADLs & Mobility",
       rows: [
         { label: "Personal Care - Bathing", value: yesNo(care.personalCareBathing) },
@@ -141,9 +224,7 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
         { label: "Mobility - Wheelchair", value: yesNo(care.mobilityWheelchair) },
         { label: "Mobility - Scooter", value: yesNo(care.mobilityScooter) },
         { label: "Mobility - Other", value: yesNo(care.mobilityOther) },
-        ...(care.mobilityOther
-          ? [{ label: "Mobility Other Detail", value: valueOrDash(care.mobilityOtherText) }]
-          : []),
+        ...(care.mobilityOther ? [{ label: "Mobility Other Detail", value: valueOrDash(care.mobilityOtherText) }] : []),
         { label: "Functional Limitation - Sight", value: yesNo(care.functionalLimitationSight) },
         { label: "Functional Limitation - Hearing", value: yesNo(care.functionalLimitationHearing) },
         { label: "Functional Limitation - Speech", value: yesNo(care.functionalLimitationSpeech) },
@@ -167,6 +248,7 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
       ]
     },
     {
+      sectionKey: "clinical-support",
       title: "Clinical Support",
       rows: [
         { label: "Breathing - Room Air", value: yesNo(care.breathingRoomAir) },
@@ -177,6 +259,7 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
       ]
     },
     {
+      sectionKey: "nutrition-joy",
       title: "Nutrition & Joy Sparks",
       rows: [
         { label: "Nutrition / Diet", value: joinedOrDash(normalizeNutritionDiets(care.nutritionDiets)) },
@@ -185,4 +268,6 @@ export function buildPofDocumentSections(form: PhysicianOrderForm): PofDocumentS
       ]
     }
   ];
+
+  return filterPofDocumentSections(sections, config);
 }

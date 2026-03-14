@@ -4,6 +4,7 @@ import { Buffer } from "node:buffer";
 
 import { headers } from "next/headers";
 
+import { normalizeEnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 import {
   savePublicEnrollmentPacketProgress,
   submitPublicEnrollmentPacket
@@ -13,13 +14,45 @@ function asString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
 }
 
+function parseIntakePayload(formData: FormData) {
+  const raw = asString(formData, "intakePayload");
+  if (!raw) return normalizeEnrollmentPacketIntakePayload({});
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return normalizeEnrollmentPacketIntakePayload(parsed);
+  } catch {
+    return normalizeEnrollmentPacketIntakePayload({});
+  }
+}
+
 async function parseFileUploads(
   formData: FormData,
   key: string,
-  category: "insurance" | "poa" | "supporting"
+  category:
+    | "insurance"
+    | "poa"
+    | "supporting"
+    | "medicare_card"
+    | "private_insurance"
+    | "supplemental_insurance"
+    | "poa_guardianship"
+    | "dnr_dni_advance_directive"
 ) {
   const entries = formData.getAll(key);
-  const uploads: Array<{ fileName: string; contentType: string; bytes: Buffer; category: "insurance" | "poa" | "supporting" }> = [];
+  const uploads: Array<{
+    fileName: string;
+    contentType: string;
+    bytes: Buffer;
+    category:
+      | "insurance"
+      | "poa"
+      | "supporting"
+      | "medicare_card"
+      | "private_insurance"
+      | "supplemental_insurance"
+      | "poa_guardianship"
+      | "dnr_dni_advance_directive";
+  }> = [];
   for (const entry of entries) {
     if (!(entry instanceof File)) continue;
     if (entry.size <= 0) continue;
@@ -36,6 +69,7 @@ async function parseFileUploads(
 
 export async function savePublicEnrollmentPacketProgressAction(formData: FormData) {
   try {
+    const intakePayload = parseIntakePayload(formData);
     await savePublicEnrollmentPacketProgress({
       token: asString(formData, "token"),
       caregiverName: asString(formData, "caregiverName"),
@@ -50,7 +84,8 @@ export async function savePublicEnrollmentPacketProgressAction(formData: FormDat
       secondaryContactPhone: asString(formData, "secondaryContactPhone"),
       secondaryContactEmail: asString(formData, "secondaryContactEmail"),
       secondaryContactRelationship: asString(formData, "secondaryContactRelationship"),
-      notes: asString(formData, "notes")
+      notes: asString(formData, "notes"),
+      intakePayload
     });
     return { ok: true } as const;
   } catch (error) {
@@ -67,11 +102,26 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
     const forwardedFor = headerMap.get("x-forwarded-for");
     const caregiverIp = forwardedFor ? forwardedFor.split(",")[0].trim() : null;
     const caregiverUserAgent = headerMap.get("user-agent");
+    const intakePayload = parseIntakePayload(formData);
 
-    const [insuranceUploads, poaUploads, supportingUploads] = await Promise.all([
+    const [
+      insuranceUploads,
+      poaUploads,
+      supportingUploads,
+      medicareCardUploads,
+      privateInsuranceUploads,
+      supplementalInsuranceUploads,
+      poaGuardianshipUploads,
+      advanceDirectiveUploads
+    ] = await Promise.all([
       parseFileUploads(formData, "insuranceUploads", "insurance"),
       parseFileUploads(formData, "poaUploads", "poa"),
-      parseFileUploads(formData, "supportingUploads", "supporting")
+      parseFileUploads(formData, "supportingUploads", "supporting"),
+      parseFileUploads(formData, "medicareCardUploads", "medicare_card"),
+      parseFileUploads(formData, "privateInsuranceCardUploads", "private_insurance"),
+      parseFileUploads(formData, "supplementalInsuranceCardUploads", "supplemental_insurance"),
+      parseFileUploads(formData, "poaGuardianshipUploads", "poa_guardianship"),
+      parseFileUploads(formData, "advanceDirectiveUploads", "dnr_dni_advance_directive")
     ]);
 
     await submitPublicEnrollmentPacket({
@@ -94,7 +144,17 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       secondaryContactEmail: asString(formData, "secondaryContactEmail"),
       secondaryContactRelationship: asString(formData, "secondaryContactRelationship"),
       notes: asString(formData, "notes"),
-      uploads: [...insuranceUploads, ...poaUploads, ...supportingUploads]
+      intakePayload,
+      uploads: [
+        ...insuranceUploads,
+        ...poaUploads,
+        ...supportingUploads,
+        ...medicareCardUploads,
+        ...privateInsuranceUploads,
+        ...supplementalInsuranceUploads,
+        ...poaGuardianshipUploads,
+        ...advanceDirectiveUploads
+      ]
     });
     return { ok: true } as const;
   } catch (error) {
@@ -104,4 +164,3 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
     } as const;
   }
 }
-

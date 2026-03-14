@@ -4,29 +4,19 @@ import { Buffer } from "node:buffer";
 
 import { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
+import {
+  ENROLLMENT_PACKET_SECTIONS,
+  formatEnrollmentPacketValue
+} from "@/lib/services/enrollment-packet-public-schema";
+import type { EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 const COMPLETED_PACKET_TEMPLATE = {
-  title: "Memory Lane Enrollment Packet",
+  title: "Town Square Fort Mill Enrollment Packet",
   sections: {
     enrollmentInputs: "Enrollment Inputs",
-    caregiverInformation: "Caregiver Information",
-    secondaryContact: "Secondary Contact",
-    packetForms: "Included Packet Forms",
     signatures: "Signatures"
-  },
-  includedForms: [
-    "1. TS Welcome Checklist",
-    "2. Face Sheet and Biography",
-    "3. Membership Agreement",
-    "3a. Membership Agreement Exhibit A",
-    "4. Notice of Privacy Practices",
-    "5. Statement of Rights of Adult Day Care Participants",
-    "6. Photo Consent",
-    "7. Ancillary Charges Notice",
-    "8. Insurance and POA Upload",
-    "TSFM Welcome Guide"
-  ]
+  }
 } as const;
 
 type CompletedEnrollmentPacketDocxInput = {
@@ -48,6 +38,7 @@ type CompletedEnrollmentPacketDocxInput = {
   secondaryContactPhone: string | null;
   secondaryContactEmail: string | null;
   secondaryContactRelationship: string | null;
+  intakePayload: EnrollmentPacketIntakePayload;
   senderSignatureName: string;
   caregiverSignatureName: string;
 };
@@ -112,28 +103,22 @@ export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnr
           line("Transportation", textValue(input.transportation)),
           line("Community Fee", moneyValue(input.communityFee)),
           line("Daily Rate", moneyValue(input.dailyRate)),
+          line("Primary Contact", textValue(input.caregiverName)),
+          line("Primary Contact Phone", textValue(input.caregiverPhone)),
+          line("Primary Contact Email", textValue(input.caregiverEmail)),
+          line("Primary Contact Address", compactAddress(input)),
+          line("Secondary Contact", textValue(input.secondaryContactName)),
+          line("Secondary Contact Relationship", textValue(input.secondaryContactRelationship)),
+          line("Secondary Contact Phone", textValue(input.secondaryContactPhone)),
+          line("Secondary Contact Email", textValue(input.secondaryContactEmail)),
 
-          sectionHeading(COMPLETED_PACKET_TEMPLATE.sections.caregiverInformation),
-          line("Name", textValue(input.caregiverName)),
-          line("Phone", textValue(input.caregiverPhone)),
-          line("Email", textValue(input.caregiverEmail)),
-          line("Address", compactAddress(input)),
-
-          sectionHeading(COMPLETED_PACKET_TEMPLATE.sections.secondaryContact),
-          line("Name", textValue(input.secondaryContactName)),
-          line("Relationship", textValue(input.secondaryContactRelationship)),
-          line("Phone", textValue(input.secondaryContactPhone)),
-          line("Email", textValue(input.secondaryContactEmail)),
-
-          sectionHeading(COMPLETED_PACKET_TEMPLATE.sections.packetForms),
-          ...COMPLETED_PACKET_TEMPLATE.includedForms.map(
-            (formLabel) =>
-              new Paragraph({
-                text: formLabel,
-                bullet: { level: 0 },
-                spacing: { after: 60 }
-              })
-          ),
+          ...ENROLLMENT_PACKET_SECTIONS.flatMap((section) => {
+            if (section.fields.length === 0) return [];
+            const rows = section.fields.map((field) =>
+              line(field.label, formatEnrollmentPacketValue(input.intakePayload[field.key]))
+            );
+            return [sectionHeading(section.title), ...rows];
+          }),
 
           sectionHeading(COMPLETED_PACKET_TEMPLATE.sections.signatures),
           line("Sender Signature Applied", textValue(input.senderSignatureName)),

@@ -273,6 +273,7 @@ export default async function DashboardPage() {
             <CardTitle>Nursing Shortcuts</CardTitle>
             <CardBody className="space-x-2">
               <Link href="/health" className="text-sm font-semibold text-brand">Health Unit</Link>
+              <Link href="/health/mar" className="text-sm font-semibold text-brand">MAR Workflow</Link>
               <Link href="/documentation/blood-sugar" className="text-sm font-semibold text-brand">Blood Sugar</Link>
               <Link href="/health/member-health-profiles" className="text-sm font-semibold text-brand">Member Health Profiles</Link>
             </CardBody>

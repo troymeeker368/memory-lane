@@ -6,6 +6,19 @@ import {
   savePublicEnrollmentPacketProgressAction,
   submitPublicEnrollmentPacketAction
 } from "@/app/sign/enrollment-packet/[token]/actions";
+import {
+  ENROLLMENT_PACKET_SECTIONS,
+  ENROLLMENT_PACKET_UPLOAD_FIELDS,
+  formatEnrollmentPacketValue,
+  type EnrollmentPacketFieldDefinition
+} from "@/lib/services/enrollment-packet-public-schema";
+import {
+  normalizeEnrollmentPacketIntakePayload,
+  type EnrollmentPacketIntakeArrayKey,
+  type EnrollmentPacketIntakeFieldKey,
+  type EnrollmentPacketIntakePayload,
+  type EnrollmentPacketIntakeTextKey
+} from "@/lib/services/enrollment-packet-intake-payload";
 
 type PublicEnrollmentPacketFields = {
   requestedDays: string[];
@@ -25,42 +38,75 @@ type PublicEnrollmentPacketFields = {
   secondaryContactEmail: string | null;
   secondaryContactRelationship: string | null;
   notes: string | null;
+  intakePayload: EnrollmentPacketIntakePayload;
 };
 
-type FormState = {
-  caregiverName: string;
-  caregiverPhone: string;
-  caregiverEmail: string;
-  caregiverAddressLine1: string;
-  caregiverAddressLine2: string;
-  caregiverCity: string;
-  caregiverState: string;
-  caregiverZip: string;
-  secondaryContactName: string;
-  secondaryContactPhone: string;
-  secondaryContactEmail: string;
-  secondaryContactRelationship: string;
-  notes: string;
-  caregiverTypedName: string;
-};
+type UploadKey = (typeof ENROLLMENT_PACKET_UPLOAD_FIELDS)[number]["key"];
+type UploadState = Record<UploadKey, File[]>;
 
-function toInitialState(fields: PublicEnrollmentPacketFields): FormState {
-  return {
-    caregiverName: fields.caregiverName ?? "",
-    caregiverPhone: fields.caregiverPhone ?? "",
-    caregiverEmail: fields.caregiverEmail ?? "",
-    caregiverAddressLine1: fields.caregiverAddressLine1 ?? "",
-    caregiverAddressLine2: fields.caregiverAddressLine2 ?? "",
-    caregiverCity: fields.caregiverCity ?? "",
-    caregiverState: fields.caregiverState ?? "",
-    caregiverZip: fields.caregiverZip ?? "",
-    secondaryContactName: fields.secondaryContactName ?? "",
-    secondaryContactPhone: fields.secondaryContactPhone ?? "",
-    secondaryContactEmail: fields.secondaryContactEmail ?? "",
-    secondaryContactRelationship: fields.secondaryContactRelationship ?? "",
-    notes: fields.notes ?? "",
-    caregiverTypedName: fields.caregiverName ?? ""
+const UPLOAD_STEP_ID = "insurance-legal-uploads";
+const WEEKDAY_OPTIONS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+function emptyUploadState(): UploadState {
+  return ENROLLMENT_PACKET_UPLOAD_FIELDS.reduce((acc, definition) => {
+    acc[definition.key] = [];
+    return acc;
+  }, {} as UploadState);
+}
+
+function toInitialPayload(fields: PublicEnrollmentPacketFields): EnrollmentPacketIntakePayload {
+  const base = normalizeEnrollmentPacketIntakePayload({
+    ...fields.intakePayload,
+    requestedAttendanceDays: fields.requestedDays,
+    membershipRequestedWeekdays: fields.requestedDays,
+    transportationPreference: fields.transportation,
+    primaryContactName: fields.caregiverName,
+    primaryContactPhone: fields.caregiverPhone,
+    primaryContactEmail: fields.caregiverEmail,
+    memberAddressLine1: fields.caregiverAddressLine1,
+    memberAddressLine2: fields.caregiverAddressLine2,
+    memberCity: fields.caregiverCity,
+    memberState: fields.caregiverState,
+    memberZip: fields.caregiverZip,
+    secondaryContactName: fields.secondaryContactName,
+    secondaryContactPhone: fields.secondaryContactPhone,
+    secondaryContactEmail: fields.secondaryContactEmail,
+    secondaryContactRelationship: fields.secondaryContactRelationship,
+    additionalNotes: fields.notes,
+    membershipNumberOfDays: fields.requestedDays.length > 0 ? String(fields.requestedDays.length) : null,
+    membershipDailyAmount: fields.dailyRate > 0 ? fields.dailyRate.toFixed(2) : null,
+    communityFee: fields.communityFee > 0 ? fields.communityFee.toFixed(2) : null
+  });
+
+  return base;
+}
+
+function todayDateString() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function applySignatureDefaults(payload: EnrollmentPacketIntakePayload, typedName: string) {
+  const signatureDate = todayDateString();
+  const normalizedName = typedName.trim();
+  if (!normalizedName) return payload;
+
+  const patch: Partial<Record<EnrollmentPacketIntakeFieldKey, string | string[] | null>> = {
+    welcomeChecklistAcknowledgedName: payload.welcomeChecklistAcknowledgedName ?? normalizedName,
+    welcomeChecklistAcknowledgedDate: payload.welcomeChecklistAcknowledgedDate ?? signatureDate,
+    guarantorSignatureName: payload.guarantorSignatureName ?? normalizedName,
+    guarantorSignatureDate: payload.guarantorSignatureDate ?? signatureDate,
+    privacyAcknowledgmentSignatureName: payload.privacyAcknowledgmentSignatureName ?? normalizedName,
+    privacyAcknowledgmentSignatureDate: payload.privacyAcknowledgmentSignatureDate ?? signatureDate,
+    rightsAcknowledgmentSignatureName: payload.rightsAcknowledgmentSignatureName ?? normalizedName,
+    rightsAcknowledgmentSignatureDate: payload.rightsAcknowledgmentSignatureDate ?? signatureDate,
+    ancillaryChargesAcknowledgmentSignatureName:
+      payload.ancillaryChargesAcknowledgmentSignatureName ?? normalizedName,
+    ancillaryChargesAcknowledgmentSignatureDate:
+      payload.ancillaryChargesAcknowledgmentSignatureDate ?? signatureDate,
+    photoConsentAcknowledgmentName: payload.photoConsentAcknowledgmentName ?? normalizedName
   };
+
+  return normalizeEnrollmentPacketIntakePayload({ ...payload, ...patch });
 }
 
 export function EnrollmentPacketPublicForm({
@@ -70,15 +116,23 @@ export function EnrollmentPacketPublicForm({
   token: string;
   fields: PublicEnrollmentPacketFields;
 }) {
-  const [form, setForm] = useState<FormState>(() => toInitialState(fields));
+  const sections = [...ENROLLMENT_PACKET_SECTIONS, {
+    id: UPLOAD_STEP_ID,
+    title: "Insurance & Legal Uploads",
+    description: "Upload cards and legal documents from the packet.",
+    sourceDocuments: ["Insurance and POA Upload"] as const,
+    fields: []
+  }];
+
+  const [payload, setPayload] = useState<EnrollmentPacketIntakePayload>(() => toInitialPayload(fields));
   const [status, setStatus] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const [isSaved, setIsSaved] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
   const [attested, setAttested] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
-  const [insuranceUploads, setInsuranceUploads] = useState<File[]>([]);
-  const [poaUploads, setPoaUploads] = useState<File[]>([]);
-  const [supportingUploads, setSupportingUploads] = useState<File[]>([]);
+  const [caregiverTypedName, setCaregiverTypedName] = useState(payload.primaryContactName ?? "");
+  const [uploads, setUploads] = useState<UploadState>(() => emptyUploadState());
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
@@ -96,6 +150,10 @@ export function EnrollmentPacketPublicForm({
     context.lineCap = "round";
     context.lineJoin = "round";
   }, []);
+
+  const currentSection = sections[currentSectionIndex];
+  const onFirstSection = currentSectionIndex === 0;
+  const onLastSection = currentSectionIndex === sections.length - 1;
 
   const getCanvasPoint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -151,28 +209,58 @@ export function EnrollmentPacketPublicForm({
     setHasSignature(false);
   };
 
-  const appendCommonFields = (formData: FormData) => {
+  const getTextValue = (key: EnrollmentPacketIntakeTextKey) => {
+    const value = payload[key];
+    return typeof value === "string" ? value : "";
+  };
+
+  const getArrayValue = (key: EnrollmentPacketIntakeArrayKey) => {
+    const value = payload[key];
+    return Array.isArray(value) ? value : [];
+  };
+
+  const setTextValue = (key: EnrollmentPacketIntakeTextKey, value: string) => {
+    setPayload((current) => normalizeEnrollmentPacketIntakePayload({ ...current, [key]: value }));
+  };
+
+  const toggleArrayValue = (key: EnrollmentPacketIntakeArrayKey, item: string, checked: boolean) => {
+    setPayload((current) => {
+      const existing = new Set(getArrayValueFromPayload(current, key));
+      if (checked) {
+        existing.add(item);
+      } else {
+        existing.delete(item);
+      }
+      return normalizeEnrollmentPacketIntakePayload({
+        ...current,
+        [key]: Array.from(existing)
+      });
+    });
+  };
+
+  const appendCommonFields = (formData: FormData, sourcePayload: EnrollmentPacketIntakePayload) => {
     formData.set("token", token);
-    formData.set("caregiverName", form.caregiverName);
-    formData.set("caregiverPhone", form.caregiverPhone);
-    formData.set("caregiverEmail", form.caregiverEmail);
-    formData.set("caregiverAddressLine1", form.caregiverAddressLine1);
-    formData.set("caregiverAddressLine2", form.caregiverAddressLine2);
-    formData.set("caregiverCity", form.caregiverCity);
-    formData.set("caregiverState", form.caregiverState);
-    formData.set("caregiverZip", form.caregiverZip);
-    formData.set("secondaryContactName", form.secondaryContactName);
-    formData.set("secondaryContactPhone", form.secondaryContactPhone);
-    formData.set("secondaryContactEmail", form.secondaryContactEmail);
-    formData.set("secondaryContactRelationship", form.secondaryContactRelationship);
-    formData.set("notes", form.notes);
+    formData.set("intakePayload", JSON.stringify(sourcePayload));
+    formData.set("caregiverName", sourcePayload.primaryContactName ?? "");
+    formData.set("caregiverPhone", sourcePayload.primaryContactPhone ?? "");
+    formData.set("caregiverEmail", sourcePayload.primaryContactEmail ?? "");
+    formData.set("caregiverAddressLine1", sourcePayload.memberAddressLine1 ?? "");
+    formData.set("caregiverAddressLine2", sourcePayload.memberAddressLine2 ?? "");
+    formData.set("caregiverCity", sourcePayload.memberCity ?? "");
+    formData.set("caregiverState", sourcePayload.memberState ?? "");
+    formData.set("caregiverZip", sourcePayload.memberZip ?? "");
+    formData.set("secondaryContactName", sourcePayload.secondaryContactName ?? "");
+    formData.set("secondaryContactPhone", sourcePayload.secondaryContactPhone ?? "");
+    formData.set("secondaryContactEmail", sourcePayload.secondaryContactEmail ?? "");
+    formData.set("secondaryContactRelationship", sourcePayload.secondaryContactRelationship ?? "");
+    formData.set("notes", sourcePayload.additionalNotes ?? "");
   };
 
   const saveProgress = () => {
     setStatus(null);
     startTransition(async () => {
       const formData = new FormData();
-      appendCommonFields(formData);
+      appendCommonFields(formData, payload);
       const result = await savePublicEnrollmentPacketProgressAction(formData);
       if (!result.ok) {
         setStatus(result.error);
@@ -185,7 +273,7 @@ export function EnrollmentPacketPublicForm({
   const submitPacket = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    if (!form.caregiverTypedName.trim()) {
+    if (!caregiverTypedName.trim()) {
       setStatus("Typed caregiver signature name is required.");
       return;
     }
@@ -199,260 +287,328 @@ export function EnrollmentPacketPublicForm({
     }
 
     const signatureImageDataUrl = canvas.toDataURL("image/png");
+    const payloadToSubmit = applySignatureDefaults(payload, caregiverTypedName);
     setStatus(null);
+
     startTransition(async () => {
       const formData = new FormData();
-      appendCommonFields(formData);
-      formData.set("caregiverTypedName", form.caregiverTypedName);
+      appendCommonFields(formData, payloadToSubmit);
+      formData.set("caregiverTypedName", caregiverTypedName);
       formData.set("caregiverSignatureImageDataUrl", signatureImageDataUrl);
       formData.set("attested", attested ? "true" : "false");
-      insuranceUploads.forEach((file) => formData.append("insuranceUploads", file));
-      poaUploads.forEach((file) => formData.append("poaUploads", file));
-      supportingUploads.forEach((file) => formData.append("supportingUploads", file));
+
+      ENROLLMENT_PACKET_UPLOAD_FIELDS.forEach((uploadField) => {
+        uploads[uploadField.key].forEach((file) => formData.append(uploadField.key, file));
+      });
+
       const result = await submitPublicEnrollmentPacketAction(formData);
       if (!result.ok) {
         setStatus(result.error);
         return;
       }
-      setIsSaved(true);
+
+      setPayload(payloadToSubmit);
+      setIsSubmitted(true);
       setStatus("Enrollment packet submitted successfully.");
     });
   };
 
-  if (isSaved) {
+  const renderField = (field: EnrollmentPacketFieldDefinition) => {
+    const disabled = isPending || Boolean(field.staffPrepared);
+    const wrapperClass = field.columns === 2 ? "space-y-1 text-sm md:col-span-2" : "space-y-1 text-sm";
+
+    if (field.type === "textarea") {
+      return (
+        <label key={field.key} className={wrapperClass}>
+          <span className="text-xs font-semibold text-muted">
+            {field.label}
+            {field.staffPrepared ? " (Staff prepared)" : ""}
+          </span>
+          <textarea
+            className="min-h-[92px] w-full rounded-lg border border-border px-3 py-2"
+            value={getTextValue(field.key as EnrollmentPacketIntakeTextKey)}
+            onChange={(event) => setTextValue(field.key as EnrollmentPacketIntakeTextKey, event.target.value)}
+            disabled={disabled}
+          />
+        </label>
+      );
+    }
+
+    if (field.type === "select") {
+      return (
+        <label key={field.key} className={wrapperClass}>
+          <span className="text-xs font-semibold text-muted">
+            {field.label}
+            {field.staffPrepared ? " (Staff prepared)" : ""}
+          </span>
+          <select
+            className="h-11 w-full rounded-lg border border-border px-3"
+            value={getTextValue(field.key as EnrollmentPacketIntakeTextKey)}
+            onChange={(event) => setTextValue(field.key as EnrollmentPacketIntakeTextKey, event.target.value)}
+            disabled={disabled}
+          >
+            <option value="">Select</option>
+            {(field.options ?? []).map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+      );
+    }
+
+    if (field.type === "radio") {
+      const selectedValue = getTextValue(field.key as EnrollmentPacketIntakeTextKey);
+      return (
+        <fieldset key={field.key} className={wrapperClass}>
+          <legend className="text-xs font-semibold text-muted">
+            {field.label}
+            {field.staffPrepared ? " (Staff prepared)" : ""}
+          </legend>
+          <div className="flex flex-wrap gap-3 rounded-lg border border-border bg-slate-50 p-3">
+            {(field.options ?? []).map((option) => (
+              <label key={option} className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name={`radio-${field.key}`}
+                  checked={selectedValue === option}
+                  onChange={() => setTextValue(field.key as EnrollmentPacketIntakeTextKey, option)}
+                  disabled={disabled}
+                />
+                <span>{option}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      );
+    }
+
+    if (field.type === "checkbox-group" || field.type === "weekday-group") {
+      const options = field.type === "weekday-group" ? WEEKDAY_OPTIONS : field.options ?? [];
+      const selected = new Set(getArrayValue(field.key as EnrollmentPacketIntakeArrayKey));
+      return (
+        <fieldset key={field.key} className={wrapperClass}>
+          <legend className="text-xs font-semibold text-muted">
+            {field.label}
+            {field.staffPrepared ? " (Staff prepared)" : ""}
+          </legend>
+          <div className="grid gap-2 rounded-lg border border-border bg-slate-50 p-3 sm:grid-cols-2">
+            {options.map((option) => (
+              <label key={option} className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selected.has(option)}
+                  onChange={(event) =>
+                    toggleArrayValue(field.key as EnrollmentPacketIntakeArrayKey, option, event.target.checked)
+                  }
+                  disabled={disabled}
+                />
+                <span>{option}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      );
+    }
+
+    const inputType = field.type === "email" || field.type === "tel" || field.type === "date" || field.type === "number"
+      ? field.type
+      : "text";
+
     return (
-      <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">
-        Enrollment packet submitted successfully. You may close this page.
-      </p>
+      <label key={field.key} className={wrapperClass}>
+        <span className="text-xs font-semibold text-muted">
+          {field.label}
+          {field.staffPrepared ? " (Staff prepared)" : ""}
+        </span>
+        <input
+          type={inputType}
+          className="h-11 w-full rounded-lg border border-border px-3"
+          value={getTextValue(field.key as EnrollmentPacketIntakeTextKey)}
+          onChange={(event) => setTextValue(field.key as EnrollmentPacketIntakeTextKey, event.target.value)}
+          disabled={disabled}
+        />
+      </label>
+    );
+  };
+
+  if (isSubmitted) {
+    return (
+      <div className="space-y-3 rounded-lg border border-emerald-300 bg-emerald-50 p-4">
+        <h3 className="text-base font-semibold text-emerald-900">Enrollment Packet Submitted</h3>
+        <p className="text-sm text-emerald-800">
+          Thank you for completing the enrollment packet. Your information was submitted successfully.
+        </p>
+      </div>
     );
   }
 
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-border bg-slate-50 p-3 text-sm">
-        <p><span className="font-semibold">Requested Days:</span> {fields.requestedDays.length > 0 ? fields.requestedDays.join(", ") : "-"}</p>
+        <p>
+          <span className="font-semibold">Requested Days:</span>{" "}
+          {fields.requestedDays.length > 0 ? fields.requestedDays.join(", ") : "-"}
+        </p>
         <p><span className="font-semibold">Transportation:</span> {fields.transportation ?? "-"}</p>
         <p><span className="font-semibold">Community Fee:</span> ${fields.communityFee.toFixed(2)}</p>
         <p><span className="font-semibold">Daily Rate:</span> ${fields.dailyRate.toFixed(2)}</p>
+        <p className="mt-1 text-xs text-muted">Town Square staff signature is pre-applied on the agreement.</p>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Caregiver Name</span>
-          <input
-            className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.caregiverName}
-            onChange={(event) => setForm((current) => ({ ...current, caregiverName: event.target.value }))}
-            disabled={isPending}
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Caregiver Phone</span>
-          <input
-            className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.caregiverPhone}
-            onChange={(event) => setForm((current) => ({ ...current, caregiverPhone: event.target.value }))}
-            disabled={isPending}
-          />
-        </label>
-        <label className="space-y-1 text-sm md:col-span-2">
-          <span className="text-xs font-semibold text-muted">Caregiver Email</span>
-          <input
-            className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.caregiverEmail}
-            onChange={(event) => setForm((current) => ({ ...current, caregiverEmail: event.target.value }))}
-            disabled={isPending}
-          />
-        </label>
-        <label className="space-y-1 text-sm md:col-span-2">
-          <span className="text-xs font-semibold text-muted">Address Line 1</span>
-          <input
-            className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.caregiverAddressLine1}
-            onChange={(event) => setForm((current) => ({ ...current, caregiverAddressLine1: event.target.value }))}
-            disabled={isPending}
-          />
-        </label>
-        <label className="space-y-1 text-sm md:col-span-2">
-          <span className="text-xs font-semibold text-muted">Address Line 2</span>
-          <input
-            className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.caregiverAddressLine2}
-            onChange={(event) => setForm((current) => ({ ...current, caregiverAddressLine2: event.target.value }))}
-            disabled={isPending}
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">City</span>
-          <input
-            className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.caregiverCity}
-            onChange={(event) => setForm((current) => ({ ...current, caregiverCity: event.target.value }))}
-            disabled={isPending}
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">State</span>
-          <input
-            className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.caregiverState}
-            onChange={(event) => setForm((current) => ({ ...current, caregiverState: event.target.value }))}
-            disabled={isPending}
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">ZIP</span>
-          <input
-            className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.caregiverZip}
-            onChange={(event) => setForm((current) => ({ ...current, caregiverZip: event.target.value }))}
-            disabled={isPending}
-          />
-        </label>
+      <div className="rounded-lg border border-border p-2">
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {sections.map((section, index) => (
+            <button
+              key={section.id}
+              type="button"
+              className={`whitespace-nowrap rounded-lg border px-3 py-2 text-xs font-semibold ${
+                index === currentSectionIndex
+                  ? "border-brand bg-brand text-white"
+                  : "border-border bg-white text-muted hover:border-brand/50"
+              }`}
+              onClick={() => setCurrentSectionIndex(index)}
+              disabled={isPending}
+            >
+              {index + 1}. {section.title}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Secondary Contact Name</span>
+      <div className="rounded-lg border border-border p-4">
+        <div className="mb-3">
+          <h3 className="text-base font-semibold">{currentSection.title}</h3>
+          <p className="text-sm text-muted">{currentSection.description}</p>
+          <p className="text-xs text-muted">Source: {currentSection.sourceDocuments.join(", ")}</p>
+        </div>
+
+        {currentSection.id === UPLOAD_STEP_ID ? (
+          <div className="grid gap-3 md:grid-cols-2">
+            {ENROLLMENT_PACKET_UPLOAD_FIELDS.map((uploadField) => (
+              <label key={uploadField.key} className="space-y-1 text-sm">
+                <span className="text-xs font-semibold text-muted">{uploadField.label}</span>
+                <input
+                  type="file"
+                  multiple
+                  onChange={(event) =>
+                    setUploads((current) => ({
+                      ...current,
+                      [uploadField.key]: Array.from(event.target.files ?? [])
+                    }))
+                  }
+                  disabled={isPending}
+                />
+                <p className="text-xs text-muted">
+                  {uploads[uploadField.key].length > 0
+                    ? `${uploads[uploadField.key].length} file(s) selected`
+                    : "No files selected"}
+                </p>
+              </label>
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2">{currentSection.fields.map(renderField)}</div>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-border p-4">
+        <h3 className="text-base font-semibold">Final Signature</h3>
+        <p className="text-sm text-muted">Sign to complete and submit all packet sections.</p>
+
+        <label className="mt-3 block space-y-1 text-sm">
+          <span className="text-xs font-semibold text-muted">Typed signature name</span>
           <input
             className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.secondaryContactName}
-            onChange={(event) => setForm((current) => ({ ...current, secondaryContactName: event.target.value }))}
+            value={caregiverTypedName}
+            onChange={(event) => setCaregiverTypedName(event.target.value)}
             disabled={isPending}
           />
         </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Relationship</span>
+
+        <div className="mt-3 rounded-lg border border-border p-3">
+          <p className="text-xs font-semibold text-muted">Draw signature</p>
+          <canvas
+            ref={canvasRef}
+            width={920}
+            height={220}
+            className="mt-2 w-full rounded-lg border border-border bg-white"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            onPointerLeave={onPointerUp}
+          />
+          <div className="mt-2 flex justify-end">
+            <button
+              type="button"
+              className="rounded-lg border border-border px-3 py-2 text-xs font-semibold"
+              onClick={clearSignature}
+              disabled={isPending}
+            >
+              Clear Signature
+            </button>
+          </div>
+        </div>
+
+        <label className="mt-3 flex items-start gap-2 text-sm">
           <input
-            className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.secondaryContactRelationship}
-            onChange={(event) => setForm((current) => ({ ...current, secondaryContactRelationship: event.target.value }))}
+            type="checkbox"
+            checked={attested}
+            onChange={(event) => setAttested(event.target.checked)}
+            className="mt-1"
             disabled={isPending}
           />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Secondary Contact Phone</span>
-          <input
-            className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.secondaryContactPhone}
-            onChange={(event) => setForm((current) => ({ ...current, secondaryContactPhone: event.target.value }))}
-            disabled={isPending}
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Secondary Contact Email</span>
-          <input
-            className="h-11 w-full rounded-lg border border-border px-3"
-            value={form.secondaryContactEmail}
-            onChange={(event) => setForm((current) => ({ ...current, secondaryContactEmail: event.target.value }))}
-            disabled={isPending}
-          />
+          <span>I attest this electronic signature is mine and I approve this enrollment packet.</span>
         </label>
       </div>
 
-      <label className="space-y-1 text-sm">
-        <span className="text-xs font-semibold text-muted">Notes</span>
-        <textarea
-          className="min-h-[90px] w-full rounded-lg border border-border px-3 py-2"
-          value={form.notes}
-          onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))}
-          disabled={isPending}
-        />
-      </label>
-
-      <div className="grid gap-3 md:grid-cols-3">
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Insurance Uploads</span>
-          <input
-            type="file"
-            multiple
-            onChange={(event) => setInsuranceUploads(Array.from(event.target.files ?? []))}
-            disabled={isPending}
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">POA Uploads</span>
-          <input
-            type="file"
-            multiple
-            onChange={(event) => setPoaUploads(Array.from(event.target.files ?? []))}
-            disabled={isPending}
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Other Supporting Uploads</span>
-          <input
-            type="file"
-            multiple
-            onChange={(event) => setSupportingUploads(Array.from(event.target.files ?? []))}
-            disabled={isPending}
-          />
-        </label>
-      </div>
-
-      <label className="space-y-1 text-sm">
-        <span className="text-xs font-semibold text-muted">Typed Signature Name</span>
-        <input
-          className="h-11 w-full rounded-lg border border-border px-3"
-          value={form.caregiverTypedName}
-          onChange={(event) => setForm((current) => ({ ...current, caregiverTypedName: event.target.value }))}
-          disabled={isPending}
-        />
-      </label>
-
-      <div className="rounded-lg border border-border p-3">
-        <p className="text-xs font-semibold text-muted">Caregiver Signature</p>
-        <canvas
-          ref={canvasRef}
-          width={920}
-          height={240}
-          className="mt-2 w-full rounded-lg border border-border bg-white"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          onPointerLeave={onPointerUp}
-        />
-        <div className="mt-2 flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex gap-2">
           <button
             type="button"
-            className="rounded-lg border border-border px-3 py-2 text-xs font-semibold"
-            onClick={clearSignature}
+            className="rounded-lg border border-border px-4 py-2 text-sm font-semibold"
+            onClick={() => setCurrentSectionIndex((index) => Math.max(0, index - 1))}
+            disabled={isPending || onFirstSection}
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-border px-4 py-2 text-sm font-semibold"
+            onClick={() => setCurrentSectionIndex((index) => Math.min(sections.length - 1, index + 1))}
+            disabled={isPending || onLastSection}
+          >
+            Next
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className="rounded-lg border border-border px-4 py-2 text-sm font-semibold"
+            onClick={saveProgress}
             disabled={isPending}
           >
-            Clear Signature
+            {isPending ? "Saving..." : "Save Progress"}
+          </button>
+          <button
+            type="button"
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white"
+            onClick={submitPacket}
+            disabled={isPending}
+          >
+            {isPending ? "Submitting..." : "Sign and Submit Packet"}
           </button>
         </div>
       </div>
 
-      <label className="flex items-start gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={attested}
-          onChange={(event) => setAttested(event.target.checked)}
-          className="mt-1"
-          disabled={isPending}
-        />
-        <span>I attest this is my electronic signature and I approve this enrollment packet.</span>
-      </label>
-
-      <div className="flex flex-wrap justify-end gap-2">
-        <button
-          type="button"
-          className="rounded-lg border border-border px-4 py-2 text-sm font-semibold"
-          onClick={saveProgress}
-          disabled={isPending}
-        >
-          {isPending ? "Saving..." : "Save Progress"}
-        </button>
-        <button
-          type="button"
-          className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white"
-          onClick={submitPacket}
-          disabled={isPending}
-        >
-          {isPending ? "Submitting..." : "Sign and Submit Packet"}
-        </button>
+      <div className="rounded-lg border border-border bg-slate-50 p-3 text-sm">
+        <p className="font-semibold">Quick Review</p>
+        <p><span className="font-semibold">Primary contact:</span> {formatEnrollmentPacketValue(payload.primaryContactName)}</p>
+        <p><span className="font-semibold">Member:</span> {formatEnrollmentPacketValue(`${payload.memberLegalFirstName ?? ""} ${payload.memberLegalLastName ?? ""}`)}</p>
+        <p><span className="font-semibold">Photo consent:</span> {formatEnrollmentPacketValue(payload.photoConsentChoice)}</p>
       </div>
 
       {status ? <p className="text-sm text-muted">{status}</p> : null}
@@ -460,3 +616,7 @@ export function EnrollmentPacketPublicForm({
   );
 }
 
+function getArrayValueFromPayload(payload: EnrollmentPacketIntakePayload, key: EnrollmentPacketIntakeArrayKey) {
+  const value = payload[key];
+  return Array.isArray(value) ? value : [];
+}

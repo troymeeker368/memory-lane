@@ -187,7 +187,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
         </div>
       </RelatedSection>
 
-      <RelatedSection title="MAR / Health Actions" count={detail.marToday.length} viewAllHref="/health" addHref="/health">
+      <RelatedSection title="MAR / Health Actions" count={detail.marToday.length} viewAllHref="/health/mar" addHref="/health/mar">
         <div className="space-y-2">
           {detail.marToday.map((row) => (
             <div key={row.id} className="rounded-lg border border-border p-3 text-sm">

@@ -13,12 +13,21 @@ import {
 type MedicationRow = {
   id: string;
   name: string;
+  strength: string;
   dose: string;
   quantity: string;
   form: string;
   route: string;
   routeLaterality: string;
   frequency: string;
+  scheduledTimes: string;
+  active: boolean;
+  prn: boolean;
+  prnInstructions: string;
+  startDate: string;
+  endDate: string;
+  provider: string;
+  instructions: string;
   givenAtCenter: boolean;
   givenAtCenterTime24h: string;
   comments: string;
@@ -39,6 +48,15 @@ function buildInitialRows(
     route: string | null;
     routeLaterality: string | null;
     frequency: string | null;
+    scheduledTimes?: string[] | null;
+    active?: boolean;
+    prn?: boolean;
+    prnInstructions?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    provider?: string | null;
+    instructions?: string | null;
+    strength?: string | null;
     givenAtCenter: boolean;
     givenAtCenterTime24h: string | null;
     comments: string | null;
@@ -47,12 +65,21 @@ function buildInitialRows(
   const rows = initialRows.map((row, index) => ({
     id: row.id || `med-${index + 1}`,
     name: row.name,
+    strength: row.strength ?? row.quantity ?? "",
     dose: row.dose ?? "",
     quantity: row.quantity ?? POF_DEFAULT_MEDICATION_QUANTITY,
     form: row.form ?? POF_DEFAULT_MEDICATION_FORM,
     route: row.route ?? POF_DEFAULT_MEDICATION_ROUTE,
     routeLaterality: row.routeLaterality ?? "",
     frequency: row.frequency ?? "",
+    scheduledTimes: (row.scheduledTimes ?? []).join(", ") || (row.givenAtCenterTime24h ?? ""),
+    active: row.active !== false,
+    prn: row.prn === true,
+    prnInstructions: row.prnInstructions ?? "",
+    startDate: row.startDate ?? "",
+    endDate: row.endDate ?? "",
+    provider: row.provider ?? "",
+    instructions: row.instructions ?? row.comments ?? "",
     givenAtCenter: row.givenAtCenter === true,
     givenAtCenterTime24h: row.givenAtCenterTime24h ?? "",
     comments: row.comments ?? ""
@@ -64,10 +91,19 @@ function buildInitialRows(
       name: "",
       dose: "",
       quantity: POF_DEFAULT_MEDICATION_QUANTITY,
+      strength: POF_DEFAULT_MEDICATION_QUANTITY,
       form: POF_DEFAULT_MEDICATION_FORM,
       route: POF_DEFAULT_MEDICATION_ROUTE,
       routeLaterality: "",
       frequency: "",
+      scheduledTimes: "",
+      active: true,
+      prn: false,
+      prnInstructions: "",
+      startDate: "",
+      endDate: "",
+      provider: "",
+      instructions: "",
       givenAtCenter: false,
       givenAtCenterTime24h: "",
       comments: ""
@@ -83,12 +119,21 @@ export function PofMedicationsEditor({
   initialRows: Array<{
     id: string;
     name: string;
+    strength?: string | null;
     dose: string | null;
     quantity: string | null;
     form: string | null;
     route: string | null;
     routeLaterality: string | null;
     frequency: string | null;
+    scheduledTimes?: string[] | null;
+    active?: boolean;
+    prn?: boolean;
+    prnInstructions?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    provider?: string | null;
+    instructions?: string | null;
     givenAtCenter: boolean;
     givenAtCenterTime24h: string | null;
     comments: string | null;
@@ -118,12 +163,21 @@ export function PofMedicationsEditor({
       {
         id: `med-${Date.now()}-${current.length + 1}`,
         name: "",
+        strength: POF_DEFAULT_MEDICATION_QUANTITY,
         dose: "",
         quantity: POF_DEFAULT_MEDICATION_QUANTITY,
         form: POF_DEFAULT_MEDICATION_FORM,
         route: POF_DEFAULT_MEDICATION_ROUTE,
         routeLaterality: "",
         frequency: "",
+        scheduledTimes: "",
+        active: true,
+        prn: false,
+        prnInstructions: "",
+        startDate: "",
+        endDate: "",
+        provider: "",
+        instructions: "",
         givenAtCenter: false,
         givenAtCenterTime24h: "",
         comments: ""
@@ -181,6 +235,7 @@ export function PofMedicationsEditor({
                     onChange={(event) => updateRow(medication.id, "quantity", event.target.value)}
                     className="h-9 w-[58px] rounded border border-border px-2 text-sm"
                   />
+                  <input type="hidden" name="medicationStrength" value={medication.strength || medication.quantity} />
                 </td>
                 <td>
                   <select
@@ -218,10 +273,21 @@ export function PofMedicationsEditor({
                     onChange={(event) => updateRow(medication.id, "frequency", event.target.value)}
                     className="h-9 w-full rounded border border-border px-2 text-sm"
                   />
+                  <input type="hidden" name="medicationScheduledTimes" value={medication.scheduledTimes || medication.givenAtCenterTime24h} />
                 </td>
                 <td>
+                  <input type="hidden" name="medicationActive" value={medication.active ? "true" : "false"} />
                   <input type="hidden" name="medicationGivenAtCenter" value={medication.givenAtCenter ? "true" : "false"} />
+                  <input type="hidden" name="medicationPrn" value={medication.prn ? "true" : "false"} />
                   <div className="flex min-w-[168px] flex-col gap-1">
+                    <label className="inline-flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={medication.active}
+                        onChange={(event) => updateRow(medication.id, "active", event.target.checked)}
+                      />
+                      <span>Active</span>
+                    </label>
                     <label className="inline-flex items-center gap-2 text-xs">
                       <input
                         type="checkbox"
@@ -246,9 +312,32 @@ export function PofMedicationsEditor({
                     ) : (
                       <input type="hidden" name="medicationGivenAtCenterTime24h" value="" />
                     )}
+                    <label className="inline-flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={medication.prn}
+                        onChange={(event) => updateRow(medication.id, "prn", event.target.checked)}
+                      />
+                      <span>PRN</span>
+                    </label>
+                    {medication.prn ? (
+                      <input
+                        name="medicationPrnInstructions"
+                        value={medication.prnInstructions}
+                        onChange={(event) => updateRow(medication.id, "prnInstructions", event.target.value)}
+                        className="h-9 w-[160px] rounded border border-border px-2 text-sm"
+                        placeholder="PRN instructions"
+                      />
+                    ) : (
+                      <input type="hidden" name="medicationPrnInstructions" value="" />
+                    )}
+                    <input type="date" name="medicationStartDate" value={medication.startDate} onChange={(event) => updateRow(medication.id, "startDate", event.target.value)} className="h-9 w-[160px] rounded border border-border px-2 text-sm" />
+                    <input type="date" name="medicationEndDate" value={medication.endDate} onChange={(event) => updateRow(medication.id, "endDate", event.target.value)} className="h-9 w-[160px] rounded border border-border px-2 text-sm" />
+                    <input type="hidden" name="medicationProvider" value={medication.provider} />
                   </div>
                 </td>
                 <td>
+                  <input type="hidden" name="medicationInstructions" value={medication.instructions || medication.comments} />
                   <input
                     name="medicationComments"
                     value={medication.comments}

@@ -54,7 +54,7 @@ export default async function PublicEnrollmentPacketPage({
       <Card>
         <CardTitle>Enrollment Packet for {context.memberName}</CardTitle>
         <p className="mt-2 text-sm text-muted">
-          Complete this packet, upload insurance/POA documents, and sign electronically. No login is required.
+          Complete each enrollment section, upload insurance/legal documents, and sign electronically. No login is required.
         </p>
       </Card>
       <Card>

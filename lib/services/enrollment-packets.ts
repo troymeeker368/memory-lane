@@ -11,9 +11,11 @@ import {
 import { buildEnrollmentPacketTemplate } from "@/lib/email/templates/enrollment-packet";
 import { buildCompletedEnrollmentPacketDocxData } from "@/lib/services/enrollment-packet-docx";
 import {
-  ensureMemberAttendanceScheduleSupabase,
-  ensureMemberCommandCenterProfileSupabase
-} from "@/lib/services/member-command-center-supabase";
+  getDefaultEnrollmentPacketIntakePayload,
+  normalizeEnrollmentPacketIntakePayload,
+  type EnrollmentPacketIntakePayload
+} from "@/lib/services/enrollment-packet-intake-payload";
+import { mapEnrollmentPacketToDownstream } from "@/lib/services/enrollment-packet-intake-mapping";
 import { createUserNotification } from "@/lib/services/notifications";
 import { resolveEnrollmentPricingForRequestedDays } from "@/lib/services/enrollment-pricing";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -84,6 +86,7 @@ type EnrollmentPacketFieldsRow = {
   secondary_contact_email: string | null;
   secondary_contact_relationship: string | null;
   notes: string | null;
+  intake_payload: Record<string, unknown> | null;
 };
 
 type MemberRow = {
@@ -97,6 +100,7 @@ type LeadRow = {
   member_name: string | null;
   caregiver_email: string | null;
   caregiver_name: string | null;
+  caregiver_relationship: string | null;
   caregiver_phone: string | null;
 };
 
@@ -112,8 +116,20 @@ type PacketFileUpload = {
   fileName: string;
   contentType: string;
   bytes: Buffer;
-  category: "insurance" | "poa" | "supporting";
+  category:
+    | "insurance"
+    | "poa"
+    | "supporting"
+    | "medicare_card"
+    | "private_insurance"
+    | "supplemental_insurance"
+    | "poa_guardianship"
+    | "dnr_dni_advance_directive"
+    | "signed_membership_agreement"
+    | "signed_exhibit_a_payment_authorization";
 };
+
+type EnrollmentPacketUploadCategory = PacketFileUpload["category"] | "completed_packet" | "signature_artifact";
 
 export type PublicEnrollmentPacketContext =
   | { state: "invalid" }
@@ -140,6 +156,7 @@ export type PublicEnrollmentPacketContext =
         secondaryContactEmail: string | null;
         secondaryContactRelationship: string | null;
         notes: string | null;
+        intakePayload: EnrollmentPacketIntakePayload;
       };
       memberName: string;
     };
@@ -152,6 +169,60 @@ function clean(value: string | null | undefined) {
 function cleanEmail(value: string | null | undefined) {
   const normalized = clean(value);
   return normalized ? normalized.toLowerCase() : null;
+}
+
+function normalizeStoredIntakePayload(fields: EnrollmentPacketFieldsRow) {
+  return normalizeEnrollmentPacketIntakePayload({
+    ...getDefaultEnrollmentPacketIntakePayload(),
+    ...(fields.intake_payload ?? {}),
+    requestedAttendanceDays: fields.requested_days ?? [],
+    transportationPreference: fields.transportation,
+    primaryContactName: fields.caregiver_name,
+    primaryContactPhone: fields.caregiver_phone,
+    primaryContactEmail: fields.caregiver_email,
+    secondaryContactName: fields.secondary_contact_name,
+    secondaryContactPhone: fields.secondary_contact_phone,
+    secondaryContactEmail: fields.secondary_contact_email,
+    secondaryContactRelationship: fields.secondary_contact_relationship,
+    additionalNotes: fields.notes
+  });
+}
+
+function mergePublicProgressPayload(input: {
+  storedPayload: EnrollmentPacketIntakePayload;
+  intakePayload?: Partial<Record<string, unknown>> | null;
+  caregiverName?: string | null;
+  caregiverPhone?: string | null;
+  caregiverEmail?: string | null;
+  caregiverAddressLine1?: string | null;
+  caregiverAddressLine2?: string | null;
+  caregiverCity?: string | null;
+  caregiverState?: string | null;
+  caregiverZip?: string | null;
+  secondaryContactName?: string | null;
+  secondaryContactPhone?: string | null;
+  secondaryContactEmail?: string | null;
+  secondaryContactRelationship?: string | null;
+  notes?: string | null;
+}) {
+  return normalizeEnrollmentPacketIntakePayload({
+    ...input.storedPayload,
+    ...(input.intakePayload ?? {}),
+    primaryContactName: clean(input.caregiverName) ?? input.storedPayload.primaryContactName,
+    primaryContactPhone: clean(input.caregiverPhone) ?? input.storedPayload.primaryContactPhone,
+    primaryContactEmail: cleanEmail(input.caregiverEmail) ?? input.storedPayload.primaryContactEmail,
+    memberAddressLine1: clean(input.caregiverAddressLine1) ?? input.storedPayload.memberAddressLine1,
+    memberAddressLine2: clean(input.caregiverAddressLine2) ?? input.storedPayload.memberAddressLine2,
+    memberCity: clean(input.caregiverCity) ?? input.storedPayload.memberCity,
+    memberState: clean(input.caregiverState) ?? input.storedPayload.memberState,
+    memberZip: clean(input.caregiverZip) ?? input.storedPayload.memberZip,
+    secondaryContactName: clean(input.secondaryContactName) ?? input.storedPayload.secondaryContactName,
+    secondaryContactPhone: clean(input.secondaryContactPhone) ?? input.storedPayload.secondaryContactPhone,
+    secondaryContactEmail: cleanEmail(input.secondaryContactEmail) ?? input.storedPayload.secondaryContactEmail,
+    secondaryContactRelationship:
+      clean(input.secondaryContactRelationship) ?? input.storedPayload.secondaryContactRelationship,
+    additionalNotes: clean(input.notes) ?? input.storedPayload.additionalNotes
+  });
 }
 
 function isEmail(value: string | null | undefined) {
@@ -304,7 +375,7 @@ async function getLeadById(leadId: string) {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("leads")
-    .select("id, member_name, caregiver_email, caregiver_name, caregiver_phone")
+    .select("id, member_name, caregiver_email, caregiver_name, caregiver_relationship, caregiver_phone")
     .eq("id", leadId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -721,6 +792,14 @@ export async function sendEnrollmentPacketRequest(input: {
     caregiver_name: clean(lead?.caregiver_name),
     caregiver_phone: clean(lead?.caregiver_phone),
     caregiver_email: caregiverEmail,
+    intake_payload: normalizeEnrollmentPacketIntakePayload({
+      requestedAttendanceDays: resolvedPricing.requestedDays,
+      transportationPreference: clean(input.transportation),
+      primaryContactName: clean(lead?.caregiver_name),
+      primaryContactRelationship: clean(lead?.caregiver_relationship),
+      primaryContactPhone: clean(lead?.caregiver_phone),
+      primaryContactEmail: caregiverEmail
+    }),
     created_at: now,
     updated_at: now
   });
@@ -831,6 +910,7 @@ function toPublicContext(
   fields: EnrollmentPacketFieldsRow,
   memberName: string
 ): PublicEnrollmentPacketContext {
+  const intakePayload = normalizeStoredIntakePayload(fields);
   return {
     state: "ready",
     request: toSummary(request),
@@ -852,7 +932,8 @@ function toPublicContext(
       secondaryContactPhone: fields.secondary_contact_phone,
       secondaryContactEmail: fields.secondary_contact_email,
       secondaryContactRelationship: fields.secondary_contact_relationship,
-      notes: fields.notes
+      notes: fields.notes,
+      intakePayload
     }
   };
 }
@@ -969,7 +1050,7 @@ async function insertUploadAndFile(input: {
   fileName: string;
   contentType: string;
   bytes: Buffer;
-  uploadCategory: "insurance" | "poa" | "supporting" | "completed_packet" | "signature_artifact";
+  uploadCategory: EnrollmentPacketUploadCategory;
   uploadedByUserId: string | null;
   uploadedByName: string | null;
   dataUrl?: string | null;
@@ -988,7 +1069,19 @@ async function insertUploadAndFile(input: {
     fileType: input.contentType,
     dataUrl: input.dataUrl ?? null,
     storageUri,
-    category: input.uploadCategory === "insurance" || input.uploadCategory === "poa" ? "Legal" : "Admin",
+    category: [
+      "insurance",
+      "poa",
+      "medicare_card",
+      "private_insurance",
+      "supplemental_insurance",
+      "poa_guardianship",
+      "dnr_dni_advance_directive",
+      "signed_membership_agreement",
+      "signed_exhibit_a_payment_authorization"
+    ].includes(input.uploadCategory)
+      ? "Legal"
+      : "Admin",
     uploadedByUserId: input.uploadedByUserId,
     uploadedByName: input.uploadedByName,
     packetId: input.packetId
@@ -1007,268 +1100,6 @@ async function insertUploadAndFile(input: {
   });
   if (error) throw new Error(error.message);
   return { storageUri, memberFileId };
-}
-
-function attendanceDaysFromRequestedDays(days: string[]) {
-  const normalized = new Set(days.map((day) => day.trim().toLowerCase()));
-  return {
-    monday: normalized.has("monday") || normalized.has("mon"),
-    tuesday: normalized.has("tuesday") || normalized.has("tue"),
-    wednesday: normalized.has("wednesday") || normalized.has("wed"),
-    thursday: normalized.has("thursday") || normalized.has("thu"),
-    friday: normalized.has("friday") || normalized.has("fri")
-  };
-}
-
-function normalizeTransportationMode(value: string | null | undefined): "Door to Door" | "Bus Stop" | null {
-  const normalized = clean(value)?.toLowerCase() ?? null;
-  if (!normalized) return null;
-  if (normalized.includes("door")) return "Door to Door";
-  if (normalized.includes("bus")) return "Bus Stop";
-  if (normalized === "yes") return "Door to Door";
-  if (normalized === "no") return null;
-  return null;
-}
-
-function isEmptyText(value: unknown) {
-  return clean(typeof value === "string" ? value : null) == null;
-}
-
-async function ensureMccRows(input: {
-  memberId: string;
-  senderUserId: string;
-  senderName: string;
-}): Promise<{
-  profileRow: Record<string, unknown>;
-  scheduleRow: Record<string, unknown>;
-}> {
-  const [profileRow, scheduleRow] = await Promise.all([
-    ensureMemberCommandCenterProfileSupabase(input.memberId, {
-      serviceRole: true,
-      actor: {
-        userId: input.senderUserId,
-        name: input.senderName
-      }
-    }),
-    ensureMemberAttendanceScheduleSupabase(input.memberId, {
-      serviceRole: true,
-      actor: {
-        userId: input.senderUserId,
-        name: input.senderName
-      }
-    })
-  ]);
-  return {
-    profileRow: profileRow as unknown as Record<string, unknown>,
-    scheduleRow: scheduleRow as unknown as Record<string, unknown>
-  };
-}
-
-async function importPacketDataToMcc(input: {
-  packetId: string;
-  request: EnrollmentPacketRequestRow;
-  fields: EnrollmentPacketFieldsRow;
-  senderName: string;
-}) {
-  const admin = createSupabaseAdminClient();
-  const now = toEasternISO();
-  const populated: string[] = [];
-  const conflicts: string[] = [];
-  const { profileRow, scheduleRow } = await ensureMccRows({
-    memberId: input.request.member_id,
-    senderUserId: input.request.sender_user_id,
-    senderName: input.senderName
-  });
-
-  const profilePatch: Record<string, unknown> = {
-    updated_by_user_id: input.request.sender_user_id,
-    updated_by_name: input.senderName,
-    updated_at: now
-  };
-  const setProfileField = (field: string, value: string | null, label: string) => {
-    if (!value) return;
-    const existing = profileRow[field];
-    if (isEmptyText(existing)) {
-      profilePatch[field] = value;
-      populated.push(`member_command_centers.${field}`);
-      return;
-    }
-    if (clean(String(existing)) !== clean(value)) {
-      conflicts.push(`${label} conflict (existing retained).`);
-    }
-  };
-
-  setProfileField("street_address", input.fields.caregiver_address_line1, "Caregiver address line 1");
-  setProfileField("city", input.fields.caregiver_city, "Caregiver city");
-  setProfileField("state", input.fields.caregiver_state, "Caregiver state");
-  setProfileField("zip", input.fields.caregiver_zip, "Caregiver zip");
-
-  if (Object.keys(profilePatch).length > 3) {
-    const { error } = await admin.from("member_command_centers").update(profilePatch).eq("id", String(profileRow.id));
-    if (error) throw new Error(error.message);
-  }
-
-  const days = attendanceDaysFromRequestedDays(input.fields.requested_days ?? []);
-  const schedulePatch: Record<string, unknown> = {
-    updated_by_user_id: input.request.sender_user_id,
-    updated_by_name: input.senderName,
-    updated_at: now
-  };
-  const existingHasAttendanceDays = Boolean(
-    scheduleRow.monday || scheduleRow.tuesday || scheduleRow.wednesday || scheduleRow.thursday || scheduleRow.friday
-  );
-  if (!existingHasAttendanceDays) {
-    schedulePatch.monday = days.monday;
-    schedulePatch.tuesday = days.tuesday;
-    schedulePatch.wednesday = days.wednesday;
-    schedulePatch.thursday = days.thursday;
-    schedulePatch.friday = days.friday;
-    schedulePatch.attendance_days_per_week = [days.monday, days.tuesday, days.wednesday, days.thursday, days.friday].filter(Boolean).length;
-    populated.push("member_attendance_schedules.requested_days");
-  } else if (
-    scheduleRow.monday !== days.monday ||
-    scheduleRow.tuesday !== days.tuesday ||
-    scheduleRow.wednesday !== days.wednesday ||
-    scheduleRow.thursday !== days.thursday ||
-    scheduleRow.friday !== days.friday
-  ) {
-    conflicts.push("Attendance days conflict (existing schedule retained).");
-  }
-
-  const transportationMode = normalizeTransportationMode(input.fields.transportation);
-  const existingTransportationMode = clean(typeof scheduleRow.transportation_mode === "string" ? scheduleRow.transportation_mode : null);
-  if (!existingTransportationMode && transportationMode) {
-    schedulePatch.transportation_mode = transportationMode;
-    schedulePatch.transportation_required = true;
-    populated.push("member_attendance_schedules.transportation_mode");
-  } else if (existingTransportationMode && transportationMode && existingTransportationMode !== transportationMode) {
-    conflicts.push("Transportation preference conflict (existing value retained).");
-  }
-
-  if (scheduleRow.daily_rate == null && input.fields.daily_rate != null) {
-    schedulePatch.daily_rate = safeNumber(input.fields.daily_rate);
-    populated.push("member_attendance_schedules.daily_rate");
-  } else if (
-    scheduleRow.daily_rate != null &&
-    input.fields.daily_rate != null &&
-    Number(scheduleRow.daily_rate) !== Number(input.fields.daily_rate)
-  ) {
-    conflicts.push("Daily rate conflict (existing value retained).");
-  }
-
-  if (Object.keys(schedulePatch).length > 3) {
-    const { error } = await admin.from("member_attendance_schedules").update(schedulePatch).eq("id", String(scheduleRow.id));
-    if (error) throw new Error(error.message);
-  }
-
-  const { data: contactsData, error: contactsError } = await admin
-    .from("member_contacts")
-    .select("*")
-    .eq("member_id", input.request.member_id)
-    .order("updated_at", { ascending: false });
-  if (contactsError) throw new Error(contactsError.message);
-  const contacts = (contactsData ?? []) as Array<Record<string, unknown>>;
-  const responsibleContact =
-    contacts.find((row) => clean(String(row.category ?? ""))?.toLowerCase() === "responsible party") ??
-    contacts.find((row) => clean(String(row.category ?? ""))?.toLowerCase() === "emergency contact") ??
-    null;
-
-  const caregiverName = clean(input.fields.caregiver_name) ?? "Caregiver";
-  const caregiverContactPatch = {
-    contact_name: caregiverName,
-    relationship_to_member: "Caregiver",
-    category: "Responsible Party",
-    category_other: null,
-    email: cleanEmail(input.fields.caregiver_email),
-    cellular_number: clean(input.fields.caregiver_phone),
-    work_number: null,
-    home_number: null,
-    street_address: clean(input.fields.caregiver_address_line1),
-    city: clean(input.fields.caregiver_city),
-    state: clean(input.fields.caregiver_state),
-    zip: clean(input.fields.caregiver_zip),
-    updated_at: now
-  };
-
-  if (!responsibleContact) {
-    const { error } = await admin.from("member_contacts").insert({
-      id: `contact-${randomUUID().replace(/-/g, "")}`,
-      member_id: input.request.member_id,
-      ...caregiverContactPatch,
-      created_by_user_id: input.request.sender_user_id,
-      created_by_name: input.senderName,
-      created_at: now
-    });
-    if (error) throw new Error(error.message);
-    populated.push("member_contacts.responsible_party");
-  } else {
-    const updatePatch: Record<string, unknown> = { updated_at: now };
-    const setContactField = (field: string, value: string | null, label: string) => {
-      if (!value) return;
-      const existing = clean(typeof responsibleContact[field] === "string" ? String(responsibleContact[field]) : null);
-      if (!existing) {
-        updatePatch[field] = value;
-        populated.push(`member_contacts.${field}`);
-        return;
-      }
-      if (existing !== value) conflicts.push(`${label} conflict (existing contact retained).`);
-    };
-    setContactField("email", caregiverContactPatch.email, "Caregiver email");
-    setContactField("cellular_number", caregiverContactPatch.cellular_number, "Caregiver phone");
-    setContactField("street_address", caregiverContactPatch.street_address, "Caregiver address");
-    setContactField("city", caregiverContactPatch.city, "Caregiver city");
-    setContactField("state", caregiverContactPatch.state, "Caregiver state");
-    setContactField("zip", caregiverContactPatch.zip, "Caregiver zip");
-    if (Object.keys(updatePatch).length > 1) {
-      const { error } = await admin.from("member_contacts").update(updatePatch).eq("id", String(responsibleContact.id));
-      if (error) throw new Error(error.message);
-    }
-  }
-
-  const secondaryName = clean(input.fields.secondary_contact_name);
-  if (secondaryName) {
-    const secondary = contacts.find((row) => {
-      const existingName = clean(typeof row.contact_name === "string" ? row.contact_name : null);
-      return existingName?.toLowerCase() === secondaryName.toLowerCase();
-    });
-    if (!secondary) {
-      const { error } = await admin.from("member_contacts").insert({
-        id: `contact-${randomUUID().replace(/-/g, "")}`,
-        member_id: input.request.member_id,
-        contact_name: secondaryName,
-        relationship_to_member: clean(input.fields.secondary_contact_relationship),
-        category: "Emergency Contact",
-        category_other: null,
-        email: cleanEmail(input.fields.secondary_contact_email),
-        cellular_number: clean(input.fields.secondary_contact_phone),
-        work_number: null,
-        home_number: null,
-        street_address: null,
-        city: null,
-        state: null,
-        zip: null,
-        created_by_user_id: input.request.sender_user_id,
-        created_by_name: input.senderName,
-        created_at: now,
-        updated_at: now
-      });
-      if (error) throw new Error(error.message);
-      populated.push("member_contacts.secondary_contact");
-    } else {
-      conflicts.push("Secondary contact already exists (existing record retained).");
-    }
-  }
-
-  await insertPacketEvent({
-    packetId: input.packetId,
-    eventType: conflicts.length > 0 ? "mcc_import_conflict" : "mcc_imported",
-    actorUserId: input.request.sender_user_id,
-    metadata: {
-      populatedFields: populated,
-      conflicts
-    }
-  });
-  return { populated, conflicts };
 }
 
 async function buildCompletedPacketDocxData(input: {
@@ -1297,6 +1128,7 @@ async function buildCompletedPacketDocxData(input: {
     secondaryContactPhone: input.fields.secondary_contact_phone,
     secondaryContactEmail: input.fields.secondary_contact_email,
     secondaryContactRelationship: input.fields.secondary_contact_relationship,
+    intakePayload: normalizeStoredIntakePayload(input.fields),
     caregiverSignatureName: input.caregiverSignatureName,
     senderSignatureName: input.senderSignatureName
   });
@@ -1317,27 +1149,46 @@ export async function savePublicEnrollmentPacketProgress(input: {
   secondaryContactEmail?: string | null;
   secondaryContactRelationship?: string | null;
   notes?: string | null;
+  intakePayload?: Partial<Record<string, unknown>> | null;
 }) {
   const context = await getPublicEnrollmentPacketContext(input.token);
   if (context.state !== "ready") throw new Error("Enrollment packet link is not active.");
+  const mergedPayload = mergePublicProgressPayload({
+    storedPayload: context.fields.intakePayload,
+    intakePayload: input.intakePayload,
+    caregiverName: input.caregiverName,
+    caregiverPhone: input.caregiverPhone,
+    caregiverEmail: input.caregiverEmail,
+    caregiverAddressLine1: input.caregiverAddressLine1,
+    caregiverAddressLine2: input.caregiverAddressLine2,
+    caregiverCity: input.caregiverCity,
+    caregiverState: input.caregiverState,
+    caregiverZip: input.caregiverZip,
+    secondaryContactName: input.secondaryContactName,
+    secondaryContactPhone: input.secondaryContactPhone,
+    secondaryContactEmail: input.secondaryContactEmail,
+    secondaryContactRelationship: input.secondaryContactRelationship,
+    notes: input.notes
+  });
   const now = toEasternISO();
   const admin = createSupabaseAdminClient();
   const { error: fieldsError } = await admin
     .from("enrollment_packet_fields")
     .update({
-      caregiver_name: clean(input.caregiverName),
-      caregiver_phone: clean(input.caregiverPhone),
-      caregiver_email: cleanEmail(input.caregiverEmail),
-      caregiver_address_line1: clean(input.caregiverAddressLine1),
-      caregiver_address_line2: clean(input.caregiverAddressLine2),
-      caregiver_city: clean(input.caregiverCity),
-      caregiver_state: clean(input.caregiverState),
-      caregiver_zip: clean(input.caregiverZip),
-      secondary_contact_name: clean(input.secondaryContactName),
-      secondary_contact_phone: clean(input.secondaryContactPhone),
-      secondary_contact_email: cleanEmail(input.secondaryContactEmail),
-      secondary_contact_relationship: clean(input.secondaryContactRelationship),
-      notes: clean(input.notes),
+      caregiver_name: mergedPayload.primaryContactName,
+      caregiver_phone: mergedPayload.primaryContactPhone,
+      caregiver_email: cleanEmail(mergedPayload.primaryContactEmail),
+      caregiver_address_line1: mergedPayload.memberAddressLine1,
+      caregiver_address_line2: mergedPayload.memberAddressLine2,
+      caregiver_city: mergedPayload.memberCity,
+      caregiver_state: mergedPayload.memberState,
+      caregiver_zip: mergedPayload.memberZip,
+      secondary_contact_name: mergedPayload.secondaryContactName,
+      secondary_contact_phone: mergedPayload.secondaryContactPhone,
+      secondary_contact_email: cleanEmail(mergedPayload.secondaryContactEmail),
+      secondary_contact_relationship: mergedPayload.secondaryContactRelationship,
+      notes: mergedPayload.additionalNotes,
+      intake_payload: mergedPayload,
       updated_at: now
     })
     .eq("packet_id", context.request.id);
@@ -1362,7 +1213,7 @@ export async function savePublicEnrollmentPacketProgress(input: {
   await insertPacketEvent({
     packetId: context.request.id,
     eventType: "partially_completed",
-    actorEmail: cleanEmail(input.caregiverEmail) ?? context.request.caregiverEmail
+    actorEmail: cleanEmail(mergedPayload.primaryContactEmail) ?? context.request.caregiverEmail
   });
   return { ok: true as const };
 }
@@ -1387,6 +1238,7 @@ export async function submitPublicEnrollmentPacket(input: {
   secondaryContactEmail?: string | null;
   secondaryContactRelationship?: string | null;
   notes?: string | null;
+  intakePayload?: Partial<Record<string, unknown>> | null;
   uploads?: PacketFileUpload[];
 }) {
   const normalizedToken = clean(input.token);
@@ -1422,7 +1274,8 @@ export async function submitPublicEnrollmentPacket(input: {
     secondaryContactPhone: input.secondaryContactPhone,
     secondaryContactEmail: input.secondaryContactEmail,
     secondaryContactRelationship: input.secondaryContactRelationship,
-    notes: input.notes
+    notes: input.notes,
+    intakePayload: input.intakePayload
   });
 
   const now = toEasternISO();
@@ -1466,8 +1319,12 @@ export async function submitPublicEnrollmentPacket(input: {
     dataUrl: input.caregiverSignatureImageDataUrl.trim()
   });
 
+  const uploadedArtifacts: Array<{ uploadCategory: EnrollmentPacketUploadCategory; memberFileId: string | null }> = [
+    { uploadCategory: "signature_artifact", memberFileId: signatureArtifact.memberFileId }
+  ];
+
   for (const upload of input.uploads ?? []) {
-    await insertUploadAndFile({
+    const artifact = await insertUploadAndFile({
       packetId: request.id,
       memberId: member.id,
       fileName: upload.fileName,
@@ -1476,6 +1333,10 @@ export async function submitPublicEnrollmentPacket(input: {
       uploadCategory: upload.category,
       uploadedByUserId: null,
       uploadedByName: caregiverTypedName
+    });
+    uploadedArtifacts.push({
+      uploadCategory: upload.category,
+      memberFileId: artifact.memberFileId
     });
   }
 
@@ -1498,6 +1359,10 @@ export async function submitPublicEnrollmentPacket(input: {
     uploadedByUserId: null,
     uploadedByName: caregiverTypedName,
     dataUrl: packetDocx.dataUrl
+  });
+  uploadedArtifacts.push({
+    uploadCategory: "completed_packet",
+    memberFileId: finalPacketArtifact.memberFileId
   });
 
   const { data: completedRow, error: completedError } = await admin
@@ -1527,11 +1392,18 @@ export async function submitPublicEnrollmentPacket(input: {
     }
   });
 
-  const mccImport = await importPacketDataToMcc({
+  const downstreamMapping = await mapEnrollmentPacketToDownstream({
     packetId: request.id,
-    request,
+    memberId: member.id,
+    senderUserId: request.sender_user_id,
+    senderName: senderSignatureName,
+    senderEmail: null,
+    caregiverEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
     fields: refreshedFields,
-    senderName: senderSignatureName
+    memberFileArtifacts: uploadedArtifacts.map((artifact) => ({
+      uploadCategory: artifact.uploadCategory,
+      memberFileId: artifact.memberFileId
+    }))
   });
 
   const filedAt = toEasternISO();
@@ -1555,7 +1427,9 @@ export async function submitPublicEnrollmentPacket(input: {
     eventType: "filed",
     actorUserId: request.sender_user_id,
     metadata: {
-      conflicts: mccImport.conflicts
+      downstreamSystemsUpdated: downstreamMapping.downstreamSystemsUpdated,
+      conflictsRequiringReview: downstreamMapping.conflictsRequiringReview,
+      mappingRunId: downstreamMapping.mappingRunId
     }
   });
 

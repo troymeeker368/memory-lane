@@ -208,6 +208,7 @@ export const NAV_ITEMS: AppNavItem[] = [
   { label: "Recent Lead Activity", href: "/sales/activities", group: "Sales Activities", module: "sales" },
 
   { label: "Nursing Dashboard", href: "/health", group: "Health Unit", module: "health" },
+  { label: "MAR Workflow", href: "/health/mar", group: "Health Unit", module: "health", roles: ["admin", "manager", "director", "nurse"] },
   { label: "Member Health Profiles", href: "/health/member-health-profiles", group: "Health Unit", module: "health", roles: ["admin", "nurse"] },
   { label: "Blood Sugar", href: "/documentation/blood-sugar", group: "Health Unit", module: "health" },
   { label: "New Intake Assessment", href: "/health/assessment", group: "Health Unit", module: "health" },

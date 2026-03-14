@@ -85,6 +85,15 @@ function parseMedicationRows(formData: FormData): PhysicianOrderMedication[] {
   const givenAtCenterValues = formData.getAll("medicationGivenAtCenter").map((value) => String(value ?? "").trim());
   const givenAtCenterTimes = formData.getAll("medicationGivenAtCenterTime24h").map((value) => String(value ?? "").trim());
   const comments = formData.getAll("medicationComments").map((value) => String(value ?? "").trim());
+  const strengths = formData.getAll("medicationStrength").map((value) => String(value ?? "").trim());
+  const scheduledTimesValues = formData.getAll("medicationScheduledTimes").map((value) => String(value ?? "").trim());
+  const prnValues = formData.getAll("medicationPrn").map((value) => String(value ?? "").trim());
+  const prnInstructionsValues = formData.getAll("medicationPrnInstructions").map((value) => String(value ?? "").trim());
+  const startDateValues = formData.getAll("medicationStartDate").map((value) => String(value ?? "").trim());
+  const endDateValues = formData.getAll("medicationEndDate").map((value) => String(value ?? "").trim());
+  const activeValues = formData.getAll("medicationActive").map((value) => String(value ?? "").trim());
+  const providerValues = formData.getAll("medicationProvider").map((value) => String(value ?? "").trim());
+  const instructionsValues = formData.getAll("medicationInstructions").map((value) => String(value ?? "").trim());
 
   const max = Math.max(
     names.length,
@@ -96,7 +105,16 @@ function parseMedicationRows(formData: FormData): PhysicianOrderMedication[] {
     frequencies.length,
     givenAtCenterValues.length,
     givenAtCenterTimes.length,
-    comments.length
+    comments.length,
+    strengths.length,
+    scheduledTimesValues.length,
+    prnValues.length,
+    prnInstructionsValues.length,
+    startDateValues.length,
+    endDateValues.length,
+    activeValues.length,
+    providerValues.length,
+    instructionsValues.length
   );
   const rows: PhysicianOrderMedication[] = [];
   for (let idx = 0; idx < max; idx += 1) {
@@ -118,17 +136,38 @@ function parseMedicationRows(formData: FormData): PhysicianOrderMedication[] {
     const givenAtCenter = givenAtCenterValues[idx] === "true";
     const rawGivenAtCenterTime = givenAtCenterTimes[idx] ?? "";
     const givenAtCenterTime24h = givenAtCenter && /^\d{2}:\d{2}$/.test(rawGivenAtCenterTime) ? rawGivenAtCenterTime : null;
+    const frequency = frequencies[idx] ? frequencies[idx] : null;
+    const fallbackScheduledTimes =
+      givenAtCenterTime24h && /^\d{2}:\d{2}$/.test(givenAtCenterTime24h) ? [givenAtCenterTime24h] : [];
+    const scheduledTimesFromInput = (scheduledTimesValues[idx] ?? "")
+      .split(/[;,]/g)
+      .map((value) => value.trim())
+      .filter((value) => /^\d{2}:\d{2}$/.test(value));
+    const scheduledTimes = Array.from(new Set(scheduledTimesFromInput.length > 0 ? scheduledTimesFromInput : fallbackScheduledTimes));
+    const inferredPrnFromFrequency = /(^|\b)prn(\b|$)/i.test(frequency ?? "");
+    const prn = prnValues[idx] === "true" || inferredPrnFromFrequency;
+    const activeRaw = activeValues[idx];
+    const active = activeRaw === "" ? true : activeRaw !== "false";
     rows.push({
       id: `med-input-${idx + 1}`,
       name,
+      strength: strengths[idx] ? strengths[idx] : quantities[idx] ? quantities[idx] : null,
       dose: doses[idx] ? doses[idx] : null,
       quantity: quantities[idx] ? quantities[idx] : POF_DEFAULT_MEDICATION_QUANTITY,
       form: forms[idx] ? forms[idx] : POF_DEFAULT_MEDICATION_FORM,
       route,
       routeLaterality: validLaterality,
-      frequency: frequencies[idx] ? frequencies[idx] : null,
+      frequency,
+      scheduledTimes,
       givenAtCenter,
       givenAtCenterTime24h,
+      prn,
+      prnInstructions: prnInstructionsValues[idx] ? prnInstructionsValues[idx] : null,
+      startDate: /^\d{4}-\d{2}-\d{2}$/.test(startDateValues[idx] ?? "") ? (startDateValues[idx] as string) : null,
+      endDate: /^\d{4}-\d{2}-\d{2}$/.test(endDateValues[idx] ?? "") ? (endDateValues[idx] as string) : null,
+      active,
+      provider: providerValues[idx] ? providerValues[idx] : null,
+      instructions: instructionsValues[idx] ? instructionsValues[idx] : comments[idx] ? comments[idx] : null,
       comments: comments[idx] ? comments[idx] : null
     });
   }
@@ -298,6 +337,7 @@ function parseOperationalFlags(formData: FormData): PhysicianOrderOperationalFla
 
 function revalidatePofRoutes(memberId: string, pofId?: string | null) {
   revalidatePath("/health");
+  revalidatePath("/health/mar");
   revalidatePath("/health/physician-orders");
   if (pofId) {
     revalidatePath(`/health/physician-orders/${pofId}`);

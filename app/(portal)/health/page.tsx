@@ -11,6 +11,8 @@ import { getClinicalOverview } from "@/lib/services/health";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime, formatOptionalDateTime } from "@/lib/utils";
 
+export const dynamic = "force-dynamic";
+
 interface MarRow {
   id: string;
   member_name: string;
@@ -89,7 +91,7 @@ export default async function HealthPage() {
   const fourHoursAhead = new Date(now.getTime() + 4 * 60 * 60 * 1000);
 
   const dueMedicationRows = toMarRows(snapshot.marToday as unknown[])
-    .filter((row) => row.status !== "administered")
+    .filter((row) => row.status === "scheduled")
     .filter((row) => {
       const dueAt = parseDate(row.due_at);
       if (!dueAt) return false;
@@ -295,6 +297,7 @@ export default async function HealthPage() {
       <Card>
         <CardTitle>Health Unit Quick Access</CardTitle>
         <div className="mt-3 flex flex-wrap gap-3 text-sm">
+          <Link href="/health/mar" className="font-semibold text-brand">MAR Workflow</Link>
           <Link href="/documentation/blood-sugar" className="font-semibold text-brand">Blood Sugar Workflow</Link>
           <Link href="/health/assessment" className="font-semibold text-brand">New Intake Assessment</Link>
           <Link href="/health/physician-orders" className="font-semibold text-brand">Physician Orders / POF</Link>
@@ -311,7 +314,8 @@ export default async function HealthPage() {
       </Card>
 
       <Card className="table-wrap">
-        <CardTitle>MAR / Today</CardTitle>
+        <CardTitle>MAR / Today (Summary)</CardTitle>
+        <p className="mb-2 text-xs text-muted">Use the dedicated MAR Workflow for Given / Not Given and PRN documentation.</p>
         <table>
           <thead>
             <tr>

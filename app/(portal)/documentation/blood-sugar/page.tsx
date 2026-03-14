@@ -7,6 +7,8 @@ import { getMembers } from "@/lib/services/documentation";
 import { getHealthSnapshot } from "@/lib/services/health-workflows";
 import { formatDateTime } from "@/lib/utils";
 
+export const dynamic = "force-dynamic";
+
 export default async function BloodSugarPage() {
   const profile = await requireModuleAccess("health");
   const canEdit = profile.role === "admin" || profile.role === "manager";

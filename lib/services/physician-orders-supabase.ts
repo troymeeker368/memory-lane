@@ -1,9 +1,9 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
+import { buildPofDocumentPdfBytes } from "@/lib/services/pof-document-pdf";
 import {
   DEFAULT_PHYSICIAN_ORDER_RULE_SETTINGS,
   OPHTHALMIC_LATERALITY_OPTIONS,
@@ -19,6 +19,7 @@ import {
   POF_STANDING_ORDER_OPTIONS
 } from "@/lib/services/physician-order-config";
 import { ensureMemberCommandCenterProfileSupabase } from "@/lib/services/member-command-center-supabase";
+import { generateMarSchedulesForMember, syncPofMedicationsFromSignedOrder } from "@/lib/services/mar-workflow";
 import { type IntakeAssessmentForPofPrefill, mapIntakeAssessmentToPofPrefill } from "@/lib/services/intake-to-pof-mapping";
 import type { IntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -43,14 +44,23 @@ export type PhysicianOrderRenewalStatus = "Current" | "Due Soon" | "Overdue" | "
 export interface PhysicianOrderMedication {
   id: string;
   name: string;
+  strength: string | null;
   dose: string | null;
   quantity: string | null;
   form: string | null;
   route: string | null;
   routeLaterality: string | null;
   frequency: string | null;
+  scheduledTimes: string[];
   givenAtCenter: boolean;
   givenAtCenterTime24h: string | null;
+  prn: boolean;
+  prnInstructions: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  active: boolean;
+  provider: string | null;
+  instructions: string | null;
   comments: string | null;
 }
 
@@ -294,17 +304,33 @@ function sanitizeMedicationRows(rows: PhysicianOrderMedication[]) {
     .map((row, index) => {
       const name = clean(row.name);
       if (!name) return null;
+      const scheduledTimes = Array.from(
+        new Set(
+          (Array.isArray(row.scheduledTimes) ? row.scheduledTimes : [])
+            .map((value) => clean(value))
+            .filter((value): value is string => Boolean(value))
+        )
+      );
       return {
         id: clean(row.id) ?? `medication-${index + 1}`,
         name,
+        strength: clean(row.strength),
         dose: clean(row.dose),
         quantity: clean(row.quantity),
         form: clean(row.form),
         route: clean(row.route),
         routeLaterality: clean(row.routeLaterality),
         frequency: clean(row.frequency),
+        scheduledTimes,
         givenAtCenter: Boolean(row.givenAtCenter),
         givenAtCenterTime24h: clean(row.givenAtCenterTime24h),
+        prn: Boolean(row.prn),
+        prnInstructions: clean(row.prnInstructions),
+        startDate: clean(row.startDate),
+        endDate: clean(row.endDate),
+        active: row.active !== false,
+        provider: clean(row.provider),
+        instructions: clean(row.instructions),
         comments: clean(row.comments)
       } satisfies PhysicianOrderMedication;
     })
@@ -317,6 +343,16 @@ function calculateRenewalDueDate(sentDate: string | null | undefined) {
   if (Number.isNaN(d.getTime())) return null;
   d.setUTCFullYear(d.getUTCFullYear() + DEFAULT_PHYSICIAN_ORDER_RULE_SETTINGS.renewalIntervalYears);
   return d.toISOString().slice(0, 10);
+}
+
+function addDaysDateOnly(dateValue: string, days: number) {
+  const [yearRaw, monthRaw, dayRaw] = dateValue.split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const seed = new Date(Date.UTC(year, month - 1, day));
+  seed.setUTCDate(seed.getUTCDate() + days);
+  return `${seed.getUTCFullYear()}-${String(seed.getUTCMonth() + 1).padStart(2, "0")}-${String(seed.getUTCDate()).padStart(2, "0")}`;
 }
 
 function resolveRenewalStatus(nextRenewalDueDate: string | null | undefined): PhysicianOrderRenewalStatus {
@@ -1020,6 +1056,15 @@ export async function signPhysicianOrder(
   }
 
   await syncMemberHealthProfileFromSignedPhysicianOrder(pofId, { serviceRole: options?.serviceRole });
+  await syncPofMedicationsFromSignedOrder({ physicianOrderId: pofId, serviceRole: options?.serviceRole });
+  const scheduleStartDate = toEasternDate(now);
+  const scheduleEndDate = addDaysDateOnly(scheduleStartDate, 30);
+  await generateMarSchedulesForMember({
+    memberId: row.memberId,
+    startDate: scheduleStartDate,
+    endDate: scheduleEndDate,
+    serviceRole: options?.serviceRole
+  });
 }
 
 function toMemberAllergyGroup(value: PhysicianOrderAllergy["allergyGroup"]) {
@@ -1235,52 +1280,11 @@ export async function buildPhysicianOrderPdfDataUrl(
   if (!form) throw new Error("Physician Order Form not found.");
 
   const now = toEasternISO();
-  const pdf = await PDFDocument.create();
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const page = pdf.addPage([612, 792]);
-
-  let y = 760;
-  page.drawText("Physician Order Form", { x: 36, y, size: 16, font: bold, color: rgb(0.09, 0.24, 0.55) });
-  y -= 20;
-  page.drawText(`Generated: ${now}`, { x: 36, y, size: 9, font });
-  y -= 20;
-  page.drawText(`Member: ${form.memberNameSnapshot}`, { x: 36, y, size: 11, font: bold });
-  y -= 14;
-  page.drawText(`Status: ${form.status} | Provider: ${form.providerName ?? "-"}`, { x: 36, y, size: 10, font });
-  y -= 14;
-  page.drawText(`DOB: ${form.memberDobSnapshot ?? "-"} | DNR: ${form.dnrSelected ? "Yes" : "No"}`, { x: 36, y, size: 10, font });
-  y -= 18;
-  page.drawText("Diagnoses", { x: 36, y, size: 11, font: bold });
-  y -= 14;
-  if (form.diagnosisRows.length === 0) {
-    page.drawText("No diagnoses entered.", { x: 36, y, size: 10, font });
-    y -= 12;
-  } else {
-    form.diagnosisRows.slice(0, 10).forEach((row) => {
-      page.drawText(`- ${row.diagnosisName}`, {
-        x: 36,
-        y,
-        size: 10,
-        font
-      });
-      y -= 12;
-    });
-  }
-
-  y -= 6;
-  page.drawText("Orders Summary", { x: 36, y, size: 11, font: bold });
-  y -= 14;
-  page.drawText(`Diet: ${(form.careInformation.nutritionDiets ?? []).join(", ") || "-"}`, { x: 36, y, size: 10, font });
-  y -= 12;
-  page.drawText(`Mobility: ${form.careInformation.ambulatoryStatus ?? "-"}`, { x: 36, y, size: 10, font });
-  y -= 12;
-  page.drawText(
-    `Medication Administration: Self ${form.careInformation.medAdministrationSelf ? "Yes" : "No"} / Nurse ${form.careInformation.medAdministrationNurse ? "Yes" : "No"}`,
-    { x: 36, y, size: 10, font }
-  );
-
-  const bytes = await pdf.save();
+  const bytes = await buildPofDocumentPdfBytes({
+    form,
+    title: "Physician Order Form",
+    metaLines: [`Generated: ${now}`]
+  });
   return {
     form,
     fileName: `POF - ${form.memberNameSnapshot} - ${toEasternDate(now)}.pdf`,
