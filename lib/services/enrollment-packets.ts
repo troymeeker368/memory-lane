@@ -29,6 +29,9 @@ import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 const STORAGE_BUCKET = "member-documents";
 const TOKEN_BYTE_LENGTH = 32;
+const STAFF_TRANSPORTATION_OPTIONS = ["Door to Door", "Bus Stop", "Mixed"] as const;
+
+type StaffTransportationOption = (typeof STAFF_TRANSPORTATION_OPTIONS)[number];
 
 export const ENROLLMENT_PACKET_STATUS_VALUES = [
   "draft",
@@ -177,6 +180,19 @@ function clean(value: string | null | undefined) {
 function cleanEmail(value: string | null | undefined) {
   const normalized = clean(value);
   return normalized ? normalized.toLowerCase() : null;
+}
+
+function normalizeStaffTransportation(value: string | null | undefined): StaffTransportationOption {
+  const normalized = clean(value);
+  if (!normalized) {
+    throw new Error("Transportation selection is required.");
+  }
+
+  if (STAFF_TRANSPORTATION_OPTIONS.includes(normalized as StaffTransportationOption)) {
+    return normalized as StaffTransportationOption;
+  }
+
+  throw new Error("Transportation must be Door to Door, Bus Stop, or Mixed.");
 }
 
 function splitMemberName(fullName: string | null | undefined) {
@@ -751,7 +767,7 @@ export async function sendEnrollmentPacketRequest(input: {
   caregiverEmail?: string | null;
   requestedStartDate?: string | null;
   requestedDays: string[];
-  transportation: string | null;
+  transportation: string;
   communityFeeOverride?: number | null;
   dailyRateOverride?: number | null;
   totalInitialEnrollmentAmountOverride?: number | null;
@@ -776,6 +792,7 @@ export async function sendEnrollmentPacketRequest(input: {
     memberId: input.memberId,
     leadId: input.leadId
   });
+  const staffTransportation = normalizeStaffTransportation(input.transportation);
   const requestedStartDate = normalizeEnrollmentDateOnly(
     clean(input.requestedStartDate) ?? clean(lead?.member_start_date) ?? toEasternDate()
   );
@@ -796,7 +813,8 @@ export async function sendEnrollmentPacketRequest(input: {
   const calculatedInitialEnrollmentAmount = calculateInitialEnrollmentAmount({
     requestedStartDate,
     requestedDays: resolvedPricing.requestedDays,
-    dailyRate: effectiveDailyRate
+    dailyRate: effectiveDailyRate,
+    communityFee: effectiveCommunityFee
   });
   const totalInitialEnrollmentAmountOverride =
     typeof input.totalInitialEnrollmentAmountOverride === "number" &&
@@ -856,7 +874,7 @@ export async function sendEnrollmentPacketRequest(input: {
   const { error: fieldsError } = await admin.from("enrollment_packet_fields").insert({
     packet_id: requestId,
     requested_days: resolvedPricing.requestedDays,
-    transportation: clean(input.transportation),
+    transportation: staffTransportation,
     community_fee: effectiveCommunityFee,
     daily_rate: effectiveDailyRate,
     pricing_community_fee_id: resolvedPricing.communityFeeId,
@@ -870,8 +888,8 @@ export async function sendEnrollmentPacketRequest(input: {
       memberLegalLastName: memberNameParts.lastName,
       requestedAttendanceDays: resolvedPricing.requestedDays,
       requestedStartDate,
-      transportationPreference: clean(input.transportation),
-      transportationQuestionEnabled: clean(input.transportation) ? "Yes" : "No",
+      transportationPreference: staffTransportation,
+      transportationQuestionEnabled: "No",
       referredBy: clean(lead?.referral_name),
       primaryContactName: clean(lead?.caregiver_name),
       primaryContactRelationship: clean(lead?.caregiver_relationship),
@@ -1392,8 +1410,7 @@ export async function submitPublicEnrollmentPacket(input: {
   if (!fieldsForValidation) throw new Error("Enrollment packet fields were not found.");
   const validationPayload = normalizeStoredIntakePayload(fieldsForValidation);
   const completionValidation = validateEnrollmentPacketCompletion({
-    payload: validationPayload,
-    showTransportationQuestion: clean(fieldsForValidation.transportation) != null
+    payload: validationPayload
   });
   if (!completionValidation.isComplete) {
     throw new Error(

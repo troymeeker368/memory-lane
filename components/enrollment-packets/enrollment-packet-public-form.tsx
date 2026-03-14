@@ -74,7 +74,7 @@ function toInitialPayload(fields: PublicEnrollmentPacketFields): EnrollmentPacke
     requestedAttendanceDays: fields.requestedDays,
     membershipRequestedWeekdays: fields.requestedDays,
     transportationPreference: fields.transportation,
-    transportationQuestionEnabled: fields.transportation ? "Yes" : "No",
+    transportationQuestionEnabled: "No",
     primaryContactName: fields.intakePayload.primaryContactName ?? fields.caregiverName,
     primaryContactPhone: fields.intakePayload.primaryContactPhone ?? fields.caregiverPhone,
     primaryContactEmail: fields.intakePayload.primaryContactEmail ?? fields.caregiverEmail,
@@ -152,18 +152,12 @@ export function EnrollmentPacketPublicForm({
   const [caregiverTypedName, setCaregiverTypedName] = useState(payload.primaryContactName ?? "");
   const [uploads, setUploads] = useState<UploadState>(() => emptyUploadState());
 
-  const showTransportationQuestion =
-    payload.transportationQuestionEnabled?.toLowerCase() === "yes" ||
-    payload.transportationQuestionEnabled?.toLowerCase() === "true" ||
-    Boolean(fields.transportation);
-
   const completion = useMemo(
     () =>
       validateEnrollmentPacketCompletion({
-        payload,
-        showTransportationQuestion
+        payload
       }),
-    [payload, showTransportationQuestion]
+    [payload]
   );
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -405,17 +399,6 @@ export function EnrollmentPacketPublicForm({
 
       <Section title="5. Medical Information">
         <div className="grid gap-3 md:grid-cols-2">
-          {showTransportationQuestion ? (
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">Transportation needed</span>
-              <select className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "transportationPreference")} onChange={(event) => setText("transportationPreference", event.target.value)} disabled={isPending}>
-                <option value="">Select</option>
-                <option>Door to Door</option>
-                <option>Bus Stop</option>
-                <option>No Transportation</option>
-              </select>
-            </label>
-          ) : null}
           <label className="space-y-1 text-sm md:col-span-2"><span className="text-xs font-semibold text-muted">Referred by</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "referredBy")} onChange={(event) => setText("referredBy", event.target.value)} disabled={isPending} /></label>
           <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">VA Benefits</span><select className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "veteranStatus")} onChange={(event) => setText("veteranStatus", event.target.value)} disabled={isPending}><option value="">Select</option><option>Yes</option><option>No</option></select></label>
           {textValue(payload, "veteranStatus") === "Yes" ? <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Tricare Number</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "tricareNumber")} onChange={(event) => setText("tricareNumber", event.target.value)} disabled={isPending} /></label> : null}

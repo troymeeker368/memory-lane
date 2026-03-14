@@ -11,7 +11,9 @@ import {
 } from "@/lib/services/enrollment-packet-proration";
 
 const WEEKDAY_OPTIONS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as const;
+const STAFF_TRANSPORTATION_OPTIONS = ["Door to Door", "Bus Stop", "Mixed"] as const;
 type WeekdayOption = (typeof WEEKDAY_OPTIONS)[number];
+type StaffTransportationOption = (typeof STAFF_TRANSPORTATION_OPTIONS)[number];
 
 function todayDateString() {
   return new Date().toISOString().slice(0, 10);
@@ -47,8 +49,7 @@ export function SendEnrollmentPacketAction({
   const [caregiverEmail, setCaregiverEmail] = useState(defaultCaregiverEmail ?? "");
   const [requestedStartDate, setRequestedStartDate] = useState(defaultRequestedStartDate ?? todayDateString());
   const [requestedDays, setRequestedDays] = useState<WeekdayOption[]>([]);
-  const [askTransportationQuestion, setAskTransportationQuestion] = useState(false);
-  const [transportation, setTransportation] = useState("Door to Door");
+  const [transportation, setTransportation] = useState<StaffTransportationOption>("Door to Door");
   const [optionalMessage, setOptionalMessage] = useState("");
   const [communityFee, setCommunityFee] = useState<string>(
     pricingPreview.communityFeeAmount == null ? "" : pricingPreview.communityFeeAmount.toFixed(2)
@@ -95,12 +96,13 @@ export function SendEnrollmentPacketAction({
       return calculateInitialEnrollmentAmount({
         requestedStartDate,
         requestedDays,
-        dailyRate: parsedDailyRate
+        dailyRate: parsedDailyRate,
+        communityFee: Number(communityFee)
       });
     } catch {
       return 0;
     }
-  }, [dailyRate, requestedDays, requestedStartDate]);
+  }, [communityFee, dailyRate, requestedDays, requestedStartDate]);
 
   useEffect(() => {
     if (communityFeeEdited) return;
@@ -171,7 +173,7 @@ export function SendEnrollmentPacketAction({
           caregiverEmail,
           requestedStartDate,
           requestedDays,
-          transportation: askTransportationQuestion ? transportation : "",
+          transportation,
           communityFee: parsedCommunityFee,
           dailyRate: parsedDailyRate,
           totalInitialEnrollmentAmount: parsedInitialEnrollmentAmount,
@@ -283,31 +285,21 @@ export function SendEnrollmentPacketAction({
                     </div>
                   </div>
 
-                  <label className="flex items-center gap-2 rounded-lg border border-border p-3 text-sm md:col-span-2">
-                    <input
-                      type="checkbox"
-                      checked={askTransportationQuestion}
-                      onChange={(event) => setAskTransportationQuestion(event.target.checked)}
+                  <label className="space-y-1 text-sm">
+                    <span className="text-xs font-semibold text-muted">Transportation (staff set)</span>
+                    <select
+                      className="h-11 w-full rounded-lg border border-border px-3"
+                      value={transportation}
+                      onChange={(event) => setTransportation(event.target.value as StaffTransportationOption)}
                       disabled={isWorking}
-                    />
-                    <span>Ask caregiver transportation question in packet</span>
+                    >
+                      {STAFF_TRANSPORTATION_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
                   </label>
-
-                  {askTransportationQuestion ? (
-                    <label className="space-y-1 text-sm">
-                      <span className="text-xs font-semibold text-muted">Transportation (staff preset)</span>
-                      <select
-                        className="h-11 w-full rounded-lg border border-border px-3"
-                        value={transportation}
-                        onChange={(event) => setTransportation(event.target.value)}
-                        disabled={isWorking}
-                      >
-                        <option value="Door to Door">Door to Door</option>
-                        <option value="Bus Stop">Bus Stop</option>
-                        <option value="No Transportation">No Transportation</option>
-                      </select>
-                    </label>
-                  ) : null}
 
                   <label className="space-y-1 text-sm">
                     <span className="text-xs font-semibold text-muted">Community Fee ($)</span>

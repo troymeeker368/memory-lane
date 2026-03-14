@@ -448,7 +448,6 @@ function isSelectedAch(value: string | null | undefined) {
 
 export function validateEnrollmentPacketCompletion(input: {
   payload: EnrollmentPacketIntakePayload;
-  showTransportationQuestion: boolean;
 }): EnrollmentPacketCompletionValidationResult {
   const { payload } = input;
   const missingItems: string[] = [];
@@ -483,10 +482,6 @@ export function validateEnrollmentPacketCompletion(input: {
   if (!hasValue(payload.requestedStartDate)) missingItems.push("Requested start date");
   if (!hasValue(payload.totalInitialEnrollmentAmount)) missingItems.push("Total initial enrollment amount");
   if (!hasValue(payload.paymentMethodSelection)) missingItems.push("Payment method selection");
-
-  if (input.showTransportationQuestion && !hasValue(payload.transportationPreference)) {
-    missingItems.push("Transportation needed");
-  }
 
   if (isYes(payload.veteranStatus) && !hasValue(payload.branchOfService)) {
     missingItems.push("Branch of service");

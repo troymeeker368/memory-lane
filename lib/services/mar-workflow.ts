@@ -290,21 +290,62 @@ async function resolveMarAnchorPhysicianOrderId(input: {
   const profileOrderId = clean((profileData as { active_physician_order_id?: string | null } | null)?.active_physician_order_id);
   if (profileOrderId) return profileOrderId;
 
-  const { data: orderRows, error: orderError } = await supabase
-    .from("physician_orders")
-    .select("id")
-    .eq("member_id", input.memberId)
-    .eq("status", "signed")
-    .order("is_active_signed", { ascending: false })
-    .order("signed_at", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(1);
+  const [{ data: orderRows, error: orderError }, { data: memberData, error: memberError }] = await Promise.all([
+    supabase
+      .from("physician_orders")
+      .select("id, version_number")
+      .eq("member_id", input.memberId)
+      .order("version_number", { ascending: false })
+      .order("created_at", { ascending: false }),
+    supabase.from("members").select("display_name").eq("id", input.memberId).maybeSingle()
+  ]);
   if (orderError) throw new Error(orderError.message);
+  if (memberError) throw new Error(memberError.message);
 
-  const fallbackOrderId = clean(((orderRows ?? [])[0] as { id?: string } | undefined)?.id);
-  if (fallbackOrderId) return fallbackOrderId;
+  const existingOrderId = clean(((orderRows ?? [])[0] as { id?: string } | undefined)?.id);
+  if (existingOrderId) return existingOrderId;
 
-  throw new Error("MAR sync requires at least one signed Physician Order for this member.");
+  const now = toEasternISO();
+  const memberNameSnapshot = clean((memberData as { display_name?: string | null } | null)?.display_name);
+  const { data: insertedOrder, error: insertError } = await supabase
+    .from("physician_orders")
+    .insert({
+      member_id: input.memberId,
+      version_number: 1,
+      status: "superseded",
+      is_active_signed: false,
+      superseded_at: now,
+      signed_at: now,
+      effective_at: now,
+      member_name_snapshot: memberNameSnapshot,
+      signature_metadata: {
+        system_generated_for: "mar_anchor",
+        generated_by_service: "mar-workflow",
+        generated_at: now
+      },
+      created_by_name: "System MAR Anchor",
+      updated_by_name: "System MAR Anchor"
+    })
+    .select("id")
+    .single();
+  if (insertError) {
+    if ((insertError as { code?: string }).code === "23505") {
+      const { data: retryRows, error: retryError } = await supabase
+        .from("physician_orders")
+        .select("id")
+        .eq("member_id", input.memberId)
+        .order("version_number", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (retryError) throw new Error(retryError.message);
+      const retryId = clean(((retryRows ?? [])[0] as { id?: string } | undefined)?.id);
+      if (retryId) return retryId;
+    }
+    throw new Error(insertError.message);
+  }
+  const insertedOrderId = clean((insertedOrder as { id?: string } | null)?.id);
+  if (!insertedOrderId) throw new Error("Unable to create MAR anchor physician order.");
+  return insertedOrderId;
 }
 
 async function syncMarMedicationsFromMhp(input: {

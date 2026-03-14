@@ -101,6 +101,7 @@ export function calculateInitialEnrollmentAmount(input: {
   requestedStartDate: string;
   requestedDays: string[];
   dailyRate: number;
+  communityFee?: number;
 }) {
   const attendanceDays = countRemainingEnrollmentAttendanceDaysInMonth({
     requestedStartDate: input.requestedStartDate,
@@ -112,5 +113,10 @@ export function calculateInitialEnrollmentAmount(input: {
     throw new Error("Daily rate must be a non-negative number.");
   }
 
-  return Number((attendanceDays * dailyRate).toFixed(2));
+  const communityFee = Number(input.communityFee ?? 0);
+  if (!Number.isFinite(communityFee) || communityFee < 0) {
+    throw new Error("Community fee must be a non-negative number.");
+  }
+
+  return Number((attendanceDays * dailyRate + communityFee).toFixed(2));
 }

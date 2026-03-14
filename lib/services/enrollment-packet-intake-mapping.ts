@@ -185,9 +185,10 @@ function normalizeGender(value: string | null | undefined): "M" | "F" | null {
   return null;
 }
 
-function normalizeTransportationMode(value: string | null | undefined): "Door to Door" | "Bus Stop" | null {
+function normalizeTransportationMode(value: string | null | undefined): "Door to Door" | "Bus Stop" | "Mixed" | null {
   const normalized = clean(value)?.toLowerCase();
   if (!normalized) return null;
+  if (normalized.includes("mixed")) return "Mixed";
   if (normalized.includes("door")) return "Door to Door";
   if (normalized.includes("bus")) return "Bus Stop";
   if (normalized === "yes") return "Door to Door";
