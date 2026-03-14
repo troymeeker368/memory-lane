@@ -26,6 +26,26 @@ const DEV_FORCE_ADMIN_PROFILE_IDS = new Set([
   "569f46e5-c97e-493a-8221-f8131bbd5b17"
 ]);
 
+type ProfileTimingOptions = {
+  traceLabel?: string;
+};
+
+function timingNow() {
+  return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+function logTiming(traceLabel: string | undefined, step: string, startedAtMs: number, details?: Record<string, unknown>) {
+  if (!traceLabel) return;
+  const elapsedMs = (timingNow() - startedAtMs).toFixed(1);
+  const detailsText = details
+    ? Object.entries(details)
+        .map(([key, value]) => `${key}=${String(value)}`)
+        .join(" ")
+    : "";
+  const suffix = detailsText ? ` ${detailsText}` : "";
+  console.info(`[timing] ${traceLabel} ${step} ${elapsedMs}ms${suffix}`);
+}
+
 function extractPostgrestErrorText(error: unknown) {
   if (!error || typeof error !== "object") return "";
   const err = error as { message?: string; details?: string; hint?: string };
@@ -56,12 +76,23 @@ export async function getSession() {
   return user;
 }
 
-export async function getCurrentProfile(): Promise<UserProfile> {
+export async function getCurrentProfile(options?: ProfileTimingOptions): Promise<UserProfile> {
+  const traceLabel = options?.traceLabel;
+  const totalStartedAt = timingNow();
+
+  const userClientStartedAt = timingNow();
   const supabase = await createClient();
+  logTiming(traceLabel, "create-user-client", userClientStartedAt);
+
+  const serviceClientStartedAt = timingNow();
   const serviceSupabase = await createClient({ serviceRole: true });
+  logTiming(traceLabel, "create-service-client", serviceClientStartedAt);
+
+  const authStartedAt = timingNow();
   const {
     data: { user }
   } = await supabase.auth.getUser();
+  logTiming(traceLabel, "session-auth-resolution", authStartedAt);
 
   if (!user) {
     redirect("/login?reason=no-auth-user");
@@ -71,11 +102,13 @@ export async function getCurrentProfile(): Promise<UserProfile> {
     "id, email, full_name, role, active, is_active, status, invited_at, password_set_at, last_sign_in_at, disabled_at, staff_id";
   const legacySelect = "id, email, full_name, role, active, staff_id";
 
+  const profileLookupStartedAt = timingNow();
   const { data: enrichedData, error: enrichedError } = await serviceSupabase
     .from("profiles")
     .select(baseSelect)
     .eq("id", user.id)
     .maybeSingle();
+  logTiming(traceLabel, "profile-role-lookup", profileLookupStartedAt);
 
   let data = enrichedData as
     | {
@@ -96,7 +129,9 @@ export async function getCurrentProfile(): Promise<UserProfile> {
   let error = enrichedError;
 
   if (error) {
+    const legacyLookupStartedAt = timingNow();
     const fallback = await serviceSupabase.from("profiles").select(legacySelect).eq("id", user.id).maybeSingle();
+    logTiming(traceLabel, "profile-legacy-lookup", legacyLookupStartedAt);
     if (fallback.error) {
       throw new Error(`Failed to load profile row for authenticated user: ${error.message}`);
     }
@@ -143,10 +178,12 @@ export async function getCurrentProfile(): Promise<UserProfile> {
   let hasCustomPermissions = false;
   let customPermissions = null;
 
+  const permissionsStartedAt = timingNow();
   const { data: rows, error: permissionsError } = await serviceSupabase
     .from("user_permissions")
     .select("module_key, can_view, can_create, can_edit, can_admin")
     .eq("user_id", user.id);
+  logTiming(traceLabel, "permission-row-lookup", permissionsStartedAt);
   if (permissionsError) {
     if (isMissingSchemaObjectError(permissionsError)) {
       throw new Error(
@@ -177,6 +214,11 @@ export async function getCurrentProfile(): Promise<UserProfile> {
     role,
     hasCustomPermissions,
     customPermissions
+  });
+
+  logTiming(traceLabel, "profile-total", totalStartedAt, {
+    role,
+    hasCustomPermissions
   });
 
   return {

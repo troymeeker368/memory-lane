@@ -1,11 +1,8 @@
-import { getIncompleteAttendanceSummary } from "@/lib/services/attendance";
-import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export async function getDashboardStats(userId: string) {
   const supabase = await createClient({ serviceRole: true });
-  const operationsDate = getOperationsTodayDate();
 
   const today = new Date();
   const start = new Date(today);
@@ -16,8 +13,7 @@ export async function getDashboardStats(userId: string) {
   const [
     { count: todaysLogs, error: todaysLogsError },
     { count: missingDocs, error: missingDocsError },
-    { data: latestPunches, error: latestPunchesError },
-    incompleteAttendance
+    { data: latestPunches, error: latestPunchesError }
   ] = await Promise.all([
     supabase
       .from("documentation_events")
@@ -34,8 +30,7 @@ export async function getDashboardStats(userId: string) {
       .select("id, punch_type, punch_at")
       .eq("staff_user_id", userId)
       .order("punch_at", { ascending: false })
-      .limit(5),
-    getIncompleteAttendanceSummary({ selectedDate: operationsDate })
+      .limit(5)
   ]);
   if (todaysLogsError) throw new Error(`Unable to load today's documentation event count: ${todaysLogsError.message}`);
   if (missingDocsError) throw new Error(`Unable to load missing documentation assignment count: ${missingDocsError.message}`);
@@ -44,8 +39,7 @@ export async function getDashboardStats(userId: string) {
   return {
     todaysLogs: todaysLogs ?? 0,
     missingDocs: missingDocs ?? 0,
-    latestPunches: latestPunches ?? [],
-    incompleteAttendance
+    latestPunches: latestPunches ?? []
   };
 }
 

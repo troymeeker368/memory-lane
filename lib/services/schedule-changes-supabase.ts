@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { listCanonicalMemberLinksForLeadIds, resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { toEasternISO } from "@/lib/timezone";
 
 export const SCHEDULE_CHANGE_TYPES = [
@@ -40,6 +40,62 @@ export interface ScheduleChangeRow {
   closed_at: string | null;
   closed_by: string | null;
   closed_by_user_id: string | null;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SCHEDULE_CHANGE_SELECT =
+  "id, member_id, change_type, effective_start_date, effective_end_date, original_days, new_days, suspend_base_schedule, reason, notes, entered_by, entered_by_user_id, status, created_at, updated_at, closed_at, closed_by, closed_by_user_id";
+
+function normalizeDistinctUuidIds(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value ?? "").trim())
+        .filter((value) => UUID_PATTERN.test(value))
+    )
+  );
+}
+
+async function resolveScheduleMemberIdsBulk(rawIds: Array<string | null | undefined>, actionLabel: string) {
+  const normalizedIds = normalizeDistinctUuidIds(rawIds);
+  if (normalizedIds.length === 0) return [] as string[];
+
+  const supabase = await createClient({ serviceRole: true });
+  const { data: memberRows, error: memberRowsError } = await supabase.from("members").select("id").in("id", normalizedIds);
+  if (memberRowsError) {
+    throw new Error(`${actionLabel} failed member.id lookup: ${memberRowsError.message}`);
+  }
+
+  const resolvedMemberIdsByInput = new Map<string, string>();
+  const canonicalIds = new Set<string>();
+  (memberRows ?? []).forEach((row) => {
+    const memberId = String((row as { id: string }).id);
+    resolvedMemberIdsByInput.set(memberId, memberId);
+    canonicalIds.add(memberId);
+  });
+
+  const unresolvedIds = normalizedIds.filter((id) => !resolvedMemberIdsByInput.has(id));
+  if (unresolvedIds.length > 0) {
+    const leadLinks = await listCanonicalMemberLinksForLeadIds(unresolvedIds, {
+      actionLabel: `${actionLabel}:lead-links`,
+      serviceRole: true
+    });
+    unresolvedIds.forEach((id) => {
+      const memberId = leadLinks.get(id)?.memberId ?? null;
+      if (!memberId) return;
+      resolvedMemberIdsByInput.set(id, memberId);
+      canonicalIds.add(memberId);
+    });
+  }
+
+  const stillUnresolvedIds = normalizedIds.filter((id) => !resolvedMemberIdsByInput.has(id));
+  if (stillUnresolvedIds.length > 0) {
+    throw new Error(
+      `${actionLabel} expected canonical member identities, but ${stillUnresolvedIds.length} id(s) could not be resolved.`
+    );
+  }
+
+  return Array.from(canonicalIds);
 }
 
 
@@ -134,10 +190,11 @@ export async function listScheduleChangesSupabase(input?: {
   limit?: number;
 }) {
   const supabase = await createClient();
-  let query = supabase.from("schedule_changes").select("*").order("created_at", { ascending: false });
+  let query = supabase.from("schedule_changes").select(SCHEDULE_CHANGE_SELECT).order("created_at", { ascending: false });
   if (input?.memberId) {
-    const canonicalMemberId = await resolveScheduleMemberId(input.memberId, "listScheduleChangesSupabase");
-    query = query.eq("member_id", canonicalMemberId);
+    const canonicalMemberIds = await resolveScheduleMemberIdsBulk([input.memberId], "listScheduleChangesSupabase");
+    if (canonicalMemberIds.length === 0) return [] as ScheduleChangeRow[];
+    query = query.eq("member_id", canonicalMemberIds[0]);
   }
   if (input?.status && input.status !== "all") query = query.eq("status", input.status);
   if (input?.changeType && input.changeType !== "all") query = query.eq("change_type", input.changeType);
@@ -162,29 +219,18 @@ export async function listActiveScheduleChangesForMembersSupabase(input: {
   startDate: string;
   endDate: string;
 }) {
-  const memberIds = Array.from(
-    new Set(
-      input.memberIds
-        .map((value) => String(value ?? "").trim())
-        .filter(Boolean)
-    )
+  const canonicalMemberIds = await resolveScheduleMemberIdsBulk(
+    input.memberIds,
+    "listActiveScheduleChangesForMembersSupabase"
   );
-  if (memberIds.length === 0) return [] as ScheduleChangeRow[];
-
-  const canonicalMemberIds = Array.from(
-    new Set(
-      await Promise.all(
-        memberIds.map((memberId) => resolveScheduleMemberId(memberId, "listActiveScheduleChangesForMembersSupabase"))
-      )
-    )
-  );
+  if (canonicalMemberIds.length === 0) return [] as ScheduleChangeRow[];
 
   const startDate = normalizeOperationalDateOnly(input.startDate);
   const endDate = normalizeOperationalDateOnly(input.endDate);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("schedule_changes")
-    .select("*")
+    .select(SCHEDULE_CHANGE_SELECT)
     .in("member_id", canonicalMemberIds)
     .eq("status", "active")
     .lte("effective_start_date", endDate)

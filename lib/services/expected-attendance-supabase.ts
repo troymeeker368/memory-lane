@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { cache } from "react";
 import {
   resolveExpectedAttendanceForDate,
   type AttendanceWeekdayScheduleShape,
@@ -44,6 +45,125 @@ export interface ExpectedAttendanceSupabaseContext {
   attendanceRecordByMemberDate: Map<string, AttendanceRecordLite>;
 }
 
+const loadExpectedAttendanceSupabaseContextCached = cache(
+  async (
+    memberIdsKey: string,
+    startDate: string,
+    endDate: string,
+    includeAttendanceRecords: boolean
+  ): Promise<ExpectedAttendanceSupabaseContext> => {
+    const memberIds = memberIdsKey.split(",").filter(Boolean);
+    if (memberIds.length === 0) {
+      return {
+        startDate,
+        endDate,
+        schedulesByMember: new Map(),
+        holdsByMember: new Map(),
+        scheduleChangesByMember: new Map(),
+        centerClosures: [],
+        attendanceRecordByMemberDate: new Map()
+      };
+    }
+
+    const supabase = await createClient();
+    const holdsFilter = `end_date.is.null,end_date.gte.${startDate}`;
+    const [scheduleResult, holdsResult, centerClosuresResult, scheduleChanges, attendanceRecordsResult] = await Promise.all([
+      supabase.from("member_attendance_schedules").select("member_id, monday, tuesday, wednesday, thursday, friday").in("member_id", memberIds),
+      supabase
+        .from("member_holds")
+        .select("member_id, start_date, end_date, status")
+        .in("member_id", memberIds)
+        .eq("status", "active")
+        .lte("start_date", endDate)
+        .or(holdsFilter),
+      supabase
+        .from("center_closures")
+        .select("closure_date, active")
+        .gte("closure_date", startDate)
+        .lte("closure_date", endDate),
+      listActiveScheduleChangesForMembersSupabase({
+        memberIds,
+        startDate,
+        endDate
+      }),
+      includeAttendanceRecords
+        ? supabase
+            .from("attendance_records")
+            .select("id, member_id, attendance_date")
+            .in("member_id", memberIds)
+            .gte("attendance_date", startDate)
+            .lte("attendance_date", endDate)
+        : Promise.resolve({ data: [], error: null })
+    ]);
+
+    if (scheduleResult.error) {
+      if (isMissingSchemaObjectError(scheduleResult.error)) {
+        throw missingExpectedAttendanceStorageError({
+          objectName: "member_attendance_schedules",
+          migration: "0011_member_command_center_aux_schema.sql"
+        });
+      }
+      throw new Error(scheduleResult.error.message);
+    }
+    if (holdsResult.error) {
+      if (isMissingSchemaObjectError(holdsResult.error)) {
+        throw missingExpectedAttendanceStorageError({
+          objectName: "member_holds",
+          migration: "0010_member_holds_persistence.sql"
+        });
+      }
+      throw new Error(holdsResult.error.message);
+    }
+    if (centerClosuresResult.error) {
+      if (isMissingSchemaObjectError(centerClosuresResult.error)) {
+        throw missingExpectedAttendanceStorageError({
+          objectName: "center_closures",
+          migration: "0015_schema_compatibility_backfill.sql"
+        });
+      }
+      throw new Error(centerClosuresResult.error.message);
+    }
+    if (attendanceRecordsResult.error) {
+      if (isMissingSchemaObjectError(attendanceRecordsResult.error)) {
+        throw missingExpectedAttendanceStorageError({
+          objectName: "attendance_records",
+          migration: "0012_legacy_operational_health_alignment.sql"
+        });
+      }
+      throw new Error(attendanceRecordsResult.error.message);
+    }
+
+    const schedulesByMember = new Map<string, AttendanceScheduleRow>();
+    ((scheduleResult.data ?? []) as AttendanceScheduleRow[]).forEach((row) => {
+      schedulesByMember.set(row.member_id, row);
+    });
+
+    const holdsByMember = mapByMember(
+      ((holdsResult.data ?? []) as HoldRow[])
+    );
+    const scheduleChangesByMember = mapByMember(scheduleChanges);
+    const centerClosures = (centerClosuresResult.data ?? []) as CenterClosureRow[];
+
+    const attendanceRecordByMemberDate = new Map<string, AttendanceRecordLite>();
+    ((attendanceRecordsResult.data ?? []) as AttendanceRecordLite[]).forEach((row) => {
+      attendanceRecordByMemberDate.set(
+        buildAttendanceRecordKey(row.member_id, normalizeOperationalDateOnly(row.attendance_date)),
+        row
+      );
+    });
+
+    return {
+      startDate,
+      endDate,
+      schedulesByMember,
+      holdsByMember,
+      scheduleChangesByMember,
+      centerClosures,
+      attendanceRecordByMemberDate
+    };
+  }
+);
+
 function buildAttendanceRecordKey(memberId: string, dateOnly: string) {
   return `${memberId}:${dateOnly}`;
 }
@@ -86,118 +206,16 @@ export async function loadExpectedAttendanceSupabaseContext(input: {
         .map((value) => String(value ?? "").trim())
         .filter(Boolean)
     )
-  );
+  ).sort();
   const startDate = normalizeOperationalDateOnly(input.startDate);
   const endDate = normalizeOperationalDateOnly(input.endDate);
 
-  if (memberIds.length === 0) {
-    return {
-      startDate,
-      endDate,
-      schedulesByMember: new Map(),
-      holdsByMember: new Map(),
-      scheduleChangesByMember: new Map(),
-      centerClosures: [],
-      attendanceRecordByMemberDate: new Map()
-    };
-  }
-
-  const supabase = await createClient();
-  const holdsFilter = `end_date.is.null,end_date.gte.${startDate}`;
-  const [scheduleResult, holdsResult, centerClosuresResult, scheduleChanges, attendanceRecordsResult] = await Promise.all([
-    supabase.from("member_attendance_schedules").select("member_id, monday, tuesday, wednesday, thursday, friday").in("member_id", memberIds),
-    supabase
-      .from("member_holds")
-      .select("member_id, start_date, end_date, status")
-      .in("member_id", memberIds)
-      .eq("status", "active")
-      .lte("start_date", endDate)
-      .or(holdsFilter),
-    supabase
-      .from("center_closures")
-      .select("closure_date, active")
-      .gte("closure_date", startDate)
-      .lte("closure_date", endDate),
-    listActiveScheduleChangesForMembersSupabase({
-      memberIds,
-      startDate,
-      endDate
-    }),
-    input.includeAttendanceRecords
-      ? supabase
-          .from("attendance_records")
-          .select("id, member_id, attendance_date")
-          .in("member_id", memberIds)
-          .gte("attendance_date", startDate)
-          .lte("attendance_date", endDate)
-      : Promise.resolve({ data: [], error: null })
-  ]);
-
-  if (scheduleResult.error) {
-    if (isMissingSchemaObjectError(scheduleResult.error)) {
-      throw missingExpectedAttendanceStorageError({
-        objectName: "member_attendance_schedules",
-        migration: "0011_member_command_center_aux_schema.sql"
-      });
-    }
-    throw new Error(scheduleResult.error.message);
-  }
-  if (holdsResult.error) {
-    if (isMissingSchemaObjectError(holdsResult.error)) {
-      throw missingExpectedAttendanceStorageError({
-        objectName: "member_holds",
-        migration: "0010_member_holds_persistence.sql"
-      });
-    }
-    throw new Error(holdsResult.error.message);
-  }
-  if (centerClosuresResult.error) {
-    if (isMissingSchemaObjectError(centerClosuresResult.error)) {
-      throw missingExpectedAttendanceStorageError({
-        objectName: "center_closures",
-        migration: "0015_schema_compatibility_backfill.sql"
-      });
-    }
-    throw new Error(centerClosuresResult.error.message);
-  }
-  if (attendanceRecordsResult.error) {
-    if (isMissingSchemaObjectError(attendanceRecordsResult.error)) {
-      throw missingExpectedAttendanceStorageError({
-        objectName: "attendance_records",
-        migration: "0012_legacy_operational_health_alignment.sql"
-      });
-    }
-    throw new Error(attendanceRecordsResult.error.message);
-  }
-
-  const schedulesByMember = new Map<string, AttendanceScheduleRow>();
-  ((scheduleResult.data ?? []) as AttendanceScheduleRow[]).forEach((row) => {
-    schedulesByMember.set(row.member_id, row);
-  });
-
-  const holdsByMember = mapByMember(
-    ((holdsResult.data ?? []) as HoldRow[])
-  );
-  const scheduleChangesByMember = mapByMember(scheduleChanges);
-  const centerClosures = (centerClosuresResult.data ?? []) as CenterClosureRow[];
-
-  const attendanceRecordByMemberDate = new Map<string, AttendanceRecordLite>();
-  ((attendanceRecordsResult.data ?? []) as AttendanceRecordLite[]).forEach((row) => {
-    attendanceRecordByMemberDate.set(
-      buildAttendanceRecordKey(row.member_id, normalizeOperationalDateOnly(row.attendance_date)),
-      row
-    );
-  });
-
-  return {
+  return loadExpectedAttendanceSupabaseContextCached(
+    memberIds.join(","),
     startDate,
     endDate,
-    schedulesByMember,
-    holdsByMember,
-    scheduleChangesByMember,
-    centerClosures,
-    attendanceRecordByMemberDate
-  };
+    Boolean(input.includeAttendanceRecords)
+  );
 }
 
 export function resolveExpectedAttendanceFromSupabaseContext(input: {

@@ -40,7 +40,7 @@ export async function listMemberHolds() {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_holds")
-    .select("*")
+    .select("id, member_id, start_date, end_date, status, reason, reason_other, notes, created_by_user_id, created_by_name, created_at, updated_at, ended_at, ended_by_user_id, ended_by_name")
     .order("start_date", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as MemberHoldRow[];

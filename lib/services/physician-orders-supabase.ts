@@ -588,7 +588,7 @@ function isMissingPofPostSignQueueTableError(error: PostgrestErrorLike | null | 
 
 function pofPostSignQueueTableRequiredError() {
   return new Error(
-    "POF post-sign sync queue storage is not available. Run Supabase migration 0031_pof_post_sign_sync_queue.sql."
+    "POF post-sign sync queue storage is not available. Run Supabase migration 0039_pof_post_sign_sync_queue.sql."
   );
 }
 

@@ -95,3 +95,28 @@ export async function getSalesWorkflows() {
   };
 }
 
+export async function getSalesOpenLeadSummary() {
+  const supabase = await createClient();
+  const { data: leads, error } = await supabase.from("leads").select("stage, status");
+  if (error) {
+    throw new Error(`Unable to load sales lead summary: ${error.message}`);
+  }
+
+  let unresolvedLeads = 0;
+  let unresolvedInquiryLeads = 0;
+  for (const lead of leads ?? []) {
+    const stage = canonicalLeadStage(String(lead.stage ?? "Inquiry"));
+    const status = canonicalLeadStatus(String(lead.status ?? "Open"), stage);
+    if (!isOpenLeadStatus(status)) continue;
+    unresolvedLeads += 1;
+    if (stage === "Inquiry") {
+      unresolvedInquiryLeads += 1;
+    }
+  }
+
+  return {
+    unresolvedLeads,
+    unresolvedInquiryLeads
+  };
+}
+

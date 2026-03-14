@@ -3,13 +3,12 @@ import Link from "next/link";
 import { Card, CardBody, CardTitle } from "@/components/ui/card";
 import { PunchStatusBadge, PunchTypeBadge } from "@/components/ui/punch-type-badge";
 import { getCurrentProfile } from "@/lib/auth";
-import { canonicalLeadStage, canonicalLeadStatus, isOpenLeadStatus } from "@/lib/canonical";
 import { canView, normalizeRoleKey } from "@/lib/permissions";
 import { getDailyAttendanceView } from "@/lib/services/attendance";
 import { getDashboardAlerts, getDashboardStats } from "@/lib/services/dashboard";
 import { listMemberHolds } from "@/lib/services/holds-supabase";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
-import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import { getSalesOpenLeadSummary } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
@@ -32,73 +31,132 @@ function formatCurrency(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format((cents || 0) / 100);
 }
 
+function nowMs() {
+  return Number(process.hrtime.bigint()) / 1_000_000;
+}
+
+function logDashboardTiming(step: string, startedAtMs: number, details?: Record<string, unknown>) {
+  const elapsedMs = (nowMs() - startedAtMs).toFixed(1);
+  const detailsText = details
+    ? Object.entries(details)
+        .map(([key, value]) => `${key}=${String(value)}`)
+        .join(" ")
+    : "";
+  const suffix = detailsText ? ` ${detailsText}` : "";
+  console.info(`[timing] route:/dashboard ${step} ${elapsedMs}ms${suffix}`);
+}
+
+async function withDashboardTiming<T>(step: string, loader: () => Promise<T>, details?: Record<string, unknown>) {
+  const startedAt = nowMs();
+  try {
+    return await loader();
+  } finally {
+    logDashboardTiming(step, startedAt, details);
+  }
+}
+
 export default async function DashboardPage() {
-  const profile = await getCurrentProfile();
-  const normalizedRole = normalizeRoleKey(profile.role);
-  const isAdminOrCoordinator = normalizedRole === "admin" || normalizedRole === "coordinator";
-  const canPunch = normalizedRole === "program-assistant";
-  const canViewSales = canView(profile.permissions, "sales-activities");
-  const canViewReports = canView(profile.permissions, "reports");
-  const canViewOperations = canView(profile.permissions, "operations");
+  const totalStartedAt = nowMs();
 
-  const [stats, alerts, salesWorkflows] = await Promise.all([
-    getDashboardStats(profile.id),
-    getDashboardAlerts(),
-    canViewSales ? getSalesWorkflows() : Promise.resolve(null)
-  ]);
+  try {
+    const profileStartedAt = nowMs();
+    const profile = await getCurrentProfile({ traceLabel: "route:/dashboard" });
+    logDashboardTiming("profile-resolution-complete", profileStartedAt, { role: profile.role });
 
-  const firstName = profile.full_name.trim().split(/\s+/)[0] || profile.full_name;
-  const today = getOperationsTodayDate();
-  const dailyAttendance = canViewOperations ? await getDailyAttendanceView({ selectedDate: today }) : null;
-  const absentTodayRows = (dailyAttendance?.rows ?? []).filter((row) => row.recordStatus === "absent");
+    const permissionStartedAt = nowMs();
+    const normalizedRole = normalizeRoleKey(profile.role);
+    const isAdminOrCoordinator = normalizedRole === "admin" || normalizedRole === "coordinator";
+    const canPunch = normalizedRole === "program-assistant";
+    const canViewSales = canView(profile.permissions, "sales-activities");
+    const canViewReports = canView(profile.permissions, "reports");
+    const canViewOperations = canView(profile.permissions, "operations");
+    logDashboardTiming("permission-checks", permissionStartedAt, {
+      canViewSales,
+      canViewReports,
+      canViewOperations,
+      isAdminOrCoordinator
+    });
 
-  const supabase = await createClient();
-  const [{ data: membersData }, holds, { data: ancillaryData }] = await Promise.all([
-    supabase.from("members").select("id, display_name"),
-    listMemberHolds(),
-    supabase
-      .from("ancillary_charge_logs")
-      .select("service_date, amount, billing_status")
-      .gte("service_date", `${today.slice(0, 7)}-01`)
-      .lte("service_date", `${today.slice(0, 7)}-31`)
-  ]);
-  const expiryThreshold = addDays(today, HOLD_EXPIRY_LOOKAHEAD_DAYS);
-  const activeHolds = holds.filter((row) => row.status === "active");
-  const memberNameById = new Map((membersData ?? []).map((member: any) => [member.id, member.display_name] as const));
-  const upcomingHolds = activeHolds
-    .filter((hold) => toDateOnly(hold.start_date) && (toDateOnly(hold.start_date) as string) > today)
-    .sort((left, right) => String(left.start_date).localeCompare(String(right.start_date)))
-    .slice(0, 6);
-  const expiringHolds = activeHolds
-    .filter((hold) => {
-      const endDate = toDateOnly(hold.end_date);
-      if (!endDate) return false;
-      return endDate >= today && endDate <= expiryThreshold;
-    })
-    .sort((left, right) => String(left.end_date).localeCompare(String(right.end_date)))
-    .slice(0, 6);
+    const today = getOperationsTodayDate();
+    const [stats, alerts, salesSummary, dailyAttendance, adminSnapshot] = await Promise.all([
+      withDashboardTiming("service:getDashboardStats", () => getDashboardStats(profile.id)),
+      withDashboardTiming("service:getDashboardAlerts", () => getDashboardAlerts()),
+      canViewSales
+        ? withDashboardTiming("service:getSalesOpenLeadSummary", () => getSalesOpenLeadSummary())
+        : Promise.resolve({ unresolvedLeads: 0, unresolvedInquiryLeads: 0 }),
+      canViewOperations
+        ? withDashboardTiming("service:getDailyAttendanceView", () => getDailyAttendanceView({ selectedDate: today }))
+        : Promise.resolve(null),
+      isAdminOrCoordinator
+        ? withDashboardTiming("query:adminSnapshot", async () => {
+            const supabase = await createClient();
+            const [{ data: membersData }, holds, { data: ancillaryData }] = await Promise.all([
+              supabase.from("members").select("id, display_name"),
+              listMemberHolds(),
+              supabase
+                .from("ancillary_charge_logs")
+                .select("service_date, amount, billing_status")
+                .gte("service_date", `${today.slice(0, 7)}-01`)
+                .lte("service_date", `${today.slice(0, 7)}-31`)
+            ]);
+            return {
+              membersData: membersData ?? [],
+              holds,
+              ancillaryData: ancillaryData ?? []
+            };
+          })
+        : Promise.resolve({ membersData: [], holds: [], ancillaryData: [] as Array<{ service_date: string; amount: number; billing_status: string | null }> })
+    ]);
 
-  const monthlyAncillary = ancillaryData ?? [];
-  const monthlyRevenueCents = monthlyAncillary.reduce((sum: number, row: any) => sum + Math.round(Number(row.amount ?? 0) * 100), 0);
-  const unreconciledCharges = monthlyAncillary.filter((row: any) => String(row.billing_status ?? "Unbilled") !== "Billed").length;
+    const firstName = profile.full_name.trim().split(/\s+/)[0] || profile.full_name;
+    const absentTodayRows = (dailyAttendance?.rows ?? []).filter((row) => row.recordStatus === "absent");
+    const membersData = adminSnapshot.membersData;
+    const holds = adminSnapshot.holds;
+    const ancillaryData = adminSnapshot.ancillaryData;
+    const expiryThreshold = addDays(today, HOLD_EXPIRY_LOOKAHEAD_DAYS);
+    const activeHolds = holds.filter((row) => row.status === "active");
+    const memberNameById = new Map((membersData ?? []).map((member: any) => [member.id, member.display_name] as const));
+    const upcomingHolds = activeHolds
+      .filter((hold) => toDateOnly(hold.start_date) && (toDateOnly(hold.start_date) as string) > today)
+      .sort((left, right) => String(left.start_date).localeCompare(String(right.start_date)))
+      .slice(0, 6);
+    const expiringHolds = activeHolds
+      .filter((hold) => {
+        const endDate = toDateOnly(hold.end_date);
+        if (!endDate) return false;
+        return endDate >= today && endDate <= expiryThreshold;
+      })
+      .sort((left, right) => String(left.end_date).localeCompare(String(right.end_date)))
+      .slice(0, 6);
 
-  const unresolvedLeads = salesWorkflows
-    ? salesWorkflows.openLeads.filter((lead) => isOpenLeadStatus(canonicalLeadStatus(lead.status, lead.stage))).length
-    : 0;
-  const unresolvedInquiryLeads = salesWorkflows
-    ? salesWorkflows.openLeads.filter((lead) => canonicalLeadStage(lead.stage) === "Inquiry").length
-    : 0;
+    const monthlyAncillary = ancillaryData ?? [];
+    const monthlyRevenueCents = monthlyAncillary.reduce((sum: number, row: any) => sum + Math.round(Number(row.amount ?? 0) * 100), 0);
+    const unreconciledCharges = monthlyAncillary.filter((row: any) => String(row.billing_status ?? "Unbilled") !== "Billed").length;
 
-  const showIncompleteAttendanceFlag =
-    (normalizedRole === "admin" || normalizedRole === "director") && stats.incompleteAttendance.totalIncomplete > 0;
+    const unresolvedLeads = salesSummary.unresolvedLeads;
+    const unresolvedInquiryLeads = salesSummary.unresolvedInquiryLeads;
 
-  return (
-    <div className="space-y-4">
-      <header className="rounded-xl border border-border bg-white p-4">
-        <p className="text-center text-xl font-bold text-brand">Welcome, {firstName}!</p>
-        <h1 className="text-xl font-bold">Home Dashboard</h1>
-        <p className="mt-1 text-sm text-muted">Today&apos;s operational priorities, quick links, and role-based activity.</p>
-      </header>
+    const incompleteAttendance = dailyAttendance
+      ? {
+          selectedDate: dailyAttendance.selectedDate,
+          pendingWithoutStatus: dailyAttendance.summary.pendingMembers,
+          checkInMissingCheckOut: dailyAttendance.summary.missingCheckOutMembers,
+          checkOutMissingCheckIn: dailyAttendance.summary.missingCheckInMembers,
+          totalIncomplete: dailyAttendance.summary.incompleteMembers
+        }
+      : null;
+
+    const showIncompleteAttendanceFlag =
+      (normalizedRole === "admin" || normalizedRole === "director") &&
+      Boolean(incompleteAttendance && incompleteAttendance.totalIncomplete > 0);
+
+    return (
+      <div className="space-y-4">
+        <header className="rounded-xl border border-border bg-white p-4">
+          <p className="text-center text-xl font-bold text-brand">Welcome, {firstName}!</p>
+          <h1 className="text-xl font-bold">Home Dashboard</h1>
+          <p className="mt-1 text-sm text-muted">Today&apos;s operational priorities, quick links, and role-based activity.</p>
+        </header>
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
@@ -237,18 +295,18 @@ export default async function DashboardPage() {
         </section>
       ) : null}
 
-      {showIncompleteAttendanceFlag ? (
+      {showIncompleteAttendanceFlag && incompleteAttendance ? (
         <Card className="border-amber-300">
           <CardTitle>Attendance Incomplete Records</CardTitle>
           <CardBody>
             <p className="text-sm">
-              {stats.incompleteAttendance.totalIncomplete} incomplete attendance record(s) for {stats.incompleteAttendance.selectedDate}.
+              {incompleteAttendance.totalIncomplete} incomplete attendance record(s) for {incompleteAttendance.selectedDate}.
             </p>
             <p className="mt-1 text-xs text-muted">
-              Pending: {stats.incompleteAttendance.pendingWithoutStatus} | Missing check-out: {stats.incompleteAttendance.checkInMissingCheckOut} | Missing check-in: {stats.incompleteAttendance.checkOutMissingCheckIn}
+              Pending: {incompleteAttendance.pendingWithoutStatus} | Missing check-out: {incompleteAttendance.checkInMissingCheckOut} | Missing check-in: {incompleteAttendance.checkOutMissingCheckIn}
             </p>
             <Link
-              href={`/operations/attendance?tab=daily-attendance&date=${stats.incompleteAttendance.selectedDate}`}
+              href={`/operations/attendance?tab=daily-attendance&date=${incompleteAttendance.selectedDate}`}
               className="mt-2 inline-block text-sm font-semibold text-brand"
             >
               Open Daily Attendance
@@ -321,6 +379,9 @@ export default async function DashboardPage() {
           </table>
         </Card>
       </section>
-    </div>
-  );
+      </div>
+    );
+  } finally {
+    logDashboardTiming("total", totalStartedAt);
+  }
 }

@@ -58,8 +58,14 @@ function normalizeSourceType(value: string | null | undefined): CanonicalPersonS
   return null;
 }
 
+function isCanonicalDebugEnabled() {
+  const raw = String(process.env.CANONICAL_PERSON_REF_DEBUG ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
 function debugCanonicalIdentity(event: string, payload: Record<string, unknown>) {
   if (process.env.NODE_ENV === "production") return;
+  if (!isCanonicalDebugEnabled()) return;
   console.info(`[canonical-person-ref] ${event}`, payload);
 }
 
