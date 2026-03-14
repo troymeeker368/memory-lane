@@ -10,6 +10,7 @@ import {
 import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
 import { Button } from "@/components/ui/button";
 import { COMMUNITY_PARTNER_CATEGORY_OPTIONS, LEAD_ACTIVITY_TYPES, LEAD_FOLLOW_UP_TYPES } from "@/lib/canonical";
+import { formatPhoneInput } from "@/lib/phone";
 import { toEasternDateTimeLocal } from "@/lib/timezone";
 type ReferralSourceCategory = (typeof COMMUNITY_PARTNER_CATEGORY_OPTIONS)[number];
 
@@ -168,7 +169,7 @@ export function SalesPartnerActivityForm({
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             <input className="h-11 rounded-lg border border-border px-3" placeholder="Location" value={orgForm.location} onChange={(event) => setOrgForm((current) => ({ ...current, location: event.target.value }))} />
-            <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Phone" value={orgForm.primaryPhone} onChange={(event) => setOrgForm((current) => ({ ...current, primaryPhone: event.target.value }))} />
+            <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Phone" value={orgForm.primaryPhone} onChange={(event) => setOrgForm((current) => ({ ...current, primaryPhone: formatPhoneInput(event.target.value) }))} />
             <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Email" value={orgForm.primaryEmail} onChange={(event) => setOrgForm((current) => ({ ...current, primaryEmail: event.target.value }))} />
           </div>
           <Button

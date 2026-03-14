@@ -19,6 +19,7 @@ import {
   type EnrollmentPacketIntakePayload,
   type EnrollmentPacketIntakeTextKey
 } from "@/lib/services/enrollment-packet-intake-payload";
+import { formatPhoneInput } from "@/lib/phone";
 
 type PublicEnrollmentPacketFields = {
   requestedDays: string[];
@@ -426,7 +427,12 @@ export function EnrollmentPacketPublicForm({
           type={inputType}
           className="h-11 w-full rounded-lg border border-border px-3"
           value={getTextValue(field.key as EnrollmentPacketIntakeTextKey)}
-          onChange={(event) => setTextValue(field.key as EnrollmentPacketIntakeTextKey, event.target.value)}
+          onChange={(event) =>
+            setTextValue(
+              field.key as EnrollmentPacketIntakeTextKey,
+              inputType === "tel" ? formatPhoneInput(event.target.value) : event.target.value
+            )
+          }
           disabled={disabled}
         />
       </label>

@@ -11,6 +11,7 @@ import { TransportationStationAddRiderForm } from "@/components/forms/transporta
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { formatPhoneDisplay } from "@/lib/phone";
 import { getTransportationAddRiderMemberOptionsSupabase } from "@/lib/services/member-command-center-supabase";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
@@ -262,7 +263,7 @@ export default async function TransportationStationPage({
                           <td>{rider.transportType}</td>
                           <td>{rider.locationLabel}</td>
                           <td>{rider.caregiverContactName ?? "-"}</td>
-                          <td>{rider.caregiverContactPhone ?? "-"}</td>
+                          <td>{formatPhoneDisplay(rider.caregiverContactPhone)}</td>
                           <td>{rider.caregiverContactAddress ?? "-"}</td>
                           <td>{rider.source === "manual-add" ? "Manual Add" : "Schedule"}</td>
                           {canEdit ? (

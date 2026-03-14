@@ -4,6 +4,7 @@ import { Buffer } from "node:buffer";
 
 import { headers } from "next/headers";
 
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizeEnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 import {
   savePublicEnrollmentPacketProgress,
@@ -53,6 +54,10 @@ const ENROLLMENT_PACKET_UPLOAD_EXTENSION_TO_MIME: Record<string, string> = {
 
 function asString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
+}
+
+function asPhone(formData: FormData, key: string) {
+  return normalizePhoneForStorage(asString(formData, key)) ?? "";
 }
 
 function parseIntakePayload(formData: FormData) {
@@ -142,7 +147,7 @@ export async function savePublicEnrollmentPacketProgressAction(formData: FormDat
     await savePublicEnrollmentPacketProgress({
       token: asString(formData, "token"),
       caregiverName: asString(formData, "caregiverName"),
-      caregiverPhone: asString(formData, "caregiverPhone"),
+      caregiverPhone: asPhone(formData, "caregiverPhone"),
       caregiverEmail: asString(formData, "caregiverEmail"),
       caregiverAddressLine1: asString(formData, "caregiverAddressLine1"),
       caregiverAddressLine2: asString(formData, "caregiverAddressLine2"),
@@ -150,7 +155,7 @@ export async function savePublicEnrollmentPacketProgressAction(formData: FormDat
       caregiverState: asString(formData, "caregiverState"),
       caregiverZip: asString(formData, "caregiverZip"),
       secondaryContactName: asString(formData, "secondaryContactName"),
-      secondaryContactPhone: asString(formData, "secondaryContactPhone"),
+      secondaryContactPhone: asPhone(formData, "secondaryContactPhone"),
       secondaryContactEmail: asString(formData, "secondaryContactEmail"),
       secondaryContactRelationship: asString(formData, "secondaryContactRelationship"),
       notes: asString(formData, "notes"),
@@ -201,7 +206,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       caregiverIp,
       caregiverUserAgent,
       caregiverName: asString(formData, "caregiverName"),
-      caregiverPhone: asString(formData, "caregiverPhone"),
+      caregiverPhone: asPhone(formData, "caregiverPhone"),
       caregiverEmail: asString(formData, "caregiverEmail"),
       caregiverAddressLine1: asString(formData, "caregiverAddressLine1"),
       caregiverAddressLine2: asString(formData, "caregiverAddressLine2"),
@@ -209,7 +214,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       caregiverState: asString(formData, "caregiverState"),
       caregiverZip: asString(formData, "caregiverZip"),
       secondaryContactName: asString(formData, "secondaryContactName"),
-      secondaryContactPhone: asString(formData, "secondaryContactPhone"),
+      secondaryContactPhone: asPhone(formData, "secondaryContactPhone"),
       secondaryContactEmail: asString(formData, "secondaryContactEmail"),
       secondaryContactRelationship: asString(formData, "secondaryContactRelationship"),
       notes: asString(formData, "notes"),

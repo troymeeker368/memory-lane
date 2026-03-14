@@ -8,6 +8,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
 import { requireModuleAccess } from "@/lib/auth";
 import { canonicalLeadStage } from "@/lib/canonical";
+import { formatPhoneDisplay } from "@/lib/phone";
 import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
 import { getLeadDetail } from "@/lib/services/relations";
 import { formatDate, formatDateTime } from "@/lib/utils";
@@ -74,7 +75,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
         <CardTitle>Caregiver / Contact Info</CardTitle>
         <table>
           <thead><tr><th>Caregiver</th><th>Relationship</th><th>Email</th><th>Phone</th><th>Referral Name</th><th>Likelihood</th><th>Next Follow-Up</th></tr></thead>
-          <tbody><tr><td>{lead.caregiver_name}</td><td>{lead.caregiver_relationship ?? "-"}</td><td>{lead.caregiver_email ?? "-"}</td><td>{lead.caregiver_phone || "-"}</td><td>{lead.referral_name ?? "-"}</td><td>{lead.likelihood ?? "-"}</td><td>{lead.next_follow_up_date ? `${formatDate(lead.next_follow_up_date)} (${lead.next_follow_up_type ?? "-"})` : "-"}</td></tr></tbody>
+          <tbody><tr><td>{lead.caregiver_name}</td><td>{lead.caregiver_relationship ?? "-"}</td><td>{lead.caregiver_email ?? "-"}</td><td>{formatPhoneDisplay(lead.caregiver_phone)}</td><td>{lead.referral_name ?? "-"}</td><td>{lead.likelihood ?? "-"}</td><td>{lead.next_follow_up_date ? `${formatDate(lead.next_follow_up_date)} (${lead.next_follow_up_type ?? "-"})` : "-"}</td></tr></tbody>
         </table>
       </Card>
 
@@ -82,7 +83,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
         <Card>
           <CardTitle>Linked Community Partner</CardTitle>
           <p className="text-sm font-semibold">{detail.partner.organization_name}</p>
-          <p className="text-sm text-muted">{detail.partner.contact_name || "-"} | {detail.partner.primary_phone || "-"}</p>
+          <p className="text-sm text-muted">{detail.partner.contact_name || "-"} | {formatPhoneDisplay(detail.partner.primary_phone)}</p>
           <Link className="text-sm font-semibold text-brand" href={`/sales/community-partners/organizations/${detail.partner.id}`}>Open Community Partner Detail</Link>
         </Card>
       ) : null}
@@ -91,7 +92,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
         <Card>
           <CardTitle>Linked Referral Source</CardTitle>
           <p className="text-sm font-semibold">{detail.referralSource.contact_name} - {detail.referralSource.organization_name}</p>
-          <p className="text-sm text-muted">{detail.referralSource.primary_phone || "-"} | {detail.referralSource.primary_email || "-"}</p>
+          <p className="text-sm text-muted">{formatPhoneDisplay(detail.referralSource.primary_phone)} | {detail.referralSource.primary_email || "-"}</p>
           <Link className="text-sm font-semibold text-brand" href={`/sales/community-partners/referral-sources/${detail.referralSource.id}`}>Open Referral Source Detail</Link>
         </Card>
       ) : null}

@@ -4,13 +4,14 @@ import { Resend } from "resend";
 
 import {
   getPhysicianOrderById,
-  signPhysicianOrder,
+  processSignedPhysicianOrderPostSignSync,
   type PhysicianOrderForm
 } from "@/lib/services/physician-orders-supabase";
 import { buildPofSignatureRequestTemplate } from "@/lib/email/templates/pof-signature-request";
 import { buildPofDocumentPdfBytes } from "@/lib/services/pof-document-pdf";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export const POF_REQUEST_STATUS_VALUES = ["draft", "sent", "opened", "signed", "declined", "expired"] as const;
@@ -18,6 +19,7 @@ export type PofRequestStatus = (typeof POF_REQUEST_STATUS_VALUES)[number];
 
 const STORAGE_BUCKET = "member-documents";
 const TOKEN_BYTE_LENGTH = 32;
+const RPC_FINALIZE_POF_SIGNATURE = "rpc_finalize_pof_signature";
 
 type PofRequestRow = {
   id: string;
@@ -129,6 +131,23 @@ type SubmitPublicPofSignatureInput = {
   providerUserAgent: string | null;
 };
 
+type RpcFinalizePofSignatureRow = {
+  request_id: string;
+  physician_order_id: string;
+  member_id: string;
+  member_file_id: string;
+  queue_id: string;
+  queue_attempt_count: number;
+  queue_next_retry_at: string | null;
+};
+
+type PostgrestErrorLike = {
+  code?: string | null;
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+};
+
 export type PublicPofSigningContext =
   | { state: "invalid" }
   | { state: "expired"; request: PofRequestSummary }
@@ -139,6 +158,47 @@ export type PublicPofSigningContext =
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function extractErrorText(error: PostgrestErrorLike | null | undefined) {
+  return [error?.message, error?.details, error?.hint].filter(Boolean).join(" ").toLowerCase();
+}
+
+function isPostgresUniqueViolation(error: PostgrestErrorLike | null | undefined) {
+  const text = extractErrorText(error);
+  if (!text) return false;
+  return error?.code === "23505" || text.includes("duplicate key value") || text.includes("unique constraint");
+}
+
+function mapPofRequestWriteError(error: PostgrestErrorLike | null | undefined, fallbackMessage: string) {
+  const text = extractErrorText(error);
+  if (isPostgresUniqueViolation(error) && text.includes("idx_pof_requests_active_per_order_unique")) {
+    return "An active signature request already exists for this physician order. Use Resend.";
+  }
+  return clean(error?.message) ?? fallbackMessage;
+}
+
+function isMissingRpcFunctionError(error: unknown, rpcName: string) {
+  if (!error || typeof error !== "object") return false;
+  const code = String((error as { code?: string }).code ?? "").toUpperCase();
+  const text = String((error as { message?: string }).message ?? "").toLowerCase();
+  return (code === "PGRST202" || code === "42883") && text.includes(rpcName.toLowerCase());
+}
+
+function toRpcFinalizePofSignatureRow(data: unknown): RpcFinalizePofSignatureRow {
+  const row = (Array.isArray(data) ? data[0] : null) as RpcFinalizePofSignatureRow | null;
+  if (!row?.request_id || !row.physician_order_id || !row.member_id || !row.member_file_id || !row.queue_id) {
+    throw new Error("POF finalization RPC did not return expected identifiers.");
+  }
+  return {
+    request_id: row.request_id,
+    physician_order_id: row.physician_order_id,
+    member_id: row.member_id,
+    member_file_id: row.member_file_id,
+    queue_id: row.queue_id,
+    queue_attempt_count: Math.max(0, Number(row.queue_attempt_count ?? 0)),
+    queue_next_retry_at: row.queue_next_retry_at ?? null
+  };
 }
 
 function parseEmailAddress(value: string | null | undefined) {
@@ -818,7 +878,9 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     updated_by_name: input.actor.fullName,
     updated_at: now
   });
-  if (createError) throw new Error(createError.message);
+  if (createError) {
+    throw new Error(mapPofRequestWriteError(createError, "Unable to create POF signature request."));
+  }
 
   await createDocumentEvent({
     documentId: requestId,
@@ -862,7 +924,9 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
       updated_at: sentAt
     })
     .eq("id", requestId);
-  if (sentError) throw new Error(sentError.message);
+  if (sentError) {
+    throw new Error(mapPofRequestWriteError(sentError, "Unable to mark POF request as sent."));
+  }
 
   await createDocumentEvent({
     documentId: requestId,
@@ -951,7 +1015,9 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
       updated_at: preSendUpdatedAt
     })
     .eq("id", input.requestId);
-  if (preSendError) throw new Error(preSendError.message);
+  if (preSendError) {
+    throw new Error(mapPofRequestWriteError(preSendError, "Unable to prepare POF resend request."));
+  }
 
   try {
     await sendSignatureEmail({
@@ -992,7 +1058,9 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
       updated_at: now
     })
     .eq("id", input.requestId);
-  if (error) throw new Error(error.message);
+  if (error) {
+    throw new Error(mapPofRequestWriteError(error, "Unable to resend POF signature request."));
+  }
 
   await createDocumentEvent({
     documentId: input.requestId,
@@ -1178,56 +1246,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
   });
 
   const signedPdfDataUrl = `data:application/pdf;base64,${signedPdfBytes.toString("base64")}`;
-  const admin = createSupabaseAdminClient();
   const memberFileName = `POF Signed - ${snapshot.memberNameSnapshot} - ${day}.pdf`;
-  const { data: existingMemberFile, error: existingMemberFileError } = await admin
-    .from("member_files")
-    .select("id")
-    .eq("pof_request_id", request.id)
-    .maybeSingle();
-  if (existingMemberFileError) throw new Error(existingMemberFileError.message);
-  const memberFileId = clean(existingMemberFile?.id) ?? nextMemberFileId();
-
-  const memberFilePayload = {
-    member_id: request.member_id,
-    file_name: memberFileName,
-    file_type: "application/pdf",
-    file_data_url: signedPdfDataUrl,
-    storage_object_path: parseStorageUri(signedPdfUri),
-    category: "Orders / POF",
-    category_other: null,
-    document_source: "POF E-Sign Signed",
-    pof_request_id: request.id,
-    uploaded_by_user_id: request.sent_by_user_id,
-    uploaded_by_name: request.nurse_name,
-    uploaded_at: now,
-    updated_at: now
-  };
-  if (clean(existingMemberFile?.id)) {
-    const { error: fileUpdateError } = await admin.from("member_files").update(memberFilePayload).eq("id", memberFileId);
-    if (fileUpdateError) throw new Error(fileUpdateError.message);
-  } else {
-    const { error: fileInsertError } = await admin.from("member_files").insert({
-      id: memberFileId,
-      ...memberFilePayload
-    });
-    if (fileInsertError) throw new Error(fileInsertError.message);
-  }
-
-  const { error: signatureInsertError } = await admin.from("pof_signatures").upsert({
-    pof_request_id: request.id,
-    provider_typed_name: providerTypedName,
-    provider_signature_image_url: signatureUri,
-    provider_ip: clean(input.providerIp),
-    provider_user_agent: clean(input.providerUserAgent),
-    signed_at: now,
-    created_at: now,
-    updated_at: now
-  }, {
-    onConflict: "pof_request_id"
-  });
-  if (signatureInsertError) throw new Error(signatureInsertError.message);
-
   const signatureMetadata = {
     signedVia: "pof-esign",
     providerSignatureImageUrl: signatureUri,
@@ -1235,73 +1254,56 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     providerUserAgent: clean(input.providerUserAgent),
     signedAt: now
   };
-  const { error: physicianOrderUpdateError } = await admin
-    .from("physician_orders")
-    .update({
-      provider_name: providerTypedName,
-      provider_signature: providerTypedName,
-      provider_signature_date: day,
-      signature_metadata: signatureMetadata,
-      updated_by_user_id: request.sent_by_user_id,
-      updated_by_name: request.nurse_name,
-      updated_at: now
-    })
-    .eq("id", request.physician_order_id);
-  if (physicianOrderUpdateError) throw new Error(physicianOrderUpdateError.message);
+  const rotatedToken = hashToken(generateSigningToken());
+  const admin = createSupabaseAdminClient();
+  let finalizedRaw: unknown;
+  try {
+    finalizedRaw = await invokeSupabaseRpcOrThrow<unknown>(admin, RPC_FINALIZE_POF_SIGNATURE, {
+      p_request_id: request.id,
+      p_provider_typed_name: providerTypedName,
+      p_provider_signature_image_url: signatureUri,
+      p_provider_ip: clean(input.providerIp),
+      p_provider_user_agent: clean(input.providerUserAgent),
+      p_signed_pdf_url: signedPdfUri,
+      p_member_file_id: nextMemberFileId(),
+      p_member_file_name: memberFileName,
+      p_member_file_data_url: signedPdfDataUrl,
+      p_member_file_storage_object_path: parseStorageUri(signedPdfUri),
+      p_actor_user_id: request.sent_by_user_id,
+      p_actor_name: request.nurse_name,
+      p_signed_at: now,
+      p_opened_at: request.opened_at ?? now,
+      p_signature_request_token: rotatedToken,
+      p_signature_metadata: signatureMetadata
+    });
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, RPC_FINALIZE_POF_SIGNATURE)) {
+      throw new Error(
+        "POF signing finalization RPC is not available. Apply Supabase migration 0037_shared_rpc_standardization_lead_pof.sql and refresh PostgREST schema cache."
+      );
+    }
+    throw error;
+  }
+  const finalized = toRpcFinalizePofSignatureRow(finalizedRaw);
 
-  const postSign = await signPhysicianOrder(
-    request.physician_order_id,
-    {
+  await processSignedPhysicianOrderPostSignSync({
+    pofId: finalized.physician_order_id,
+    memberId: finalized.member_id,
+    queueId: finalized.queue_id,
+    queueAttemptCount: finalized.queue_attempt_count,
+    actor: {
       id: request.sent_by_user_id,
       fullName: request.nurse_name
     },
-    {
-      serviceRole: true,
-      signedAtIso: now,
-      pofRequestId: request.id
-    }
-  );
-
-  const rotatedToken = hashToken(generateSigningToken());
-  const { error: updateRequestError } = await admin
-    .from("pof_requests")
-    .update({
-      status: "signed",
-      opened_at: request.opened_at ?? now,
-      signed_at: now,
-      signed_pdf_url: signedPdfUri,
-      member_file_id: memberFileId,
-      signature_request_token: rotatedToken,
-      updated_by_user_id: request.sent_by_user_id,
-      updated_by_name: request.nurse_name,
-      updated_at: now
-    })
-    .eq("id", request.id);
-  if (updateRequestError) throw new Error(updateRequestError.message);
-
-  await createDocumentEvent({
-    documentId: request.id,
-    memberId: request.member_id,
-    physicianOrderId: request.physician_order_id,
-    eventType: "signed",
-    actorType: "provider",
-    actorName: providerTypedName,
-    actorEmail: request.provider_email,
-    actorIp: clean(input.providerIp),
-    actorUserAgent: clean(input.providerUserAgent),
-    metadata: {
-      postSignStatus: postSign.postSignStatus,
-      postSignQueueId: postSign.queueId,
-      postSignAttemptCount: postSign.attemptCount,
-      postSignNextRetryAt: postSign.nextRetryAt,
-      postSignLastError: postSign.lastError
-    }
+    signedAtIso: now,
+    pofRequestId: finalized.request_id,
+    serviceRole: true
   });
 
   return {
-    requestId: request.id,
-    memberId: request.member_id,
-    memberFileId,
+    requestId: finalized.request_id,
+    memberId: finalized.member_id,
+    memberFileId: finalized.member_file_id,
     signedPdfUrl: await createSignedStorageUrl(signedPdfUri, 60 * 15)
   };
 }

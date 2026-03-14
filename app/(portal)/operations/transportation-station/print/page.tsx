@@ -4,6 +4,7 @@ import { DocumentBrandHeader } from "@/components/documents/document-brand-heade
 import { ManifestPrintActions } from "@/components/transportation-station/manifest-print-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireModuleAccess } from "@/lib/auth";
+import { formatPhoneDisplay } from "@/lib/phone";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import {
   getTransportationManifestSupabase,
@@ -141,7 +142,7 @@ export default async function TransportationManifestPrintPage({
                         <td>{rider.transportType}</td>
                         <td>{rider.locationLabel}</td>
                         <td>{rider.caregiverContactName ?? "-"}</td>
-                        <td>{rider.caregiverContactPhone ?? "-"}</td>
+                        <td>{formatPhoneDisplay(rider.caregiverContactPhone)}</td>
                         <td>{rider.caregiverContactAddress ?? "-"}</td>
                         <td>{rider.source === "manual-add" ? "Manual Add" : "Schedule"}</td>
                       </tr>

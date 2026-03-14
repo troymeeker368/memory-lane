@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { copyForwardTransportationDetailsAction } from "@/app/(portal)/operations/transportation-station/actions";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
+import { formatPhoneInput } from "@/lib/phone";
 
 type ShiftOption = "AM" | "PM" | "Both";
 type TransportType = "Door to Door" | "Bus Stop";
@@ -71,7 +72,7 @@ export function TransportationStationAddRiderForm({
     const nextMember = members.find((row) => row.id === nextMemberId) ?? null;
     setDoorToDoorAddress(nextMember?.defaultDoorToDoorAddress ?? "");
     setCaregiverContactName(nextMember?.defaultContactName ?? "");
-    setCaregiverContactPhone(nextMember?.defaultContactPhone ?? "");
+    setCaregiverContactPhone(formatPhoneInput(nextMember?.defaultContactPhone));
     setCaregiverContactAddress(nextMember?.defaultContactAddress ?? "");
   };
 
@@ -113,7 +114,7 @@ export function TransportationStationAddRiderForm({
       setBusStopName(snapshot.busStopName);
       setDoorToDoorAddress(snapshot.doorToDoorAddress || selectedMember?.defaultDoorToDoorAddress || "");
       setCaregiverContactName(snapshot.caregiverContactName || selectedMember?.defaultContactName || "");
-      setCaregiverContactPhone(snapshot.caregiverContactPhone || selectedMember?.defaultContactPhone || "");
+      setCaregiverContactPhone(formatPhoneInput(snapshot.caregiverContactPhone || selectedMember?.defaultContactPhone || ""));
       setCaregiverContactAddress(snapshot.caregiverContactAddress || selectedMember?.defaultContactAddress || "");
       setCopyStatus(result.unchanged ? "Current manifest already matches copied transport details." : "Transport details copied. You can edit before saving.");
     });
@@ -246,7 +247,7 @@ export function TransportationStationAddRiderForm({
         <input
           name="caregiverContactPhone"
           value={caregiverContactPhone}
-          onChange={(event) => setCaregiverContactPhone(event.target.value)}
+          onChange={(event) => setCaregiverContactPhone(formatPhoneInput(event.target.value))}
           className="h-10 w-full rounded-lg border border-border px-3"
         />
       </label>

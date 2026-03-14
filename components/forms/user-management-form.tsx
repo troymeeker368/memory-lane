@@ -1,5 +1,6 @@
 import type { ManagedUser } from "@/types/app";
 import { CANONICAL_ROLE_ORDER, getRoleLabel, normalizeRoleKey } from "@/lib/permissions";
+import { formatPhoneInput } from "@/lib/phone";
 
 type FormAction = (formData: FormData) => void | Promise<void>;
 
@@ -67,7 +68,7 @@ export function UserManagementForm({
 
       <label className="grid gap-1 text-sm">
         <span>Phone (optional)</span>
-        <input className="h-11 rounded-lg border border-border px-3" name="phone" defaultValue={user?.phone ?? ""} />
+        <input className="h-11 rounded-lg border border-border px-3" name="phone" defaultValue={formatPhoneInput(user?.phone ?? "")} />
       </label>
 
       <label className="grid gap-1 text-sm">

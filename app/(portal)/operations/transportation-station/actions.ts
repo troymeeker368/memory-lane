@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
@@ -153,7 +154,7 @@ export async function addTransportationManifestRiderAction(formData: FormData) {
   const doorToDoorAddress = asNullableString(formData, "doorToDoorAddress");
   const caregiverContactId = asNullableString(formData, "caregiverContactId");
   const caregiverContactName = asNullableString(formData, "caregiverContactName");
-  const caregiverContactPhone = asNullableString(formData, "caregiverContactPhone");
+  const caregiverContactPhone = normalizePhoneForStorage(asNullableString(formData, "caregiverContactPhone"));
   const caregiverContactAddress = asNullableString(formData, "caregiverContactAddress");
   const notes = asNullableString(formData, "notes");
 
@@ -217,7 +218,7 @@ export async function excludeTransportationManifestRiderAction(formData: FormDat
   const doorToDoorAddress = asNullableString(formData, "doorToDoorAddress");
   const caregiverContactId = asNullableString(formData, "caregiverContactId");
   const caregiverContactName = asNullableString(formData, "caregiverContactName");
-  const caregiverContactPhone = asNullableString(formData, "caregiverContactPhone");
+  const caregiverContactPhone = normalizePhoneForStorage(asNullableString(formData, "caregiverContactPhone"));
   const caregiverContactAddress = asNullableString(formData, "caregiverContactAddress");
   const notes = asNullableString(formData, "notes");
 
@@ -257,7 +258,7 @@ export async function reassignTransportationManifestBusAction(formData: FormData
   const doorToDoorAddress = asNullableString(formData, "doorToDoorAddress");
   const caregiverContactId = asNullableString(formData, "caregiverContactId");
   const caregiverContactName = asNullableString(formData, "caregiverContactName");
-  const caregiverContactPhone = asNullableString(formData, "caregiverContactPhone");
+  const caregiverContactPhone = normalizePhoneForStorage(asNullableString(formData, "caregiverContactPhone"));
   const caregiverContactAddress = asNullableString(formData, "caregiverContactAddress");
   const notes = asNullableString(formData, "notes");
 

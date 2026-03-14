@@ -4,6 +4,7 @@ import { Buffer } from "node:buffer";
 
 import { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
+import { formatPhoneDisplay } from "@/lib/phone";
 import {
   ENROLLMENT_PACKET_SECTIONS,
   formatEnrollmentPacketValue
@@ -104,12 +105,12 @@ export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnr
           line("Community Fee", moneyValue(input.communityFee)),
           line("Daily Rate", moneyValue(input.dailyRate)),
           line("Primary Contact", textValue(input.caregiverName)),
-          line("Primary Contact Phone", textValue(input.caregiverPhone)),
+          line("Primary Contact Phone", formatPhoneDisplay(input.caregiverPhone)),
           line("Primary Contact Email", textValue(input.caregiverEmail)),
           line("Primary Contact Address", compactAddress(input)),
           line("Secondary Contact", textValue(input.secondaryContactName)),
           line("Secondary Contact Relationship", textValue(input.secondaryContactRelationship)),
-          line("Secondary Contact Phone", textValue(input.secondaryContactPhone)),
+          line("Secondary Contact Phone", formatPhoneDisplay(input.secondaryContactPhone)),
           line("Secondary Contact Email", textValue(input.secondaryContactEmail)),
 
           ...ENROLLMENT_PACKET_SECTIONS.flatMap((section) => {

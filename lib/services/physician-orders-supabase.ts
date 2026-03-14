@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { buildPofDocumentPdfBytes } from "@/lib/services/pof-document-pdf";
 import {
   DEFAULT_PHYSICIAN_ORDER_RULE_SETTINGS,
@@ -499,6 +500,25 @@ function extractErrorText(error: PostgrestErrorLike | null | undefined) {
   return [error?.message, error?.details, error?.hint].filter(Boolean).join(" ").toLowerCase();
 }
 
+function isPostgresUniqueViolation(error: PostgrestErrorLike | null | undefined) {
+  const text = extractErrorText(error);
+  if (!text) return false;
+  return error?.code === "23505" || text.includes("duplicate key value") || text.includes("unique constraint");
+}
+
+function isIntakeDraftSentUniqueViolation(error: PostgrestErrorLike | null | undefined) {
+  const text = extractErrorText(error);
+  if (!isPostgresUniqueViolation(error) || !text) return false;
+  return text.includes("idx_physician_orders_intake_draft_sent_unique");
+}
+
+function mapPhysicianOrderWriteError(error: PostgrestErrorLike | null | undefined, fallbackMessage: string) {
+  if (isIntakeDraftSentUniqueViolation(error)) {
+    return "A Draft/Sent physician order already exists for this intake assessment. Open the existing order instead of creating a new one.";
+  }
+  return clean(error?.message) ?? fallbackMessage;
+}
+
 function isMissingPhysicianOrdersTableError(error: PostgrestErrorLike | null | undefined) {
   const text = extractErrorText(error);
   if (!text) return false;
@@ -511,6 +531,19 @@ function isMissingPhysicianOrdersTableError(error: PostgrestErrorLike | null | u
 
 function physicianOrdersTableRequiredError() {
   return new Error("Physician Orders storage is not available. Run Supabase migration 0006_intake_pof_mhp_supabase.sql.");
+}
+
+function isMissingRpcFunctionError(error: unknown, rpcName: string) {
+  if (!error || typeof error !== "object") return false;
+  const code = String((error as { code?: string }).code ?? "").toUpperCase();
+  const text = String((error as { message?: string }).message ?? "").toLowerCase();
+  return (code === "PGRST202" || code === "42883") && text.includes(rpcName.toLowerCase());
+}
+
+function missingRpcFunctionRequiredError(rpcName: string) {
+  return new Error(
+    `Shared RPC ${rpcName} is not available. Apply Supabase migration 0037_shared_rpc_standardization_lead_pof.sql and refresh PostgREST schema cache.`
+  );
 }
 
 type PofPostSignSyncStep = "mhp_mcc" | "mar_medications" | "mar_schedules";
@@ -532,6 +565,16 @@ export type SignPhysicianOrderResult = {
   nextRetryAt: string | null;
   lastError: string | null;
 };
+
+type RpcSignPhysicianOrderRow = {
+  physician_order_id: string;
+  member_id: string;
+  queue_id: string;
+  queue_attempt_count: number;
+  queue_next_retry_at: string | null;
+};
+
+const RPC_SIGN_PHYSICIAN_ORDER = "rpc_sign_physician_order";
 
 function isMissingPofPostSignQueueTableError(error: PostgrestErrorLike | null | undefined) {
   const text = extractErrorText(error);
@@ -563,81 +606,46 @@ function buildPostSignSyncError(step: PofPostSignSyncStep, error: unknown) {
   return `MAR schedule sync failed: ${base}`;
 }
 
-async function loadPostSignQueueRow(
-  pofId: string,
-  options?: {
-    serviceRole?: boolean;
+function toRpcSignPhysicianOrderRow(data: unknown): RpcSignPhysicianOrderRow {
+  const row = (Array.isArray(data) ? data[0] : null) as RpcSignPhysicianOrderRow | null;
+  if (!row?.physician_order_id || !row.member_id || !row.queue_id) {
+    throw new Error("Physician order signing RPC did not return queue details.");
   }
-) {
-  const supabase = await createClient({ serviceRole: options?.serviceRole });
-  const { data, error } = await supabase
-    .from("pof_post_sign_sync_queue")
-    .select("id, physician_order_id, member_id, pof_request_id, status, attempt_count, next_retry_at")
-    .eq("physician_order_id", pofId)
-    .maybeSingle();
-  if (error) {
-    if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
-    throw new Error(error.message);
-  }
-  return (data as PofPostSignSyncQueueRow | null) ?? null;
+  return {
+    physician_order_id: row.physician_order_id,
+    member_id: row.member_id,
+    queue_id: row.queue_id,
+    queue_attempt_count: Math.max(0, Number(row.queue_attempt_count ?? 0)),
+    queue_next_retry_at: row.queue_next_retry_at ?? null
+  };
 }
 
-async function ensurePostSignQueueRow(input: {
+async function invokeSignPhysicianOrderRpc(input: {
   pofId: string;
-  memberId: string;
-  pofRequestId?: string | null;
-  signatureCompletedAt: string;
   actor: { id: string; fullName: string };
+  signedAtIso: string;
+  pofRequestId?: string | null;
   serviceRole?: boolean;
 }) {
   const supabase = await createClient({ serviceRole: input.serviceRole });
-  const existing = await loadPostSignQueueRow(input.pofId, { serviceRole: input.serviceRole });
-  const requestId = clean(input.pofRequestId);
-  if (existing) {
-    if (requestId && existing.pof_request_id !== requestId) {
-      const { error: updateError } = await supabase
-        .from("pof_post_sign_sync_queue")
-        .update({
-          pof_request_id: requestId,
-          queued_by_user_id: input.actor.id,
-          queued_by_name: input.actor.fullName
-        })
-        .eq("id", existing.id);
-      if (updateError) {
-        if (isMissingPofPostSignQueueTableError(updateError)) throw pofPostSignQueueTableRequiredError();
-        throw new Error(updateError.message);
-      }
-      const refreshed = await loadPostSignQueueRow(input.pofId, { serviceRole: input.serviceRole });
-      if (!refreshed) throw new Error("POF post-sign sync queue row disappeared after update.");
-      return refreshed;
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_SIGN_PHYSICIAN_ORDER, {
+      p_pof_id: input.pofId,
+      p_actor_user_id: input.actor.id,
+      p_actor_name: input.actor.fullName,
+      p_signed_at: input.signedAtIso,
+      p_pof_request_id: clean(input.pofRequestId) ?? null
+    });
+    return toRpcSignPhysicianOrderRow(data);
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, RPC_SIGN_PHYSICIAN_ORDER)) {
+      throw missingRpcFunctionRequiredError(RPC_SIGN_PHYSICIAN_ORDER);
     }
-    return existing;
+    const postgrestError = error as PostgrestErrorLike | null | undefined;
+    if (isMissingPofPostSignQueueTableError(postgrestError)) throw pofPostSignQueueTableRequiredError();
+    if (isMissingPhysicianOrdersTableError(postgrestError)) throw physicianOrdersTableRequiredError();
+    throw error;
   }
-
-  const { error: insertError } = await supabase.from("pof_post_sign_sync_queue").insert({
-    physician_order_id: input.pofId,
-    member_id: input.memberId,
-    pof_request_id: requestId,
-    status: "queued",
-    attempt_count: 0,
-    next_retry_at: input.signatureCompletedAt,
-    last_error: null,
-    last_error_at: null,
-    last_failed_step: null,
-    signature_completed_at: input.signatureCompletedAt,
-    queued_by_user_id: input.actor.id,
-    queued_by_name: input.actor.fullName,
-    resolved_at: null,
-    resolved_by_user_id: null,
-    resolved_by_name: null
-  });
-  if (insertError) {
-    if (isMissingPofPostSignQueueTableError(insertError)) throw pofPostSignQueueTableRequiredError();
-    throw new Error(insertError.message);
-  }
-  const created = await loadPostSignQueueRow(input.pofId, { serviceRole: input.serviceRole });
-  if (!created) throw new Error("Unable to create POF post-sign sync queue row.");
-  return created;
 }
 
 async function markPostSignQueueCompleted(input: {
@@ -1106,7 +1114,7 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
   const { data, error } = await supabase.from("physician_orders").insert(payload).select("id").single();
   if (error) {
     if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
-    throw new Error(error.message);
+    throw new Error(mapPhysicianOrderWriteError(error, "Unable to create draft physician order from intake."));
   }
   const saved = await getPhysicianOrderById(data.id);
   if (!saved) throw new Error("Unable to load created physician order.");
@@ -1197,7 +1205,7 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
     const { error } = await supabase.from("physician_orders").update(payload).eq("id", existing.id);
     if (error) {
       if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
-      throw new Error(error.message);
+      throw new Error(mapPhysicianOrderWriteError(error, "Unable to update physician order."));
     }
     if (wantsSigned) {
       await signPhysicianOrder(existing.id, input.actor);
@@ -1222,7 +1230,7 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
 
   if (error) {
     if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
-    throw new Error(error.message);
+    throw new Error(mapPhysicianOrderWriteError(error, "Unable to create physician order."));
   }
   if (wantsSigned) {
     await signPhysicianOrder(data.id, input.actor);
@@ -1230,6 +1238,63 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
   const saved = await getPhysicianOrderById(data.id);
   if (!saved) throw new Error("Unable to load saved physician order.");
   return saved;
+}
+
+export async function processSignedPhysicianOrderPostSignSync(input: {
+  pofId: string;
+  memberId: string;
+  queueId: string;
+  queueAttemptCount: number;
+  actor: { id: string; fullName: string };
+  signedAtIso: string;
+  pofRequestId?: string | null;
+  serviceRole?: boolean;
+}): Promise<SignPhysicianOrderResult> {
+  const attemptCount = Math.max(0, Number(input.queueAttemptCount ?? 0)) + 1;
+  const postSign = await runPostSignSyncCascade({
+    pofId: input.pofId,
+    memberId: input.memberId,
+    syncTimestamp: input.signedAtIso,
+    serviceRole: input.serviceRole
+  });
+
+  if (postSign.ok) {
+    await markPostSignQueueCompleted({
+      queueId: input.queueId,
+      attemptCount,
+      actor: input.actor,
+      completedAt: input.signedAtIso,
+      pofRequestId: input.pofRequestId,
+      serviceRole: input.serviceRole
+    });
+    return {
+      postSignStatus: "synced",
+      queueId: input.queueId,
+      attemptCount,
+      nextRetryAt: null,
+      lastError: null
+    };
+  }
+
+  const nextRetryAt = computePostSignRetryAt(attemptCount, input.signedAtIso);
+  await markPostSignQueueQueued({
+    queueId: input.queueId,
+    attemptCount,
+    step: postSign.step,
+    errorMessage: postSign.errorMessage,
+    nextRetryAt,
+    pofRequestId: input.pofRequestId,
+    actor: input.actor,
+    queuedAt: input.signedAtIso,
+    serviceRole: input.serviceRole
+  });
+  return {
+    postSignStatus: "queued",
+    queueId: input.queueId,
+    attemptCount,
+    nextRetryAt,
+    lastError: postSign.errorMessage
+  };
 }
 
 export async function signPhysicianOrder(
@@ -1241,105 +1306,25 @@ export async function signPhysicianOrder(
     pofRequestId?: string | null;
   }
 ): Promise<SignPhysicianOrderResult> {
-  const supabase = await createClient({ serviceRole: options?.serviceRole });
-  const row = await getPhysicianOrderById(pofId, { serviceRole: options?.serviceRole });
-  if (!row) throw new Error("Physician order not found.");
-
-  const now = options?.signedAtIso ?? toEasternISO();
-  const queue = await ensurePostSignQueueRow({
+  const signedAtIso = options?.signedAtIso ?? toEasternISO();
+  const transition = await invokeSignPhysicianOrderRpc({
     pofId,
-    memberId: row.memberId,
-    pofRequestId: options?.pofRequestId,
-    signatureCompletedAt: now,
     actor,
-    serviceRole: options?.serviceRole
-  });
-
-  const { error: supersedeError } = await supabase
-    .from("physician_orders")
-    .update({
-      status: "superseded",
-      is_active_signed: false,
-      superseded_by: pofId,
-      superseded_at: now,
-      updated_by_user_id: actor.id,
-      updated_by_name: actor.fullName,
-      updated_at: now
-    })
-    .eq("member_id", row.memberId)
-    .eq("is_active_signed", true)
-    .neq("id", pofId);
-
-  if (supersedeError) {
-    if (isMissingPhysicianOrdersTableError(supersedeError)) throw physicianOrdersTableRequiredError();
-    throw new Error(supersedeError.message);
-  }
-
-  const { error: signError } = await supabase
-    .from("physician_orders")
-    .update({
-      status: "signed",
-      is_active_signed: true,
-      signed_at: now,
-      sent_at: now,
-      signed_by_name: row.providerName ?? actor.fullName,
-      effective_at: now,
-      updated_by_user_id: actor.id,
-      updated_by_name: actor.fullName,
-      updated_at: now
-    })
-    .eq("id", pofId);
-
-  if (signError) {
-    if (isMissingPhysicianOrdersTableError(signError)) throw physicianOrdersTableRequiredError();
-    throw new Error(signError.message);
-  }
-
-  const attemptCount = Math.max(0, Number(queue.attempt_count ?? 0)) + 1;
-  const postSign = await runPostSignSyncCascade({
-    pofId,
-    memberId: row.memberId,
-    syncTimestamp: now,
-    serviceRole: options?.serviceRole
-  });
-
-  if (postSign.ok) {
-    await markPostSignQueueCompleted({
-      queueId: queue.id,
-      attemptCount,
-      actor,
-      completedAt: now,
-      pofRequestId: options?.pofRequestId,
-      serviceRole: options?.serviceRole
-    });
-    return {
-      postSignStatus: "synced",
-      queueId: queue.id,
-      attemptCount,
-      nextRetryAt: null,
-      lastError: null
-    };
-  }
-
-  const nextRetryAt = computePostSignRetryAt(attemptCount, now);
-  await markPostSignQueueQueued({
-    queueId: queue.id,
-    attemptCount,
-    step: postSign.step,
-    errorMessage: postSign.errorMessage,
-    nextRetryAt,
+    signedAtIso,
     pofRequestId: options?.pofRequestId,
-    actor,
-    queuedAt: now,
     serviceRole: options?.serviceRole
   });
-  return {
-    postSignStatus: "queued",
-    queueId: queue.id,
-    attemptCount,
-    nextRetryAt,
-    lastError: postSign.errorMessage
-  };
+
+  return processSignedPhysicianOrderPostSignSync({
+    pofId: transition.physician_order_id,
+    memberId: transition.member_id,
+    queueId: transition.queue_id,
+    queueAttemptCount: transition.queue_attempt_count,
+    actor,
+    signedAtIso,
+    pofRequestId: options?.pofRequestId,
+    serviceRole: options?.serviceRole
+  });
 }
 
 export async function retryQueuedPhysicianOrderPostSignSync(input?: {

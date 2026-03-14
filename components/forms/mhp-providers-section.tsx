@@ -8,6 +8,7 @@ import {
   updateMhpProviderInlineAction
 } from "@/app/(portal)/health/member-health-profiles/actions";
 import { MhpEditModal } from "@/components/forms/mhp-edit-modal";
+import { formatPhoneDisplay, formatPhoneInput } from "@/lib/phone";
 
 type ProviderRow = {
   id: string;
@@ -207,14 +208,14 @@ export function MhpProvidersSection({
       setProviderSpecialty(specialtySelectValue);
       setProviderSpecialtyOther(specialtyOtherValue);
       setPracticeName(matched.practice_name ?? "");
-      setProviderPhone(matched.provider_phone ?? "");
+      setProviderPhone(formatPhoneInput(matched.provider_phone));
       return;
     }
 
     setEditProviderSpecialty(specialtySelectValue);
     setEditProviderSpecialtyOther(specialtyOtherValue);
     setEditPracticeName(matched.practice_name ?? "");
-    setEditProviderPhone(matched.provider_phone ?? "");
+    setEditProviderPhone(formatPhoneInput(matched.provider_phone));
   };
 
   const applyDefaultsIfExactMatch = (providerNameValue: string, mode: "add" | "edit") => {
@@ -278,7 +279,7 @@ export function MhpProvidersSection({
     setEditProviderSpecialty(known ? specialty : "Other");
     setEditProviderSpecialtyOther(known ? "" : specialty);
     setEditPracticeName(row.practice_name ?? "");
-    setEditProviderPhone(row.provider_phone ?? "");
+    setEditProviderPhone(formatPhoneInput(row.provider_phone));
   };
 
   const handleEditSave = () => {
@@ -324,7 +325,7 @@ export function MhpProvidersSection({
               <td>{row.provider_name}</td>
               <td>{row.specialty ?? "-"}</td>
               <td>{row.practice_name ?? "-"}</td>
-              <td>{row.provider_phone ?? "-"}</td>
+              <td>{formatPhoneDisplay(row.provider_phone)}</td>
               <td>
                 <div className="flex items-center gap-1">
                   <button
@@ -395,7 +396,7 @@ export function MhpProvidersSection({
         />
         <input
           value={providerPhone}
-          onChange={(event) => setProviderPhone(event.target.value)}
+          onChange={(event) => setProviderPhone(formatPhoneInput(event.target.value))}
           placeholder="Phone"
           className="h-10 rounded-lg border border-border px-3"
         />
@@ -446,7 +447,7 @@ export function MhpProvidersSection({
           </label>
           <label className="space-y-1 text-sm">
             <span className="text-xs font-semibold text-muted">Phone</span>
-            <input value={editProviderPhone} onChange={(event) => setEditProviderPhone(event.target.value)} className="h-10 w-full rounded-lg border border-border px-3" />
+            <input value={editProviderPhone} onChange={(event) => setEditProviderPhone(formatPhoneInput(event.target.value))} className="h-10 w-full rounded-lg border border-border px-3" />
           </label>
         </div>
         <div className="mt-3 flex justify-end gap-2">

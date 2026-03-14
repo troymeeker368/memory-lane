@@ -6,6 +6,7 @@ import { createCommunityPartnerAction, createReferralSourceAction } from "@/app/
 import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
 import { Button } from "@/components/ui/button";
 import { COMMUNITY_PARTNER_CATEGORY_OPTIONS } from "@/lib/canonical";
+import { formatPhoneInput } from "@/lib/phone";
 type ReferralSourceCategory = (typeof COMMUNITY_PARTNER_CATEGORY_OPTIONS)[number];
 
 type PartnerLookup = {
@@ -56,12 +57,12 @@ export function NewCommunityPartnerForm() {
 
       <div className="grid gap-3 md:grid-cols-3">
         <input className="h-11 rounded-lg border border-border px-3" placeholder="Location" value={form.location} onChange={(event) => setForm((current) => ({ ...current, location: event.target.value }))} />
-        <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Phone" value={form.primaryPhone} onChange={(event) => setForm((current) => ({ ...current, primaryPhone: event.target.value }))} />
+        <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Phone" value={form.primaryPhone} onChange={(event) => setForm((current) => ({ ...current, primaryPhone: formatPhoneInput(event.target.value) }))} />
         <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Email" value={form.primaryEmail} onChange={(event) => setForm((current) => ({ ...current, primaryEmail: event.target.value }))} />
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
-        <input className="h-11 rounded-lg border border-border px-3" placeholder="Secondary Phone" value={form.secondaryPhone} onChange={(event) => setForm((current) => ({ ...current, secondaryPhone: event.target.value }))} />
+        <input className="h-11 rounded-lg border border-border px-3" placeholder="Secondary Phone" value={form.secondaryPhone} onChange={(event) => setForm((current) => ({ ...current, secondaryPhone: formatPhoneInput(event.target.value) }))} />
         <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Contact Name" value={form.contactName} onChange={(event) => setForm((current) => ({ ...current, contactName: event.target.value }))} />
       </div>
 
@@ -167,7 +168,7 @@ export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] 
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             <input className="h-11 rounded-lg border border-border px-3" placeholder="Location" value={orgForm.location} onChange={(event) => setOrgForm((current) => ({ ...current, location: event.target.value }))} />
-            <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Phone" value={orgForm.primaryPhone} onChange={(event) => setOrgForm((current) => ({ ...current, primaryPhone: event.target.value }))} />
+            <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Phone" value={orgForm.primaryPhone} onChange={(event) => setOrgForm((current) => ({ ...current, primaryPhone: formatPhoneInput(event.target.value) }))} />
             <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Email" value={orgForm.primaryEmail} onChange={(event) => setOrgForm((current) => ({ ...current, primaryEmail: event.target.value }))} />
           </div>
           <Button
@@ -220,8 +221,8 @@ export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] 
           </div>
 
           <div className="grid gap-3 md:grid-cols-3">
-            <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Phone" value={form.primaryPhone} onChange={(event) => setForm((current) => ({ ...current, primaryPhone: event.target.value }))} />
-            <input className="h-11 rounded-lg border border-border px-3" placeholder="Secondary Phone" value={form.secondaryPhone} onChange={(event) => setForm((current) => ({ ...current, secondaryPhone: event.target.value }))} />
+            <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Phone" value={form.primaryPhone} onChange={(event) => setForm((current) => ({ ...current, primaryPhone: formatPhoneInput(event.target.value) }))} />
+            <input className="h-11 rounded-lg border border-border px-3" placeholder="Secondary Phone" value={form.secondaryPhone} onChange={(event) => setForm((current) => ({ ...current, secondaryPhone: formatPhoneInput(event.target.value) }))} />
             <input className="h-11 rounded-lg border border-border px-3" placeholder="Primary Email" value={form.primaryEmail} onChange={(event) => setForm((current) => ({ ...current, primaryEmail: event.target.value }))} />
           </div>
 

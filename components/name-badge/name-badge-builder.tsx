@@ -4,6 +4,9 @@ import { useMemo, useState, useTransition } from "react";
 
 import { generateMemberNameBadgePdfAction } from "@/app/(portal)/members/[memberId]/name-badge/actions";
 
+const STAR_GROUP_SRC =
+  "https://dcnyjtfyftamcdsaxrsz.supabase.co/storage/v1/object/public/Assets/TS_Gray_Star_Group_4%20(1).png";
+
 interface BadgeIndicatorView {
   key: string;
   label: string;
@@ -87,6 +90,43 @@ async function triggerDownload(dataUrl: string, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 }
 
+function triggerPrint(dataUrl: string) {
+  const blob = dataUrlToBlob(dataUrl);
+  const blobUrl = URL.createObjectURL(blob);
+  const frame = document.createElement("iframe");
+  frame.style.position = "fixed";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  frame.style.opacity = "0";
+  frame.src = blobUrl;
+
+  const cleanup = () => {
+    frame.remove();
+    URL.revokeObjectURL(blobUrl);
+  };
+
+  frame.addEventListener(
+    "load",
+    () => {
+      const frameWindow = frame.contentWindow;
+      if (!frameWindow) {
+        cleanup();
+        return;
+      }
+      frameWindow.addEventListener("afterprint", cleanup, { once: true });
+      frameWindow.focus();
+      frameWindow.print();
+      window.setTimeout(cleanup, 60000);
+    },
+    { once: true }
+  );
+
+  document.body.appendChild(frame);
+}
+
 export function NameBadgeBuilder({
   memberId,
   badge
@@ -113,9 +153,9 @@ export function NameBadgeBuilder({
     const length = text.length || 1;
     // Approximate Helvetica Bold width factor for uppercase/mixed names.
     const estimatedWidthFactor = 0.58;
-    const availableWidthPx = 320;
+    const availableWidthPx = 372;
     const fitSize = availableWidthPx / (length * estimatedWidthFactor);
-    return Math.max(18, Math.min(24, fitSize));
+    return Math.max(26, Math.min(50, fitSize));
   }, [memberDisplayName]);
 
   function toggleIndicator(key: string) {
@@ -126,7 +166,7 @@ export function NameBadgeBuilder({
     setSelectedKeys(badge.indicators.filter((indicator) => indicator.enabled).map((indicator) => indicator.key));
   }
 
-  function runGeneration(printAfterDownload: boolean) {
+  function runGeneration(mode: "download" | "print") {
     if (!hasResolvedName) {
       setStatus(`Error: ${nameResolutionError}`);
       return;
@@ -141,10 +181,12 @@ export function NameBadgeBuilder({
         setStatus(`Error: ${result?.error ?? "Unable to generate badge."}`);
         return;
       }
-      await triggerDownload(result.dataUrl, result.fileName);
-      if (printAfterDownload) {
-        window.print();
+      if (mode === "print") {
+        triggerPrint(result.dataUrl);
+        setStatus("Name badge generated, saved to member files, and sent to printer.");
+        return;
       }
+      await triggerDownload(result.dataUrl, result.fileName);
       setStatus("Name badge saved to Files/Documents and downloaded.");
     });
   }
@@ -179,7 +221,7 @@ export function NameBadgeBuilder({
           <button
             type="button"
             className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70"
-            onClick={() => runGeneration(false)}
+            onClick={() => runGeneration("download")}
             disabled={isPending || !hasResolvedName}
           >
             {isPending ? "Generating..." : "Download PDF"}
@@ -187,7 +229,7 @@ export function NameBadgeBuilder({
           <button
             type="button"
             className="rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-70"
-            onClick={() => runGeneration(true)}
+            onClick={() => runGeneration("print")}
             disabled={isPending || !hasResolvedName}
           >
             Print
@@ -207,8 +249,8 @@ export function NameBadgeBuilder({
 
       {hasResolvedName ? (
         <div className="name-badge-preview">
-          <div className="name-badge-star name-badge-star-left">*</div>
-          <div className="name-badge-star name-badge-star-right">*</div>
+          <img src={STAR_GROUP_SRC} alt="" aria-hidden className="name-badge-star-group name-badge-star-group-left" />
+          <img src={STAR_GROUP_SRC} alt="" aria-hidden className="name-badge-star-group name-badge-star-group-right" />
           <img src={badge.logoSrc} alt="Town Square Fort Mill logo" className="name-badge-logo" />
           <p className="name-badge-member-name" style={{ fontSize: `${nameFontSizePx}px` }}>
             {memberDisplayName}

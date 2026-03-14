@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
 import { requireModuleAccess } from "@/lib/auth";
+import { formatPhoneDisplay } from "@/lib/phone";
 import { getReferralSourceDetail } from "@/lib/services/relations";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
@@ -20,7 +21,7 @@ export default async function ReferralSourceDetailPage({ params }: { params: Pro
         <div className="mt-2 grid gap-3 md:grid-cols-4">
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Organization</p><p className="font-semibold">{detail.referralSource.organization_name}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Job Title</p><p className="font-semibold">{detail.referralSource.job_title || "-"}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Primary Phone</p><p className="font-semibold">{detail.referralSource.primary_phone || "-"}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Primary Phone</p><p className="font-semibold">{formatPhoneDisplay(detail.referralSource.primary_phone)}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Primary Email</p><p className="font-semibold">{detail.referralSource.primary_email || "-"}</p></div>
         </div>
         <p className="mt-2 text-sm text-muted">Preferred Contact: {detail.referralSource.preferred_contact_method || "-"}</p>

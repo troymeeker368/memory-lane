@@ -29,6 +29,7 @@ import {
   createLeadWithMemberConversionSupabase
 } from "@/lib/services/sales-lead-conversion-supabase";
 import { applyLeadStageTransitionSupabase } from "@/lib/services/sales-lead-stage-supabase";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternDateTimeLocal, toEasternISO } from "@/lib/timezone";
 
@@ -67,15 +68,7 @@ function revalidateSalesLeadViews(leadId?: string) {
 }
 
 function normalizePhone(phone: string | undefined) {
-  return (phone ?? "").trim();
-}
-
-function normalizePhoneDigits(phone: string | null | undefined) {
-  const digits = String(phone ?? "").replace(/\D/g, "");
-  if (digits.length === 11 && digits.startsWith("1")) {
-    return digits.slice(1);
-  }
-  return digits;
+  return normalizePhoneForStorage(phone) ?? "";
 }
 
 function normalizeText(value: string | null | undefined) {
@@ -129,6 +122,34 @@ function resolveLostReason(lostReason?: string, lostReasonOther?: string) {
     return other || null;
   }
   return reason;
+}
+
+async function applyClosedWonLeadConversion(input: {
+  leadId: string;
+  actorUserId: string;
+  actorName: string;
+  source: string;
+  reason: string;
+  memberDisplayName: string;
+  memberDob?: string | null;
+  memberEnrollmentDate: string;
+  existingMemberId?: string | null;
+  additionalLeadPatch?: Record<string, any>;
+}) {
+  return applyLeadStageTransitionWithMemberUpsertSupabase({
+    leadId: input.leadId,
+    requestedStage: "Closed - Won",
+    requestedStatus: "Won",
+    actorUserId: input.actorUserId,
+    actorName: input.actorName,
+    source: input.source,
+    reason: input.reason,
+    memberDisplayName: input.memberDisplayName,
+    memberDob: input.memberDob ?? null,
+    memberEnrollmentDate: input.memberEnrollmentDate,
+    existingMemberId: input.existingMemberId ?? null,
+    additionalLeadPatch: input.additionalLeadPatch ?? undefined
+  });
 }
 
 const salesLeadSchema = z
@@ -358,10 +379,8 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
       }
       try {
         if (status === "Won") {
-          await applyLeadStageTransitionWithMemberUpsertSupabase({
+          await applyClosedWonLeadConversion({
             leadId,
-            requestedStage: stage,
-            requestedStatus: status,
             actorUserId: profile.id,
             actorName: profile.full_name,
             source: "saveSalesLeadAction",
@@ -428,10 +447,8 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
       const enrollmentDate = payload.data.memberStartDate?.trim() || toEasternDate();
       try {
         const canonicalLead = await resolveSalesLeadId(leadId, "saveSalesLeadAction:closed-won");
-        await applyLeadStageTransitionWithMemberUpsertSupabase({
+        await applyClosedWonLeadConversion({
           leadId,
-          requestedStage: stage,
-          requestedStatus: status,
           actorUserId: profile.id,
           actorName: profile.full_name,
           source: "saveSalesLeadAction",
@@ -500,10 +517,8 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
     const enrollmentDate = lead.member_start_date?.trim() || toEasternDate();
     let memberId = "";
     try {
-      const conversion = await applyLeadStageTransitionWithMemberUpsertSupabase({
+      const conversion = await applyClosedWonLeadConversion({
         leadId: lead.id,
-        requestedStage: "Closed - Won",
-        requestedStatus: "Won",
         actorUserId: profile.id,
         actorName: profile.full_name,
         source: "enrollMemberFromLeadAction",
@@ -822,8 +837,8 @@ export async function createCommunityPartnerAction(raw: z.infer<typeof community
       organization_name: payload.data.organizationName.trim(),
       category: payload.data.referralSourceCategory.trim(),
       location: payload.data.location?.trim() || null,
-      primary_phone: payload.data.primaryPhone?.trim() || null,
-      secondary_phone: payload.data.secondaryPhone?.trim() || null,
+      primary_phone: normalizePhoneForStorage(payload.data.primaryPhone),
+      secondary_phone: normalizePhoneForStorage(payload.data.secondaryPhone),
       primary_email: payload.data.primaryEmail?.trim() || null,
       active: payload.data.active,
       notes: payload.data.notes?.trim() || null,
@@ -879,8 +894,8 @@ export async function createReferralSourceAction(raw: z.infer<typeof referralSou
       contact_name: payload.data.contactName.trim(),
       organization_name: partner.organization_name,
       job_title: payload.data.jobTitle?.trim() || null,
-      primary_phone: payload.data.primaryPhone?.trim() || null,
-      secondary_phone: payload.data.secondaryPhone?.trim() || null,
+      primary_phone: normalizePhoneForStorage(payload.data.primaryPhone),
+      secondary_phone: normalizePhoneForStorage(payload.data.secondaryPhone),
       primary_email: payload.data.primaryEmail?.trim() || null,
       preferred_contact_method: payload.data.preferredContactMethod?.trim() || null,
       active: payload.data.active,

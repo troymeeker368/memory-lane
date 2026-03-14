@@ -1,3 +1,4 @@
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { toEasternISO } from "@/lib/timezone";
 import { getMemberCommandCenterDetail } from "@/lib/services/member-command-center";
 import { getMemberHealthProfileDetail } from "@/lib/services/member-health-profiles";
@@ -17,7 +18,9 @@ function pickFirstPhone(input: {
   work_number?: string | null;
   home_number?: string | null;
 }) {
-  return clean(input.cellular_number) ?? clean(input.work_number) ?? clean(input.home_number) ?? null;
+  return normalizePhoneForStorage(
+    clean(input.cellular_number) ?? clean(input.work_number) ?? clean(input.home_number) ?? null
+  );
 }
 
 function formatAddress(input: {
@@ -224,7 +227,7 @@ export async function getMemberFaceSheet(memberId: string) {
       name: row.provider_name,
       specialty: clean(row.specialty),
       practice: clean(row.practice_name),
-      phone: clean(row.provider_phone)
+      phone: normalizePhoneForStorage(clean(row.provider_phone))
     })),
     dietAllergyFlags: {
       dietType: clean(mccProfile.diet_type) ?? clean(mhpProfile.diet_type),

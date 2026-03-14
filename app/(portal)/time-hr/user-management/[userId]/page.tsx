@@ -12,6 +12,7 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getManagedUserById, getManagedUserRecentActivity, summarizePermissionSet } from "@/lib/services/user-management";
+import { formatPhoneDisplay } from "@/lib/phone";
 import { formatDateTime, formatOptionalDateTime } from "@/lib/utils";
 import { getRoleLabel } from "@/lib/permissions";
 
@@ -76,7 +77,7 @@ export default async function ManagedUserDetailPage({
           <p><span className="font-semibold">Auth Status:</span> {user.authStatus}</p>
           <p><span className="font-semibold">Permission Source:</span> {user.permissionSource}</p>
           <p><span className="font-semibold">Credentials:</span> {user.credentials ?? "-"}</p>
-          <p><span className="font-semibold">Phone:</span> {user.phone ?? "-"}</p>
+          <p><span className="font-semibold">Phone:</span> {formatPhoneDisplay(user.phone)}</p>
           <p><span className="font-semibold">Title:</span> {user.title ?? "-"}</p>
           <p><span className="font-semibold">Department:</span> {user.department ?? "-"}</p>
           <p><span className="font-semibold">Default Landing:</span> {user.defaultLanding}</p>

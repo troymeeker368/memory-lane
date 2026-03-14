@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import {
   listCenterBillingSettingsSupabase,
   upsertCenterBillingSettingSupabase
@@ -291,7 +292,7 @@ export async function savePayorAction(formData: FormData) {
     payor_type: asString(formData, "payorType") || "Private",
     billing_contact_name: asNullableString(formData, "billingContactName"),
     billing_email: asNullableString(formData, "billingEmail"),
-    billing_phone: asNullableString(formData, "billingPhone"),
+    billing_phone: normalizePhoneForStorage(asNullableString(formData, "billingPhone")),
     billing_method: billingMethod,
     auto_draft_enabled: asBoolean(formData, "autoDraftEnabled", false),
     quickbooks_customer_name: asNullableString(formData, "quickbooksCustomerName"),

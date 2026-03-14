@@ -15,21 +15,27 @@ import type { PDFDocument as PDFDocumentType } from "pdf-lib";
 const MILLIMETER_TO_POINTS = 72 / 25.4;
 const BADGE_WIDTH_MM = 100;
 const BADGE_HEIGHT_MM = 85;
+const STAR_GROUP_SRC =
+  "https://dcnyjtfyftamcdsaxrsz.supabase.co/storage/v1/object/public/Assets/TS_Gray_Star_Group_4%20(1).png";
 
 const BADGE_LAYOUT = {
-  sidePaddingMm: 6.3,
-  logoTopMm: 7.9,
-  logoWidthMm: 42.3,
-  nameTopMm: 31.25,
-  nameMaxSizePt: 18,
-  nameMinSizePt: 12,
-  nameLineHeight: 1.05,
+  sidePaddingMm: 3.6,
+  logoTopMm: 5.2,
+  logoMaxWidthMm: 64,
+  logoMaxHeightMm: 34,
+  starTopMm: 7.8,
+  starSideMm: 5.2,
+  starWidthMm: 17.5,
+  nameTopMm: 41.2,
+  nameMaxSizePt: 36,
+  nameMinSizePt: 14,
+  nameLineHeight: 1.12,
   nameMaxLines: 2,
-  lockerTopMm: 47.66,
-  lockerSizePt: 10.8,
-  dividerTopMm: 59.84,
+  lockerTopMm: 61.8,
+  lockerSizePt: 16,
+  dividerTopMm: 71,
   dividerThicknessPt: 1.5,
-  iconsTopMm: 63.55,
+  iconsTopMm: 74,
   iconSizeMm: 9.5,
   iconGapMm: 2.1,
   textBadgeWidthMm: 11.9
@@ -148,6 +154,17 @@ async function loadPngFromPublic(pdf: PDFDocumentType, src: string) {
   }
 }
 
+async function loadPngFromUrl(pdf: PDFDocumentType, src: string) {
+  try {
+    const response = await fetch(src, { cache: "force-cache" });
+    if (!response.ok) return null;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return await pdf.embedPng(bytes);
+  } catch {
+    return null;
+  }
+}
+
 async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?: string[]) {
   const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
   const badge = await getMemberNameBadgeDetail(memberId);
@@ -171,11 +188,12 @@ async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?
   const fontRegular = await pdf.embedFont(StandardFonts.Helvetica);
   const brandBlue = rgb(0.106, 0.243, 0.576);
 
-  const logoWidth = toPoints(BADGE_LAYOUT.logoWidthMm);
+  const logoMaxWidth = toPoints(BADGE_LAYOUT.logoMaxWidthMm);
+  const logoMaxHeight = toPoints(BADGE_LAYOUT.logoMaxHeightMm);
   let logoHeight = toPoints(12);
   const logoImage = await loadPngFromPublic(pdf, badge.logoSrc);
   if (logoImage) {
-    const logoScale = logoWidth / logoImage.width;
+    const logoScale = Math.min(logoMaxWidth / logoImage.width, logoMaxHeight / logoImage.height);
     const scaledLogoWidth = logoImage.width * logoScale;
     logoHeight = logoImage.height * logoScale;
     page.drawImage(logoImage, {
@@ -196,6 +214,39 @@ async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?
     });
   }
 
+  const starImage = await loadPngFromUrl(pdf, STAR_GROUP_SRC);
+  if (starImage) {
+    const starWidth = toPoints(BADGE_LAYOUT.starWidthMm);
+    const starScale = starWidth / starImage.width;
+    const starHeight = starImage.height * starScale;
+    const starTopY = toPageYFromTop(pageHeight, BADGE_LAYOUT.starTopMm, starHeight);
+    const leftX = toPoints(BADGE_LAYOUT.starSideMm);
+    const rightX = pageWidth - toPoints(BADGE_LAYOUT.starSideMm) - starWidth;
+
+    page.drawImage(starImage, {
+      x: leftX,
+      y: starTopY,
+      width: starWidth,
+      height: starHeight
+    });
+
+    try {
+      page.drawImage(starImage, {
+        x: rightX + starWidth,
+        y: starTopY,
+        width: -starWidth,
+        height: starHeight
+      });
+    } catch {
+      page.drawImage(starImage, {
+        x: rightX,
+        y: starTopY,
+        width: starWidth,
+        height: starHeight
+      });
+    }
+  }
+
   const availableNameWidth = pageWidth - sidePadding * 2;
   let nameFontSize = BADGE_LAYOUT.nameMaxSizePt;
   let wrappedName = wrapTextByWords(
@@ -208,7 +259,9 @@ async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?
   while (
     nameFontSize > BADGE_LAYOUT.nameMinSizePt &&
     (wrappedName.truncated ||
-      wrappedName.lines.some((line) => fontBold.widthOfTextAtSize(line, nameFontSize) > availableNameWidth))
+      wrappedName.lines.some((line) => fontBold.widthOfTextAtSize(line, nameFontSize) > availableNameWidth) ||
+      wrappedName.lines.length * nameFontSize * BADGE_LAYOUT.nameLineHeight >
+        toPoints(BADGE_LAYOUT.lockerTopMm - BADGE_LAYOUT.nameTopMm - 2))
   ) {
     nameFontSize -= 1;
     wrappedName = wrapTextByWords(

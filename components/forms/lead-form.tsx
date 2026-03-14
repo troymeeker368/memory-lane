@@ -12,6 +12,7 @@ import {
   LEAD_STAGE_OPTIONS,
   LEAD_STATUS_OPTIONS
 } from "@/lib/canonical";
+import { formatPhoneInput } from "@/lib/phone";
 import { toEasternDate } from "@/lib/timezone";
 
 type LeadLostReason = "" | (typeof LEAD_LOST_REASON_OPTIONS)[number];
@@ -61,7 +62,7 @@ export function LeadForm() {
         </label>
         <label className="space-y-1 text-sm">
           <span className="font-semibold">Phone</span>
-          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverPhone} onChange={(e) => setForm((f) => ({ ...f, caregiverPhone: e.target.value }))} />
+          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverPhone} onChange={(e) => setForm((f) => ({ ...f, caregiverPhone: formatPhoneInput(e.target.value) }))} />
         </label>
         <label className="space-y-1 text-sm">
           <span className="font-semibold">Email</span>

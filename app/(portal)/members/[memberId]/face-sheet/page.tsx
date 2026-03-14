@@ -5,6 +5,7 @@ import { DocumentBrandHeader } from "@/components/documents/document-brand-heade
 import { FaceSheetActions } from "@/components/face-sheet/face-sheet-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireRoles } from "@/lib/auth";
+import { formatPhoneDisplay } from "@/lib/phone";
 import { getMemberFaceSheet } from "@/lib/services/member-face-sheet";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
@@ -121,7 +122,7 @@ export default async function MemberFaceSheetPage({
                   <td>{contact.category}</td>
                   <td>{contact.name}</td>
                   <td>{contact.relationship ?? "-"}</td>
-                  <td>{contact.phone ?? "-"}</td>
+                  <td>{formatPhoneDisplay(contact.phone)}</td>
                   <td>{contact.email ?? "-"}</td>
                 </tr>
               ))}
@@ -268,7 +269,7 @@ export default async function MemberFaceSheetPage({
                   <td>{provider.name}</td>
                   <td>{provider.specialty ?? "-"}</td>
                   <td>{provider.practice ?? "-"}</td>
-                  <td>{provider.phone ?? "-"}</td>
+                  <td>{formatPhoneDisplay(provider.phone)}</td>
                 </tr>
               ))}
             </tbody>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { sendEnrollmentPacketAction } from "@/app/sales-actions";
@@ -35,10 +35,11 @@ export function SalesEnrollmentPacketStandaloneAction({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [leadId, setLeadId] = useState("");
   const [caregiverEmail, setCaregiverEmail] = useState("");
-  const [requestedDays, setRequestedDays] = useState<string[]>(["Monday", "Wednesday", "Friday"]);
+  const [requestedDays, setRequestedDays] = useState<string[]>([]);
   const [transportation, setTransportation] = useState("Door to Door");
   const [optionalMessage, setOptionalMessage] = useState("");
   const [communityFee, setCommunityFee] = useState<string>(pricingPreview.communityFeeAmount == null ? "" : pricingPreview.communityFeeAmount.toFixed(2));
@@ -49,7 +50,9 @@ export function SalesEnrollmentPacketStandaloneAction({
     requestId: string;
     requestUrl: string;
   } | null>(null);
+  const submitGuardRef = useRef(false);
   const router = useRouter();
+  const isWorking = isPending || isSubmitting;
 
   const leadById = useMemo(() => new Map(leads.map((lead) => [lead.id, lead] as const)), [leads]);
   const resolvedDaysPerWeek = requestedDays.length;
@@ -87,6 +90,7 @@ export function SalesEnrollmentPacketStandaloneAction({
   };
 
   const onSend = () => {
+    if (submitGuardRef.current) return;
     if (!leadId) {
       setStatus("Select a lead before sending.");
       return;
@@ -107,26 +111,35 @@ export function SalesEnrollmentPacketStandaloneAction({
     }
 
     setStatus(null);
+    submitGuardRef.current = true;
+    setIsSubmitting(true);
     startTransition(async () => {
-      const result = await sendEnrollmentPacketAction({
-        leadId,
-        caregiverEmail,
-        requestedDays,
-        transportation,
-        communityFee: parsedCommunityFee,
-        dailyRate: parsedDailyRate,
-        optionalMessage
-      });
-      if (!result.ok) {
-        setStatus(result.error);
-        if ("redirectTo" in result && result.redirectTo) {
-          router.push(result.redirectTo);
+      try {
+        const result = await sendEnrollmentPacketAction({
+          leadId,
+          caregiverEmail,
+          requestedDays,
+          transportation,
+          communityFee: parsedCommunityFee,
+          dailyRate: parsedDailyRate,
+          optionalMessage
+        });
+        if (!result.ok) {
+          setStatus(result.error);
+          if ("redirectTo" in result && result.redirectTo) {
+            router.push(result.redirectTo);
+          }
+          return;
         }
-        return;
+
+        setSentResult({ requestId: result.requestId, requestUrl: result.requestUrl });
+        setStatus(null);
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Unable to send enrollment packet.");
+      } finally {
+        setIsSubmitting(false);
+        submitGuardRef.current = false;
       }
-      setSentResult({ requestId: result.requestId, requestUrl: result.requestUrl });
-      setStatus(null);
-      router.refresh();
     });
   };
 
@@ -139,10 +152,9 @@ export function SalesEnrollmentPacketStandaloneAction({
 
   return (
     <div className="space-y-2">
-      <Button type="button" onClick={() => setIsOpen(true)} disabled={isPending}>
+      <Button type="button" onClick={() => setIsOpen(true)} disabled={isWorking}>
         Send Enrollment Packet
       </Button>
-      {status ? <p className="text-sm text-muted">{status}</p> : null}
 
       {isOpen ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
@@ -166,8 +178,9 @@ export function SalesEnrollmentPacketStandaloneAction({
                     onClick={() => {
                       setIsOpen(false);
                       setSentResult(null);
+                      router.refresh();
                     }}
-                    disabled={isPending}
+                    disabled={isWorking}
                   >
                     Done
                   </button>
@@ -179,6 +192,9 @@ export function SalesEnrollmentPacketStandaloneAction({
                 <p className="mt-1 text-sm text-muted">
                   Select a lead and provide packet values before sending.
                 </p>
+                {status ? (
+                  <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{status}</p>
+                ) : null}
 
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <label className="space-y-1 text-sm">
@@ -187,7 +203,7 @@ export function SalesEnrollmentPacketStandaloneAction({
                       className="h-11 w-full rounded-lg border border-border px-3"
                       value={leadId}
                       onChange={(event) => onLeadChange(event.target.value)}
-                      disabled={isPending}
+                      disabled={isWorking}
                     >
                       <option value="">Select lead</option>
                       {leads.map((lead) => (
@@ -204,7 +220,7 @@ export function SalesEnrollmentPacketStandaloneAction({
                       className="h-11 w-full rounded-lg border border-border px-3"
                       value={caregiverEmail}
                       onChange={(event) => setCaregiverEmail(event.target.value)}
-                      disabled={isPending}
+                      disabled={isWorking}
                     />
                   </label>
 
@@ -217,7 +233,7 @@ export function SalesEnrollmentPacketStandaloneAction({
                             type="checkbox"
                             checked={requestedDays.includes(day)}
                             onChange={() => toggleRequestedDay(day)}
-                            disabled={isPending}
+                            disabled={isWorking}
                           />
                           <span>{day}</span>
                         </label>
@@ -231,7 +247,7 @@ export function SalesEnrollmentPacketStandaloneAction({
                       className="h-11 w-full rounded-lg border border-border px-3"
                       value={transportation}
                       onChange={(event) => setTransportation(event.target.value)}
-                      disabled={isPending}
+                      disabled={isWorking}
                     >
                       <option value="Door to Door">Door to Door</option>
                       <option value="Bus Stop">Bus Stop</option>
@@ -251,7 +267,7 @@ export function SalesEnrollmentPacketStandaloneAction({
                         setCommunityFee(event.target.value);
                         setCommunityFeeEdited(true);
                       }}
-                      disabled={isPending}
+                      disabled={isWorking}
                     />
                   </label>
 
@@ -267,7 +283,7 @@ export function SalesEnrollmentPacketStandaloneAction({
                         setDailyRate(event.target.value);
                         setDailyRateEdited(true);
                       }}
-                      disabled={isPending}
+                      disabled={isWorking}
                     />
                   </label>
 
@@ -289,7 +305,7 @@ export function SalesEnrollmentPacketStandaloneAction({
                         type="button"
                         className="rounded-lg border border-border px-3 py-1 text-xs font-semibold"
                         onClick={resetPricingDefaults}
-                        disabled={isPending}
+                        disabled={isWorking}
                       >
                         Reset Pricing to Defaults
                       </button>
@@ -319,7 +335,7 @@ export function SalesEnrollmentPacketStandaloneAction({
                       className="min-h-[90px] w-full rounded-lg border border-border px-3 py-2"
                       value={optionalMessage}
                       onChange={(event) => setOptionalMessage(event.target.value)}
-                      disabled={isPending}
+                      disabled={isWorking}
                     />
                   </label>
                 </div>
@@ -329,7 +345,7 @@ export function SalesEnrollmentPacketStandaloneAction({
                     type="button"
                     className="rounded-lg border border-border px-4 py-2 text-sm font-semibold"
                     onClick={() => setIsOpen(false)}
-                    disabled={isPending}
+                    disabled={isWorking}
                   >
                     Cancel
                   </button>
@@ -337,9 +353,9 @@ export function SalesEnrollmentPacketStandaloneAction({
                     type="button"
                     className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white"
                     onClick={onSend}
-                    disabled={isPending}
+                    disabled={isWorking}
                   >
-                    {isPending ? "Sending..." : "Send Packet"}
+                    {isWorking ? "Sending..." : "Send Packet"}
                   </button>
                 </div>
               </>

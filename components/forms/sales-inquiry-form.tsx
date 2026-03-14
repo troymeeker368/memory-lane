@@ -17,6 +17,7 @@ import {
   canonicalLeadStage,
   canonicalLeadStatus
 } from "@/lib/canonical";
+import { formatPhoneDisplay, formatPhoneInput } from "@/lib/phone";
 import { toEasternDate } from "@/lib/timezone";
 
 export type PartnerLookup = {
@@ -183,7 +184,7 @@ export function SalesInquiryForm({
       caregiverName: initialLead?.caregiver_name ?? "",
       caregiverRelationship: initialLead?.caregiver_relationship ?? "",
       caregiverEmail: initialLead?.caregiver_email ?? "",
-      caregiverPhone: initialLead?.caregiver_phone ?? "",
+      caregiverPhone: formatPhoneInput(initialLead?.caregiver_phone ?? ""),
       memberName: initialLead?.member_name ?? "",
       memberDob: initialLead?.member_dob ?? "",
       leadSource: (initialLead?.lead_source as (typeof LEAD_SOURCE_OPTIONS)[number]) ?? "Referral",
@@ -293,7 +294,7 @@ export function SalesInquiryForm({
         </div>
         <div>
           <FieldLabel>Caregiver Phone</FieldLabel>
-          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverPhone} onChange={(event) => updateForm((current) => ({ ...current, caregiverPhone: event.target.value }))} />
+          <input className="h-11 w-full rounded-lg border border-border px-3" value={form.caregiverPhone} onChange={(event) => updateForm((current) => ({ ...current, caregiverPhone: formatPhoneInput(event.target.value) }))} />
         </div>
         <div>
           <FieldLabel>Caregiver Email</FieldLabel>
@@ -574,7 +575,7 @@ export function SalesInquiryForm({
                 <p className="text-xs text-muted">
                   Stage/Status: {match.stage} / {match.status} | Inquiry Date: {match.inquiryDate}
                 </p>
-                <p className="text-xs text-muted">Caregiver: {match.caregiverName || "-"} | Phone: {match.caregiverPhone || "-"} | Email: {match.caregiverEmail || "-"}</p>
+                <p className="text-xs text-muted">Caregiver: {match.caregiverName || "-"} | Phone: {formatPhoneDisplay(match.caregiverPhone)} | Email: {match.caregiverEmail || "-"}</p>
                 <p className="mt-1 text-xs text-slate-700">{match.reasons.join(" ")}</p>
                 <Link className="mt-2 inline-block text-xs font-semibold text-brand" href={`/sales/leads/${match.leadId}`}>
                   Review Existing Lead

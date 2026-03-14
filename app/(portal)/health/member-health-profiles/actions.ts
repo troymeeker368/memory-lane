@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { syncMhpToCommandCenter as syncMhpToCommandCenterService } from "@/lib/services/member-profile-sync";
 import {
   countMemberDiagnosesSupabase,
@@ -207,9 +208,11 @@ export async function saveMhpOverviewAction(formData: FormData) {
   const profileImageUrl = await asUploadedImageDataUrl(formData, "photoFile", profile.profile_image_url ?? null);
   const sameAsPrimary = asNullableBool(formData, "sameAsPrimary") === true;
   const primaryCaregiverName = asNullableString(formData, "primaryCaregiverName");
-  const primaryCaregiverPhone = asNullableString(formData, "primaryCaregiverPhone");
+  const primaryCaregiverPhone = normalizePhoneForStorage(asNullableString(formData, "primaryCaregiverPhone"));
   const responsiblePartyName = sameAsPrimary ? primaryCaregiverName : asNullableString(formData, "responsiblePartyName");
-  const responsiblePartyPhone = sameAsPrimary ? primaryCaregiverPhone : asNullableString(formData, "responsiblePartyPhone");
+  const responsiblePartyPhone = sameAsPrimary
+    ? primaryCaregiverPhone
+    : normalizePhoneForStorage(asNullableString(formData, "responsiblePartyPhone"));
   const memberDob = asNullableString(formData, "memberDob");
 
   await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
@@ -659,7 +662,7 @@ export async function addMhpProviderAction(formData: FormData) {
 
   const specialty = resolveProviderSpecialty(formData);
   const practiceName = asNullableString(formData, "practiceName");
-  const providerPhone = asNullableString(formData, "providerPhone");
+  const providerPhone = normalizePhoneForStorage(asNullableString(formData, "providerPhone"));
   const providerName = asString(formData, "providerName");
   await createMemberProviderSupabase({
     member_id: memberId,
@@ -698,7 +701,7 @@ export async function updateMhpProviderAction(formData: FormData) {
   const specialty = resolveProviderSpecialty(formData);
   const providerName = asString(formData, "providerName");
   const practiceName = asNullableString(formData, "practiceName");
-  const providerPhone = asNullableString(formData, "providerPhone");
+  const providerPhone = normalizePhoneForStorage(asNullableString(formData, "providerPhone"));
   await updateMemberProviderSupabase(providerId, {
     provider_name: providerName,
     specialty: specialty.specialty,
@@ -792,7 +795,7 @@ export async function addMhpProviderInlineAction(formData: FormData) {
   const now = toEasternISO();
   const specialty = resolveProviderSpecialty(formData);
   const practiceName = asNullableString(formData, "practiceName");
-  const providerPhone = asNullableString(formData, "providerPhone");
+  const providerPhone = normalizePhoneForStorage(asNullableString(formData, "providerPhone"));
   const created = await createMemberProviderSupabase({
     member_id: memberId,
     provider_name: providerName,
@@ -847,7 +850,7 @@ export async function updateMhpProviderInlineAction(formData: FormData) {
 
   const specialty = resolveProviderSpecialty(formData);
   const practiceName = asNullableString(formData, "practiceName");
-  const providerPhone = asNullableString(formData, "providerPhone");
+  const providerPhone = normalizePhoneForStorage(asNullableString(formData, "providerPhone"));
   const now = toEasternISO();
   const updated = await updateMemberProviderSupabase(providerId, {
     provider_name: providerName,

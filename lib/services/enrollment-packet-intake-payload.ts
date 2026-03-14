@@ -1,3 +1,5 @@
+import { normalizePhoneForStorage } from "@/lib/phone";
+
 export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "memberLegalFirstName",
   "memberLegalLastName",
@@ -153,6 +155,15 @@ export type EnrollmentPacketIntakePayload = {
 
 type RawPayload = Partial<Record<EnrollmentPacketIntakeFieldKey, unknown>>;
 
+const ENROLLMENT_PACKET_PHONE_KEYS: EnrollmentPacketIntakeTextKey[] = [
+  "primaryContactPhone",
+  "secondaryContactPhone",
+  "pcpPhone",
+  "physicianPhone",
+  "pcpFax",
+  "physicianFax"
+];
+
 function clean(value: unknown) {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
@@ -213,6 +224,10 @@ export function normalizeEnrollmentPacketIntakePayload(raw: RawPayload | null | 
 
   ENROLLMENT_PACKET_INTAKE_TEXT_KEYS.forEach((key) => {
     normalized[key] = clean(source[key]);
+  });
+
+  ENROLLMENT_PACKET_PHONE_KEYS.forEach((key) => {
+    normalized[key] = normalizePhoneForStorage(normalized[key]);
   });
 
   ENROLLMENT_PACKET_INTAKE_ARRAY_KEYS.forEach((key) => {

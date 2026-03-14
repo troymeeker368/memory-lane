@@ -5,6 +5,7 @@ import { type ChangeEvent } from "react";
 import { saveMhpOverviewAction } from "@/app/(portal)/health/member-health-profiles/actions";
 import { SegmentedChoiceGroup } from "@/components/forms/segmented-choice-group";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
+import { formatPhoneInput } from "@/lib/phone";
 
 function Field({
   label,
@@ -89,9 +90,9 @@ export function MhpOverviewForm(props: {
     props.responsiblePartyPhone
   ];
   const [primaryCaregiverName, setPrimaryCaregiverName] = usePropSyncedState(props.primaryCaregiverName, syncDeps);
-  const [primaryCaregiverPhone, setPrimaryCaregiverPhone] = usePropSyncedState(props.primaryCaregiverPhone, syncDeps);
+  const [primaryCaregiverPhone, setPrimaryCaregiverPhone] = usePropSyncedState(formatPhoneInput(props.primaryCaregiverPhone), syncDeps);
   const [responsiblePartyName, setResponsiblePartyName] = usePropSyncedState(props.responsiblePartyName, syncDeps);
-  const [responsiblePartyPhone, setResponsiblePartyPhone] = usePropSyncedState(props.responsiblePartyPhone, syncDeps);
+  const [responsiblePartyPhone, setResponsiblePartyPhone] = usePropSyncedState(formatPhoneInput(props.responsiblePartyPhone), syncDeps);
   const [sameAsPrimary, setSameAsPrimary] = usePropSyncedState(false, syncDeps);
 
   const handlePrimaryNameChange = (next: string) => {
@@ -100,8 +101,9 @@ export function MhpOverviewForm(props: {
   };
 
   const handlePrimaryPhoneChange = (next: string) => {
-    setPrimaryCaregiverPhone(next);
-    if (sameAsPrimary) setResponsiblePartyPhone(next);
+    const formatted = formatPhoneInput(next);
+    setPrimaryCaregiverPhone(formatted);
+    if (sameAsPrimary) setResponsiblePartyPhone(formatted);
   };
 
   const handleSameAsPrimaryChange = (checked: boolean) => {
@@ -158,7 +160,7 @@ export function MhpOverviewForm(props: {
         label="Responsible Party Phone"
         name="responsiblePartyPhone"
         value={responsiblePartyPhone}
-        onChange={setResponsiblePartyPhone}
+        onChange={(next) => setResponsiblePartyPhone(formatPhoneInput(next))}
         disabled={sameAsPrimary}
       />
 

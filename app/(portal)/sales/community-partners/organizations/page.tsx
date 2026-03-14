@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { formatPhoneDisplay } from "@/lib/phone";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 import { formatOptionalDate } from "@/lib/utils";
 
@@ -134,7 +135,7 @@ export default async function CommunityPartnerOrganizationsPage({
                         partner.contact_name || "-"
                       )}
                     </td>
-                    <td>{partner.primary_phone || "-"}</td>
+                    <td>{formatPhoneDisplay(partner.primary_phone)}</td>
                     <td>{partner.primary_email || "-"}</td>
                     <td>{partner.location || "-"}</td>
                     <td>{formatOptionalDate(partner.last_touched)}</td>

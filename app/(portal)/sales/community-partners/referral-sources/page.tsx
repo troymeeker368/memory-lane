@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { formatPhoneDisplay } from "@/lib/phone";
 import { getSalesWorkflows } from "@/lib/services/sales-workflows";
 import { formatOptionalDate } from "@/lib/utils";
 
@@ -102,7 +103,7 @@ export default async function ReferralSourcesPage({
                   <td><Link className="font-semibold text-brand" href={`/sales/community-partners/referral-sources/${source.id}`}>{source.contact_name}</Link></td>
                   <td>{source.organization_name}</td>
                   <td>{source.job_title || "-"}</td>
-                  <td>{source.primary_phone || "-"}</td>
+                  <td>{formatPhoneDisplay(source.primary_phone)}</td>
                   <td>{source.primary_email || "-"}</td>
                   <td>{source.preferred_contact_method || "-"}</td>
                   <td>{formatOptionalDate(source.last_touched)}</td>

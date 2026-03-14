@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { requireRoles } from "@/lib/auth";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizePermissionSet, PERMISSION_MODULES } from "@/lib/permissions";
 import {
   createManagedUser,
@@ -51,7 +52,7 @@ function parseUserFromFormData(formData: FormData) {
     email: String(formData.get("email") ?? "").trim(),
     role: String(formData.get("role") ?? "program-assistant") as AppRole,
     status: String(formData.get("status") ?? "active") as UserStatus,
-    phone: String(formData.get("phone") ?? "").trim(),
+    phone: normalizePhoneForStorage(String(formData.get("phone") ?? "")) ?? "",
     title: String(formData.get("title") ?? "").trim(),
     department: String(formData.get("department") ?? "").trim(),
     defaultLanding: String(formData.get("defaultLanding") ?? "").trim()

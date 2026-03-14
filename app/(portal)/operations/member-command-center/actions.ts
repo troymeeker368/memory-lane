@@ -4,6 +4,7 @@ import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import {
   MEMBER_CONTACT_CATEGORY_OPTIONS,
@@ -66,6 +67,10 @@ function asOptionalPositiveNumber(formData: FormData, key: string) {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return Number(parsed.toFixed(2));
+}
+
+function normalizePhone(value: string | null | undefined) {
+  return normalizePhoneForStorage(value);
 }
 
 function normalizeLockerInput(raw: string) {
@@ -1093,9 +1098,9 @@ export async function upsertMemberContactAction(raw: {
         category: normalizedCategory,
         category_other: normalizedCategory === "Other" ? categoryOther : null,
         email: raw.email?.trim() || null,
-        cellular_number: raw.cellularNumber?.trim() || null,
-        work_number: raw.workNumber?.trim() || null,
-        home_number: raw.homeNumber?.trim() || null,
+        cellular_number: normalizePhone(raw.cellularNumber),
+        work_number: normalizePhone(raw.workNumber),
+        home_number: normalizePhone(raw.homeNumber),
         street_address: raw.streetAddress?.trim() || null,
         city: raw.city?.trim() || null,
         state: raw.state?.trim() || null,
@@ -1116,9 +1121,9 @@ export async function upsertMemberContactAction(raw: {
         category: normalizedCategory,
         category_other: normalizedCategory === "Other" ? categoryOther : null,
         email: raw.email?.trim() || null,
-        cellular_number: raw.cellularNumber?.trim() || null,
-        work_number: raw.workNumber?.trim() || null,
-        home_number: raw.homeNumber?.trim() || null,
+        cellular_number: normalizePhone(raw.cellularNumber),
+        work_number: normalizePhone(raw.workNumber),
+        home_number: normalizePhone(raw.homeNumber),
         street_address: raw.streetAddress?.trim() || null,
         city: raw.city?.trim() || null,
         state: raw.state?.trim() || null,

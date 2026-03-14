@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizeOperationalDateOnly, getWeekdayForDate, type OperationsWeekdayKey } from "@/lib/services/operations-calendar";
 import { getTransportSlotForScheduleDay } from "@/lib/services/member-schedule-selectors";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
@@ -310,7 +311,7 @@ export async function upsertTransportationManifestAdjustmentSupabase(input: {
         door_to_door_address: input.doorToDoorAddress,
         caregiver_contact_id: input.caregiverContactId,
         caregiver_contact_name_snapshot: input.caregiverContactNameSnapshot,
-        caregiver_contact_phone_snapshot: input.caregiverContactPhoneSnapshot,
+        caregiver_contact_phone_snapshot: normalizePhoneForStorage(input.caregiverContactPhoneSnapshot),
         caregiver_contact_address_snapshot: input.caregiverContactAddressSnapshot,
         notes: input.notes,
         created_by_user_id: input.actorUserId,
@@ -342,7 +343,7 @@ export async function upsertTransportationManifestAdjustmentSupabase(input: {
       door_to_door_address: input.doorToDoorAddress,
       caregiver_contact_id: input.caregiverContactId,
       caregiver_contact_name_snapshot: input.caregiverContactNameSnapshot,
-      caregiver_contact_phone_snapshot: input.caregiverContactPhoneSnapshot,
+      caregiver_contact_phone_snapshot: normalizePhoneForStorage(input.caregiverContactPhoneSnapshot),
       caregiver_contact_address_snapshot: input.caregiverContactAddressSnapshot,
       notes: input.notes,
       created_by_user_id: input.actorUserId,
@@ -469,7 +470,7 @@ export async function getTransportationManifestSupabase(input?: {
         caregiverContactId: contact?.id ?? null,
         caregiverContactName: contact?.contact_name ?? null,
         caregiverContactPhone:
-          contact?.cellular_number ?? contact?.home_number ?? contact?.work_number ?? null,
+          normalizePhoneForStorage(contact?.cellular_number ?? contact?.home_number ?? contact?.work_number ?? null),
         caregiverContactAddress:
           [contact?.street_address, contact?.city, contact?.state, contact?.zip]
             .map((value) => (value ?? "").trim())
@@ -525,11 +526,13 @@ export async function getTransportationManifestSupabase(input?: {
       caregiverContactId: row.caregiver_contact_id ?? contact?.id ?? null,
       caregiverContactName: row.caregiver_contact_name_snapshot ?? contact?.contact_name ?? null,
       caregiverContactPhone:
-        row.caregiver_contact_phone_snapshot ??
-        contact?.cellular_number ??
-        contact?.home_number ??
-        contact?.work_number ??
-        null,
+        normalizePhoneForStorage(
+          row.caregiver_contact_phone_snapshot ??
+          contact?.cellular_number ??
+          contact?.home_number ??
+          contact?.work_number ??
+          null
+        ),
       caregiverContactAddress:
         row.caregiver_contact_address_snapshot ??
         ([contact?.street_address, contact?.city, contact?.state, contact?.zip]

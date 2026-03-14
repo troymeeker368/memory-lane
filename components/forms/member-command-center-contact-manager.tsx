@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { MEMBER_CONTACT_CATEGORY_OPTIONS } from "@/lib/canonical";
+import { formatPhoneDisplay, formatPhoneInput } from "@/lib/phone";
 import { deleteMemberContactAction, upsertMemberContactAction } from "@/app/(portal)/operations/member-command-center/actions";
 
 interface ContactRow {
@@ -52,9 +53,9 @@ function normalizeContactRow(input: unknown): ContactRow | null {
     category: String(source.category ?? "Other"),
     category_other: (source.category_other ?? source.categoryOther ?? null) as string | null,
     email: (source.email ?? null) as string | null,
-    cellular_number: (source.cellular_number ?? source.cellularNumber ?? null) as string | null,
-    work_number: (source.work_number ?? source.workNumber ?? null) as string | null,
-    home_number: (source.home_number ?? source.homeNumber ?? null) as string | null,
+    cellular_number: formatPhoneInput((source.cellular_number ?? source.cellularNumber ?? null) as string | null) || null,
+    work_number: formatPhoneInput((source.work_number ?? source.workNumber ?? null) as string | null) || null,
+    home_number: formatPhoneInput((source.home_number ?? source.homeNumber ?? null) as string | null) || null,
     street_address: (source.street_address ?? source.streetAddress ?? null) as string | null,
     city: (source.city ?? null) as string | null,
     state: (source.state ?? null) as string | null,
@@ -247,19 +248,19 @@ export function MemberCommandCenterContactManager({
               className="h-10 rounded-lg border border-border px-3"
               placeholder="Cell"
               value={form.cellularNumber}
-              onChange={(event) => setForm((current) => ({ ...current, cellularNumber: event.target.value }))}
+              onChange={(event) => setForm((current) => ({ ...current, cellularNumber: formatPhoneInput(event.target.value) }))}
             />
             <input
               className="h-10 rounded-lg border border-border px-3"
               placeholder="Work"
               value={form.workNumber}
-              onChange={(event) => setForm((current) => ({ ...current, workNumber: event.target.value }))}
+              onChange={(event) => setForm((current) => ({ ...current, workNumber: formatPhoneInput(event.target.value) }))}
             />
             <input
               className="h-10 rounded-lg border border-border px-3"
               placeholder="Home"
               value={form.homeNumber}
-              onChange={(event) => setForm((current) => ({ ...current, homeNumber: event.target.value }))}
+              onChange={(event) => setForm((current) => ({ ...current, homeNumber: formatPhoneInput(event.target.value) }))}
             />
             <input
               className="h-10 rounded-lg border border-border px-3 md:col-span-2"
@@ -339,9 +340,9 @@ export function MemberCommandCenterContactManager({
                   <td>
                     <div className="text-xs leading-relaxed">
                       <p>{row.email ?? "-"}</p>
-                      <p>Cell: {row.cellular_number ?? "-"}</p>
-                      <p>Work: {row.work_number ?? "-"}</p>
-                      <p>Home: {row.home_number ?? "-"}</p>
+                      <p>Cell: {formatPhoneDisplay(row.cellular_number)}</p>
+                      <p>Work: {formatPhoneDisplay(row.work_number)}</p>
+                      <p>Home: {formatPhoneDisplay(row.home_number)}</p>
                     </div>
                   </td>
                   <td>{[row.street_address, row.city, row.state, row.zip].filter(Boolean).join(", ") || "-"}</td>

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 import {
@@ -10,6 +11,11 @@ import {
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
+const RPC_CONVERT_LEAD_TO_MEMBER = "rpc_convert_lead_to_member";
+const RPC_CREATE_LEAD_WITH_MEMBER_CONVERSION = "rpc_create_lead_with_member_conversion";
+const LEGACY_RPC_CONVERT_LEAD_TO_MEMBER = "apply_lead_stage_transition_with_member_upsert";
+const LEGACY_RPC_CREATE_LEAD_WITH_MEMBER_CONVERSION = "create_lead_with_member_conversion";
+
 type LeadConversionRpcRow = {
   lead_id: string;
   member_id: string;
@@ -19,6 +25,31 @@ type LeadConversionRpcRow = {
   to_status: LeadDbStatus;
   business_status: CanonicalLeadBusinessStatus;
 };
+
+function isMissingRpcFunctionError(error: unknown, rpcName: string) {
+  if (!error || typeof error !== "object") return false;
+  const code = String((error as { code?: string }).code ?? "").toUpperCase();
+  const text = String((error as { message?: string }).message ?? "").toLowerCase();
+  return (code === "PGRST202" || code === "42883") && text.includes(rpcName.toLowerCase());
+}
+
+async function invokeLeadConversionRpcWithFallback(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  input: {
+    rpcName: string;
+    fallbackRpcName: string;
+    args: Record<string, unknown>;
+  }
+) {
+  try {
+    return await invokeSupabaseRpcOrThrow<unknown>(supabase, input.rpcName, input.args);
+  } catch (error) {
+    if (!isMissingRpcFunctionError(error, input.rpcName)) {
+      throw error;
+    }
+    return invokeSupabaseRpcOrThrow<unknown>(supabase, input.fallbackRpcName, input.args);
+  }
+}
 
 export interface LeadStageTransitionMemberUpsertResult {
   leadId: string;
@@ -67,7 +98,7 @@ export async function applyLeadStageTransitionWithMemberUpsertSupabase(input: {
   });
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("apply_lead_stage_transition_with_member_upsert", {
+  const args = {
     p_lead_id: input.leadId,
     p_to_stage: resolved.stage,
     p_to_status: resolved.dbStatus,
@@ -83,11 +114,12 @@ export async function applyLeadStageTransitionWithMemberUpsertSupabase(input: {
     p_additional_lead_patch: (input.additionalLeadPatch ?? {}) as JsonValue,
     p_now: toEasternISO(),
     p_today: toEasternDate()
+  };
+  const data = await invokeLeadConversionRpcWithFallback(supabase, {
+    rpcName: RPC_CONVERT_LEAD_TO_MEMBER,
+    fallbackRpcName: LEGACY_RPC_CONVERT_LEAD_TO_MEMBER,
+    args
   });
-
-  if (error) {
-    throw new Error(error.message);
-  }
 
   return toLeadConversionResult(data);
 }
@@ -111,7 +143,7 @@ export async function createLeadWithMemberConversionSupabase(input: {
   });
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("create_lead_with_member_conversion", {
+  const args = {
     p_to_stage: resolved.stage,
     p_to_status: resolved.dbStatus,
     p_business_status: resolved.businessStatus,
@@ -126,11 +158,12 @@ export async function createLeadWithMemberConversionSupabase(input: {
     p_lead_patch: input.leadPatch as JsonValue,
     p_now: toEasternISO(),
     p_today: toEasternDate()
+  };
+  const data = await invokeLeadConversionRpcWithFallback(supabase, {
+    rpcName: RPC_CREATE_LEAD_WITH_MEMBER_CONVERSION,
+    fallbackRpcName: LEGACY_RPC_CREATE_LEAD_WITH_MEMBER_CONVERSION,
+    args
   });
-
-  if (error) {
-    throw new Error(error.message);
-  }
 
   return toLeadConversionResult(data);
 }
