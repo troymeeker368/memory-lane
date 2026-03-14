@@ -11,7 +11,6 @@ import {
   getDailyAttendanceView,
   getDailyCensusView,
   getDailyTrackSheetView,
-  getIncompleteAttendanceSummary,
   getUnscheduledAttendanceMemberOptions,
   getWeeklyAttendanceView,
   getWeeklyCensusView,
@@ -219,7 +218,12 @@ export default async function OperationsAttendancePage({
   const isWeeklyCensusTab = selectedTab === "weekly-census";
 
   const dailyAttendance = isDailyAttendanceTab ? await getDailyAttendanceView({ selectedDate }) : null;
-  const incompleteAttendance = isDailyAttendanceTab ? await getIncompleteAttendanceSummary({ selectedDate }) : null;
+  const incompleteAttendance =
+    isDailyAttendanceTab && dailyAttendance
+      ? {
+          totalIncomplete: dailyAttendance.summary.incompleteMembers
+        }
+      : null;
   const weeklyAttendance = isWeeklyAttendanceTab ? await getWeeklyAttendanceView({ anchorDate: selectedWeekAnchor }) : null;
   const dailyCensus = isDailyCensusTab ? await getDailyCensusView({ selectedDate }) : null;
   const dailyTracks = isDailyTracksTab ? await getDailyTrackSheetView({ selectedDate }) : null;

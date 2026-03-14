@@ -16,6 +16,11 @@ import {
   type EnrollmentPacketIntakePayload
 } from "@/lib/services/enrollment-packet-intake-payload";
 import { mapEnrollmentPacketToDownstream } from "@/lib/services/enrollment-packet-intake-mapping";
+import {
+  calculateInitialEnrollmentAmount,
+  normalizeEnrollmentDateOnly
+} from "@/lib/services/enrollment-packet-proration";
+import { validateEnrollmentPacketCompletion } from "@/lib/services/enrollment-packet-public-schema";
 import { createUserNotification } from "@/lib/services/notifications";
 import { resolveEnrollmentPricingForRequestedDays } from "@/lib/services/enrollment-pricing";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
@@ -99,6 +104,8 @@ type MemberRow = {
 type LeadRow = {
   id: string;
   member_name: string | null;
+  member_start_date: string | null;
+  referral_name: string | null;
   caregiver_email: string | null;
   caregiver_name: string | null;
   caregiver_relationship: string | null;
@@ -172,6 +179,30 @@ function cleanEmail(value: string | null | undefined) {
   return normalized ? normalized.toLowerCase() : null;
 }
 
+function splitMemberName(fullName: string | null | undefined) {
+  const normalized = clean(fullName);
+  if (!normalized) {
+    return { firstName: null, lastName: null };
+  }
+
+  const parts = normalized.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: null };
+  }
+
+  return {
+    firstName: parts[0] ?? null,
+    lastName: parts.slice(1).join(" ") || null
+  };
+}
+
+function payloadMemberDisplayName(payload: EnrollmentPacketIntakePayload) {
+  const firstName = clean(payload.memberLegalFirstName);
+  const lastName = clean(payload.memberLegalLastName);
+  const combined = [firstName, lastName].filter((value): value is string => Boolean(value)).join(" ");
+  return clean(combined);
+}
+
 function normalizeStoredIntakePayload(fields: EnrollmentPacketFieldsRow) {
   return normalizeEnrollmentPacketIntakePayload({
     ...getDefaultEnrollmentPacketIntakePayload(),
@@ -195,6 +226,7 @@ function mergePublicProgressPayload(input: {
   caregiverName?: string | null;
   caregiverPhone?: string | null;
   caregiverEmail?: string | null;
+  primaryContactAddress?: string | null;
   caregiverAddressLine1?: string | null;
   caregiverAddressLine2?: string | null;
   caregiverCity?: string | null;
@@ -204,6 +236,7 @@ function mergePublicProgressPayload(input: {
   secondaryContactPhone?: string | null;
   secondaryContactEmail?: string | null;
   secondaryContactRelationship?: string | null;
+  secondaryContactAddress?: string | null;
   notes?: string | null;
 }) {
   return normalizeEnrollmentPacketIntakePayload({
@@ -212,6 +245,7 @@ function mergePublicProgressPayload(input: {
     primaryContactName: clean(input.caregiverName) ?? input.storedPayload.primaryContactName,
     primaryContactPhone: clean(input.caregiverPhone) ?? input.storedPayload.primaryContactPhone,
     primaryContactEmail: cleanEmail(input.caregiverEmail) ?? input.storedPayload.primaryContactEmail,
+    primaryContactAddress: clean(input.primaryContactAddress) ?? input.storedPayload.primaryContactAddress,
     memberAddressLine1: clean(input.caregiverAddressLine1) ?? input.storedPayload.memberAddressLine1,
     memberAddressLine2: clean(input.caregiverAddressLine2) ?? input.storedPayload.memberAddressLine2,
     memberCity: clean(input.caregiverCity) ?? input.storedPayload.memberCity,
@@ -222,6 +256,7 @@ function mergePublicProgressPayload(input: {
     secondaryContactEmail: cleanEmail(input.secondaryContactEmail) ?? input.storedPayload.secondaryContactEmail,
     secondaryContactRelationship:
       clean(input.secondaryContactRelationship) ?? input.storedPayload.secondaryContactRelationship,
+    secondaryContactAddress: clean(input.secondaryContactAddress) ?? input.storedPayload.secondaryContactAddress,
     additionalNotes: clean(input.notes) ?? input.storedPayload.additionalNotes
   });
 }
@@ -390,7 +425,9 @@ async function getLeadById(leadId: string) {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("leads")
-    .select("id, member_name, caregiver_email, caregiver_name, caregiver_relationship, caregiver_phone")
+    .select(
+      "id, member_name, member_start_date, referral_name, caregiver_email, caregiver_name, caregiver_relationship, caregiver_phone"
+    )
     .eq("id", leadId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -712,10 +749,12 @@ export async function sendEnrollmentPacketRequest(input: {
   senderFullName: string;
   senderEmail?: string | null;
   caregiverEmail?: string | null;
+  requestedStartDate?: string | null;
   requestedDays: string[];
   transportation: string | null;
   communityFeeOverride?: number | null;
   dailyRateOverride?: number | null;
+  totalInitialEnrollmentAmountOverride?: number | null;
   optionalMessage?: string | null;
   appBaseUrl?: string | null;
 }) {
@@ -737,8 +776,12 @@ export async function sendEnrollmentPacketRequest(input: {
     memberId: input.memberId,
     leadId: input.leadId
   });
+  const requestedStartDate = normalizeEnrollmentDateOnly(
+    clean(input.requestedStartDate) ?? clean(lead?.member_start_date) ?? toEasternDate()
+  );
   const resolvedPricing = await resolveEnrollmentPricingForRequestedDays({
-    requestedDays: input.requestedDays
+    requestedDays: input.requestedDays,
+    effectiveDate: requestedStartDate
   });
   const communityFeeOverride =
     typeof input.communityFeeOverride === "number" && Number.isFinite(input.communityFeeOverride)
@@ -750,19 +793,34 @@ export async function sendEnrollmentPacketRequest(input: {
       : null;
   const effectiveCommunityFee = communityFeeOverride ?? safeNumber(resolvedPricing.communityFeeAmount);
   const effectiveDailyRate = dailyRateOverride ?? safeNumber(resolvedPricing.dailyRateAmount);
+  const calculatedInitialEnrollmentAmount = calculateInitialEnrollmentAmount({
+    requestedStartDate,
+    requestedDays: resolvedPricing.requestedDays,
+    dailyRate: effectiveDailyRate
+  });
+  const totalInitialEnrollmentAmountOverride =
+    typeof input.totalInitialEnrollmentAmountOverride === "number" &&
+    Number.isFinite(input.totalInitialEnrollmentAmountOverride)
+      ? safeNumber(input.totalInitialEnrollmentAmountOverride, calculatedInitialEnrollmentAmount)
+      : null;
+  const effectiveInitialEnrollmentAmount = totalInitialEnrollmentAmountOverride ?? calculatedInitialEnrollmentAmount;
   const pricingSnapshot = {
     ...(resolvedPricing.snapshot ?? {}),
     selectedValues: {
       communityFee: effectiveCommunityFee,
-      dailyRate: effectiveDailyRate
+      dailyRate: effectiveDailyRate,
+      totalInitialEnrollmentAmount: effectiveInitialEnrollmentAmount,
+      requestedStartDate
     },
     overrides: {
       communityFee: communityFeeOverride,
-      dailyRate: dailyRateOverride
+      dailyRate: dailyRateOverride,
+      totalInitialEnrollmentAmount: totalInitialEnrollmentAmountOverride
     }
   };
   const caregiverEmail = cleanEmail(input.caregiverEmail) ?? cleanEmail(lead?.caregiver_email);
   if (!isEmail(caregiverEmail)) throw new Error("Caregiver email is required.");
+  const memberNameParts = splitMemberName(lead?.member_name ?? member.display_name);
 
   const active = await listActivePacketRows(member.id, lead?.id ?? null);
   if (active.length > 0) {
@@ -808,12 +866,24 @@ export async function sendEnrollmentPacketRequest(input: {
     caregiver_phone: clean(lead?.caregiver_phone),
     caregiver_email: caregiverEmail,
     intake_payload: normalizeEnrollmentPacketIntakePayload({
+      memberLegalFirstName: memberNameParts.firstName,
+      memberLegalLastName: memberNameParts.lastName,
       requestedAttendanceDays: resolvedPricing.requestedDays,
+      requestedStartDate,
       transportationPreference: clean(input.transportation),
+      transportationQuestionEnabled: clean(input.transportation) ? "Yes" : "No",
+      referredBy: clean(lead?.referral_name),
       primaryContactName: clean(lead?.caregiver_name),
       primaryContactRelationship: clean(lead?.caregiver_relationship),
       primaryContactPhone: clean(lead?.caregiver_phone),
-      primaryContactEmail: caregiverEmail
+      primaryContactEmail: caregiverEmail,
+      responsiblePartyGuarantorFirstName: clean(lead?.caregiver_name)?.split(" ")[0] ?? null,
+      responsiblePartyGuarantorLastName: clean(lead?.caregiver_name)?.split(" ").slice(1).join(" ") || null,
+      membershipNumberOfDays: String(resolvedPricing.requestedDays.length),
+      membershipDailyAmount: effectiveDailyRate.toFixed(2),
+      communityFee: effectiveCommunityFee.toFixed(2),
+      totalInitialEnrollmentAmount: effectiveInitialEnrollmentAmount.toFixed(2),
+      photoConsentMemberName: clean(lead?.member_name) ?? clean(member.display_name)
     }),
     created_at: now,
     updated_at: now
@@ -858,8 +928,11 @@ export async function sendEnrollmentPacketRequest(input: {
       pricingDaysPerWeek: resolvedPricing.daysPerWeek,
       communityFee: effectiveCommunityFee,
       dailyRate: effectiveDailyRate,
+      requestedStartDate,
+      totalInitialEnrollmentAmount: effectiveInitialEnrollmentAmount,
       communityFeeOverride,
-      dailyRateOverride
+      dailyRateOverride,
+      totalInitialEnrollmentAmountOverride
     }
   });
 
@@ -926,10 +999,11 @@ function toPublicContext(
   memberName: string
 ): PublicEnrollmentPacketContext {
   const intakePayload = normalizeStoredIntakePayload(fields);
+  const prefilledMemberName = payloadMemberDisplayName(intakePayload);
   return {
     state: "ready",
     request: toSummary(request),
-    memberName,
+    memberName: prefilledMemberName ?? memberName,
     fields: {
       requestedDays: fields.requested_days ?? [],
       transportation: fields.transportation,
@@ -1169,6 +1243,7 @@ export async function savePublicEnrollmentPacketProgress(input: {
   caregiverName?: string | null;
   caregiverPhone?: string | null;
   caregiverEmail?: string | null;
+  primaryContactAddress?: string | null;
   caregiverAddressLine1?: string | null;
   caregiverAddressLine2?: string | null;
   caregiverCity?: string | null;
@@ -1178,6 +1253,7 @@ export async function savePublicEnrollmentPacketProgress(input: {
   secondaryContactPhone?: string | null;
   secondaryContactEmail?: string | null;
   secondaryContactRelationship?: string | null;
+  secondaryContactAddress?: string | null;
   notes?: string | null;
   intakePayload?: Partial<Record<string, unknown>> | null;
 }) {
@@ -1189,6 +1265,7 @@ export async function savePublicEnrollmentPacketProgress(input: {
     caregiverName: input.caregiverName,
     caregiverPhone: input.caregiverPhone,
     caregiverEmail: input.caregiverEmail,
+    primaryContactAddress: input.primaryContactAddress,
     caregiverAddressLine1: input.caregiverAddressLine1,
     caregiverAddressLine2: input.caregiverAddressLine2,
     caregiverCity: input.caregiverCity,
@@ -1198,6 +1275,7 @@ export async function savePublicEnrollmentPacketProgress(input: {
     secondaryContactPhone: input.secondaryContactPhone,
     secondaryContactEmail: input.secondaryContactEmail,
     secondaryContactRelationship: input.secondaryContactRelationship,
+    secondaryContactAddress: input.secondaryContactAddress,
     notes: input.notes
   });
   const now = toEasternISO();
@@ -1208,7 +1286,7 @@ export async function savePublicEnrollmentPacketProgress(input: {
       caregiver_name: mergedPayload.primaryContactName,
       caregiver_phone: mergedPayload.primaryContactPhone,
       caregiver_email: cleanEmail(mergedPayload.primaryContactEmail),
-      caregiver_address_line1: mergedPayload.memberAddressLine1,
+      caregiver_address_line1: mergedPayload.primaryContactAddress ?? mergedPayload.memberAddressLine1,
       caregiver_address_line2: mergedPayload.memberAddressLine2,
       caregiver_city: mergedPayload.memberCity,
       caregiver_state: mergedPayload.memberState,
@@ -1258,6 +1336,7 @@ export async function submitPublicEnrollmentPacket(input: {
   caregiverName?: string | null;
   caregiverPhone?: string | null;
   caregiverEmail?: string | null;
+  primaryContactAddress?: string | null;
   caregiverAddressLine1?: string | null;
   caregiverAddressLine2?: string | null;
   caregiverCity?: string | null;
@@ -1267,6 +1346,7 @@ export async function submitPublicEnrollmentPacket(input: {
   secondaryContactPhone?: string | null;
   secondaryContactEmail?: string | null;
   secondaryContactRelationship?: string | null;
+  secondaryContactAddress?: string | null;
   notes?: string | null;
   intakePayload?: Partial<Record<string, unknown>> | null;
   uploads?: PacketFileUpload[];
@@ -1285,8 +1365,6 @@ export async function submitPublicEnrollmentPacket(input: {
   if (status === "completed" || status === "filed") throw new Error("This enrollment packet has already been submitted.");
   if (isExpired(request.token_expires_at)) throw new Error("This enrollment packet link has expired.");
 
-  const fields = await loadPacketFields(request.id);
-  if (!fields) throw new Error("Enrollment packet fields were not found.");
   const member = await getMemberById(request.member_id);
   if (!member) throw new Error("Member record was not found.");
 
@@ -1295,6 +1373,7 @@ export async function submitPublicEnrollmentPacket(input: {
     caregiverName: input.caregiverName,
     caregiverPhone: input.caregiverPhone,
     caregiverEmail: input.caregiverEmail,
+    primaryContactAddress: input.primaryContactAddress,
     caregiverAddressLine1: input.caregiverAddressLine1,
     caregiverAddressLine2: input.caregiverAddressLine2,
     caregiverCity: input.caregiverCity,
@@ -1304,9 +1383,23 @@ export async function submitPublicEnrollmentPacket(input: {
     secondaryContactPhone: input.secondaryContactPhone,
     secondaryContactEmail: input.secondaryContactEmail,
     secondaryContactRelationship: input.secondaryContactRelationship,
+    secondaryContactAddress: input.secondaryContactAddress,
     notes: input.notes,
     intakePayload: input.intakePayload
   });
+
+  const fieldsForValidation = await loadPacketFields(request.id);
+  if (!fieldsForValidation) throw new Error("Enrollment packet fields were not found.");
+  const validationPayload = normalizeStoredIntakePayload(fieldsForValidation);
+  const completionValidation = validateEnrollmentPacketCompletion({
+    payload: validationPayload,
+    showTransportationQuestion: clean(fieldsForValidation.transportation) != null
+  });
+  if (!completionValidation.isComplete) {
+    throw new Error(
+      `Complete all required packet fields before signing. Missing: ${completionValidation.missingItems.join(", ")}.`
+    );
+  }
 
   const now = toEasternISO();
   const admin = createSupabaseAdminClient();

@@ -2,23 +2,11 @@ import "server-only";
 
 import { Buffer } from "node:buffer";
 
-import { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 import { formatPhoneDisplay } from "@/lib/phone";
-import {
-  ENROLLMENT_PACKET_SECTIONS,
-  formatEnrollmentPacketValue
-} from "@/lib/services/enrollment-packet-public-schema";
-import type { EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
-
-const COMPLETED_PACKET_TEMPLATE = {
-  title: "Town Square Fort Mill Enrollment Packet",
-  sections: {
-    enrollmentInputs: "Enrollment Inputs",
-    signatures: "Signatures"
-  }
-} as const;
+import type { EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 
 type CompletedEnrollmentPacketDocxInput = {
   memberName: string;
@@ -44,8 +32,8 @@ type CompletedEnrollmentPacketDocxInput = {
   caregiverSignatureName: string;
 };
 
-function textValue(value: string | null | undefined, fallback = "-") {
-  const normalized = (value ?? "").trim();
+function clean(value: string | null | undefined, fallback = "-") {
+  const normalized = String(value ?? "").trim();
   return normalized.length > 0 ? normalized : fallback;
 }
 
@@ -58,82 +46,100 @@ function safeFileName(value: string) {
   return value.replace(/[<>:"/\\|?*]/g, "").trim();
 }
 
-function line(label: string, value: string) {
-  return new Paragraph({
-    spacing: { after: 100 },
-    children: [new TextRun({ text: `${label}: `, bold: true }), new TextRun(value)]
+function wrapText(text: string, maxChars = 105) {
+  const normalized = text.trim();
+  if (!normalized) return ["-"];
+  const words = normalized.split(/\s+/);
+  const lines: string[] = [];
+  let current = "";
+  words.forEach((word) => {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length <= maxChars) {
+      current = next;
+      return;
+    }
+    if (current) lines.push(current);
+    current = word;
   });
-}
-
-function sectionHeading(label: string) {
-  return new Paragraph({
-    text: label,
-    heading: HeadingLevel.HEADING_2,
-    spacing: { before: 220, after: 120 }
-  });
-}
-
-function compactAddress(input: CompletedEnrollmentPacketDocxInput) {
-  const line1 = textValue(input.caregiverAddressLine1, "");
-  const line2 = textValue(input.caregiverAddressLine2, "");
-  const city = textValue(input.caregiverCity, "");
-  const state = textValue(input.caregiverState, "");
-  const zip = textValue(input.caregiverZip, "");
-  const first = [line1, line2].filter(Boolean).join(", ");
-  const second = [city, state, zip].filter(Boolean).join(" ");
-  return [first, second].filter(Boolean).join(", ") || "-";
+  if (current) lines.push(current);
+  return lines.length > 0 ? lines : ["-"];
 }
 
 export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnrollmentPacketDocxInput) {
+  const pdf = await PDFDocument.create();
+  const regular = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const now = toEasternISO();
-  const doc = new Document({
-    sections: [
-      {
-        children: [
-          new Paragraph({
-            text: COMPLETED_PACKET_TEMPLATE.title,
-            heading: HeadingLevel.TITLE,
-            alignment: AlignmentType.LEFT
-          }),
-          line("Member", textValue(input.memberName)),
-          line("Packet ID", textValue(input.packetId)),
-          line("Completed At (ET)", `${toEasternDate(now)} ${now.slice(11, 19)}`),
 
-          sectionHeading(COMPLETED_PACKET_TEMPLATE.sections.enrollmentInputs),
-          line("Requested Days", input.requestedDays.length > 0 ? input.requestedDays.join(", ") : "-"),
-          line("Transportation", textValue(input.transportation)),
-          line("Community Fee", moneyValue(input.communityFee)),
-          line("Daily Rate", moneyValue(input.dailyRate)),
-          line("Primary Contact", textValue(input.caregiverName)),
-          line("Primary Contact Phone", formatPhoneDisplay(input.caregiverPhone)),
-          line("Primary Contact Email", textValue(input.caregiverEmail)),
-          line("Primary Contact Address", compactAddress(input)),
-          line("Secondary Contact", textValue(input.secondaryContactName)),
-          line("Secondary Contact Relationship", textValue(input.secondaryContactRelationship)),
-          line("Secondary Contact Phone", formatPhoneDisplay(input.secondaryContactPhone)),
-          line("Secondary Contact Email", textValue(input.secondaryContactEmail)),
+  let page = pdf.addPage([612, 792]);
+  let y = 756;
 
-          ...ENROLLMENT_PACKET_SECTIONS.flatMap((section) => {
-            if (section.fields.length === 0) return [];
-            const rows = section.fields.map((field) =>
-              line(field.label, formatEnrollmentPacketValue(input.intakePayload[field.key]))
-            );
-            return [sectionHeading(section.title), ...rows];
-          }),
+  const drawTitle = (text: string) => {
+    if (y < 70) {
+      page = pdf.addPage([612, 792]);
+      y = 756;
+    }
+    page.drawText(text, { x: 36, y, size: 14, font: bold, color: rgb(0.1, 0.22, 0.49) });
+    y -= 20;
+  };
 
-          sectionHeading(COMPLETED_PACKET_TEMPLATE.sections.signatures),
-          line("Sender Signature Applied", textValue(input.senderSignatureName)),
-          line("Caregiver Signature Applied", textValue(input.caregiverSignatureName))
-        ]
-      }
-    ]
-  });
+  const drawRow = (label: string, value: string) => {
+    if (y < 70) {
+      page = pdf.addPage([612, 792]);
+      y = 756;
+    }
+    const lines = wrapText(value, 90);
+    page.drawText(`${label}:`, { x: 36, y, size: 9, font: bold, color: rgb(0.1, 0.1, 0.1) });
+    lines.forEach((line, index) => {
+      page.drawText(line, { x: 200, y: y - index * 12, size: 9, font: regular, color: rgb(0.1, 0.1, 0.1) });
+    });
+    y -= Math.max(14, lines.length * 12 + 2);
+  };
 
-  const bytes = Buffer.from(await Packer.toBuffer(doc));
+  drawTitle("Town Square Fort Mill Enrollment Packet");
+  drawRow("Member", clean(input.memberName));
+  drawRow("Packet ID", clean(input.packetId));
+  drawRow("Completed At (ET)", `${toEasternDate(now)} ${now.slice(11, 19)}`);
+  drawRow("Requested Days", input.requestedDays.length > 0 ? input.requestedDays.join(", ") : "-");
+  drawRow("Transportation", clean(input.transportation));
+  drawRow("Community Fee", moneyValue(input.communityFee));
+  drawRow("Daily Rate", moneyValue(input.dailyRate));
+  drawRow("Primary Contact", clean(input.caregiverName));
+  drawRow("Primary Contact Phone", clean(formatPhoneDisplay(input.caregiverPhone)));
+  drawRow("Primary Contact Email", clean(input.caregiverEmail));
+  drawRow(
+    "Primary Contact Address",
+    [input.caregiverAddressLine1, input.caregiverAddressLine2, [input.caregiverCity, input.caregiverState, input.caregiverZip].filter(Boolean).join(" ")]
+      .filter(Boolean)
+      .join(", ")
+  );
+  drawRow("Secondary Contact", clean(input.secondaryContactName));
+  drawRow("Secondary Contact Relationship", clean(input.secondaryContactRelationship));
+  drawRow("Secondary Contact Phone", clean(formatPhoneDisplay(input.secondaryContactPhone)));
+  drawRow("Secondary Contact Email", clean(input.secondaryContactEmail));
+
+  drawTitle("Enrollment Data Snapshot");
+  const intakeRows: Array<[string, string]> = [
+    ["Member DOB", clean(input.intakePayload.memberDob)],
+    ["Member Gender", clean(input.intakePayload.memberGender)],
+    ["Requested Start Date", clean(input.intakePayload.requestedStartDate)],
+    ["Total Initial Enrollment Amount", clean(input.intakePayload.totalInitialEnrollmentAmount)],
+    ["PCP", clean(input.intakePayload.pcpName)],
+    ["Pharmacy", clean(input.intakePayload.pharmacy)],
+    ["Photo Consent", clean(input.intakePayload.photoConsentChoice)],
+    ["Payment Method", clean(input.intakePayload.paymentMethodSelection)]
+  ];
+  intakeRows.forEach(([label, value]) => drawRow(label, value));
+
+  drawTitle("Signatures");
+  drawRow("Sender Signature Applied", clean(input.senderSignatureName));
+  drawRow("Caregiver Signature Applied", clean(input.caregiverSignatureName));
+
+  const bytes = Buffer.from(await pdf.save());
   return {
     bytes,
-    contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    dataUrl: `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${bytes.toString("base64")}`,
-    fileName: `Enrollment Packet Completed - ${safeFileName(input.memberName)} - ${toEasternDate(now)}.docx`
+    contentType: "application/pdf",
+    dataUrl: `data:application/pdf;base64,${bytes.toString("base64")}`,
+    fileName: `Enrollment Packet Completed - ${safeFileName(input.memberName)} - ${toEasternDate(now)}.pdf`
   };
 }

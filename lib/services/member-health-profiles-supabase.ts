@@ -123,6 +123,10 @@ type MemberMedicationRow = {
   frequency: string | null;
   route: string | null;
   route_laterality: string | null;
+  given_at_center: boolean;
+  prn: boolean;
+  prn_instructions: string | null;
+  scheduled_times: string[];
   comments: string | null;
   created_by_name: string | null;
   updated_at: string;

@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { cache } from "react";
 
 import type { AppRole, ModuleKey, PermissionModuleKey, UserProfile } from "@/types/app";
 import type { PermissionAction } from "@/lib/permissions";
@@ -28,7 +29,12 @@ const DEV_FORCE_ADMIN_PROFILE_IDS = new Set([
 
 type ProfileTimingOptions = {
   traceLabel?: string;
+  skipCache?: boolean;
 };
+
+const getCurrentProfileCached = cache(async (): Promise<UserProfile> => {
+  return getCurrentProfile({ skipCache: true });
+});
 
 function timingNow() {
   return Number(process.hrtime.bigint()) / 1_000_000;
@@ -77,6 +83,9 @@ export async function getSession() {
 }
 
 export async function getCurrentProfile(options?: ProfileTimingOptions): Promise<UserProfile> {
+  if (!options?.traceLabel && !options?.skipCache) {
+    return getCurrentProfileCached();
+  }
   const traceLabel = options?.traceLabel;
   const totalStartedAt = timingNow();
 

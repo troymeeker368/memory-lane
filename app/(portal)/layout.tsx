@@ -17,9 +17,11 @@ export default async function PortalLayout({
   children: React.ReactNode;
 }) {
   const profile = await getCurrentProfile();
-  const unreadNotifications = await countUnreadUserNotificationsForUser(profile.id);
   const showDevRoleSwitcher = isDevAuthBypassEnabled();
-  const devAccounts = showDevRoleSwitcher ? await listDevAuthBootstrapAccounts() : [];
+  const [unreadNotifications, devAccounts] = await Promise.all([
+    countUnreadUserNotificationsForUser(profile.id),
+    showDevRoleSwitcher ? listDevAuthBootstrapAccounts() : Promise.resolve([])
+  ]);
 
   return (
     <div className="portal-shell mx-auto grid min-h-screen w-full max-w-7xl gap-4 p-3 md:grid-cols-[270px_minmax(0,1fr)] md:p-4">

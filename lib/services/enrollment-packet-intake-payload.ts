@@ -17,10 +17,12 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "memberZip",
   "requestedStartDate",
   "transportationPreference",
+  "transportationQuestionEnabled",
   "medicareNumber",
   "privateInsuranceName",
   "privateInsurancePolicyNumber",
   "veteranStatus",
+  "tricareNumber",
   "memberRepresentativeGuardianPoa",
   "guardianPoaStatus",
   "referredBy",
@@ -28,10 +30,12 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "primaryContactRelationship",
   "primaryContactPhone",
   "primaryContactEmail",
+  "primaryContactAddress",
   "secondaryContactName",
   "secondaryContactRelationship",
   "secondaryContactPhone",
   "secondaryContactEmail",
+  "secondaryContactAddress",
   "pcpName",
   "pcpPhone",
   "pcpFax",
@@ -41,16 +45,22 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "physicianFax",
   "physicianAddress",
   "pharmacy",
+  "pharmacyAddress",
+  "pharmacyPhone",
   "hospitalPreference",
   "livingSituation",
+  "livingSituationOther",
   "insuranceSummaryReference",
   "medicationNeededDuringDay",
+  "medicationNamesDuringDay",
   "oxygenUse",
+  "oxygenFlowRate",
   "mentalHealthHistory",
   "ptsdHistory",
   "memoryStage",
   "intakeClinicalNotes",
   "fallsHistory",
+  "fallsWithinLast3Months",
   "physicalHealthProblems",
   "behavioralNotes",
   "communicationStyle",
@@ -63,10 +73,17 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "dressesSelf",
   "feedsSelf",
   "dressingFeedingIndependence",
+  "adlMobilityLevel",
+  "adlToiletingLevel",
+  "adlBathingLevel",
+  "adlDressingLevel",
+  "adlEatingLevel",
+  "adlContinenceLevel",
   "dietaryRestrictions",
   "dentures",
   "speech",
   "hearing",
+  "hearingStatus",
   "hearingAids",
   "vision",
   "glasses",
@@ -82,7 +99,9 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "childrenGrandchildren",
   "importantPeople",
   "pets",
+  "petNames",
   "militaryWarService",
+  "branchOfService",
   "religion",
   "pastOccupation",
   "nickname",
@@ -129,6 +148,10 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "photoConsentMemberName",
   "ancillaryChargesAcknowledgmentSignatureName",
   "ancillaryChargesAcknowledgmentSignatureDate",
+  "privacyPracticesAcknowledged",
+  "statementOfRightsAcknowledged",
+  "photoConsentAcknowledged",
+  "ancillaryChargesAcknowledged",
   "welcomeChecklistAcknowledgedName",
   "welcomeChecklistAcknowledgedDate",
   "diagnosisPlaceholders",
@@ -140,7 +163,11 @@ export const ENROLLMENT_PACKET_INTAKE_ARRAY_KEYS = [
   "requestedAttendanceDays",
   "membershipRequestedWeekdays",
   "personalityPreferencePairs",
-  "recreationalInterests"
+  "recreationalInterests",
+  "livingSituationOptions",
+  "petTypes",
+  "behavioralObservations",
+  "dentureTypes"
 ] as const;
 
 export type EnrollmentPacketIntakeTextKey = (typeof ENROLLMENT_PACKET_INTAKE_TEXT_KEYS)[number];
@@ -161,7 +188,8 @@ const ENROLLMENT_PACKET_PHONE_KEYS: EnrollmentPacketIntakeTextKey[] = [
   "pcpPhone",
   "physicianPhone",
   "pcpFax",
-  "physicianFax"
+  "physicianFax",
+  "pharmacyPhone"
 ];
 
 function clean(value: unknown) {
@@ -207,9 +235,17 @@ function deriveLast4(ssn: string | null) {
   return digits.slice(-4);
 }
 
-function joinParts(parts: Array<string | null | undefined>) {
+function joinParts(parts: Array<string | null | undefined>, separator = " | ") {
   const values = parts.map((part) => clean(part)).filter((part): part is string => Boolean(part));
-  return values.length > 0 ? values.join(" | ") : null;
+  return values.length > 0 ? values.join(separator) : null;
+}
+
+function toYesNoLike(value: string | null | undefined) {
+  const normalized = clean(value)?.toLowerCase();
+  if (!normalized) return null;
+  if (["yes", "y", "true", "1"].includes(normalized)) return "Yes";
+  if (["no", "n", "false", "0"].includes(normalized)) return "No";
+  return clean(value);
 }
 
 export function getDefaultEnrollmentPacketIntakePayload(): EnrollmentPacketIntakePayload {
@@ -258,6 +294,61 @@ export function normalizeEnrollmentPacketIntakePayload(raw: RawPayload | null | 
   if (!normalized.physicianFax) normalized.physicianFax = normalized.pcpFax;
   if (!normalized.physicianAddress) normalized.physicianAddress = normalized.pcpAddress;
 
+  if (!normalized.livingSituation) {
+    normalized.livingSituation = joinParts([
+      normalized.livingSituationOptions.length > 0 ? normalized.livingSituationOptions.join(", ") : null,
+      normalized.livingSituationOther ? `Other: ${normalized.livingSituationOther}` : null
+    ]);
+  }
+
+  if (!normalized.pets) {
+    normalized.pets = joinParts([
+      normalized.petTypes.length > 0 ? normalized.petTypes.join(", ") : null,
+      normalized.petNames ? `Names: ${normalized.petNames}` : null
+    ]);
+  }
+
+  if (!normalized.behavioralNotes && normalized.behavioralObservations.length > 0) {
+    normalized.behavioralNotes = normalized.behavioralObservations.join(", ");
+  }
+
+  if (!normalized.mobilityTransferStatus && normalized.adlMobilityLevel) {
+    normalized.mobilityTransferStatus = normalized.adlMobilityLevel;
+  }
+
+  if (!normalized.toiletingBathingAssistance) {
+    normalized.toiletingBathingAssistance = joinParts([
+      normalized.adlToiletingLevel ? `Toileting: ${normalized.adlToiletingLevel}` : null,
+      normalized.adlBathingLevel ? `Bathing: ${normalized.adlBathingLevel}` : null
+    ]);
+  }
+
+  if (!normalized.continenceStatus && normalized.adlContinenceLevel) {
+    normalized.continenceStatus = normalized.adlContinenceLevel;
+  }
+
+  if (!normalized.dressesSelf && normalized.adlDressingLevel) {
+    normalized.dressesSelf = normalized.adlDressingLevel;
+  }
+  if (!normalized.feedsSelf && normalized.adlEatingLevel) {
+    normalized.feedsSelf = normalized.adlEatingLevel;
+  }
+
+  if (!normalized.dressingFeedingIndependence) {
+    normalized.dressingFeedingIndependence = joinParts([
+      normalized.adlDressingLevel ? `Dressing: ${normalized.adlDressingLevel}` : null,
+      normalized.adlEatingLevel ? `Eating: ${normalized.adlEatingLevel}` : null
+    ]);
+  }
+
+  if (!normalized.hearing && normalized.hearingStatus) {
+    normalized.hearing = normalized.hearingStatus;
+  }
+
+  if (!normalized.hearingAids && normalized.hearingStatus?.toLowerCase().includes("aid")) {
+    normalized.hearingAids = "Yes";
+  }
+
   if (!normalized.speechHearingVision) {
     normalized.speechHearingVision = joinParts([
       normalized.speech ? `Speech: ${normalized.speech}` : null,
@@ -274,11 +365,15 @@ export function normalizeEnrollmentPacketIntakePayload(raw: RawPayload | null | 
     ]);
   }
 
-  if (!normalized.dressingFeedingIndependence) {
-    normalized.dressingFeedingIndependence = joinParts([
-      normalized.dressesSelf ? `Dresses self: ${normalized.dressesSelf}` : null,
-      normalized.feedsSelf ? `Feeds self: ${normalized.feedsSelf}` : null
+  if (!normalized.fallsHistory) {
+    normalized.fallsHistory = joinParts([
+      toYesNoLike(normalized.fallsHistory),
+      normalized.fallsWithinLast3Months ? `Falls within last 3 months: ${normalized.fallsWithinLast3Months}` : null
     ]);
+  }
+
+  if (!normalized.militaryWarService && normalized.branchOfService) {
+    normalized.militaryWarService = normalized.branchOfService;
   }
 
   if (!normalized.membershipNumberOfDays && normalized.requestedAttendanceDays.length > 0) {

@@ -89,6 +89,13 @@ export default async function LockerAssignmentsPage({
   if (error) {
     throw new Error(error.message);
   }
+  const { data: lockerHistoryData, error: lockerHistoryError } = await supabase
+    .from("locker_assignment_history")
+    .select("locker_number, previous_member_assigned, updated_at")
+    .order("updated_at", { ascending: false });
+  if (lockerHistoryError) {
+    throw new Error(lockerHistoryError.message);
+  }
   const allMembers = (membersData ?? []) as Array<{
     id: string;
     display_name: string;
@@ -98,6 +105,11 @@ export default async function LockerAssignmentsPage({
     discharge_date: string | null;
     updated_at: string | null;
     locker_assigned_at?: string | null;
+  }>;
+  const lockerHistory = (lockerHistoryData ?? []) as Array<{
+    locker_number: string | null;
+    previous_member_assigned: string | null;
+    updated_at: string | null;
   }>;
   const activeMembers = Array.from(
     new Map(
@@ -127,10 +139,11 @@ export default async function LockerAssignmentsPage({
   });
 
   const previousByLocker = new Map<string, string>();
-  inactiveMembers.forEach((member) => {
-    const locker = normalizeLocker(member.locker_number);
-    if (!locker || previousByLocker.has(locker)) return;
-    previousByLocker.set(locker, member.display_name);
+  lockerHistory.forEach((row) => {
+    const locker = normalizeLocker(row.locker_number);
+    const previousMemberAssigned = String(row.previous_member_assigned ?? "").trim();
+    if (!locker || !previousMemberAssigned || previousByLocker.has(locker)) return;
+    previousByLocker.set(locker, previousMemberAssigned);
   });
 
   const referencePreviousByLocker = new Map(
@@ -148,6 +161,10 @@ export default async function LockerAssignmentsPage({
   });
   inactiveMembers.forEach((member) => {
     const locker = normalizeLocker(member.locker_number);
+    if (locker) lockerPool.add(locker);
+  });
+  lockerHistory.forEach((row) => {
+    const locker = normalizeLocker(row.locker_number);
     if (locker) lockerPool.add(locker);
   });
 

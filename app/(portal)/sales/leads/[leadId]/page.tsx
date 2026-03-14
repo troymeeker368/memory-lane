@@ -47,6 +47,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
             <SendEnrollmentPacketAction
               leadId={lead.id}
               defaultCaregiverEmail={lead.caregiver_email}
+              defaultRequestedStartDate={lead.member_start_date}
               pricingPreview={{
                 communityFeeAmount: pricingOverview.activeCommunityFee?.amount ?? null,
                 dailyRates: pricingOverview.activeDailyRates.map((tier) => ({

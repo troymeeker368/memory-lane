@@ -13,13 +13,8 @@ import {
 
 type PublicEnrollmentPacketUploadCategory =
   | "insurance"
-  | "poa"
   | "supporting"
-  | "medicare_card"
-  | "private_insurance"
-  | "supplemental_insurance"
-  | "poa_guardianship"
-  | "dnr_dni_advance_directive";
+  | "poa_guardianship";
 
 const MAX_ENROLLMENT_PACKET_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_ENROLLMENT_PACKET_UPLOAD_MB = MAX_ENROLLMENT_PACKET_UPLOAD_BYTES / (1024 * 1024);
@@ -149,6 +144,7 @@ export async function savePublicEnrollmentPacketProgressAction(formData: FormDat
       caregiverName: asString(formData, "caregiverName"),
       caregiverPhone: asPhone(formData, "caregiverPhone"),
       caregiverEmail: asString(formData, "caregiverEmail"),
+      primaryContactAddress: asString(formData, "primaryContactAddress"),
       caregiverAddressLine1: asString(formData, "caregiverAddressLine1"),
       caregiverAddressLine2: asString(formData, "caregiverAddressLine2"),
       caregiverCity: asString(formData, "caregiverCity"),
@@ -158,6 +154,7 @@ export async function savePublicEnrollmentPacketProgressAction(formData: FormDat
       secondaryContactPhone: asPhone(formData, "secondaryContactPhone"),
       secondaryContactEmail: asString(formData, "secondaryContactEmail"),
       secondaryContactRelationship: asString(formData, "secondaryContactRelationship"),
+      secondaryContactAddress: asString(formData, "secondaryContactAddress"),
       notes: asString(formData, "notes"),
       intakePayload
     });
@@ -178,24 +175,10 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
     const caregiverUserAgent = headerMap.get("user-agent");
     const intakePayload = parseIntakePayload(formData);
 
-    const [
-      insuranceUploads,
-      poaUploads,
-      supportingUploads,
-      medicareCardUploads,
-      privateInsuranceUploads,
-      supplementalInsuranceUploads,
-      poaGuardianshipUploads,
-      advanceDirectiveUploads
-    ] = await Promise.all([
-      parseFileUploads(formData, "insuranceUploads", "insurance"),
-      parseFileUploads(formData, "poaUploads", "poa"),
-      parseFileUploads(formData, "supportingUploads", "supporting"),
-      parseFileUploads(formData, "medicareCardUploads", "medicare_card"),
-      parseFileUploads(formData, "privateInsuranceCardUploads", "private_insurance"),
-      parseFileUploads(formData, "supplementalInsuranceCardUploads", "supplemental_insurance"),
-      parseFileUploads(formData, "poaGuardianshipUploads", "poa_guardianship"),
-      parseFileUploads(formData, "advanceDirectiveUploads", "dnr_dni_advance_directive")
+    const [insuranceCardUploads, idUploads, legalDocumentUploads] = await Promise.all([
+      parseFileUploads(formData, "insuranceCardUploads", "insurance"),
+      parseFileUploads(formData, "idUploads", "supporting"),
+      parseFileUploads(formData, "legalDocumentUploads", "poa_guardianship")
     ]);
 
     await submitPublicEnrollmentPacket({
@@ -208,6 +191,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       caregiverName: asString(formData, "caregiverName"),
       caregiverPhone: asPhone(formData, "caregiverPhone"),
       caregiverEmail: asString(formData, "caregiverEmail"),
+      primaryContactAddress: asString(formData, "primaryContactAddress"),
       caregiverAddressLine1: asString(formData, "caregiverAddressLine1"),
       caregiverAddressLine2: asString(formData, "caregiverAddressLine2"),
       caregiverCity: asString(formData, "caregiverCity"),
@@ -217,18 +201,10 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       secondaryContactPhone: asPhone(formData, "secondaryContactPhone"),
       secondaryContactEmail: asString(formData, "secondaryContactEmail"),
       secondaryContactRelationship: asString(formData, "secondaryContactRelationship"),
+      secondaryContactAddress: asString(formData, "secondaryContactAddress"),
       notes: asString(formData, "notes"),
       intakePayload,
-      uploads: [
-        ...insuranceUploads,
-        ...poaUploads,
-        ...supportingUploads,
-        ...medicareCardUploads,
-        ...privateInsuranceUploads,
-        ...supplementalInsuranceUploads,
-        ...poaGuardianshipUploads,
-        ...advanceDirectiveUploads
-      ]
+      uploads: [...insuranceCardUploads, ...idUploads, ...legalDocumentUploads]
     });
     return { ok: true } as const;
   } catch (error) {

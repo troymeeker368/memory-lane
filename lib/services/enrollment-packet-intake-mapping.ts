@@ -139,6 +139,11 @@ function clean(value: string | null | undefined) {
   return normalized.length > 0 ? normalized : null;
 }
 
+function joinParts(parts: Array<string | null | undefined>, separator = " | ") {
+  const values = parts.map((part) => clean(part)).filter((part): part is string => Boolean(part));
+  return values.length > 0 ? values.join(separator) : null;
+}
+
 function cleanEmail(value: string | null | undefined) {
   const normalized = clean(value);
   return normalized ? normalized.toLowerCase() : null;
@@ -658,7 +663,7 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
         cellular_number: clean(payload.primaryContactPhone),
         work_number: null,
         home_number: null,
-        street_address: clean(payload.memberAddressLine1),
+        street_address: clean(payload.primaryContactAddress) ?? clean(payload.memberAddressLine1),
         city: clean(payload.memberCity),
         state: clean(payload.memberState),
         zip: clean(payload.memberZip),
@@ -701,7 +706,7 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
           cellular_number: clean(payload.secondaryContactPhone),
           work_number: null,
           home_number: null,
-          street_address: null,
+          street_address: clean(payload.secondaryContactAddress),
           city: null,
           state: null,
           zip: null,
@@ -786,10 +791,11 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       providerPhone: clean(payload.pcpPhone),
       providerFax: clean(payload.pcpFax),
       providerAddress: clean(payload.pcpAddress),
-      pharmacy: clean(payload.pharmacy),
+      pharmacy: joinParts([clean(payload.pharmacy), clean(payload.pharmacyAddress)]),
       allergiesSummary: clean(payload.allergiesSummary),
       dietaryRestrictions: clean(payload.dietaryRestrictions),
       oxygenUse: clean(payload.oxygenUse),
+      medicationsDuringDay: clean(payload.medicationNamesDuringDay),
       mobilitySupport: clean(payload.mobilityTransferStatus),
       adlSupport: {
         toiletingBathingAssistance: clean(payload.toiletingBathingAssistance),
@@ -799,7 +805,11 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
         wheelchairUse: clean(payload.wheelchairUse)
       },
       diagnosisPlaceholders: clean(payload.diagnosisPlaceholders),
-      intakeNotes: clean(payload.intakeClinicalNotes)
+      intakeNotes: joinParts([
+        clean(payload.intakeClinicalNotes),
+        clean(payload.behavioralNotes),
+        clean(payload.medicationNamesDuringDay)
+      ])
     };
 
     const { error: pofStageError } = await admin.from("enrollment_packet_pof_staging").upsert(
@@ -834,9 +844,11 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       "pcpFax",
       "pcpAddress",
       "pharmacy",
+      "pharmacyAddress",
       "allergiesSummary",
       "dietaryRestrictions",
       "oxygenUse",
+      "medicationNamesDuringDay",
       "mobilityTransferStatus",
       "diagnosisPlaceholders",
       "intakeClinicalNotes"

@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
+import { generateMarSchedulesForMember } from "@/lib/services/mar-workflow";
 import { syncMhpToCommandCenter as syncMhpToCommandCenterService } from "@/lib/services/member-profile-sync";
 import {
   countMemberDiagnosesSupabase,
@@ -52,6 +53,58 @@ function asNullableBool(formData: FormData, key: string) {
   if (value === "true" || value === "yes" || value === "1") return true;
   if (value === "false" || value === "no" || value === "0") return false;
   return null;
+}
+
+const TIME_24H_PATTERN = /^(\d{1,2}):(\d{2})$/;
+
+function normalizeTime24h(value: string | null | undefined) {
+  const normalized = (value ?? "").trim();
+  if (!normalized) return null;
+  const match = TIME_24H_PATTERN.exec(normalized);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (Number.isNaN(hour) || Number.isNaN(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function parseScheduledTimesInput(value: string | null | undefined) {
+  const raw = (value ?? "").trim();
+  if (!raw) return { ok: true as const, times: [] as string[] };
+  const times = Array.from(
+    new Set(
+      raw
+        .split(/[;,]/g)
+        .map((entry) => normalizeTime24h(entry))
+        .filter((entry): entry is string => Boolean(entry))
+    )
+  );
+  if (times.length === 0) {
+    return { ok: false as const, error: "Scheduled times must use 24-hour HH:MM format (example: 09:00, 13:30)." };
+  }
+  return { ok: true as const, times };
+}
+
+function parseMedicationMarInput(formData: FormData) {
+  const givenAtCenter = asNullableBool(formData, "givenAtCenter") ?? true;
+  const prn = asNullableBool(formData, "prn") ?? false;
+  const prnInstructions = asNullableString(formData, "prnInstructions");
+  const scheduledTimesResult = parseScheduledTimesInput(asNullableString(formData, "scheduledTimes"));
+  if (!scheduledTimesResult.ok) return scheduledTimesResult;
+  if (givenAtCenter && !prn && scheduledTimesResult.times.length === 0) {
+    return {
+      ok: false as const,
+      error: "Center-administered non-PRN medications require at least one scheduled time."
+    };
+  }
+  return {
+    ok: true as const,
+    givenAtCenter,
+    prn,
+    prnInstructions,
+    scheduledTimes: scheduledTimesResult.times
+  };
 }
 
 const OPHTHALMIC_LATERALITY = new Set(["OD", "OS", "OU"]);
@@ -197,6 +250,28 @@ async function touchMhpProfile(memberId: string, actor: { id: string; full_name:
     },
     atIso: at
   });
+}
+
+function addDaysDateOnly(dateValue: string, days: number) {
+  const [yearRaw, monthRaw, dayRaw] = dateValue.split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const seed = new Date(Date.UTC(year, month - 1, day));
+  seed.setUTCDate(seed.getUTCDate() + days);
+  return `${seed.getUTCFullYear()}-${String(seed.getUTCMonth() + 1).padStart(2, "0")}-${String(seed.getUTCDate()).padStart(2, "0")}`;
+}
+
+async function syncMarFromMhpMedicationList(memberId: string) {
+  const startDate = toEasternDate();
+  const endDate = addDaysDateOnly(startDate, 30);
+  await generateMarSchedulesForMember({
+    memberId,
+    startDate,
+    endDate,
+    serviceRole: true
+  });
+  revalidatePath("/health/mar");
 }
 
 export async function saveMhpOverviewAction(formData: FormData) {
@@ -558,6 +633,8 @@ export async function addMhpMedicationAction(formData: FormData) {
   const route = asNullableString(formData, "route");
   const parsedLaterality = parseRouteLaterality(route, formData);
   if (!parsedLaterality.ok) return;
+  const marInput = parseMedicationMarInput(formData);
+  if (!marInput.ok) throw new Error(marInput.error);
 
   await createMemberMedicationSupabase({
     member_id: memberId,
@@ -571,6 +648,10 @@ export async function addMhpMedicationAction(formData: FormData) {
     frequency: asNullableString(formData, "frequency"),
     route,
     route_laterality: parsedLaterality.value,
+    given_at_center: marInput.givenAtCenter,
+    prn: marInput.prn,
+    prn_instructions: marInput.prnInstructions,
+    scheduled_times: marInput.scheduledTimes,
     comments: asNullableString(formData, "medicationComments"),
     created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
@@ -578,6 +659,7 @@ export async function addMhpMedicationAction(formData: FormData) {
     updated_at: now
   });
   await touchMhpProfile(memberId, actor, now);
+  await syncMarFromMhpMedicationList(memberId);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -592,6 +674,8 @@ export async function updateMhpMedicationAction(formData: FormData) {
   const route = asNullableString(formData, "route");
   const parsedLaterality = parseRouteLaterality(route, formData);
   if (!parsedLaterality.ok) return;
+  const marInput = parseMedicationMarInput(formData);
+  if (!marInput.ok) throw new Error(marInput.error);
 
   await updateMemberMedicationSupabase(medicationId, {
     medication_name: asString(formData, "medicationName"),
@@ -602,10 +686,15 @@ export async function updateMhpMedicationAction(formData: FormData) {
     frequency: asNullableString(formData, "frequency"),
     route,
     route_laterality: parsedLaterality.value,
+    given_at_center: marInput.givenAtCenter,
+    prn: marInput.prn,
+    prn_instructions: marInput.prnInstructions,
+    scheduled_times: marInput.scheduledTimes,
     comments: asNullableString(formData, "medicationComments"),
     updated_at: now
   });
   await touchMhpProfile(memberId, actor, now);
+  await syncMarFromMhpMedicationList(memberId);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -760,6 +849,7 @@ export async function deleteMhpMedicationAction(formData: FormData) {
   const deleted = await deleteMemberMedicationSupabase(medicationId);
   if (!deleted) return;
   await touchMhpProfile(memberId, actor, now);
+  await syncMarFromMhpMedicationList(memberId);
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
 }
@@ -886,6 +976,8 @@ export async function addMhpMedicationInlineAction(formData: FormData) {
   const route = asNullableString(formData, "route");
   const parsedLaterality = parseRouteLaterality(route, formData);
   if (!parsedLaterality.ok) return { ok: false, error: parsedLaterality.error };
+  const marInput = parseMedicationMarInput(formData);
+  if (!marInput.ok) return { ok: false, error: marInput.error };
 
   const now = toEasternISO();
   const created = await createMemberMedicationSupabase({
@@ -900,6 +992,10 @@ export async function addMhpMedicationInlineAction(formData: FormData) {
     frequency: asNullableString(formData, "frequency"),
     route,
     route_laterality: parsedLaterality.value,
+    given_at_center: marInput.givenAtCenter,
+    prn: marInput.prn,
+    prn_instructions: marInput.prnInstructions,
+    scheduled_times: marInput.scheduledTimes,
     comments: asNullableString(formData, "medicationComments"),
     created_by_user_id: toNullableUuid(actor.id),
     created_by_name: actor.full_name,
@@ -916,6 +1012,7 @@ export async function addMhpMedicationInlineAction(formData: FormData) {
     },
     now
   );
+  await syncMarFromMhpMedicationList(memberId);
   revalidateMhp(memberId);
   return { ok: true, row: created };
 }
@@ -930,6 +1027,8 @@ export async function updateMhpMedicationInlineAction(formData: FormData) {
   const route = asNullableString(formData, "route");
   const parsedLaterality = parseRouteLaterality(route, formData);
   if (!parsedLaterality.ok) return { ok: false, error: parsedLaterality.error };
+  const marInput = parseMedicationMarInput(formData);
+  if (!marInput.ok) return { ok: false, error: marInput.error };
 
   const now = toEasternISO();
   const updated = await updateMemberMedicationSupabase(medicationId, {
@@ -941,12 +1040,17 @@ export async function updateMhpMedicationInlineAction(formData: FormData) {
     frequency: asNullableString(formData, "frequency"),
     route,
     route_laterality: parsedLaterality.value,
+    given_at_center: marInput.givenAtCenter,
+    prn: marInput.prn,
+    prn_instructions: marInput.prnInstructions,
+    scheduled_times: marInput.scheduledTimes,
     comments: asNullableString(formData, "medicationComments"),
     updated_at: now
   });
   if (!updated) return { ok: false, error: "Medication not found." };
 
   await touchMhpProfile(memberId, actor, now);
+  await syncMarFromMhpMedicationList(memberId);
   revalidateMhp(memberId);
   return { ok: true, row: updated };
 }
@@ -962,6 +1066,7 @@ export async function deleteMhpMedicationInlineAction(formData: FormData) {
   if (!deleted) return { ok: false, error: "Medication not found." };
 
   await touchMhpProfile(memberId, actor, now);
+  await syncMarFromMhpMedicationList(memberId);
   revalidateMhp(memberId);
   return { ok: true };
 }
@@ -982,6 +1087,7 @@ export async function inactivateMhpMedicationInlineAction(formData: FormData) {
   if (!updated) return { ok: false, error: "Medication not found." };
 
   await touchMhpProfile(memberId, actor, now);
+  await syncMarFromMhpMedicationList(memberId);
   revalidateMhp(memberId);
   return { ok: true, row: updated };
 }
@@ -1003,6 +1109,7 @@ export async function reactivateMhpMedicationInlineAction(formData: FormData) {
   if (!updated) return { ok: false, error: "Medication not found." };
 
   await touchMhpProfile(memberId, actor, now);
+  await syncMarFromMhpMedicationList(memberId);
   revalidateMhp(memberId);
   return { ok: true, row: updated };
 }

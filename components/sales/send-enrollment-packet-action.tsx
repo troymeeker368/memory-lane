@@ -5,9 +5,17 @@ import { useRouter } from "next/navigation";
 
 import { sendEnrollmentPacketAction } from "@/app/sales-actions";
 import { Button } from "@/components/ui/button";
+import {
+  calculateInitialEnrollmentAmount,
+  countRemainingEnrollmentAttendanceDaysInMonth
+} from "@/lib/services/enrollment-packet-proration";
 
 const WEEKDAY_OPTIONS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as const;
 type WeekdayOption = (typeof WEEKDAY_OPTIONS)[number];
+
+function todayDateString() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 type PricingPreview = {
   communityFeeAmount: number | null;
@@ -24,10 +32,12 @@ type PricingPreview = {
 export function SendEnrollmentPacketAction({
   leadId,
   defaultCaregiverEmail,
+  defaultRequestedStartDate,
   pricingPreview
 }: {
   leadId: string;
   defaultCaregiverEmail?: string | null;
+  defaultRequestedStartDate?: string | null;
   pricingPreview: PricingPreview;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -35,15 +45,19 @@ export function SendEnrollmentPacketAction({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [caregiverEmail, setCaregiverEmail] = useState(defaultCaregiverEmail ?? "");
+  const [requestedStartDate, setRequestedStartDate] = useState(defaultRequestedStartDate ?? todayDateString());
   const [requestedDays, setRequestedDays] = useState<WeekdayOption[]>([]);
+  const [askTransportationQuestion, setAskTransportationQuestion] = useState(false);
   const [transportation, setTransportation] = useState("Door to Door");
   const [optionalMessage, setOptionalMessage] = useState("");
   const [communityFee, setCommunityFee] = useState<string>(
     pricingPreview.communityFeeAmount == null ? "" : pricingPreview.communityFeeAmount.toFixed(2)
   );
   const [dailyRate, setDailyRate] = useState<string>("");
+  const [totalInitialEnrollmentAmount, setTotalInitialEnrollmentAmount] = useState<string>("");
   const [communityFeeEdited, setCommunityFeeEdited] = useState(false);
   const [dailyRateEdited, setDailyRateEdited] = useState(false);
+  const [initialAmountEdited, setInitialAmountEdited] = useState(false);
   const [sentResult, setSentResult] = useState<{
     requestId: string;
     requestUrl: string;
@@ -60,6 +74,33 @@ export function SendEnrollmentPacketAction({
       ) ?? null,
     [pricingPreview.dailyRates, resolvedDaysPerWeek]
   );
+  const calculatedRemainingAttendanceDays = useMemo(() => {
+    if (!requestedStartDate || requestedDays.length === 0) return 0;
+    try {
+      return countRemainingEnrollmentAttendanceDaysInMonth({
+        requestedStartDate,
+        requestedDays
+      });
+    } catch {
+      return 0;
+    }
+  }, [requestedDays, requestedStartDate]);
+
+  const calculatedInitialEnrollmentAmount = useMemo(() => {
+    const parsedDailyRate = Number(dailyRate);
+    if (!requestedStartDate || requestedDays.length === 0 || !Number.isFinite(parsedDailyRate) || parsedDailyRate < 0) {
+      return 0;
+    }
+    try {
+      return calculateInitialEnrollmentAmount({
+        requestedStartDate,
+        requestedDays,
+        dailyRate: parsedDailyRate
+      });
+    } catch {
+      return 0;
+    }
+  }, [dailyRate, requestedDays, requestedStartDate]);
 
   useEffect(() => {
     if (communityFeeEdited) return;
@@ -70,6 +111,11 @@ export function SendEnrollmentPacketAction({
     if (dailyRateEdited) return;
     setDailyRate(resolvedDailyRateTier ? resolvedDailyRateTier.dailyRate.toFixed(2) : "");
   }, [dailyRateEdited, resolvedDailyRateTier]);
+
+  useEffect(() => {
+    if (initialAmountEdited) return;
+    setTotalInitialEnrollmentAmount(calculatedInitialEnrollmentAmount.toFixed(2));
+  }, [calculatedInitialEnrollmentAmount, initialAmountEdited]);
 
   const toggleDay = (day: WeekdayOption) => {
     setRequestedDays((current) => {
@@ -83,24 +129,35 @@ export function SendEnrollmentPacketAction({
   const resetPricingDefaults = () => {
     setCommunityFee(pricingPreview.communityFeeAmount == null ? "" : pricingPreview.communityFeeAmount.toFixed(2));
     setDailyRate(resolvedDailyRateTier ? resolvedDailyRateTier.dailyRate.toFixed(2) : "");
+    setTotalInitialEnrollmentAmount(calculatedInitialEnrollmentAmount.toFixed(2));
     setCommunityFeeEdited(false);
     setDailyRateEdited(false);
+    setInitialAmountEdited(false);
   };
 
   const onSend = () => {
     if (submitGuardRef.current) return;
+    if (!requestedStartDate) {
+      setStatus("Requested start date is required.");
+      return;
+    }
     if (requestedDays.length === 0) {
       setStatus("Select at least one requested day.");
       return;
     }
     const parsedCommunityFee = Number(communityFee);
     const parsedDailyRate = Number(dailyRate);
+    const parsedInitialEnrollmentAmount = Number(totalInitialEnrollmentAmount);
     if (!Number.isFinite(parsedCommunityFee) || parsedCommunityFee < 0) {
       setStatus("Community fee must be a valid non-negative amount.");
       return;
     }
     if (!Number.isFinite(parsedDailyRate) || parsedDailyRate < 0) {
       setStatus("Daily rate must be a valid non-negative amount.");
+      return;
+    }
+    if (!Number.isFinite(parsedInitialEnrollmentAmount) || parsedInitialEnrollmentAmount < 0) {
+      setStatus("Initial enrollment amount must be a valid non-negative amount.");
       return;
     }
 
@@ -112,10 +169,12 @@ export function SendEnrollmentPacketAction({
         const result = await sendEnrollmentPacketAction({
           leadId,
           caregiverEmail,
+          requestedStartDate,
           requestedDays,
-          transportation,
+          transportation: askTransportationQuestion ? transportation : "",
           communityFee: parsedCommunityFee,
           dailyRate: parsedDailyRate,
+          totalInitialEnrollmentAmount: parsedInitialEnrollmentAmount,
           optionalMessage
         });
         if (!result.ok) {
@@ -193,6 +252,20 @@ export function SendEnrollmentPacketAction({
                     />
                   </label>
 
+                  <label className="space-y-1 text-sm">
+                    <span className="text-xs font-semibold text-muted">Requested Start Date</span>
+                    <input
+                      type="date"
+                      className="h-11 w-full rounded-lg border border-border px-3"
+                      value={requestedStartDate}
+                      onChange={(event) => {
+                        setRequestedStartDate(event.target.value);
+                        setInitialAmountEdited(false);
+                      }}
+                      disabled={isWorking}
+                    />
+                  </label>
+
                   <div className="space-y-1 text-sm md:col-span-2">
                     <span className="text-xs font-semibold text-muted">Requested Days</span>
                     <div className="flex flex-wrap gap-2 rounded-lg border border-border p-2">
@@ -210,19 +283,31 @@ export function SendEnrollmentPacketAction({
                     </div>
                   </div>
 
-                  <label className="space-y-1 text-sm">
-                    <span className="text-xs font-semibold text-muted">Transportation</span>
-                    <select
-                      className="h-11 w-full rounded-lg border border-border px-3"
-                      value={transportation}
-                      onChange={(event) => setTransportation(event.target.value)}
+                  <label className="flex items-center gap-2 rounded-lg border border-border p-3 text-sm md:col-span-2">
+                    <input
+                      type="checkbox"
+                      checked={askTransportationQuestion}
+                      onChange={(event) => setAskTransportationQuestion(event.target.checked)}
                       disabled={isWorking}
-                    >
-                      <option value="Door to Door">Door to Door</option>
-                      <option value="Bus Stop">Bus Stop</option>
-                      <option value="No Transportation">No Transportation</option>
-                    </select>
+                    />
+                    <span>Ask caregiver transportation question in packet</span>
                   </label>
+
+                  {askTransportationQuestion ? (
+                    <label className="space-y-1 text-sm">
+                      <span className="text-xs font-semibold text-muted">Transportation (staff preset)</span>
+                      <select
+                        className="h-11 w-full rounded-lg border border-border px-3"
+                        value={transportation}
+                        onChange={(event) => setTransportation(event.target.value)}
+                        disabled={isWorking}
+                      >
+                        <option value="Door to Door">Door to Door</option>
+                        <option value="Bus Stop">Bus Stop</option>
+                        <option value="No Transportation">No Transportation</option>
+                      </select>
+                    </label>
+                  ) : null}
 
                   <label className="space-y-1 text-sm">
                     <span className="text-xs font-semibold text-muted">Community Fee ($)</span>
@@ -256,6 +341,22 @@ export function SendEnrollmentPacketAction({
                     />
                   </label>
 
+                  <label className="space-y-1 text-sm">
+                    <span className="text-xs font-semibold text-muted">Initial Enrollment Amount ($)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      className="h-11 w-full rounded-lg border border-border px-3"
+                      value={totalInitialEnrollmentAmount}
+                      onChange={(event) => {
+                        setTotalInitialEnrollmentAmount(event.target.value);
+                        setInitialAmountEdited(true);
+                      }}
+                      disabled={isWorking}
+                    />
+                  </label>
+
                   <div className="space-y-1 rounded-lg border border-border bg-slate-50 p-3 text-xs md:col-span-2">
                     <p className="font-semibold text-fg">Pricing Defaults (Operations &gt; Pricing)</p>
                     <p className="text-muted">
@@ -263,11 +364,17 @@ export function SendEnrollmentPacketAction({
                       {resolvedDailyRateTier ? ` | Default tier: ${resolvedDailyRateTier.label}` : ""}
                     </p>
                     <p className="text-muted">
+                      Remaining attendance days this month from start date: {calculatedRemainingAttendanceDays}
+                    </p>
+                    <p className="text-muted">
                       Community Fee Default:{" "}
                       {pricingPreview.communityFeeAmount == null ? "Not configured" : `$${pricingPreview.communityFeeAmount.toFixed(2)}`}
                     </p>
                     <p className="text-muted">
                       Daily Rate Default: {resolvedDailyRateTier ? `$${resolvedDailyRateTier.dailyRate.toFixed(2)}` : "No matching tier"}
+                    </p>
+                    <p className="text-muted">
+                      Calculated Initial Enrollment Amount: ${calculatedInitialEnrollmentAmount.toFixed(2)}
                     </p>
                     <div className="pt-1">
                       <button

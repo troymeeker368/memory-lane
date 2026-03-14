@@ -11,6 +11,7 @@ export const MAR_MONTHLY_REPORT_TYPES = ["summary", "detail", "exceptions"] as c
 export type MarMonthlyReportType = (typeof MAR_MONTHLY_REPORT_TYPES)[number];
 
 const MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
+const MAR_MHP_SOURCE_PREFIX = "mhp-";
 
 function clean(value: unknown): string | null {
   const normalized = typeof value === "string" ? value.trim() : "";
@@ -307,7 +308,11 @@ export async function getMarMonthlyReportMemberOptions(options?: { serviceRole?:
   const supabase = await createClient({ serviceRole });
 
   const [{ data: pofRows, error: pofError }, { data: adminRows, error: adminError }] = await Promise.all([
-    supabase.from("pof_medications").select("member_id").eq("given_at_center", true),
+    supabase
+      .from("pof_medications")
+      .select("member_id")
+      .eq("given_at_center", true)
+      .like("source_medication_id", `${MAR_MHP_SOURCE_PREFIX}%`),
     supabase.from("mar_administrations").select("member_id")
   ]);
 
@@ -388,7 +393,8 @@ export async function assembleMarMonthlyReportData(input: {
         "id, medication_name, strength, dose, route, frequency, scheduled_times, prn, prn_instructions, start_date, end_date, provider, instructions, active, given_at_center"
       )
       .eq("member_id", memberId)
-      .eq("given_at_center", true),
+      .eq("given_at_center", true)
+      .like("source_medication_id", `${MAR_MHP_SOURCE_PREFIX}%`),
     supabase
       .from("mar_schedules")
       .select(

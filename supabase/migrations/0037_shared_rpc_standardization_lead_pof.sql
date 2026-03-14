@@ -1,3 +1,26 @@
+create table if not exists public.pof_post_sign_sync_queue (
+  id uuid primary key default gen_random_uuid(),
+  physician_order_id uuid not null unique references public.physician_orders(id) on delete cascade,
+  member_id uuid not null references public.members(id) on delete cascade,
+  pof_request_id uuid references public.pof_requests(id) on delete set null,
+  status text not null default 'queued' check (status in ('queued', 'completed')),
+  attempt_count integer not null default 0 check (attempt_count >= 0),
+  last_attempt_at timestamptz,
+  next_retry_at timestamptz,
+  last_error text,
+  last_error_at timestamptz,
+  last_failed_step text check (last_failed_step in ('mhp_mcc', 'mar_medications', 'mar_schedules')),
+  signature_completed_at timestamptz not null,
+  queued_at timestamptz not null default now(),
+  queued_by_user_id uuid references public.profiles(id) on delete set null,
+  queued_by_name text,
+  resolved_at timestamptz,
+  resolved_by_user_id uuid references public.profiles(id) on delete set null,
+  resolved_by_name text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create or replace function public.rpc_convert_lead_to_member(
   p_lead_id uuid,
   p_to_stage text,

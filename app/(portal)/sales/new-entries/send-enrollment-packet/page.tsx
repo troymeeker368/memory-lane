@@ -15,7 +15,8 @@ export default async function SendEnrollmentPacketStandalonePage() {
   const leads = workflows.openLeads.slice(0, 500).map((row: any) => ({
     id: String(row.id),
     memberName: String(row.member_name ?? ""),
-    caregiverEmail: typeof row.caregiver_email === "string" ? row.caregiver_email : null
+    caregiverEmail: typeof row.caregiver_email === "string" ? row.caregiver_email : null,
+    memberStartDate: typeof row.member_start_date === "string" ? row.member_start_date : null
   }));
 
   return (

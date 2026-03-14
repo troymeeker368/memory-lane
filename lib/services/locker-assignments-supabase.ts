@@ -92,11 +92,29 @@ export async function clearLockerForMemberSupabase(input: {
   if (memberError) throw new Error(memberError.message);
   if (!member) throw new Error("Member not found.");
 
+  const at = toEasternISO();
+  const clearedLocker = typeof member.locker_number === "string" ? member.locker_number.trim() : "";
+  if (clearedLocker) {
+    const { error: historyError } = await supabase
+      .from("locker_assignment_history")
+      .upsert(
+        {
+          locker_number: clearedLocker,
+          previous_member_id: canonical.memberId,
+          previous_member_assigned: member.display_name,
+          previous_assigned_at: at,
+          updated_at: at
+        },
+        { onConflict: "locker_number" }
+      );
+    if (historyError) throw new Error("Unable to save previous locker assignment.");
+  }
+
   const { error: clearError } = await supabase
     .from("members")
     .update({
       locker_number: null,
-      updated_at: toEasternISO()
+      updated_at: at
     })
     .eq("id", canonical.memberId);
   if (clearError) throw new Error("Unable to clear locker.");

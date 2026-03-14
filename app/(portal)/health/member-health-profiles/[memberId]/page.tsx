@@ -479,6 +479,10 @@ export default async function MemberHealthProfileDetailPage({
                 frequency: row.frequency ?? null,
                 route: row.route ?? null,
                 route_laterality: row.route_laterality ?? null,
+                given_at_center: row.given_at_center ?? true,
+                prn: row.prn ?? false,
+                prn_instructions: row.prn_instructions ?? null,
+                scheduled_times: Array.isArray(row.scheduled_times) ? row.scheduled_times : [],
                 comments: row.comments ?? null,
                 updated_at: row.updated_at
               }))}

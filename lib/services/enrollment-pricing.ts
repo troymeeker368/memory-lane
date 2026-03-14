@@ -1,29 +1,11 @@
 import "server-only";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { normalizeEnrollmentRequestedDays } from "@/lib/services/enrollment-packet-proration";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 const PRICING_SCHEMA_MIGRATION = "0026_enrollment_pricing_module.sql";
-
-const REQUESTED_DAY_ALIASES: Record<string, string> = {
-  mon: "Monday",
-  monday: "Monday",
-  tue: "Tuesday",
-  tues: "Tuesday",
-  tuesday: "Tuesday",
-  wed: "Wednesday",
-  weds: "Wednesday",
-  wednesday: "Wednesday",
-  thu: "Thursday",
-  thur: "Thursday",
-  thurs: "Thursday",
-  thursday: "Thursday",
-  fri: "Friday",
-  friday: "Friday"
-};
-
-const REQUESTED_DAY_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as const;
 
 type PricingCommunityFeeRow = {
   id: string;
@@ -183,13 +165,7 @@ function mapDailyRate(row: PricingDailyRateRow): EnrollmentPricingDailyRate {
 }
 
 export function normalizeRequestedDays(inputDays: string[]): string[] {
-  const canonical = new Set<string>();
-  inputDays.forEach((day) => {
-    const key = String(day ?? "").trim().toLowerCase();
-    const mapped = REQUESTED_DAY_ALIASES[key];
-    if (mapped) canonical.add(mapped);
-  });
-  return REQUESTED_DAY_ORDER.filter((day) => canonical.has(day));
+  return normalizeEnrollmentRequestedDays(inputDays);
 }
 
 export function countRequestedDaysPerWeek(inputDays: string[]): number {

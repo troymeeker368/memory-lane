@@ -60,7 +60,7 @@ export default async function DashboardPage() {
 
   try {
     const profileStartedAt = nowMs();
-    const profile = await getCurrentProfile({ traceLabel: "route:/dashboard" });
+    const profile = await getCurrentProfile();
     logDashboardTiming("profile-resolution-complete", profileStartedAt, { role: profile.role });
 
     const permissionStartedAt = nowMs();

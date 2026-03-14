@@ -955,10 +955,12 @@ export async function getSalesFormLookups() {
 const enrollmentPacketSendSchema = z.object({
   leadId: z.string().uuid(),
   caregiverEmail: optionalString,
+  requestedStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   requestedDays: z.array(z.string().min(1)).min(1),
   transportation: optionalString,
   communityFee: z.number().finite().nonnegative().optional().nullable(),
   dailyRate: z.number().finite().nonnegative().optional().nullable(),
+  totalInitialEnrollmentAmount: z.number().finite().nonnegative().optional().nullable(),
   optionalMessage: optionalString
 });
 
@@ -990,10 +992,12 @@ export async function sendEnrollmentPacketAction(raw: z.infer<typeof enrollmentP
       senderUserId: profile.id,
       senderFullName: profile.full_name,
       caregiverEmail: payload.data.caregiverEmail || null,
+      requestedStartDate: payload.data.requestedStartDate,
       requestedDays: payload.data.requestedDays.map((day) => day.trim()).filter(Boolean),
       transportation: payload.data.transportation || null,
       communityFeeOverride: payload.data.communityFee ?? null,
       dailyRateOverride: payload.data.dailyRate ?? null,
+      totalInitialEnrollmentAmountOverride: payload.data.totalInitialEnrollmentAmount ?? null,
       optionalMessage: payload.data.optionalMessage || null,
       appBaseUrl: await resolveRequestAppBaseUrl()
     });

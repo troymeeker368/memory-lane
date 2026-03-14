@@ -25,6 +25,10 @@ type MedicationRow = {
   frequency: string | null;
   route: string | null;
   route_laterality?: string | null;
+  given_at_center: boolean;
+  prn: boolean;
+  prn_instructions: string | null;
+  scheduled_times: string[];
   comments: string | null;
   updated_at: string;
 };
@@ -67,6 +71,10 @@ export function MhpMedicationsSection({
   const [newFrequency, setNewFrequency] = useState("");
   const [newRoute, setNewRoute] = useState(routeOptions[0] ?? "PO");
   const [newRouteLaterality, setNewRouteLaterality] = useState("");
+  const [newGivenAtCenter, setNewGivenAtCenter] = useState(true);
+  const [newPrn, setNewPrn] = useState(false);
+  const [newPrnInstructions, setNewPrnInstructions] = useState("");
+  const [newScheduledTimes, setNewScheduledTimes] = useState("");
   const [editingRow, setEditingRow] = useState<MedicationRow | null>(null);
   const [editMedicationName, setEditMedicationName] = useState("");
   const [editDateStarted, setEditDateStarted] = useState(toEasternDate());
@@ -77,6 +85,10 @@ export function MhpMedicationsSection({
   const [editFrequency, setEditFrequency] = useState("");
   const [editRoute, setEditRoute] = useState(routeOptions[0] ?? "PO");
   const [editRouteLaterality, setEditRouteLaterality] = useState("");
+  const [editGivenAtCenter, setEditGivenAtCenter] = useState(true);
+  const [editPrn, setEditPrn] = useState(false);
+  const [editPrnInstructions, setEditPrnInstructions] = useState("");
+  const [editScheduledTimes, setEditScheduledTimes] = useState("");
   const [editComments, setEditComments] = useState("");
 
   const requiresRouteLaterality = (route: string | null | undefined) => {
@@ -140,6 +152,10 @@ export function MhpMedicationsSection({
       setStatus("Please select eye/ear side for Ophthalmic/Otic routes.");
       return;
     }
+    if (newGivenAtCenter && !newPrn && newScheduledTimes.trim().length === 0) {
+      setStatus("Enter at least one scheduled time for center-administered non-PRN medications.");
+      return;
+    }
     startTransition(async () => {
       const formData = new FormData();
       formData.set("memberId", memberId);
@@ -154,6 +170,10 @@ export function MhpMedicationsSection({
       formData.set("frequency", newFrequency);
       formData.set("route", newRoute);
       formData.set("routeLaterality", requiresRouteLaterality(newRoute) ? newRouteLaterality : "");
+      formData.set("givenAtCenter", newGivenAtCenter ? "true" : "false");
+      formData.set("prn", newPrn ? "true" : "false");
+      formData.set("prnInstructions", newPrnInstructions);
+      formData.set("scheduledTimes", newScheduledTimes);
 
       const result = await addMhpMedicationInlineAction(formData);
       if (!result.ok || !result.row) {
@@ -171,6 +191,10 @@ export function MhpMedicationsSection({
       setNewFrequency("");
       setNewRoute(routeOptions[0] ?? "PO");
       setNewRouteLaterality("");
+      setNewGivenAtCenter(true);
+      setNewPrn(false);
+      setNewPrnInstructions("");
+      setNewScheduledTimes("");
       setStatus("Medication added.");
     });
   };
@@ -188,6 +212,10 @@ export function MhpMedicationsSection({
     setEditFrequency(row.frequency ?? "");
     setEditRoute(row.route ?? (routeOptions[0] ?? "PO"));
     setEditRouteLaterality(row.route_laterality ?? "");
+    setEditGivenAtCenter(Boolean(row.given_at_center));
+    setEditPrn(Boolean(row.prn));
+    setEditPrnInstructions(row.prn_instructions ?? "");
+    setEditScheduledTimes((row.scheduled_times ?? []).join(", "));
     setEditComments(row.comments ?? "");
   };
 
@@ -196,6 +224,10 @@ export function MhpMedicationsSection({
     setStatus("");
     if (requiresRouteLaterality(editRoute) && !editRouteLaterality) {
       setStatus("Please select eye/ear side for Ophthalmic/Otic routes.");
+      return;
+    }
+    if (editGivenAtCenter && !editPrn && editScheduledTimes.trim().length === 0) {
+      setStatus("Enter at least one scheduled time for center-administered non-PRN medications.");
       return;
     }
     startTransition(async () => {
@@ -213,6 +245,10 @@ export function MhpMedicationsSection({
       data.set("frequency", editFrequency);
       data.set("route", editRoute);
       data.set("routeLaterality", requiresRouteLaterality(editRoute) ? editRouteLaterality : "");
+      data.set("givenAtCenter", editGivenAtCenter ? "true" : "false");
+      data.set("prn", editPrn ? "true" : "false");
+      data.set("prnInstructions", editPrnInstructions);
+      data.set("scheduledTimes", editScheduledTimes);
       data.set("medicationComments", editComments);
 
       const result = await updateMhpMedicationInlineAction(data);
@@ -282,7 +318,7 @@ export function MhpMedicationsSection({
 
   return (
     <>
-      <form onSubmit={handleAdd} className="mt-3 grid gap-2 md:grid-cols-9">
+      <form onSubmit={handleAdd} className="mt-3 grid gap-2 md:grid-cols-12">
         <input value={newMedicationName} onChange={(event) => setNewMedicationName(event.target.value)} placeholder="Medication" className="h-10 rounded-lg border border-border px-3" required />
         <input type="date" value={newDateStarted} onChange={(event) => setNewDateStarted(event.target.value)} className="h-10 rounded-lg border border-border px-3" required />
         <input value={newDose} onChange={(event) => setNewDose(event.target.value)} placeholder="Dose" className="h-10 rounded-lg border border-border px-3" />
@@ -337,7 +373,40 @@ export function MhpMedicationsSection({
         ) : (
           <div className="h-10 rounded-lg border border-border bg-slate-50 px-3 text-xs leading-10 text-muted">Eye/Ear N/A</div>
         )}
-        <button type="submit" className="h-10 rounded-lg bg-brand px-3 text-sm font-semibold text-white" disabled={isPending}>
+        <label className="flex h-10 items-center gap-2 rounded-lg border border-border px-3 text-xs">
+          <input
+            type="checkbox"
+            checked={newGivenAtCenter}
+            onChange={(event) => setNewGivenAtCenter(event.target.checked)}
+            className="h-4 w-4 rounded border-border"
+          />
+          Center Admin
+        </label>
+        <label className="flex h-10 items-center gap-2 rounded-lg border border-border px-3 text-xs">
+          <input
+            type="checkbox"
+            checked={newPrn}
+            onChange={(event) => setNewPrn(event.target.checked)}
+            className="h-4 w-4 rounded border-border"
+            disabled={!newGivenAtCenter}
+          />
+          PRN
+        </label>
+        <input
+          value={newScheduledTimes}
+          onChange={(event) => setNewScheduledTimes(event.target.value)}
+          placeholder="Scheduled times (e.g. 09:00, 13:00)"
+          className="h-10 rounded-lg border border-border px-3 md:col-span-3"
+          disabled={!newGivenAtCenter || newPrn}
+        />
+        <input
+          value={newPrnInstructions}
+          onChange={(event) => setNewPrnInstructions(event.target.value)}
+          placeholder="PRN instructions"
+          className="h-10 rounded-lg border border-border px-3 md:col-span-2"
+          disabled={!newGivenAtCenter || !newPrn}
+        />
+        <button type="submit" className="h-10 rounded-lg bg-brand px-3 text-sm font-semibold text-white md:col-span-2" disabled={isPending}>
           {isPending ? "Saving..." : "Add Medication"}
         </button>
       </form>
@@ -352,6 +421,7 @@ export function MhpMedicationsSection({
             <th>Form</th>
             <th>Frequency</th>
             <th>Route</th>
+            <th>MAR</th>
             <th aria-label="Actions" />
           </tr>
         </thead>
@@ -365,6 +435,15 @@ export function MhpMedicationsSection({
               <td>{row.form ?? "-"}</td>
               <td>{row.frequency ?? "-"}</td>
               <td>{routeDisplay(row)}</td>
+              <td>
+                {!row.given_at_center
+                  ? "Not at center"
+                  : row.prn
+                    ? `PRN${row.prn_instructions ? ` (${row.prn_instructions})` : ""}`
+                    : row.scheduled_times.length > 0
+                      ? row.scheduled_times.join(", ")
+                      : "Schedule missing"}
+              </td>
               <td>
                 <div className="flex items-center gap-1">
                   <button
@@ -397,7 +476,7 @@ export function MhpMedicationsSection({
           ))}
           {activeRows.length === 0 ? (
             <tr>
-              <td colSpan={8} className="text-sm text-muted">No active medications.</td>
+              <td colSpan={9} className="text-sm text-muted">No active medications.</td>
             </tr>
           ) : null}
         </tbody>
@@ -416,6 +495,7 @@ export function MhpMedicationsSection({
               <th>Form</th>
               <th>Frequency</th>
               <th>Route</th>
+              <th>MAR</th>
               <th aria-label="Actions" />
             </tr>
           </thead>
@@ -430,6 +510,15 @@ export function MhpMedicationsSection({
                 <td>{row.form ?? "-"}</td>
                 <td>{row.frequency ?? "-"}</td>
                 <td>{routeDisplay(row)}</td>
+                <td>
+                  {!row.given_at_center
+                    ? "Not at center"
+                    : row.prn
+                      ? `PRN${row.prn_instructions ? ` (${row.prn_instructions})` : ""}`
+                      : row.scheduled_times.length > 0
+                        ? row.scheduled_times.join(", ")
+                        : "Schedule missing"}
+                </td>
                 <td>
                   <div className="flex items-center gap-1">
                     <button
@@ -454,7 +543,7 @@ export function MhpMedicationsSection({
             ))}
             {inactiveRows.length === 0 ? (
               <tr>
-                <td colSpan={9} className="text-sm text-muted">No historical medications.</td>
+                <td colSpan={10} className="text-sm text-muted">No historical medications.</td>
               </tr>
             ) : null}
           </tbody>
@@ -538,6 +627,44 @@ export function MhpMedicationsSection({
               </select>
             </label>
           ) : null}
+          <label className="flex items-center gap-2 rounded-lg border border-border px-3 text-sm md:col-span-2">
+            <input
+              type="checkbox"
+              checked={editGivenAtCenter}
+              onChange={(event) => setEditGivenAtCenter(event.target.checked)}
+              className="h-4 w-4 rounded border-border"
+            />
+            <span className="text-xs font-semibold text-muted">Center Administered</span>
+          </label>
+          <label className="flex items-center gap-2 rounded-lg border border-border px-3 text-sm md:col-span-2">
+            <input
+              type="checkbox"
+              checked={editPrn}
+              onChange={(event) => setEditPrn(event.target.checked)}
+              className="h-4 w-4 rounded border-border"
+              disabled={!editGivenAtCenter}
+            />
+            <span className="text-xs font-semibold text-muted">PRN</span>
+          </label>
+          <label className="space-y-1 text-sm md:col-span-2">
+            <span className="text-xs font-semibold text-muted">Scheduled Times (24h)</span>
+            <input
+              value={editScheduledTimes}
+              onChange={(event) => setEditScheduledTimes(event.target.value)}
+              placeholder="09:00, 13:00"
+              className="h-10 w-full rounded-lg border border-border px-3"
+              disabled={!editGivenAtCenter || editPrn}
+            />
+          </label>
+          <label className="space-y-1 text-sm md:col-span-2">
+            <span className="text-xs font-semibold text-muted">PRN Instructions</span>
+            <input
+              value={editPrnInstructions}
+              onChange={(event) => setEditPrnInstructions(event.target.value)}
+              className="h-10 w-full rounded-lg border border-border px-3"
+              disabled={!editGivenAtCenter || !editPrn}
+            />
+          </label>
           <label className="space-y-1 text-sm md:col-span-2">
             <span className="text-xs font-semibold text-muted">Comments</span>
             <input value={editComments} onChange={(event) => setEditComments(event.target.value)} className="h-10 w-full rounded-lg border border-border px-3" />

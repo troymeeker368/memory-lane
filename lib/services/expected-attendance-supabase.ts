@@ -50,7 +50,8 @@ const loadExpectedAttendanceSupabaseContextCached = cache(
     memberIdsKey: string,
     startDate: string,
     endDate: string,
-    includeAttendanceRecords: boolean
+    includeAttendanceRecords: boolean,
+    includeSchedules: boolean
   ): Promise<ExpectedAttendanceSupabaseContext> => {
     const memberIds = memberIdsKey.split(",").filter(Boolean);
     if (memberIds.length === 0) {
@@ -68,7 +69,12 @@ const loadExpectedAttendanceSupabaseContextCached = cache(
     const supabase = await createClient();
     const holdsFilter = `end_date.is.null,end_date.gte.${startDate}`;
     const [scheduleResult, holdsResult, centerClosuresResult, scheduleChanges, attendanceRecordsResult] = await Promise.all([
-      supabase.from("member_attendance_schedules").select("member_id, monday, tuesday, wednesday, thursday, friday").in("member_id", memberIds),
+      includeSchedules
+        ? supabase
+            .from("member_attendance_schedules")
+            .select("member_id, monday, tuesday, wednesday, thursday, friday")
+            .in("member_id", memberIds)
+        : Promise.resolve({ data: [], error: null }),
       supabase
         .from("member_holds")
         .select("member_id, start_date, end_date, status")
@@ -96,7 +102,7 @@ const loadExpectedAttendanceSupabaseContextCached = cache(
         : Promise.resolve({ data: [], error: null })
     ]);
 
-    if (scheduleResult.error) {
+    if (includeSchedules && scheduleResult.error) {
       if (isMissingSchemaObjectError(scheduleResult.error)) {
         throw missingExpectedAttendanceStorageError({
           objectName: "member_attendance_schedules",
@@ -199,6 +205,7 @@ export async function loadExpectedAttendanceSupabaseContext(input: {
   startDate: string;
   endDate: string;
   includeAttendanceRecords?: boolean;
+  includeSchedules?: boolean;
 }): Promise<ExpectedAttendanceSupabaseContext> {
   const memberIds = Array.from(
     new Set(
@@ -214,7 +221,8 @@ export async function loadExpectedAttendanceSupabaseContext(input: {
     memberIds.join(","),
     startDate,
     endDate,
-    Boolean(input.includeAttendanceRecords)
+    Boolean(input.includeAttendanceRecords),
+    input.includeSchedules !== false
   );
 }
 
