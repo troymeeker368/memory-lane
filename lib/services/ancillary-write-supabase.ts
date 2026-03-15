@@ -135,6 +135,31 @@ export async function createAncillaryChargeSupabase(input: CreateAncillaryCharge
   };
 }
 
+export async function updateAncillaryCategoryPriceSupabase(input: {
+  categoryId: string;
+  priceCents: number;
+}) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("ancillary_charge_categories")
+    .update({ price_cents: input.priceCents })
+    .eq("id", input.categoryId)
+    .select("id, name")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (!data) {
+    throw new Error("Ancillary charge category not found.");
+  }
+
+  return {
+    id: String(data.id),
+    name: String(data.name ?? "")
+  };
+}
+
 export async function updateToiletLogWithAncillarySync(input: UpdateToiletLogWithAncillarySyncInput) {
   const supabase = await createClient();
   const { data: existingRow, error: existingError } = await supabase

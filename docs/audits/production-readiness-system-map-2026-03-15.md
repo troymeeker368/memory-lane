@@ -1,0 +1,508 @@
+# Production Readiness System Map
+
+Date: 2026-03-15
+Scope: full-system inventory before repo-wide production hardening and refactor
+Method: static repo scan of `app/`, `lib/services/`, `lib/actions/`, `supabase/migrations/`, and `tests/`
+
+## Purpose
+
+This document is the mandatory pre-refactor map for Memory Lane. It identifies:
+
+- workflow entry points
+- server action hubs
+- canonical service owners
+- canonical tables
+- shared RPC / transaction boundaries
+- direct database write hotspots
+- file/storage paths
+- email/notification paths
+- cross-domain sync points
+- initial idempotency / concurrency / observability / migration-safety posture
+
+## Raw Inventory Artifacts Generated During This Audit
+
+These machine-generated inventories were produced in the workspace and used to build this map:
+
+- `.tmp_server_action_functions.txt`
+- `.tmp_rpc_calls.txt`
+- `.tmp_db_writes.txt`
+- `.tmp_storage_paths.txt`
+- `.tmp_delivery_paths.txt`
+- `.tmp_cross_domain_syncs.txt`
+
+They should be treated as the exhaustive raw scan baseline for this audit pass.
+
+## System-Wide Inventory Summary
+
+- Workflow entry-point files discovered in `app/`: portal pages, public signature pages, auth routes, internal API route, and action files across sales, health, operations, members, notifications, billing, and HR/time.
+- Server-action/exported async function inventory: 229 action/helper functions discovered in `app/**`.
+- RPC usage discovered in runtime code: 6 direct `client.rpc(...)` callsites plus shared-wrapper RPC usage in lead conversion, physician order signing, and POF signing.
+- Direct database write callsites discovered in `app/` + `lib/`: 100 matched write hotspots.
+- File/storage path callsites discovered: 12.
+- Email/notification delivery callsites discovered: 82.
+
+## Domain Map
+
+### 1. Sales / Lead Management
+
+- Workflow entry points:
+  - `app/sales-actions.ts`
+  - `app/actions.ts` legacy sales actions
+  - `app/(portal)/sales/**/page.tsx`
+  - `app/(portal)/sales/new-entries/**/page.tsx`
+- Canonical source-of-truth tables:
+  - `leads`
+  - `lead_activities`
+  - `lead_stage_history`
+  - `community_partner_organizations`
+  - `referral_sources`
+  - `partner_activities`
+  - `audit_logs`
+- Canonical service owners:
+  - `lib/services/sales-crm-supabase.ts`
+  - `lib/services/sales-lead-stage-supabase.ts`
+  - `lib/services/sales-lead-conversion-supabase.ts`
+  - `lib/services/sales-lead-activities.ts`
+  - `lib/services/canonical-person-ref.ts`
+- Canonical RPC / transaction boundaries:
+  - `rpc_convert_lead_to_member`
+  - `rpc_create_lead_with_member_conversion`
+  - legacy fallbacks: `apply_lead_stage_transition_with_member_upsert`, `create_lead_with_member_conversion`
+- Downstream dependents:
+  - `members`
+  - enrollment packet workflows
+  - member command center
+  - MHP / POF / care plan workflows after conversion
+- Cross-domain sync points:
+  - lead -> member conversion
+  - lead -> enrollment packet send
+  - lead activity logging after enrollment packet completion
+- Idempotency / duplicate posture:
+  - DB hardening exists for `members.source_lead_id` in `0049_workflow_hardening_constraints.sql`
+  - conversion path is RPC-backed, but legacy action and audit paths still need consistency review
+
+### 2. Enrollment Packet Workflow
+
+- Workflow entry points:
+  - `app/sales-actions.ts::sendEnrollmentPacketAction`
+  - `app/sign/enrollment-packet/[token]/actions.ts`
+  - `components/sales/send-enrollment-packet-action.tsx`
+  - `components/enrollment-packets/enrollment-packet-public-form.tsx`
+- Canonical source-of-truth tables:
+  - `enrollment_packet_requests`
+  - `enrollment_packet_fields`
+  - `enrollment_packet_signatures`
+  - `enrollment_packet_uploads`
+  - `enrollment_packet_events`
+  - `enrollment_packet_mapping_runs`
+  - `enrollment_packet_mapping_records`
+  - `enrollment_packet_pof_staging`
+  - `member_files`
+- Canonical service owners:
+  - `lib/services/enrollment-packets.ts`
+  - `lib/services/enrollment-packet-intake-mapping.ts`
+  - `lib/services/enrollment-packet-intake-staging.ts`
+  - `lib/services/member-files.ts`
+- Canonical RPC / transaction boundaries:
+  - `rpc_finalize_enrollment_packet_request_completion`
+  - send path is service-backed but not RPC-backed end-to-end
+  - downstream mapping is still service-orchestrated and rollback-based
+- Downstream dependents:
+  - `members`
+  - `member_command_centers`
+  - `member_attendance_schedules`
+  - `member_contacts`
+  - `member_health_profiles`
+  - `enrollment_packet_pof_staging`
+  - `lead_activities`
+  - `member_files`
+  - `system_events`
+  - `user_notifications`
+- Cross-domain sync points:
+  - lead/member canonical resolution
+  - public packet completion -> downstream mapping -> member files -> lead activity -> workflow events
+- Idempotency / duplicate posture:
+  - active-packet uniqueness is DB-backed in `0049_workflow_hardening_constraints.sql`
+  - service pre-check exists in `sendEnrollmentPacketRequest`
+  - completion path still has split storage/mapping/finalization phases and repair-state behavior
+
+### 3. Intake Assessment
+
+- Workflow entry points:
+  - `app/actions.ts::createAssessmentAction`
+  - `app/(portal)/health/assessment/page.tsx`
+  - `app/(portal)/health/assessment/[assessmentId]/actions.ts`
+- Canonical source-of-truth tables:
+  - `intake_assessments`
+  - `assessment_responses`
+  - `intake_assessment_signatures`
+  - `member_files`
+- Canonical service owners:
+  - `lib/services/intake-pof-mhp-cascade.ts`
+  - `lib/services/intake-assessment-esign.ts`
+  - `lib/services/clinical-esign-artifacts.ts`
+- Canonical RPC / transaction boundaries:
+  - `rpc_create_intake_assessment_with_responses` now provides one atomic boundary for the base assessment row plus `assessment_responses`
+  - `rpc_finalize_intake_assessment_signature` now provides one atomic DB boundary for `intake_assessment_signatures` + `intake_assessments`
+  - draft-POF follow-up is still sequential and not one end-to-end transaction
+- Downstream dependents:
+  - `physician_orders` draft creation
+  - intake PDF member files
+  - workflow events
+- Cross-domain sync points:
+  - signed intake -> draft POF creation
+- Idempotency / duplicate posture:
+  - `draft_pof_status` / `draft_pof_attempted_at` / `draft_pof_error` added in `0049`
+  - base assessment create + responses is now one RPC-backed transaction
+  - signature DB finalization is now RPC-backed with replay-safe signed-state gating
+  - full create + sign + draft-POF cascade still needs a wider atomic boundary
+
+### 4. Physician Orders / POF
+
+- Workflow entry points:
+  - `app/(portal)/health/physician-orders/actions.ts`
+  - `app/(portal)/operations/member-command-center/pof-actions.ts`
+  - `app/sign/pof/[token]/actions.ts`
+  - `app/api/internal/pof-post-sign-sync/route.ts`
+- Canonical source-of-truth tables:
+  - `physician_orders`
+  - `pof_requests`
+  - `pof_signatures`
+  - `document_events`
+  - `member_files`
+  - `pof_post_sign_sync_queue`
+  - `pof_medications`
+  - `mar_schedules`
+- Canonical service owners:
+  - `lib/services/physician-orders-supabase.ts`
+  - `lib/services/pof-esign.ts`
+  - `lib/services/mar-workflow.ts`
+  - `lib/services/member-files.ts`
+- Canonical RPC / transaction boundaries:
+  - `rpc_sign_physician_order`
+  - `rpc_finalize_pof_signature`
+  - `rpc_sync_signed_pof_to_member_clinical_profile`
+- Downstream dependents:
+  - MHP
+  - MCC visibility
+  - `pof_medications`
+  - `mar_schedules`
+  - signed PDF member file
+  - notifications / workflow milestones
+- Cross-domain sync points:
+  - signed POF -> clinical profile sync -> medication propagation -> MAR schedule generation
+  - internal retry route for queued post-sign sync
+- Idempotency / duplicate posture:
+  - active POF request uniqueness is handled in service + DB constraint messaging
+  - post-sign sync is queue-backed and recoverable, but runner/config must stay healthy
+
+### 5. Member Health Profile (MHP)
+
+- Workflow entry points:
+  - `app/(portal)/health/member-health-profiles/actions.ts`
+  - `app/(portal)/health/member-health-profiles/[memberId]/page.tsx`
+- Canonical source-of-truth tables:
+  - `member_health_profiles`
+  - `member_diagnoses`
+  - `member_medications`
+  - `member_allergies`
+  - `member_providers`
+  - `member_equipment`
+  - `member_notes`
+  - provider directory support tables
+- Canonical service owners:
+  - `lib/services/member-health-profiles-supabase.ts`
+  - `lib/services/member-health-profiles-write-supabase.ts`
+- Canonical RPC / transaction boundaries:
+  - no single RPC for full parent/child sync
+  - child writes are service CRUD
+- Downstream dependents:
+  - MCC
+  - MAR medication/schedule generation
+  - reporting / print artifacts
+- Cross-domain sync points:
+  - MHP overview/legal/etc. -> MCC sync
+  - MHP medications -> MAR sync
+- Idempotency / duplicate posture:
+  - child-row CRUD is service-backed
+  - bulk parent/child consistency still depends on action sequencing
+
+### 6. Care Plans
+
+- Workflow entry points:
+  - `app/care-plan-actions.ts`
+  - `app/(portal)/health/care-plans/[carePlanId]/actions.ts`
+  - `app/sign/care-plan/[token]/actions.ts`
+- Canonical source-of-truth tables:
+  - `care_plans`
+  - `care_plan_sections`
+  - `care_plan_versions`
+  - `care_plan_review_history`
+  - `care_plan_signature_events`
+  - `member_files`
+- Canonical service owners:
+  - `lib/services/care-plans-supabase.ts`
+  - `lib/services/care-plan-esign.ts`
+  - `lib/services/care-plan-nurse-esign.ts`
+- Canonical RPC / transaction boundaries:
+  - `rpc_finalize_care_plan_caregiver_signature`
+  - create/review path itself is still service-orchestrated with rollback/delete patterns
+- Downstream dependents:
+  - signed/final care plan member files
+  - signature events
+  - notifications / workflow milestones
+- Cross-domain sync points:
+  - create/review -> nurse signature -> caregiver dispatch -> caregiver sign -> final artifact filing
+- Idempotency / duplicate posture:
+  - `care_plans(member_id, track)` uniqueness is DB-backed in `0049`
+  - caregiver finalization is RPC-backed
+  - pre-finalization storage and draft signature state remain split
+
+### 7. MAR / Medication Administration
+
+- Workflow entry points:
+  - `app/(portal)/health/mar/actions.ts`
+  - `app/(portal)/health/mar/page.tsx`
+- Canonical source-of-truth tables:
+  - `pof_medications`
+  - `mar_schedules`
+  - `mar_administrations`
+- Canonical service owners:
+  - `lib/services/mar-workflow.ts`
+  - `lib/services/mar-monthly-report.ts`
+  - `lib/services/mar-monthly-report-pdf.ts`
+- Canonical RPC / transaction boundaries:
+  - none for schedule regeneration
+  - documentation writes are service CRUD with DB uniqueness on `mar_administrations(mar_schedule_id)`
+- Downstream dependents:
+  - member files for monthly reports
+  - workflow events / notifications
+- Cross-domain sync points:
+  - signed POF / MHP meds -> `pof_medications` -> `mar_schedules`
+- Idempotency / duplicate posture:
+  - duplicate scheduled administration is DB-constrained
+  - schedule regeneration is multi-step and still non-transactional
+
+### 8. Member Command Center / Operations
+
+- Workflow entry points:
+  - `app/(portal)/operations/member-command-center/actions.ts`
+  - `app/(portal)/operations/attendance/actions.ts`
+  - `app/(portal)/operations/transportation-station/actions.ts`
+  - `app/(portal)/operations/holds/actions.ts`
+  - `app/(portal)/operations/locker-assignments/actions.ts`
+  - `app/(portal)/operations/schedule-changes/actions.ts`
+  - `app/(portal)/operations/pricing/actions.ts`
+  - `app/(portal)/operations/payor/actions.ts`
+- Canonical source-of-truth tables:
+  - `member_command_centers`
+  - `member_attendance_schedules`
+  - `member_contacts`
+  - `member_files`
+  - `member_holds`
+  - `attendance_records`
+  - `transportation_manifest_adjustments`
+  - pricing / billing tables
+- Canonical service owners:
+  - `lib/services/member-command-center-supabase.ts`
+  - `lib/services/attendance-workflow-supabase.ts`
+  - `lib/services/transportation-station-supabase.ts`
+  - `lib/services/holds-supabase.ts`
+  - `lib/services/schedule-changes-supabase.ts`
+  - `lib/services/enrollment-pricing.ts`
+  - `lib/services/billing-supabase.ts`
+- Canonical RPC / transaction boundaries:
+  - `apply_makeup_balance_delta_with_audit`
+  - `rpc_generate_billing_batch`
+  - `rpc_create_billing_export`
+- Downstream dependents:
+  - billing / invoice generation
+  - transportation manifests
+  - member detail read models
+  - reports
+- Cross-domain sync points:
+  - attendance -> makeup ledger -> billing
+  - MCC attendance/billing settings -> payor module
+- Idempotency / duplicate posture:
+  - mixed; some service CRUD, some RPC-backed, some action-level orchestration
+
+### 9. File / Document Generation and Member Files
+
+- Workflow entry points:
+  - assessment PDF
+  - care plan PDF
+  - POF PDF
+  - MAR monthly PDF
+  - face sheet PDF
+  - diet card PDF
+  - name badge PDF
+  - enrollment packet artifacts
+  - caregiver/provider/nurse signature image capture
+- Canonical source-of-truth tables / storage:
+  - storage bucket: `member-documents`
+  - `member_files`
+  - workflow-specific artifact tables such as `enrollment_packet_uploads`
+- Canonical service owners:
+  - `lib/services/member-files.ts`
+  - `lib/services/clinical-esign-artifacts.ts`
+  - workflow-specific services above
+- File/storage path hotspots:
+  - `lib/services/member-files.ts`
+  - `lib/services/enrollment-packets.ts`
+  - `lib/services/pof-esign.ts`
+  - `lib/services/care-plan-esign.ts`
+  - `lib/services/clinical-esign-artifacts.ts`
+- Integrity posture:
+  - storage and metadata writes are centralized around `uploadMemberDocumentObject` and `upsertMemberFileByDocumentSource`
+  - several workflows still upload to storage before final DB finalization, creating split-brain risk on failure
+
+### 10. Notifications / Workflow Milestones / System Events
+
+- Workflow entry points:
+  - lifecycle service calls from enrollment, POF, care plan, MAR, billing, and operational reliability paths
+  - portal inbox routes and actions in `app/(portal)/notifications/*`
+- Canonical source-of-truth tables:
+  - `system_events`
+  - `user_notifications`
+- Canonical service owners:
+  - `lib/services/system-event-service.ts`
+  - `lib/services/workflow-observability.ts`
+  - `lib/services/lifecycle-milestones.ts`
+  - `lib/services/notifications.ts`
+- Delivery posture:
+  - notifications are created after success-path milestones in several critical workflows
+  - some milestone/event writes remain optional/non-blocking by design
+
+## RPC Inventory
+
+- `apply_makeup_balance_delta_with_audit`
+- `rpc_convert_lead_to_member`
+- `rpc_create_lead_with_member_conversion`
+- `rpc_sign_physician_order`
+- `rpc_finalize_pof_signature`
+- `rpc_sync_signed_pof_to_member_clinical_profile`
+- `rpc_generate_billing_batch`
+- `rpc_create_billing_export`
+- `rpc_finalize_enrollment_packet_request_completion`
+- `rpc_finalize_care_plan_caregiver_signature`
+
+## File / Storage Inventory
+
+- Bucket owner: `lib/services/member-files.ts`
+- Storage upload/download/signed-url paths:
+  - enrollment packet uploads and completed DOCX artifacts
+  - POF unsigned PDF, signed PDF, provider signature image
+  - care plan caregiver signature image and final signed PDF
+  - nurse clinical signature artifacts for intake/care plan
+
+## Email / Notification Inventory
+
+- Outbound email send services:
+  - `lib/services/enrollment-packets.ts`
+  - `lib/services/pof-esign.ts`
+  - `lib/services/care-plan-esign.ts`
+  - `lib/services/staff-auth.ts`
+- Notification/milestone services:
+  - `lib/services/lifecycle-milestones.ts`
+  - `lib/services/notifications.ts`
+  - `lib/services/workflow-observability.ts`
+
+## Test Coverage Baseline
+
+Confirmed focused tests exist for:
+
+- RPC standardization
+- enrollment packet workflow wiring
+- POF e-sign UI and document rendering
+- care plan canonical rules
+- daily activity update action
+- member name badge display-name rules
+
+Critical gaps still appear likely for:
+
+- enrollment packet downstream mapping durability
+- intake create/sign + draft-POF atomicity
+- care plan create/review transactional safety
+- MAR schedule regeneration under retry/concurrency
+- billing batch/export failure and replay safety
+- public route token replay / duplicate-submit coverage
+- RLS/policy parity verification
+
+## Environment / Config Dependency Baseline
+
+High-impact runtime dependencies discovered:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_SERVICE_KEY`
+- `NEXT_PUBLIC_APP_URL` / `APP_URL` / `SITE_URL`
+- `RESEND_API_KEY`
+- `CLINICAL_SENDER_EMAIL` / `DEFAULT_CLINICAL_SENDER_EMAIL` / `RESEND_FROM_EMAIL`
+- `POF_POST_SIGN_SYNC_SECRET`
+
+## Initial Production-Risk Hotspots To Carry Into Refactor
+
+- Action-level direct `audit_logs` writes still exist in `app/actions.ts`, `app/(portal)/health/mar/actions.ts`, and `app/(portal)/operations/pricing/actions.ts`.
+- Enrollment packet downstream mapping is still outside the finalization RPC boundary.
+- Intake assessment create + responses + signature + draft-POF follow-up is not one atomic DB boundary.
+- Care plan create/review paths still use service-level rollback/delete behavior rather than one RPC-backed transaction.
+- File workflows still have storage-first patterns that can leave orphaned objects when later metadata/finalization fails.
+- MAR schedule regeneration is multi-step and non-transactional.
+- Some service modules still write `audit_logs` directly instead of routing all lifecycle logging through one shared service.
+
+## Next Audit Phases After This Map
+
+1. Idempotency / duplicate-submit / concurrency audit by workflow.
+2. UI mutation-state audit for loading/success/failure/retry/duplicate-submit prevention.
+3. Permission parity audit across UI, actions, services, RPC, RLS, and public token routes.
+4. File/document integrity audit for storage + metadata atomicity.
+5. Blocker-first implementation pass.
+
+## Hardening Pass Applied In This Session
+
+Implemented production-safety fixes:
+
+- Moved action-level audit log persistence in `app/actions.ts`, `app/(portal)/health/mar/actions.ts`, and `app/(portal)/operations/pricing/actions.ts` behind shared service `lib/services/audit-log-service.ts`.
+- Moved `timePunchAction` write orchestration behind shared service `lib/services/time-punches.ts`.
+- Moved legacy `app/actions.ts` ancillary pricing mutation behind `lib/services/ancillary-write-supabase.ts::updateAncillaryCategoryPriceSupabase`.
+- Moved legacy `app/actions.ts` intake-assessment rollback delete behind `lib/services/intake-pof-mhp-cascade.ts::deleteIntakeAssessmentSupabase`.
+- Added `0051_intake_assessment_atomic_creation_rpc.sql` and moved base intake assessment creation (`intake_assessments` + `assessment_responses`) onto `rpc_create_intake_assessment_with_responses`.
+- Added `0052_intake_assessment_signature_finalize_rpc.sql` and moved intake signature DB finalization (`intake_assessment_signatures` + `intake_assessments`) onto `rpc_finalize_intake_assessment_signature`, with explicit cleanup/alert handling for artifact split-brain failures.
+- Normalized remaining service-layer `audit_logs` writers in `lib/services/sales-crm-supabase.ts`, `lib/services/sales-lead-activities.ts`, and `lib/services/staff-auth.ts` behind shared service `lib/services/audit-log-service.ts`.
+- Added storage cleanup helper `deleteMemberDocumentObject(...)` and metadata cleanup helper `deleteMemberFileRecord(...)` in `lib/services/member-files.ts`.
+- Hardened `lib/services/clinical-esign-artifacts.ts` so failed `member_files` persistence cleans up the just-uploaded storage object.
+- Hardened `lib/services/enrollment-packets.ts` so:
+  - failed `member_files` upsert cleans up the just-uploaded object
+  - failed `enrollment_packet_uploads` insert cleans up newly created `member_files` + storage when rollback is safe
+  - unsafe rollback cases now emit a high-severity system alert `enrollment_packet_upload_split_brain`
+- Added workflow reliability support indexes in `supabase/migrations/0050_workflow_reliability_indexes.sql` for:
+  - `enrollment_packet_requests(delivery_status, updated_at desc)`
+  - `pof_requests(delivery_status, updated_at desc)`
+  - `pof_requests(delivery_status, status, updated_at desc)`
+  - `care_plans(caregiver_signature_status, updated_at desc)`
+  - `system_events(event_type, status, created_at desc)`
+  - `system_events(event_type, created_at desc)`
+- Added focused regression coverage in `tests/production-hardening-write-paths.test.ts`.
+- Updated stale enrollment packet source-inspection tests in `tests/enrollment-packet-workflow.test.ts` to match the current canonical code.
+
+## Production Blockers Resolved In This Pass
+
+- Direct action-level writes to `audit_logs` in key workflow entry points.
+- Direct action-level write to `time_punches` from `timePunchAction`.
+- Remaining direct app-layer mutation leak in ancillary pricing update.
+- Remaining direct app-layer mutation leak in intake rollback delete path.
+- Silent orphaned storage-object risk in nurse clinical e-sign artifact capture.
+- Silent orphaned storage-object risk when enrollment packet upload metadata fails before final upload row creation.
+- Missing observability for the enrollment packet upload split-brain case that cannot be safely auto-rolled-back after an upserted `member_files` row is reused.
+- Duplicated service-layer `audit_logs` write implementations in core sales/staff-auth services.
+- Missing support indexes for workflow delivery-state and system-event retry/alert queries.
+
+## Production Blockers Still Open After This Pass
+
+- Enrollment packet downstream mapping is still not inside one shared RPC/transaction boundary.
+- Intake assessment create + signature + draft POF cascade is still not one end-to-end atomic DB boundary, even though base assessment creation and signature DB finalization are now RPC-backed.
+- Care plan create/review workflow still has pre-finalization split storage/state transitions outside one transaction boundary.
+- POF signing still uploads artifacts before final RPC completion; metadata/storage rollback is not fully canonicalized.
+- MAR schedule regeneration remains multi-step and non-transactional under retry/concurrency.
+- Service-layer `audit_logs` writes still exist in some service modules and should be normalized behind one shared audit writer.
+- RLS/policy parity, public-token replay safety, and cross-domain downstream propagation still require deeper workflow-by-workflow verification beyond this code pass.

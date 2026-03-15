@@ -15,6 +15,11 @@ import {
   recordImmediateSystemAlert,
   recordWorkflowEvent
 } from "@/lib/services/workflow-observability";
+import {
+  deleteMemberDocumentObject,
+  deleteMemberFileRecord
+} from "@/lib/services/member-files";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -39,6 +44,13 @@ type IntakeAssessmentSignatureRow = {
   signature_metadata: Record<string, unknown> | null;
 };
 
+type FinalizedIntakeAssessmentSignatureRpcRow = IntakeAssessmentSignatureRow & {
+  was_already_signed: boolean;
+};
+
+const FINALIZE_INTAKE_SIGNATURE_RPC = "rpc_finalize_intake_assessment_signature";
+const FINALIZE_INTAKE_SIGNATURE_MIGRATION = "0052_intake_assessment_signature_finalize_rpc.sql";
+
 function toStateFromRow(row: IntakeAssessmentSignatureRow): IntakeAssessmentSignatureState {
   return {
     assessmentId: row.assessment_id,
@@ -54,6 +66,59 @@ function toStateFromRow(row: IntakeAssessmentSignatureRow): IntakeAssessmentSign
         ? (row.signature_metadata as Record<string, unknown>)
         : {}
   };
+}
+
+async function cleanupIntakeSignatureArtifactAfterFinalizeFailure(input: {
+  assessmentId: string;
+  memberId: string;
+  actorUserId: string;
+  reason: string;
+  artifact: {
+    signatureArtifactStoragePath: string | null;
+    signatureArtifactMemberFileId: string | null;
+    signatureArtifactMemberFileCreated?: boolean;
+  };
+}) {
+  if (!input.artifact.signatureArtifactMemberFileCreated) {
+    await recordImmediateSystemAlert({
+      entityType: "intake_assessment",
+      entityId: input.assessmentId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "intake_assessment_signature_finalize_split_brain",
+      metadata: {
+        member_id: input.memberId,
+        reason: input.reason,
+        signature_artifact_storage_path: input.artifact.signatureArtifactStoragePath,
+        signature_artifact_member_file_id: input.artifact.signatureArtifactMemberFileId
+      }
+    });
+    return;
+  }
+
+  try {
+    if (input.artifact.signatureArtifactMemberFileId) {
+      await deleteMemberFileRecord(input.artifact.signatureArtifactMemberFileId);
+    }
+    if (input.artifact.signatureArtifactStoragePath) {
+      await deleteMemberDocumentObject(input.artifact.signatureArtifactStoragePath);
+    }
+  } catch (cleanupError) {
+    await recordImmediateSystemAlert({
+      entityType: "intake_assessment",
+      entityId: input.assessmentId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "intake_assessment_signature_finalize_cleanup_failed",
+      metadata: {
+        member_id: input.memberId,
+        reason: input.reason,
+        cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error.",
+        signature_artifact_storage_path: input.artifact.signatureArtifactStoragePath,
+        signature_artifact_member_file_id: input.artifact.signatureArtifactMemberFileId
+      }
+    });
+  }
 }
 
 export async function getIntakeAssessmentSignatureState(
@@ -180,6 +245,13 @@ export async function signIntakeAssessment(input: {
   if (assessmentError) throw new Error(assessmentError.message);
   if (!assessment) throw new Error("Intake assessment not found.");
 
+  const existingState = await getIntakeAssessmentSignatureState(assessment.id, {
+    serviceRole: input.serviceRole
+  });
+  if (existingState.status === "signed" && existingState.signedByUserId && existingState.signedAt) {
+    return existingState;
+  }
+
   try {
     if (!cleanIntakeAssessmentSignatureValue(input.signatureImageDataUrl)) {
       throw new Error("Nurse/Admin e-signature image is required.");
@@ -209,34 +281,66 @@ export async function signIntakeAssessment(input: {
         ...(input.metadata ?? {})
       }
     });
-
-    const { error: upsertError } = await supabase
-      .from("intake_assessment_signatures")
-      .upsert(persistence.signatureRow, { onConflict: "assessment_id" });
-    if (upsertError) throw new Error(upsertError.message);
-
-    const { error: assessmentUpdateError } = await supabase
-      .from("intake_assessments")
-      .update(persistence.assessmentUpdate)
-      .eq("id", assessment.id);
-    if (assessmentUpdateError) throw new Error(assessmentUpdateError.message);
-
-    await recordWorkflowEvent({
-      eventType: "intake_assessment_signed",
-      entityType: "intake_assessment",
-      entityId: assessment.id,
-      actorType: "user",
-      actorUserId: input.actor.id,
-      status: "signed",
-      severity: "low",
-      metadata: {
-        member_id: assessment.member_id,
-        signature_status: persistence.state.status,
-        signature_artifact_member_file_id: persistence.state.signatureArtifactMemberFileId
+    let rpcData: unknown;
+    try {
+      rpcData = await invokeSupabaseRpcOrThrow<unknown>(supabase, FINALIZE_INTAKE_SIGNATURE_RPC, {
+        p_assessment_id: assessment.id,
+        p_member_id: assessment.member_id,
+        p_signed_by_user_id: persistence.signatureRow.signed_by_user_id,
+        p_signed_by_name: persistence.signatureRow.signed_by_name,
+        p_signed_at: persistence.signatureRow.signed_at,
+        p_signature_artifact_storage_path: persistence.signatureRow.signature_artifact_storage_path,
+        p_signature_artifact_member_file_id: persistence.signatureRow.signature_artifact_member_file_id,
+        p_signature_metadata: persistence.signatureRow.signature_metadata
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to finalize intake assessment signature.";
+      await cleanupIntakeSignatureArtifactAfterFinalizeFailure({
+        assessmentId: assessment.id,
+        memberId: assessment.member_id,
+        actorUserId: input.actor.id,
+        reason: message,
+        artifact
+      });
+      if (message.includes(FINALIZE_INTAKE_SIGNATURE_RPC)) {
+        throw new Error(
+          `Intake assessment signature finalization RPC is not available. Apply Supabase migration ${FINALIZE_INTAKE_SIGNATURE_MIGRATION} and refresh PostgREST schema cache.`
+        );
       }
-    });
+      throw error;
+    }
 
-    return persistence.state;
+    const finalizedRow = (Array.isArray(rpcData) ? rpcData[0] : null) as FinalizedIntakeAssessmentSignatureRpcRow | null;
+    if (!finalizedRow?.assessment_id) {
+      await cleanupIntakeSignatureArtifactAfterFinalizeFailure({
+        assessmentId: assessment.id,
+        memberId: assessment.member_id,
+        actorUserId: input.actor.id,
+        reason: "Intake assessment signature finalization RPC did not return a signature row.",
+        artifact
+      });
+      throw new Error("Intake assessment signature finalization RPC did not return a signature row.");
+    }
+
+    const state = toStateFromRow(finalizedRow);
+    if (!finalizedRow.was_already_signed) {
+      await recordWorkflowEvent({
+        eventType: "intake_assessment_signed",
+        entityType: "intake_assessment",
+        entityId: assessment.id,
+        actorType: "user",
+        actorUserId: input.actor.id,
+        status: "signed",
+        severity: "low",
+        metadata: {
+          member_id: assessment.member_id,
+          signature_status: state.status,
+          signature_artifact_member_file_id: state.signatureArtifactMemberFileId
+        }
+      });
+    }
+
+    return state;
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to sign intake assessment.";
     await recordWorkflowEvent({

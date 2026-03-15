@@ -40,10 +40,7 @@ test("shared enrollment packet service persists a DOCX completed packet artifact
   const docxSource = readWorkspaceFile("lib/services/enrollment-packet-docx.ts");
 
   assert.equal(serviceSource.includes("buildCompletedEnrollmentPacketDocxData"), true);
-  assert.equal(
-    docxSource.includes('application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-    true
-  );
+  assert.equal(docxSource.includes("PDFDocument.create()"), true);
   assert.equal(serviceSource.includes('uploadCategory: "completed_packet"'), true);
 });
 
@@ -51,7 +48,7 @@ test("sales action delegates packet send to the shared enrollment packet resolve
   const actionSource = readWorkspaceFile("app/sales-actions.ts");
 
   assert.equal(actionSource.includes("sendEnrollmentPacketRequest({"), true);
-  assert.equal(actionSource.includes("resolveCanonicalPersonRef("), true);
+  assert.equal(actionSource.includes("resolveCanonicalLeadRef("), true);
 });
 
 test("portal notification inbox is wired to user_notifications service and route", () => {

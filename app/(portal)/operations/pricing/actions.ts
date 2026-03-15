@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
+import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { normalizeRoleKey } from "@/lib/permissions";
 import {
   createEnrollmentPricingCommunityFee,
@@ -13,7 +14,6 @@ import {
   updateEnrollmentPricingCommunityFee,
   updateEnrollmentPricingDailyRate
 } from "@/lib/services/enrollment-pricing";
-import { createClient } from "@/lib/supabase/server";
 
 const optionalString = z.string().optional().or(z.literal(""));
 
@@ -64,14 +64,13 @@ async function insertPricingAudit(input: {
   entityId: string;
   details: Record<string, unknown>;
 }) {
-  const supabase = await createClient();
   const profile = await getCurrentProfile();
-  await supabase.from("audit_logs").insert({
-    actor_user_id: profile.id,
-    actor_role: normalizeRoleKey(profile.role),
+  await insertAuditLogEntry({
+    actorUserId: profile.id,
+    actorRole: normalizeRoleKey(profile.role),
     action: "manager_review",
-    entity_type: input.entityType,
-    entity_id: input.entityId,
+    entityType: input.entityType,
+    entityId: input.entityId,
     details: {
       operation: input.action,
       ...input.details

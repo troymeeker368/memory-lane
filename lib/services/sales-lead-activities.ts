@@ -7,6 +7,7 @@ import {
   LEAD_LOST_REASON_OPTIONS
 } from "@/lib/canonical";
 import { normalizeRoleKey } from "@/lib/permissions";
+import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { resolveCanonicalLeadRef } from "@/lib/services/canonical-person-ref";
 import { applyLeadStageTransitionWithMemberUpsertSupabase } from "@/lib/services/sales-lead-conversion-supabase";
 import { applyLeadStageTransitionSupabase } from "@/lib/services/sales-lead-stage-supabase";
@@ -195,12 +196,12 @@ export async function createSalesLeadActivity(input: {
     });
   }
 
-  await supabase.from("audit_logs").insert({
-    actor_user_id: input.actor.id,
-    actor_role: normalizeRoleKey(input.actor.role),
+  await insertAuditLogEntry({
+    actorUserId: input.actor.id,
+    actorRole: normalizeRoleKey(input.actor.role),
     action: "create_log",
-    entity_type: "lead_activity",
-    entity_id: canonicalLead.leadId,
+    entityType: "lead_activity",
+    entityId: canonicalLead.leadId,
     details: {
       activityType: input.activity.activityType,
       outcome: input.activity.outcome

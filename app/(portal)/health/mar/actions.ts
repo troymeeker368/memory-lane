@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
+import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { MAR_MONTHLY_REPORT_TYPES } from "@/lib/services/mar-monthly-report";
 import { buildMarMonthlyReportPdfDataUrl } from "@/lib/services/mar-monthly-report-pdf";
@@ -13,7 +14,6 @@ import {
   documentScheduledMarAdministration,
 } from "@/lib/services/mar-workflow";
 import { MAR_NOT_GIVEN_REASON_OPTIONS, MAR_PRN_OUTCOME_OPTIONS, type MarPrnOutcome } from "@/lib/services/mar-shared";
-import { createClient } from "@/lib/supabase/server";
 import { toEasternISO } from "@/lib/timezone";
 
 const scheduledAdministrationSchema = z
@@ -76,14 +76,14 @@ const monthlyMarReportSchema = z.object({
 
 async function insertAudit(action: string, entityType: string, entityId: string | null, details: Record<string, unknown>) {
   const profile = await getCurrentProfile();
-  const supabase = await createClient({ serviceRole: true });
-  await supabase.from("audit_logs").insert({
-    actor_user_id: profile.id,
-    actor_role: profile.role,
+  await insertAuditLogEntry({
+    actorUserId: profile.id,
+    actorRole: profile.role,
     action,
-    entity_type: entityType,
-    entity_id: entityId,
-    details
+    entityType,
+    entityId,
+    details,
+    serviceRole: true
   });
 }
 

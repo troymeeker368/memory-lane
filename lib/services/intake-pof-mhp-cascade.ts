@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { calculateAssessmentTotal, getAssessmentTrack } from "@/lib/assessment";
 
 import { type IntakeAssessmentForPofPrefill } from "@/lib/services/intake-to-pof-mapping";
@@ -65,6 +66,9 @@ export type CreateIntakeAssessmentPayload = {
   vitalsRr: number;
   notes?: string;
 };
+
+const CREATE_INTAKE_ASSESSMENT_RPC = "rpc_create_intake_assessment_with_responses";
+const CREATE_INTAKE_ASSESSMENT_MIGRATION = "0051_intake_assessment_atomic_creation_rpc.sql";
 
 function buildAssessmentResponseRows(input: {
   assessmentId: string;
@@ -138,11 +142,10 @@ function buildAssessmentResponseRows(input: {
   });
 }
 
-export async function createIntakeAssessment(input: {
+function buildIntakeAssessmentInsertPayload(input: {
   payload: CreateIntakeAssessmentPayload;
   actor: { id: string; fullName: string; signoffName: string };
 }) {
-  const supabase = await createClient();
   const totalScore = calculateAssessmentTotal({
     orientationGeneralHealth: input.payload.scoreOrientationGeneralHealth,
     dailyRoutinesIndependence: input.payload.scoreDailyRoutinesIndependence,
@@ -153,7 +156,7 @@ export async function createIntakeAssessment(input: {
   const { recommendedTrack, admissionReviewRequired } = getAssessmentTrack(totalScore);
   const now = toEasternISO();
 
-  const insertPayload = {
+  return {
     member_id: input.payload.memberId,
     lead_id: input.payload.leadId ?? null,
     assessment_date: input.payload.assessmentDate,
@@ -220,10 +223,6 @@ export async function createIntakeAssessment(input: {
     created_at: now,
     updated_at: now
   };
-
-  const { data, error } = await supabase.from("intake_assessments").insert(insertPayload).select("*").single();
-  if (error) throw new Error(error.message);
-  return data;
 }
 
 export type IntakeDraftPofStatus = "pending" | "created" | "failed";
@@ -247,6 +246,12 @@ export async function updateIntakeAssessmentDraftPofStatus(input: {
   if (error) throw new Error(error.message);
 }
 
+export async function deleteIntakeAssessmentSupabase(assessmentId: string) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("intake_assessments").delete().eq("id", assessmentId);
+  if (error) throw new Error(error.message);
+}
+
 export async function createIntakeAssessmentWithResponses(input: {
   payload: CreateIntakeAssessmentPayload;
   actor: { id: string; fullName: string; signoffName: string };
@@ -255,27 +260,25 @@ export async function createIntakeAssessmentWithResponses(input: {
     leadStatus?: string | null;
   };
 }) {
-  const assessment = await createIntakeAssessment({
+  const insertPayload = buildIntakeAssessmentInsertPayload({
     payload: input.payload,
     actor: input.actor
   });
 
   const responseRows = buildAssessmentResponseRows({
-    assessmentId: String(assessment.id),
+    assessmentId: "pending-rpc-assessment-id",
     memberId: input.payload.memberId,
-    createdAt: String(assessment.created_at ?? toEasternISO()),
+    createdAt: String(insertPayload.created_at ?? toEasternISO()),
     values: {
       ...input.payload,
       leadId: input.payload.leadId ?? "",
       leadStage: input.responseContext?.leadStage ?? "",
       leadStatus: input.responseContext?.leadStatus ?? "",
-      totalScore: Number(assessment.total_score ?? 0),
-      recommendedTrack: String(assessment.recommended_track ?? ""),
-      admissionReviewRequired: Boolean(assessment.admission_review_required)
+      totalScore: Number(insertPayload.total_score ?? 0),
+      recommendedTrack: String(insertPayload.recommended_track ?? ""),
+      admissionReviewRequired: Boolean(insertPayload.admission_review_required)
     }
   }).map((row) => ({
-    assessment_id: row.assessment_id,
-    member_id: row.member_id,
     field_key: row.field_key,
     field_label: row.field_label,
     section_type: row.section_type,
@@ -284,18 +287,26 @@ export async function createIntakeAssessmentWithResponses(input: {
     created_at: row.created_at
   }));
 
-  if (responseRows.length > 0) {
-    const supabase = await createClient();
-    const { error: responsesError } = await supabase.from("assessment_responses").insert(responseRows);
-    if (responsesError) {
-      const { error: rollbackError } = await supabase.from("intake_assessments").delete().eq("id", assessment.id);
-      if (rollbackError) {
-        throw new Error(
-          `${responsesError.message}. Intake assessment rollback failed: ${rollbackError.message}`
-        );
-      }
-      throw new Error(responsesError.message);
+  const supabase = await createClient();
+  let rpcData: unknown;
+  try {
+    rpcData = await invokeSupabaseRpcOrThrow<unknown>(supabase, CREATE_INTAKE_ASSESSMENT_RPC, {
+      p_assessment: insertPayload,
+      p_response_rows: responseRows
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to create intake assessment.";
+    if (message.includes(CREATE_INTAKE_ASSESSMENT_RPC)) {
+      throw new Error(
+        `Intake assessment atomic creation RPC is not available. Apply Supabase migration ${CREATE_INTAKE_ASSESSMENT_MIGRATION} and refresh PostgREST schema cache.`
+      );
     }
+    throw error;
+  }
+
+  const assessment = (Array.isArray(rpcData) ? rpcData[0] : null) as Record<string, unknown> | null;
+  if (!assessment?.id) {
+    throw new Error("Intake assessment creation RPC did not return the created assessment row.");
   }
 
   await recordWorkflowEvent({

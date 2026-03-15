@@ -94,6 +94,24 @@ export async function uploadMemberDocumentObject(input: {
   return buildMemberDocumentStorageUri(input.objectPath);
 }
 
+export async function deleteMemberDocumentObject(objectPath: string) {
+  const normalized = String(objectPath ?? "").trim();
+  if (!normalized) return;
+
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).remove([normalized]);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteMemberFileRecord(memberFileId: string) {
+  const normalized = String(memberFileId ?? "").trim();
+  if (!normalized) return;
+
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin.from("member_files").delete().eq("id", normalized);
+  if (error) throw new Error(error.message);
+}
+
 export async function upsertMemberFileByDocumentSource(input: {
   memberId: string;
   documentSource: string;

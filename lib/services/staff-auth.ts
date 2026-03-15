@@ -1,4 +1,5 @@
 import { normalizeRoleKey } from "@/lib/permissions";
+import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { createClient } from "@/lib/supabase/server";
 import {
   getDevAuthBootstrapPassword,
@@ -169,18 +170,15 @@ async function insertAuditLog(input: {
   entityId: string;
   details: Record<string, unknown>;
 }) {
-  const supabase = await getServiceClient();
-  const { error } = await supabase.from("audit_logs").insert({
-    actor_user_id: input.actorUserId,
-    actor_role: input.actorRole,
+  await insertAuditLogEntry({
+    actorUserId: input.actorUserId,
+    actorRole: input.actorRole,
     action: input.action,
-    entity_type: input.entityType,
-    entity_id: input.entityId,
-    details: input.details
+    entityType: input.entityType,
+    entityId: input.entityId,
+    details: input.details,
+    serviceRole: true
   });
-  if (error) {
-    throw new Error(`Unable to insert audit log entry (${input.action}): ${error.message}`);
-  }
 }
 
 async function insertStaffAuthEvent(input: {

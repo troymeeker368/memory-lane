@@ -24,6 +24,8 @@ import { validateEnrollmentPacketCompletion } from "@/lib/services/enrollment-pa
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import { resolveEnrollmentPricingForRequestedDays } from "@/lib/services/enrollment-pricing";
 import {
+  deleteMemberDocumentObject,
+  deleteMemberFileRecord,
   parseDataUrlPayload,
   parseMemberDocumentStorageUri,
   safeFileName,
@@ -1578,7 +1580,7 @@ async function upsertMemberFileBySource(input: {
   packetId: string;
 }) {
   const now = toEasternISO();
-  const result = await upsertMemberFileByDocumentSource({
+  return upsertMemberFileByDocumentSource({
     memberId: input.memberId,
     documentSource: input.documentSource,
     fileName: input.fileName,
@@ -1594,7 +1596,6 @@ async function upsertMemberFileBySource(input: {
       enrollment_packet_request_id: input.packetId
     }
   });
-  return result.id;
 }
 
 async function insertUploadAndFile(input: {
@@ -1615,30 +1616,40 @@ async function insertUploadAndFile(input: {
     bytes: input.bytes,
     contentType: input.contentType
   });
-  const memberFileId = await upsertMemberFileBySource({
-    memberId: input.memberId,
-    documentSource: `Enrollment Packet ${input.uploadCategory}:${input.packetId}:${safeName}`,
-    fileName: safeName,
-    fileType: input.contentType,
-    dataUrl: input.dataUrl ?? null,
-    storageUri,
-    category: [
-      "insurance",
-      "poa",
-      "medicare_card",
-      "private_insurance",
-      "supplemental_insurance",
-      "poa_guardianship",
-      "dnr_dni_advance_directive",
-      "signed_membership_agreement",
-      "signed_exhibit_a_payment_authorization"
-    ].includes(input.uploadCategory)
-      ? "Legal"
-      : "Admin",
-    uploadedByUserId: input.uploadedByUserId,
-    uploadedByName: input.uploadedByName,
-    packetId: input.packetId
-  });
+  let memberFile;
+  try {
+    memberFile = await upsertMemberFileBySource({
+      memberId: input.memberId,
+      documentSource: `Enrollment Packet ${input.uploadCategory}:${input.packetId}:${safeName}`,
+      fileName: safeName,
+      fileType: input.contentType,
+      dataUrl: input.dataUrl ?? null,
+      storageUri,
+      category: [
+        "insurance",
+        "poa",
+        "medicare_card",
+        "private_insurance",
+        "supplemental_insurance",
+        "poa_guardianship",
+        "dnr_dni_advance_directive",
+        "signed_membership_agreement",
+        "signed_exhibit_a_payment_authorization"
+      ].includes(input.uploadCategory)
+        ? "Legal"
+        : "Admin",
+      uploadedByUserId: input.uploadedByUserId,
+      uploadedByName: input.uploadedByName,
+      packetId: input.packetId
+    });
+  } catch (error) {
+    try {
+      await deleteMemberDocumentObject(objectPath);
+    } catch (cleanupError) {
+      console.error("[enrollment-packets] unable to cleanup orphaned upload object after member_files failure", cleanupError);
+    }
+    throw error;
+  }
 
   const admin = createSupabaseAdminClient();
   const { error } = await admin.from("enrollment_packet_uploads").insert({
@@ -1648,10 +1659,35 @@ async function insertUploadAndFile(input: {
     file_name: safeName,
     file_type: input.contentType,
     upload_category: input.uploadCategory,
-    member_file_id: memberFileId,
+    member_file_id: memberFile.id,
     uploaded_at: toEasternISO()
   });
   if (error) {
+    if (memberFile.created) {
+      try {
+        await Promise.all([deleteMemberFileRecord(memberFile.id), deleteMemberDocumentObject(objectPath)]);
+      } catch (cleanupError) {
+        console.error("[enrollment-packets] unable to cleanup upload artifacts after enrollment_packet_uploads failure", cleanupError);
+      }
+    } else {
+      try {
+        await recordImmediateSystemAlert({
+          entityType: "enrollment_packet_request",
+          entityId: input.packetId,
+          severity: "high",
+          alertKey: "enrollment_packet_upload_split_brain",
+          metadata: {
+            upload_category: input.uploadCategory,
+            member_id: input.memberId,
+            member_file_id: memberFile.id,
+            storage_uri: storageUri
+          }
+        });
+      } catch (alertError) {
+        console.error("[enrollment-packets] unable to record split-brain alert", alertError);
+      }
+    }
+
     const text = String(error.message ?? "").toLowerCase();
     if (
       text.includes("enrollment_packet_uploads_upload_category_check") ||
@@ -1667,7 +1703,7 @@ async function insertUploadAndFile(input: {
     }
     throw new Error(error.message);
   }
-  return { storageUri, memberFileId };
+  return { storageUri, memberFileId: memberFile.id };
 }
 
 async function buildCompletedPacketDocxData(input: {

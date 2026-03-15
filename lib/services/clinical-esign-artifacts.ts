@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  deleteMemberDocumentObject,
   parseDataUrlPayload,
   uploadMemberDocumentObject,
   upsertMemberFileByDocumentSource
@@ -79,25 +80,36 @@ export async function captureClinicalEsignArtifact(input: {
   const fileName = resolveFileName(domain, signedAtIso);
   const documentSource = resolveDocumentSource(domain, recordId);
   const category = resolveCategory(domain);
-  const result = await upsertMemberFileByDocumentSource({
-    memberId,
-    documentSource,
-    fileName,
-    fileType: signature.contentType,
-    dataUrl: null,
-    storageObjectPath: storagePath,
-    category,
-    uploadedByUserId: signedByUserId,
-    uploadedByName: signedByName,
-    uploadedAtIso: signedAtIso,
-    updatedAtIso: signedAtIso,
-    additionalColumns: {
-      care_plan_id: domain === "care-plan" ? recordId : null
+  let result;
+  try {
+    result = await upsertMemberFileByDocumentSource({
+      memberId,
+      documentSource,
+      fileName,
+      fileType: signature.contentType,
+      dataUrl: null,
+      storageObjectPath: storagePath,
+      category,
+      uploadedByUserId: signedByUserId,
+      uploadedByName: signedByName,
+      uploadedAtIso: signedAtIso,
+      updatedAtIso: signedAtIso,
+      additionalColumns: {
+        care_plan_id: domain === "care-plan" ? recordId : null
+      }
+    });
+  } catch (error) {
+    try {
+      await deleteMemberDocumentObject(storagePath);
+    } catch (cleanupError) {
+      console.error("[clinical-esign-artifacts] unable to cleanup orphaned signature object", cleanupError);
     }
-  });
+    throw error;
+  }
 
   return {
     signatureArtifactStoragePath: storagePath,
-    signatureArtifactMemberFileId: result.id
+    signatureArtifactMemberFileId: result.id,
+    signatureArtifactMemberFileCreated: result.created
   };
 }

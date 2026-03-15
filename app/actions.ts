@@ -26,11 +26,17 @@ import {
   canonicalLeadStatus
 } from "@/lib/canonical";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
-import { createAncillaryChargeSupabase, updateToiletLogWithAncillarySync } from "@/lib/services/ancillary-write-supabase";
+import {
+  createAncillaryChargeSupabase,
+  updateAncillaryCategoryPriceSupabase,
+  updateToiletLogWithAncillarySync
+} from "@/lib/services/ancillary-write-supabase";
+import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import {
   autoCreateDraftPhysicianOrderFromIntake,
   createIntakeAssessmentWithResponses,
+  deleteIntakeAssessmentSupabase,
   updateIntakeAssessmentDraftPofStatus
 } from "@/lib/services/intake-pof-mhp-cascade";
 import { normalizeIntakeAssistiveDeviceFields } from "@/lib/services/intake-pof-shared";
@@ -57,6 +63,7 @@ import {
 import { parseBusNumbersInput, updateOperationalSettings } from "@/lib/services/operations-settings";
 import { updateMemberStatusSupabase } from "@/lib/services/member-status-supabase";
 import { legacyLeadActivityInputSchema, normalizeLegacyLeadActivityInput } from "@/lib/services/sales-lead-activities";
+import { createTimePunchSupabase } from "@/lib/services/time-punches";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -80,14 +87,12 @@ export async function signInAction(formData: FormData) {
 
 async function insertAudit(action: AuditAction, entityType: string, entityId: string | null, details: Record<string, unknown>) {
   const profile = await getCurrentProfile();
-  const supabase = await createClient();
-
-  await supabase.from("audit_logs").insert({
-    actor_user_id: profile.id,
-    actor_role: profile.role,
+  await insertAuditLogEntry({
+    actorUserId: profile.id,
+    actorRole: profile.role,
     action,
-    entity_type: entityType,
-    entity_id: entityId,
+    entityType,
+    entityId,
     details
   });
 }
@@ -156,25 +161,21 @@ export async function timePunchAction(raw: z.infer<typeof timePunchSchema>) {
     return { error: "Clock in/out is only available for Program Assistant users." };
   }
 
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("time_punches")
-    .insert({
-      staff_user_id: profile.id,
-      punch_type: payload.data.punchType,
-      punch_at: toEasternISO(),
+  let created;
+  try {
+    created = await createTimePunchSupabase({
+      staffUserId: profile.id,
+      punchType: payload.data.punchType,
+      punchAtIso: toEasternISO(),
       lat: payload.data.lat ?? null,
       lng: payload.data.lng ?? null,
       note: payload.data.note ?? null
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    return { error: error.message };
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to save time punch." };
   }
 
-  await insertAudit(payload.data.punchType === "in" ? "clock_in" : "clock_out", "time_punch", data.id, payload.data);
+  await insertAudit(payload.data.punchType === "in" ? "clock_in" : "clock_out", "time_punch", created.id, payload.data);
   revalidatePath("/time-card");
   revalidatePath("/time-card/punch-history");
   revalidatePath("/");
@@ -566,16 +567,16 @@ export async function updateAncillaryCategoryPriceAction(
   const editor = await requireAdminEditor();
   if ("error" in editor) return editor;
 
-  const supabase = await createClient();
   const nextPriceCents = Math.round(payload.data.unitPriceDollars * 100);
-  const { data: updated, error } = await supabase
-    .from("ancillary_charge_categories")
-    .update({ price_cents: nextPriceCents })
-    .eq("id", payload.data.categoryId)
-    .select("id, name")
-    .maybeSingle();
-  if (error) return { error: error.message };
-  if (!updated) return { error: "Ancillary charge category not found." };
+  let updated;
+  try {
+    updated = await updateAncillaryCategoryPriceSupabase({
+      categoryId: payload.data.categoryId,
+      priceCents: nextPriceCents
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to update ancillary pricing." };
+  }
   await insertAudit("manager_review", "ancillary_category", updated.id, {
     categoryName: updated.name,
     unitPriceDollars: payload.data.unitPriceDollars,
@@ -1193,11 +1194,12 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       }
     });
   } catch (error) {
-    const { error: rollbackError } = await supabase.from("intake_assessments").delete().eq("id", created.id);
-    if (rollbackError) {
+    try {
+      await deleteIntakeAssessmentSupabase(created.id);
+    } catch (rollbackError) {
       const signatureError = error instanceof Error ? error.message : "Unknown signature persistence error.";
       return {
-        error: `Unable to persist Intake Assessment e-signature (${signatureError}). Rollback failed: ${rollbackError.message}`
+        error: `Unable to persist Intake Assessment e-signature (${signatureError}). Rollback failed: ${rollbackError instanceof Error ? rollbackError.message : "Unknown rollback error."}`
       };
     }
     return {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { normalizePhoneForStorage } from "@/lib/phone";
+import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -349,16 +350,14 @@ export async function insertSalesAuditLogSupabase(input: {
   entityId: string;
   details?: Record<string, unknown>;
 }) {
-  const supabase = await createClient();
-  const { error } = await supabase.from("audit_logs").insert({
-    actor_user_id: input.actorUserId,
-    actor_role: input.actorRole,
+  await insertAuditLogEntry({
+    actorUserId: input.actorUserId,
+    actorRole: input.actorRole,
     action: input.action,
-    entity_type: input.entityType,
-    entity_id: input.entityId,
+    entityType: input.entityType,
+    entityId: input.entityId,
     details: input.details ?? {}
   });
-  if (error) throw new Error(error.message);
 }
 
 export async function getSalesLeadForEnrollmentSupabase(leadId: string) {
