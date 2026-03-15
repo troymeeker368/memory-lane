@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -17,10 +17,10 @@ import {
 import { getCarePlanById, type CaregiverSignatureStatus, type CarePlan } from "@/lib/services/care-plans";
 import {
   buildDatedPdfFileName,
+  deleteMemberDocumentObject,
   parseDataUrlPayload,
   parseMemberDocumentStorageUri,
-  uploadMemberDocumentObject,
-  upsertMemberFileByDocumentSource
+  uploadMemberDocumentObject
 } from "@/lib/services/member-files";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import {
@@ -28,10 +28,28 @@ import {
   recordImmediateSystemAlert,
   recordWorkflowEvent
 } from "@/lib/services/workflow-observability";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 
 const TOKEN_BYTE_LENGTH = 32;
 const CARE_PLAN_CAREGIVER_FINALIZATION_RPC = "rpc_finalize_care_plan_caregiver_signature";
-const CARE_PLAN_CAREGIVER_FINALIZATION_MIGRATION = "0044_atomic_billing_and_completion_finalization.sql";
+const CARE_PLAN_CAREGIVER_FINALIZATION_MIGRATION = "0053_artifact_drift_replay_hardening.sql";
+
+type CarePlanTokenMatch = {
+  carePlan: {
+    id: string;
+    member_id: string;
+    caregiver_signature_status: CaregiverSignatureStatus;
+    caregiver_signature_expires_at: string | null;
+  };
+  tokenMatch: "active" | "consumed";
+};
+
+type CarePlanCaregiverFinalizeRpcRow = {
+  care_plan_id: string;
+  member_id: string;
+  final_member_file_id: string;
+  was_already_signed: boolean;
+};
 
 export type CarePlanSignatureEventType =
   | "sent"
@@ -177,7 +195,7 @@ async function createCarePlanSignatureEvent(input: {
   if (error) throw new Error(error.message);
 }
 
-async function loadCarePlanRowByToken(token: string) {
+async function loadCarePlanRowByToken(token: string): Promise<CarePlanTokenMatch | null> {
   const hashed = hashToken(token);
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
@@ -186,7 +204,34 @@ async function loadCarePlanRowByToken(token: string) {
     .eq("caregiver_signature_request_token", hashed)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return data as { id: string; member_id: string; caregiver_signature_status: CaregiverSignatureStatus; caregiver_signature_expires_at: string | null } | null;
+  if (data) {
+    return {
+      carePlan: data as {
+        id: string;
+        member_id: string;
+        caregiver_signature_status: CaregiverSignatureStatus;
+        caregiver_signature_expires_at: string | null;
+      },
+      tokenMatch: "active"
+    };
+  }
+
+  const { data: consumedData, error: consumedError } = await admin
+    .from("care_plans")
+    .select("id, member_id, caregiver_signature_status, caregiver_signature_expires_at")
+    .eq("last_consumed_caregiver_signature_token_hash", hashed)
+    .maybeSingle();
+  if (consumedError) throw new Error(consumedError.message);
+  if (!consumedData) return null;
+  return {
+    carePlan: consumedData as {
+      id: string;
+      member_id: string;
+      caregiver_signature_status: CaregiverSignatureStatus;
+      caregiver_signature_expires_at: string | null;
+    },
+    tokenMatch: "consumed"
+  };
 }
 
 async function markExpiredIfNeeded(input: {
@@ -485,8 +530,9 @@ export async function getPublicCarePlanSigningContext(
 ): Promise<PublicCarePlanSigningContext> {
   const normalizedToken = clean(token);
   if (!normalizedToken) return { state: "invalid" };
-  const tokenRow = await loadCarePlanRowByToken(normalizedToken);
-  if (!tokenRow) return { state: "invalid" };
+  const tokenMatch = await loadCarePlanRowByToken(normalizedToken);
+  if (!tokenMatch) return { state: "invalid" };
+  const tokenRow = tokenMatch.carePlan;
 
   const resolvedStatus = await markExpiredIfNeeded({
     carePlanId: tokenRow.id,
@@ -534,43 +580,18 @@ export async function getPublicCarePlanSigningContext(
   return { state: "ready", detail: refreshed };
 }
 
-async function upsertFinalSignedMemberFile(input: {
-  carePlanId: string;
-  memberId: string;
-  memberName: string;
-  dataUrl: string;
-  uploadedByUserId: string | null;
-  uploadedByName: string | null;
-  signedPdfStorageUri: string | null;
-}) {
-  const now = toEasternISO();
-  const fileName = buildDatedPdfFileName("Care Plan Final Signed", input.memberName, now);
-  const documentSource = `Care Plan Final Signed:${input.carePlanId}`;
-  const result = await upsertMemberFileByDocumentSource({
-    memberId: input.memberId,
-    documentSource,
-    fileName,
-    fileType: "application/pdf",
-    dataUrl: input.dataUrl,
-    storageObjectPath: parseMemberDocumentStorageUri(input.signedPdfStorageUri),
-    category: "Care Plan",
-    uploadedByUserId: input.uploadedByUserId,
-    uploadedByName: input.uploadedByName,
-    uploadedAtIso: now,
-    updatedAtIso: now,
-    additionalColumns: {
-      care_plan_id: input.carePlanId
-    }
-  });
-  return result.id;
-}
-
 async function invokeFinalizeCarePlanCaregiverSignatureRpc(input: {
   carePlanId: string;
   rotatedToken: string;
+  consumedTokenHash: string;
   signedAt: string;
   updatedAt: string;
   finalMemberFileId: string;
+  finalMemberFileName: string;
+  finalMemberFileDataUrl: string;
+  finalMemberFileStorageObjectPath: string | null;
+  uploadedByUserId: string | null;
+  uploadedByName: string | null;
   actorName: string;
   actorEmail: string | null;
   actorIp: string | null;
@@ -578,29 +599,79 @@ async function invokeFinalizeCarePlanCaregiverSignatureRpc(input: {
   signatureImageUrl: string;
 }) {
   const admin = createSupabaseAdminClient();
-  const { error } = await admin.rpc(CARE_PLAN_CAREGIVER_FINALIZATION_RPC, {
-    p_care_plan_id: input.carePlanId,
-    p_rotated_token: input.rotatedToken,
-    p_signed_at: input.signedAt,
-    p_updated_at: input.updatedAt,
-    p_final_member_file_id: input.finalMemberFileId,
-    p_actor_name: input.actorName,
-    p_actor_email: input.actorEmail,
-    p_actor_ip: input.actorIp,
-    p_actor_user_agent: input.actorUserAgent,
-    p_signature_image_url: input.signatureImageUrl,
-    p_metadata: {
-      finalMemberFileId: input.finalMemberFileId,
-      signatureImageUrl: input.signatureImageUrl
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(admin, CARE_PLAN_CAREGIVER_FINALIZATION_RPC, {
+      p_care_plan_id: input.carePlanId,
+      p_rotated_token: input.rotatedToken,
+      p_consumed_signature_token_hash: input.consumedTokenHash,
+      p_signed_at: input.signedAt,
+      p_updated_at: input.updatedAt,
+      p_final_member_file_id: input.finalMemberFileId,
+      p_final_member_file_name: input.finalMemberFileName,
+      p_final_member_file_data_url: input.finalMemberFileDataUrl,
+      p_final_member_file_storage_object_path: input.finalMemberFileStorageObjectPath,
+      p_uploaded_by_user_id: input.uploadedByUserId,
+      p_uploaded_by_name: input.uploadedByName,
+      p_actor_name: input.actorName,
+      p_actor_email: input.actorEmail,
+      p_actor_ip: input.actorIp,
+      p_actor_user_agent: input.actorUserAgent,
+      p_signature_image_url: input.signatureImageUrl,
+      p_metadata: {
+        finalMemberFileId: input.finalMemberFileId,
+        signatureImageUrl: input.signatureImageUrl
+      }
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as CarePlanCaregiverFinalizeRpcRow | null;
+    if (!row?.care_plan_id || !row?.member_id || !row?.final_member_file_id) {
+      throw new Error("Care plan caregiver finalization RPC did not return expected identifiers.");
     }
-  });
-  if (error) {
+    return {
+      carePlanId: row.care_plan_id,
+      memberId: row.member_id,
+      finalMemberFileId: row.final_member_file_id,
+      wasAlreadySigned: Boolean(row.was_already_signed)
+    };
+  } catch (error) {
     if (isMissingRpcFunctionError(error, CARE_PLAN_CAREGIVER_FINALIZATION_RPC)) {
       throw new Error(
         `Care plan caregiver finalization RPC is not available yet. Apply Supabase migration ${CARE_PLAN_CAREGIVER_FINALIZATION_MIGRATION} first.`
       );
     }
-    throw new Error(error.message);
+    throw error;
+  }
+}
+
+async function cleanupFailedCarePlanCaregiverArtifacts(input: {
+  carePlanId: string;
+  actorUserId: string | null;
+  memberId: string;
+  signatureObjectPath: string | null;
+  signedPdfObjectPath: string | null;
+  reason: string;
+}) {
+  try {
+    if (input.signatureObjectPath) {
+      await deleteMemberDocumentObject(input.signatureObjectPath);
+    }
+    if (input.signedPdfObjectPath) {
+      await deleteMemberDocumentObject(input.signedPdfObjectPath);
+    }
+  } catch (cleanupError) {
+    await recordImmediateSystemAlert({
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "care_plan_signature_cleanup_failed",
+      metadata: {
+        member_id: input.memberId,
+        error: input.reason,
+        cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error.",
+        signature_object_path: input.signatureObjectPath,
+        signed_pdf_object_path: input.signedPdfObjectPath
+      }
+    });
   }
 }
 
@@ -616,8 +687,20 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     throw new Error("Signature image format is invalid.");
   }
 
-  const tokenRow = await loadCarePlanRowByToken(token);
-  if (!tokenRow) throw new Error("This signature link is invalid.");
+  const tokenMatch = await loadCarePlanRowByToken(token);
+  if (!tokenMatch) throw new Error("This signature link is invalid.");
+  const tokenRow = tokenMatch.carePlan;
+  if (tokenMatch.tokenMatch === "consumed" && tokenRow.caregiver_signature_status === "signed") {
+    const signedDetail = await getCarePlanById(tokenRow.id, { serviceRole: true });
+    if (!signedDetail?.carePlan.finalMemberFileId) {
+      throw new Error("This signature link was already used, but the final care plan file is missing.");
+    }
+    return {
+      carePlanId: tokenRow.id,
+      memberId: tokenRow.member_id,
+      finalMemberFileId: signedDetail.carePlan.finalMemberFileId
+    };
+  }
   const status = await markExpiredIfNeeded({
     carePlanId: tokenRow.id,
     memberId: tokenRow.member_id,
@@ -632,7 +715,6 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
   if (!detail) throw new Error("Care plan was not found.");
 
   const now = toEasternISO();
-  const day = toEasternDate(now);
   const signaturePath = `members/${detail.carePlan.memberId}/care-plans/${detail.carePlan.id}/caregiver-signature.png`;
   const signatureUri = await uploadMemberDocumentObject({
     objectPath: signaturePath,
@@ -641,54 +723,51 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
   });
 
   const admin = createSupabaseAdminClient();
-  const { error: signatureDraftError } = await admin
-    .from("care_plans")
-    .update({
-      caregiver_signed_name: caregiverTypedName,
-      caregiver_signature_image_url: signatureUri,
-      caregiver_signature_ip: clean(input.caregiverIp),
-      caregiver_signature_user_agent: clean(input.caregiverUserAgent),
-      caregiver_signature_error: null,
-      responsible_party_signature: caregiverTypedName,
-      responsible_party_signature_date: day,
-      updated_at: now
-    })
-    .eq("id", detail.carePlan.id);
-  if (signatureDraftError) throw new Error(signatureDraftError.message);
-
+  const signedPdfStoragePath = `members/${detail.carePlan.memberId}/care-plans/${detail.carePlan.id}/final-signed.pdf`;
   try {
     const generated = await buildCarePlanPdfDataUrl(detail.carePlan.id, { serviceRole: true });
     const parsedPdf = parseDataUrlPayload(generated.dataUrl);
-    const signedPdfStoragePath = `members/${detail.carePlan.memberId}/care-plans/${detail.carePlan.id}/final-signed.pdf`;
     const signedPdfStorageUri = await uploadMemberDocumentObject({
       objectPath: signedPdfStoragePath,
       bytes: parsedPdf.bytes,
       contentType: "application/pdf"
     });
 
-    const finalMemberFileId = await upsertFinalSignedMemberFile({
-      carePlanId: detail.carePlan.id,
-      memberId: detail.carePlan.memberId,
-      memberName: detail.carePlan.memberName,
-      dataUrl: generated.dataUrl,
-      uploadedByUserId: detail.carePlan.nurseSignedByUserId ?? detail.carePlan.nurseDesigneeUserId,
-      uploadedByName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName,
-      signedPdfStorageUri
-    });
-
     const rotatedToken = hashToken(generateSigningToken());
-    await invokeFinalizeCarePlanCaregiverSignatureRpc({
+    const finalized = await invokeFinalizeCarePlanCaregiverSignatureRpc({
       carePlanId: detail.carePlan.id,
       rotatedToken,
+      consumedTokenHash: hashToken(token),
       signedAt: now,
       updatedAt: toEasternISO(),
-      finalMemberFileId,
+      finalMemberFileId: detail.carePlan.finalMemberFileId ?? `mf_${randomUUID().replace(/-/g, "")}`,
+      finalMemberFileName: buildDatedPdfFileName("Care Plan Final Signed", detail.carePlan.memberName, now),
+      finalMemberFileDataUrl: generated.dataUrl,
+      finalMemberFileStorageObjectPath: parseMemberDocumentStorageUri(signedPdfStorageUri),
+      uploadedByUserId: detail.carePlan.nurseSignedByUserId ?? detail.carePlan.nurseDesigneeUserId,
+      uploadedByName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName,
       actorName: caregiverTypedName,
       actorEmail: detail.carePlan.caregiverEmail,
       actorIp: clean(input.caregiverIp),
       actorUserAgent: clean(input.caregiverUserAgent),
       signatureImageUrl: signatureUri
     });
+
+    if (finalized.wasAlreadySigned) {
+      await cleanupFailedCarePlanCaregiverArtifacts({
+        carePlanId: detail.carePlan.id,
+        actorUserId: detail.carePlan.caregiverSentByUserId,
+        memberId: detail.carePlan.memberId,
+        signatureObjectPath: signaturePath,
+        signedPdfObjectPath: signedPdfStoragePath,
+        reason: "Replay-safe caregiver signature finalization reused committed signed state."
+      });
+      return {
+        carePlanId: detail.carePlan.id,
+        memberId: detail.carePlan.memberId,
+        finalMemberFileId: finalized.finalMemberFileId
+      };
+    }
 
     try {
       await recordWorkflowMilestone({
@@ -701,7 +780,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
           severity: "low",
           metadata: {
             member_id: detail.carePlan.memberId,
-            final_member_file_id: finalMemberFileId,
+            final_member_file_id: finalized.finalMemberFileId,
             caregiver_email: detail.carePlan.caregiverEmail,
             signature_image_url: signatureUri
           }
@@ -734,7 +813,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
       severity: "low",
       metadata: {
         member_id: detail.carePlan.memberId,
-        final_member_file_id: finalMemberFileId,
+        final_member_file_id: finalized.finalMemberFileId,
         caregiver_email: detail.carePlan.caregiverEmail
       }
     });
@@ -742,10 +821,18 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     return {
       carePlanId: detail.carePlan.id,
       memberId: detail.carePlan.memberId,
-      finalMemberFileId
+      finalMemberFileId: finalized.finalMemberFileId
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete care plan filing.";
+    await cleanupFailedCarePlanCaregiverArtifacts({
+      carePlanId: detail.carePlan.id,
+      actorUserId: detail.carePlan.caregiverSentByUserId,
+      memberId: detail.carePlan.memberId,
+      signatureObjectPath: signaturePath,
+      signedPdfObjectPath: signedPdfStoragePath,
+      reason
+    });
     await admin
       .from("care_plans")
       .update({

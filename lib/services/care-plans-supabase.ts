@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import {
@@ -46,6 +47,26 @@ export {
 export type { CarePlanSectionType, CarePlanTrack };
 
 export type CarePlanStatus = "Due Soon" | "Due Now" | "Overdue" | "Completed";
+
+const CARE_PLAN_SNAPSHOT_RPC = "rpc_record_care_plan_snapshot";
+const CARE_PLAN_SNAPSHOT_RPC_MIGRATION = "0054_care_plan_snapshot_atomicity.sql";
+
+type CarePlanSnapshotRpcRow = {
+  version_id: string;
+  version_number: number;
+};
+
+type CarePlanWorkflowError = Error & {
+  carePlanId?: string;
+  partiallyCommitted?: boolean;
+};
+
+function buildCarePlanWorkflowError(message: string, carePlanId: string) {
+  const error = new Error(message) as CarePlanWorkflowError;
+  error.carePlanId = carePlanId;
+  error.partiallyCommitted = true;
+  return error;
+}
 
 async function resolveCarePlanMemberId(rawMemberId: string, actionLabel: string) {
   const canonical = await resolveCanonicalMemberRef(
@@ -566,20 +587,6 @@ export function getCarePlanTemplates(track?: CarePlanTrack) {
   return templates.filter((template) => (track ? template.track === track : true));
 }
 
-async function getNextCarePlanVersionNumber(carePlanId: string, serviceRole = false) {
-  const supabase = await createClient({ serviceRole });
-  const { data, error } = await supabase
-    .from("care_plan_versions")
-    .select("version_number")
-    .eq("care_plan_id", carePlanId)
-    .order("version_number", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  const current = Number(data?.version_number ?? 0);
-  return Number.isFinite(current) && current > 0 ? current + 1 : 1;
-}
-
 async function createCarePlanVersionSnapshot(input: {
   carePlanId: string;
   snapshotType: "initial" | "review";
@@ -597,31 +604,49 @@ async function createCarePlanVersionSnapshot(input: {
     longTermGoals: string;
     displayOrder: number;
   }>;
+  reviewHistory?: {
+    reviewDate: string;
+    reviewedBy: string | null;
+    summary: string;
+    changesMade: boolean;
+  } | null;
   serviceRole?: boolean;
 }) {
   const supabase = await createClient({ serviceRole: Boolean(input.serviceRole) });
-  const versionNumber = await getNextCarePlanVersionNumber(input.carePlanId, Boolean(input.serviceRole));
-  const { data, error } = await supabase
-    .from("care_plan_versions")
-    .insert({
-      care_plan_id: input.carePlanId,
-      version_number: versionNumber,
-      snapshot_type: input.snapshotType,
-      snapshot_date: input.snapshotDate,
-      reviewed_by: input.reviewedBy,
-      status: input.status,
-      next_due_date: input.nextDueDate,
-      no_changes_needed: input.noChangesNeeded,
-      modifications_required: input.modificationsRequired,
-      modifications_description: input.modificationsDescription,
-      care_team_notes: input.careTeamNotes,
-      sections_snapshot: serializeSectionsSnapshot(input.sections),
-      created_at: toEasternISO()
-    })
-    .select("id")
-    .single();
-  if (error) throw new Error(error.message);
-  return { versionId: String(data.id), versionNumber };
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, CARE_PLAN_SNAPSHOT_RPC, {
+      p_care_plan_id: input.carePlanId,
+      p_snapshot_type: input.snapshotType,
+      p_snapshot_date: input.snapshotDate,
+      p_reviewed_by: input.reviewedBy,
+      p_status: input.status,
+      p_next_due_date: input.nextDueDate,
+      p_no_changes_needed: input.noChangesNeeded,
+      p_modifications_required: input.modificationsRequired,
+      p_modifications_description: input.modificationsDescription,
+      p_care_team_notes: input.careTeamNotes,
+      p_sections_snapshot: serializeSectionsSnapshot(input.sections),
+      p_review_date: input.reviewHistory?.reviewDate ?? null,
+      p_review_summary: input.reviewHistory?.summary ?? null,
+      p_review_changes_made: input.reviewHistory?.changesMade ?? null
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as CarePlanSnapshotRpcRow | null;
+    if (!row?.version_id) {
+      throw new Error("Care plan snapshot RPC did not return a version id.");
+    }
+    return {
+      versionId: String(row.version_id),
+      versionNumber: Number(row.version_number ?? 0)
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save care plan version snapshot.";
+    if (message.includes(CARE_PLAN_SNAPSHOT_RPC)) {
+      throw new Error(
+        `Care plan snapshot RPC is not available. Apply Supabase migration ${CARE_PLAN_SNAPSHOT_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
 }
 
 async function syncCarePlanSectionsToCanonical(
@@ -1150,37 +1175,51 @@ export async function createCarePlan(input: {
       }
     });
   } catch (error) {
-    const { error: rollbackError } = await supabase.from("care_plans").delete().eq("id", createdCarePlanId);
-    if (rollbackError) {
-      const signError = error instanceof Error ? error.message : "Unknown signature persistence error.";
-      throw new Error(
-        `Unable to persist Care Plan nurse e-signature (${signError}). Rollback failed: ${rollbackError.message}`
-      );
-    }
-    throw error;
+    const signError = error instanceof Error ? error.message : "Unknown signature persistence error.";
+    throw buildCarePlanWorkflowError(
+      `Care Plan was created, but nurse/admin e-signature finalization failed (${signError}). Open the saved care plan and retry signing.`,
+      createdCarePlanId
+    );
   }
 
-  await createCarePlanVersionSnapshot({
-    carePlanId: createdCarePlanId,
-    snapshotType: "initial",
-    snapshotDate: input.reviewDate,
-    reviewedBy: signedState.signedByName ?? input.actor.signatureName,
-    status: computeCarePlanStatus(nextDueDate),
-    nextDueDate,
-    noChangesNeeded: Boolean(input.noChangesNeeded),
-    modificationsRequired: Boolean(input.modificationsRequired),
-    modificationsDescription: input.modificationsDescription ?? "",
-    careTeamNotes: input.careTeamNotes,
-    sections: normalizedSections
-  });
-  return finalizeCaregiverDispatchAfterNurseSignature({
-    carePlanId: createdCarePlanId,
-    actor: {
-      id: input.actor.id,
-      fullName: input.actor.fullName,
-      signatureName: input.actor.signatureName
-    }
-  });
+  try {
+    await createCarePlanVersionSnapshot({
+      carePlanId: createdCarePlanId,
+      snapshotType: "initial",
+      snapshotDate: input.reviewDate,
+      reviewedBy: signedState.signedByName ?? input.actor.signatureName,
+      status: computeCarePlanStatus(nextDueDate),
+      nextDueDate,
+      noChangesNeeded: Boolean(input.noChangesNeeded),
+      modificationsRequired: Boolean(input.modificationsRequired),
+      modificationsDescription: input.modificationsDescription ?? "",
+      careTeamNotes: input.careTeamNotes,
+      sections: normalizedSections
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to persist care plan version snapshot.";
+    throw buildCarePlanWorkflowError(
+      `Care Plan was created and signed, but version history persistence failed (${message}). Open the saved care plan before retrying downstream actions.`,
+      createdCarePlanId
+    );
+  }
+
+  try {
+    return await finalizeCaregiverDispatchAfterNurseSignature({
+      carePlanId: createdCarePlanId,
+      actor: {
+        id: input.actor.id,
+        fullName: input.actor.fullName,
+        signatureName: input.actor.signatureName
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
+    throw buildCarePlanWorkflowError(
+      `Care Plan was created and signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry sending the caregiver link.`,
+      createdCarePlanId
+    );
+  }
 }
 
 export async function reviewCarePlan(input: {
@@ -1281,40 +1320,52 @@ export async function reviewCarePlan(input: {
     }
   });
 
-  const snapshot = await createCarePlanVersionSnapshot({
-    carePlanId: input.carePlanId,
-    snapshotType: "review",
-    snapshotDate: input.reviewDate,
-    reviewedBy: signedState.signedByName ?? input.actor.signatureName,
-    status: computeCarePlanStatus(nextDueDate),
-    nextDueDate,
-    noChangesNeeded: input.noChangesNeeded,
-    modificationsRequired: input.modificationsRequired,
-    modificationsDescription: input.modificationsDescription,
-    careTeamNotes: input.careTeamNotes,
-    sections: normalizedSections
-  });
-  const { error: historyError } = await supabase.from("care_plan_review_history").insert({
-    care_plan_id: input.carePlanId,
-    review_date: input.reviewDate,
-    reviewed_by: signedState.signedByName ?? input.actor.signatureName,
-    summary: input.modificationsRequired
-      ? input.modificationsDescription || "Reviewed with modifications."
-      : "Reviewed without required modifications.",
-    changes_made: input.modificationsRequired,
-    next_due_date: nextDueDate,
-    version_id: snapshot.versionId,
-    created_at: now
-  });
-  if (historyError) throw new Error(historyError.message);
-  return finalizeCaregiverDispatchAfterNurseSignature({
-    carePlanId: input.carePlanId,
-    actor: {
-      id: input.actor.id,
-      fullName: input.actor.fullName,
-      signatureName: input.actor.signatureName
-    }
-  });
+  try {
+    await createCarePlanVersionSnapshot({
+      carePlanId: input.carePlanId,
+      snapshotType: "review",
+      snapshotDate: input.reviewDate,
+      reviewedBy: signedState.signedByName ?? input.actor.signatureName,
+      status: computeCarePlanStatus(nextDueDate),
+      nextDueDate,
+      noChangesNeeded: input.noChangesNeeded,
+      modificationsRequired: input.modificationsRequired,
+      modificationsDescription: input.modificationsDescription,
+      careTeamNotes: input.careTeamNotes,
+      sections: normalizedSections,
+      reviewHistory: {
+        reviewDate: input.reviewDate,
+        reviewedBy: signedState.signedByName ?? input.actor.signatureName,
+        summary: input.modificationsRequired
+          ? input.modificationsDescription || "Reviewed with modifications."
+          : "Reviewed without required modifications.",
+        changesMade: input.modificationsRequired
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to persist care plan review history.";
+    throw buildCarePlanWorkflowError(
+      `Care Plan review was saved and signed, but version/review history persistence failed (${message}). Open the saved care plan before retrying downstream actions.`,
+      input.carePlanId
+    );
+  }
+
+  try {
+    return await finalizeCaregiverDispatchAfterNurseSignature({
+      carePlanId: input.carePlanId,
+      actor: {
+        id: input.actor.id,
+        fullName: input.actor.fullName,
+        signatureName: input.actor.signatureName
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
+    throw buildCarePlanWorkflowError(
+      `Care Plan review was saved and signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry sending the caregiver link.`,
+      input.carePlanId
+    );
+  }
 }
 
 export async function signCarePlanAsNurseAdmin(input: {
@@ -1338,14 +1389,22 @@ export async function signCarePlanAsNurseAdmin(input: {
       signedFrom: "signCarePlanAsNurseAdmin"
     }
   });
-  return finalizeCaregiverDispatchAfterNurseSignature({
-    carePlanId: input.carePlanId,
-    actor: {
-      id: input.actor.id,
-      fullName: input.actor.fullName,
-      signatureName: input.actor.signatureName
-    }
-  });
+  try {
+    return await finalizeCaregiverDispatchAfterNurseSignature({
+      carePlanId: input.carePlanId,
+      actor: {
+        id: input.actor.id,
+        fullName: input.actor.fullName,
+        signatureName: input.actor.signatureName
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
+    throw buildCarePlanWorkflowError(
+      `Care Plan nurse/admin signature was saved, but caregiver dispatch failed (${message}). Open the saved care plan to retry sending the caregiver link.`,
+      input.carePlanId
+    );
+  }
 }
 
 export async function updateCarePlanCaregiverContact(input: {

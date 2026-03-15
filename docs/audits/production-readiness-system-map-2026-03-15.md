@@ -468,6 +468,12 @@ Implemented production-safety fixes:
 - Moved legacy `app/actions.ts` intake-assessment rollback delete behind `lib/services/intake-pof-mhp-cascade.ts::deleteIntakeAssessmentSupabase`.
 - Added `0051_intake_assessment_atomic_creation_rpc.sql` and moved base intake assessment creation (`intake_assessments` + `assessment_responses`) onto `rpc_create_intake_assessment_with_responses`.
 - Added `0052_intake_assessment_signature_finalize_rpc.sql` and moved intake signature DB finalization (`intake_assessment_signatures` + `intake_assessments`) onto `rpc_finalize_intake_assessment_signature`, with explicit cleanup/alert handling for artifact split-brain failures.
+- Added `0053_artifact_drift_replay_hardening.sql` and moved artifact-finalization workflows onto replay-safe RPC boundaries:
+  - `rpc_finalize_pof_signature` now records consumed-token hashes and returns replay-safe signed-state results
+  - `rpc_finalize_care_plan_caregiver_signature` now owns caregiver final state + final `member_files` persistence
+  - `rpc_finalize_care_plan_nurse_signature` now atomically finalizes `care_plan_nurse_signatures` + `care_plans`
+  - `rpc_finalize_enrollment_packet_submission` now files packets before downstream mapping and finalizes staged upload batches
+- Added `0054_care_plan_snapshot_atomicity.sql` and moved care-plan version snapshot + review-history persistence onto `rpc_record_care_plan_snapshot` so signed care plan reviews cannot save one without the other.
 - Normalized remaining service-layer `audit_logs` writers in `lib/services/sales-crm-supabase.ts`, `lib/services/sales-lead-activities.ts`, and `lib/services/staff-auth.ts` behind shared service `lib/services/audit-log-service.ts`.
 - Added storage cleanup helper `deleteMemberDocumentObject(...)` and metadata cleanup helper `deleteMemberFileRecord(...)` in `lib/services/member-files.ts`.
 - Hardened `lib/services/clinical-esign-artifacts.ts` so failed `member_files` persistence cleans up the just-uploaded storage object.
@@ -475,6 +481,24 @@ Implemented production-safety fixes:
   - failed `member_files` upsert cleans up the just-uploaded object
   - failed `enrollment_packet_uploads` insert cleans up newly created `member_files` + storage when rollback is safe
   - unsafe rollback cases now emit a high-severity system alert `enrollment_packet_upload_split_brain`
+  - public submission now stages uploads, files the packet in one RPC, and tracks downstream mapping separately as post-commit sync state
+- Hardened `lib/services/pof-esign.ts` so public signing now:
+  - recognizes consumed-token replays as committed signed state
+  - cleans staged signature/PDF artifacts when finalization RPC fails
+  - skips duplicate post-sign milestones on replay
+- Hardened `lib/services/care-plan-esign.ts` so caregiver signing now:
+  - avoids pre-finalization `care_plans` draft signature writes
+  - moves final signed `member_files` persistence into the finalization RPC
+  - cleans staged caregiver signature/PDF artifacts on RPC failure
+- Hardened `lib/services/care-plan-nurse-esign.ts` so nurse signing now:
+  - short-circuits replay from canonical signed state
+  - finalizes signature row + parent care plan state in one RPC
+  - cleans new artifact/member-file rows or raises explicit split-brain alerts when cleanup is unsafe
+- Hardened `app/actions.ts` intake create flow so signed-assessment failures no longer delete a successfully created assessment; failures now return a retryable saved-state result instead of simulating a rollback.
+- Hardened `lib/services/care-plans-supabase.ts` and `app/care-plan-actions.ts` so:
+  - care plan create no longer deletes the newly created parent row when later signing fails
+  - create/review/sign actions now return recoverable saved-state errors with the committed `carePlanId`
+  - post-sign version/review history persistence uses one RPC boundary instead of split inserts
 - Added workflow reliability support indexes in `supabase/migrations/0050_workflow_reliability_indexes.sql` for:
   - `enrollment_packet_requests(delivery_status, updated_at desc)`
   - `pof_requests(delivery_status, updated_at desc)`
@@ -496,13 +520,17 @@ Implemented production-safety fixes:
 - Missing observability for the enrollment packet upload split-brain case that cannot be safely auto-rolled-back after an upserted `member_files` row is reused.
 - Duplicated service-layer `audit_logs` write implementations in core sales/staff-auth services.
 - Missing support indexes for workflow delivery-state and system-event retry/alert queries.
+- POF public signing replay ambiguity and pre-finalization artifact cleanup gap.
+- Care plan caregiver signing drift window caused by pre-finalization parent/member-file writes.
+- Care plan nurse signing drift window caused by separate artifact, signature-row, and parent finalization writes.
+- Enrollment packet filing drift caused by staging artifacts and downstream mapping before canonical filed-state commit.
 
 ## Production Blockers Still Open After This Pass
 
 - Enrollment packet downstream mapping is still not inside one shared RPC/transaction boundary.
 - Intake assessment create + signature + draft POF cascade is still not one end-to-end atomic DB boundary, even though base assessment creation and signature DB finalization are now RPC-backed.
-- Care plan create/review workflow still has pre-finalization split storage/state transitions outside one transaction boundary.
-- POF signing still uploads artifacts before final RPC completion; metadata/storage rollback is not fully canonicalized.
+- Care plan create/review workflow still has non-artifact transactional gaps outside one end-to-end transaction, even though rollback-delete compensation is removed and version/review history is now atomic.
+- POF post-sign clinical sync remains a post-commit derived process rather than a single end-to-end transaction, though canonical signed state is now protected.
 - MAR schedule regeneration remains multi-step and non-transactional under retry/concurrency.
 - Service-layer `audit_logs` writes still exist in some service modules and should be normalized behind one shared audit writer.
 - RLS/policy parity, public-token replay safety, and cross-domain downstream propagation still require deeper workflow-by-workflow verification beyond this code pass.

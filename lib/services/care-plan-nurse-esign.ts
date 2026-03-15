@@ -11,6 +11,15 @@ import {
   type CarePlanNurseSignatureStatus
 } from "@/lib/services/care-plan-nurse-esign-core";
 import { captureClinicalEsignArtifact } from "@/lib/services/clinical-esign-artifacts";
+import {
+  deleteMemberDocumentObject,
+  deleteMemberFileRecord
+} from "@/lib/services/member-files";
+import {
+  recordImmediateSystemAlert,
+  recordWorkflowEvent
+} from "@/lib/services/workflow-observability";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -35,6 +44,14 @@ type CarePlanNurseSignatureRow = {
   signature_metadata: Record<string, unknown> | null;
 };
 
+type FinalizedCarePlanNurseSignatureRpcRow = CarePlanNurseSignatureRow & {
+  caregiver_signature_status: string | null;
+  was_already_signed: boolean;
+};
+
+const FINALIZE_CARE_PLAN_NURSE_SIGNATURE_RPC = "rpc_finalize_care_plan_nurse_signature";
+const FINALIZE_CARE_PLAN_NURSE_SIGNATURE_MIGRATION = "0053_artifact_drift_replay_hardening.sql";
+
 function toStateFromRow(row: CarePlanNurseSignatureRow): CarePlanNurseSignatureState {
   return {
     carePlanId: row.care_plan_id,
@@ -50,6 +67,59 @@ function toStateFromRow(row: CarePlanNurseSignatureRow): CarePlanNurseSignatureS
         ? (row.signature_metadata as Record<string, unknown>)
         : {}
   };
+}
+
+async function cleanupCarePlanNurseSignatureArtifactAfterFinalizeFailure(input: {
+  carePlanId: string;
+  memberId: string;
+  actorUserId: string;
+  reason: string;
+  artifact: {
+    signatureArtifactStoragePath: string | null;
+    signatureArtifactMemberFileId: string | null;
+    signatureArtifactMemberFileCreated?: boolean;
+  };
+}) {
+  if (!input.artifact.signatureArtifactMemberFileCreated) {
+    await recordImmediateSystemAlert({
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "care_plan_nurse_signature_finalize_split_brain",
+      metadata: {
+        member_id: input.memberId,
+        reason: input.reason,
+        signature_artifact_storage_path: input.artifact.signatureArtifactStoragePath,
+        signature_artifact_member_file_id: input.artifact.signatureArtifactMemberFileId
+      }
+    });
+    return;
+  }
+
+  try {
+    if (input.artifact.signatureArtifactMemberFileId) {
+      await deleteMemberFileRecord(input.artifact.signatureArtifactMemberFileId);
+    }
+    if (input.artifact.signatureArtifactStoragePath) {
+      await deleteMemberDocumentObject(input.artifact.signatureArtifactStoragePath);
+    }
+  } catch (cleanupError) {
+    await recordImmediateSystemAlert({
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "care_plan_nurse_signature_finalize_cleanup_failed",
+      metadata: {
+        member_id: input.memberId,
+        reason: input.reason,
+        cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error.",
+        signature_artifact_storage_path: input.artifact.signatureArtifactStoragePath,
+        signature_artifact_member_file_id: input.artifact.signatureArtifactMemberFileId
+      }
+    });
+  }
 }
 
 export async function getCarePlanNurseSignatureState(
@@ -153,6 +223,13 @@ export async function signCarePlanNurseEsign(input: {
     throw new Error("Nurse/Admin e-signature image is required.");
   }
 
+  const existingState = await getCarePlanNurseSignatureState(carePlan.id, {
+    serviceRole: input.serviceRole ?? true
+  });
+  if (existingState.status === "signed" && existingState.signedByUserId && existingState.signedAt) {
+    return existingState;
+  }
+
   const completionDate = cleanCarePlanSignatureValue(carePlan.review_date) ?? toEasternDate(now);
   const artifact = await captureClinicalEsignArtifact({
     domain: "care-plan",
@@ -180,25 +257,67 @@ export async function signCarePlanNurseEsign(input: {
     }
   });
 
-  const { error: upsertError } = await supabase
-    .from("care_plan_nurse_signatures")
-    .upsert(persistence.signatureRow, { onConflict: "care_plan_id" });
-  if (upsertError) throw new Error(upsertError.message);
+  let rpcData: unknown;
+  try {
+    rpcData = await invokeSupabaseRpcOrThrow<unknown>(supabase, FINALIZE_CARE_PLAN_NURSE_SIGNATURE_RPC, {
+      p_care_plan_id: carePlan.id,
+      p_member_id: carePlan.member_id,
+      p_signed_by_user_id: persistence.signatureRow.signed_by_user_id,
+      p_signed_by_name: persistence.signatureRow.signed_by_name,
+      p_signed_at: persistence.signatureRow.signed_at,
+      p_signature_artifact_storage_path: persistence.signatureRow.signature_artifact_storage_path,
+      p_signature_artifact_member_file_id: persistence.signatureRow.signature_artifact_member_file_id,
+      p_signature_metadata: persistence.signatureRow.signature_metadata
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to finalize care plan nurse signature.";
+    await cleanupCarePlanNurseSignatureArtifactAfterFinalizeFailure({
+      carePlanId: carePlan.id,
+      memberId: carePlan.member_id,
+      actorUserId: input.actor.id,
+      reason: message,
+      artifact
+    });
+    if (message.includes(FINALIZE_CARE_PLAN_NURSE_SIGNATURE_RPC)) {
+      throw new Error(
+        `Care plan nurse signature finalization RPC is not available. Apply Supabase migration ${FINALIZE_CARE_PLAN_NURSE_SIGNATURE_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
 
-  const nextCaregiverStatus =
-    cleanCarePlanSignatureValue(carePlan.caregiver_signature_status) === "signed"
-      ? "signed"
-      : "ready_to_send";
-  const { error: carePlanUpdateError } = await supabase
-    .from("care_plans")
-    .update({
-      ...persistence.carePlanUpdate,
-      caregiver_signature_status: nextCaregiverStatus
-    })
-    .eq("id", carePlan.id);
-  if (carePlanUpdateError) throw new Error(carePlanUpdateError.message);
+  const finalizedRow = (Array.isArray(rpcData) ? rpcData[0] : null) as FinalizedCarePlanNurseSignatureRpcRow | null;
+  if (!finalizedRow?.care_plan_id) {
+    await cleanupCarePlanNurseSignatureArtifactAfterFinalizeFailure({
+      carePlanId: carePlan.id,
+      memberId: carePlan.member_id,
+      actorUserId: input.actor.id,
+      reason: "Care plan nurse signature finalization RPC did not return a signature row.",
+      artifact
+    });
+    throw new Error("Care plan nurse signature finalization RPC did not return a signature row.");
+  }
 
-  return persistence.state;
+  const state = toStateFromRow(finalizedRow);
+  if (!finalizedRow.was_already_signed) {
+    await recordWorkflowEvent({
+      eventType: "care_plan_nurse_signed",
+      entityType: "care_plan",
+      entityId: carePlan.id,
+      actorType: "user",
+      actorUserId: input.actor.id,
+      status: "signed",
+      severity: "low",
+      metadata: {
+        member_id: carePlan.member_id,
+        nurse_signature_status: state.status,
+        caregiver_signature_status: finalizedRow.caregiver_signature_status,
+        signature_artifact_member_file_id: state.signatureArtifactMemberFileId
+      }
+    });
+  }
+
+  return state;
 }
 
 export async function requireSignedCarePlanNurseEsign(

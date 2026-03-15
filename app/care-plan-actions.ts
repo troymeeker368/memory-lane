@@ -68,7 +68,7 @@ const createCarePlanSchema = z
 export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSchema>) {
   const user = await requireCarePlanAuthorizedUser();
   const payload = createCarePlanSchema.safeParse(raw);
-  if (!payload.success) return { error: "Invalid care plan submission." };
+  if (!payload.success) return { ok: false as const, error: "Invalid care plan submission." };
 
   let created: Awaited<ReturnType<typeof createCarePlan>>;
   try {
@@ -94,7 +94,16 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
       }
     });
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Unable to create care plan." };
+    const carePlanId =
+      error && typeof error === "object" && "carePlanId" in error ? String((error as { carePlanId?: string }).carePlanId ?? "") : "";
+    if (carePlanId) {
+      revalidatePath(`/health/care-plans/${carePlanId}`);
+    }
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : "Unable to create care plan.",
+      ...(carePlanId ? { id: carePlanId } : {})
+    };
   }
 
   revalidatePath("/health");
@@ -102,7 +111,7 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
   revalidatePath("/health/care-plans/list");
   revalidatePath(`/health/care-plans/${created.id}`);
   revalidatePath(`/members/${created.memberId}`);
-  return { ok: true, id: created.id } as const;
+  return { ok: true as const, error: null, id: created.id };
 }
 
 const reviewCarePlanSchema = z
@@ -153,27 +162,41 @@ const reviewCarePlanSchema = z
 export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSchema>) {
   const user = await requireCarePlanAuthorizedUser();
   const payload = reviewCarePlanSchema.safeParse(raw);
-  if (!payload.success) return { error: "Invalid care plan review submission." };
+  if (!payload.success) return { ok: false as const, error: "Invalid care plan review submission." };
 
-  const updated = await reviewCarePlan({
-    carePlanId: payload.data.carePlanId,
-    reviewDate: payload.data.reviewDate,
-    noChangesNeeded: payload.data.noChangesNeeded,
-    modificationsRequired: payload.data.modificationsRequired,
-    modificationsDescription: payload.data.modificationsDescription || "",
-    careTeamNotes: payload.data.careTeamNotes,
-    caregiverName: payload.data.caregiverName,
-    caregiverEmail: payload.data.caregiverEmail,
-    sections: payload.data.sections,
-    signatureAttested: payload.data.signatureAttested,
-    signatureImageDataUrl: payload.data.signatureImageDataUrl,
-    actor: {
-      id: user.userId,
-      fullName: user.fullName,
-      signatureName: user.signatureName,
-      role: user.role
-    }
-  });
+  let updated: Awaited<ReturnType<typeof reviewCarePlan>>;
+  try {
+    updated = await reviewCarePlan({
+      carePlanId: payload.data.carePlanId,
+      reviewDate: payload.data.reviewDate,
+      noChangesNeeded: payload.data.noChangesNeeded,
+      modificationsRequired: payload.data.modificationsRequired,
+      modificationsDescription: payload.data.modificationsDescription || "",
+      careTeamNotes: payload.data.careTeamNotes,
+      caregiverName: payload.data.caregiverName,
+      caregiverEmail: payload.data.caregiverEmail,
+      sections: payload.data.sections,
+      signatureAttested: payload.data.signatureAttested,
+      signatureImageDataUrl: payload.data.signatureImageDataUrl,
+      actor: {
+        id: user.userId,
+        fullName: user.fullName,
+        signatureName: user.signatureName,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    const carePlanId =
+      error && typeof error === "object" && "carePlanId" in error
+        ? String((error as { carePlanId?: string }).carePlanId ?? payload.data.carePlanId)
+        : payload.data.carePlanId;
+    revalidatePath(`/health/care-plans/${carePlanId}`);
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to review care plan.",
+      id: carePlanId
+    } as const;
+  }
 
   revalidatePath("/health");
   revalidatePath("/health/care-plans");
@@ -181,7 +204,7 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
   revalidatePath("/health/care-plans/due-report");
   revalidatePath(`/health/care-plans/${updated.id}`);
   revalidatePath(`/members/${updated.memberId}`);
-  return { ok: true } as const;
+  return { ok: true as const, error: null };
 }
 
 const signCarePlanSchema = z.object({
@@ -211,20 +234,34 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
   if (!payload.data.signatureImageDataUrl.trim().startsWith("data:image/")) {
     return { ok: false, error: "A valid drawn nurse/admin signature image is required." } as const;
   }
-  const updated = await signCarePlanAsNurseAdmin({
-    carePlanId: payload.data.carePlanId,
-    actor: {
-      id: user.userId,
-      fullName: user.fullName,
-      signatureName: user.signatureName,
-      role: user.role
-    },
-    attested: payload.data.attested,
-    signatureImageDataUrl: payload.data.signatureImageDataUrl
-  });
+  let updated: Awaited<ReturnType<typeof signCarePlanAsNurseAdmin>>;
+  try {
+    updated = await signCarePlanAsNurseAdmin({
+      carePlanId: payload.data.carePlanId,
+      actor: {
+        id: user.userId,
+        fullName: user.fullName,
+        signatureName: user.signatureName,
+        role: user.role
+      },
+      attested: payload.data.attested,
+      signatureImageDataUrl: payload.data.signatureImageDataUrl
+    });
+  } catch (error) {
+    const carePlanId =
+      error && typeof error === "object" && "carePlanId" in error
+        ? String((error as { carePlanId?: string }).carePlanId ?? payload.data.carePlanId)
+        : payload.data.carePlanId;
+    revalidatePath(`/health/care-plans/${carePlanId}`);
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to sign care plan.",
+      id: carePlanId
+    } as const;
+  }
   revalidatePath(`/health/care-plans/${updated.id}`);
   revalidatePath(`/members/${updated.memberId}`);
-  return { ok: true, status: updated.caregiverSignatureStatus } as const;
+  return { ok: true as const, error: null, status: updated.caregiverSignatureStatus };
 }
 
 const sendCaregiverSignatureSchema = z.object({

@@ -36,7 +36,6 @@ import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import {
   autoCreateDraftPhysicianOrderFromIntake,
   createIntakeAssessmentWithResponses,
-  deleteIntakeAssessmentSupabase,
   updateIntakeAssessmentDraftPofStatus
 } from "@/lib/services/intake-pof-mhp-cascade";
 import { normalizeIntakeAssistiveDeviceFields } from "@/lib/services/intake-pof-shared";
@@ -1194,16 +1193,15 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       }
     });
   } catch (error) {
-    try {
-      await deleteIntakeAssessmentSupabase(created.id);
-    } catch (rollbackError) {
-      const signatureError = error instanceof Error ? error.message : "Unknown signature persistence error.";
-      return {
-        error: `Unable to persist Intake Assessment e-signature (${signatureError}). Rollback failed: ${rollbackError instanceof Error ? rollbackError.message : "Unknown rollback error."}`
-      };
-    }
+    revalidatePath("/health/assessment");
+    revalidatePath(`/health/assessment/${created.id}`);
+    revalidatePath(`/reports/assessments/${created.id}`);
     return {
-      error: error instanceof Error ? error.message : "Unable to persist Intake Assessment e-signature."
+      error:
+        error instanceof Error
+          ? `Intake Assessment was created, but nurse/admin e-signature finalization failed (${error.message}). Open the saved assessment and retry the signature.`
+          : "Intake Assessment was created, but nurse/admin e-signature finalization failed.",
+      assessmentId: created.id
     };
   }
 
