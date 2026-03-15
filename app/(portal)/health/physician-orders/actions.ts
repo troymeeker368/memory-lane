@@ -8,6 +8,7 @@ import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { resendPofSignatureRequest, sendNewPofSignatureRequest } from "@/lib/services/pof-esign";
+import { WorkflowDeliveryError } from "@/lib/services/send-workflow-state";
 import {
   OTIC_LATERALITY_OPTIONS,
   OPHTHALMIC_LATERALITY_OPTIONS,
@@ -546,6 +547,17 @@ export async function saveAndDispatchPofSignatureRequestFromEditorAction(formDat
     revalidatePofRoutes(saved.memberId, saved.id);
     return { ok: true, pofId: saved.id } as const;
   } catch (error) {
+    if (error instanceof WorkflowDeliveryError) {
+      return {
+        ok: false,
+        error: error.message,
+        code: error.code,
+        retryable: error.retryable,
+        requestId: error.requestId,
+        requestUrl: error.requestUrl,
+        deliveryStatus: error.deliveryStatus
+      } as const;
+    }
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to save and send POF signature request."

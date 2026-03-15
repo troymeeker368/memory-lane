@@ -30,6 +30,11 @@ import {
   uploadMemberDocumentObject,
   upsertMemberFileByDocumentSource
 } from "@/lib/services/member-files";
+import {
+  buildRetryableWorkflowDeliveryError,
+  toSendWorkflowDeliveryStatus,
+  type SendWorkflowDeliveryStatus
+} from "@/lib/services/send-workflow-state";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -58,6 +63,10 @@ export type EnrollmentPacketRequestSummary = {
   senderUserId: string;
   caregiverEmail: string;
   status: EnrollmentPacketStatus;
+  deliveryStatus: SendWorkflowDeliveryStatus;
+  deliveryError: string | null;
+  lastDeliveryAttemptAt: string | null;
+  deliveryFailedAt: string | null;
   tokenExpiresAt: string;
   createdAt: string;
   sentAt: string | null;
@@ -85,6 +94,10 @@ type EnrollmentPacketRequestRow = {
   sender_user_id: string;
   caregiver_email: string;
   status: string;
+  delivery_status: string | null;
+  last_delivery_attempt_at: string | null;
+  delivery_failed_at: string | null;
+  delivery_error: string | null;
   token: string;
   token_expires_at: string;
   created_at: string;
@@ -342,6 +355,17 @@ function toStatus(value: string | null | undefined): EnrollmentPacketStatus {
   return "draft";
 }
 
+function toDeliveryStatus(row: Pick<EnrollmentPacketRequestRow, "status" | "delivery_status">) {
+  const status = toStatus(row.status);
+  const fallback =
+    status === "sent" || status === "opened" || status === "partially_completed" || status === "completed" || status === "filed"
+      ? "sent"
+      : status === "prepared"
+        ? "ready_to_send"
+        : "pending_preparation";
+  return toSendWorkflowDeliveryStatus(row.delivery_status, fallback);
+}
+
 function toSummary(row: EnrollmentPacketRequestRow): EnrollmentPacketRequestSummary {
   return {
     id: row.id,
@@ -350,6 +374,10 @@ function toSummary(row: EnrollmentPacketRequestRow): EnrollmentPacketRequestSumm
     senderUserId: row.sender_user_id,
     caregiverEmail: row.caregiver_email,
     status: toStatus(row.status),
+    deliveryStatus: toDeliveryStatus(row),
+    deliveryError: clean(row.delivery_error),
+    lastDeliveryAttemptAt: row.last_delivery_attempt_at ?? null,
+    deliveryFailedAt: row.delivery_failed_at ?? null,
     tokenExpiresAt: row.token_expires_at,
     createdAt: row.created_at,
     sentAt: row.sent_at,
@@ -781,6 +809,198 @@ async function sendEnrollmentPacketEmail(input: {
   }
 }
 
+async function markEnrollmentPacketDeliveryState(input: {
+  packetId: string;
+  status?: EnrollmentPacketStatus;
+  deliveryStatus: SendWorkflowDeliveryStatus;
+  deliveryError?: string | null;
+  sentAt?: string | null;
+  attemptAt: string;
+}) {
+  const admin = createSupabaseAdminClient();
+  const patch: Record<string, unknown> = {
+    delivery_status: input.deliveryStatus,
+    last_delivery_attempt_at: input.attemptAt,
+    delivery_failed_at: input.deliveryStatus === "send_failed" ? input.attemptAt : null,
+    delivery_error: clean(input.deliveryError),
+    updated_at: input.attemptAt
+  };
+  if (input.status) {
+    patch.status = input.status;
+  }
+  if (input.sentAt !== undefined) {
+    patch.sent_at = input.sentAt;
+  }
+  const { error } = await admin.from("enrollment_packet_requests").update(patch).eq("id", input.packetId);
+  if (error) throw new Error(error.message);
+}
+
+async function prepareEnrollmentPacketFields(input: {
+  packetId: string;
+  requestedDays: string[];
+  transportation: StaffTransportationOption;
+  communityFee: number;
+  dailyRate: number;
+  pricingCommunityFeeId: string | null;
+  pricingDailyRateId: string | null;
+  pricingSnapshot: Record<string, unknown>;
+  caregiverName: string | null;
+  caregiverPhone: string | null;
+  caregiverEmail: string;
+  intakePayload: EnrollmentPacketIntakePayload;
+  updatedAt: string;
+}) {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin.from("enrollment_packet_fields").upsert(
+    {
+      packet_id: input.packetId,
+      requested_days: input.requestedDays,
+      transportation: input.transportation,
+      community_fee: input.communityFee,
+      daily_rate: input.dailyRate,
+      pricing_community_fee_id: input.pricingCommunityFeeId,
+      pricing_daily_rate_id: input.pricingDailyRateId,
+      pricing_snapshot: input.pricingSnapshot,
+      caregiver_name: input.caregiverName,
+      caregiver_phone: input.caregiverPhone,
+      caregiver_email: input.caregiverEmail,
+      intake_payload: input.intakePayload,
+      updated_at: input.updatedAt
+    },
+    { onConflict: "packet_id" }
+  );
+  if (error) throwEnrollmentPacketSchemaError(error, "enrollment_packet_fields");
+}
+
+async function insertEnrollmentPacketSenderSignature(input: {
+  packetId: string;
+  senderEmail: string;
+  signatureProfile: SenderProfileRow;
+  signedAt: string;
+}) {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin.from("enrollment_packet_signatures").insert({
+    packet_id: input.packetId,
+    signer_name: input.signatureProfile.signature_name,
+    signer_email: input.senderEmail,
+    signer_role: "sender_staff",
+    signature_blob: input.signatureProfile.signature_blob,
+    ip_address: null,
+    signed_at: input.signedAt,
+    created_at: input.signedAt,
+    updated_at: input.signedAt
+  });
+  if (error) throw new Error(error.message);
+}
+
+async function prepareEnrollmentPacketRequestForDelivery(input: {
+  existingRequest: EnrollmentPacketRequestRow | null;
+  memberId: string;
+  leadId: string | null;
+  senderUserId: string;
+  caregiverEmail: string;
+  expiresAt: string;
+  hashedToken: string;
+  requestedDays: string[];
+  transportation: StaffTransportationOption;
+  communityFee: number;
+  dailyRate: number;
+  pricingCommunityFeeId: string | null;
+  pricingDailyRateId: string | null;
+  pricingSnapshot: Record<string, unknown>;
+  caregiverName: string | null;
+  caregiverPhone: string | null;
+  intakePayload: EnrollmentPacketIntakePayload;
+  signatureProfile: SenderProfileRow;
+  senderEmail: string;
+  eventMetadata: Record<string, unknown>;
+  preparedAt: string;
+}) {
+  const admin = createSupabaseAdminClient();
+  const packetId = input.existingRequest?.id ?? randomUUID();
+
+  if (input.existingRequest) {
+    const { error } = await admin
+      .from("enrollment_packet_requests")
+      .update({
+        member_id: input.memberId,
+        lead_id: input.leadId,
+        sender_user_id: input.senderUserId,
+        caregiver_email: input.caregiverEmail,
+        status: "prepared",
+        delivery_status: "retry_pending",
+        token: input.hashedToken,
+        token_expires_at: input.expiresAt,
+        sent_at: null,
+        completed_at: null,
+        delivery_error: null,
+        delivery_failed_at: null,
+        updated_at: input.preparedAt
+      })
+      .eq("id", packetId);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await admin.from("enrollment_packet_requests").insert({
+      id: packetId,
+      member_id: input.memberId,
+      lead_id: input.leadId,
+      sender_user_id: input.senderUserId,
+      caregiver_email: input.caregiverEmail,
+      status: "draft",
+      delivery_status: "pending_preparation",
+      token: input.hashedToken,
+      token_expires_at: input.expiresAt,
+      created_at: input.preparedAt,
+      sent_at: null,
+      completed_at: null,
+      updated_at: input.preparedAt
+    });
+    if (error) throw new Error(error.message);
+  }
+
+  await prepareEnrollmentPacketFields({
+    packetId,
+    requestedDays: input.requestedDays,
+    transportation: input.transportation,
+    communityFee: input.communityFee,
+    dailyRate: input.dailyRate,
+    pricingCommunityFeeId: input.pricingCommunityFeeId,
+    pricingDailyRateId: input.pricingDailyRateId,
+    pricingSnapshot: input.pricingSnapshot,
+    caregiverName: input.caregiverName,
+    caregiverPhone: input.caregiverPhone,
+    caregiverEmail: input.caregiverEmail,
+    intakePayload: input.intakePayload,
+    updatedAt: input.preparedAt
+  });
+
+  await insertEnrollmentPacketSenderSignature({
+    packetId,
+    senderEmail: input.senderEmail,
+    signatureProfile: input.signatureProfile,
+    signedAt: input.preparedAt
+  });
+
+  await markEnrollmentPacketDeliveryState({
+    packetId,
+    status: "prepared",
+    deliveryStatus: "ready_to_send",
+    deliveryError: null,
+    sentAt: null,
+    attemptAt: input.preparedAt
+  });
+
+  await insertPacketEvent({
+    packetId,
+    eventType: "prepared",
+    actorUserId: input.senderUserId,
+    actorEmail: input.senderEmail,
+    metadata: input.eventMetadata
+  });
+
+  return packetId;
+}
+
 function resolveClinicalSenderEmail() {
   const sender = clean(process.env.CLINICAL_SENDER_EMAIL);
   if (!sender || !isEmail(sender)) {
@@ -930,108 +1150,77 @@ export async function sendEnrollmentPacketRequest(input: {
   };
   const caregiverEmail = cleanEmail(input.caregiverEmail) ?? cleanEmail(lead?.caregiver_email);
   if (!isEmail(caregiverEmail)) throw new Error("Caregiver email is required.");
+  const requiredCaregiverEmail = caregiverEmail!;
   const memberNameParts = splitMemberName(lead?.member_name ?? member.display_name);
 
   const active = await listActivePacketRows(member.id, lead?.id ?? null);
-  if (active.length > 0) {
+  const blockingActive = active.find((row) => {
+    const status = toStatus(row.status);
+    if (status === "sent" || status === "opened" || status === "partially_completed") {
+      return true;
+    }
+    const deliveryStatus = toDeliveryStatus(row);
+    return (status === "draft" || status === "prepared") && deliveryStatus !== "send_failed";
+  });
+  const retryableActive = active.find((row) => {
+    const status = toStatus(row.status);
+    return (status === "draft" || status === "prepared") && toDeliveryStatus(row) === "send_failed";
+  });
+  if (blockingActive && (!retryableActive || retryableActive.id !== blockingActive.id)) {
     throw new Error("An active enrollment packet already exists for this member.");
   }
 
   const now = toEasternISO();
-  const requestId = randomUUID();
   const token = generateSigningToken();
   const hashedToken = hashToken(token);
   const expiresAtDate = new Date();
   expiresAtDate.setDate(expiresAtDate.getDate() + 14);
   const expiresAt = expiresAtDate.toISOString();
   const requestUrl = `${buildAppBaseUrl(input.appBaseUrl)}/sign/enrollment-packet/${token}`;
-
-  const admin = createSupabaseAdminClient();
-  const { error: requestError } = await admin.from("enrollment_packet_requests").insert({
-    id: requestId,
-    member_id: member.id,
-    lead_id: lead?.id ?? null,
-    sender_user_id: senderUserId,
-    caregiver_email: caregiverEmail,
-    status: "draft",
-    token: hashedToken,
-    token_expires_at: expiresAt,
-    created_at: now,
-    sent_at: null,
-    completed_at: null,
-    updated_at: now
+  const intakePayload = normalizeEnrollmentPacketIntakePayload({
+    memberLegalFirstName: memberNameParts.firstName,
+    memberLegalLastName: memberNameParts.lastName,
+    memberDob: clean(lead?.member_dob),
+    requestedAttendanceDays: resolvedPricing.requestedDays,
+    requestedStartDate,
+    transportationPreference: staffTransportation,
+    transportationQuestionEnabled: "No",
+    referredBy: clean(lead?.referral_name),
+    primaryContactName: clean(lead?.caregiver_name),
+    primaryContactRelationship: clean(lead?.caregiver_relationship),
+    primaryContactPhone: clean(lead?.caregiver_phone),
+    primaryContactEmail: caregiverEmail,
+    responsiblePartyGuarantorFirstName: clean(lead?.caregiver_name)?.split(" ")[0] ?? null,
+    responsiblePartyGuarantorLastName: clean(lead?.caregiver_name)?.split(" ").slice(1).join(" ") || null,
+    membershipNumberOfDays: String(resolvedPricing.requestedDays.length),
+    membershipDailyAmount: effectiveDailyRate.toFixed(2),
+    communityFee: effectiveCommunityFee.toFixed(2),
+    totalInitialEnrollmentAmount: effectiveInitialEnrollmentAmount.toFixed(2),
+    photoConsentMemberName: clean(lead?.member_name) ?? clean(member.display_name)
   });
-  if (requestError) throw new Error(requestError.message);
 
-  const { error: fieldsError } = await admin.from("enrollment_packet_fields").insert({
-    packet_id: requestId,
-    requested_days: resolvedPricing.requestedDays,
+  const requestId = await prepareEnrollmentPacketRequestForDelivery({
+    existingRequest: retryableActive ?? null,
+    memberId: member.id,
+    leadId: lead?.id ?? null,
+    senderUserId,
+    caregiverEmail: requiredCaregiverEmail,
+    expiresAt,
+    hashedToken,
+    requestedDays: resolvedPricing.requestedDays,
     transportation: staffTransportation,
-    community_fee: effectiveCommunityFee,
-    daily_rate: effectiveDailyRate,
-    pricing_community_fee_id: resolvedPricing.communityFeeId,
-    pricing_daily_rate_id: resolvedPricing.dailyRateId,
-    pricing_snapshot: pricingSnapshot,
-    caregiver_name: clean(lead?.caregiver_name),
-    caregiver_phone: clean(lead?.caregiver_phone),
-    caregiver_email: caregiverEmail,
-    intake_payload: normalizeEnrollmentPacketIntakePayload({
-      memberLegalFirstName: memberNameParts.firstName,
-      memberLegalLastName: memberNameParts.lastName,
-      memberDob: clean(lead?.member_dob),
-      requestedAttendanceDays: resolvedPricing.requestedDays,
-      requestedStartDate,
-      transportationPreference: staffTransportation,
-      transportationQuestionEnabled: "No",
-      referredBy: clean(lead?.referral_name),
-      primaryContactName: clean(lead?.caregiver_name),
-      primaryContactRelationship: clean(lead?.caregiver_relationship),
-      primaryContactPhone: clean(lead?.caregiver_phone),
-      primaryContactEmail: caregiverEmail,
-      responsiblePartyGuarantorFirstName: clean(lead?.caregiver_name)?.split(" ")[0] ?? null,
-      responsiblePartyGuarantorLastName: clean(lead?.caregiver_name)?.split(" ").slice(1).join(" ") || null,
-      membershipNumberOfDays: String(resolvedPricing.requestedDays.length),
-      membershipDailyAmount: effectiveDailyRate.toFixed(2),
-      communityFee: effectiveCommunityFee.toFixed(2),
-      totalInitialEnrollmentAmount: effectiveInitialEnrollmentAmount.toFixed(2),
-      photoConsentMemberName: clean(lead?.member_name) ?? clean(member.display_name)
-    }),
-    created_at: now,
-    updated_at: now
-  });
-  if (fieldsError) throwEnrollmentPacketSchemaError(fieldsError, "enrollment_packet_fields");
-
-  const { error: signatureError } = await admin.from("enrollment_packet_signatures").insert({
-    packet_id: requestId,
-    signer_name: signatureProfile.signature_name,
-    signer_email: senderEmail,
-    signer_role: "sender_staff",
-    signature_blob: signatureProfile.signature_blob,
-    ip_address: null,
-    signed_at: now,
-    created_at: now,
-    updated_at: now
-  });
-  if (signatureError) throw new Error(signatureError.message);
-
-  const preparedAt = toEasternISO();
-  const { data: preparedRow, error: preparedError } = await admin
-    .from("enrollment_packet_requests")
-    .update({ status: "prepared", updated_at: preparedAt })
-    .eq("id", requestId)
-    .eq("status", "draft")
-    .select("id")
-    .maybeSingle();
-  if (preparedError) throw new Error(preparedError.message);
-  if (!preparedRow) {
-    throw new Error("Unable to transition enrollment packet from Draft to Prepared.");
-  }
-  await insertPacketEvent({
-    packetId: requestId,
-    eventType: "prepared",
-    actorUserId: senderUserId,
-    actorEmail: senderEmail,
-    metadata: {
+    communityFee: effectiveCommunityFee,
+    dailyRate: effectiveDailyRate,
+    pricingCommunityFeeId: resolvedPricing.communityFeeId,
+    pricingDailyRateId: resolvedPricing.dailyRateId,
+    pricingSnapshot,
+    caregiverName: clean(lead?.caregiver_name),
+    caregiverPhone: clean(lead?.caregiver_phone),
+    intakePayload,
+    signatureProfile,
+    senderEmail,
+    preparedAt: now,
+    eventMetadata: {
       memberId: member.id,
       leadId: lead?.id ?? null,
       pricingCommunityFeeId: resolvedPricing.communityFeeId,
@@ -1043,13 +1232,14 @@ export async function sendEnrollmentPacketRequest(input: {
       totalInitialEnrollmentAmount: effectiveInitialEnrollmentAmount,
       communityFeeOverride,
       dailyRateOverride,
-      totalInitialEnrollmentAmountOverride
+      totalInitialEnrollmentAmountOverride,
+      retryAttempt: Boolean(retryableActive)
     }
   });
 
   try {
     await sendEnrollmentPacketEmail({
-      caregiverEmail: caregiverEmail!,
+      caregiverEmail: requiredCaregiverEmail,
       caregiverName: lead?.caregiver_name ?? null,
       memberName: member.display_name,
       optionalMessage: input.optionalMessage ?? null,
@@ -1057,25 +1247,45 @@ export async function sendEnrollmentPacketRequest(input: {
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to deliver enrollment packet email.";
-    throw new Error(`${reason} Packet saved as Prepared. Copy secure link manually: ${requestUrl}`);
+    const failedAt = toEasternISO();
+    await markEnrollmentPacketDeliveryState({
+      packetId: requestId,
+      status: "prepared",
+      deliveryStatus: "send_failed",
+      deliveryError: reason,
+      sentAt: null,
+      attemptAt: failedAt
+    });
+    await insertPacketEvent({
+      packetId: requestId,
+      eventType: "send_failed",
+      actorUserId: senderUserId,
+      actorEmail: senderEmail,
+      metadata: {
+        memberId: member.id,
+        leadId: lead?.id ?? null,
+        retryAvailable: true,
+        error: reason
+      }
+    });
+    throw buildRetryableWorkflowDeliveryError({
+      requestId,
+      requestUrl,
+      reason,
+      workflowLabel: "Enrollment packet",
+      retryLabel: "Retry sending the same packet once delivery settings are corrected."
+    });
   }
 
   const sentAt = toEasternISO();
-  const { data: sentRow, error: sentError } = await admin
-    .from("enrollment_packet_requests")
-    .update({
-      status: "sent",
-      sent_at: sentAt,
-      updated_at: sentAt
-    })
-    .eq("id", requestId)
-    .eq("status", "prepared")
-    .select("id")
-    .maybeSingle();
-  if (sentError) throw new Error(sentError.message);
-  if (!sentRow) {
-    throw new Error("Unable to transition enrollment packet from Prepared to Sent.");
-  }
+  await markEnrollmentPacketDeliveryState({
+    packetId: requestId,
+    status: "sent",
+    deliveryStatus: "sent",
+    deliveryError: null,
+    sentAt,
+    attemptAt: sentAt
+  });
 
   await insertPacketEvent({
     packetId: requestId,

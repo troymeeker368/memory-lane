@@ -181,6 +181,9 @@ export function SendEnrollmentPacketAction({
           if ("redirectTo" in result && result.redirectTo) {
             router.push(result.redirectTo);
           }
+          if ("retryable" in result && result.retryable) {
+            router.refresh();
+          }
           return;
         }
 

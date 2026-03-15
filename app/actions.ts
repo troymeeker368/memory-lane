@@ -38,6 +38,15 @@ import {
   isAuthorizedIntakeAssessmentSignerRole,
   signIntakeAssessment
 } from "@/lib/services/intake-assessment-esign";
+import {
+  deleteWorkflowRecordSupabase,
+  setAncillaryReconciliationSupabase,
+  updateAncillaryLogNotesSupabase,
+  updateBloodSugarLogSupabase,
+  updateDailyActivityParticipationSupabase,
+  updateShowerLogSupabase,
+  updateTransportationLogSupabase
+} from "@/lib/services/documentation-write-supabase";
 import { parseBusNumbersInput, updateOperationalSettings } from "@/lib/services/operations-settings";
 import { updateMemberStatusSupabase } from "@/lib/services/member-status-supabase";
 import { legacyLeadActivityInputSchema, normalizeLegacyLeadActivityInput } from "@/lib/services/sales-lead-activities";
@@ -1415,31 +1424,23 @@ export async function updateDailyActivityAction(raw: z.infer<typeof updateDailyA
     (payload.data.activity1 + payload.data.activity2 + payload.data.activity3 + payload.data.activity4 + payload.data.activity5) / 5
   );
 
-  const supabase = await createClient();
-  const { data: updatedRows, error } = await supabase
-    .from("daily_activity_logs")
-    .update({
-      activity_1_level: payload.data.activity1,
-      missing_reason_1: payload.data.activity1 === 0 ? payload.data.reasonMissing1?.trim() ?? null : null,
-      activity_2_level: payload.data.activity2,
-      missing_reason_2: payload.data.activity2 === 0 ? payload.data.reasonMissing2?.trim() ?? null : null,
-      activity_3_level: payload.data.activity3,
-      missing_reason_3: payload.data.activity3 === 0 ? payload.data.reasonMissing3?.trim() ?? null : null,
-      activity_4_level: payload.data.activity4,
-      missing_reason_4: payload.data.activity4 === 0 ? payload.data.reasonMissing4?.trim() ?? null : null,
-      activity_5_level: payload.data.activity5,
-      missing_reason_5: payload.data.activity5 === 0 ? payload.data.reasonMissing5?.trim() ?? null : null,
+  try {
+    await updateDailyActivityParticipationSupabase({
+      id: payload.data.id,
+      activity1: payload.data.activity1,
+      reasonMissing1: payload.data.reasonMissing1,
+      activity2: payload.data.activity2,
+      reasonMissing2: payload.data.reasonMissing2,
+      activity3: payload.data.activity3,
+      reasonMissing3: payload.data.reasonMissing3,
+      activity4: payload.data.activity4,
+      reasonMissing4: payload.data.reasonMissing4,
+      activity5: payload.data.activity5,
+      reasonMissing5: payload.data.reasonMissing5,
       notes: payload.data.notes ?? null
-    })
-    .eq("id", payload.data.id)
-    .select("id");
-  if (error) return { error: error.message };
-  const updatedCount = updatedRows?.length ?? 0;
-  if (updatedCount === 0) {
-    throw new Error(`Daily activity log update failed: no row found for id ${payload.data.id}.`);
-  }
-  if (updatedCount > 1) {
-    throw new Error(`Daily activity log update failed: expected exactly one row for id ${payload.data.id}, affected ${updatedCount}.`);
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to update participation log." };
   }
   await insertAudit("manager_review", "daily_activity_log", payload.data.id, { participation });
   revalidatePath("/documentation/activity");
@@ -1487,12 +1488,15 @@ export async function updateShowerLogAction(raw: z.infer<typeof updateSimpleSche
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("shower_logs")
-    .update({ laundry: payload.data.laundry, briefs: payload.data.briefs })
-    .eq("id", payload.data.id);
-  if (error) return { error: error.message };
+  try {
+    await updateShowerLogSupabase({
+      id: payload.data.id,
+      laundry: payload.data.laundry,
+      briefs: payload.data.briefs
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to update shower log." };
+  }
   await insertAudit("manager_review", "shower_log", payload.data.id, {
     laundry: payload.data.laundry,
     briefs: payload.data.briefs,
@@ -1509,15 +1513,15 @@ export async function updateTransportationLogAction(raw: { id: string; period: (
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
 
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("transportation_logs")
-    .update({
+  try {
+    await updateTransportationLogSupabase({
+      id: payload.data.id,
       period: payload.data.period,
-      transport_type: payload.data.transportType
-    })
-    .eq("id", payload.data.id);
-  if (error) return { error: error.message };
+      transportType: payload.data.transportType
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to update transportation log." };
+  }
   await insertAudit("manager_review", "transportation_log", payload.data.id, payload.data);
   revalidatePath("/documentation/transportation");
   revalidatePath("/documentation");
@@ -1529,12 +1533,15 @@ export async function updateBloodSugarAction(raw: { id: string; readingMgDl: num
   if (!payload.success) return { error: "Invalid blood sugar update." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("blood_sugar_logs")
-    .update({ reading_mg_dl: payload.data.readingMgDl, notes: payload.data.notes ?? null })
-    .eq("id", payload.data.id);
-  if (error) return { error: error.message };
+  try {
+    await updateBloodSugarLogSupabase({
+      id: payload.data.id,
+      readingMgDl: payload.data.readingMgDl,
+      notes: payload.data.notes ?? null
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to update blood sugar log." };
+  }
   await insertAudit("manager_review", "blood_sugar_log", payload.data.id, {
     reading_mg_dl: payload.data.readingMgDl,
     notes: payload.data.notes ?? null
@@ -1549,12 +1556,14 @@ export async function updateAncillaryAction(raw: { id: string; notes?: string })
   if (!payload.success) return { error: "Invalid ancillary update." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("ancillary_charge_logs")
-    .update({ notes: payload.data.notes ?? null })
-    .eq("id", payload.data.id);
-  if (error) return { error: error.message };
+  try {
+    await updateAncillaryLogNotesSupabase({
+      id: payload.data.id,
+      notes: payload.data.notes ?? null
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to update ancillary entry." };
+  }
   await insertAudit("manager_review", "ancillary_charge", payload.data.id, { notes: payload.data.notes ?? null });
   revalidatePath("/ancillary");
   revalidatePath("/documentation");
@@ -1577,26 +1586,16 @@ export async function setAncillaryReconciliationAction(raw: {
 
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const supabase = await createClient();
-  const nextPatch =
-    payload.data.status === "reconciled"
-      ? {
-          reconciliation_status: "reconciled",
-          reconciled_by: editor.full_name,
-          reconciled_at: toEasternISO(),
-          reconciliation_note: payload.data.note?.trim() || "Reconciled by manager/admin review."
-        }
-      : {
-          reconciliation_status: payload.data.status,
-          reconciled_by: null,
-          reconciled_at: null,
-          reconciliation_note:
-            payload.data.status === "void"
-              ? payload.data.note?.trim() || "Voided during reconciliation review."
-              : payload.data.note?.trim() || null
-        };
-  const { error } = await supabase.from("ancillary_charge_logs").update(nextPatch).eq("id", payload.data.id);
-  if (error) return { error: error.message };
+  try {
+    await setAncillaryReconciliationSupabase({
+      id: payload.data.id,
+      status: payload.data.status,
+      note: payload.data.note,
+      actorName: editor.full_name
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to update ancillary reconciliation." };
+  }
   await insertAudit("manager_review", "ancillary_charge", payload.data.id, {
     reconciliation_status: payload.data.status,
     note: payload.data.note ?? null
@@ -1727,23 +1726,11 @@ export async function deleteWorkflowRecordAction(
   if (!payload.success) return { error: "Invalid delete request." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const supabase = await createClient();
-  const tableMap: Record<string, string> = {
-    dailyActivities: "daily_activity_logs",
-    toiletLogs: "toilet_logs",
-    showerLogs: "shower_logs",
-    transportationLogs: "transportation_logs",
-    photoUploads: "member_photo_uploads",
-    bloodSugarLogs: "blood_sugar_logs",
-    ancillaryLogs: "ancillary_charge_logs",
-    leads: "leads",
-    leadActivities: "lead_activities",
-    assessments: "intake_assessments"
-  };
-  const table = tableMap[payload.data.entity];
-  if (!table) return { error: "Unknown entity." };
-  const { error } = await supabase.from(table).delete().eq("id", payload.data.id);
-  if (error) return { error: error.message };
+  try {
+    await deleteWorkflowRecordSupabase(payload.data);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to delete workflow record." };
+  }
   await insertAudit("manager_review", payload.data.entity, payload.data.id, { operation: "delete" });
 
   revalidatePath("/");

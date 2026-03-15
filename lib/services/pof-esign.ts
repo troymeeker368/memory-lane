@@ -21,6 +21,11 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/timezone";
+import {
+  buildRetryableWorkflowDeliveryError,
+  toSendWorkflowDeliveryStatus,
+  type SendWorkflowDeliveryStatus
+} from "@/lib/services/send-workflow-state";
 
 export const POF_REQUEST_STATUS_VALUES = ["draft", "sent", "opened", "signed", "declined", "expired"] as const;
 export type PofRequestStatus = (typeof POF_REQUEST_STATUS_VALUES)[number];
@@ -38,6 +43,10 @@ type PofRequestRow = {
   from_email: string;
   sent_by_user_id: string;
   status: PofRequestStatus;
+  delivery_status: string | null;
+  last_delivery_attempt_at: string | null;
+  delivery_failed_at: string | null;
+  delivery_error: string | null;
   optional_message: string | null;
   sent_at: string | null;
   opened_at: string | null;
@@ -67,6 +76,10 @@ export type PofRequestSummary = {
   fromEmail: string;
   sentByUserId: string;
   status: PofRequestStatus;
+  deliveryStatus: SendWorkflowDeliveryStatus;
+  deliveryError: string | null;
+  lastDeliveryAttemptAt: string | null;
+  deliveryFailedAt: string | null;
   optionalMessage: string | null;
   sentAt: string | null;
   openedAt: string | null;
@@ -85,7 +98,7 @@ export type PofDocumentEvent = {
   documentId: string;
   memberId: string;
   physicianOrderId: string | null;
-  eventType: "created" | "sent" | "opened" | "signed" | "declined" | "expired" | "resent";
+  eventType: "created" | "sent" | "send_failed" | "opened" | "signed" | "declined" | "expired" | "resent";
   actorType: "user" | "provider" | "system";
   actorUserId: string | null;
   actorName: string | null;
@@ -280,6 +293,13 @@ function toStatus(value: string | null | undefined): PofRequestStatus {
   return "draft";
 }
 
+function toDeliveryStatus(row: Pick<PofRequestRow, "status" | "delivery_status">) {
+  const fallback = toStatus(row.status) === "sent" || toStatus(row.status) === "opened" || toStatus(row.status) === "signed"
+    ? "sent"
+    : "pending_preparation";
+  return toSendWorkflowDeliveryStatus(row.delivery_status, fallback);
+}
+
 function toSummary(row: PofRequestRow): PofRequestSummary {
   return {
     id: row.id,
@@ -291,6 +311,10 @@ function toSummary(row: PofRequestRow): PofRequestSummary {
     fromEmail: row.from_email,
     sentByUserId: row.sent_by_user_id,
     status: toStatus(row.status),
+    deliveryStatus: toDeliveryStatus(row),
+    deliveryError: clean(row.delivery_error),
+    lastDeliveryAttemptAt: row.last_delivery_attempt_at ?? null,
+    deliveryFailedAt: row.delivery_failed_at ?? null,
     optionalMessage: row.optional_message,
     sentAt: row.sent_at,
     openedAt: row.opened_at,
@@ -546,7 +570,7 @@ async function createDocumentEvent(input: {
   documentId: string;
   memberId: string;
   physicianOrderId: string | null;
-  eventType: "created" | "sent" | "opened" | "signed" | "declined" | "expired" | "resent";
+  eventType: "created" | "sent" | "send_failed" | "opened" | "signed" | "declined" | "expired" | "resent";
   actorType: "user" | "provider" | "system";
   actorUserId?: string | null;
   actorName?: string | null;
@@ -631,6 +655,39 @@ async function setPhysicianOrderSentState(input: {
     .eq("id", input.physicianOrderId)
     .neq("status", "signed");
   if (error) throw new Error(error.message);
+}
+
+async function markPofRequestDeliveryState(input: {
+  requestId: string;
+  actor: { id: string; fullName: string };
+  deliveryStatus: SendWorkflowDeliveryStatus;
+  attemptAt: string;
+  status?: PofRequestStatus;
+  sentAt?: string | null;
+  openedAt?: string | null;
+  signedAt?: string | null;
+  deliveryError?: string | null;
+}) {
+  const admin = createSupabaseAdminClient();
+  const patch: Record<string, unknown> = {
+    delivery_status: input.deliveryStatus,
+    last_delivery_attempt_at: input.attemptAt,
+    delivery_failed_at: input.deliveryStatus === "send_failed" ? input.attemptAt : null,
+    delivery_error: clean(input.deliveryError),
+    updated_by_user_id: input.actor.id,
+    updated_by_name: input.actor.fullName,
+    updated_at: input.attemptAt
+  };
+  if (input.status) {
+    patch.status = input.status;
+  }
+  if (input.sentAt !== undefined) patch.sent_at = input.sentAt;
+  if (input.openedAt !== undefined) patch.opened_at = input.openedAt;
+  if (input.signedAt !== undefined) patch.signed_at = input.signedAt;
+  const { error } = await admin.from("pof_requests").update(patch).eq("id", input.requestId);
+  if (error) {
+    throw new Error(mapPofRequestWriteError(error, "Unable to update POF request delivery state."));
+  }
 }
 
 async function buildSignedPdfBytes(input: {
@@ -825,6 +882,7 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     from_email: fromEmail,
     sent_by_user_id: input.actor.id,
     status: "draft",
+    delivery_status: "pending_preparation",
     optional_message: optionalMessage,
     sent_at: null,
     opened_at: null,
@@ -862,6 +920,18 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     }
   });
 
+  await markPofRequestDeliveryState({
+    requestId,
+    actor: input.actor,
+    status: "draft",
+    deliveryStatus: "ready_to_send",
+    sentAt: null,
+    openedAt: null,
+    signedAt: null,
+    deliveryError: null,
+    attemptAt: toEasternISO()
+  });
+
   try {
     await sendSignatureEmail({
       toEmail: providerEmail!,
@@ -875,23 +945,52 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to deliver signature email.";
-    throw new Error(`${reason} Request was saved as Draft. Copy and send this secure link manually: ${signatureRequestUrl}`);
+    const failedAt = toEasternISO();
+    await markPofRequestDeliveryState({
+      requestId,
+      actor: input.actor,
+      status: "draft",
+      deliveryStatus: "send_failed",
+      sentAt: null,
+      openedAt: null,
+      signedAt: null,
+      deliveryError: reason,
+      attemptAt: failedAt
+    });
+    await createDocumentEvent({
+      documentId: requestId,
+      memberId: input.memberId,
+      physicianOrderId: input.physicianOrderId,
+      eventType: "send_failed",
+      actorType: "user",
+      actorUserId: input.actor.id,
+      actorName: input.actor.fullName,
+      actorEmail: fromEmail,
+      metadata: {
+        providerEmail,
+        retryAvailable: true,
+        error: reason
+      }
+    });
+    throw buildRetryableWorkflowDeliveryError({
+      requestId,
+      requestUrl: signatureRequestUrl,
+      reason,
+      workflowLabel: "POF signature request",
+      retryLabel: "Use Resend to retry delivery after the email issue is fixed."
+    });
   }
 
   const sentAt = toEasternISO();
-  const { error: sentError } = await admin
-    .from("pof_requests")
-    .update({
-      status: "sent",
-      sent_at: sentAt,
-      updated_by_user_id: input.actor.id,
-      updated_by_name: input.actor.fullName,
-      updated_at: sentAt
-    })
-    .eq("id", requestId);
-  if (sentError) {
-    throw new Error(mapPofRequestWriteError(sentError, "Unable to mark POF request as sent."));
-  }
+  await markPofRequestDeliveryState({
+    requestId,
+    actor: input.actor,
+    status: "sent",
+    deliveryStatus: "sent",
+    sentAt,
+    deliveryError: null,
+    attemptAt: sentAt
+  });
 
   await createDocumentEvent({
     documentId: requestId,
@@ -967,9 +1066,12 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
       from_email: fromEmail,
       optional_message: optionalMessage,
       status: "draft",
+      delivery_status: "retry_pending",
       sent_at: null,
       opened_at: null,
       signed_at: null,
+      delivery_error: null,
+      delivery_failed_at: null,
       expires_at: expiresAt,
       signature_request_token: hashedToken,
       signature_request_url: signatureRequestUrl,
@@ -984,6 +1086,18 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
     throw new Error(mapPofRequestWriteError(preSendError, "Unable to prepare POF resend request."));
   }
 
+  await markPofRequestDeliveryState({
+    requestId: input.requestId,
+    actor: input.actor,
+    status: "draft",
+    deliveryStatus: "ready_to_send",
+    sentAt: null,
+    openedAt: null,
+    signedAt: null,
+    deliveryError: null,
+    attemptAt: toEasternISO()
+  });
+
   try {
     await sendSignatureEmail({
       toEmail: providerEmail!,
@@ -997,35 +1111,54 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to deliver signature email.";
-    throw new Error(`${reason} Request was saved as Draft. Copy and send this secure link manually: ${signatureRequestUrl}`);
+    const failedAt = toEasternISO();
+    await markPofRequestDeliveryState({
+      requestId: input.requestId,
+      actor: input.actor,
+      status: "draft",
+      deliveryStatus: "send_failed",
+      sentAt: null,
+      openedAt: null,
+      signedAt: null,
+      deliveryError: reason,
+      attemptAt: failedAt
+    });
+    await createDocumentEvent({
+      documentId: input.requestId,
+      memberId: request.member_id,
+      physicianOrderId: request.physician_order_id,
+      eventType: "send_failed",
+      actorType: "user",
+      actorUserId: input.actor.id,
+      actorName: input.actor.fullName,
+      actorEmail: fromEmail,
+      metadata: {
+        providerEmail,
+        retryAvailable: true,
+        error: reason
+      }
+    });
+    throw buildRetryableWorkflowDeliveryError({
+      requestId: input.requestId,
+      requestUrl: signatureRequestUrl,
+      reason,
+      workflowLabel: "POF signature request",
+      retryLabel: "Use Resend to retry delivery after the email issue is fixed."
+    });
   }
 
   const now = toEasternISO();
-  const { error } = await admin
-    .from("pof_requests")
-    .update({
-      provider_name: providerName,
-      provider_email: providerEmail,
-      nurse_name: nurseName,
-      from_email: fromEmail,
-      optional_message: optionalMessage,
-      status: "sent",
-      sent_at: now,
-      opened_at: null,
-      signed_at: null,
-      expires_at: expiresAt,
-      signature_request_token: hashedToken,
-      signature_request_url: signatureRequestUrl,
-      unsigned_pdf_url: unsignedStorageUri,
-      pof_payload_json: form,
-      updated_by_user_id: input.actor.id,
-      updated_by_name: input.actor.fullName,
-      updated_at: now
-    })
-    .eq("id", input.requestId);
-  if (error) {
-    throw new Error(mapPofRequestWriteError(error, "Unable to resend POF signature request."));
-  }
+  await markPofRequestDeliveryState({
+    requestId: input.requestId,
+    actor: input.actor,
+    status: "sent",
+    deliveryStatus: "sent",
+    sentAt: now,
+    openedAt: null,
+    signedAt: null,
+    deliveryError: null,
+    attemptAt: now
+  });
 
   await createDocumentEvent({
     documentId: input.requestId,

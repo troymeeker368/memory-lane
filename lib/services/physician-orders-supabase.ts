@@ -19,7 +19,6 @@ import {
   POF_NUTRITION_OPTIONS,
   POF_STANDING_ORDER_OPTIONS
 } from "@/lib/services/physician-order-config";
-import { ensureMemberCommandCenterProfileSupabase } from "@/lib/services/member-command-center-supabase";
 import { generateMarSchedulesForMember, syncPofMedicationsFromSignedOrder } from "@/lib/services/mar-workflow";
 import { type IntakeAssessmentForPofPrefill, mapIntakeAssessmentToPofPrefill } from "@/lib/services/intake-to-pof-mapping";
 import type { IntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
@@ -592,7 +591,14 @@ type RpcSignPhysicianOrderRow = {
   queue_next_retry_at: string | null;
 };
 
+type RpcSyncSignedPofToMemberClinicalProfileRow = {
+  member_id: string;
+  member_health_profile_id: string;
+  member_command_center_id: string | null;
+};
+
 const RPC_SIGN_PHYSICIAN_ORDER = "rpc_sign_physician_order";
+const RPC_SYNC_SIGNED_POF_TO_MEMBER_CLINICAL_PROFILE = "rpc_sync_signed_pof_to_member_clinical_profile";
 
 function isMissingPofPostSignQueueTableError(error: PostgrestErrorLike | null | undefined) {
   const text = extractErrorText(error);
@@ -638,6 +644,18 @@ function toRpcSignPhysicianOrderRow(data: unknown): RpcSignPhysicianOrderRow {
   };
 }
 
+function toRpcSyncSignedPofToMemberClinicalProfileRow(data: unknown): RpcSyncSignedPofToMemberClinicalProfileRow {
+  const row = (Array.isArray(data) ? data[0] : null) as RpcSyncSignedPofToMemberClinicalProfileRow | null;
+  if (!row?.member_id || !row.member_health_profile_id) {
+    throw new Error("Signed POF clinical sync RPC did not return expected member identifiers.");
+  }
+  return {
+    member_id: row.member_id,
+    member_health_profile_id: row.member_health_profile_id,
+    member_command_center_id: clean(row.member_command_center_id) ?? null
+  };
+}
+
 async function invokeSignPhysicianOrderRpc(input: {
   pofId: string;
   actor: { id: string; fullName: string };
@@ -662,6 +680,28 @@ async function invokeSignPhysicianOrderRpc(input: {
     const postgrestError = error as PostgrestErrorLike | null | undefined;
     if (isMissingPofPostSignQueueTableError(postgrestError)) throw pofPostSignQueueTableRequiredError();
     if (isMissingPhysicianOrdersTableError(postgrestError)) throw physicianOrdersTableRequiredError();
+    throw error;
+  }
+}
+
+async function invokeSyncSignedPofToMemberClinicalProfileRpc(input: {
+  pofId: string;
+  syncTimestamp: string;
+  serviceRole?: boolean;
+}) {
+  const supabase = await createClient({ serviceRole: input.serviceRole });
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_SYNC_SIGNED_POF_TO_MEMBER_CLINICAL_PROFILE, {
+      p_pof_id: input.pofId,
+      p_synced_at: input.syncTimestamp
+    });
+    return toRpcSyncSignedPofToMemberClinicalProfileRow(data);
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, RPC_SYNC_SIGNED_POF_TO_MEMBER_CLINICAL_PROFILE)) {
+      throw new Error(
+        "Shared RPC rpc_sync_signed_pof_to_member_clinical_profile is not available. Apply Supabase migration 0043_delivery_state_and_pof_post_sign_sync_rpc.sql and refresh PostgREST schema cache."
+      );
+    }
     throw error;
   }
 }
@@ -1598,193 +1638,20 @@ export async function retryQueuedPhysicianOrderPostSignSync(input?: {
   };
 }
 
-function toMemberAllergyGroup(value: PhysicianOrderAllergy["allergyGroup"]) {
-  if (value === "food" || value === "medication" || value === "environmental") return value;
-  return "environmental";
-}
-
-function joinUnique(values: Array<string | null | undefined>, separator = ", ") {
-  const deduped = Array.from(
-    new Set(values.map((value) => clean(value)).filter((value): value is string => Boolean(value)))
-  );
-  return deduped.join(separator);
-}
-
 export async function syncMemberHealthProfileFromSignedPhysicianOrder(
   pofId: string,
   options?: {
     serviceRole?: boolean;
   }
 ) {
-  const supabase = await createClient({ serviceRole: options?.serviceRole });
   const form = await getPhysicianOrderById(pofId, { serviceRole: options?.serviceRole });
   if (!form) throw new Error("Physician order not found for sync.");
   if (form.status !== "Signed") return null;
-  const now = toEasternISO();
-  const signedDate = form.signedDate ?? toEasternDate(now);
-  const diagnosisRows = sanitizeDiagnosisRows(form.diagnosisRows);
-  const allergyRows = sanitizeAllergyRows(form.allergyRows);
-  const medicationRows = sanitizeMedicationRows(form.medications);
-  const actorUserId = clean(form.updatedByUserId) ?? clean(form.createdByUserId);
-  const actorName = clean(form.updatedByName) ?? clean(form.createdByName);
-
-  const payload = {
-    member_id: form.memberId,
-    active_physician_order_id: form.id,
-    diagnoses: diagnosisRows,
-    allergies: allergyRows,
-    medications: medicationRows,
-    diet: {
-      nutritionDiets: form.careInformation.nutritionDiets,
-      nutritionDietOther: form.careInformation.nutritionDietOther
-    },
-    mobility: {
-      ambulatoryStatus: form.careInformation.ambulatoryStatus,
-      mobilityIndependent: form.careInformation.mobilityIndependent,
-      mobilityWalker: form.careInformation.mobilityWalker,
-      mobilityWheelchair: form.careInformation.mobilityWheelchair,
-      mobilityScooter: form.careInformation.mobilityScooter,
-      mobilityOther: form.careInformation.mobilityOther,
-      mobilityOtherText: form.careInformation.mobilityOtherText
-    },
-    adl_support: form.careInformation.adlProfile,
-    continence: {
-      bladderContinent: form.careInformation.bladderContinent,
-      bladderIncontinent: form.careInformation.bladderIncontinent,
-      bowelContinent: form.careInformation.bowelContinent,
-      bowelIncontinent: form.careInformation.bowelIncontinent
-    },
-    behavior_orientation: form.careInformation.orientationProfile,
-    clinical_support: form.careInformation,
-    operational_flags: form.operationalFlags,
-    profile_notes: form.careInformation.orientationProfile.cognitiveBehaviorComments,
-    joy_sparks: form.careInformation.joySparksNotes,
-    last_synced_at: now,
-    updated_at: now
-  };
-
-  const [{ error: mhpError }, { error: clearDiagnosisError }, { error: clearMedicationError }, { error: clearAllergyError }] =
-    await Promise.all([
-      supabase.from("member_health_profiles").upsert(payload, { onConflict: "member_id" }),
-      supabase.from("member_diagnoses").delete().eq("member_id", form.memberId),
-      supabase.from("member_medications").delete().eq("member_id", form.memberId),
-      supabase.from("member_allergies").delete().eq("member_id", form.memberId)
-    ]);
-  if (mhpError) throw new Error(mhpError.message);
-  if (clearDiagnosisError) throw new Error(clearDiagnosisError.message);
-  if (clearMedicationError) throw new Error(clearMedicationError.message);
-  if (clearAllergyError) throw new Error(clearAllergyError.message);
-
-  if (diagnosisRows.length > 0) {
-    const { error } = await supabase.from("member_diagnoses").insert(
-      diagnosisRows.map((row) => ({
-        id: randomUUID(),
-        member_id: form.memberId,
-        diagnosis_type: row.diagnosisType,
-        diagnosis_name: row.diagnosisName,
-        diagnosis_code: null,
-        date_added: signedDate,
-        comments: null,
-        created_by_user_id: actorUserId,
-        created_by_name: actorName,
-        created_at: now,
-        updated_at: now
-      }))
-    );
-    if (error) throw new Error(error.message);
-  }
-
-  if (medicationRows.length > 0) {
-    const { error } = await supabase.from("member_medications").insert(
-      medicationRows.map((row) => ({
-        id: randomUUID(),
-        member_id: form.memberId,
-        medication_name: row.name,
-        date_started: signedDate,
-        medication_status: "active",
-        inactivated_at: null,
-        dose: row.dose,
-        quantity: row.quantity,
-        form: row.form,
-        frequency: row.frequency,
-        route: row.route,
-        route_laterality: row.routeLaterality,
-        comments: row.comments,
-        created_by_user_id: actorUserId,
-        created_by_name: actorName,
-        created_at: now,
-        updated_at: now
-      }))
-    );
-    if (error) throw new Error(error.message);
-  }
-
-  if (allergyRows.length > 0) {
-    const { error } = await supabase.from("member_allergies").insert(
-      allergyRows.map((row, index) => ({
-        id: `allergy-${randomUUID().replace(/-/g, "")}-${index + 1}`,
-        member_id: form.memberId,
-        allergy_group: toMemberAllergyGroup(row.allergyGroup),
-        allergy_name: row.allergyName,
-        severity: row.severity,
-        comments: row.comments,
-        created_by_user_id: actorUserId,
-        created_by_name: actorName,
-        created_at: now,
-        updated_at: now
-      }))
-    );
-    if (error) throw new Error(error.message);
-  }
-
-  const ensuredMcc = await ensureMemberCommandCenterProfileSupabase(form.memberId, {
-    serviceRole: options?.serviceRole,
-    actor: { userId: actorUserId, name: actorName }
+  await invokeSyncSignedPofToMemberClinicalProfileRpc({
+    pofId,
+    syncTimestamp: toEasternISO(),
+    serviceRole: options?.serviceRole
   });
-  if (ensuredMcc?.id) {
-    const nutritionDiets = form.careInformation.nutritionDiets ?? [];
-    const primaryDiet =
-      nutritionDiets.find((diet) => diet.toLowerCase() !== "regular") ??
-      nutritionDiets[0] ??
-      "Regular";
-    const foodAllergies = joinUnique(
-      allergyRows
-        .filter((row) => toMemberAllergyGroup(row.allergyGroup) === "food")
-        .map((row) => row.allergyName)
-    );
-    const medicationAllergies = joinUnique(
-      allergyRows
-        .filter((row) => toMemberAllergyGroup(row.allergyGroup) === "medication")
-        .map((row) => row.allergyName)
-    );
-    const environmentalAllergies = joinUnique(
-      allergyRows
-        .filter((row) => toMemberAllergyGroup(row.allergyGroup) === "environmental")
-        .map((row) => row.allergyName)
-    );
-    const { error: mccUpdateError } = await supabase
-      .from("member_command_centers")
-      .update({
-        code_status: form.dnrSelected ? "DNR" : "Full Code",
-        dnr: form.dnrSelected,
-        diet_type: primaryDiet,
-        dietary_preferences_restrictions: joinUnique([
-          form.careInformation.nutritionDietOther,
-          form.careInformation.joySparksNotes
-        ], " | "),
-        no_known_allergies: allergyRows.length === 0,
-        medication_allergies: medicationAllergies || null,
-        food_allergies: foodAllergies || null,
-        environmental_allergies: environmentalAllergies || null,
-        source_assessment_id: form.intakeAssessmentId,
-        source_assessment_at: form.signedDate ?? null,
-        updated_by_user_id: actorUserId,
-        updated_by_name: actorName,
-        updated_at: now
-      })
-      .eq("id", ensuredMcc.id);
-    if (mccUpdateError) throw new Error(mccUpdateError.message);
-  }
 
   return getMemberHealthProfile(form.memberId);
 }

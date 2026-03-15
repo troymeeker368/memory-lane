@@ -195,6 +195,9 @@ export function PofEsignWorkflowCard({
       const result = mode === "send" ? await sendPofSignatureRequestAction(formData) : await resendPofSignatureRequestAction(formData);
       if (!result.ok) {
         setStatusMessage(result.error);
+        if ("retryable" in result && result.retryable) {
+          router.refresh();
+        }
         return;
       }
       setStatusMessage(mode === "send" ? "POF signature request sent." : "POF signature request resent.");

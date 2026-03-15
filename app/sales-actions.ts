@@ -25,6 +25,7 @@ import {
   upsertEnrollmentPacketSenderSignatureProfile
 } from "@/lib/services/enrollment-packets";
 import { createSalesLeadActivity, salesLeadActivityInputSchema } from "@/lib/services/sales-lead-activities";
+import { WorkflowDeliveryError } from "@/lib/services/send-workflow-state";
 import {
   applyLeadStageTransitionWithMemberUpsertSupabase,
   createLeadWithMemberConversionSupabase
@@ -936,6 +937,17 @@ export async function sendEnrollmentPacketAction(raw: z.infer<typeof enrollmentP
         error: message,
         code,
         redirectTo: "/sales/new-entries/enrollment-signature-setup"
+      } as const;
+    }
+    if (error instanceof WorkflowDeliveryError) {
+      return {
+        ok: false,
+        error: message,
+        code: error.code,
+        retryable: error.retryable,
+        requestId: error.requestId,
+        requestUrl: error.requestUrl,
+        deliveryStatus: error.deliveryStatus
       } as const;
     }
     return { ok: false, error: message } as const;

@@ -10,6 +10,7 @@ import {
   sendNewPofSignatureRequest,
   voidPofSignatureRequest
 } from "@/lib/services/pof-esign";
+import { WorkflowDeliveryError } from "@/lib/services/send-workflow-state";
 import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
 
 function asString(formData: FormData, key: string) {
@@ -104,6 +105,17 @@ export async function sendPofSignatureRequestAction(formData: FormData) {
     revalidatePofRoutes(memberId, physicianOrderId);
     return { ok: true } as const;
   } catch (error) {
+    if (error instanceof WorkflowDeliveryError) {
+      return {
+        ok: false,
+        error: error.message,
+        code: error.code,
+        retryable: error.retryable,
+        requestId: error.requestId,
+        requestUrl: error.requestUrl,
+        deliveryStatus: error.deliveryStatus
+      } as const;
+    }
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to send POF signature request."
@@ -147,6 +159,17 @@ export async function resendPofSignatureRequestAction(formData: FormData) {
     revalidatePofRoutes(memberId, physicianOrderId);
     return { ok: true } as const;
   } catch (error) {
+    if (error instanceof WorkflowDeliveryError) {
+      return {
+        ok: false,
+        error: error.message,
+        code: error.code,
+        retryable: error.retryable,
+        requestId: error.requestId,
+        requestUrl: error.requestUrl,
+        deliveryStatus: error.deliveryStatus
+      } as const;
+    }
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to resend POF signature request."

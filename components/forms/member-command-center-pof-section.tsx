@@ -78,10 +78,6 @@ function triggerDownload(url: string) {
   anchor.remove();
 }
 
-function includesManualSendLinkMessage(message: string) {
-  return message.includes("Copy and send this secure link manually:");
-}
-
 function isEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
@@ -206,7 +202,7 @@ export function MemberCommandCenterPofSection({
       if (!result.ok) {
         setStatus(`Error: ${result.error}`);
         setToast({ kind: "error", message: result.error });
-        if (includesManualSendLinkMessage(result.error)) {
+        if ("retryable" in result && result.retryable) {
           setModalState(null);
           router.refresh();
         }
