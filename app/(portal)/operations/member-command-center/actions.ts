@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
-import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
+import { canAccessModule, canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import { resolveActiveEffectiveRowForDate } from "@/lib/services/billing-supabase";
 import {
   saveMemberCommandCenterAttendanceBillingWorkflow,
@@ -19,10 +19,8 @@ import {
 } from "@/lib/canonical";
 import {
   addMemberAllergySupabase,
-  addMemberFileSupabase,
   deleteMemberAllergySupabase,
   deleteMemberContactSupabase,
-  deleteMemberFileSupabase,
   ensureMemberAttendanceScheduleSupabase,
   ensureMemberCommandCenterProfileSupabase,
   getMemberSupabase,
@@ -32,6 +30,11 @@ import {
   updateMemberAllergySupabase,
   upsertMemberContactSupabase
 } from "@/lib/services/member-command-center-supabase";
+import {
+  deleteCommandCenterMemberFile,
+  getMemberFileDownloadUrl,
+  saveCommandCenterMemberFileUpload
+} from "@/lib/services/member-files";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -103,6 +106,14 @@ async function requireCommandCenterEditor() {
   const profile = await getCurrentProfile();
   if (profile.role !== "admin" && profile.role !== "manager") {
     throw new Error("Only Admin/Manager can edit Member Command Center records.");
+  }
+  return profile;
+}
+
+async function requireCommandCenterViewer() {
+  const profile = await getCurrentProfile();
+  if (!canAccessModule(profile.role, "operations", profile.permissions)) {
+    throw new Error("You do not have access to Member Command Center files.");
   }
   return profile;
 }
@@ -1158,6 +1169,7 @@ export async function addMemberFileAction(raw: {
   category: string;
   categoryOther?: string;
   documentSource?: string;
+  uploadToken?: string;
 }) {
   try {
     const actor = await requireCommandCenterEditor();
@@ -1177,20 +1189,31 @@ export async function addMemberFileAction(raw: {
       return { error: "Custom file category is required when category is Other." };
     }
 
-    const now = toEasternISO();
+    const fileDataUrl = raw.fileDataUrl?.trim() || "";
+    if (!fileDataUrl) {
+      return { error: "A file payload is required." };
+    }
 
-    const created = await addMemberFileSupabase({
-      member_id: memberId,
-      file_name: fileName,
-      file_type: raw.fileType?.trim() || "application/octet-stream",
-      file_data_url: raw.fileDataUrl?.trim() || null,
-      category: normalizedCategory,
-      category_other: normalizedCategory === "Other" ? categoryOther : null,
-      document_source: raw.documentSource?.trim() || null,
-      uploaded_by_user_id: actor.id,
-      uploaded_by_name: actor.full_name,
-      uploaded_at: now,
-      updated_at: now
+    const uploadToken = raw.uploadToken?.trim();
+    if (!uploadToken) {
+      return { error: "Upload token is required." };
+    }
+
+    const created = await saveCommandCenterMemberFileUpload({
+      actor: {
+        id: actor.id,
+        fullName: actor.full_name,
+        role: actor.role,
+        permissions: actor.permissions
+      },
+      memberId,
+      fileName,
+      fileType: raw.fileType?.trim() || "application/octet-stream",
+      fileDataUrl,
+      category: normalizedCategory as (typeof MEMBER_FILE_CATEGORY_OPTIONS)[number],
+      categoryOther: normalizedCategory === "Other" ? categoryOther : null,
+      documentSource: raw.documentSource?.trim() || null,
+      uploadToken
     });
 
     revalidateCommandCenter(memberId);
@@ -1202,16 +1225,46 @@ export async function addMemberFileAction(raw: {
 
 export async function deleteMemberFileAction(raw: { id: string; memberId: string }) {
   try {
-    await requireCommandCenterEditor();
+    const actor = await requireCommandCenterEditor();
     const id = raw.id?.trim();
     const memberId = raw.memberId?.trim();
     if (!id || !memberId) return { error: "Invalid file delete request." };
 
-    await deleteMemberFileSupabase(id);
+    await deleteCommandCenterMemberFile({
+      actor: {
+        id: actor.id,
+        fullName: actor.full_name,
+        role: actor.role,
+        permissions: actor.permissions
+      },
+      memberFileId: id,
+      memberId
+    });
 
     revalidateCommandCenter(memberId);
     return { ok: true };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to delete file." };
+  }
+}
+
+export async function getMemberFileDownloadUrlAction(raw: { id: string; memberId: string }) {
+  try {
+    await requireCommandCenterViewer();
+    const id = raw.id?.trim();
+    const memberId = raw.memberId?.trim();
+    if (!id || !memberId) return { ok: false, error: "Invalid file download request." } as const;
+
+    const result = await getMemberFileDownloadUrl({
+      memberFileId: id,
+      memberId
+    });
+
+    return { ok: true, signedUrl: result.url, fileName: result.fileName } as const;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to fetch member file download URL."
+    } as const;
   }
 }

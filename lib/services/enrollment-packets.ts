@@ -39,6 +39,7 @@ import {
 } from "@/lib/services/workflow-observability";
 import {
   buildRetryableWorkflowDeliveryError,
+  throwDeliveryStateFinalizeFailure,
   toSendWorkflowDeliveryStatus,
   type SendWorkflowDeliveryStatus
 } from "@/lib/services/send-workflow-state";
@@ -1461,14 +1462,33 @@ export async function sendEnrollmentPacketRequest(input: {
   }
 
   const sentAt = toEasternISO();
-  await markEnrollmentPacketDeliveryState({
-    packetId: requestId,
-    status: "sent",
-    deliveryStatus: "sent",
-    deliveryError: null,
-    sentAt,
-    attemptAt: sentAt
-  });
+  try {
+    await markEnrollmentPacketDeliveryState({
+      packetId: requestId,
+      status: "sent",
+      deliveryStatus: "sent",
+      deliveryError: null,
+      sentAt,
+      attemptAt: sentAt
+    });
+  } catch (error) {
+    await throwDeliveryStateFinalizeFailure({
+      entityType: "enrollment_packet_request",
+      entityId: requestId,
+      actorUserId: senderUserId,
+      alertKey: "enrollment_packet_delivery_state_finalize_failed",
+      metadata: {
+        member_id: member.id,
+        lead_id: lead?.id ?? null,
+        caregiver_email: requiredCaregiverEmail,
+        email_delivery_state: "email_sent_but_sent_state_not_persisted",
+        prepared_delivery_status: "ready_to_send",
+        error: error instanceof Error ? error.message : "Unable to finalize enrollment packet sent state."
+      },
+      message:
+        "Enrollment packet email was delivered, but the sent state could not be finalized. The link remains active in Ready to Send state. Review operational alerts before retrying."
+    });
+  }
 
   await insertPacketEvent({
     packetId: requestId,
@@ -2400,12 +2420,6 @@ export async function submitPublicEnrollmentPacket(input: {
       conflictsRequiringReview: downstreamMapping.conflictsRequiringReview,
       status: "completed"
     };
-    await updateEnrollmentPacketMappingSyncState({
-      packetId: request.id,
-      status: "completed",
-      attemptedAt: toEasternISO(),
-      mappingRunId: downstreamMapping.mappingRunId
-    });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Enrollment packet mapping failed.";
     const attemptedAt = toEasternISO();

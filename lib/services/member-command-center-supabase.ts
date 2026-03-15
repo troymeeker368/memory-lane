@@ -1166,25 +1166,6 @@ export async function listMemberFilesSupabase(memberId: string) {
   return (data ?? []) as MemberFileRow[];
 }
 
-export async function addMemberFileSupabase(input: Omit<MemberFileRow, "id">) {
-  const canonicalMemberId = await resolveMccMemberId(input.member_id, "addMemberFileSupabase");
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("member_files")
-    .insert({ ...input, member_id: canonicalMemberId, id: toId("file") })
-    .select("*")
-    .single();
-  if (error) throw new Error(error.message);
-  return data as MemberFileRow;
-}
-
-export async function deleteMemberFileSupabase(id: string) {
-  const supabase = await createClient();
-  const { error } = await supabase.from("member_files").delete().eq("id", id);
-  if (error) throw new Error(error.message);
-  return true;
-}
-
 export async function listMemberAllergiesSupabase(memberId: string) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberAllergiesSupabase");
   const supabase = await createClient();

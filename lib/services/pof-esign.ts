@@ -29,6 +29,7 @@ import {
 } from "@/lib/services/workflow-observability";
 import {
   buildRetryableWorkflowDeliveryError,
+  throwDeliveryStateFinalizeFailure,
   toSendWorkflowDeliveryStatus,
   type SendWorkflowDeliveryStatus
 } from "@/lib/services/send-workflow-state";
@@ -1110,15 +1111,34 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
   }
 
   const sentAt = toEasternISO();
-  await markPofRequestDeliveryState({
-    requestId,
-    actor: input.actor,
-    status: "sent",
-    deliveryStatus: "sent",
-    sentAt,
-    deliveryError: null,
-    attemptAt: sentAt
-  });
+  try {
+    await markPofRequestDeliveryState({
+      requestId,
+      actor: input.actor,
+      status: "sent",
+      deliveryStatus: "sent",
+      sentAt,
+      deliveryError: null,
+      attemptAt: sentAt
+    });
+  } catch (error) {
+    await throwDeliveryStateFinalizeFailure({
+      entityType: "pof_request",
+      entityId: requestId,
+      actorUserId: input.actor.id,
+      alertKey: "pof_delivery_state_finalize_failed",
+      metadata: {
+        member_id: input.memberId,
+        physician_order_id: input.physicianOrderId,
+        provider_email: providerEmail,
+        email_delivery_state: "email_sent_but_sent_state_not_persisted",
+        prepared_delivery_status: "ready_to_send",
+        error: error instanceof Error ? error.message : "Unable to finalize POF sent state."
+      },
+      message:
+        "POF signature email was delivered, but the sent state could not be finalized. The signature link remains active in Ready to Send state. Review operational alerts before retrying."
+    });
+  }
 
   await createDocumentEvent({
     documentId: requestId,
@@ -1359,17 +1379,36 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
   }
 
   const now = toEasternISO();
-  await markPofRequestDeliveryState({
-    requestId: input.requestId,
-    actor: input.actor,
-    status: "sent",
-    deliveryStatus: "sent",
-    sentAt: now,
-    openedAt: null,
-    signedAt: null,
-    deliveryError: null,
-    attemptAt: now
-  });
+  try {
+    await markPofRequestDeliveryState({
+      requestId: input.requestId,
+      actor: input.actor,
+      status: "sent",
+      deliveryStatus: "sent",
+      sentAt: now,
+      openedAt: null,
+      signedAt: null,
+      deliveryError: null,
+      attemptAt: now
+    });
+  } catch (error) {
+    await throwDeliveryStateFinalizeFailure({
+      entityType: "pof_request",
+      entityId: input.requestId,
+      actorUserId: input.actor.id,
+      alertKey: "pof_delivery_state_finalize_failed",
+      metadata: {
+        member_id: request.member_id,
+        physician_order_id: request.physician_order_id,
+        provider_email: providerEmail,
+        email_delivery_state: "email_sent_but_sent_state_not_persisted",
+        prepared_delivery_status: "ready_to_send",
+        error: error instanceof Error ? error.message : "Unable to finalize resent POF state."
+      },
+      message:
+        "POF signature email was delivered, but the sent state could not be finalized. The signature link remains active in Ready to Send state. Review operational alerts before retrying."
+    });
+  }
 
   await createDocumentEvent({
     documentId: input.requestId,

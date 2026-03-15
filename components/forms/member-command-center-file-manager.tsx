@@ -4,7 +4,11 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { MEMBER_FILE_CATEGORY_OPTIONS } from "@/lib/canonical";
-import { addMemberFileAction, deleteMemberFileAction } from "@/app/(portal)/operations/member-command-center/actions";
+import {
+  addMemberFileAction,
+  deleteMemberFileAction,
+  getMemberFileDownloadUrlAction
+} from "@/app/(portal)/operations/member-command-center/actions";
 import { formatDateTime } from "@/lib/utils";
 
 interface FileRow {
@@ -12,11 +16,39 @@ interface FileRow {
   file_name: string;
   file_type: string;
   file_data_url: string | null;
+  storage_object_path?: string | null;
   category: string;
   category_other: string | null;
   document_source?: string | null;
   uploaded_by_name: string | null;
   uploaded_at: string;
+}
+
+function createUploadToken() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `upload-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function triggerDownload(url: string, fileName?: string) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  if (fileName) {
+    link.download = fileName;
+  }
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function formatDocumentSource(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "-";
+  if (normalized.startsWith("mcc_manual_upload:")) return "Manual Upload";
+  return normalized;
 }
 
 export function MemberCommandCenterFileManager({
@@ -33,6 +65,7 @@ export function MemberCommandCenterFileManager({
   const [category, setCategory] = useState<(typeof MEMBER_FILE_CATEGORY_OPTIONS)[number]>("Health Unit");
   const [categoryOther, setCategoryOther] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadToken, setUploadToken] = useState<string | null>(null);
   const router = useRouter();
 
   const showCustomCategory = useMemo(() => category === "Other", [category]);
@@ -40,12 +73,14 @@ export function MemberCommandCenterFileManager({
   useEffect(() => {
     setStatus(null);
     setSelectedFile(null);
+    setUploadToken(null);
     setCategory("Health Unit");
     setCategoryOther("");
   }, [memberId]);
 
   function clearSelection() {
     setSelectedFile(null);
+    setUploadToken(null);
     setCategory("Health Unit");
     setCategoryOther("");
   }
@@ -70,6 +105,10 @@ export function MemberCommandCenterFileManager({
       setStatus("Error: Please select a file.");
       return;
     }
+    if (!uploadToken) {
+      setStatus("Error: Upload token is missing. Re-select the file and try again.");
+      return;
+    }
     if (showCustomCategory && !categoryOther.trim()) {
       setStatus("Error: Custom category is required when category is Other.");
       return;
@@ -84,7 +123,8 @@ export function MemberCommandCenterFileManager({
           fileType: selectedFile.type || "application/octet-stream",
           fileDataUrl: dataUrl,
           category,
-          categoryOther: showCustomCategory ? categoryOther : ""
+          categoryOther: showCustomCategory ? categoryOther : "",
+          uploadToken
         });
 
         if (result?.error) {
@@ -115,6 +155,37 @@ export function MemberCommandCenterFileManager({
     });
   }
 
+  function onFileSelected(file: File | null) {
+    setSelectedFile(file);
+    setUploadToken(file ? createUploadToken() : null);
+  }
+
+  function onOpen(row: FileRow) {
+    setStatus(null);
+    startTransition(async () => {
+      const result = await getMemberFileDownloadUrlAction({ id: row.id, memberId });
+      if (!result.ok) {
+        setStatus(`Error: ${result.error}`);
+        return;
+      }
+      window.open(result.signedUrl, "_blank", "noopener,noreferrer");
+      setStatus("File opened.");
+    });
+  }
+
+  function onDownload(row: FileRow) {
+    setStatus(null);
+    startTransition(async () => {
+      const result = await getMemberFileDownloadUrlAction({ id: row.id, memberId });
+      if (!result.ok) {
+        setStatus(`Error: ${result.error}`);
+        return;
+      }
+      triggerDownload(result.signedUrl, result.fileName || row.file_name);
+      setStatus("File download started.");
+    });
+  }
+
   return (
     <div className="space-y-3">
       {canEdit ? (
@@ -124,7 +195,7 @@ export function MemberCommandCenterFileManager({
             <input
               type="file"
               className="h-10 rounded-lg border border-border px-3 py-1 text-sm"
-              onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+              onChange={(event) => onFileSelected(event.target.files?.[0] ?? null)}
             />
             <select
               className="h-10 rounded-lg border border-border px-3"
@@ -200,19 +271,29 @@ export function MemberCommandCenterFileManager({
                 <tr key={row.id}>
                   <td>{row.file_name}</td>
                   <td>{row.category === "Other" ? row.category_other ?? "Other" : row.category}</td>
-                  <td>{row.document_source ?? "-"}</td>
+                  <td>{formatDocumentSource(row.document_source)}</td>
                   <td>{formatDateTime(row.uploaded_at)}</td>
                   <td>{row.uploaded_by_name ?? "-"}</td>
                   <td>
                     <div className="flex flex-wrap gap-2 text-xs">
-                      {row.file_data_url ? (
+                      {row.file_data_url || row.storage_object_path ? (
                         <>
-                          <a href={row.file_data_url} target="_blank" rel="noopener noreferrer" className="font-semibold text-brand">
+                          <button
+                            type="button"
+                            className="font-semibold text-brand"
+                            onClick={() => onOpen(row)}
+                            disabled={isPending}
+                          >
                             Open
-                          </a>
-                          <a href={row.file_data_url} download={row.file_name} className="font-semibold text-brand">
+                          </button>
+                          <button
+                            type="button"
+                            className="font-semibold text-brand"
+                            onClick={() => onDownload(row)}
+                            disabled={isPending}
+                          >
                             Download
-                          </a>
+                          </button>
                         </>
                       ) : (
                         "-"

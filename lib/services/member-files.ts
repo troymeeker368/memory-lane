@@ -1,7 +1,9 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 
+import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -78,6 +80,50 @@ export function parseMemberDocumentStorageUri(storageUri: string | null | undefi
   const prefix = `storage://${MEMBER_DOCUMENTS_BUCKET}/`;
   if (!normalized.startsWith(prefix)) return null;
   return normalized.slice(prefix.length);
+}
+
+function slugifyMemberFileSegment(value: string) {
+  return safeFileName(value)
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function isUniqueViolation(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? (error as { code?: unknown }).code : undefined;
+  return typeof code === "string" && code === "23505";
+}
+
+type MemberFileMutationActor = {
+  id: string;
+  fullName: string;
+  role: string;
+  permissions?: Parameters<typeof canPerformModuleAction>[3];
+};
+
+function assertAuthorizedMemberFileMutator(actor: MemberFileMutationActor) {
+  const normalizedRole = normalizeRoleKey(actor.role);
+  const hasOperationsEdit = canPerformModuleAction(normalizedRole, "operations", "canEdit", actor.permissions);
+  if (normalizedRole !== "admin" && normalizedRole !== "manager" && !hasOperationsEdit) {
+    throw new Error("Only authorized operations editors can manage member files.");
+  }
+}
+
+function buildManualUploadDocumentSource(uploadToken: string) {
+  return `mcc_manual_upload:${uploadToken}`;
+}
+
+async function loadMemberFileRowById(memberFileId: string) {
+  const normalized = String(memberFileId ?? "").trim();
+  if (!normalized) return null;
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin.from("member_files").select("*").eq("id", normalized).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 export async function uploadMemberDocumentObject(input: {
@@ -165,8 +211,194 @@ export async function upsertMemberFileByDocumentSource(input: {
     member_id: input.memberId,
     ...patch
   });
-  if (insertError) throw new Error(insertError.message);
+  if (insertError) {
+    if (isUniqueViolation(insertError)) {
+      const { data: conflicted, error: conflictedError } = await admin
+        .from("member_files")
+        .select("id")
+        .eq("member_id", input.memberId)
+        .eq("document_source", input.documentSource)
+        .maybeSingle();
+      if (conflictedError) throw new Error(conflictedError.message);
+      if (conflicted?.id) {
+        return { id: String(conflicted.id), created: false as const };
+      }
+    }
+    throw new Error(insertError.message);
+  }
   return { id: memberFileId, created: true as const };
+}
+
+export async function saveCommandCenterMemberFileUpload(input: {
+  actor: MemberFileMutationActor;
+  memberId: string;
+  fileName: string;
+  fileType?: string | null;
+  fileDataUrl: string;
+  category: MemberFileCategory;
+  categoryOther?: string | null;
+  documentSource?: string | null;
+  uploadToken: string;
+}) {
+  assertAuthorizedMemberFileMutator(input.actor);
+
+  const canonical = await resolveCanonicalMemberRef(
+    {
+      sourceType: "member",
+      memberId: input.memberId,
+      selectedId: input.memberId
+    },
+    {
+      actionLabel: "saveCommandCenterMemberFileUpload"
+    }
+  );
+  if (!canonical.memberId) {
+    throw new Error("Member ID is required to upload a member file.");
+  }
+
+  const memberId = canonical.memberId;
+  const uploadToken = String(input.uploadToken ?? "").trim();
+  if (!uploadToken) throw new Error("Upload token is required.");
+
+  const now = toEasternISO();
+  const fileName = safeFileName(input.fileName) || `member-file-${uploadToken}`;
+  const categoryOther = input.category === "Other" ? String(input.categoryOther ?? "").trim() || null : null;
+  const parsed = parseDataUrlPayload(input.fileDataUrl, "Unable to read uploaded member file.");
+  const contentType = String(input.fileType ?? "").trim() || parsed.contentType || "application/octet-stream";
+  const objectName = slugifyMemberFileSegment(fileName) || `member-file-${uploadToken}`;
+  const objectPath = `members/${memberId}/member-files/manual/${uploadToken}-${objectName}`;
+  const storageUri = await uploadMemberDocumentObject({
+    objectPath,
+    bytes: parsed.bytes,
+    contentType
+  });
+
+  const documentSource = String(input.documentSource ?? "").trim() || buildManualUploadDocumentSource(uploadToken);
+  let memberFile;
+  try {
+    memberFile = await upsertMemberFileByDocumentSource({
+      memberId,
+      documentSource,
+      fileName,
+      fileType: contentType,
+      dataUrl: null,
+      storageObjectPath: parseMemberDocumentStorageUri(storageUri),
+      category: input.category,
+      categoryOther,
+      uploadedByUserId: input.actor.id,
+      uploadedByName: input.actor.fullName,
+      uploadedAtIso: now,
+      updatedAtIso: now
+    });
+  } catch (error) {
+    try {
+      await deleteMemberDocumentObject(objectPath);
+    } catch (cleanupError) {
+      await recordImmediateSystemAlert({
+        entityType: "member_file",
+        entityId: null,
+        actorUserId: input.actor.id,
+        severity: "high",
+        alertKey: "member_file_upload_cleanup_failed",
+        metadata: {
+          member_id: memberId,
+          document_source: documentSource,
+          storage_object_path: objectPath,
+          upload_error: error instanceof Error ? error.message : "Unknown member file write error.",
+          cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
+        }
+      });
+    }
+    throw error;
+  }
+
+  const created = await loadMemberFileRowById(memberFile.id);
+  if (!created) {
+    throw new Error("Member file upload completed, but the saved row could not be loaded.");
+  }
+  return created;
+}
+
+export async function deleteCommandCenterMemberFile(input: {
+  actor: MemberFileMutationActor;
+  memberFileId: string;
+  memberId?: string | null;
+}) {
+  assertAuthorizedMemberFileMutator(input.actor);
+
+  const existing = await loadMemberFileRowById(input.memberFileId);
+  if (!existing) return false;
+
+  const expectedMemberId = String(input.memberId ?? "").trim();
+  if (expectedMemberId && String(existing.member_id ?? "").trim() !== expectedMemberId) {
+    throw new Error("Member file/member mismatch.");
+  }
+
+  const storageObjectPath = String(existing.storage_object_path ?? "").trim() || null;
+  if (storageObjectPath) {
+    await deleteMemberDocumentObject(storageObjectPath);
+  }
+
+  try {
+    await deleteMemberFileRecord(String(existing.id));
+  } catch (error) {
+    if (storageObjectPath) {
+      await recordImmediateSystemAlert({
+        entityType: "member_file",
+        entityId: String(existing.id),
+        actorUserId: input.actor.id,
+        severity: "high",
+        alertKey: "member_file_delete_split_brain",
+        metadata: {
+          member_id: String(existing.member_id ?? ""),
+          storage_object_path: storageObjectPath,
+          error: error instanceof Error ? error.message : "Unable to delete member file row after storage cleanup."
+        }
+      });
+    }
+    throw error;
+  }
+
+  return true;
+}
+
+export async function getMemberFileDownloadUrl(input: {
+  memberFileId: string;
+  memberId?: string | null;
+  expiresInSeconds?: number;
+}) {
+  const existing = await loadMemberFileRowById(input.memberFileId);
+  if (!existing) throw new Error("Member file was not found.");
+
+  const expectedMemberId = String(input.memberId ?? "").trim();
+  if (expectedMemberId && String(existing.member_id ?? "").trim() !== expectedMemberId) {
+    throw new Error("Member file/member mismatch.");
+  }
+
+  const storageObjectPath = String(existing.storage_object_path ?? "").trim() || null;
+  if (storageObjectPath) {
+    const admin = createSupabaseAdminClient();
+    const { data, error } = await admin
+      .storage
+      .from(MEMBER_DOCUMENTS_BUCKET)
+      .createSignedUrl(storageObjectPath, input.expiresInSeconds ?? 60 * 15);
+    if (error || !data?.signedUrl) {
+      throw new Error(error?.message ?? "Unable to create member file download URL.");
+    }
+    return {
+      url: data.signedUrl,
+      fileName: String(existing.file_name ?? "member-file")
+    };
+  }
+
+  const dataUrl = String(existing.file_data_url ?? "").trim();
+  if (!dataUrl) {
+    throw new Error("Member file is missing both storage and inline data.");
+  }
+  return {
+    url: dataUrl,
+    fileName: String(existing.file_name ?? "member-file")
+  };
 }
 
 export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPdfInput) {

@@ -28,6 +28,7 @@ import {
   recordImmediateSystemAlert,
   recordWorkflowEvent
 } from "@/lib/services/workflow-observability";
+import { throwDeliveryStateFinalizeFailure } from "@/lib/services/send-workflow-state";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 
 const TOKEN_BYTE_LENGTH = 32;
@@ -472,7 +473,7 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
     })
     .eq("id", input.carePlanId);
   if (updateError) {
-    await recordImmediateSystemAlert({
+    await throwDeliveryStateFinalizeFailure({
       entityType: "care_plan",
       entityId: input.carePlanId,
       actorUserId: input.actor.id,
@@ -483,11 +484,10 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
         caregiver_email: caregiverEmail,
         email_delivery_state: "email_sent_but_sent_state_not_persisted",
         error: updateError.message
-      }
+      },
+      message:
+        "Care plan email was delivered, but the sent state could not be finalized. The signature link remains active in Ready to Send state. Review operational alerts before retrying."
     });
-    throw new Error(
-      "Care plan email was delivered, but the sent state could not be finalized. The signature link remains active in Ready to Send state. Review operational alerts before retrying."
-    );
   }
 
   await createCarePlanSignatureEvent({

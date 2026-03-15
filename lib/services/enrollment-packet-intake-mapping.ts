@@ -3,11 +3,8 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import { normalizeEnrollmentPacketIntakePayload, type EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
-import {
-  ensureMemberAttendanceScheduleSupabase,
-  ensureMemberCommandCenterProfileSupabase
-} from "@/lib/services/member-command-center-supabase";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
 
 export type EnrollmentPacketFieldsForMapping = {
@@ -58,9 +55,45 @@ type MappingRecord = {
   note: string | null;
 };
 
-type RollbackAction = {
-  label: string;
-  run: () => Promise<void>;
+type PreparedContactInsert = {
+  id: string;
+  contact_name: string;
+  relationship_to_member: string | null;
+  category: string;
+  category_other: string | null;
+  email: string | null;
+  cellular_number: string | null;
+  work_number: string | null;
+  home_number: string | null;
+  street_address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+};
+
+type PreparedRecordRow = {
+  target_system: MappingSystem;
+  target_table: string;
+  target_field: string;
+  source_field: string | null;
+  status: MappingStatus;
+  source_value: string | null;
+  destination_value: string | null;
+  note: string | null;
+};
+
+type EnrollmentConversionRpcRow = {
+  packet_id: string;
+  member_id: string;
+  lead_id: string | null;
+  conversion_status: string;
+  mapping_run_id: string;
+  systems: unknown;
+  downstream_systems_updated: string[] | null;
+  conflicts_requiring_review: number | null;
+  records_persisted: number | null;
+  conflict_ids: string[] | null;
+  entity_references: Record<string, unknown> | null;
 };
 
 export type EnrollmentPacketMappingSummary = {
@@ -140,6 +173,8 @@ const MHP_STRING_MAP: StringMap[] = [
   { sourceField: "glassesHearingAidsCataracts", targetField: "glasses_hearing_aids_cataracts" },
   { sourceField: "intakeClinicalNotes", targetField: "intake_notes" }
 ];
+
+const CONVERT_ENROLLMENT_PACKET_TO_MEMBER_RPC = "convert_enrollment_packet_to_member";
 
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
@@ -454,629 +489,591 @@ function summarizeRecords(records: MappingRecord[]) {
     conflictsRequiringReview: mccConflicts + mhpConflicts
   };
 }
+
+function buildDefaultCommandCenterSnapshot(memberId: string): Record<string, unknown> {
+  return {
+    id: `mcc-${memberId}`,
+    member_id: memberId,
+    gender: null,
+    marital_status: null,
+    street_address: null,
+    city: null,
+    state: null,
+    zip: null,
+    guardian_poa_status: null,
+    power_of_attorney: null,
+    original_referral_source: null,
+    pcp_name: null,
+    pcp_phone: null,
+    pcp_fax: null,
+    pcp_address: null,
+    pharmacy: null,
+    living_situation: null,
+    insurance_summary_reference: null,
+    veteran_branch: null,
+    is_veteran: null,
+    photo_consent: null
+  };
+}
+
+function buildDefaultAttendanceScheduleSnapshot(memberId: string, enrollmentDate: string | null): Record<string, unknown> {
+  return {
+    id: `attendance-${memberId}`,
+    member_id: memberId,
+    enrollment_date: enrollmentDate,
+    monday: false,
+    tuesday: false,
+    wednesday: false,
+    thursday: false,
+    friday: false,
+    transportation_required: null,
+    transportation_mode: null,
+    daily_rate: null,
+    attendance_days_per_week: 0
+  };
+}
+
+function buildDefaultMhpSnapshot(): Record<string, unknown> {
+  return {
+    provider_name: null,
+    provider_phone: null,
+    hospital_preference: null,
+    dietary_restrictions: null,
+    oxygen_use: null,
+    memory_severity: null,
+    falls_history: null,
+    physical_health_problems: null,
+    cognitive_behavior_comments: null,
+    communication_style: null,
+    ambulation: null,
+    transferring: null,
+    bathing: null,
+    toileting: null,
+    bladder_continence: null,
+    bowel_continence: null,
+    incontinence_products: null,
+    hearing: null,
+    dressing: null,
+    eating: null,
+    dental: null,
+    speech_comments: null,
+    glasses_hearing_aids_cataracts: null,
+    intake_notes: null,
+    mental_health_history: null,
+    mobility_aids: null,
+    wandering: null,
+    combative_disruptive: null,
+    disorientation: null,
+    agitation_resistive: null,
+    sleep_issues: null
+  };
+}
+
+function stripNoopPatch(patch: Record<string, unknown>, minimumKeys: number) {
+  return Object.keys(patch).length > minimumKeys ? patch : {};
+}
+
+function parseCount(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseMappingSystems(value: unknown): EnrollmentPacketMappingSummary["systems"] {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const mcc = source.mcc && typeof source.mcc === "object" ? (source.mcc as Record<string, unknown>) : {};
+  const mhp = source.mhp && typeof source.mhp === "object" ? (source.mhp as Record<string, unknown>) : {};
+  const pofStaging =
+    source.pofStaging && typeof source.pofStaging === "object"
+      ? (source.pofStaging as Record<string, unknown>)
+      : {};
+  const memberFiles =
+    source.memberFiles && typeof source.memberFiles === "object"
+      ? (source.memberFiles as Record<string, unknown>)
+      : {};
+
+  return {
+    mcc: {
+      written: parseCount(mcc.written),
+      skipped: parseCount(mcc.skipped),
+      conflicts: parseCount(mcc.conflicts)
+    },
+    mhp: {
+      written: parseCount(mhp.written),
+      skipped: parseCount(mhp.skipped),
+      conflicts: parseCount(mhp.conflicts)
+    },
+    pofStaging: {
+      staged: parseCount(pofStaging.staged),
+      skipped: parseCount(pofStaging.skipped)
+    },
+    memberFiles: {
+      written: parseCount(memberFiles.written),
+      skipped: parseCount(memberFiles.skipped)
+    }
+  };
+}
 export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMappingRequest): Promise<EnrollmentPacketMappingSummary> {
   const admin = createSupabaseAdminClient();
   const now = toEasternISO();
   const payload = buildNormalizedPayload(input.fields);
-
-  const { data: runRow, error: runError } = await admin
-    .from("enrollment_packet_mapping_runs")
-    .insert({
-      packet_id: input.packetId,
-      member_id: input.memberId,
-      actor_user_id: input.senderUserId,
-      actor_email: cleanEmail(input.senderEmail) ?? cleanEmail(input.caregiverEmail),
-      actor_name: clean(input.senderName),
-      status: "running",
-      summary: {},
-      started_at: now
-    })
-    .select("id")
-    .single();
-  if (runError) throw new Error(runError.message);
-
-  const mappingRunId = String((runRow as { id: string }).id);
   const records: MappingRecord[] = [];
-  const rollbackActions: RollbackAction[] = [];
+  const preparedContacts: PreparedContactInsert[] = [];
 
-  try {
-    const { data: memberRow, error: memberError } = await admin
+  const [memberResult, existingMccResult, existingAttendanceResult, contactsResult, mhpResult] = await Promise.all([
+    admin
       .from("members")
       .select("id, preferred_name, legal_first_name, legal_last_name, dob, enrollment_date, ssn_last4, updated_at")
       .eq("id", input.memberId)
-      .maybeSingle();
-    if (memberError) throw new Error(memberError.message);
-    if (!memberRow) throw new Error("Member not found for enrollment packet mapping.");
+      .maybeSingle(),
+    admin.from("member_command_centers").select("*").eq("member_id", input.memberId).maybeSingle(),
+    admin.from("member_attendance_schedules").select("*").eq("member_id", input.memberId).maybeSingle(),
+    admin.from("member_contacts").select("*").eq("member_id", input.memberId).order("updated_at", { ascending: false }),
+    admin.from("member_health_profiles").select("*").eq("member_id", input.memberId).maybeSingle()
+  ]);
 
-    const { data: existingMccRow, error: existingMccError } = await admin
-      .from("member_command_centers")
-      .select("*")
-      .eq("member_id", input.memberId)
-      .maybeSingle();
-    if (existingMccError) throw new Error(existingMccError.message);
+  if (memberResult.error) throw new Error(memberResult.error.message);
+  if (!memberResult.data) throw new Error("Member not found for enrollment packet mapping.");
+  if (existingMccResult.error) throw new Error(existingMccResult.error.message);
+  if (existingAttendanceResult.error) throw new Error(existingAttendanceResult.error.message);
+  if (contactsResult.error) throw new Error(contactsResult.error.message);
+  if (mhpResult.error) throw new Error(mhpResult.error.message);
 
-    const mccProfile = await ensureMemberCommandCenterProfileSupabase(input.memberId, {
-      serviceRole: true,
-      actor: { userId: input.senderUserId, name: input.senderName }
+  const memberRow = memberResult.data as Record<string, unknown>;
+  const mccProfileRecord =
+    (existingMccResult.data as Record<string, unknown> | null) ?? buildDefaultCommandCenterSnapshot(input.memberId);
+  const attendanceSchedule =
+    (existingAttendanceResult.data as Record<string, unknown> | null) ??
+    buildDefaultAttendanceScheduleSnapshot(input.memberId, toTextValue(memberRow.enrollment_date));
+  const mhpRow = (mhpResult.data as Record<string, unknown> | null) ?? buildDefaultMhpSnapshot();
+  const contacts = (contactsResult.data ?? []) as Array<Record<string, unknown>>;
+
+  const memberPatch: Record<string, unknown> = { updated_at: now };
+  MEMBER_STRING_MAP.forEach((map) => {
+    applyFillBlankString({
+      records,
+      patch: memberPatch,
+      targetSystem: "mcc",
+      targetTable: "members",
+      targetField: map.targetField,
+      sourceField: String(map.sourceField),
+      sourceValue: payload[map.sourceField],
+      existingValue: memberRow[map.targetField]
     });
-    if (!existingMccRow) {
-      rollbackActions.push({
-        label: "delete created member_command_centers row",
-        run: async () => {
-          const { error } = await admin.from("member_command_centers").delete().eq("id", mccProfile.id);
-          if (error) throw new Error(error.message);
-        }
-      });
-    }
+  });
+  const memberWritePatch = stripNoopPatch(memberPatch, 1);
 
-    const { data: existingAttendanceRow, error: existingAttendanceError } = await admin
-      .from("member_attendance_schedules")
-      .select("*")
-      .eq("member_id", input.memberId)
-      .maybeSingle();
-    if (existingAttendanceError) throw new Error(existingAttendanceError.message);
+  const mccPatch: Record<string, unknown> = {
+    updated_by_user_id: input.senderUserId,
+    updated_by_name: input.senderName,
+    updated_at: now
+  };
 
-    const attendanceSchedule = await ensureMemberAttendanceScheduleSupabase(input.memberId, {
-      serviceRole: true,
-      actor: { userId: input.senderUserId, name: input.senderName }
-    });
-    if (!existingAttendanceRow) {
-      rollbackActions.push({
-        label: "delete created member_attendance_schedules row",
-        run: async () => {
-          const { error } = await admin.from("member_attendance_schedules").delete().eq("id", attendanceSchedule.id);
-          if (error) throw new Error(error.message);
-        }
-      });
-    }
-
-    const { data: contactsRows, error: contactsError } = await admin
-      .from("member_contacts")
-      .select("*")
-      .eq("member_id", input.memberId)
-      .order("updated_at", { ascending: false });
-    if (contactsError) throw new Error(contactsError.message);
-
-    let { data: mhpRow, error: mhpError } = await admin
-      .from("member_health_profiles")
-      .select("*")
-      .eq("member_id", input.memberId)
-      .maybeSingle();
-    if (mhpError) throw new Error(mhpError.message);
-    const mhpExisted = Boolean(mhpRow);
-    if (!mhpRow) {
-      const { error: mhpInsertError } = await admin.from("member_health_profiles").insert({
-        member_id: input.memberId,
-        created_at: now,
-        updated_at: now,
-        updated_by_user_id: input.senderUserId,
-        updated_by_name: input.senderName
-      });
-      if (mhpInsertError) throw new Error(mhpInsertError.message);
-      const { data: reloadedMhp, error: reloadedMhpError } = await admin
-        .from("member_health_profiles")
-        .select("*")
-        .eq("member_id", input.memberId)
-        .maybeSingle();
-      if (reloadedMhpError) throw new Error(reloadedMhpError.message);
-      mhpRow = reloadedMhp;
-    }
-    if (!mhpExisted && mhpRow) {
-      rollbackActions.push({
-        label: "delete created member_health_profiles row",
-        run: async () => {
-          const { error } = await admin.from("member_health_profiles").delete().eq("member_id", input.memberId);
-          if (error) throw new Error(error.message);
-        }
-      });
-    }
-
-    const memberPatch: Record<string, unknown> = { updated_at: now };
-    MEMBER_STRING_MAP.forEach((map) => {
-      applyFillBlankString({
-        records,
-        patch: memberPatch,
-        targetSystem: "mcc",
-        targetTable: "members",
-        targetField: map.targetField,
-        sourceField: String(map.sourceField),
-        sourceValue: payload[map.sourceField],
-        existingValue: (memberRow as Record<string, unknown>)[map.targetField]
-      });
-    });
-
-    if (Object.keys(memberPatch).length > 1) {
-      const memberRollbackPatch = Object.keys(memberPatch).reduce<Record<string, unknown>>((acc, key) => {
-        acc[key] = (memberRow as Record<string, unknown>)[key];
-        return acc;
-      }, {});
-      const { error } = await admin.from("members").update(memberPatch).eq("id", input.memberId);
-      if (error) throw new Error(error.message);
-      rollbackActions.push({
-        label: "restore members patch",
-        run: async () => {
-          const { error: rollbackError } = await admin.from("members").update(memberRollbackPatch).eq("id", input.memberId);
-          if (rollbackError) throw new Error(rollbackError.message);
-        }
-      });
-    }
-
-    const mccPatch: Record<string, unknown> = {
-      updated_by_user_id: input.senderUserId,
-      updated_by_name: input.senderName,
-      updated_at: now
-    };
-    const mccProfileRecord = mccProfile as unknown as Record<string, unknown>;
-
-    MCC_STRING_MAP.forEach((map) => {
-      applyFillBlankString({
-        records,
-        patch: mccPatch,
-        targetSystem: "mcc",
-        targetTable: "member_command_centers",
-        targetField: map.targetField,
-        sourceField: String(map.sourceField),
-        sourceValue: payload[map.sourceField],
-        existingValue: mccProfileRecord[map.targetField]
-      });
-    });
-
+  MCC_STRING_MAP.forEach((map) => {
     applyFillBlankString({
       records,
       patch: mccPatch,
       targetSystem: "mcc",
       targetTable: "member_command_centers",
-      targetField: "gender",
-      sourceField: "memberGender",
-      sourceValue: normalizeGender(payload.memberGender),
-      existingValue: mccProfile.gender
+      targetField: map.targetField,
+      sourceField: String(map.sourceField),
+      sourceValue: payload[map.sourceField],
+      existingValue: mccProfileRecord[map.targetField]
     });
-    applyFillBlankBoolean({
-      records,
-      patch: mccPatch,
-      targetSystem: "mcc",
-      targetTable: "member_command_centers",
-      targetField: "is_veteran",
-      sourceField: "veteranStatus",
-      sourceValue: parseBoolLike(payload.veteranStatus),
-      existingValue: mccProfile.is_veteran
-    });
-    applyFillBlankBoolean({
-      records,
-      patch: mccPatch,
-      targetSystem: "mcc",
-      targetTable: "member_command_centers",
-      targetField: "photo_consent",
-      sourceField: "photoConsentChoice",
-      sourceValue: parsePhotoConsentChoice(payload.photoConsentChoice),
-      existingValue: mccProfile.photo_consent
-    });
+  });
+  applyFillBlankString({
+    records,
+    patch: mccPatch,
+    targetSystem: "mcc",
+    targetTable: "member_command_centers",
+    targetField: "gender",
+    sourceField: "memberGender",
+    sourceValue: normalizeGender(payload.memberGender),
+    existingValue: mccProfileRecord.gender
+  });
+  applyFillBlankBoolean({
+    records,
+    patch: mccPatch,
+    targetSystem: "mcc",
+    targetTable: "member_command_centers",
+    targetField: "is_veteran",
+    sourceField: "veteranStatus",
+    sourceValue: parseBoolLike(payload.veteranStatus),
+    existingValue: mccProfileRecord.is_veteran
+  });
+  applyFillBlankBoolean({
+    records,
+    patch: mccPatch,
+    targetSystem: "mcc",
+    targetTable: "member_command_centers",
+    targetField: "photo_consent",
+    sourceField: "photoConsentChoice",
+    sourceValue: parsePhotoConsentChoice(payload.photoConsentChoice),
+    existingValue: mccProfileRecord.photo_consent
+  });
+  const mccWritePatch = stripNoopPatch(mccPatch, 3);
 
-    if (Object.keys(mccPatch).length > 3) {
-      const mccRollbackPatch = Object.keys(mccPatch).reduce<Record<string, unknown>>((acc, key) => {
-        acc[key] = (existingMccRow ?? mccProfile as unknown as Record<string, unknown>)[key];
-        return acc;
-      }, {});
-      const { error } = await admin.from("member_command_centers").update(mccPatch).eq("id", mccProfile.id);
-      if (error) throw new Error(error.message);
-      rollbackActions.push({
-        label: "restore member_command_centers patch",
-        run: async () => {
-          const { error: rollbackError } = await admin
-            .from("member_command_centers")
-            .update(mccRollbackPatch)
-            .eq("id", mccProfile.id);
-          if (rollbackError) throw new Error(rollbackError.message);
-        }
-      });
-    }
+  const attendancePatch: Record<string, unknown> = {
+    updated_by_user_id: input.senderUserId,
+    updated_by_name: input.senderName,
+    updated_at: now
+  };
+  const attendanceDays = attendanceDaysFromRequestedDays(payload.requestedAttendanceDays);
+  const existingHasAttendanceDays =
+    Boolean(attendanceSchedule.monday) ||
+    Boolean(attendanceSchedule.tuesday) ||
+    Boolean(attendanceSchedule.wednesday) ||
+    Boolean(attendanceSchedule.thursday) ||
+    Boolean(attendanceSchedule.friday);
 
-    const attendancePatch: Record<string, unknown> = {
-      updated_by_user_id: input.senderUserId,
-      updated_by_name: input.senderName,
-      updated_at: now
-    };
-
-    const attendanceDays = attendanceDaysFromRequestedDays(payload.requestedAttendanceDays);
-    const existingHasAttendanceDays =
-      Boolean(attendanceSchedule.monday) ||
-      Boolean(attendanceSchedule.tuesday) ||
-      Boolean(attendanceSchedule.wednesday) ||
-      Boolean(attendanceSchedule.thursday) ||
-      Boolean(attendanceSchedule.friday);
-
-    if (!existingHasAttendanceDays) {
-      attendancePatch.monday = attendanceDays.monday;
-      attendancePatch.tuesday = attendanceDays.tuesday;
-      attendancePatch.wednesday = attendanceDays.wednesday;
-      attendancePatch.thursday = attendanceDays.thursday;
-      attendancePatch.friday = attendanceDays.friday;
-      attendancePatch.attendance_days_per_week = [
-        attendanceDays.monday,
-        attendanceDays.tuesday,
-        attendanceDays.wednesday,
-        attendanceDays.thursday,
-        attendanceDays.friday
-      ].filter(Boolean).length;
-      addRecord(records, {
-        targetSystem: "mcc",
-        targetTable: "member_attendance_schedules",
-        targetField: "requested_days",
-        sourceField: "requestedAttendanceDays",
-        status: "written",
-        sourceValue: payload.requestedAttendanceDays.join(", "),
-        destinationValue: null,
-        note: null
-      });
-    } else {
-      addRecord(records, {
-        targetSystem: "mcc",
-        targetTable: "member_attendance_schedules",
-        targetField: "requested_days",
-        sourceField: "requestedAttendanceDays",
-        status: "conflict",
-        sourceValue: payload.requestedAttendanceDays.join(", "),
-        destinationValue: [
-          attendanceSchedule.monday ? "Monday" : null,
-          attendanceSchedule.tuesday ? "Tuesday" : null,
-          attendanceSchedule.wednesday ? "Wednesday" : null,
-          attendanceSchedule.thursday ? "Thursday" : null,
-          attendanceSchedule.friday ? "Friday" : null
-        ]
-          .filter((value): value is string => Boolean(value))
-          .join(", "),
-        note: "Existing attendance schedule retained."
-      });
-    }
-
-    const normalizedTransportationMode = normalizeTransportationMode(payload.transportationPreference);
-    const normalizedTransportationRequired = normalizeTransportationRequired(payload.transportationPreference);
-
-    applyFillBlankString({
-      records,
-      patch: attendancePatch,
+  if (!existingHasAttendanceDays) {
+    attendancePatch.monday = attendanceDays.monday;
+    attendancePatch.tuesday = attendanceDays.tuesday;
+    attendancePatch.wednesday = attendanceDays.wednesday;
+    attendancePatch.thursday = attendanceDays.thursday;
+    attendancePatch.friday = attendanceDays.friday;
+    attendancePatch.attendance_days_per_week = [
+      attendanceDays.monday,
+      attendanceDays.tuesday,
+      attendanceDays.wednesday,
+      attendanceDays.thursday,
+      attendanceDays.friday
+    ].filter(Boolean).length;
+    addRecord(records, {
       targetSystem: "mcc",
       targetTable: "member_attendance_schedules",
-      targetField: "transportation_mode",
-      sourceField: "transportationPreference",
-      sourceValue: normalizedTransportationMode,
-      existingValue: attendanceSchedule.transportation_mode
+      targetField: "requested_days",
+      sourceField: "requestedAttendanceDays",
+      status: "written",
+      sourceValue: payload.requestedAttendanceDays.join(", "),
+      destinationValue: null,
+      note: null
     });
-
-    applyFillBlankBoolean({
-      records,
-      patch: attendancePatch,
+  } else {
+    addRecord(records, {
       targetSystem: "mcc",
       targetTable: "member_attendance_schedules",
-      targetField: "transportation_required",
-      sourceField: "transportationPreference",
-      sourceValue: normalizedTransportationRequired,
-      existingValue: attendanceSchedule.transportation_required
+      targetField: "requested_days",
+      sourceField: "requestedAttendanceDays",
+      status: "conflict",
+      sourceValue: payload.requestedAttendanceDays.join(", "),
+      destinationValue: [
+        attendanceSchedule.monday ? "Monday" : null,
+        attendanceSchedule.tuesday ? "Tuesday" : null,
+        attendanceSchedule.wednesday ? "Wednesday" : null,
+        attendanceSchedule.thursday ? "Thursday" : null,
+        attendanceSchedule.friday ? "Friday" : null
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(", "),
+      note: "Existing attendance schedule retained."
+    });
+  }
+
+  applyFillBlankString({
+    records,
+    patch: attendancePatch,
+    targetSystem: "mcc",
+    targetTable: "member_attendance_schedules",
+    targetField: "transportation_mode",
+    sourceField: "transportationPreference",
+    sourceValue: normalizeTransportationMode(payload.transportationPreference),
+    existingValue: attendanceSchedule.transportation_mode
+  });
+  applyFillBlankBoolean({
+    records,
+    patch: attendancePatch,
+    targetSystem: "mcc",
+    targetTable: "member_attendance_schedules",
+    targetField: "transportation_required",
+    sourceField: "transportationPreference",
+    sourceValue: normalizeTransportationRequired(payload.transportationPreference),
+    existingValue: attendanceSchedule.transportation_required
+  });
+  if (attendanceSchedule.daily_rate == null && input.fields.daily_rate != null) {
+    attendancePatch.daily_rate = Number(input.fields.daily_rate);
+    addRecord(records, {
+      targetSystem: "mcc",
+      targetTable: "member_attendance_schedules",
+      targetField: "daily_rate",
+      sourceField: "daily_rate",
+      status: "written",
+      sourceValue: String(input.fields.daily_rate),
+      destinationValue: null,
+      note: null
+    });
+  } else if (attendanceSchedule.daily_rate != null && input.fields.daily_rate != null) {
+    addRecord(records, {
+      targetSystem: "mcc",
+      targetTable: "member_attendance_schedules",
+      targetField: "daily_rate",
+      sourceField: "daily_rate",
+      status: Number(attendanceSchedule.daily_rate) === Number(input.fields.daily_rate) ? "skipped" : "conflict",
+      sourceValue: String(input.fields.daily_rate),
+      destinationValue: String(attendanceSchedule.daily_rate),
+      note:
+        Number(attendanceSchedule.daily_rate) === Number(input.fields.daily_rate)
+          ? "Already matched existing value."
+          : "Existing daily rate retained."
+    });
+  }
+  const attendanceWritePatch = stripNoopPatch(attendancePatch, 3);
+
+  const responsibleContact =
+    contacts.find((row) => clean(String(row.category ?? ""))?.toLowerCase() === "responsible party") ??
+    contacts.find((row) => clean(String(row.category ?? ""))?.toLowerCase() === "emergency contact") ??
+    null;
+  const primaryName = clean(payload.primaryContactName);
+  if (!responsibleContact && primaryName) {
+    const responsibleContactId = `contact-${randomUUID().replace(/-/g, "")}`;
+    preparedContacts.push({
+      id: responsibleContactId,
+      contact_name: primaryName,
+      relationship_to_member: clean(payload.primaryContactRelationship),
+      category: "Responsible Party",
+      category_other: null,
+      email: cleanEmail(payload.primaryContactEmail),
+      cellular_number: clean(payload.primaryContactPhone),
+      work_number: null,
+      home_number: null,
+      street_address:
+        clean(payload.primaryContactAddressLine1) ?? clean(payload.primaryContactAddress) ?? clean(payload.memberAddressLine1),
+      city: clean(payload.primaryContactCity) ?? clean(payload.memberCity),
+      state: clean(payload.primaryContactState) ?? clean(payload.memberState),
+      zip: clean(payload.primaryContactZip) ?? clean(payload.memberZip)
+    });
+    addRecord(records, {
+      targetSystem: "mcc",
+      targetTable: "member_contacts",
+      targetField: "responsible_party",
+      sourceField: "primaryContactName",
+      status: "written",
+      sourceValue: primaryName,
+      destinationValue: responsibleContactId,
+      note: "Created responsible party contact."
+    });
+  }
+
+  const secondaryName = clean(payload.secondaryContactName);
+  if (secondaryName) {
+    const existingSecondary = contacts.find((row) => {
+      const existingName = clean(String(row.contact_name ?? ""));
+      return Boolean(
+        existingName &&
+          existingName.toLowerCase() === secondaryName.toLowerCase() &&
+          clean(String(row.category ?? ""))?.toLowerCase() === "emergency contact"
+      );
     });
 
-    if (attendanceSchedule.daily_rate == null && input.fields.daily_rate != null) {
-      attendancePatch.daily_rate = Number(input.fields.daily_rate);
-      addRecord(records, {
-        targetSystem: "mcc",
-        targetTable: "member_attendance_schedules",
-        targetField: "daily_rate",
-        sourceField: "daily_rate",
-        status: "written",
-        sourceValue: String(input.fields.daily_rate),
-        destinationValue: null,
-        note: null
-      });
-    } else if (attendanceSchedule.daily_rate != null && input.fields.daily_rate != null) {
-      addRecord(records, {
-        targetSystem: "mcc",
-        targetTable: "member_attendance_schedules",
-        targetField: "daily_rate",
-        sourceField: "daily_rate",
-        status: Number(attendanceSchedule.daily_rate) === Number(input.fields.daily_rate) ? "skipped" : "conflict",
-        sourceValue: String(input.fields.daily_rate),
-        destinationValue: String(attendanceSchedule.daily_rate),
-        note: Number(attendanceSchedule.daily_rate) === Number(input.fields.daily_rate) ? "Already matched existing value." : "Existing daily rate retained."
-      });
-    }
-
-    if (Object.keys(attendancePatch).length > 3) {
-      const attendanceRollbackPatch = Object.keys(attendancePatch).reduce<Record<string, unknown>>((acc, key) => {
-        acc[key] = (existingAttendanceRow ?? attendanceSchedule as unknown as Record<string, unknown>)[key];
-        return acc;
-      }, {});
-      const { error } = await admin.from("member_attendance_schedules").update(attendancePatch).eq("id", attendanceSchedule.id);
-      if (error) throw new Error(error.message);
-      rollbackActions.push({
-        label: "restore member_attendance_schedules patch",
-        run: async () => {
-          const { error: rollbackError } = await admin
-            .from("member_attendance_schedules")
-            .update(attendanceRollbackPatch)
-            .eq("id", attendanceSchedule.id);
-          if (rollbackError) throw new Error(rollbackError.message);
-        }
-      });
-    }
-
-    const contacts = (contactsRows ?? []) as Array<Record<string, unknown>>;
-    const responsibleContact =
-      contacts.find((row) => clean(String(row.category ?? ""))?.toLowerCase() === "responsible party") ??
-      contacts.find((row) => clean(String(row.category ?? ""))?.toLowerCase() === "emergency contact") ??
-      null;
-
-    const primaryName = clean(payload.primaryContactName);
-    if (!responsibleContact && primaryName) {
-      const responsibleContactId = `contact-${randomUUID().replace(/-/g, "")}`;
-      const { error } = await admin.from("member_contacts").insert({
-        id: responsibleContactId,
-        member_id: input.memberId,
-        contact_name: primaryName,
-        relationship_to_member: clean(payload.primaryContactRelationship),
-        category: "Responsible Party",
+    if (!existingSecondary) {
+      const secondaryContactId = `contact-${randomUUID().replace(/-/g, "")}`;
+      preparedContacts.push({
+        id: secondaryContactId,
+        contact_name: secondaryName,
+        relationship_to_member: clean(payload.secondaryContactRelationship),
+        category: "Emergency Contact",
         category_other: null,
-        email: cleanEmail(payload.primaryContactEmail),
-        cellular_number: clean(payload.primaryContactPhone),
+        email: cleanEmail(payload.secondaryContactEmail),
+        cellular_number: clean(payload.secondaryContactPhone),
         work_number: null,
         home_number: null,
-        street_address: clean(payload.primaryContactAddressLine1) ?? clean(payload.primaryContactAddress) ?? clean(payload.memberAddressLine1),
-        city: clean(payload.primaryContactCity) ?? clean(payload.memberCity),
-        state: clean(payload.primaryContactState) ?? clean(payload.memberState),
-        zip: clean(payload.primaryContactZip) ?? clean(payload.memberZip),
-        created_by_user_id: input.senderUserId,
-        created_by_name: input.senderName,
-        created_at: now,
-        updated_at: now
-      });
-      if (error) throw new Error(error.message);
-      rollbackActions.push({
-        label: "delete created responsible party contact",
-        run: async () => {
-          const { error: rollbackError } = await admin.from("member_contacts").delete().eq("id", responsibleContactId);
-          if (rollbackError) throw new Error(rollbackError.message);
-        }
+        street_address: clean(payload.secondaryContactAddressLine1) ?? clean(payload.secondaryContactAddress),
+        city: clean(payload.secondaryContactCity),
+        state: clean(payload.secondaryContactState),
+        zip: clean(payload.secondaryContactZip)
       });
       addRecord(records, {
         targetSystem: "mcc",
         targetTable: "member_contacts",
-        targetField: "responsible_party",
-        sourceField: "primaryContactName",
+        targetField: "secondary_contact",
+        sourceField: "secondaryContactName",
         status: "written",
-        sourceValue: primaryName,
-        destinationValue: null,
-        note: "Created responsible party contact."
+        sourceValue: secondaryName,
+        destinationValue: secondaryContactId,
+        note: "Created emergency contact."
+      });
+    } else {
+      addRecord(records, {
+        targetSystem: "mcc",
+        targetTable: "member_contacts",
+        targetField: "secondary_contact",
+        sourceField: "secondaryContactName",
+        status: "conflict",
+        sourceValue: secondaryName,
+        destinationValue: clean(String(existingSecondary.contact_name ?? "")),
+        note: "Existing emergency contact retained."
       });
     }
+  }
 
-    const secondaryName = clean(payload.secondaryContactName);
-    if (secondaryName) {
-      const existingSecondary = contacts.find((row) => {
-        const existingName = clean(String(row.contact_name ?? ""));
-        if (!existingName) return false;
-        if (existingName.toLowerCase() !== secondaryName.toLowerCase()) return false;
-        return clean(String(row.category ?? ""))?.toLowerCase() === "emergency contact";
-      });
-
-      if (!existingSecondary) {
-        const secondaryContactId = `contact-${randomUUID().replace(/-/g, "")}`;
-        const { error } = await admin.from("member_contacts").insert({
-          id: secondaryContactId,
-          member_id: input.memberId,
-          contact_name: secondaryName,
-          relationship_to_member: clean(payload.secondaryContactRelationship),
-          category: "Emergency Contact",
-          category_other: null,
-          email: cleanEmail(payload.secondaryContactEmail),
-          cellular_number: clean(payload.secondaryContactPhone),
-          work_number: null,
-          home_number: null,
-          street_address: clean(payload.secondaryContactAddressLine1) ?? clean(payload.secondaryContactAddress),
-          city: clean(payload.secondaryContactCity),
-          state: clean(payload.secondaryContactState),
-          zip: clean(payload.secondaryContactZip),
-          created_by_user_id: input.senderUserId,
-          created_by_name: input.senderName,
-          created_at: now,
-          updated_at: now
-        });
-        if (error) throw new Error(error.message);
-        rollbackActions.push({
-          label: "delete created emergency contact",
-          run: async () => {
-            const { error: rollbackError } = await admin.from("member_contacts").delete().eq("id", secondaryContactId);
-            if (rollbackError) throw new Error(rollbackError.message);
-          }
-        });
-        addRecord(records, {
-          targetSystem: "mcc",
-          targetTable: "member_contacts",
-          targetField: "secondary_contact",
-          sourceField: "secondaryContactName",
-          status: "written",
-          sourceValue: secondaryName,
-          destinationValue: null,
-          note: "Created emergency contact."
-        });
-      } else {
-        addRecord(records, {
-          targetSystem: "mcc",
-          targetTable: "member_contacts",
-          targetField: "secondary_contact",
-          sourceField: "secondaryContactName",
-          status: "conflict",
-          sourceValue: secondaryName,
-          destinationValue: clean(String(existingSecondary.contact_name ?? "")),
-          note: "Existing emergency contact retained."
-        });
-      }
-    }
-
-    const mhpPatch: Record<string, unknown> = {
-      updated_by_user_id: input.senderUserId,
-      updated_by_name: input.senderName,
-      updated_at: now
-    };
-
-    MHP_STRING_MAP.forEach((map) => {
-      applyFillBlankString({
-        records,
-        patch: mhpPatch,
-        targetSystem: "mhp",
-        targetTable: "member_health_profiles",
-        targetField: map.targetField,
-        sourceField: String(map.sourceField),
-        sourceValue: payload[map.sourceField],
-        existingValue: (mhpRow as Record<string, unknown>)[map.targetField]
-      });
-    });
-
+  const mhpPatch: Record<string, unknown> = {
+    updated_by_user_id: input.senderUserId,
+    updated_by_name: input.senderName,
+    updated_at: now
+  };
+  MHP_STRING_MAP.forEach((map) => {
     applyFillBlankString({
       records,
       patch: mhpPatch,
       targetSystem: "mhp",
       targetTable: "member_health_profiles",
-      targetField: "mental_health_history",
-      sourceField: "mentalHealthHistory",
-      sourceValue: [payload.mentalHealthHistory, payload.ptsdHistory].filter(Boolean).join(" | "),
-      existingValue: (mhpRow as Record<string, unknown>).mental_health_history
+      targetField: map.targetField,
+      sourceField: String(map.sourceField),
+      sourceValue: payload[map.sourceField],
+      existingValue: mhpRow[map.targetField]
     });
+  });
+  applyFillBlankString({
+    records,
+    patch: mhpPatch,
+    targetSystem: "mhp",
+    targetTable: "member_health_profiles",
+    targetField: "mental_health_history",
+    sourceField: "mentalHealthHistory",
+    sourceValue: [payload.mentalHealthHistory, payload.ptsdHistory].filter(Boolean).join(" | "),
+    existingValue: mhpRow.mental_health_history
+  });
+  applyFillBlankString({
+    records,
+    patch: mhpPatch,
+    targetSystem: "mhp",
+    targetTable: "member_health_profiles",
+    targetField: "mobility_aids",
+    sourceField: "mobilityAids",
+    sourceValue: [payload.caneWalkerUse, payload.wheelchairUse].filter(Boolean).join(" | "),
+    existingValue: mhpRow.mobility_aids
+  });
 
-    applyFillBlankString({
-      records,
-      patch: mhpPatch,
-      targetSystem: "mhp",
-      targetTable: "member_health_profiles",
-      targetField: "mobility_aids",
-      sourceField: "mobilityAids",
-      sourceValue: [payload.caneWalkerUse, payload.wheelchairUse].filter(Boolean).join(" | "),
-      existingValue: (mhpRow as Record<string, unknown>).mobility_aids
-    });
+  const hasUrinaryIncontinence = hasSelection(payload.continenceSelections, "Urinary Incontinence");
+  const hasBowelIncontinence = hasSelection(payload.continenceSelections, "Bowel Incontinence");
+  const hasContinentSelection = hasSelection(payload.continenceSelections, "Continent");
+  const bladderContinenceFromSelections =
+    payload.continenceSelections.length === 0
+      ? clean(payload.continenceStatus)
+      : hasUrinaryIncontinence
+        ? "Urinary Incontinence"
+        : hasContinentSelection
+          ? "Continent"
+          : clean(payload.continenceStatus);
+  const bowelContinenceFromSelections =
+    payload.continenceSelections.length === 0
+      ? clean(payload.continenceStatus)
+      : hasBowelIncontinence
+        ? "Bowel Incontinence"
+        : hasContinentSelection
+          ? "Continent"
+          : clean(payload.continenceStatus);
+  applyFillBlankString({
+    records,
+    patch: mhpPatch,
+    targetSystem: "mhp",
+    targetTable: "member_health_profiles",
+    targetField: "bladder_continence",
+    sourceField: "continenceSelections",
+    sourceValue: bladderContinenceFromSelections,
+    existingValue: mhpRow.bladder_continence
+  });
+  applyFillBlankString({
+    records,
+    patch: mhpPatch,
+    targetSystem: "mhp",
+    targetTable: "member_health_profiles",
+    targetField: "bowel_continence",
+    sourceField: "continenceSelections",
+    sourceValue: bowelContinenceFromSelections,
+    existingValue: mhpRow.bowel_continence
+  });
 
-    const hasUrinaryIncontinence = hasSelection(payload.continenceSelections, "Urinary Incontinence");
-    const hasBowelIncontinence = hasSelection(payload.continenceSelections, "Bowel Incontinence");
-    const hasContinentSelection = hasSelection(payload.continenceSelections, "Continent");
+  const hasBehaviorSelections = payload.behavioralObservations.length > 0;
+  applyFillBlankBoolean({
+    records,
+    patch: mhpPatch,
+    targetSystem: "mhp",
+    targetTable: "member_health_profiles",
+    targetField: "wandering",
+    sourceField: "behavioralObservations",
+    sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Wandering") : null,
+    existingValue: mhpRow.wandering
+  });
+  applyFillBlankBoolean({
+    records,
+    patch: mhpPatch,
+    targetSystem: "mhp",
+    targetTable: "member_health_profiles",
+    targetField: "combative_disruptive",
+    sourceField: "behavioralObservations",
+    sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Aggression") : null,
+    existingValue: mhpRow.combative_disruptive
+  });
+  applyFillBlankBoolean({
+    records,
+    patch: mhpPatch,
+    targetSystem: "mhp",
+    targetTable: "member_health_profiles",
+    targetField: "disorientation",
+    sourceField: "behavioralObservations",
+    sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Confusion") : null,
+    existingValue: mhpRow.disorientation
+  });
+  applyFillBlankBoolean({
+    records,
+    patch: mhpPatch,
+    targetSystem: "mhp",
+    targetTable: "member_health_profiles",
+    targetField: "agitation_resistive",
+    sourceField: "behavioralObservations",
+    sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Agitation") : null,
+    existingValue: mhpRow.agitation_resistive
+  });
+  applyFillBlankBoolean({
+    records,
+    patch: mhpPatch,
+    targetSystem: "mhp",
+    targetTable: "member_health_profiles",
+    targetField: "sleep_issues",
+    sourceField: "behavioralObservations",
+    sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Sundowning") : null,
+    existingValue: mhpRow.sleep_issues
+  });
+  const mhpWritePatch = stripNoopPatch(mhpPatch, 3);
 
-    const bladderContinenceFromSelections =
-      payload.continenceSelections.length === 0
-        ? clean(payload.continenceStatus)
-        : hasUrinaryIncontinence
-          ? "Urinary Incontinence"
-          : hasContinentSelection
-            ? "Continent"
-            : clean(payload.continenceStatus);
-    const bowelContinenceFromSelections =
-      payload.continenceSelections.length === 0
-        ? clean(payload.continenceStatus)
-        : hasBowelIncontinence
-          ? "Bowel Incontinence"
-          : hasContinentSelection
-            ? "Continent"
-            : clean(payload.continenceStatus);
-
-    applyFillBlankString({
-      records,
-      patch: mhpPatch,
-      targetSystem: "mhp",
-      targetTable: "member_health_profiles",
-      targetField: "bladder_continence",
-      sourceField: "continenceSelections",
-      sourceValue: bladderContinenceFromSelections,
-      existingValue: (mhpRow as Record<string, unknown>).bladder_continence
-    });
-    applyFillBlankString({
-      records,
-      patch: mhpPatch,
-      targetSystem: "mhp",
-      targetTable: "member_health_profiles",
-      targetField: "bowel_continence",
-      sourceField: "continenceSelections",
-      sourceValue: bowelContinenceFromSelections,
-      existingValue: (mhpRow as Record<string, unknown>).bowel_continence
-    });
-
-    const hasBehaviorSelections = payload.behavioralObservations.length > 0;
-
-    applyFillBlankBoolean({
-      records,
-      patch: mhpPatch,
-      targetSystem: "mhp",
-      targetTable: "member_health_profiles",
-      targetField: "wandering",
-      sourceField: "behavioralObservations",
-      sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Wandering") : null,
-      existingValue: (mhpRow as Record<string, unknown>).wandering
-    });
-    applyFillBlankBoolean({
-      records,
-      patch: mhpPatch,
-      targetSystem: "mhp",
-      targetTable: "member_health_profiles",
-      targetField: "combative_disruptive",
-      sourceField: "behavioralObservations",
-      sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Aggression") : null,
-      existingValue: (mhpRow as Record<string, unknown>).combative_disruptive
-    });
-    applyFillBlankBoolean({
-      records,
-      patch: mhpPatch,
-      targetSystem: "mhp",
-      targetTable: "member_health_profiles",
-      targetField: "disorientation",
-      sourceField: "behavioralObservations",
-      sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Confusion") : null,
-      existingValue: (mhpRow as Record<string, unknown>).disorientation
-    });
-    applyFillBlankBoolean({
-      records,
-      patch: mhpPatch,
-      targetSystem: "mhp",
-      targetTable: "member_health_profiles",
-      targetField: "agitation_resistive",
-      sourceField: "behavioralObservations",
-      sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Agitation") : null,
-      existingValue: (mhpRow as Record<string, unknown>).agitation_resistive
-    });
-    applyFillBlankBoolean({
-      records,
-      patch: mhpPatch,
-      targetSystem: "mhp",
-      targetTable: "member_health_profiles",
-      targetField: "sleep_issues",
-      sourceField: "behavioralObservations",
-      sourceValue: hasBehaviorSelections ? hasSelection(payload.behavioralObservations, "Sundowning") : null,
-      existingValue: (mhpRow as Record<string, unknown>).sleep_issues
-    });
-
-    if (Object.keys(mhpPatch).length > 3) {
-      const mhpRollbackPatch = Object.keys(mhpPatch).reduce<Record<string, unknown>>((acc, key) => {
-        acc[key] = (mhpRow as Record<string, unknown>)[key];
-        return acc;
-      }, {});
-      const { error } = await admin.from("member_health_profiles").update(mhpPatch).eq("member_id", input.memberId);
-      if (error) throw new Error(error.message);
-      rollbackActions.push({
-        label: "restore member_health_profiles patch",
-        run: async () => {
-          const { error: rollbackError } = await admin
-            .from("member_health_profiles")
-            .update(mhpRollbackPatch)
-            .eq("member_id", input.memberId);
-          if (rollbackError) throw new Error(rollbackError.message);
-        }
-      });
-    }
-
-    const behavioralRiskSelections = payload.behavioralObservations
-      .map((value) => clean(value))
-      .filter((value): value is string => Boolean(value));
-    const medicationDuringDayRequired =
-      toYesLikeBoolean(payload.medicationNeededDuringDay) === true || clean(payload.medicationNamesDuringDay) != null;
-    const oxygenUseRequired =
+  const behavioralRiskSelections = payload.behavioralObservations.map((value) => clean(value)).filter((value): value is string => Boolean(value));
+  const pofPrefillPayload = {
+    providerName: clean(payload.pcpName),
+    providerPhone: clean(payload.pcpPhone),
+    providerFax: clean(payload.pcpFax),
+    providerAddress: clean(payload.pcpAddress),
+    pharmacy: joinParts([clean(payload.pharmacy), clean(payload.pharmacyAddress)]),
+    allergiesSummary: clean(payload.allergiesSummary),
+    dietaryRestrictions: clean(payload.dietaryRestrictions),
+    oxygenUse: clean(payload.oxygenUse),
+    medicationsDuringDay: clean(payload.medicationNamesDuringDay),
+    mobilitySupport: clean(payload.mobilityTransferStatus),
+    adlSupport: {
+      toiletingBathingAssistance: clean(payload.toiletingBathingAssistance),
+      continenceStatus: clean(payload.continenceStatus),
+      dressingFeedingIndependence: clean(payload.dressingFeedingIndependence),
+      caneWalkerUse: clean(payload.caneWalkerUse),
+      wheelchairUse: clean(payload.wheelchairUse)
+    },
+    adlSnapshot: {
+      ambulation: clean(payload.adlMobilityLevel),
+      transfers: clean(payload.adlTransferLevel),
+      toileting: clean(payload.adlToiletingLevel),
+      bathing: clean(payload.adlBathingLevel),
+      dressing: clean(payload.adlDressingLevel),
+      eating: clean(payload.adlEatingLevel),
+      continence: clean(payload.adlContinenceLevel)
+    },
+    behavioralRiskSelections,
+    medicationDuringDayRequired:
+      toYesLikeBoolean(payload.medicationNeededDuringDay) === true || clean(payload.medicationNamesDuringDay) != null,
+    oxygenUseRequired:
       toYesLikeBoolean(payload.oxygenUse) === true ||
       clean(payload.oxygenFlowRate) != null ||
-      clean(payload.oxygenUse)?.toLowerCase().includes("oxygen") === true;
-    const fallsHistoryYes = toYesLikeBoolean(payload.fallsHistory) === true;
-    const recentFalls = toYesLikeBoolean(payload.fallsWithinLast3Months) === true;
-    const mobilityAssistanceRequired = [
+      clean(payload.oxygenUse)?.toLowerCase().includes("oxygen") === true,
+    fallsHistoryYes: toYesLikeBoolean(payload.fallsHistory) === true,
+    recentFalls: toYesLikeBoolean(payload.fallsWithinLast3Months) === true,
+    mobilityAssistanceRequired: [
       payload.adlMobilityLevel,
       payload.adlTransferLevel,
       payload.adlToiletingLevel,
@@ -1086,100 +1083,37 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       payload.mobilityTransferStatus,
       payload.toiletingBathingAssistance,
       payload.dressingFeedingIndependence
-    ].some((value) => impliesAssistance(value));
-
-    const pofPrefillPayload = {
-      providerName: clean(payload.pcpName),
-      providerPhone: clean(payload.pcpPhone),
-      providerFax: clean(payload.pcpFax),
-      providerAddress: clean(payload.pcpAddress),
-      pharmacy: joinParts([clean(payload.pharmacy), clean(payload.pharmacyAddress)]),
-      allergiesSummary: clean(payload.allergiesSummary),
-      dietaryRestrictions: clean(payload.dietaryRestrictions),
-      oxygenUse: clean(payload.oxygenUse),
-      medicationsDuringDay: clean(payload.medicationNamesDuringDay),
-      mobilitySupport: clean(payload.mobilityTransferStatus),
-      adlSupport: {
-        toiletingBathingAssistance: clean(payload.toiletingBathingAssistance),
-        continenceStatus: clean(payload.continenceStatus),
-        dressingFeedingIndependence: clean(payload.dressingFeedingIndependence),
-        caneWalkerUse: clean(payload.caneWalkerUse),
-        wheelchairUse: clean(payload.wheelchairUse)
-      },
-      adlSnapshot: {
-        ambulation: clean(payload.adlMobilityLevel),
-        transfers: clean(payload.adlTransferLevel),
-        toileting: clean(payload.adlToiletingLevel),
-        bathing: clean(payload.adlBathingLevel),
-        dressing: clean(payload.adlDressingLevel),
-        eating: clean(payload.adlEatingLevel),
-        continence: clean(payload.adlContinenceLevel)
-      },
-      behavioralRiskSelections,
-      medicationDuringDayRequired,
-      oxygenUseRequired,
-      fallsHistoryYes,
-      recentFalls,
-      mobilityAssistanceRequired,
-      sourceLabel: "Caregiver Provided Intake",
-      caregiverProvidedBy: clean(payload.primaryContactName),
-      diagnosisPlaceholders: clean(payload.diagnosisPlaceholders),
-      intakeNotes: joinParts([
-        clean(payload.intakeClinicalNotes),
-        clean(payload.behavioralNotes),
-        clean(payload.medicationNamesDuringDay)
-      ])
-    };
-
-    const { data: existingPofStageRow, error: existingPofStageError } = await admin
-      .from("enrollment_packet_pof_staging")
-      .select("*")
-      .eq("packet_id", input.packetId)
-      .maybeSingle();
-    if (existingPofStageError) throw new Error(existingPofStageError.message);
-
-    const pofStagePayload = {
-      packet_id: input.packetId,
-      member_id: input.memberId,
-      pcp_name: pofPrefillPayload.providerName,
-      physician_phone: pofPrefillPayload.providerPhone,
-      physician_fax: pofPrefillPayload.providerFax,
-      physician_address: pofPrefillPayload.providerAddress,
-      pharmacy: pofPrefillPayload.pharmacy,
-      allergies_summary: pofPrefillPayload.allergiesSummary,
-      dietary_restrictions: pofPrefillPayload.dietaryRestrictions,
-      oxygen_use: pofPrefillPayload.oxygenUse,
-      mobility_support: pofPrefillPayload.mobilitySupport,
-      adl_support: pofPrefillPayload.adlSupport,
-      diagnosis_placeholders: pofPrefillPayload.diagnosisPlaceholders,
-      intake_notes: pofPrefillPayload.intakeNotes,
-      prefill_payload: pofPrefillPayload,
-      review_required: true,
-      updated_by_user_id: input.senderUserId,
-      updated_by_name: input.senderName,
-      updated_at: now
-    };
-
-    const { error: pofStageError } = await admin.from("enrollment_packet_pof_staging").upsert(
-      pofStagePayload,
-      { onConflict: "packet_id" }
-    );
-    if (pofStageError) throw new Error(pofStageError.message);
-    rollbackActions.push({
-      label: "restore enrollment_packet_pof_staging row",
-      run: async () => {
-        if (!existingPofStageRow) {
-          const { error: rollbackError } = await admin.from("enrollment_packet_pof_staging").delete().eq("packet_id", input.packetId);
-          if (rollbackError) throw new Error(rollbackError.message);
-          return;
-        }
-        const { error: rollbackError } = await admin
-          .from("enrollment_packet_pof_staging")
-          .update(existingPofStageRow as Record<string, unknown>)
-          .eq("packet_id", input.packetId);
-        if (rollbackError) throw new Error(rollbackError.message);
-      }
-    });
+    ].some((value) => impliesAssistance(value)),
+    sourceLabel: "Caregiver Provided Intake",
+    caregiverProvidedBy: clean(payload.primaryContactName),
+    diagnosisPlaceholders: clean(payload.diagnosisPlaceholders),
+    intakeNotes: joinParts([
+      clean(payload.intakeClinicalNotes),
+      clean(payload.behavioralNotes),
+      clean(payload.medicationNamesDuringDay)
+    ])
+  };
+  const pofStagePayload = {
+    packet_id: input.packetId,
+    member_id: input.memberId,
+    pcp_name: pofPrefillPayload.providerName,
+    physician_phone: pofPrefillPayload.providerPhone,
+    physician_fax: pofPrefillPayload.providerFax,
+    physician_address: pofPrefillPayload.providerAddress,
+    pharmacy: pofPrefillPayload.pharmacy,
+    allergies_summary: pofPrefillPayload.allergiesSummary,
+    dietary_restrictions: pofPrefillPayload.dietaryRestrictions,
+    oxygen_use: pofPrefillPayload.oxygenUse,
+    mobility_support: pofPrefillPayload.mobilitySupport,
+    adl_support: pofPrefillPayload.adlSupport,
+    diagnosis_placeholders: pofPrefillPayload.diagnosisPlaceholders,
+    intake_notes: pofPrefillPayload.intakeNotes,
+    prefill_payload: pofPrefillPayload,
+    review_required: true,
+    updated_by_user_id: input.senderUserId,
+    updated_by_name: input.senderName,
+    updated_at: now
+  };
 
     [
       "pcpName",
@@ -1220,129 +1154,72 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       });
     });
 
-    if (input.memberFileArtifacts.length === 0) {
+  if (input.memberFileArtifacts.length === 0) {
+    addRecord(records, {
+      targetSystem: "member_files",
+      targetTable: "member_files",
+      targetField: "artifacts",
+      sourceField: null,
+      status: "skipped",
+      sourceValue: null,
+      destinationValue: null,
+      note: "No uploaded artifacts mapped."
+    });
+  } else {
+    input.memberFileArtifacts.forEach((artifact) => {
       addRecord(records, {
         targetSystem: "member_files",
         targetTable: "member_files",
-        targetField: "artifacts",
-        sourceField: null,
-        status: "skipped",
-        sourceValue: null,
-        destinationValue: null,
-        note: "No uploaded artifacts mapped."
+        targetField: "id",
+        sourceField: "uploadCategory",
+        status: artifact.memberFileId ? "written" : "skipped",
+        sourceValue: artifact.uploadCategory,
+        destinationValue: artifact.memberFileId,
+        note: artifact.memberFileId ? "Artifact linked to member files." : "No member file id available."
       });
-    } else {
-      input.memberFileArtifacts.forEach((artifact) => {
-        addRecord(records, {
-          targetSystem: "member_files",
-          targetTable: "member_files",
-          targetField: "id",
-          sourceField: "uploadCategory",
-          status: artifact.memberFileId ? "written" : "skipped",
-          sourceValue: artifact.uploadCategory,
-          destinationValue: artifact.memberFileId,
-          note: artifact.memberFileId ? "Artifact linked to member files." : "No member file id available."
-        });
-      });
-    }
-
-    const summary = summarizeRecords(records);
-
-    const recordRows = records.map((record) => ({
-      mapping_run_id: mappingRunId,
-      packet_id: input.packetId,
-      member_id: input.memberId,
-      target_system: record.targetSystem,
-      target_table: record.targetTable,
-      target_field: record.targetField,
-      source_field: record.sourceField,
-      status: record.status,
-      source_value: record.sourceValue,
-      destination_value: record.destinationValue,
-      note: record.note,
-      created_at: now
-    }));
-
-    if (recordRows.length > 0) {
-      const { error: recordError } = await admin.from("enrollment_packet_mapping_records").insert(recordRows);
-      if (recordError) throw new Error(recordError.message);
-    }
-
-    const conflictRows = records
-      .filter((record) => record.status === "conflict")
-      .map((record) => ({
-        mapping_run_id: mappingRunId,
-        packet_id: input.packetId,
-        member_id: input.memberId,
-        target_system: record.targetSystem,
-        target_table: record.targetTable,
-        target_field: record.targetField,
-        source_field: record.sourceField,
-        source_value: record.sourceValue,
-        destination_value: record.destinationValue,
-        status: "open",
-        created_at: now
-      }));
-
-    let conflictIds: string[] = [];
-    if (conflictRows.length > 0) {
-      const { data: insertedConflicts, error: conflictError } = await admin
-        .from("enrollment_packet_field_conflicts")
-        .insert(conflictRows)
-        .select("id");
-      if (conflictError) throw new Error(conflictError.message);
-      conflictIds = ((insertedConflicts ?? []) as Array<{ id: string }>).map((row) => row.id);
-    }
-
-    const runSummary = {
-      ...summary,
-      recordsPersisted: recordRows.length,
-      conflictIds
-    };
-
-    const { error: completeRunError } = await admin
-      .from("enrollment_packet_mapping_runs")
-      .update({
-        status: "completed",
-        summary: runSummary,
-        completed_at: now
-      })
-      .eq("id", mappingRunId);
-    if (completeRunError) throw new Error(completeRunError.message);
-
-    return {
-      mappingRunId,
-      systems: runSummary.systems,
-      downstreamSystemsUpdated: runSummary.downstreamSystemsUpdated,
-      conflictsRequiringReview: runSummary.conflictsRequiringReview,
-      recordsPersisted: runSummary.recordsPersisted,
-      conflictIds: runSummary.conflictIds
-    };
-  } catch (error) {
-    const rollbackFailures: string[] = [];
-    while (rollbackActions.length > 0) {
-      const rollback = rollbackActions.pop();
-      if (!rollback) continue;
-      try {
-        await rollback.run();
-      } catch (rollbackError) {
-        const message = rollbackError instanceof Error ? rollbackError.message : "Unknown rollback error.";
-        rollbackFailures.push(`${rollback.label}: ${message}`);
-      }
-    }
-    const failureSummary = {
-      error: error instanceof Error ? error.message : "Enrollment packet mapping failed.",
-      recordsCaptured: records.length,
-      rollbackFailures
-    };
-    await admin
-      .from("enrollment_packet_mapping_runs")
-      .update({
-        status: "failed",
-        summary: failureSummary,
-        completed_at: toEasternISO()
-      })
-      .eq("id", mappingRunId);
-    throw error;
+    });
   }
+
+  const summary = summarizeRecords(records);
+  const recordRows: PreparedRecordRow[] = records.map((record) => ({
+    target_system: record.targetSystem,
+    target_table: record.targetTable,
+    target_field: record.targetField,
+    source_field: record.sourceField,
+    status: record.status,
+    source_value: record.sourceValue,
+    destination_value: record.destinationValue,
+    note: record.note
+  }));
+
+  const rpcData = await invokeSupabaseRpcOrThrow<EnrollmentConversionRpcRow[]>(admin, CONVERT_ENROLLMENT_PACKET_TO_MEMBER_RPC, {
+    p_packet_id: input.packetId,
+    p_member_id: input.memberId,
+    p_actor_user_id: input.senderUserId,
+    p_actor_name: clean(input.senderName),
+    p_actor_email: cleanEmail(input.senderEmail) ?? cleanEmail(input.caregiverEmail),
+    p_started_at: now,
+    p_member_patch: memberWritePatch,
+    p_mcc_patch: mccWritePatch,
+    p_attendance_patch: attendanceWritePatch,
+    p_contacts: preparedContacts,
+    p_mhp_patch: mhpWritePatch,
+    p_pof_stage_payload: pofStagePayload,
+    p_record_rows: recordRows,
+    p_summary: summary
+  });
+
+  const rpcRow = Array.isArray(rpcData) ? rpcData[0] : null;
+  if (!rpcRow?.mapping_run_id) {
+    throw new Error("Enrollment packet conversion RPC did not return a mapping run id.");
+  }
+
+  return {
+    mappingRunId: String(rpcRow.mapping_run_id),
+    systems: parseMappingSystems(rpcRow.systems),
+    downstreamSystemsUpdated: (rpcRow.downstream_systems_updated ?? []).map((value) => String(value)),
+    conflictsRequiringReview: parseCount(rpcRow.conflicts_requiring_review),
+    recordsPersisted: parseCount(rpcRow.records_persisted),
+    conflictIds: (rpcRow.conflict_ids ?? []).map((value) => String(value))
+  };
 }
