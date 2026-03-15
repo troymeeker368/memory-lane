@@ -1053,6 +1053,23 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
         error: reason
       }
     });
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "pof_request_failed",
+        entityType: "pof_request",
+        entityId: requestId,
+        actorType: "user",
+        actorUserId: input.actor.id,
+        status: "failed",
+        severity: "high",
+        metadata: {
+          member_id: input.memberId,
+          physician_order_id: input.physicianOrderId,
+          phase: "delivery",
+          error: reason
+        }
+      }
+    });
     await maybeRecordRepeatedFailureAlert({
       workflowEventType: "pof_request_failed",
       entityType: "pof_request",
@@ -1127,19 +1144,6 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
           provider_email: providerEmail,
           sent_at: sentAt
         }
-      },
-      notification: {
-        recipientUserId: input.actor.id,
-        title: "POF Sent",
-        message: `POF sent for ${form.memberNameSnapshot}`,
-        entityType: "pof_request",
-        entityId: requestId,
-        metadata: {
-          memberId: input.memberId,
-          physicianOrderId: input.physicianOrderId,
-          requestId
-        },
-        serviceRole: true
       }
     });
   } catch (error) {
@@ -1298,6 +1302,23 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
         error: reason
       }
     });
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "pof_request_failed",
+        entityType: "pof_request",
+        entityId: input.requestId,
+        actorType: "user",
+        actorUserId: input.actor.id,
+        status: "failed",
+        severity: "high",
+        metadata: {
+          member_id: request.member_id,
+          physician_order_id: request.physician_order_id,
+          phase: "delivery",
+          error: reason
+        }
+      }
+    });
     await maybeRecordRepeatedFailureAlert({
       workflowEventType: "pof_request_failed",
       entityType: "pof_request",
@@ -1374,19 +1395,6 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
           provider_email: providerEmail,
           resent_at: now
         }
-      },
-      notification: {
-        recipientUserId: input.actor.id,
-        title: "POF Re-sent",
-        message: `POF re-sent for ${form.memberNameSnapshot}`,
-        entityType: "pof_request",
-        entityId: input.requestId,
-        metadata: {
-          memberId: request.member_id,
-          physicianOrderId: request.physician_order_id,
-          requestId: input.requestId
-        },
-        serviceRole: true
       }
     });
   } catch (error) {
@@ -1682,19 +1690,6 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
           post_sign_attempt_count: postSignResult.attemptCount,
           post_sign_next_retry_at: postSignResult.nextRetryAt
         }
-      },
-      notification: {
-        recipientUserId: request.sent_by_user_id,
-        title: "POF Signed",
-        message: `POF signed for ${snapshot.memberNameSnapshot}`,
-        entityType: "pof_request",
-        entityId: request.id,
-        metadata: {
-          memberId: request.member_id,
-          physicianOrderId: request.physician_order_id,
-          requestId: request.id
-        },
-        serviceRole: true
       }
     });
     await recordWorkflowEvent({
@@ -1734,6 +1729,22 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
         physician_order_id: request.physician_order_id,
         phase: "signature_completion",
         error: reason
+      }
+    });
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "pof_request_failed",
+        entityType: "pof_request",
+        entityId: request.id,
+        actorType: "provider",
+        status: "failed",
+        severity: "high",
+        metadata: {
+          member_id: request.member_id,
+          physician_order_id: request.physician_order_id,
+          phase: "signature_completion",
+          error: reason
+        }
       }
     });
     await recordImmediateSystemAlert({

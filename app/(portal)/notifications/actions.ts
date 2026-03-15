@@ -3,7 +3,11 @@
 import { revalidatePath } from "next/cache";
 
 import { requireNavItemAccess } from "@/lib/auth";
-import { markAllUserNotificationsRead, markUserNotificationRead } from "@/lib/services/notifications";
+import {
+  dismissUserNotification,
+  markAllUserNotificationsRead,
+  markUserNotificationRead
+} from "@/lib/services/notifications";
 import { toEasternISO } from "@/lib/timezone";
 
 function readText(formData: FormData, key: string) {
@@ -25,6 +29,22 @@ export async function markNotificationReadAction(formData: FormData) {
     readAt: toEasternISO()
   });
   revalidatePath("/notifications");
+  revalidatePath("/", "layout");
+}
+
+export async function dismissNotificationAction(formData: FormData) {
+  const profile = await requireNavItemAccess("/notifications");
+  const notificationId = readText(formData, "notificationId");
+  if (!notificationId) {
+    return;
+  }
+  await dismissUserNotification({
+    notificationId,
+    userId: profile.id,
+    dismissedAt: toEasternISO()
+  });
+  revalidatePath("/notifications");
+  revalidatePath("/", "layout");
 }
 
 export async function markAllNotificationsReadAction() {
@@ -34,4 +54,5 @@ export async function markAllNotificationsReadAction() {
     readAt: toEasternISO()
   });
   revalidatePath("/notifications");
+  revalidatePath("/", "layout");
 }

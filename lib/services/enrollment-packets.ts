@@ -1422,6 +1422,23 @@ export async function sendEnrollmentPacketRequest(input: {
         error: reason
       }
     });
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "enrollment_packet_failed",
+        entityType: "enrollment_packet_request",
+        entityId: requestId,
+        actorType: "user",
+        actorUserId: senderUserId,
+        status: "failed",
+        severity: "high",
+        metadata: {
+          member_id: member.id,
+          lead_id: lead?.id ?? null,
+          phase: "delivery",
+          error: reason
+        }
+      }
+    });
     await maybeRecordRepeatedFailureAlert({
       workflowEventType: "enrollment_packet_failed",
       entityType: "enrollment_packet_request",
@@ -1491,19 +1508,6 @@ export async function sendEnrollmentPacketRequest(input: {
           caregiver_email: requiredCaregiverEmail,
           sent_at: sentAt
         }
-      },
-      notification: {
-        recipientUserId: senderUserId,
-        title: "Enrollment Packet Sent",
-        message: `Enrollment packet sent for ${member.display_name}`,
-        entityType: "enrollment_packet_request",
-        entityId: requestId,
-        metadata: {
-          memberId: member.id,
-          leadId: lead?.id ?? null,
-          packetId: requestId
-        },
-        serviceRole: true
       }
     });
   } catch (error) {
@@ -1574,7 +1578,10 @@ export async function getPublicEnrollmentPacketContext(
   if (!matched) return { state: "invalid" };
   const request = matched.request;
 
-  if (isExpired(request.token_expires_at)) return { state: "expired" };
+  if (isExpired(request.token_expires_at)) {
+    await recordEnrollmentPacketExpiredIfNeeded(request);
+    return { state: "expired" };
+  }
   if (toStatus(request.status) === "completed" || toStatus(request.status) === "filed") {
     return {
       state: "completed",
@@ -1616,6 +1623,54 @@ export async function getPublicEnrollmentPacketContext(
   ]);
   if (!reloaded || !fields || !member) return { state: "invalid" };
   return toPublicContext(reloaded, fields, member.display_name);
+}
+
+async function recordEnrollmentPacketExpiredIfNeeded(request: EnrollmentPacketRequestRow) {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("system_events")
+    .select("id")
+    .eq("event_type", "enrollment_packet_expired")
+    .eq("entity_type", "enrollment_packet_request")
+    .eq("entity_id", request.id)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error("[enrollment-packets] unable to check existing expiration event", error);
+    return;
+  }
+  if (data?.id) return;
+
+  await recordWorkflowEvent({
+    eventType: "enrollment_packet_expired",
+    entityType: "enrollment_packet_request",
+    entityId: request.id,
+    actorType: "system",
+    actorUserId: request.sender_user_id,
+    status: "expired",
+    severity: "medium",
+    metadata: {
+      member_id: request.member_id,
+      lead_id: request.lead_id,
+      expired_at: request.token_expires_at
+    }
+  });
+  await recordWorkflowMilestone({
+    event: {
+      eventType: "enrollment_packet_expired",
+      entityType: "enrollment_packet_request",
+      entityId: request.id,
+      actorType: "system",
+      actorUserId: request.sender_user_id,
+      status: "expired",
+      severity: "medium",
+      metadata: {
+        member_id: request.member_id,
+        lead_id: request.lead_id,
+        expired_at: request.token_expires_at
+      }
+    }
+  });
 }
 
 async function upsertMemberFileBySource(input: {
@@ -2030,7 +2085,10 @@ export async function submitPublicEnrollmentPacket(input: {
     };
   }
   if (status === "completed" || status === "filed") throw new Error("This enrollment packet has already been submitted.");
-  if (isExpired(request.token_expires_at)) throw new Error("This enrollment packet link has expired.");
+  if (isExpired(request.token_expires_at)) {
+    await recordEnrollmentPacketExpiredIfNeeded(request);
+    throw new Error("This enrollment packet link has expired.");
+  }
 
   const member = await getMemberById(request.member_id);
   if (!member) throw new Error("Member record was not found.");
@@ -2282,6 +2340,23 @@ export async function submitPublicEnrollmentPacket(input: {
         upload_batch_id: uploadBatchId
       }
     });
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "enrollment_packet_failed",
+        entityType: "enrollment_packet_request",
+        entityId: request.id,
+        actorType: "user",
+        actorUserId: request.sender_user_id,
+        status: "failed",
+        severity: "high",
+        metadata: {
+          member_id: member.id,
+          lead_id: request.lead_id,
+          phase: finalizedSubmission ? "post_finalize" : "finalization",
+          error: reason
+        }
+      }
+    });
     await recordImmediateSystemAlert({
       entityType: "enrollment_packet_request",
       entityId: request.id,
@@ -2369,6 +2444,23 @@ export async function submitPublicEnrollmentPacket(input: {
         mapping_run_id: failedMappingRunId
       }
     });
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "enrollment_packet_failed",
+        entityType: "enrollment_packet_request",
+        entityId: request.id,
+        actorType: "user",
+        actorUserId: request.sender_user_id,
+        status: "failed",
+        severity: "high",
+        metadata: {
+          member_id: member.id,
+          lead_id: request.lead_id,
+          phase: "mapping",
+          error: reason
+        }
+      }
+    });
     await recordImmediateSystemAlert({
       entityType: "enrollment_packet_request",
       entityId: request.id,
@@ -2402,10 +2494,74 @@ export async function submitPublicEnrollmentPacket(input: {
     }
   }
 
+  const reviewableUploads = uploadedArtifacts.filter(
+    (artifact) => artifact.uploadCategory !== "completed_packet" && artifact.uploadCategory !== "signature_artifact"
+  );
+
+  await recordWorkflowEvent({
+    eventType: "enrollment_packet_submitted",
+    entityType: "enrollment_packet_request",
+    entityId: request.id,
+    actorType: "user",
+    actorUserId: request.sender_user_id,
+    status: "completed",
+    severity: "low",
+    metadata: {
+      member_id: member.id,
+      lead_id: request.lead_id,
+      caregiver_signature_name: caregiverTypedName,
+      completed_at: finalizedAt ?? toEasternISO(),
+      filed_at: finalizedAt ?? toEasternISO(),
+      mapping_sync_status: mappingSummary?.status ?? "pending",
+      mapping_run_id: mappingSummary?.mappingRunId ?? null,
+      downstream_systems_updated: mappingSummary?.downstreamSystemsUpdated ?? [],
+      conflicts_requiring_review: mappingSummary?.conflictsRequiringReview ?? 0,
+      mapping_error: mappingSummary?.status === "failed" ? mappingSummary.error ?? null : null
+    }
+  });
+
+  if (reviewableUploads.length > 0) {
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "document_uploaded",
+        entityType: "enrollment_packet_request",
+        entityId: request.id,
+        actorType: "user",
+        actorUserId: request.sender_user_id,
+        status: "completed",
+        severity: "low",
+        metadata: {
+          member_id: member.id,
+          lead_id: request.lead_id,
+          document_label:
+            reviewableUploads.length === 1
+              ? `Enrollment ${reviewableUploads[0].uploadCategory.replaceAll("_", " ")} document`
+              : `${reviewableUploads.length} enrollment documents`
+        }
+      }
+    });
+  } else {
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "missing_required_document",
+        entityType: "enrollment_packet_request",
+        entityId: request.id,
+        actorType: "system",
+        actorUserId: request.sender_user_id,
+        status: "open",
+        severity: "high",
+        metadata: {
+          member_id: member.id,
+          lead_id: request.lead_id
+        }
+      }
+    });
+  }
+
   try {
     await recordWorkflowMilestone({
       event: {
-        event_type: "enrollment_packet_completed",
+        event_type: "enrollment_packet_submitted",
         entity_type: "enrollment_packet_request",
         entity_id: request.id,
         actor_type: "user",
@@ -2428,19 +2584,6 @@ export async function submitPublicEnrollmentPacket(input: {
           conflicts_requiring_review: mappingSummary?.conflictsRequiringReview ?? 0,
           mapping_error: mappingSummary?.status === "failed" ? mappingSummary.error ?? null : null
         }
-      },
-      notification: {
-        recipientUserId: request.sender_user_id,
-        title: "Enrollment Packet Completed",
-        message: `Enrollment packet completed for ${member.display_name}`,
-        entityType: "enrollment_packet_request",
-        entityId: request.id,
-        metadata: {
-          memberId: member.id,
-          leadId: request.lead_id,
-          packetId: request.id
-        },
-        serviceRole: true
       }
     });
   } catch (error) {

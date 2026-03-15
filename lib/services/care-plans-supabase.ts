@@ -10,7 +10,9 @@ import {
   getCarePlanNurseSignatureState,
   signCarePlanNurseEsign
 } from "@/lib/services/care-plan-nurse-esign";
+import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import { getDefaultCaregiverSignatureExpiresOnDate } from "@/lib/services/care-plan-esign-rules";
+import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import {
   CARE_PLAN_CARE_TEAM_NOTES_LABEL,
   CARE_PLAN_LONG_TERM_LABEL,
@@ -1245,6 +1247,39 @@ export async function createCarePlan(input: {
     );
   }
 
+  await recordWorkflowEvent({
+    eventType: "care_plan_created",
+    entityType: "care_plan",
+    entityId: createdCarePlanId,
+    actorType: "user",
+    actorUserId: input.actor.id,
+    status: "created",
+    severity: "low",
+    metadata: {
+      member_id: canonicalMemberId,
+      track: input.track,
+      review_date: input.reviewDate,
+      next_due_date: nextDueDate
+    }
+  });
+  await recordWorkflowMilestone({
+    event: {
+      eventType: "care_plan_created",
+      entityType: "care_plan",
+      entityId: createdCarePlanId,
+      actorType: "user",
+      actorUserId: input.actor.id,
+      status: "created",
+      severity: "low",
+      metadata: {
+        member_id: canonicalMemberId,
+        track: input.track,
+        review_date: input.reviewDate,
+        next_due_date: nextDueDate
+      }
+    }
+  });
+
   try {
     return await finalizeCaregiverDispatchAfterNurseSignature({
       carePlanId: createdCarePlanId,
@@ -1360,6 +1395,39 @@ export async function reviewCarePlan(input: {
       input.carePlanId
     );
   }
+
+  await recordWorkflowEvent({
+    eventType: "care_plan_reviewed",
+    entityType: "care_plan",
+    entityId: input.carePlanId,
+    actorType: "user",
+    actorUserId: input.actor.id,
+    status: "completed",
+    severity: "low",
+    metadata: {
+      member_id: String(existing.member_id),
+      track,
+      review_date: input.reviewDate,
+      next_due_date: nextDueDate
+    }
+  });
+  await recordWorkflowMilestone({
+    event: {
+      eventType: "care_plan_reviewed",
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorType: "user",
+      actorUserId: input.actor.id,
+      status: "completed",
+      severity: "low",
+      metadata: {
+        member_id: String(existing.member_id),
+        track,
+        review_date: input.reviewDate,
+        next_due_date: nextDueDate
+      }
+    }
+  });
 
   try {
     return await finalizeCaregiverDispatchAfterNurseSignature({

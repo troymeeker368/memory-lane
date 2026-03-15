@@ -1,30 +1,18 @@
 import "server-only";
 
 import {
-  createUserNotification,
-  type CreateUserNotificationInput
+  dispatchNotification,
+  type DispatchNotificationEventInput
 } from "@/lib/services/notifications";
-import {
-  logSystemEvent,
-  type LogSystemEventInput
-} from "@/lib/services/system-event-service";
 
 export type WorkflowMilestoneInput = {
-  event: LogSystemEventInput;
-  notification?: CreateUserNotificationInput;
+  event: DispatchNotificationEventInput;
 };
 
 export async function recordWorkflowMilestone(input: WorkflowMilestoneInput) {
-  await logSystemEvent(input.event, { required: false });
-
-  if (input.notification) {
-    try {
-      await createUserNotification({
-        ...input.notification,
-        serviceRole: input.notification.serviceRole ?? true
-      });
-    } catch (error) {
-      console.error("[workflow-milestones] unable to create optional notification", error);
-    }
+  try {
+    await dispatchNotification(input.event);
+  } catch (error) {
+    console.error("[workflow-milestones] unable to create workflow notification", error);
   }
 }

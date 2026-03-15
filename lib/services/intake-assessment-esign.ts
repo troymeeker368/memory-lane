@@ -11,6 +11,7 @@ import {
   type IntakeAssessmentSignatureStatus
 } from "@/lib/services/intake-assessment-esign-core";
 import { captureClinicalEsignArtifact } from "@/lib/services/clinical-esign-artifacts";
+import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import {
   recordImmediateSystemAlert,
   recordWorkflowEvent
@@ -338,6 +339,22 @@ export async function signIntakeAssessment(input: {
           signature_artifact_member_file_id: state.signatureArtifactMemberFileId
         }
       });
+      await recordWorkflowMilestone({
+        event: {
+          eventType: "intake_completed",
+          entityType: "intake_assessment",
+          entityId: assessment.id,
+          actorType: "user",
+          actorUserId: input.actor.id,
+          status: "completed",
+          severity: "low",
+          metadata: {
+            member_id: assessment.member_id,
+            signature_status: state.status,
+            signature_artifact_member_file_id: state.signatureArtifactMemberFileId
+          }
+        }
+      });
     }
 
     return state;
@@ -366,6 +383,23 @@ export async function signIntakeAssessment(input: {
       metadata: {
         member_id: assessment.member_id,
         error: reason
+      }
+    });
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "workflow_error",
+        entityType: "intake_assessment",
+        entityId: assessment.id,
+        actorType: "user",
+        actorUserId: input.actor.id,
+        status: "failed",
+        severity: "high",
+        metadata: {
+          member_id: assessment.member_id,
+          workflow_label: "Intake assessment signature",
+          message: `Intake assessment signature failed. Review the assessment and retry the completion workflow.`,
+          action_url: `/operations/member-command-center/${assessment.member_id}`
+        }
       }
     });
     throw error;

@@ -733,19 +733,6 @@ export async function documentScheduledMarAdministration(input: {
           scheduled_time: scheduleRow.scheduled_time,
           not_given_reason: reason
         }
-      },
-      notification: {
-        recipientUserId: input.actor.userId,
-        title: "MAR Dose Documented",
-        message: `${scheduleRow.medication_name} documented for MAR`,
-        entityType: "mar_administration",
-        entityId: inserted.id as string,
-        metadata: {
-          memberId: scheduleRow.member_id,
-          marScheduleId: scheduleRow.id,
-          pofMedicationId: scheduleRow.pof_medication_id
-        },
-        serviceRole: true
       }
     });
   } catch (error) {
@@ -860,18 +847,6 @@ export async function documentPrnMarAdministration(input: {
           source: "prn",
           prn_reason: reason
         }
-      },
-      notification: {
-        recipientUserId: input.actor.userId,
-        title: "PRN MAR Documented",
-        message: `${medication.medication_name} PRN administration documented`,
-        entityType: "mar_administration",
-        entityId: inserted.id as string,
-        metadata: {
-          memberId: medication.member_id,
-          pofMedicationId: medication.id
-        },
-        serviceRole: true
       }
     });
   } catch (error) {
