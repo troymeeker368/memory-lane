@@ -11,6 +11,8 @@ import { SignOutForm } from "@/components/sign-out-form";
 import { GlobalTablePaginator } from "@/components/ui/global-table-paginator";
 import { countUnreadUserNotificationsForUser } from "@/lib/services/notifications";
 
+export const dynamic = "force-dynamic";
+
 export default async function PortalLayout({
   children
 }: {
