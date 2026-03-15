@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { PasswordUpdateForm } from "@/components/auth/password-update-form";
 import { Card } from "@/components/ui/card";
 
+export const dynamic = "force-dynamic";
+
 export default async function ResetPasswordPage() {
   const supabase = await createClient();
   const {
