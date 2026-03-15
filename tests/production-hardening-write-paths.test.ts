@@ -313,3 +313,86 @@ test("MCC and MHP bundle workflows now use 0057 shared RPC boundaries", () => {
   assert.equal(migrationSource.includes("create or replace function public.rpc_update_member_health_profile_bundle("), true);
   assert.equal(migrationSource.includes("create or replace function public.rpc_update_member_track_with_note("), true);
 });
+
+test("MHP child diagnosis, medication, allergy, and provider workflows now use 0058 shared RPC boundaries", () => {
+  const mhpActionsSource = readWorkspaceFile("app/(portal)/health/member-health-profiles/actions.ts");
+  const memberHealthProfilesSource = readWorkspaceFile("lib/services/member-health-profiles.ts");
+  const migrationSource = readWorkspaceFile("supabase/migrations/0058_mhp_child_workflow_rpc_hardening.sql");
+
+  assert.equal(
+    memberHealthProfilesSource.includes(
+      'const MUTATE_MEMBER_DIAGNOSIS_WORKFLOW_RPC = "rpc_mutate_member_diagnosis_workflow";'
+    ),
+    true
+  );
+  assert.equal(
+    memberHealthProfilesSource.includes(
+      'const MUTATE_MEMBER_MEDICATION_WORKFLOW_RPC = "rpc_mutate_member_medication_workflow";'
+    ),
+    true
+  );
+  assert.equal(
+    memberHealthProfilesSource.includes(
+      'const MUTATE_MEMBER_ALLERGY_WORKFLOW_RPC = "rpc_mutate_member_allergy_workflow";'
+    ),
+    true
+  );
+  assert.equal(
+    memberHealthProfilesSource.includes(
+      'const MUTATE_MEMBER_PROVIDER_WORKFLOW_RPC = "rpc_mutate_member_provider_workflow";'
+    ),
+    true
+  );
+
+  assert.equal(mhpActionsSource.includes("mutateMemberDiagnosisWorkflow({"), true);
+  assert.equal(mhpActionsSource.includes("mutateMemberMedicationWorkflow({"), true);
+  assert.equal(mhpActionsSource.includes("mutateMemberAllergyWorkflow({"), true);
+  assert.equal(mhpActionsSource.includes("mutateMemberProviderWorkflow({"), true);
+  assert.equal(mhpActionsSource.includes("createMemberMedicationSupabase("), false);
+  assert.equal(mhpActionsSource.includes("updateMemberMedicationSupabase("), false);
+  assert.equal(mhpActionsSource.includes("deleteMemberMedicationSupabase("), false);
+  assert.equal(mhpActionsSource.includes("createMemberDiagnosisSupabase("), false);
+  assert.equal(mhpActionsSource.includes("updateMemberDiagnosisSupabase("), false);
+  assert.equal(mhpActionsSource.includes("deleteMemberDiagnosisSupabase("), false);
+  assert.equal(mhpActionsSource.includes("createMemberAllergySupabase("), false);
+  assert.equal(mhpActionsSource.includes("updateMemberAllergySupabase("), false);
+  assert.equal(mhpActionsSource.includes("deleteMemberAllergySupabase("), false);
+  assert.equal(mhpActionsSource.includes("createMemberProviderSupabase("), false);
+  assert.equal(mhpActionsSource.includes("updateMemberProviderSupabase("), false);
+  assert.equal(mhpActionsSource.includes("deleteMemberProviderSupabase("), false);
+
+  assert.equal(migrationSource.includes("create or replace function public.rpc_mutate_member_diagnosis_workflow("), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_mutate_member_medication_workflow("), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_mutate_member_allergy_workflow("), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_mutate_member_provider_workflow("), true);
+  assert.equal(migrationSource.includes("from public.rpc_reconcile_member_mar_state("), true);
+});
+
+test("MHP equipment and note workflows now use 0059 shared RPC boundaries", () => {
+  const mhpActionsSource = readWorkspaceFile("app/(portal)/health/member-health-profiles/actions.ts");
+  const memberHealthProfilesSource = readWorkspaceFile("lib/services/member-health-profiles.ts");
+  const migrationSource = readWorkspaceFile("supabase/migrations/0059_mhp_equipment_notes_rpc_hardening.sql");
+
+  assert.equal(
+    memberHealthProfilesSource.includes(
+      'const MUTATE_MEMBER_EQUIPMENT_WORKFLOW_RPC = "rpc_mutate_member_equipment_workflow";'
+    ),
+    true
+  );
+  assert.equal(
+    memberHealthProfilesSource.includes('const MUTATE_MEMBER_NOTE_WORKFLOW_RPC = "rpc_mutate_member_note_workflow";'),
+    true
+  );
+
+  assert.equal(mhpActionsSource.includes("mutateMemberEquipmentWorkflow({"), true);
+  assert.equal(mhpActionsSource.includes("mutateMemberNoteWorkflow({"), true);
+  assert.equal(mhpActionsSource.includes("createMemberEquipmentSupabase("), false);
+  assert.equal(mhpActionsSource.includes("updateMemberEquipmentSupabase("), false);
+  assert.equal(mhpActionsSource.includes("deleteMemberEquipmentSupabase("), false);
+  assert.equal(mhpActionsSource.includes("createMemberNoteSupabase("), false);
+  assert.equal(mhpActionsSource.includes("updateMemberNoteSupabase("), false);
+  assert.equal(mhpActionsSource.includes("deleteMemberNoteSupabase("), false);
+
+  assert.equal(migrationSource.includes("create or replace function public.rpc_mutate_member_equipment_workflow("), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_mutate_member_note_workflow("), true);
+});

@@ -6,33 +6,19 @@ import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
-import { generateMarSchedulesForMember } from "@/lib/services/mar-workflow";
-import { saveMemberHealthProfileBundle, updateMemberTrackWithCarePlanNote } from "@/lib/services/member-health-profiles";
-import { syncMhpToCommandCenter as syncMhpToCommandCenterService } from "@/lib/services/member-profile-sync";
 import {
-  countMemberDiagnosesSupabase,
-  createMemberAllergySupabase,
-  createMemberDiagnosisSupabase,
-  createMemberEquipmentSupabase,
-  createMemberMedicationSupabase,
-  createMemberNoteSupabase,
-  createMemberProviderSupabase,
-  deleteMemberAllergySupabase,
-  deleteMemberDiagnosisSupabase,
-  deleteMemberEquipmentSupabase,
-  deleteMemberMedicationSupabase,
-  deleteMemberNoteSupabase,
-  deleteMemberProviderSupabase,
+  mutateMemberAllergyWorkflow,
+  mutateMemberDiagnosisWorkflow,
+  mutateMemberEquipmentWorkflow,
+  mutateMemberMedicationWorkflow,
+  mutateMemberNoteWorkflow,
+  mutateMemberProviderWorkflow,
+  saveMemberHealthProfileBundle,
+  updateMemberTrackWithCarePlanNote
+} from "@/lib/services/member-health-profiles";
+import {
   getMemberTrackForMhpSupabase,
-  touchMemberHealthProfileSupabase,
-  updateMemberAllergySupabase,
-  updateMemberDiagnosisSupabase,
-  updateMemberEquipmentSupabase,
   updateMemberHealthProfileByMemberIdSupabase,
-  updateMemberMedicationSupabase,
-  updateMemberNoteSupabase,
-  updateMemberProviderSupabase,
-  upsertProviderDirectoryFromMhpSupabase
 } from "@/lib/services/member-health-profiles-write-supabase";
 import { ensureMemberHealthProfileSupabase } from "@/lib/services/member-health-profiles-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -161,44 +147,6 @@ function toNullableUuid(value: string | null | undefined) {
   return isUuid(value) ? String(value) : null;
 }
 
-async function syncMhpToCommandCenter(
-  memberId: string,
-  actor: { id: string; full_name?: string; fullName?: string },
-  at?: string
-) {
-  await syncMhpToCommandCenterService(
-    memberId,
-    {
-      actorUserId: actor.id,
-      actorName: actor.full_name ?? actor.fullName ?? null
-    },
-    at
-  );
-}
-
-async function upsertProviderDirectoryFromValues(input: {
-  providerName: string;
-  specialty: string | null;
-  specialtyOther: string | null;
-  practiceName: string | null;
-  providerPhone: string | null;
-  actor: { id: string; full_name: string };
-  now: string;
-}) {
-  await upsertProviderDirectoryFromMhpSupabase({
-    providerName: input.providerName,
-    specialty: input.specialty,
-    specialtyOther: input.specialtyOther,
-    practiceName: input.practiceName,
-    providerPhone: input.providerPhone,
-    actor: {
-      actorUserId: input.actor.id,
-      actorName: input.actor.full_name
-    },
-    atIso: input.now
-  });
-}
-
 async function requireNurseAdmin() {
   const profile = await getCurrentProfile();
   if (profile.role !== "admin" && profile.role !== "nurse") {
@@ -225,17 +173,6 @@ async function asUploadedImageDataUrl(formData: FormData, key: string, fallback:
   return fallback;
 }
 
-async function touchMhpProfile(memberId: string, actor: { id: string; full_name: string }, at?: string) {
-  await touchMemberHealthProfileSupabase({
-    memberId,
-    actor: {
-      actorUserId: actor.id,
-      actorName: actor.full_name
-    },
-    atIso: at
-  });
-}
-
 function addDaysDateOnly(dateValue: string, days: number) {
   const [yearRaw, monthRaw, dayRaw] = dateValue.split("-");
   const year = Number(yearRaw);
@@ -244,18 +181,6 @@ function addDaysDateOnly(dateValue: string, days: number) {
   const seed = new Date(Date.UTC(year, month - 1, day));
   seed.setUTCDate(seed.getUTCDate() + days);
   return `${seed.getUTCFullYear()}-${String(seed.getUTCMonth() + 1).padStart(2, "0")}-${String(seed.getUTCDate()).padStart(2, "0")}`;
-}
-
-async function syncMarFromMhpMedicationList(memberId: string) {
-  const startDate = toEasternDate();
-  const endDate = addDaysDateOnly(startDate, 30);
-  await generateMarSchedulesForMember({
-    memberId,
-    startDate,
-    endDate,
-    serviceRole: true
-  });
-  revalidatePath("/health/mar");
 }
 
 export async function saveMhpOverviewAction(formData: FormData) {
@@ -483,29 +408,21 @@ export async function addMhpDiagnosisAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return;
   const now = toEasternISO();
-  const existingDiagnosisCount = await countMemberDiagnosesSupabase(memberId);
-  const diagnosisType = existingDiagnosisCount === 0 ? "primary" : "secondary";
-  await createMemberDiagnosisSupabase({
-    member_id: memberId,
-    diagnosis_type: diagnosisType,
-    diagnosis_name: asString(formData, "diagnosisName"),
-    diagnosis_code: null,
-    date_added: asString(formData, "diagnosisDate") || now.slice(0, 10),
-    comments: null,
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
-  });
-  await touchMhpProfile(memberId, actor, now);
-  await syncMhpToCommandCenter(
+  await mutateMemberDiagnosisWorkflow({
     memberId,
-    {
+    operation: "create",
+    payload: {
+      diagnosis_name: asString(formData, "diagnosisName"),
+      diagnosis_code: null,
+      date_added: asString(formData, "diagnosisDate") || now.slice(0, 10),
+      comments: null
+    },
+    actor: {
       id: actor.id,
       fullName: actor.full_name
     },
     now
-  );
+  });
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -518,22 +435,22 @@ export async function updateMhpDiagnosisAction(formData: FormData) {
   if (!memberId || !diagnosisId) return;
   const now = toEasternISO();
 
-  await updateMemberDiagnosisSupabase(diagnosisId, {
-    diagnosis_name: asString(formData, "diagnosisName"),
-    diagnosis_code: null,
-    date_added: asString(formData, "diagnosisDate"),
-    comments: null,
-    updated_at: now
-  });
-  await touchMhpProfile(memberId, actor, now);
-  await syncMhpToCommandCenter(
+  await mutateMemberDiagnosisWorkflow({
     memberId,
-    {
+    diagnosisId,
+    operation: "update",
+    payload: {
+      diagnosis_name: asString(formData, "diagnosisName"),
+      diagnosis_code: null,
+      date_added: asString(formData, "diagnosisDate"),
+      comments: null
+    },
+    actor: {
       id: actor.id,
       fullName: actor.full_name
     },
     now
-  );
+  });
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -545,35 +462,35 @@ export async function addMhpDiagnosisInlineAction(formData: FormData) {
   if (!memberId) return { ok: false, error: "Member is required." };
 
   const now = toEasternISO();
-  const existingDiagnosisCount = await countMemberDiagnosesSupabase(memberId);
-  const diagnosisType = existingDiagnosisCount === 0 ? "primary" : "secondary";
   const diagnosisName = asString(formData, "diagnosisName");
   const diagnosisDate = asString(formData, "diagnosisDate") || now.slice(0, 10);
   if (!diagnosisName) return { ok: false, error: "Diagnosis is required." };
 
-  const created = await createMemberDiagnosisSupabase({
-    member_id: memberId,
-    diagnosis_type: diagnosisType,
-    diagnosis_name: diagnosisName,
-    diagnosis_code: null,
-    date_added: diagnosisDate,
-    comments: null,
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
+  const created = await mutateMemberDiagnosisWorkflow({
+    memberId,
+    operation: "create",
+    payload: {
+      diagnosis_name: diagnosisName,
+      diagnosis_code: null,
+      date_added: diagnosisDate,
+      comments: null
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-
-  await touchMhpProfile(memberId, actor, now);
+  if (!created.changed || !created.entity_row) return { ok: false, error: "Unable to create diagnosis." };
   revalidateMhp(memberId);
 
   return {
     ok: true,
     diagnosis: {
-      id: created.id,
-      diagnosis_type: created.diagnosis_type,
-      diagnosis_name: created.diagnosis_name,
-      date_added: created.date_added
+      id: created.entity_row.id,
+      diagnosis_type: created.entity_row.diagnosis_type,
+      diagnosis_name: created.entity_row.diagnosis_name,
+      date_added: created.entity_row.date_added
     }
   };
 }
@@ -589,25 +506,32 @@ export async function updateMhpDiagnosisInlineAction(formData: FormData) {
   if (!diagnosisName || !diagnosisDate) return { ok: false, error: "Diagnosis and date are required." };
 
   const now = toEasternISO();
-  const updated = await updateMemberDiagnosisSupabase(diagnosisId, {
-    diagnosis_name: diagnosisName,
-    diagnosis_code: null,
-    date_added: diagnosisDate,
-    comments: null,
-    updated_at: now
+  const updated = await mutateMemberDiagnosisWorkflow({
+    memberId,
+    diagnosisId,
+    operation: "update",
+    payload: {
+      diagnosis_name: diagnosisName,
+      diagnosis_code: null,
+      date_added: diagnosisDate,
+      comments: null
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-  if (!updated) return { ok: false, error: "Diagnosis not found." };
-
-  await touchMhpProfile(memberId, actor, now);
+  if (!updated.changed || !updated.entity_row) return { ok: false, error: "Diagnosis not found." };
   revalidateMhp(memberId);
 
   return {
     ok: true,
     diagnosis: {
-      id: updated.id,
-      diagnosis_type: updated.diagnosis_type,
-      diagnosis_name: updated.diagnosis_name,
-      date_added: updated.date_added
+      id: updated.entity_row.id,
+      diagnosis_type: updated.entity_row.diagnosis_type,
+      diagnosis_name: updated.entity_row.diagnosis_name,
+      date_added: updated.entity_row.date_added
     }
   };
 }
@@ -623,32 +547,39 @@ export async function addMhpMedicationAction(formData: FormData) {
   const marInput = parseMedicationMarInput(formData);
   if (!marInput.ok) throw new Error(marInput.error);
 
-  await createMemberMedicationSupabase({
-    member_id: memberId,
-    medication_name: asString(formData, "medicationName"),
-    date_started: asString(formData, "dateStarted") || toEasternDate(),
-    medication_status: "active",
-    inactivated_at: null,
-    dose: asNullableString(formData, "dose"),
-    quantity: asNullableString(formData, "quantity"),
-    form: asNullableString(formData, "medicationForm"),
-    frequency: asNullableString(formData, "frequency"),
-    route,
-    route_laterality: parsedLaterality.value,
-    given_at_center: marInput.givenAtCenter,
-    prn: marInput.prn,
-    prn_instructions: marInput.prnInstructions,
-    scheduled_times: marInput.scheduledTimes,
-    comments: asNullableString(formData, "medicationComments"),
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
+  const startDate = toEasternDate();
+  const endDate = addDaysDateOnly(startDate, 30);
+  await mutateMemberMedicationWorkflow({
+    memberId,
+    operation: "create",
+    payload: {
+      medication_name: asString(formData, "medicationName"),
+      date_started: asString(formData, "dateStarted") || startDate,
+      medication_status: "active",
+      inactivated_at: null,
+      dose: asNullableString(formData, "dose"),
+      quantity: asNullableString(formData, "quantity"),
+      form: asNullableString(formData, "medicationForm"),
+      frequency: asNullableString(formData, "frequency"),
+      route,
+      route_laterality: parsedLaterality.value,
+      given_at_center: marInput.givenAtCenter,
+      prn: marInput.prn,
+      prn_instructions: marInput.prnInstructions,
+      scheduled_times: marInput.scheduledTimes,
+      comments: asNullableString(formData, "medicationComments")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now,
+    marStartDate: startDate,
+    marEndDate: endDate
   });
-  await touchMhpProfile(memberId, actor, now);
-  await syncMarFromMhpMedicationList(memberId);
 
   revalidateMhp(memberId);
+  revalidatePath("/health/mar");
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
 }
 
@@ -664,26 +595,38 @@ export async function updateMhpMedicationAction(formData: FormData) {
   const marInput = parseMedicationMarInput(formData);
   if (!marInput.ok) throw new Error(marInput.error);
 
-  await updateMemberMedicationSupabase(medicationId, {
-    medication_name: asString(formData, "medicationName"),
-    date_started: asString(formData, "dateStarted") || toEasternDate(),
-    dose: asNullableString(formData, "dose"),
-    quantity: asNullableString(formData, "quantity"),
-    form: asNullableString(formData, "medicationForm"),
-    frequency: asNullableString(formData, "frequency"),
-    route,
-    route_laterality: parsedLaterality.value,
-    given_at_center: marInput.givenAtCenter,
-    prn: marInput.prn,
-    prn_instructions: marInput.prnInstructions,
-    scheduled_times: marInput.scheduledTimes,
-    comments: asNullableString(formData, "medicationComments"),
-    updated_at: now
+  const startDate = toEasternDate();
+  const endDate = addDaysDateOnly(startDate, 30);
+  await mutateMemberMedicationWorkflow({
+    memberId,
+    medicationId,
+    operation: "update",
+    payload: {
+      medication_name: asString(formData, "medicationName"),
+      date_started: asString(formData, "dateStarted") || startDate,
+      dose: asNullableString(formData, "dose"),
+      quantity: asNullableString(formData, "quantity"),
+      form: asNullableString(formData, "medicationForm"),
+      frequency: asNullableString(formData, "frequency"),
+      route,
+      route_laterality: parsedLaterality.value,
+      given_at_center: marInput.givenAtCenter,
+      prn: marInput.prn,
+      prn_instructions: marInput.prnInstructions,
+      scheduled_times: marInput.scheduledTimes,
+      comments: asNullableString(formData, "medicationComments")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now,
+    marStartDate: startDate,
+    marEndDate: endDate
   });
-  await touchMhpProfile(memberId, actor, now);
-  await syncMarFromMhpMedicationList(memberId);
 
   revalidateMhp(memberId);
+  revalidatePath("/health/mar");
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
 }
 
@@ -693,18 +636,21 @@ export async function addMhpAllergyAction(formData: FormData) {
   if (!memberId) return;
   const now = toEasternISO();
 
-  await createMemberAllergySupabase({
-    member_id: memberId,
-    allergy_group: parseAllergyGroup(formData, "allergyGroup"),
-    allergy_name: asString(formData, "allergyName"),
-    severity: asNullableString(formData, "allergySeverity"),
-    comments: asNullableString(formData, "allergyComments"),
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
+  await mutateMemberAllergyWorkflow({
+    memberId,
+    operation: "create",
+    payload: {
+      allergy_group: parseAllergyGroup(formData, "allergyGroup"),
+      allergy_name: asString(formData, "allergyName"),
+      severity: asNullableString(formData, "allergySeverity"),
+      comments: asNullableString(formData, "allergyComments")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -717,14 +663,22 @@ export async function updateMhpAllergyAction(formData: FormData) {
   if (!memberId || !allergyId) return;
   const now = toEasternISO();
 
-  await updateMemberAllergySupabase(allergyId, {
-    allergy_group: parseAllergyGroup(formData, "allergyGroup"),
-    allergy_name: asString(formData, "allergyName"),
-    severity: asNullableString(formData, "allergySeverity"),
-    comments: asNullableString(formData, "allergyComments"),
-    updated_at: now
+  await mutateMemberAllergyWorkflow({
+    memberId,
+    allergyId,
+    operation: "update",
+    payload: {
+      allergy_group: parseAllergyGroup(formData, "allergyGroup"),
+      allergy_name: asString(formData, "allergyName"),
+      severity: asNullableString(formData, "allergySeverity"),
+      comments: asNullableString(formData, "allergyComments")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -740,28 +694,22 @@ export async function addMhpProviderAction(formData: FormData) {
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = normalizePhoneForStorage(asNullableString(formData, "providerPhone"));
   const providerName = asString(formData, "providerName");
-  await createMemberProviderSupabase({
-    member_id: memberId,
-    provider_name: providerName,
-    specialty: specialty.specialty,
-    specialty_other: specialty.specialty_other,
-    practice_name: practiceName,
-    provider_phone: providerPhone,
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
-  });
-  await upsertProviderDirectoryFromValues({
-    providerName,
-    specialty: specialty.specialty,
-    specialtyOther: specialty.specialty_other,
-    practiceName,
-    providerPhone,
-    actor,
+  await mutateMemberProviderWorkflow({
+    memberId,
+    operation: "create",
+    payload: {
+      provider_name: providerName,
+      specialty: specialty.specialty,
+      specialty_other: specialty.specialty_other,
+      practice_name: practiceName,
+      provider_phone: providerPhone
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
     now
   });
-  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -778,24 +726,23 @@ export async function updateMhpProviderAction(formData: FormData) {
   const providerName = asString(formData, "providerName");
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = normalizePhoneForStorage(asNullableString(formData, "providerPhone"));
-  await updateMemberProviderSupabase(providerId, {
-    provider_name: providerName,
-    specialty: specialty.specialty,
-    specialty_other: specialty.specialty_other,
-    practice_name: practiceName,
-    provider_phone: providerPhone,
-    updated_at: now
-  });
-  await upsertProviderDirectoryFromValues({
-    providerName,
-    specialty: specialty.specialty,
-    specialtyOther: specialty.specialty_other,
-    practiceName,
-    providerPhone,
-    actor,
+  await mutateMemberProviderWorkflow({
+    memberId,
+    providerId,
+    operation: "update",
+    payload: {
+      provider_name: providerName,
+      specialty: specialty.specialty,
+      specialty_other: specialty.specialty_other,
+      practice_name: practiceName,
+      provider_phone: providerPhone
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
     now
   });
-  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -807,9 +754,17 @@ export async function deleteMhpDiagnosisInlineAction(formData: FormData) {
   const diagnosisId = asString(formData, "diagnosisId");
   if (!memberId || !diagnosisId) return { ok: false, error: "Missing diagnosis reference." };
   const now = toEasternISO();
-  const deleted = await deleteMemberDiagnosisSupabase(diagnosisId);
-  if (!deleted) return { ok: false, error: "Diagnosis not found." };
-  await touchMhpProfile(memberId, actor, now);
+  const deleted = await mutateMemberDiagnosisWorkflow({
+    memberId,
+    diagnosisId,
+    operation: "delete",
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
+  });
+  if (!deleted.changed) return { ok: false, error: "Diagnosis not found." };
   revalidateMhp(memberId);
   return { ok: true };
 }
@@ -820,9 +775,17 @@ export async function deleteMhpProviderAction(formData: FormData) {
   const providerId = asString(formData, "providerId");
   if (!memberId || !providerId) return;
   const now = toEasternISO();
-  const deleted = await deleteMemberProviderSupabase(providerId);
-  if (!deleted) return;
-  await touchMhpProfile(memberId, actor, now);
+  const deleted = await mutateMemberProviderWorkflow({
+    memberId,
+    providerId,
+    operation: "delete",
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
+  });
+  if (!deleted.changed) return;
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
 }
@@ -833,11 +796,23 @@ export async function deleteMhpMedicationAction(formData: FormData) {
   const medicationId = asString(formData, "medicationId");
   if (!memberId || !medicationId) return;
   const now = toEasternISO();
-  const deleted = await deleteMemberMedicationSupabase(medicationId);
-  if (!deleted) return;
-  await touchMhpProfile(memberId, actor, now);
-  await syncMarFromMhpMedicationList(memberId);
+  const startDate = toEasternDate();
+  const endDate = addDaysDateOnly(startDate, 30);
+  const deleted = await mutateMemberMedicationWorkflow({
+    memberId,
+    medicationId,
+    operation: "delete",
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now,
+    marStartDate: startDate,
+    marEndDate: endDate
+  });
+  if (!deleted.changed) return;
   revalidateMhp(memberId);
+  revalidatePath("/health/mar");
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
 }
 
@@ -847,17 +822,17 @@ export async function deleteMhpAllergyAction(formData: FormData) {
   const allergyId = asString(formData, "allergyId");
   if (!memberId || !allergyId) return;
   const now = toEasternISO();
-  const deleted = await deleteMemberAllergySupabase(allergyId);
-  if (!deleted) return;
-  await touchMhpProfile(memberId, actor, now);
-  await syncMhpToCommandCenter(
+  const deleted = await mutateMemberAllergyWorkflow({
     memberId,
-    {
+    allergyId,
+    operation: "delete",
+    actor: {
       id: actor.id,
       fullName: actor.full_name
     },
     now
-  );
+  });
+  if (!deleted.changed) return;
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
 }
@@ -873,33 +848,26 @@ export async function addMhpProviderInlineAction(formData: FormData) {
   const specialty = resolveProviderSpecialty(formData);
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = normalizePhoneForStorage(asNullableString(formData, "providerPhone"));
-  const created = await createMemberProviderSupabase({
-    member_id: memberId,
-    provider_name: providerName,
-    specialty: specialty.specialty,
-    specialty_other: specialty.specialty_other,
-    practice_name: practiceName,
-    provider_phone: providerPhone,
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
-  });
-
-  await upsertProviderDirectoryFromValues({
-    providerName,
-    specialty: specialty.specialty,
-    specialtyOther: specialty.specialty_other,
-    practiceName,
-    providerPhone,
-    actor,
+  const created = await mutateMemberProviderWorkflow({
+    memberId,
+    operation: "create",
+    payload: {
+      provider_name: providerName,
+      specialty: specialty.specialty,
+      specialty_other: specialty.specialty_other,
+      practice_name: practiceName,
+      provider_phone: providerPhone
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
     now
   });
-
-  await touchMhpProfile(memberId, actor, now);
+  if (!created.changed || !created.entity_row) return { ok: false, error: "Unable to create provider." };
   revalidateMhp(memberId);
 
-  return { ok: true, row: created };
+  return { ok: true, row: created.entity_row };
 }
 
 export async function deleteMhpProviderInlineAction(formData: FormData) {
@@ -909,10 +877,17 @@ export async function deleteMhpProviderInlineAction(formData: FormData) {
   if (!memberId || !providerId) return { ok: false, error: "Missing provider reference." };
 
   const now = toEasternISO();
-  const deleted = await deleteMemberProviderSupabase(providerId);
-  if (!deleted) return { ok: false, error: "Provider not found." };
-
-  await touchMhpProfile(memberId, actor, now);
+  const deleted = await mutateMemberProviderWorkflow({
+    memberId,
+    providerId,
+    operation: "delete",
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
+  });
+  if (!deleted.changed) return { ok: false, error: "Provider not found." };
   revalidateMhp(memberId);
   return { ok: true };
 }
@@ -929,29 +904,26 @@ export async function updateMhpProviderInlineAction(formData: FormData) {
   const practiceName = asNullableString(formData, "practiceName");
   const providerPhone = normalizePhoneForStorage(asNullableString(formData, "providerPhone"));
   const now = toEasternISO();
-  const updated = await updateMemberProviderSupabase(providerId, {
-    provider_name: providerName,
-    specialty: specialty.specialty,
-    specialty_other: specialty.specialty_other,
-    practice_name: practiceName,
-    provider_phone: providerPhone,
-    updated_at: now
-  });
-  if (!updated) return { ok: false, error: "Provider not found." };
-
-  await upsertProviderDirectoryFromValues({
-    providerName,
-    specialty: specialty.specialty,
-    specialtyOther: specialty.specialty_other,
-    practiceName,
-    providerPhone,
-    actor,
+  const updated = await mutateMemberProviderWorkflow({
+    memberId,
+    providerId,
+    operation: "update",
+    payload: {
+      provider_name: providerName,
+      specialty: specialty.specialty,
+      specialty_other: specialty.specialty_other,
+      practice_name: practiceName,
+      provider_phone: providerPhone
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
     now
   });
-
-  await touchMhpProfile(memberId, actor, now);
+  if (!updated.changed || !updated.entity_row) return { ok: false, error: "Provider not found." };
   revalidateMhp(memberId);
-  return { ok: true, row: updated };
+  return { ok: true, row: updated.entity_row };
 }
 
 export async function addMhpMedicationInlineAction(formData: FormData) {
@@ -967,41 +939,40 @@ export async function addMhpMedicationInlineAction(formData: FormData) {
   if (!marInput.ok) return { ok: false, error: marInput.error };
 
   const now = toEasternISO();
-  const created = await createMemberMedicationSupabase({
-    member_id: memberId,
-    medication_name: medicationName,
-    date_started: asString(formData, "dateStarted") || toEasternDate(),
-    medication_status: "active",
-    inactivated_at: null,
-    dose: asNullableString(formData, "dose"),
-    quantity: asNullableString(formData, "quantity"),
-    form: asNullableString(formData, "medicationForm"),
-    frequency: asNullableString(formData, "frequency"),
-    route,
-    route_laterality: parsedLaterality.value,
-    given_at_center: marInput.givenAtCenter,
-    prn: marInput.prn,
-    prn_instructions: marInput.prnInstructions,
-    scheduled_times: marInput.scheduledTimes,
-    comments: asNullableString(formData, "medicationComments"),
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
-  });
-
-  await touchMhpProfile(memberId, actor, now);
-  await syncMhpToCommandCenter(
+  const startDate = toEasternDate();
+  const endDate = addDaysDateOnly(startDate, 30);
+  const created = await mutateMemberMedicationWorkflow({
     memberId,
-    {
+    operation: "create",
+    payload: {
+      medication_name: medicationName,
+      date_started: asString(formData, "dateStarted") || startDate,
+      medication_status: "active",
+      inactivated_at: null,
+      dose: asNullableString(formData, "dose"),
+      quantity: asNullableString(formData, "quantity"),
+      form: asNullableString(formData, "medicationForm"),
+      frequency: asNullableString(formData, "frequency"),
+      route,
+      route_laterality: parsedLaterality.value,
+      given_at_center: marInput.givenAtCenter,
+      prn: marInput.prn,
+      prn_instructions: marInput.prnInstructions,
+      scheduled_times: marInput.scheduledTimes,
+      comments: asNullableString(formData, "medicationComments")
+    },
+    actor: {
       id: actor.id,
       fullName: actor.full_name
     },
-    now
-  );
-  await syncMarFromMhpMedicationList(memberId);
+    now,
+    marStartDate: startDate,
+    marEndDate: endDate
+  });
+  if (!created.changed || !created.entity_row) return { ok: false, error: "Unable to create medication." };
   revalidateMhp(memberId);
-  return { ok: true, row: created };
+  revalidatePath("/health/mar");
+  return { ok: true, row: created.entity_row };
 }
 
 export async function updateMhpMedicationInlineAction(formData: FormData) {
@@ -1018,28 +989,39 @@ export async function updateMhpMedicationInlineAction(formData: FormData) {
   if (!marInput.ok) return { ok: false, error: marInput.error };
 
   const now = toEasternISO();
-  const updated = await updateMemberMedicationSupabase(medicationId, {
-    medication_name: medicationName,
-    date_started: asString(formData, "dateStarted") || toEasternDate(),
-    dose: asNullableString(formData, "dose"),
-    quantity: asNullableString(formData, "quantity"),
-    form: asNullableString(formData, "medicationForm"),
-    frequency: asNullableString(formData, "frequency"),
-    route,
-    route_laterality: parsedLaterality.value,
-    given_at_center: marInput.givenAtCenter,
-    prn: marInput.prn,
-    prn_instructions: marInput.prnInstructions,
-    scheduled_times: marInput.scheduledTimes,
-    comments: asNullableString(formData, "medicationComments"),
-    updated_at: now
+  const startDate = toEasternDate();
+  const endDate = addDaysDateOnly(startDate, 30);
+  const updated = await mutateMemberMedicationWorkflow({
+    memberId,
+    medicationId,
+    operation: "update",
+    payload: {
+      medication_name: medicationName,
+      date_started: asString(formData, "dateStarted") || startDate,
+      dose: asNullableString(formData, "dose"),
+      quantity: asNullableString(formData, "quantity"),
+      form: asNullableString(formData, "medicationForm"),
+      frequency: asNullableString(formData, "frequency"),
+      route,
+      route_laterality: parsedLaterality.value,
+      given_at_center: marInput.givenAtCenter,
+      prn: marInput.prn,
+      prn_instructions: marInput.prnInstructions,
+      scheduled_times: marInput.scheduledTimes,
+      comments: asNullableString(formData, "medicationComments")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now,
+    marStartDate: startDate,
+    marEndDate: endDate
   });
-  if (!updated) return { ok: false, error: "Medication not found." };
-
-  await touchMhpProfile(memberId, actor, now);
-  await syncMarFromMhpMedicationList(memberId);
+  if (!updated.changed || !updated.entity_row) return { ok: false, error: "Medication not found." };
   revalidateMhp(memberId);
-  return { ok: true, row: updated };
+  revalidatePath("/health/mar");
+  return { ok: true, row: updated.entity_row };
 }
 
 export async function deleteMhpMedicationInlineAction(formData: FormData) {
@@ -1049,12 +1031,23 @@ export async function deleteMhpMedicationInlineAction(formData: FormData) {
   if (!memberId || !medicationId) return { ok: false, error: "Missing medication reference." };
 
   const now = toEasternISO();
-  const deleted = await deleteMemberMedicationSupabase(medicationId);
-  if (!deleted) return { ok: false, error: "Medication not found." };
-
-  await touchMhpProfile(memberId, actor, now);
-  await syncMarFromMhpMedicationList(memberId);
+  const startDate = toEasternDate();
+  const endDate = addDaysDateOnly(startDate, 30);
+  const deleted = await mutateMemberMedicationWorkflow({
+    memberId,
+    medicationId,
+    operation: "delete",
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now,
+    marStartDate: startDate,
+    marEndDate: endDate
+  });
+  if (!deleted.changed) return { ok: false, error: "Medication not found." };
   revalidateMhp(memberId);
+  revalidatePath("/health/mar");
   return { ok: true };
 }
 
@@ -1066,17 +1059,27 @@ export async function inactivateMhpMedicationInlineAction(formData: FormData) {
 
   const now = toEasternISO();
   const today = toEasternDate();
-  const updated = await updateMemberMedicationSupabase(medicationId, {
-    medication_status: "inactive",
-    inactivated_at: today,
-    updated_at: now
+  const startDate = toEasternDate();
+  const endDate = addDaysDateOnly(startDate, 30);
+  const updated = await mutateMemberMedicationWorkflow({
+    memberId,
+    medicationId,
+    operation: "inactivate",
+    payload: {
+      inactivated_at: today
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now,
+    marStartDate: startDate,
+    marEndDate: endDate
   });
-  if (!updated) return { ok: false, error: "Medication not found." };
-
-  await touchMhpProfile(memberId, actor, now);
-  await syncMarFromMhpMedicationList(memberId);
+  if (!updated.changed || !updated.entity_row) return { ok: false, error: "Medication not found." };
   revalidateMhp(memberId);
-  return { ok: true, row: updated };
+  revalidatePath("/health/mar");
+  return { ok: true, row: updated.entity_row };
 }
 
 export async function reactivateMhpMedicationInlineAction(formData: FormData) {
@@ -1087,18 +1090,27 @@ export async function reactivateMhpMedicationInlineAction(formData: FormData) {
 
   const now = toEasternISO();
   const today = toEasternDate();
-  const updated = await updateMemberMedicationSupabase(medicationId, {
-    medication_status: "active",
-    date_started: today,
-    inactivated_at: null,
-    updated_at: now
+  const startDate = toEasternDate();
+  const endDate = addDaysDateOnly(startDate, 30);
+  const updated = await mutateMemberMedicationWorkflow({
+    memberId,
+    medicationId,
+    operation: "reactivate",
+    payload: {
+      date_started: today
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now,
+    marStartDate: startDate,
+    marEndDate: endDate
   });
-  if (!updated) return { ok: false, error: "Medication not found." };
-
-  await touchMhpProfile(memberId, actor, now);
-  await syncMarFromMhpMedicationList(memberId);
+  if (!updated.changed || !updated.entity_row) return { ok: false, error: "Medication not found." };
   revalidateMhp(memberId);
-  return { ok: true, row: updated };
+  revalidatePath("/health/mar");
+  return { ok: true, row: updated.entity_row };
 }
 
 export async function addMhpAllergyInlineAction(formData: FormData) {
@@ -1109,21 +1121,24 @@ export async function addMhpAllergyInlineAction(formData: FormData) {
   if (!allergyName) return { ok: false, error: "Allergy is required." };
 
   const now = toEasternISO();
-  const created = await createMemberAllergySupabase({
-    member_id: memberId,
-    allergy_group: parseAllergyGroup(formData, "allergyGroup"),
-    allergy_name: allergyName,
-    severity: asNullableString(formData, "allergySeverity"),
-    comments: asNullableString(formData, "allergyComments"),
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
+  const created = await mutateMemberAllergyWorkflow({
+    memberId,
+    operation: "create",
+    payload: {
+      allergy_group: parseAllergyGroup(formData, "allergyGroup"),
+      allergy_name: allergyName,
+      severity: asNullableString(formData, "allergySeverity"),
+      comments: asNullableString(formData, "allergyComments")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-
-  await touchMhpProfile(memberId, actor, now);
+  if (!created.changed || !created.entity_row) return { ok: false, error: "Unable to create allergy." };
   revalidateMhp(memberId);
-  return { ok: true, row: created };
+  return { ok: true, row: created.entity_row };
 }
 
 export async function deleteMhpAllergyInlineAction(formData: FormData) {
@@ -1133,18 +1148,17 @@ export async function deleteMhpAllergyInlineAction(formData: FormData) {
   if (!memberId || !allergyId) return { ok: false, error: "Missing allergy reference." };
 
   const now = toEasternISO();
-  const deleted = await deleteMemberAllergySupabase(allergyId);
-  if (!deleted) return { ok: false, error: "Allergy not found." };
-
-  await touchMhpProfile(memberId, actor, now);
-  await syncMhpToCommandCenter(
+  const deleted = await mutateMemberAllergyWorkflow({
     memberId,
-    {
+    allergyId,
+    operation: "delete",
+    actor: {
       id: actor.id,
       fullName: actor.full_name
     },
     now
-  );
+  });
+  if (!deleted.changed) return { ok: false, error: "Allergy not found." };
   revalidateMhp(memberId);
   return { ok: true };
 }
@@ -1158,26 +1172,25 @@ export async function updateMhpAllergyInlineAction(formData: FormData) {
   if (!allergyName) return { ok: false, error: "Allergy is required." };
 
   const now = toEasternISO();
-  const updated = await updateMemberAllergySupabase(allergyId, {
-    allergy_group: parseAllergyGroup(formData, "allergyGroup"),
-    allergy_name: allergyName,
-    severity: asNullableString(formData, "allergySeverity"),
-    comments: asNullableString(formData, "allergyComments"),
-    updated_at: now
-  });
-  if (!updated) return { ok: false, error: "Allergy not found." };
-
-  await touchMhpProfile(memberId, actor, now);
-  await syncMhpToCommandCenter(
+  const updated = await mutateMemberAllergyWorkflow({
     memberId,
-    {
+    allergyId,
+    operation: "update",
+    payload: {
+      allergy_group: parseAllergyGroup(formData, "allergyGroup"),
+      allergy_name: allergyName,
+      severity: asNullableString(formData, "allergySeverity"),
+      comments: asNullableString(formData, "allergyComments")
+    },
+    actor: {
       id: actor.id,
       fullName: actor.full_name
     },
     now
-  );
+  });
+  if (!updated.changed || !updated.entity_row) return { ok: false, error: "Allergy not found." };
   revalidateMhp(memberId);
-  return { ok: true, row: updated };
+  return { ok: true, row: updated.entity_row };
 }
 
 export async function addMhpEquipmentAction(formData: FormData) {
@@ -1186,18 +1199,21 @@ export async function addMhpEquipmentAction(formData: FormData) {
   if (!memberId) return;
   const now = toEasternISO();
 
-  await createMemberEquipmentSupabase({
-    member_id: memberId,
-    equipment_type: asString(formData, "equipmentType"),
-    provider_source: null,
-    status: asNullableString(formData, "equipmentStatus") ?? "Active",
-    comments: asNullableString(formData, "equipmentComments"),
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
+  await mutateMemberEquipmentWorkflow({
+    memberId,
+    operation: "create",
+    payload: {
+      equipment_type: asString(formData, "equipmentType"),
+      provider_source: null,
+      status: asNullableString(formData, "equipmentStatus") ?? "Active",
+      comments: asNullableString(formData, "equipmentComments")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=equipment`);
@@ -1210,14 +1226,22 @@ export async function updateMhpEquipmentAction(formData: FormData) {
   if (!memberId || !equipmentId) return;
   const now = toEasternISO();
 
-  await updateMemberEquipmentSupabase(equipmentId, {
-    equipment_type: asString(formData, "equipmentType"),
-    provider_source: null,
-    status: asNullableString(formData, "equipmentStatus") ?? "Active",
-    comments: asNullableString(formData, "equipmentComments"),
-    updated_at: now
+  await mutateMemberEquipmentWorkflow({
+    memberId,
+    equipmentId,
+    operation: "update",
+    payload: {
+      equipment_type: asString(formData, "equipmentType"),
+      provider_source: null,
+      status: asNullableString(formData, "equipmentStatus") ?? "Active",
+      comments: asNullableString(formData, "equipmentComments")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=equipment`);
@@ -1231,20 +1255,24 @@ export async function addMhpEquipmentInlineAction(formData: FormData) {
   if (!equipmentType) return { ok: false, error: "Equipment type is required." };
 
   const now = toEasternISO();
-  const created = await createMemberEquipmentSupabase({
-    member_id: memberId,
-    equipment_type: equipmentType,
-    provider_source: null,
-    status: asNullableString(formData, "equipmentStatus") ?? "Active",
-    comments: asNullableString(formData, "equipmentComments"),
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
+  const created = await mutateMemberEquipmentWorkflow({
+    memberId,
+    operation: "create",
+    payload: {
+      equipment_type: equipmentType,
+      provider_source: null,
+      status: asNullableString(formData, "equipmentStatus") ?? "Active",
+      comments: asNullableString(formData, "equipmentComments")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-  await touchMhpProfile(memberId, actor, now);
+  if (!created.changed || !created.entity_row) return { ok: false, error: "Unable to create equipment." };
   revalidateMhp(memberId);
-  return { ok: true, row: created };
+  return { ok: true, row: created.entity_row };
 }
 
 export async function updateMhpEquipmentInlineAction(formData: FormData) {
@@ -1254,18 +1282,25 @@ export async function updateMhpEquipmentInlineAction(formData: FormData) {
   if (!memberId || !equipmentId) return { ok: false, error: "Missing equipment reference." };
 
   const now = toEasternISO();
-  const updated = await updateMemberEquipmentSupabase(equipmentId, {
-    equipment_type: asString(formData, "equipmentType"),
-    provider_source: null,
-    status: asNullableString(formData, "equipmentStatus") ?? "Active",
-    comments: asNullableString(formData, "equipmentComments"),
-    updated_at: now
+  const updated = await mutateMemberEquipmentWorkflow({
+    memberId,
+    equipmentId,
+    operation: "update",
+    payload: {
+      equipment_type: asString(formData, "equipmentType"),
+      provider_source: null,
+      status: asNullableString(formData, "equipmentStatus") ?? "Active",
+      comments: asNullableString(formData, "equipmentComments")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-  if (!updated) return { ok: false, error: "Equipment not found." };
-
-  await touchMhpProfile(memberId, actor, now);
+  if (!updated.changed || !updated.entity_row) return { ok: false, error: "Equipment not found." };
   revalidateMhp(memberId);
-  return { ok: true, row: updated };
+  return { ok: true, row: updated.entity_row };
 }
 
 export async function deleteMhpEquipmentInlineAction(formData: FormData) {
@@ -1275,10 +1310,17 @@ export async function deleteMhpEquipmentInlineAction(formData: FormData) {
   if (!memberId || !equipmentId) return { ok: false, error: "Missing equipment reference." };
 
   const now = toEasternISO();
-  const deleted = await deleteMemberEquipmentSupabase(equipmentId);
-  if (!deleted) return { ok: false, error: "Equipment not found." };
-
-  await touchMhpProfile(memberId, actor, now);
+  const deleted = await mutateMemberEquipmentWorkflow({
+    memberId,
+    equipmentId,
+    operation: "delete",
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
+  });
+  if (!deleted.changed) return { ok: false, error: "Equipment not found." };
   revalidateMhp(memberId);
   return { ok: true };
 }
@@ -1289,16 +1331,19 @@ export async function addMhpNoteAction(formData: FormData) {
   if (!memberId) return;
   const now = toEasternISO();
 
-  await createMemberNoteSupabase({
-    member_id: memberId,
-    note_type: asString(formData, "noteType") || "General",
-    note_text: asString(formData, "noteText"),
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
+  await mutateMemberNoteWorkflow({
+    memberId,
+    operation: "create",
+    payload: {
+      note_type: asString(formData, "noteType") || "General",
+      note_text: asString(formData, "noteText")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=notes`);
@@ -1311,12 +1356,20 @@ export async function updateMhpNoteAction(formData: FormData) {
   if (!memberId || !noteId) return;
   const now = toEasternISO();
 
-  await updateMemberNoteSupabase(noteId, {
-    note_type: asString(formData, "noteType") || "General",
-    note_text: asString(formData, "noteText"),
-    updated_at: now
+  await mutateMemberNoteWorkflow({
+    memberId,
+    noteId,
+    operation: "update",
+    payload: {
+      note_type: asString(formData, "noteType") || "General",
+      note_text: asString(formData, "noteText")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-  await touchMhpProfile(memberId, actor, now);
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=notes`);
@@ -1330,18 +1383,22 @@ export async function addMhpNoteInlineAction(formData: FormData) {
   if (!noteText) return { ok: false, error: "Note text is required." };
 
   const now = toEasternISO();
-  const created = await createMemberNoteSupabase({
-    member_id: memberId,
-    note_type: asString(formData, "noteType") || "General",
-    note_text: noteText,
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
+  const created = await mutateMemberNoteWorkflow({
+    memberId,
+    operation: "create",
+    payload: {
+      note_type: asString(formData, "noteType") || "General",
+      note_text: noteText
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-  await touchMhpProfile(memberId, actor, now);
+  if (!created.changed || !created.entity_row) return { ok: false, error: "Unable to create note." };
   revalidateMhp(memberId);
-  return { ok: true, row: created };
+  return { ok: true, row: created.entity_row };
 }
 
 export async function updateMhpNoteInlineAction(formData: FormData) {
@@ -1353,16 +1410,23 @@ export async function updateMhpNoteInlineAction(formData: FormData) {
   if (!noteText) return { ok: false, error: "Note text is required." };
 
   const now = toEasternISO();
-  const updated = await updateMemberNoteSupabase(noteId, {
-    note_type: asString(formData, "noteType") || "General",
-    note_text: noteText,
-    updated_at: now
+  const updated = await mutateMemberNoteWorkflow({
+    memberId,
+    noteId,
+    operation: "update",
+    payload: {
+      note_type: asString(formData, "noteType") || "General",
+      note_text: noteText
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-  if (!updated) return { ok: false, error: "Note not found." };
-
-  await touchMhpProfile(memberId, actor, now);
+  if (!updated.changed || !updated.entity_row) return { ok: false, error: "Note not found." };
   revalidateMhp(memberId);
-  return { ok: true, row: updated };
+  return { ok: true, row: updated.entity_row };
 }
 
 export async function deleteMhpNoteInlineAction(formData: FormData) {
@@ -1372,10 +1436,17 @@ export async function deleteMhpNoteInlineAction(formData: FormData) {
   if (!memberId || !noteId) return { ok: false, error: "Missing note reference." };
 
   const now = toEasternISO();
-  const deleted = await deleteMemberNoteSupabase(noteId);
-  if (!deleted) return { ok: false, error: "Note not found." };
-
-  await touchMhpProfile(memberId, actor, now);
+  const deleted = await mutateMemberNoteWorkflow({
+    memberId,
+    noteId,
+    operation: "delete",
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
+  });
+  if (!deleted.changed) return { ok: false, error: "Note not found." };
   revalidateMhp(memberId);
   return { ok: true };
 }

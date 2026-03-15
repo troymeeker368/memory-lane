@@ -488,6 +488,14 @@ Implemented production-safety fixes:
   - `rpc_save_member_command_center_transportation` now owns attendance transportation fields + bus stop directory upserts in one transaction
   - `rpc_update_member_health_profile_bundle` now owns MHP + `members` + hospital preference directory + optional MHP -> MCC sync in one transaction
   - `rpc_update_member_track_with_note` now owns `members.latest_assessment_track` + required care-plan review note creation in one transaction
+- Added `0058_mhp_child_workflow_rpc_hardening.sql` and moved remaining high-risk MHP child-row clinical workflows onto shared RPC boundaries:
+  - `rpc_mutate_member_diagnosis_workflow` now owns diagnosis create/update/delete + profile touch + audit event in one transaction
+  - `rpc_mutate_member_medication_workflow` now owns medication create/update/delete/status mutation + profile touch + MAR reconciliation + audit event in one transaction
+  - `rpc_mutate_member_allergy_workflow` now owns allergy create/update/delete + profile touch + audit event in one transaction
+  - `rpc_mutate_member_provider_workflow` now owns provider create/update/delete + provider directory upsert + profile touch + audit event in one transaction
+- Added `0059_mhp_equipment_notes_rpc_hardening.sql` and moved the remaining MHP equipment/note child workflows onto shared RPC boundaries:
+  - `rpc_mutate_member_equipment_workflow` now owns equipment create/update/delete + profile touch + audit event in one transaction
+  - `rpc_mutate_member_note_workflow` now owns note create/update/delete + profile touch + audit event in one transaction
 - Normalized remaining service-layer `audit_logs` writers in `lib/services/sales-crm-supabase.ts`, `lib/services/sales-lead-activities.ts`, and `lib/services/staff-auth.ts` behind shared service `lib/services/audit-log-service.ts`.
 - Added storage cleanup helper `deleteMemberDocumentObject(...)` and metadata cleanup helper `deleteMemberFileRecord(...)` in `lib/services/member-files.ts`.
 - Hardened `lib/services/clinical-esign-artifacts.ts` so failed `member_files` persistence cleans up the just-uploaded storage object.
@@ -548,6 +556,8 @@ Implemented production-safety fixes:
 - Shared MHP/MCC/member propagation relays previously wrote cross-domain state directly instead of using one canonical RPC boundary.
 - Member Command Center summary/photo/demographics/legal/diet, attendance/billing, and transportation flows previously orchestrated related writes directly from action/service layers.
 - Member Health Profile overview/photo/medical/legal/track workflows previously wrote cross-table state through direct relay paths instead of one canonical RPC boundary.
+- Member Health Profile diagnosis/medication/allergy/provider child-row workflows previously mutated child tables, touched parent profile state, and ran downstream MAR/provider side effects as scattered action-level writes.
+- Member Health Profile equipment/note child-row workflows previously used direct service CRUD plus follow-up parent touches instead of one canonical workflow boundary.
 
 ## Production Blockers Still Open After This Pass
 
@@ -555,6 +565,5 @@ Implemented production-safety fixes:
 - Intake assessment create + signature + draft POF cascade is still not one end-to-end atomic DB boundary, even though base assessment creation, signature finalization, and draft POF creation now each have canonical transaction boundaries.
 - Care plan create/review workflow still spans multiple canonical boundaries (`care plan core`, `nurse sign`, `snapshot/history`, caregiver dispatch) rather than one end-to-end transaction, even though the direct parent/child write gap is removed.
 - POF post-sign clinical sync remains a post-commit derived process rather than a single end-to-end transaction, though canonical signed state is now protected.
-- Some Member Health Profile child-row workflows still combine child-row CRUD with downstream sync outside one shared RPC boundary.
 - Service-layer `audit_logs` writes still exist in some service modules and should be normalized behind one shared audit writer.
 - RLS/policy parity, public-token replay safety, and cross-domain downstream propagation still require deeper workflow-by-workflow verification beyond this code pass.
