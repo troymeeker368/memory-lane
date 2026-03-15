@@ -50,6 +50,7 @@ export default async function HealthAssessmentPage({
               <th>Transport Appropriate</th>
               <th>Completed By</th>
               <th>E-Sign Status</th>
+              <th>Draft POF</th>
               <th>Signed By</th>
               <th>Complete</th>
               <th>Open</th>
@@ -66,6 +67,7 @@ export default async function HealthAssessmentPage({
                 <td>{row.transport_appropriate == null ? "-" : row.transport_appropriate ? "Yes" : "No"}</td>
                 <td>{row.completed_by ?? row.reviewer_name ?? row.created_by_name ?? "-"}</td>
                 <td>{row.signature_status ?? "unsigned"}</td>
+                <td>{row.signature_status === "signed" ? row.draft_pof_status ?? "pending" : "-"}</td>
                 <td>{row.signed_by ?? "-"}</td>
                 <td>{row.complete ? "Yes" : "No"}</td>
                 <td>

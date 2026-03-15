@@ -380,16 +380,17 @@ export default async function MemberHealthProfileDetailPage({
               </Link>
             </div>
             <table className="mt-3">
-              <thead><tr><th>Status</th><th>Provider</th><th>Sent</th><th>Signed</th><th>Updated</th><th>Open</th></tr></thead>
+              <thead><tr><th>Status</th><th>Clinical Sync</th><th>Provider</th><th>Sent</th><th>Signed</th><th>Updated</th><th>Open</th></tr></thead>
               <tbody>
                 {relatedPhysicianOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-sm text-muted">No physician orders found for this member yet.</td>
+                    <td colSpan={7} className="text-sm text-muted">No physician orders found for this member yet.</td>
                   </tr>
                 ) : (
                   relatedPhysicianOrders.slice(0, 25).map((row) => (
                     <tr key={row.id}>
                       <td>{row.status}</td>
+                      <td>{row.clinicalSyncStatus === "synced" ? "Synced" : row.clinicalSyncStatus === "pending" ? "Pending" : "-"}</td>
                       <td>{row.providerName ?? "-"}</td>
                       <td>{row.completedDate ? formatDate(row.completedDate) : "-"}</td>
                       <td>{row.signedDate ? formatDate(row.signedDate) : "-"}</td>

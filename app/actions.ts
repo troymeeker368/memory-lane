@@ -30,7 +30,8 @@ import { createAncillaryChargeSupabase, updateToiletLogWithAncillarySync } from 
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import {
   autoCreateDraftPhysicianOrderFromIntake,
-  createIntakeAssessmentWithResponses
+  createIntakeAssessmentWithResponses,
+  updateIntakeAssessmentDraftPofStatus
 } from "@/lib/services/intake-pof-mhp-cascade";
 import { normalizeIntakeAssistiveDeviceFields } from "@/lib/services/intake-pof-shared";
 import { buildIntakeAssessmentPdfDataUrl } from "@/lib/services/intake-assessment-pdf";
@@ -1204,10 +1205,38 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     };
   }
 
-  await autoCreateDraftPhysicianOrderFromIntake({
-    assessment: created,
-    actor: { id: profile.id, fullName: profile.full_name, signoffName: signerName }
-  });
+  const draftPofAttemptedAt = toEasternISO();
+  try {
+    await updateIntakeAssessmentDraftPofStatus({
+      assessmentId: created.id,
+      status: "pending",
+      attemptedAt: draftPofAttemptedAt
+    });
+    await autoCreateDraftPhysicianOrderFromIntake({
+      assessment: created,
+      actor: { id: profile.id, fullName: profile.full_name, signoffName: signerName }
+    });
+    await updateIntakeAssessmentDraftPofStatus({
+      assessmentId: created.id,
+      status: "created",
+      attemptedAt: draftPofAttemptedAt
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to create draft physician order from intake.";
+    await updateIntakeAssessmentDraftPofStatus({
+      assessmentId: created.id,
+      status: "failed",
+      attemptedAt: draftPofAttemptedAt,
+      error: message
+    });
+    revalidatePath("/health/assessment");
+    revalidatePath(`/health/assessment/${created.id}`);
+    revalidatePath(`/reports/assessments/${created.id}`);
+    return {
+      error: `Intake Assessment was signed, but draft POF creation failed (${message}).`,
+      assessmentId: created.id
+    };
+  }
 
   try {
     const generated = await buildIntakeAssessmentPdfDataUrl(created.id);

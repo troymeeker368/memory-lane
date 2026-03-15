@@ -90,7 +90,15 @@ export default async function HealthAssessmentDetailPage({
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">E-Sign Status</p><p className="font-semibold">{assessment.signature_status ?? "unsigned"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed By</p><p className="font-semibold">{assessment.signed_by ?? "-"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed At</p><p className="font-semibold">{assessment.signed_at ? formatDateTime(assessment.signed_at) : "-"}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Draft POF Status</p><p className="font-semibold">{assessment.signature_status === "signed" ? assessment.draft_pof_status ?? "pending" : "-"}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Draft POF Attempted</p><p className="font-semibold">{assessment.draft_pof_attempted_at ? formatDateTime(assessment.draft_pof_attempted_at) : "-"}</p></div>
         </div>
+        {assessment.signature_status === "signed" && assessment.draft_pof_status === "failed" ? (
+          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+            Draft POF creation failed after intake signature.
+            {assessment.draft_pof_error ? ` ${assessment.draft_pof_error}` : ""}
+          </div>
+        ) : null}
       </Card>
 
       <Card>

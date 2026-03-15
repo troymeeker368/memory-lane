@@ -165,6 +165,9 @@ export async function createIntakeAssessment(input: {
     signed_at: null,
     signature_status: "unsigned",
     signature_metadata: {},
+    draft_pof_status: "pending",
+    draft_pof_attempted_at: null,
+    draft_pof_error: null,
     complete: input.payload.complete,
     feeling_today: input.payload.feelingToday,
     health_lately: input.payload.healthLately,
@@ -221,6 +224,27 @@ export async function createIntakeAssessment(input: {
   const { data, error } = await supabase.from("intake_assessments").insert(insertPayload).select("*").single();
   if (error) throw new Error(error.message);
   return data;
+}
+
+export type IntakeDraftPofStatus = "pending" | "created" | "failed";
+
+export async function updateIntakeAssessmentDraftPofStatus(input: {
+  assessmentId: string;
+  status: IntakeDraftPofStatus;
+  attemptedAt: string;
+  error?: string | null;
+}) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("intake_assessments")
+    .update({
+      draft_pof_status: input.status,
+      draft_pof_attempted_at: input.attemptedAt,
+      draft_pof_error: input.status === "failed" ? String(input.error ?? "").trim() || null : null,
+      updated_at: input.attemptedAt
+    })
+    .eq("id", input.assessmentId);
+  if (error) throw new Error(error.message);
 }
 
 export async function createIntakeAssessmentWithResponses(input: {

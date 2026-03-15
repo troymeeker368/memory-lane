@@ -309,6 +309,16 @@ function clean(value: string | null | undefined) {
   return normalized.length > 0 ? normalized : null;
 }
 
+function isPostgresUniqueViolation(error: { code?: string | null; message?: string | null; details?: string | null } | null | undefined) {
+  const text = [error?.message, error?.details].filter(Boolean).join(" ").toLowerCase();
+  return error?.code === "23505" || text.includes("duplicate key value") || text.includes("unique constraint");
+}
+
+function isCarePlanRootUniqueViolation(error: { code?: string | null; message?: string | null; details?: string | null } | null | undefined) {
+  const text = [error?.message, error?.details].filter(Boolean).join(" ").toLowerCase();
+  return isPostgresUniqueViolation(error) && text.includes("idx_care_plans_member_track_unique");
+}
+
 function assertCarePlanTrack(value: string | null | undefined): CarePlanTrack {
   if (isCarePlanTrack(value)) return value;
   throw new Error(`Invalid care plan track value: ${value ?? "(null)"}`);
@@ -633,6 +643,19 @@ async function syncCarePlanSectionsToCanonical(
     .from("care_plan_sections")
     .upsert(normalizedSections, { onConflict: "care_plan_id,section_type" });
   if (error) throw new Error(error.message);
+}
+
+async function findCarePlanRootByMemberTrack(memberId: string, track: CarePlanTrack, serviceRole = false) {
+  const supabase = await createClient({ serviceRole });
+  const { data, error } = await supabase
+    .from("care_plans")
+    .select("id")
+    .eq("member_id", memberId)
+    .eq("track", track)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? String(data.id) : null;
 }
 
 export async function getCarePlanParticipationSummary(memberId: string): Promise<CarePlanParticipationSummary> {
@@ -1033,6 +1056,10 @@ export async function createCarePlan(input: {
   actor: { id: string; fullName: string; signatureName: string; role: string };
 }) {
   const canonicalMemberId = await resolveCarePlanMemberId(input.memberId, "createCarePlan");
+  const existingCarePlanId = await findCarePlanRootByMemberTrack(canonicalMemberId, input.track);
+  if (existingCarePlanId) {
+    throw new Error("A care plan already exists for this member and track. Review the existing plan instead of creating a new root record.");
+  }
   const supabase = await createClient();
   const now = toEasternISO();
   const completionDate = input.reviewDate;
@@ -1095,7 +1122,12 @@ export async function createCarePlan(input: {
     })
     .select("*, member:members!care_plans_member_id_fkey(display_name)")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (isCarePlanRootUniqueViolation(error)) {
+      throw new Error("A care plan already exists for this member and track. Review the existing plan instead of creating a new root record.");
+    }
+    throw new Error(error.message);
+  }
 
   const createdCarePlanId = String(data.id);
   await syncCarePlanSectionsToCanonical(createdCarePlanId, input.track, normalizedSections);

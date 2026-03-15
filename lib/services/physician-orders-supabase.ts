@@ -47,6 +47,7 @@ export {
 export type PhysicianOrderStatus = "Draft" | "Sent" | "Signed" | "Expired" | "Superseded";
 export type ProviderSignatureStatus = "Pending" | "Signed";
 export type PhysicianOrderRenewalStatus = "Current" | "Due Soon" | "Overdue" | "Missing Completion";
+export type PhysicianOrderClinicalSyncStatus = "not_signed" | "pending" | "synced";
 
 export interface PhysicianOrderMedication {
   id: string;
@@ -221,6 +222,8 @@ export interface PhysicianOrderForm {
   nextRenewalDueDate: string | null;
   signedBy: string | null;
   signedDate: string | null;
+  clinicalSyncStatus: PhysicianOrderClinicalSyncStatus;
+  clinicalSyncReady: boolean;
   supersededAt: string | null;
   supersededByPofId: string | null;
   updatedByUserId: string | null;
@@ -240,6 +243,7 @@ export interface PhysicianOrderIndexRow {
   nextRenewalDueDate: string | null;
   renewalStatus: PhysicianOrderRenewalStatus;
   signedDate: string | null;
+  clinicalSyncStatus: PhysicianOrderClinicalSyncStatus;
   updatedAt: string;
 }
 
@@ -598,6 +602,11 @@ type RpcSyncSignedPofToMemberClinicalProfileRow = {
   member_command_center_id: string | null;
 };
 
+type PofPostSignQueueStatusRow = {
+  physician_order_id: string;
+  status: "queued" | "completed";
+};
+
 const RPC_SIGN_PHYSICIAN_ORDER = "rpc_sign_physician_order";
 const RPC_SYNC_SIGNED_POF_TO_MEMBER_CLINICAL_PROFILE = "rpc_sync_signed_pof_to_member_clinical_profile";
 
@@ -655,6 +664,42 @@ function toRpcSyncSignedPofToMemberClinicalProfileRow(data: unknown): RpcSyncSig
     member_health_profile_id: row.member_health_profile_id,
     member_command_center_id: clean(row.member_command_center_id) ?? null
   };
+}
+
+function resolveClinicalSyncStatus(input: {
+  status: PhysicianOrderStatus;
+  queueStatus?: "queued" | "completed" | null;
+}): PhysicianOrderClinicalSyncStatus {
+  if (input.status !== "Signed") return "not_signed";
+  return input.queueStatus === "completed" ? "synced" : "pending";
+}
+
+async function loadPostSignQueueStatusByPofIds(
+  pofIds: string[],
+  options?: {
+    serviceRole?: boolean;
+  }
+) {
+  const normalizedIds = [...new Set(pofIds.map((value) => clean(value)).filter((value): value is string => Boolean(value)))];
+  const statuses = new Map<string, "queued" | "completed">();
+  if (normalizedIds.length === 0) return statuses;
+
+  const supabase = await createClient({ serviceRole: options?.serviceRole ?? true });
+  const { data, error } = await supabase
+    .from("pof_post_sign_sync_queue")
+    .select("physician_order_id, status")
+    .in("physician_order_id", normalizedIds);
+  if (error) {
+    if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
+    throw new Error(error.message);
+  }
+
+  for (const row of (data ?? []) as PofPostSignQueueStatusRow[]) {
+    const pofId = clean(row.physician_order_id);
+    if (!pofId) continue;
+    statuses.set(pofId, row.status === "completed" ? "completed" : "queued");
+  }
+  return statuses;
 }
 
 async function invokeSignPhysicianOrderRpc(input: {
@@ -824,14 +869,16 @@ async function resolvePhysicianOrderMemberId(rawMemberId: string, actionLabel: s
   return canonical.memberId;
 }
 
-function rowToForm(row: any): PhysicianOrderForm {
+function rowToForm(row: any, clinicalSyncStatus?: PhysicianOrderClinicalSyncStatus): PhysicianOrderForm {
   const diagnosisRows = sanitizeDiagnosisRows(parseJsonArray<PhysicianOrderDiagnosis>(row.diagnoses, []));
   const allergyRows = sanitizeAllergyRows(parseJsonArray<PhysicianOrderAllergy>(row.allergies, []));
   const medications = sanitizeMedicationRows(parseJsonArray<PhysicianOrderMedication>(row.medications, []));
   const standingOrders = parseJsonArray<string>(row.standing_orders, []);
   const careInformation = parseJsonObject<PhysicianOrderCareInformation>(row.clinical_support, defaultCareInformation());
   const operationalFlags = parseJsonObject<PhysicianOrderOperationalFlags>(row.operational_flags, defaultOperationalFlags());
+  const status = toStatus(row.status);
   const providerSignatureStatus: ProviderSignatureStatus = row.signed_at ? "Signed" : "Pending";
+  const resolvedClinicalSyncStatus = clinicalSyncStatus ?? resolveClinicalSyncStatus({ status, queueStatus: null });
 
   return {
     id: row.id,
@@ -857,7 +904,7 @@ function rowToForm(row: any): PhysicianOrderForm {
     providerName: row.provider_name,
     providerSignature: row.provider_signature,
     providerSignatureDate: row.provider_signature_date,
-    status: toStatus(row.status),
+    status,
     providerSignatureStatus,
     createdByUserId: row.created_by_user_id,
     createdByName: row.created_by_name,
@@ -868,6 +915,8 @@ function rowToForm(row: any): PhysicianOrderForm {
     nextRenewalDueDate: row.next_renewal_due_date,
     signedBy: row.signed_by_name ?? row.provider_name,
     signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
+    clinicalSyncStatus: resolvedClinicalSyncStatus,
+    clinicalSyncReady: resolvedClinicalSyncStatus === "synced",
     supersededAt: row.superseded_at,
     supersededByPofId: row.superseded_by,
     updatedByUserId: row.updated_by_user_id,
@@ -911,20 +960,32 @@ export async function getPhysicianOrders(filters?: {
     throw new Error(error.message);
   }
 
+  const queueStatuses = await loadPostSignQueueStatusByPofIds(
+    ((data ?? []) as Array<{ id: string }>).map((row) => String(row.id)),
+    { serviceRole: true }
+  );
+
   return (data ?? [])
-    .map((row: any) => ({
+    .map((row: any) => {
+      const status = toStatus(row.status);
+      return {
       id: row.id,
       memberId: row.member_id,
       memberName: row.members?.display_name ?? "Unknown Member",
-      status: toStatus(row.status),
+      status,
       levelOfCare: row.level_of_care,
       providerName: row.provider_name,
       completedDate: row.sent_at ? String(row.sent_at).slice(0, 10) : null,
       nextRenewalDueDate: row.next_renewal_due_date,
       renewalStatus: resolveRenewalStatus(row.next_renewal_due_date),
       signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
+      clinicalSyncStatus: resolveClinicalSyncStatus({
+        status,
+        queueStatus: queueStatuses.get(String(row.id)) ?? null
+      }),
       updatedAt: row.updated_at
-    }))
+    };
+    })
     .filter((row) => {
       const q = (filters?.q ?? "").trim().toLowerCase();
       if (!q) return true;
@@ -950,7 +1011,20 @@ export async function getPhysicianOrdersForMember(memberId: string) {
     }
     throw new Error(error.message);
   }
-  return (data ?? []).map(rowToForm);
+  const rows = data ?? [];
+  const queueStatuses = await loadPostSignQueueStatusByPofIds(
+    rows.map((row: any) => String(row.id)),
+    { serviceRole: true }
+  );
+  return rows.map((row: any) =>
+    rowToForm(
+      row,
+      resolveClinicalSyncStatus({
+        status: toStatus(row.status),
+        queueStatus: queueStatuses.get(String(row.id)) ?? null
+      })
+    )
+  );
 }
 
 export async function getActivePhysicianOrderForMember(memberId: string) {
@@ -966,7 +1040,17 @@ export async function getActivePhysicianOrderForMember(memberId: string) {
     if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
     throw new Error(error.message);
   }
-  return data ? rowToForm(data) : null;
+  if (!data) return null;
+  const queueStatuses = await loadPostSignQueueStatusByPofIds([String((data as { id: string }).id)], {
+    serviceRole: true
+  });
+  return rowToForm(
+    data,
+    resolveClinicalSyncStatus({
+      status: toStatus((data as { status: string }).status),
+      queueStatus: queueStatuses.get(String((data as { id: string }).id)) ?? null
+    })
+  );
 }
 
 export async function getPhysicianOrderById(
@@ -985,7 +1069,27 @@ export async function getPhysicianOrderById(
     if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
     throw new Error(error.message);
   }
-  return data ? rowToForm(data) : null;
+  if (!data) return null;
+  const queueStatuses = await loadPostSignQueueStatusByPofIds([String((data as { id: string }).id)], {
+    serviceRole: true
+  });
+  return rowToForm(
+    data,
+    resolveClinicalSyncStatus({
+      status: toStatus((data as { status: string }).status),
+      queueStatus: queueStatuses.get(String((data as { id: string }).id)) ?? null
+    })
+  );
+}
+
+export async function getPhysicianOrderClinicalSyncState(
+  pofId: string,
+  options?: {
+    serviceRole?: boolean;
+  }
+): Promise<PhysicianOrderClinicalSyncStatus> {
+  const form = await getPhysicianOrderById(pofId, { serviceRole: options?.serviceRole });
+  return form?.clinicalSyncStatus ?? "not_signed";
 }
 
 function setIfBlank(current: string | null | undefined, fallback: unknown) {
@@ -1172,6 +1276,8 @@ export async function buildNewPhysicianOrderDraft(input: {
     nextRenewalDueDate: null,
     signedBy: null,
     signedDate: null,
+    clinicalSyncStatus: "not_signed",
+    clinicalSyncReady: false,
     supersededAt: null,
     supersededByPofId: null,
     updatedByUserId: input.actor.id,
@@ -1586,7 +1692,7 @@ export async function signPhysicianOrder(
 export async function retryQueuedPhysicianOrderPostSignSync(input?: {
   limit?: number;
   serviceRole?: boolean;
-  actor?: { id: string; fullName: string };
+  actor?: { id: string | null; fullName: string | null };
 }) {
   const serviceRole = input?.serviceRole ?? true;
   const now = toEasternISO();

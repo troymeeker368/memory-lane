@@ -1034,7 +1034,7 @@ export async function documentScheduledMarAdministration(input: {
   const supabase = await createClient({ serviceRole: input.serviceRole });
   const { data: scheduleRowData, error: scheduleError } = await supabase
     .from("mar_schedules")
-    .select("id, member_id, pof_medication_id, medication_name, dose, route, scheduled_time")
+    .select("id, member_id, pof_medication_id, medication_name, dose, route, scheduled_time, active, prn")
     .eq("id", input.marScheduleId)
     .maybeSingle();
   if (scheduleError) throwMarSupabaseError(scheduleError, "mar_schedules");
@@ -1048,7 +1048,42 @@ export async function documentScheduledMarAdministration(input: {
     dose: string | null;
     route: string | null;
     scheduled_time: string;
+    active: boolean | null;
+    prn: boolean | null;
   };
+
+  if (!scheduleRow.active) {
+    throw new Error("The selected MAR schedule is no longer active.");
+  }
+  if (scheduleRow.prn) {
+    throw new Error("Scheduled MAR documentation cannot be used for PRN medications.");
+  }
+
+  const { data: medicationData, error: medicationError } = await supabase
+    .from("pof_medications")
+    .select("id, active, given_at_center, prn, scheduled_times")
+    .eq("id", scheduleRow.pof_medication_id)
+    .maybeSingle();
+  if (medicationError) throwMarSupabaseError(medicationError, "pof_medications");
+  if (!medicationData) {
+    throw new Error("The medication linked to this MAR schedule no longer exists.");
+  }
+
+  const medication = medicationData as {
+    id: string;
+    active: boolean | null;
+    given_at_center: boolean | null;
+    prn: boolean | null;
+    scheduled_times: string[] | null;
+  };
+
+  if (!medication.active || !medication.given_at_center || medication.prn) {
+    throw new Error("The linked medication is not an active center-administered scheduled medication.");
+  }
+  const normalizedScheduledTimes = normalizeScheduledTimes(medication.scheduled_times);
+  if (normalizedScheduledTimes.length === 0) {
+    throw new Error("The linked medication no longer has an active scheduled-dose configuration.");
+  }
 
   const { data: existingAdministration, error: existingAdministrationError } = await supabase
     .from("mar_administrations")

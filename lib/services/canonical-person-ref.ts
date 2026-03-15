@@ -69,6 +69,13 @@ function debugCanonicalIdentity(event: string, payload: Record<string, unknown>)
   console.info(`[canonical-person-ref] ${event}`, payload);
 }
 
+function duplicateLeadLinkError(actionLabel: string, leadId: string, memberIds: string[]) {
+  const normalizedIds = memberIds.filter(Boolean).join(", ");
+  return new Error(
+    `${actionLabel} found multiple members linked to lead ${leadId}. Clean duplicate members.source_lead_id rows before continuing. Conflicting member ids: ${normalizedIds}.`
+  );
+}
+
 function isRlsRecursionOrTimeoutError(error: PostgrestErrorLike | null | undefined) {
   const code = String(error?.code ?? "");
   const text = [error?.message, error?.details, error?.hint].filter(Boolean).join(" ").toLowerCase();
@@ -172,14 +179,18 @@ async function getMemberByLeadId(leadId: string, serviceRole = false) {
     .from("members")
     .select("id, display_name, status, enrollment_date, dob, source_lead_id")
     .eq("source_lead_id", leadId)
-    .maybeSingle();
+    .limit(2);
   if (error) {
     if (!serviceRole && isRlsRecursionOrTimeoutError(error)) {
       return await getMemberByLeadId(leadId, true);
     }
     throw new Error(error.message);
   }
-  return (data as MemberIdentityRow | null) ?? null;
+  const rows = (data ?? []) as MemberIdentityRow[];
+  if (rows.length > 1) {
+    throw duplicateLeadLinkError("getMemberByLeadId", leadId, rows.map((row) => row.id));
+  }
+  return rows[0] ?? null;
 }
 
 export async function ensureCanonicalMemberForLead(
@@ -275,13 +286,7 @@ export async function listCanonicalMemberLinksForLeadIds(
     const leadId = asUuid(row.source_lead_id);
     if (!leadId) continue;
     if (links.has(leadId)) {
-      debugCanonicalIdentity("duplicate-lead-link", {
-        actionLabel,
-        leadId,
-        existingMemberId: links.get(leadId)?.memberId ?? "",
-        duplicateMemberId: row.id
-      });
-      continue;
+      throw duplicateLeadLinkError(actionLabel, leadId, [links.get(leadId)?.memberId ?? "", row.id]);
     }
     links.set(leadId, {
       leadId,

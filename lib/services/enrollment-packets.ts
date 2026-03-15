@@ -223,6 +223,16 @@ function cleanEmail(value: string | null | undefined) {
   return normalized ? normalized.toLowerCase() : null;
 }
 
+function isPostgresUniqueViolation(error: { code?: string | null; message?: string | null; details?: string | null } | null | undefined) {
+  const text = [error?.message, error?.details].filter(Boolean).join(" ").toLowerCase();
+  return error?.code === "23505" || text.includes("duplicate key value") || text.includes("unique constraint");
+}
+
+function isActiveEnrollmentPacketUniqueViolation(error: { code?: string | null; message?: string | null; details?: string | null } | null | undefined) {
+  const text = [error?.message, error?.details].filter(Boolean).join(" ").toLowerCase();
+  return isPostgresUniqueViolation(error) && text.includes("idx_enrollment_packet_requests_active_member_unique");
+}
+
 function normalizeStaffTransportation(value: string | null | undefined): StaffTransportationOption {
   const normalized = clean(value);
   if (!normalized) {
@@ -623,17 +633,13 @@ async function invokeFinalizeEnrollmentPacketCompletionRpc(input: {
   }
 }
 
-async function listActivePacketRows(memberId: string, leadId: string | null) {
+async function listActivePacketRows(memberId: string) {
   const admin = createSupabaseAdminClient();
-  let query = admin
+  const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select("*")
     .eq("member_id", memberId)
     .order("created_at", { ascending: false });
-  if (leadId) {
-    query = query.eq("lead_id", leadId);
-  }
-  const { data, error } = await query;
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as EnrollmentPacketRequestRow[];
   return rows.filter((row) => {
@@ -1007,7 +1013,12 @@ async function prepareEnrollmentPacketRequestForDelivery(input: {
         updated_at: input.preparedAt
       })
       .eq("id", packetId);
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (isActiveEnrollmentPacketUniqueViolation(error)) {
+        throw new Error("An active enrollment packet already exists for this member.");
+      }
+      throw new Error(error.message);
+    }
   } else {
     const { error } = await admin.from("enrollment_packet_requests").insert({
       id: packetId,
@@ -1024,7 +1035,12 @@ async function prepareEnrollmentPacketRequestForDelivery(input: {
       completed_at: null,
       updated_at: input.preparedAt
     });
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (isActiveEnrollmentPacketUniqueViolation(error)) {
+        throw new Error("An active enrollment packet already exists for this member.");
+      }
+      throw new Error(error.message);
+    }
   }
 
   await prepareEnrollmentPacketFields({
@@ -1222,7 +1238,7 @@ export async function sendEnrollmentPacketRequest(input: {
   const requiredCaregiverEmail = caregiverEmail!;
   const memberNameParts = splitMemberName(lead?.member_name ?? member.display_name);
 
-  const active = await listActivePacketRows(member.id, lead?.id ?? null);
+  const active = await listActivePacketRows(member.id);
   const blockingActive = active.find((row) => {
     const status = toStatus(row.status);
     if (status === "sent" || status === "opened" || status === "partially_completed") {
@@ -1804,6 +1820,8 @@ export async function submitPublicEnrollmentPacket(input: {
 
   const member = await getMemberById(request.member_id);
   if (!member) throw new Error("Member record was not found.");
+  let completionRepairNeeded = false;
+  let failedMappingRunId: string | null = null;
 
   try {
     await savePublicEnrollmentPacketProgress({
@@ -1876,6 +1894,7 @@ export async function submitPublicEnrollmentPacket(input: {
       uploadedByName: caregiverTypedName,
       dataUrl: input.caregiverSignatureImageDataUrl.trim()
     });
+    completionRepairNeeded = true;
 
     const uploadedArtifacts: Array<{ uploadCategory: EnrollmentPacketUploadCategory; memberFileId: string | null }> = [
       { uploadCategory: "signature_artifact", memberFileId: signatureArtifact.memberFileId }
@@ -1936,6 +1955,7 @@ export async function submitPublicEnrollmentPacket(input: {
         memberFileId: artifact.memberFileId
       }))
     });
+    failedMappingRunId = downstreamMapping.mappingRunId;
 
     const filedAt = toEasternISO();
     await invokeFinalizeEnrollmentPacketCompletionRpc({
@@ -2035,6 +2055,24 @@ export async function submitPublicEnrollmentPacket(input: {
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete enrollment packet.";
+    if (completionRepairNeeded) {
+      try {
+        const admin = createSupabaseAdminClient();
+        const { error: packetStateError } = await admin
+          .from("enrollment_packet_requests")
+          .update({
+            status: "partially_completed",
+            updated_at: toEasternISO()
+          })
+          .eq("id", request.id)
+          .neq("status", "filed");
+        if (packetStateError) {
+          console.error("[enrollment-packets] unable to mark packet partially completed after failure", packetStateError);
+        }
+      } catch (packetStateError) {
+        console.error("[enrollment-packets] unable to persist partial completion repair state", packetStateError);
+      }
+    }
     await recordWorkflowEvent({
       eventType: "enrollment_packet_failed",
       entityType: "enrollment_packet_request",
@@ -2047,7 +2085,9 @@ export async function submitPublicEnrollmentPacket(input: {
         member_id: member.id,
         lead_id: request.lead_id,
         phase: "completion",
-        error: reason
+        error: reason,
+        mapping_run_id: failedMappingRunId,
+        repair_needed: completionRepairNeeded
       }
     });
     await recordImmediateSystemAlert({
@@ -2059,7 +2099,9 @@ export async function submitPublicEnrollmentPacket(input: {
       metadata: {
         member_id: member.id,
         lead_id: request.lead_id,
-        error: reason
+        error: reason,
+        mapping_run_id: failedMappingRunId,
+        repair_needed: completionRepairNeeded
       }
     });
     throw error;

@@ -16,6 +16,7 @@ import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 type PhysicianOrderListRow = {
   id: string;
   status: string;
+  clinicalSyncStatus: "not_signed" | "pending" | "synced";
   providerName: string | null;
   completedDate: string | null;
   signedDate: string | null;
@@ -289,6 +290,7 @@ export function MemberCommandCenterPofSection({
             <tr>
               <th>POF</th>
               <th>Order Status</th>
+              <th>Clinical Sync</th>
               <th>E-Sign Status</th>
               <th>Provider</th>
               <th>Provider Email</th>
@@ -300,7 +302,7 @@ export function MemberCommandCenterPofSection({
           <tbody>
             {physicianOrders.length === 0 ? (
               <tr>
-                <td colSpan={8} className="text-sm text-muted">
+                <td colSpan={9} className="text-sm text-muted">
                   No physician orders saved for this member yet.
                 </td>
               </tr>
@@ -323,6 +325,7 @@ export function MemberCommandCenterPofSection({
                       </Link>
                     </td>
                     <td>{row.status}</td>
+                    <td>{row.clinicalSyncStatus === "synced" ? "Synced" : row.clinicalSyncStatus === "pending" ? "Pending" : "-"}</td>
                     <td>
                       <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${statusBadgeClass(eSignStatus)}`}>
                         {eSignStatus}

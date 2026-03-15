@@ -166,7 +166,7 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
     assessments: await (async () => {
       const assessmentsQuery = supabase
         .from("intake_assessments")
-        .select("id, assessment_date, total_score, recommended_track, admission_review_required, transport_appropriate, complete, completed_by, signature_status, signed_by, signed_at, created_at, member:members!intake_assessments_member_id_fkey(display_name)")
+        .select("id, assessment_date, total_score, recommended_track, admission_review_required, transport_appropriate, complete, completed_by, signature_status, signed_by, signed_at, draft_pof_status, created_at, member:members!intake_assessments_member_id_fkey(display_name)")
         .order("created_at", { ascending: false })
         .limit(50);
       const filteredAssessmentsQuery = staffScoped
@@ -193,6 +193,7 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
         signature_status: signature?.status ?? "unsigned",
         signed_by: signature?.signedByName ?? null,
         signed_at: signature?.signedAt ?? null,
+        draft_pof_status: row.draft_pof_status ?? "pending",
         member_name: relationDisplayName(row.member, "Unknown Member"),
         created_at: row.created_at
       };
