@@ -76,6 +76,8 @@ Intake assessment e-sign relies on:
 
 Do not bypass canonical e-sign services when creating, signing, or voiding requests.
 
+Workflow hardening rollout and retry-runner setup are documented in [workflow-hardening-rollout.md](./workflow-hardening-rollout.md).
+
 ## Migration Discipline
 
 - Apply forward-only migrations in numeric order.

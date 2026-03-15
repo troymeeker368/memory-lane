@@ -58,6 +58,11 @@ type MappingRecord = {
   note: string | null;
 };
 
+type RollbackAction = {
+  label: string;
+  run: () => Promise<void>;
+};
+
 export type EnrollmentPacketMappingSummary = {
   mappingRunId: string;
   systems: {
@@ -472,24 +477,58 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
 
   const mappingRunId = String((runRow as { id: string }).id);
   const records: MappingRecord[] = [];
+  const rollbackActions: RollbackAction[] = [];
 
   try {
     const { data: memberRow, error: memberError } = await admin
       .from("members")
-      .select("id, preferred_name, legal_first_name, legal_last_name, dob, enrollment_date, ssn_last4")
+      .select("id, preferred_name, legal_first_name, legal_last_name, dob, enrollment_date, ssn_last4, updated_at")
       .eq("id", input.memberId)
       .maybeSingle();
     if (memberError) throw new Error(memberError.message);
     if (!memberRow) throw new Error("Member not found for enrollment packet mapping.");
 
+    const { data: existingMccRow, error: existingMccError } = await admin
+      .from("member_command_centers")
+      .select("*")
+      .eq("member_id", input.memberId)
+      .maybeSingle();
+    if (existingMccError) throw new Error(existingMccError.message);
+
     const mccProfile = await ensureMemberCommandCenterProfileSupabase(input.memberId, {
       serviceRole: true,
       actor: { userId: input.senderUserId, name: input.senderName }
     });
+    if (!existingMccRow) {
+      rollbackActions.push({
+        label: "delete created member_command_centers row",
+        run: async () => {
+          const { error } = await admin.from("member_command_centers").delete().eq("id", mccProfile.id);
+          if (error) throw new Error(error.message);
+        }
+      });
+    }
+
+    const { data: existingAttendanceRow, error: existingAttendanceError } = await admin
+      .from("member_attendance_schedules")
+      .select("*")
+      .eq("member_id", input.memberId)
+      .maybeSingle();
+    if (existingAttendanceError) throw new Error(existingAttendanceError.message);
+
     const attendanceSchedule = await ensureMemberAttendanceScheduleSupabase(input.memberId, {
       serviceRole: true,
       actor: { userId: input.senderUserId, name: input.senderName }
     });
+    if (!existingAttendanceRow) {
+      rollbackActions.push({
+        label: "delete created member_attendance_schedules row",
+        run: async () => {
+          const { error } = await admin.from("member_attendance_schedules").delete().eq("id", attendanceSchedule.id);
+          if (error) throw new Error(error.message);
+        }
+      });
+    }
 
     const { data: contactsRows, error: contactsError } = await admin
       .from("member_contacts")
@@ -504,6 +543,7 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       .eq("member_id", input.memberId)
       .maybeSingle();
     if (mhpError) throw new Error(mhpError.message);
+    const mhpExisted = Boolean(mhpRow);
     if (!mhpRow) {
       const { error: mhpInsertError } = await admin.from("member_health_profiles").insert({
         member_id: input.memberId,
@@ -521,6 +561,15 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       if (reloadedMhpError) throw new Error(reloadedMhpError.message);
       mhpRow = reloadedMhp;
     }
+    if (!mhpExisted && mhpRow) {
+      rollbackActions.push({
+        label: "delete created member_health_profiles row",
+        run: async () => {
+          const { error } = await admin.from("member_health_profiles").delete().eq("member_id", input.memberId);
+          if (error) throw new Error(error.message);
+        }
+      });
+    }
 
     const memberPatch: Record<string, unknown> = { updated_at: now };
     MEMBER_STRING_MAP.forEach((map) => {
@@ -537,8 +586,19 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
     });
 
     if (Object.keys(memberPatch).length > 1) {
+      const memberRollbackPatch = Object.keys(memberPatch).reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = (memberRow as Record<string, unknown>)[key];
+        return acc;
+      }, {});
       const { error } = await admin.from("members").update(memberPatch).eq("id", input.memberId);
       if (error) throw new Error(error.message);
+      rollbackActions.push({
+        label: "restore members patch",
+        run: async () => {
+          const { error: rollbackError } = await admin.from("members").update(memberRollbackPatch).eq("id", input.memberId);
+          if (rollbackError) throw new Error(rollbackError.message);
+        }
+      });
     }
 
     const mccPatch: Record<string, unknown> = {
@@ -593,8 +653,22 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
     });
 
     if (Object.keys(mccPatch).length > 3) {
+      const mccRollbackPatch = Object.keys(mccPatch).reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = (existingMccRow ?? mccProfile as unknown as Record<string, unknown>)[key];
+        return acc;
+      }, {});
       const { error } = await admin.from("member_command_centers").update(mccPatch).eq("id", mccProfile.id);
       if (error) throw new Error(error.message);
+      rollbackActions.push({
+        label: "restore member_command_centers patch",
+        run: async () => {
+          const { error: rollbackError } = await admin
+            .from("member_command_centers")
+            .update(mccRollbackPatch)
+            .eq("id", mccProfile.id);
+          if (rollbackError) throw new Error(rollbackError.message);
+        }
+      });
     }
 
     const attendancePatch: Record<string, unknown> = {
@@ -706,8 +780,22 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
     }
 
     if (Object.keys(attendancePatch).length > 3) {
+      const attendanceRollbackPatch = Object.keys(attendancePatch).reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = (existingAttendanceRow ?? attendanceSchedule as unknown as Record<string, unknown>)[key];
+        return acc;
+      }, {});
       const { error } = await admin.from("member_attendance_schedules").update(attendancePatch).eq("id", attendanceSchedule.id);
       if (error) throw new Error(error.message);
+      rollbackActions.push({
+        label: "restore member_attendance_schedules patch",
+        run: async () => {
+          const { error: rollbackError } = await admin
+            .from("member_attendance_schedules")
+            .update(attendanceRollbackPatch)
+            .eq("id", attendanceSchedule.id);
+          if (rollbackError) throw new Error(rollbackError.message);
+        }
+      });
     }
 
     const contacts = (contactsRows ?? []) as Array<Record<string, unknown>>;
@@ -718,8 +806,9 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
 
     const primaryName = clean(payload.primaryContactName);
     if (!responsibleContact && primaryName) {
+      const responsibleContactId = `contact-${randomUUID().replace(/-/g, "")}`;
       const { error } = await admin.from("member_contacts").insert({
-        id: `contact-${randomUUID().replace(/-/g, "")}`,
+        id: responsibleContactId,
         member_id: input.memberId,
         contact_name: primaryName,
         relationship_to_member: clean(payload.primaryContactRelationship),
@@ -739,6 +828,13 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
         updated_at: now
       });
       if (error) throw new Error(error.message);
+      rollbackActions.push({
+        label: "delete created responsible party contact",
+        run: async () => {
+          const { error: rollbackError } = await admin.from("member_contacts").delete().eq("id", responsibleContactId);
+          if (rollbackError) throw new Error(rollbackError.message);
+        }
+      });
       addRecord(records, {
         targetSystem: "mcc",
         targetTable: "member_contacts",
@@ -761,8 +857,9 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       });
 
       if (!existingSecondary) {
+        const secondaryContactId = `contact-${randomUUID().replace(/-/g, "")}`;
         const { error } = await admin.from("member_contacts").insert({
-          id: `contact-${randomUUID().replace(/-/g, "")}`,
+          id: secondaryContactId,
           member_id: input.memberId,
           contact_name: secondaryName,
           relationship_to_member: clean(payload.secondaryContactRelationship),
@@ -782,6 +879,13 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
           updated_at: now
         });
         if (error) throw new Error(error.message);
+        rollbackActions.push({
+          label: "delete created emergency contact",
+          run: async () => {
+            const { error: rollbackError } = await admin.from("member_contacts").delete().eq("id", secondaryContactId);
+            if (rollbackError) throw new Error(rollbackError.message);
+          }
+        });
         addRecord(records, {
           targetSystem: "mcc",
           targetTable: "member_contacts",
@@ -943,8 +1047,22 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
     });
 
     if (Object.keys(mhpPatch).length > 3) {
+      const mhpRollbackPatch = Object.keys(mhpPatch).reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = (mhpRow as Record<string, unknown>)[key];
+        return acc;
+      }, {});
       const { error } = await admin.from("member_health_profiles").update(mhpPatch).eq("member_id", input.memberId);
       if (error) throw new Error(error.message);
+      rollbackActions.push({
+        label: "restore member_health_profiles patch",
+        run: async () => {
+          const { error: rollbackError } = await admin
+            .from("member_health_profiles")
+            .update(mhpRollbackPatch)
+            .eq("member_id", input.memberId);
+          if (rollbackError) throw new Error(rollbackError.message);
+        }
+      });
     }
 
     const behavioralRiskSelections = payload.behavioralObservations
@@ -1013,31 +1131,55 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       ])
     };
 
+    const { data: existingPofStageRow, error: existingPofStageError } = await admin
+      .from("enrollment_packet_pof_staging")
+      .select("*")
+      .eq("packet_id", input.packetId)
+      .maybeSingle();
+    if (existingPofStageError) throw new Error(existingPofStageError.message);
+
+    const pofStagePayload = {
+      packet_id: input.packetId,
+      member_id: input.memberId,
+      pcp_name: pofPrefillPayload.providerName,
+      physician_phone: pofPrefillPayload.providerPhone,
+      physician_fax: pofPrefillPayload.providerFax,
+      physician_address: pofPrefillPayload.providerAddress,
+      pharmacy: pofPrefillPayload.pharmacy,
+      allergies_summary: pofPrefillPayload.allergiesSummary,
+      dietary_restrictions: pofPrefillPayload.dietaryRestrictions,
+      oxygen_use: pofPrefillPayload.oxygenUse,
+      mobility_support: pofPrefillPayload.mobilitySupport,
+      adl_support: pofPrefillPayload.adlSupport,
+      diagnosis_placeholders: pofPrefillPayload.diagnosisPlaceholders,
+      intake_notes: pofPrefillPayload.intakeNotes,
+      prefill_payload: pofPrefillPayload,
+      review_required: true,
+      updated_by_user_id: input.senderUserId,
+      updated_by_name: input.senderName,
+      updated_at: now
+    };
+
     const { error: pofStageError } = await admin.from("enrollment_packet_pof_staging").upsert(
-      {
-        packet_id: input.packetId,
-        member_id: input.memberId,
-        pcp_name: pofPrefillPayload.providerName,
-        physician_phone: pofPrefillPayload.providerPhone,
-        physician_fax: pofPrefillPayload.providerFax,
-        physician_address: pofPrefillPayload.providerAddress,
-        pharmacy: pofPrefillPayload.pharmacy,
-        allergies_summary: pofPrefillPayload.allergiesSummary,
-        dietary_restrictions: pofPrefillPayload.dietaryRestrictions,
-        oxygen_use: pofPrefillPayload.oxygenUse,
-        mobility_support: pofPrefillPayload.mobilitySupport,
-        adl_support: pofPrefillPayload.adlSupport,
-        diagnosis_placeholders: pofPrefillPayload.diagnosisPlaceholders,
-        intake_notes: pofPrefillPayload.intakeNotes,
-        prefill_payload: pofPrefillPayload,
-        review_required: true,
-        updated_by_user_id: input.senderUserId,
-        updated_by_name: input.senderName,
-        updated_at: now
-      },
+      pofStagePayload,
       { onConflict: "packet_id" }
     );
     if (pofStageError) throw new Error(pofStageError.message);
+    rollbackActions.push({
+      label: "restore enrollment_packet_pof_staging row",
+      run: async () => {
+        if (!existingPofStageRow) {
+          const { error: rollbackError } = await admin.from("enrollment_packet_pof_staging").delete().eq("packet_id", input.packetId);
+          if (rollbackError) throw new Error(rollbackError.message);
+          return;
+        }
+        const { error: rollbackError } = await admin
+          .from("enrollment_packet_pof_staging")
+          .update(existingPofStageRow as Record<string, unknown>)
+          .eq("packet_id", input.packetId);
+        if (rollbackError) throw new Error(rollbackError.message);
+      }
+    });
 
     [
       "pcpName",
@@ -1177,9 +1319,21 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       conflictIds: runSummary.conflictIds
     };
   } catch (error) {
+    const rollbackFailures: string[] = [];
+    while (rollbackActions.length > 0) {
+      const rollback = rollbackActions.pop();
+      if (!rollback) continue;
+      try {
+        await rollback.run();
+      } catch (rollbackError) {
+        const message = rollbackError instanceof Error ? rollbackError.message : "Unknown rollback error.";
+        rollbackFailures.push(`${rollback.label}: ${message}`);
+      }
+    }
     const failureSummary = {
       error: error instanceof Error ? error.message : "Enrollment packet mapping failed.",
-      recordsCaptured: records.length
+      recordsCaptured: records.length,
+      rollbackFailures
     };
     await admin
       .from("enrollment_packet_mapping_runs")

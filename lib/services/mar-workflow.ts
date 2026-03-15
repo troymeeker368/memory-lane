@@ -9,6 +9,7 @@ import {
   type MarTodayRow,
   type MarWorkflowSnapshot
 } from "@/lib/services/mar-shared";
+import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import { createClient } from "@/lib/supabase/server";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
@@ -1138,6 +1139,42 @@ export async function documentScheduledMarAdministration(input: {
       not_given_reason: reason
     }
   });
+  try {
+    await recordWorkflowMilestone({
+      event: {
+        event_type: "mar_administration_documented",
+        entity_type: "mar_administration",
+        entity_id: inserted.id as string,
+        actor_type: "user",
+        actor_id: input.actor.userId,
+        actor_user_id: input.actor.userId,
+        status: input.status === "Given" ? "given" : "not_given",
+        severity: "low",
+        metadata: {
+          member_id: scheduleRow.member_id,
+          mar_schedule_id: scheduleRow.id,
+          pof_medication_id: scheduleRow.pof_medication_id,
+          scheduled_time: scheduleRow.scheduled_time,
+          not_given_reason: reason
+        }
+      },
+      notification: {
+        recipientUserId: input.actor.userId,
+        title: "MAR Dose Documented",
+        message: `${scheduleRow.medication_name} documented for MAR`,
+        entityType: "mar_administration",
+        entityId: inserted.id as string,
+        metadata: {
+          memberId: scheduleRow.member_id,
+          marScheduleId: scheduleRow.id,
+          pofMedicationId: scheduleRow.pof_medication_id
+        },
+        serviceRole: true
+      }
+    });
+  } catch (error) {
+    console.error("[mar-workflow] unable to emit scheduled MAR workflow milestone", error);
+  }
 
   return {
     administrationId: inserted.id as string,
@@ -1230,6 +1267,40 @@ export async function documentPrnMarAdministration(input: {
       prn_reason: reason
     }
   });
+  try {
+    await recordWorkflowMilestone({
+      event: {
+        event_type: "mar_administration_documented",
+        entity_type: "mar_administration",
+        entity_id: inserted.id as string,
+        actor_type: "user",
+        actor_id: input.actor.userId,
+        actor_user_id: input.actor.userId,
+        status: "given",
+        severity: "low",
+        metadata: {
+          member_id: medication.member_id,
+          pof_medication_id: medication.id,
+          source: "prn",
+          prn_reason: reason
+        }
+      },
+      notification: {
+        recipientUserId: input.actor.userId,
+        title: "PRN MAR Documented",
+        message: `${medication.medication_name} PRN administration documented`,
+        entityType: "mar_administration",
+        entityId: inserted.id as string,
+        metadata: {
+          memberId: medication.member_id,
+          pofMedicationId: medication.id
+        },
+        serviceRole: true
+      }
+    });
+  } catch (error) {
+    console.error("[mar-workflow] unable to emit PRN MAR workflow milestone", error);
+  }
 
   return {
     administrationId: inserted.id as string,

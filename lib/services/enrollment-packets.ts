@@ -1422,6 +1422,41 @@ export async function sendEnrollmentPacketRequest(input: {
       sent_at: sentAt
     }
   });
+  try {
+    await recordWorkflowMilestone({
+      event: {
+        event_type: "enrollment_packet_sent",
+        entity_type: "enrollment_packet_request",
+        entity_id: requestId,
+        actor_type: "user",
+        actor_id: senderUserId,
+        actor_user_id: senderUserId,
+        status: "sent",
+        severity: "low",
+        metadata: {
+          member_id: member.id,
+          lead_id: lead?.id ?? null,
+          caregiver_email: requiredCaregiverEmail,
+          sent_at: sentAt
+        }
+      },
+      notification: {
+        recipientUserId: senderUserId,
+        title: "Enrollment Packet Sent",
+        message: `Enrollment packet sent for ${member.display_name}`,
+        entityType: "enrollment_packet_request",
+        entityId: requestId,
+        metadata: {
+          memberId: member.id,
+          leadId: lead?.id ?? null,
+          packetId: requestId
+        },
+        serviceRole: true
+      }
+    });
+  } catch (error) {
+    console.error("[enrollment-packets] unable to emit post-send workflow milestone", error);
+  }
 
   if (lead?.id) {
     await addLeadActivity({

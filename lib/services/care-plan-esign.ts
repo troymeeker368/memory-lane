@@ -439,6 +439,40 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
       expires_at: expiresAt
     }
   });
+  try {
+    await recordWorkflowMilestone({
+      event: {
+        event_type: "care_plan_sent",
+        entity_type: "care_plan",
+        entity_id: input.carePlanId,
+        actor_type: "user",
+        actor_id: input.actor.id,
+        actor_user_id: input.actor.id,
+        status: "sent",
+        severity: "low",
+        metadata: {
+          member_id: detail.carePlan.memberId,
+          caregiver_email: caregiverEmail,
+          sent_at: now,
+          expires_at: expiresAt
+        }
+      },
+      notification: {
+        recipientUserId: input.actor.id,
+        title: "Care Plan Sent",
+        message: `Care plan sent for ${detail.carePlan.memberName}`,
+        entityType: "care_plan",
+        entityId: input.carePlanId,
+        metadata: {
+          memberId: detail.carePlan.memberId,
+          carePlanId: input.carePlanId
+        },
+        serviceRole: true
+      }
+    });
+  } catch (error) {
+    console.error("[care-plan-esign] unable to emit post-send workflow milestone", error);
+  }
 
   const refreshed = await getCarePlanById(input.carePlanId);
   if (!refreshed) throw new Error("Care plan could not be loaded after send.");
@@ -671,7 +705,22 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
             caregiver_email: detail.carePlan.caregiverEmail,
             signature_image_url: signatureUri
           }
-        }
+        },
+        notification:
+          detail.carePlan.nurseSignedByUserId ?? detail.carePlan.nurseDesigneeUserId
+            ? {
+                recipientUserId: (detail.carePlan.nurseSignedByUserId ?? detail.carePlan.nurseDesigneeUserId)!,
+                title: "Care Plan Signed",
+                message: `Care plan signed for ${detail.carePlan.memberName}`,
+                entityType: "care_plan",
+                entityId: detail.carePlan.id,
+                metadata: {
+                  memberId: detail.carePlan.memberId,
+                  carePlanId: detail.carePlan.id
+                },
+                serviceRole: true
+              }
+            : undefined
       });
     } catch (error) {
       console.error("[care-plan-esign] unable to emit caregiver signature workflow milestone", error);

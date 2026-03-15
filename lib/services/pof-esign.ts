@@ -1051,6 +1051,41 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
       sent_at: sentAt
     }
   });
+  try {
+    await recordWorkflowMilestone({
+      event: {
+        event_type: "pof_request_sent",
+        entity_type: "pof_request",
+        entity_id: requestId,
+        actor_type: "user",
+        actor_id: input.actor.id,
+        actor_user_id: input.actor.id,
+        status: "sent",
+        severity: "low",
+        metadata: {
+          member_id: input.memberId,
+          physician_order_id: input.physicianOrderId,
+          provider_email: providerEmail,
+          sent_at: sentAt
+        }
+      },
+      notification: {
+        recipientUserId: input.actor.id,
+        title: "POF Sent",
+        message: `POF sent for ${form.memberNameSnapshot}`,
+        entityType: "pof_request",
+        entityId: requestId,
+        metadata: {
+          memberId: input.memberId,
+          physicianOrderId: input.physicianOrderId,
+          requestId
+        },
+        serviceRole: true
+      }
+    });
+  } catch (error) {
+    console.error("[pof-esign] unable to emit post-send workflow milestone", error);
+  }
 
   await setPhysicianOrderSentState({
     physicianOrderId: input.physicianOrderId,
@@ -1263,6 +1298,41 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
       resent_at: now
     }
   });
+  try {
+    await recordWorkflowMilestone({
+      event: {
+        event_type: "pof_request_sent",
+        entity_type: "pof_request",
+        entity_id: input.requestId,
+        actor_type: "user",
+        actor_id: input.actor.id,
+        actor_user_id: input.actor.id,
+        status: "sent",
+        severity: "low",
+        metadata: {
+          member_id: request.member_id,
+          physician_order_id: request.physician_order_id,
+          provider_email: providerEmail,
+          resent_at: now
+        }
+      },
+      notification: {
+        recipientUserId: input.actor.id,
+        title: "POF Re-sent",
+        message: `POF re-sent for ${form.memberNameSnapshot}`,
+        entityType: "pof_request",
+        entityId: input.requestId,
+        metadata: {
+          memberId: request.member_id,
+          physicianOrderId: request.physician_order_id,
+          requestId: input.requestId
+        },
+        serviceRole: true
+      }
+    });
+  } catch (error) {
+    console.error("[pof-esign] unable to emit post-resend workflow milestone", error);
+  }
 
   await setPhysicianOrderSentState({
     physicianOrderId: request.physician_order_id,
