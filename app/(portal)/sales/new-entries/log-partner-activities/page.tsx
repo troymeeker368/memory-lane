@@ -3,7 +3,7 @@ import Link from "next/link";
 import { SalesPartnerActivityForm } from "@/components/forms/sales-partner-activity-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import { getSalesFormLookupsSupabase, getSalesRecentActivitySnapshotSupabase } from "@/lib/services/sales-crm-supabase";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -11,12 +11,20 @@ export const dynamic = "force-dynamic";
 export default async function LogPartnerActivityPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   await requireModuleAccess("sales");
   const params = await searchParams;
-  const { openLeads, partners, referralSources, partnerActivities } = await getSalesWorkflows();
   const leadId = typeof params.leadId === "string" ? params.leadId : undefined;
   const partnerId = typeof params.partnerId === "string" ? params.partnerId : undefined;
   const referralSourceId = typeof params.referralSourceId === "string" ? params.referralSourceId : undefined;
+  const [{ partnerActivities }, { leads, partners, referralSources }] = await Promise.all([
+    getSalesRecentActivitySnapshotSupabase(),
+    getSalesFormLookupsSupabase({
+      leadLimit: 500,
+      includeLeadId: leadId,
+      includePartnerId: partnerId,
+      includeReferralSourceId: referralSourceId
+    })
+  ]);
 
-  const leadNameById = new Map(openLeads.map((lead: any) => [lead.id, lead.member_name]));
+  const leadNameById = new Map(leads.map((lead) => [lead.id, lead.member_name]));
 
   return (
     <div className="space-y-4">
@@ -24,7 +32,7 @@ export default async function LogPartnerActivityPage({ searchParams }: { searchP
         <CardTitle>Log Partner Activities</CardTitle>
         <div className="mt-3">
           <SalesPartnerActivityForm
-            leads={openLeads as any[]}
+            leads={leads as any[]}
             partners={partners as any[]}
             referralSources={referralSources as any[]}
             initialLeadId={leadId}

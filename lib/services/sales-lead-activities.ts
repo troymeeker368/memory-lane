@@ -8,11 +8,18 @@ import {
 } from "@/lib/canonical";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { resolveCanonicalLeadRef } from "@/lib/services/canonical-person-ref";
+import { applyLeadStageTransitionWithMemberUpsertSupabase } from "@/lib/services/sales-lead-conversion-supabase";
 import { applyLeadStageTransitionSupabase } from "@/lib/services/sales-lead-stage-supabase";
 import { createClient } from "@/lib/supabase/server";
+import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
 const optionalString = z.string().optional().or(z.literal(""));
+
+function clean(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
 
 export const salesLeadActivityInputSchema = z
   .object({
@@ -101,7 +108,7 @@ export async function createSalesLeadActivity(input: {
   const supabase = await createClient();
   const { data: lead, error: leadError } = await supabase
     .from("leads")
-    .select("id, member_name, stage, status, partner_id, referral_source_id")
+    .select("id, member_name, member_dob, member_start_date, stage, status, partner_id, referral_source_id, next_follow_up_date, next_follow_up_type")
     .eq("id", canonicalLead.leadId)
     .maybeSingle();
   if (leadError) throw new Error(leadError.message);
@@ -109,7 +116,11 @@ export async function createSalesLeadActivity(input: {
 
   const partnerId = input.activity.partnerId?.trim() || lead.partner_id || null;
   const referralSourceId = input.activity.referralSourceId?.trim() || lead.referral_source_id || null;
-  const { error: insertError } = await supabase.from("lead_activities").insert({
+  const nextFollowUpDate = clean(input.activity.nextFollowUpDate) ?? clean(lead.next_follow_up_date);
+  const nextFollowUpType = clean(input.activity.nextFollowUpType) ?? clean(lead.next_follow_up_type);
+  const { data: insertedActivity, error: insertError } = await supabase
+    .from("lead_activities")
+    .insert({
     lead_id: canonicalLead.leadId,
     member_name: lead.member_name,
     activity_at: input.activity.activityAt || toEasternISO(),
@@ -117,13 +128,15 @@ export async function createSalesLeadActivity(input: {
     outcome: input.activity.outcome,
     lost_reason: input.activity.lostReason || null,
     notes: input.activity.notes || null,
-    next_follow_up_date: input.activity.nextFollowUpDate || null,
-    next_follow_up_type: input.activity.nextFollowUpType || null,
+    next_follow_up_date: nextFollowUpDate,
+    next_follow_up_type: nextFollowUpType,
     completed_by_user_id: input.actor.id,
     completed_by_name: input.actor.fullName,
     partner_id: partnerId,
     referral_source_id: referralSourceId
-  });
+    })
+    .select("id")
+    .single();
   if (insertError) throw new Error(insertError.message);
 
   if (input.activity.outcome === "Not a fit") {
@@ -144,14 +157,41 @@ export async function createSalesLeadActivity(input: {
   }
 
   if (input.activity.outcome === "Enrollment completed" || input.activity.outcome === "Member start confirmed") {
-    await applyLeadStageTransitionSupabase({
+    const memberDisplayName = clean(lead.member_name);
+    if (!memberDisplayName) {
+      throw new Error(`${input.source} cannot convert lead ${lead.id} because member_name is blank.`);
+    }
+
+    const { data: linkedMembers, error: linkedMembersError } = await supabase
+      .from("members")
+      .select("id")
+      .eq("source_lead_id", canonicalLead.leadId)
+      .order("created_at", { ascending: true })
+      .limit(2);
+    if (linkedMembersError) throw new Error(linkedMembersError.message);
+    if ((linkedMembers ?? []).length > 1) {
+      throw new Error(`${input.source} found multiple members linked to lead ${canonicalLead.leadId}.`);
+    }
+
+    const linkedMemberId = linkedMembers?.[0]?.id ? String(linkedMembers[0].id) : null;
+    if (canonicalLead.memberId && linkedMemberId && canonicalLead.memberId !== linkedMemberId) {
+      throw new Error(
+        `${input.source} resolved lead ${canonicalLead.leadId} to member ${canonicalLead.memberId}, but the canonical linked member is ${linkedMemberId}.`
+      );
+    }
+
+    await applyLeadStageTransitionWithMemberUpsertSupabase({
       leadId: lead.id,
       requestedStage: "Closed - Won",
       requestedStatus: "Won",
       actorUserId: input.actor.id,
       actorName: input.actor.fullName,
       source: input.source,
-      reason: `Lead activity outcome: ${input.activity.outcome}.`
+      reason: `Lead activity outcome: ${input.activity.outcome}.`,
+      memberDisplayName,
+      memberDob: clean(lead.member_dob),
+      memberEnrollmentDate: clean(lead.member_start_date),
+      existingMemberId: canonicalLead.memberId ?? linkedMemberId
     });
   }
 
@@ -167,7 +207,27 @@ export async function createSalesLeadActivity(input: {
     }
   });
 
+  await recordWorkflowEvent({
+    eventType: "lead_activity_created",
+    entityType: "lead",
+    entityId: canonicalLead.leadId,
+    actorType: "user",
+    actorUserId: input.actor.id,
+    status: "created",
+    severity: "low",
+    metadata: {
+      activity_type: input.activity.activityType,
+      outcome: input.activity.outcome,
+      lost_reason: input.activity.lostReason || null,
+      next_follow_up_date: nextFollowUpDate,
+      next_follow_up_type: nextFollowUpType,
+      partner_id: partnerId,
+      referral_source_id: referralSourceId
+    }
+  });
+
   return {
-    leadId: lead.id
+    leadId: lead.id,
+    activityId: String(insertedActivity.id)
   };
 }

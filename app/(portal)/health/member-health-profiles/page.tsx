@@ -9,6 +9,12 @@ function firstString(value: string | string[] | undefined) {
   return value;
 }
 
+function parsePage(value: string | undefined) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.floor(parsed);
+}
+
 function getInitials(displayName: string) {
   const parts = displayName
     .trim()
@@ -29,11 +35,17 @@ export default async function MemberHealthProfilesPage({
   const params = await searchParams;
   const q = firstString(params.q) ?? "";
   const status = (firstString(params.status) as "all" | "active" | "inactive" | undefined) ?? "active";
+  const page = parsePage(firstString(params.page));
 
-  const rows = await getMemberHealthProfileIndexSupabase({ q, status });
-  const total = rows.length;
-  const active = rows.filter((row) => row.member.status === "active").length;
-  const withAlerts = rows.filter((row) => row.alerts.length > 0).length;
+  const result = await getMemberHealthProfileIndexSupabase({ q, status, page, pageSize: 25 });
+  const pageHref = (targetPage: number) => {
+    const query = new URLSearchParams();
+    if (q) query.set("q", q);
+    if (status !== "active") query.set("status", status);
+    if (targetPage > 1) query.set("page", String(targetPage));
+    const search = query.toString();
+    return search ? `/health/member-health-profiles?${search}` : "/health/member-health-profiles";
+  };
 
   return (
     <div className="space-y-4">
@@ -45,15 +57,15 @@ export default async function MemberHealthProfilesPage({
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted">Profiles</p>
-            <p className="text-lg font-semibold">{total}</p>
+            <p className="text-lg font-semibold">{result.totalRows}</p>
           </div>
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted">Active Members</p>
-            <p className="text-lg font-semibold">{active}</p>
+            <p className="text-lg font-semibold">{result.activeCount}</p>
           </div>
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted">Members with Alerts</p>
-            <p className="text-lg font-semibold">{withAlerts}</p>
+            <p className="text-lg font-semibold">{result.withAlertsCount}</p>
           </div>
         </div>
       </Card>
@@ -91,14 +103,14 @@ export default async function MemberHealthProfilesPage({
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
+            {result.rows.length === 0 ? (
               <tr>
                 <td colSpan={6} className="text-center text-sm text-muted">
                   No members match this filter.
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
+              result.rows.map((row) => (
                 <tr key={row.member.id}>
                   <td>
                     <div className="flex items-center gap-2">
@@ -137,6 +149,32 @@ export default async function MemberHealthProfilesPage({
             )}
           </tbody>
         </table>
+      </Card>
+
+      <Card>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Link
+            href={result.page > 1 ? pageHref(result.page - 1) : "#"}
+            className={`rounded border px-3 py-1 font-semibold ${result.page > 1 ? "border-border text-brand" : "cursor-not-allowed border-border text-muted"}`}
+          >
+            Previous
+          </Link>
+          {Array.from({ length: result.totalPages }, (_, index) => index + 1).map((pageNumber) => (
+            <Link
+              key={pageNumber}
+              href={pageHref(pageNumber)}
+              className={`rounded border px-3 py-1 ${pageNumber === result.page ? "border-brand bg-brand text-white" : "border-border text-brand"}`}
+            >
+              {pageNumber}
+            </Link>
+          ))}
+          <Link
+            href={result.page < result.totalPages ? pageHref(result.page + 1) : "#"}
+            className={`rounded border px-3 py-1 font-semibold ${result.page < result.totalPages ? "border-border text-brand" : "cursor-not-allowed border-border text-muted"}`}
+          >
+            Next
+          </Link>
+        </div>
       </Card>
     </div>
   );

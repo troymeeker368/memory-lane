@@ -10,6 +10,7 @@ import {
   type MarWorkflowSnapshot
 } from "@/lib/services/mar-shared";
 import { createClient } from "@/lib/supabase/server";
+import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -1086,6 +1087,22 @@ export async function documentScheduledMarAdministration(input: {
     .single();
   if (insertError) throwMarSupabaseError(insertError, "mar_administrations");
   if (!inserted?.id) throw new Error("Unable to save scheduled MAR administration.");
+  await recordWorkflowEvent({
+    eventType: "mar_administration_documented",
+    entityType: "mar_administration",
+    entityId: inserted.id as string,
+    actorType: "user",
+    actorUserId: input.actor.userId,
+    status: input.status === "Given" ? "given" : "not_given",
+    severity: "low",
+    metadata: {
+      member_id: scheduleRow.member_id,
+      mar_schedule_id: scheduleRow.id,
+      pof_medication_id: scheduleRow.pof_medication_id,
+      scheduled_time: scheduleRow.scheduled_time,
+      not_given_reason: reason
+    }
+  });
 
   return {
     administrationId: inserted.id as string,
@@ -1163,6 +1180,21 @@ export async function documentPrnMarAdministration(input: {
     .single();
   if (insertError) throwMarSupabaseError(insertError, "mar_administrations");
   if (!inserted?.id) throw new Error("Unable to save PRN MAR administration.");
+  await recordWorkflowEvent({
+    eventType: "mar_administration_documented",
+    entityType: "mar_administration",
+    entityId: inserted.id as string,
+    actorType: "user",
+    actorUserId: input.actor.userId,
+    status: "given",
+    severity: "low",
+    metadata: {
+      member_id: medication.member_id,
+      pof_medication_id: medication.id,
+      source: "prn",
+      prn_reason: reason
+    }
+  });
 
   return {
     administrationId: inserted.id as string,
@@ -1219,6 +1251,20 @@ export async function documentPrnOutcomeAssessment(input: {
     .single();
   if (updateError) throwMarSupabaseError(updateError, "mar_administrations");
   if (!updated?.id) throw new Error("Unable to save PRN outcome documentation.");
+  await recordWorkflowEvent({
+    eventType: "mar_prn_outcome_documented",
+    entityType: "mar_administration",
+    entityId: updated.id as string,
+    actorType: "user",
+    actorUserId: input.actor.userId,
+    status: input.prnOutcome.toLowerCase(),
+    severity: input.prnOutcome === "Ineffective" ? "medium" : "low",
+    metadata: {
+      member_id: existing.member_id,
+      prn_outcome: input.prnOutcome,
+      prn_followup_note: followupNote
+    }
+  });
 
   return {
     administrationId: updated.id as string,

@@ -17,9 +17,28 @@ function StatusLink({ status, href }: { status: string; href: string }) {
   return <span>{status}</span>;
 }
 
-export default async function CarePlansDashboardPage() {
+function parsePage(value: string | string[] | undefined) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.floor(parsed);
+}
+
+export default async function CarePlansDashboardPage({
+  searchParams
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await requireCarePlanAuthorizedUser();
-  const dashboard = await getCarePlanDashboard();
+  const params = await searchParams;
+  const page = parsePage(params.page);
+  const dashboard = await getCarePlanDashboard({ page, pageSize: 25 });
+  const pageHref = (targetPage: number) => {
+    const query = new URLSearchParams();
+    if (targetPage > 1) query.set("page", String(targetPage));
+    const search = query.toString();
+    return search ? `/health/care-plans?${search}` : "/health/care-plans";
+  };
 
   return (
     <div className="space-y-4">
@@ -66,6 +85,32 @@ export default async function CarePlansDashboardPage() {
             ))}
           </tbody>
         </table>
+      </Card>
+
+      <Card>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Link
+            href={dashboard.page > 1 ? pageHref(dashboard.page - 1) : "#"}
+            className={`rounded border px-3 py-1 font-semibold ${dashboard.page > 1 ? "border-border text-brand" : "cursor-not-allowed border-border text-muted"}`}
+          >
+            Previous
+          </Link>
+          {Array.from({ length: dashboard.totalPages }, (_, index) => index + 1).map((pageNumber) => (
+            <Link
+              key={pageNumber}
+              href={pageHref(pageNumber)}
+              className={`rounded border px-3 py-1 ${pageNumber === dashboard.page ? "border-brand bg-brand text-white" : "border-border text-brand"}`}
+            >
+              {pageNumber}
+            </Link>
+          ))}
+          <Link
+            href={dashboard.page < dashboard.totalPages ? pageHref(dashboard.page + 1) : "#"}
+            className={`rounded border px-3 py-1 font-semibold ${dashboard.page < dashboard.totalPages ? "border-border text-brand" : "cursor-not-allowed border-border text-muted"}`}
+          >
+            Next
+          </Link>
+        </div>
       </Card>
 
       <Card className="table-wrap">

@@ -3,10 +3,8 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { formatPhoneDisplay } from "@/lib/phone";
-import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import { getSalesReferralSourceDirectoryPageSupabase } from "@/lib/services/sales-crm-supabase";
 import { formatOptionalDate } from "@/lib/utils";
-
-const PAGE_SIZE = 25;
 
 function parsePage(raw: string | string[] | undefined) {
   const value = Array.isArray(raw) ? raw[0] : raw;
@@ -20,10 +18,6 @@ function normalizeQuery(raw: string | string[] | undefined) {
   return (value ?? "").trim();
 }
 
-function includesQuery(value: unknown, query: string) {
-  return String(value ?? "").toLowerCase().includes(query.toLowerCase());
-}
-
 export default async function ReferralSourcesPage({
   searchParams
 }: {
@@ -31,35 +25,19 @@ export default async function ReferralSourcesPage({
 }) {
   await requireModuleAccess("sales");
   const params = await searchParams;
-  const { referralSources } = await getSalesWorkflows();
 
   const query = normalizeQuery(params.q);
   const requestedPage = parsePage(params.page);
-
-  const seen = new Set<string>();
-  const dedupedSources = (referralSources as any[]).filter((source) => {
-    const key = String(source.id ?? "").trim();
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
+  const sourcePage = await getSalesReferralSourceDirectoryPageSupabase({
+    q: query || undefined,
+    page: requestedPage,
+    pageSize: 25
   });
-
-  const filteredSources = query
-    ? dedupedSources.filter((source) =>
-        includesQuery(source.contact_name, query) ||
-        includesQuery(source.organization_name, query) ||
-        includesQuery(source.job_title, query) ||
-        includesQuery(source.primary_phone, query) ||
-        includesQuery(source.primary_email, query) ||
-        includesQuery(source.preferred_contact_method, query)
-      )
-    : dedupedSources;
-
-  const totalRows = filteredSources.length;
-  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
-  const currentPage = Math.min(requestedPage, totalPages);
-  const startIndex = (currentPage - 1) * PAGE_SIZE;
-  const pageRows = filteredSources.slice(startIndex, startIndex + PAGE_SIZE);
+  const totalRows = sourcePage.totalRows;
+  const totalPages = sourcePage.totalPages;
+  const currentPage = sourcePage.page;
+  const startIndex = (currentPage - 1) * sourcePage.pageSize;
+  const pageRows = sourcePage.rows;
 
   const pageHref = (page: number) => {
     const qs = new URLSearchParams();

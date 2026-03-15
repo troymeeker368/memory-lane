@@ -4,7 +4,7 @@ import { SalesInquiryForm, type LeadLookup, type PartnerLookup, type ReferralSou
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getLeadDetail } from "@/lib/services/relations";
-import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import { getSalesFormLookupsSupabase } from "@/lib/services/sales-crm-supabase";
 
 export default async function EditLeadPage({ params }: { params: Promise<{ leadId: string }> }) {
   await requireModuleAccess("sales");
@@ -12,7 +12,10 @@ export default async function EditLeadPage({ params }: { params: Promise<{ leadI
   const detail = await getLeadDetail(leadId);
   if (!detail) notFound();
 
-  const { partners, referralSources } = await getSalesWorkflows();
+  const { partners, referralSources } = await getSalesFormLookupsSupabase({
+    includePartnerId: detail.lead.partner_id,
+    includeReferralSourceId: detail.lead.referral_source_id
+  });
 
   return (
     <Card>

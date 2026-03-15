@@ -23,6 +23,21 @@ export interface MccMemberRow {
   latest_assessment_track: string | null;
 }
 
+export interface MemberCommandCenterIndexResult {
+  rows: Array<{
+    member: MccMemberRow;
+    profile: MemberCommandCenterRow;
+    schedule: MemberAttendanceScheduleRow;
+    makeupBalance: number;
+    age: number | null;
+    monthsEnrolled: number | null;
+  }>;
+  page: number;
+  pageSize: number;
+  totalRows: number;
+  totalPages: number;
+}
+
 export interface MemberCommandCenterRow {
   id: string;
   member_id: string;
@@ -749,6 +764,84 @@ export async function listMembersSupabase(filters?: { q?: string; status?: "all"
   );
 }
 
+async function listMembersPageSupabase(filters?: {
+  q?: string;
+  status?: "all" | "active" | "inactive";
+  page?: number;
+  pageSize?: number;
+}) {
+  const supabase = await createClient();
+  const page = Number.isFinite(filters?.page) && Number(filters?.page) > 0 ? Math.floor(Number(filters?.page)) : 1;
+  const pageSize =
+    Number.isFinite(filters?.pageSize) && Number(filters?.pageSize) > 0 ? Math.floor(Number(filters?.pageSize)) : 25;
+  const q = (filters?.q ?? "").trim();
+  const selectVariants = [
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, code_status, latest_assessment_track",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob",
+    "id, display_name, preferred_name, first_name, last_name, full_name, name, status",
+    "id, display_name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
+    "id, display_name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
+    "id, display_name, status, enrollment_date, dob, code_status, latest_assessment_track",
+    "id, display_name, status, enrollment_date, dob",
+    "id, display_name, status"
+  ];
+  const mapRow = (row: Record<string, unknown>): MccMemberRow => ({
+    id: String(row.id ?? ""),
+    display_name: String(row.display_name ?? ""),
+    preferred_name: typeof row.preferred_name === "string" ? row.preferred_name : null,
+    first_name: typeof row.first_name === "string" ? row.first_name : null,
+    last_name: typeof row.last_name === "string" ? row.last_name : null,
+    full_name: typeof row.full_name === "string" ? row.full_name : null,
+    name: typeof row.name === "string" ? row.name : null,
+    status: row.status === "inactive" ? "inactive" : "active",
+    locker_number: typeof row.locker_number === "string" ? row.locker_number : null,
+    enrollment_date: typeof row.enrollment_date === "string" ? row.enrollment_date : null,
+    dob: typeof row.dob === "string" ? row.dob : null,
+    city: typeof row.city === "string" ? row.city : null,
+    code_status: typeof row.code_status === "string" ? row.code_status : null,
+    latest_assessment_track: typeof row.latest_assessment_track === "string" ? row.latest_assessment_track : null
+  });
+
+  let rows: MccMemberRow[] | null = null;
+  let totalRows = 0;
+  let lastError: PostgrestErrorLike | null = null;
+  for (const selectClause of selectVariants) {
+    let query: any = supabase
+      .from("members")
+      .select(selectClause, { count: "exact" })
+      .order("display_name", { ascending: true })
+      .range((page - 1) * pageSize, page * pageSize - 1);
+    if (filters?.status && filters.status !== "all") {
+      query = query.eq("status", filters.status);
+    }
+    if (q) {
+      query = query.ilike("display_name", `%${q.replace(/[%,_]/g, (match) => `\\${match}`)}%`);
+    }
+    const { data, error, count } = await query;
+    if (!error) {
+      rows = ((data ?? []) as Record<string, unknown>[]).map((row) => mapRow(row));
+      totalRows = count ?? rows.length;
+      break;
+    }
+    lastError = error;
+    if (!isMissingAnyColumnError(error, "members")) {
+      throw new Error(error.message ?? "Unable to query members.");
+    }
+  }
+  if (!rows) {
+    throw new Error(lastError?.message ?? "Unable to query members.");
+  }
+  return {
+    rows,
+    page,
+    pageSize,
+    totalRows,
+    totalPages: Math.max(1, Math.ceil(totalRows / pageSize))
+  };
+}
+
 export async function getMemberSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberSupabase");
   const supabase = await getMccClient(options);
@@ -1205,9 +1298,23 @@ export async function getAvailableLockerNumbersForMemberSupabase(memberId: strin
     .sort(sortLockerValues);
 }
 
-export async function getMemberCommandCenterIndexSupabase(filters?: { q?: string; status?: "all" | "active" | "inactive" }) {
-  const members = await listMembersSupabase(filters);
-  if (members.length === 0) return [];
+export async function getMemberCommandCenterIndexSupabase(filters?: {
+  q?: string;
+  status?: "all" | "active" | "inactive";
+  page?: number;
+  pageSize?: number;
+}): Promise<MemberCommandCenterIndexResult> {
+  const membersPage = await listMembersPageSupabase(filters);
+  const members = membersPage.rows;
+  if (members.length === 0) {
+    return {
+      rows: [],
+      page: membersPage.page,
+      pageSize: membersPage.pageSize,
+      totalRows: membersPage.totalRows,
+      totalPages: membersPage.totalPages
+    };
+  }
   const supabase = await createClient();
   const memberIds = members.map((row) => row.id);
   const [{ data: profilesData, error: profilesError }, { data: schedulesData, error: schedulesError }] = await Promise.all([
@@ -1268,7 +1375,7 @@ export async function getMemberCommandCenterIndexSupabase(filters?: { q?: string
     });
   }
 
-  return members
+  const rows = members
     .map((member) => {
       const profile = profileByMember.get(member.id);
       if (!profile) {
@@ -1288,6 +1395,13 @@ export async function getMemberCommandCenterIndexSupabase(filters?: { q?: string
       };
     })
     .sort((a, b) => sortByLastName(a.member.display_name, b.member.display_name));
+  return {
+    rows,
+    page: membersPage.page,
+    pageSize: membersPage.pageSize,
+    totalRows: membersPage.totalRows,
+    totalPages: membersPage.totalPages
+  };
 }
 
 export async function getMemberCommandCenterDetailSupabase(memberId: string) {

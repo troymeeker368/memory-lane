@@ -2,12 +2,19 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { getScheduledDayAbbreviations } from "@/lib/services/member-schedule-selectors";
 import { getMemberCommandCenterIndexSupabase } from "@/lib/services/member-command-center-supabase";
 import { formatOptionalDate } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0];
   return value;
+}
+
+function parsePage(value: string | undefined) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.floor(parsed);
 }
 
 function initials(name: string) {
@@ -26,8 +33,17 @@ export default async function MemberCommandCenterIndexPage({
   const params = await searchParams;
   const q = firstString(params.q) ?? "";
   const status = (firstString(params.status) as "all" | "active" | "inactive" | undefined) ?? "active";
+  const page = parsePage(firstString(params.page));
 
-  const rows = await getMemberCommandCenterIndexSupabase({ q, status });
+  const result = await getMemberCommandCenterIndexSupabase({ q, status, page, pageSize: 25 });
+  const pageHref = (targetPage: number) => {
+    const query = new URLSearchParams();
+    if (q) query.set("q", q);
+    if (status !== "active") query.set("status", status);
+    if (targetPage > 1) query.set("page", String(targetPage));
+    const search = query.toString();
+    return search ? `/operations/member-command-center?${search}` : "/operations/member-command-center";
+  };
 
   return (
     <div className="space-y-4">
@@ -55,7 +71,7 @@ export default async function MemberCommandCenterIndexPage({
           <Link href="/operations/member-command-center" className="h-10 rounded-lg border border-border px-3 text-center text-sm font-semibold leading-10">Clear</Link>
         </form>
 
-        <p className="mt-2 text-xs text-muted">Total: {rows.length}</p>
+        <p className="mt-2 text-xs text-muted">Total: {result.totalRows}</p>
 
         <table className="mt-3">
           <thead>
@@ -70,21 +86,13 @@ export default async function MemberCommandCenterIndexPage({
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
+            {result.rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="text-sm text-muted">No members match this filter.</td>
               </tr>
             ) : (
-              rows.map((row) => {
-                const attendanceDays = [
-                  row.schedule.monday ? "M" : null,
-                  row.schedule.tuesday ? "Tu" : null,
-                  row.schedule.wednesday ? "W" : null,
-                  row.schedule.thursday ? "Th" : null,
-                  row.schedule.friday ? "F" : null
-                ]
-                  .filter(Boolean)
-                  .join(", ");
+              result.rows.map((row) => {
+                const attendanceDays = getScheduledDayAbbreviations(row.schedule);
                 return (
                   <tr key={row.member.id}>
                     <td>
@@ -116,13 +124,39 @@ export default async function MemberCommandCenterIndexPage({
                     <td>{formatOptionalDate(row.member.dob)}</td>
                     <td>{formatOptionalDate(row.schedule.enrollment_date ?? row.member.enrollment_date)}</td>
                     <td>{row.monthsEnrolled ?? "-"}</td>
-                    <td>{attendanceDays || "-"}</td>
+                    <td>{attendanceDays}</td>
                   </tr>
                 );
               })
             )}
           </tbody>
         </table>
+      </Card>
+
+      <Card>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Link
+            href={result.page > 1 ? pageHref(result.page - 1) : "#"}
+            className={`rounded border px-3 py-1 font-semibold ${result.page > 1 ? "border-border text-brand" : "cursor-not-allowed border-border text-muted"}`}
+          >
+            Previous
+          </Link>
+          {Array.from({ length: result.totalPages }, (_, index) => index + 1).map((pageNumber) => (
+            <Link
+              key={pageNumber}
+              href={pageHref(pageNumber)}
+              className={`rounded border px-3 py-1 ${pageNumber === result.page ? "border-brand bg-brand text-white" : "border-border text-brand"}`}
+            >
+              {pageNumber}
+            </Link>
+          ))}
+          <Link
+            href={result.page < result.totalPages ? pageHref(result.page + 1) : "#"}
+            className={`rounded border px-3 py-1 font-semibold ${result.page < result.totalPages ? "border-border text-brand" : "cursor-not-allowed border-border text-muted"}`}
+          >
+            Next
+          </Link>
+        </div>
       </Card>
     </div>
   );

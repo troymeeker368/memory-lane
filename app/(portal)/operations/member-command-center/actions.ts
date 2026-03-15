@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
+import { resolveActiveEffectiveRowForDate } from "@/lib/services/billing-supabase";
 import {
   MEMBER_CONTACT_CATEGORY_OPTIONS,
   MEMBER_FILE_CATEGORY_OPTIONS,
@@ -544,9 +545,7 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     .filter((row) => row.active)
     .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1));
   const existingBillingSetting =
-    activeMemberBillingSettings
-      .filter((row) => row.effective_start_date <= rateEffectiveDate)
-      .filter((row) => !row.effective_end_date || row.effective_end_date >= rateEffectiveDate)[0] ??
+    resolveActiveEffectiveRowForDate(rateEffectiveDate, activeMemberBillingSettings) ??
     activeMemberBillingSettings[0] ??
     null;
 
@@ -603,9 +602,7 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     .filter((row) => row.active)
     .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1));
   const existingScheduleTemplate =
-    activeScheduleTemplates
-      .filter((row) => row.effective_start_date <= rateEffectiveDate)
-      .filter((row) => !row.effective_end_date || row.effective_end_date >= rateEffectiveDate)[0] ??
+    resolveActiveEffectiveRowForDate(rateEffectiveDate, activeScheduleTemplates) ??
     activeScheduleTemplates[0] ??
     null;
 

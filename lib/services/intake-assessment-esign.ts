@@ -11,7 +11,10 @@ import {
   type IntakeAssessmentSignatureStatus
 } from "@/lib/services/intake-assessment-esign-core";
 import { captureClinicalEsignArtifact } from "@/lib/services/clinical-esign-artifacts";
-import { logSystemEvent } from "@/lib/services/system-event-service";
+import {
+  recordImmediateSystemAlert,
+  recordWorkflowEvent
+} from "@/lib/services/workflow-observability";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -177,60 +180,92 @@ export async function signIntakeAssessment(input: {
   if (assessmentError) throw new Error(assessmentError.message);
   if (!assessment) throw new Error("Intake assessment not found.");
 
-  if (!cleanIntakeAssessmentSignatureValue(input.signatureImageDataUrl)) {
-    throw new Error("Nurse/Admin e-signature image is required.");
+  try {
+    if (!cleanIntakeAssessmentSignatureValue(input.signatureImageDataUrl)) {
+      throw new Error("Nurse/Admin e-signature image is required.");
+    }
+    const artifact = await captureClinicalEsignArtifact({
+      domain: "intake-assessment",
+      recordId: assessment.id,
+      memberId: assessment.member_id,
+      signedByUserId: input.actor.id,
+      signedByName: input.actor.signoffName ?? input.actor.fullName,
+      signedAtIso: now,
+      signatureImageDataUrl: input.signatureImageDataUrl
+    });
+
+    const persistence = buildIntakeAssessmentSignaturePersistence({
+      assessmentId: assessment.id,
+      memberId: assessment.member_id,
+      actor: input.actor,
+      attested: input.attested,
+      signedAt: now,
+      signatureArtifactStoragePath:
+        artifact.signatureArtifactStoragePath ?? input.signatureArtifactStoragePath,
+      signatureArtifactMemberFileId:
+        artifact.signatureArtifactMemberFileId ?? input.signatureArtifactMemberFileId,
+      metadata: {
+        signatureCapture: "drawn-image",
+        ...(input.metadata ?? {})
+      }
+    });
+
+    const { error: upsertError } = await supabase
+      .from("intake_assessment_signatures")
+      .upsert(persistence.signatureRow, { onConflict: "assessment_id" });
+    if (upsertError) throw new Error(upsertError.message);
+
+    const { error: assessmentUpdateError } = await supabase
+      .from("intake_assessments")
+      .update(persistence.assessmentUpdate)
+      .eq("id", assessment.id);
+    if (assessmentUpdateError) throw new Error(assessmentUpdateError.message);
+
+    await recordWorkflowEvent({
+      eventType: "intake_assessment_signed",
+      entityType: "intake_assessment",
+      entityId: assessment.id,
+      actorType: "user",
+      actorUserId: input.actor.id,
+      status: "signed",
+      severity: "low",
+      metadata: {
+        member_id: assessment.member_id,
+        signature_status: persistence.state.status,
+        signature_artifact_member_file_id: persistence.state.signatureArtifactMemberFileId
+      }
+    });
+
+    return persistence.state;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unable to sign intake assessment.";
+    await recordWorkflowEvent({
+      eventType: "intake_assessment_failed",
+      entityType: "intake_assessment",
+      entityId: assessment.id,
+      actorType: "user",
+      actorUserId: input.actor.id,
+      status: "failed",
+      severity: "high",
+      metadata: {
+        member_id: assessment.member_id,
+        phase: "signature",
+        error: reason
+      }
+    });
+    await recordImmediateSystemAlert({
+      entityType: "intake_assessment",
+      entityId: assessment.id,
+      actorUserId: input.actor.id,
+      severity: "high",
+      alertKey: "intake_assessment_signature_failed",
+      metadata: {
+        member_id: assessment.member_id,
+        error: reason
+      }
+    });
+    throw error;
   }
-  const artifact = await captureClinicalEsignArtifact({
-    domain: "intake-assessment",
-    recordId: assessment.id,
-    memberId: assessment.member_id,
-    signedByUserId: input.actor.id,
-    signedByName: input.actor.signoffName ?? input.actor.fullName,
-    signedAtIso: now,
-    signatureImageDataUrl: input.signatureImageDataUrl
-  });
-
-  const persistence = buildIntakeAssessmentSignaturePersistence({
-    assessmentId: assessment.id,
-    memberId: assessment.member_id,
-    actor: input.actor,
-    attested: input.attested,
-    signedAt: now,
-    signatureArtifactStoragePath:
-      artifact.signatureArtifactStoragePath ?? input.signatureArtifactStoragePath,
-    signatureArtifactMemberFileId:
-      artifact.signatureArtifactMemberFileId ?? input.signatureArtifactMemberFileId,
-    metadata: {
-      signatureCapture: "drawn-image",
-      ...(input.metadata ?? {})
-    }
-  });
-
-  const { error: upsertError } = await supabase
-    .from("intake_assessment_signatures")
-    .upsert(persistence.signatureRow, { onConflict: "assessment_id" });
-  if (upsertError) throw new Error(upsertError.message);
-
-  const { error: assessmentUpdateError } = await supabase
-    .from("intake_assessments")
-    .update(persistence.assessmentUpdate)
-    .eq("id", assessment.id);
-  if (assessmentUpdateError) throw new Error(assessmentUpdateError.message);
-
-  await logSystemEvent({
-    event_type: "intake_assessment_signed",
-    entity_type: "intake_assessment",
-    entity_id: assessment.id,
-    actor_type: "user",
-    actor_id: input.actor.id,
-    metadata: {
-      member_id: assessment.member_id,
-      signature_status: persistence.state.status,
-      signature_artifact_member_file_id: persistence.state.signatureArtifactMemberFileId
-    }
-  });
-
-  return persistence.state;
 }
 
 export async function requireSignedIntakeAssessment(

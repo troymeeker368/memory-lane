@@ -189,6 +189,21 @@ export interface CarePlanListRow {
   openHref: string;
 }
 
+export interface CarePlanListResult {
+  rows: CarePlanListRow[];
+  page: number;
+  pageSize: number;
+  totalRows: number;
+  totalPages: number;
+  summary: {
+    total: number;
+    dueSoon: number;
+    dueNow: number;
+    overdue: number;
+    completedRecently: number;
+  };
+}
+
 export interface MemberCarePlanSummary {
   hasExistingPlan: boolean;
   nextDueDate: string | null;
@@ -683,14 +698,91 @@ async function listCarePlanRows(filters?: {
     );
 }
 
+async function resolveCarePlanQueryMemberIds(queryText?: string | null) {
+  const query = clean(queryText);
+  if (!query) return null;
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("members")
+    .select("id")
+    .ilike("display_name", `%${query.replace(/[%,_]/g, (match) => `\\${match}`)}%`)
+    .order("display_name", { ascending: true });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
+}
+
+function applyCarePlanStatusFilter(query: any, status: string | undefined) {
+  if (!status || status === "All") return query;
+  const today = toEasternDate();
+  const dueSoonEnd = addDays(today, 14);
+  if (status === "Overdue") return query.lt("next_due_date", today);
+  if (status === "Due Now") return query.eq("next_due_date", today);
+  if (status === "Due Soon") return query.gt("next_due_date", today).lte("next_due_date", dueSoonEnd);
+  if (status === "Completed") return query.gt("next_due_date", dueSoonEnd);
+  return query;
+}
+
+async function getCarePlanCount(filters: {
+  memberId?: string;
+  track?: string;
+  status?: string;
+  query?: string;
+}) {
+  const supabase = await createClient();
+  const canonicalMemberId = filters.memberId
+    ? await resolveCarePlanMemberId(filters.memberId, "getCarePlanCount")
+    : null;
+  const queryMemberIds = await resolveCarePlanQueryMemberIds(filters.query);
+  if (queryMemberIds && queryMemberIds.length === 0) return 0;
+  let query: any = supabase.from("care_plans").select("id", { count: "exact", head: true });
+  if (canonicalMemberId) query = query.eq("member_id", canonicalMemberId);
+  if (filters.track && filters.track !== "All") query = query.eq("track", filters.track);
+  if (queryMemberIds) query = query.in("member_id", queryMemberIds);
+  query = applyCarePlanStatusFilter(query, filters.status);
+  const { count, error } = await query;
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
 export async function getCarePlans(filters?: {
   memberId?: string;
   track?: string;
   status?: string;
   query?: string;
-}): Promise<CarePlanListRow[]> {
-  const rows = await listCarePlanRows(filters);
-  return rows.map((plan) => ({
+  page?: number;
+  pageSize?: number;
+}): Promise<CarePlanListResult> {
+  const supabase = await createClient();
+  const page = Number.isFinite(filters?.page) && Number(filters?.page) > 0 ? Math.floor(Number(filters?.page)) : 1;
+  const pageSize =
+    Number.isFinite(filters?.pageSize) && Number(filters?.pageSize) > 0 ? Math.floor(Number(filters?.pageSize)) : 25;
+  const canonicalMemberId = filters?.memberId
+    ? await resolveCarePlanMemberId(filters.memberId, "getCarePlans")
+    : null;
+  const queryMemberIds = await resolveCarePlanQueryMemberIds(filters?.query);
+  if (queryMemberIds && queryMemberIds.length === 0) {
+    return {
+      rows: [],
+      page,
+      pageSize,
+      totalRows: 0,
+      totalPages: 1,
+      summary: { total: 0, dueSoon: 0, dueNow: 0, overdue: 0, completedRecently: 0 }
+    };
+  }
+
+  let query: any = supabase
+    .from("care_plans")
+    .select("*, member:members!care_plans_member_id_fkey(display_name)", { count: "exact" })
+    .order("next_due_date", { ascending: true })
+    .range((page - 1) * pageSize, page * pageSize - 1);
+  if (canonicalMemberId) query = query.eq("member_id", canonicalMemberId);
+  if (filters?.track && filters.track !== "All") query = query.eq("track", filters.track);
+  if (queryMemberIds) query = query.in("member_id", queryMemberIds);
+  query = applyCarePlanStatusFilter(query, filters?.status);
+  const { data, error, count } = await query;
+  if (error) throw new Error(error.message);
+  const rows = ((data ?? []) as DbCarePlan[]).map((plan) => toCarePlan(plan)).map((plan) => ({
     id: plan.id,
     memberId: plan.memberId,
     memberName: plan.memberName,
@@ -705,6 +797,26 @@ export async function getCarePlans(filters?: {
     actionHref: `/health/care-plans/${plan.id}?view=review`,
     openHref: `/health/care-plans/${plan.id}`
   }));
+  const [totalCount, dueSoonCount, dueNowCount, overdueCount] = await Promise.all([
+    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query }),
+    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Due Soon" }),
+    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Due Now" }),
+    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Overdue" })
+  ]);
+  return {
+    rows,
+    page,
+    pageSize,
+    totalRows: count ?? rows.length,
+    totalPages: Math.max(1, Math.ceil((count ?? rows.length) / pageSize)),
+    summary: {
+      total: totalCount,
+      dueSoon: dueSoonCount,
+      dueNow: dueNowCount,
+      overdue: overdueCount,
+      completedRecently: 0
+    }
+  };
 }
 
 export async function getCarePlanById(id: string, options?: { serviceRole?: boolean }) {
@@ -779,18 +891,22 @@ export async function getCarePlanById(id: string, options?: { serviceRole?: bool
   };
 }
 
-export async function getCarePlanDashboard() {
-  const plans = await getCarePlans();
-  const dueSoon = plans.filter((row) => row.status === "Due Soon");
-  const dueNow = plans.filter((row) => row.status === "Due Now");
-  const overdue = plans.filter((row) => row.status === "Overdue");
+export async function getCarePlanDashboard(input?: { page?: number; pageSize?: number }) {
+  const plans = await getCarePlans({ page: input?.page, pageSize: input?.pageSize });
+  const dueSoon = plans.rows.filter((row) => row.status === "Due Soon");
+  const dueNow = plans.rows.filter((row) => row.status === "Due Now");
+  const overdue = plans.rows.filter((row) => row.status === "Overdue");
   return {
-    summary: { total: plans.length, dueSoon: dueSoon.length, dueNow: dueNow.length, overdue: overdue.length, completedRecently: 0 },
+    summary: plans.summary,
     dueSoon,
     dueNow,
     overdue,
     recentlyCompleted: [] as Array<CarePlanReviewHistory & { memberId: string; memberName: string; track: CarePlanTrack }>,
-    plans
+    plans: plans.rows,
+    page: plans.page,
+    pageSize: plans.pageSize,
+    totalRows: plans.totalRows,
+    totalPages: plans.totalPages
   };
 }
 

@@ -2,15 +2,8 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
-import { canonicalLeadStatus } from "@/lib/canonical";
-import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import { getSalesSummarySnapshotSupabase } from "@/lib/services/sales-crm-supabase";
 import { formatDate } from "@/lib/utils";
-
-function dateDaysAgo(days: number) {
-  const now = new Date();
-  now.setUTCDate(now.getUTCDate() - days);
-  return now.toISOString().slice(0, 10);
-}
 
 function percent(part: number, total: number) {
   if (!total) return 0;
@@ -20,19 +13,8 @@ function percent(part: number, total: number) {
 export default async function SalesSummaryPage() {
   await requireRoles(["admin"]);
 
-  const { stageCounts, openLeads, eipLeads, wonLeads, lostLeads } = await getSalesWorkflows();
-  const allLeads = [...openLeads, ...wonLeads, ...lostLeads];
-  const recentInquiries = [...allLeads]
-    .sort((left, right) => (left.inquiry_date < right.inquiry_date ? 1 : -1))
-    .slice(0, 10);
-  const convertedOrEnrolledCount = allLeads.filter(
-    (lead) =>
-      canonicalLeadStatus(lead.status, lead.stage) === "Won" ||
-      Boolean(String(lead.member_start_date ?? "").trim())
-  ).length;
-  const recentInquiryActivityCount = allLeads.filter((lead) => lead.inquiry_date >= dateDaysAgo(30)).length;
-  const totalLeadCount = allLeads.length;
-  const nonReferralStageRows = stageCounts.filter((row) => row.stage !== "Referrals Only");
+  const snapshot = await getSalesSummarySnapshotSupabase();
+  const nonReferralStageRows = snapshot.stageCounts.filter((row) => row.stage !== "Referrals Only");
   const maxStageCount = Math.max(...nonReferralStageRows.map((row) => row.count), 1);
 
   return (
@@ -47,20 +29,20 @@ export default async function SalesSummaryPage() {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardTitle>Total Leads</CardTitle>
-          <p className="mt-2 text-2xl font-bold text-brand">{totalLeadCount}</p>
+          <p className="mt-2 text-2xl font-bold text-brand">{snapshot.totalLeadCount}</p>
         </Card>
         <Card>
           <CardTitle>EIP Leads</CardTitle>
-          <p className="mt-2 text-2xl font-bold text-brand">{eipLeads.length}</p>
+          <p className="mt-2 text-2xl font-bold text-brand">{snapshot.eipLeadCount}</p>
         </Card>
         <Card>
           <CardTitle>Converted / Enrolled</CardTitle>
-          <p className="mt-2 text-2xl font-bold text-brand">{convertedOrEnrolledCount}</p>
-          <p className="mt-1 text-xs text-muted">{percent(convertedOrEnrolledCount, totalLeadCount)}% conversion coverage</p>
+          <p className="mt-2 text-2xl font-bold text-brand">{snapshot.convertedOrEnrolledCount}</p>
+          <p className="mt-1 text-xs text-muted">{percent(snapshot.convertedOrEnrolledCount, snapshot.totalLeadCount)}% conversion coverage</p>
         </Card>
         <Card>
           <CardTitle>Recent Inquiry Activity</CardTitle>
-          <p className="mt-2 text-2xl font-bold text-brand">{recentInquiryActivityCount}</p>
+          <p className="mt-2 text-2xl font-bold text-brand">{snapshot.recentInquiryActivityCount}</p>
           <p className="mt-1 text-xs text-muted">Inquiries created in the last 30 days</p>
         </Card>
       </div>
@@ -102,22 +84,20 @@ export default async function SalesSummaryPage() {
               </tr>
             </thead>
             <tbody>
-              {recentInquiries.length === 0 ? (
+              {snapshot.recentInquiries.length === 0 ? (
                 <tr>
                   <td colSpan={4}>No recent inquiries.</td>
                 </tr>
               ) : (
-                recentInquiries.map((lead) => (
+                snapshot.recentInquiries.map((lead) => (
                   <tr key={lead.id}>
                     <td>
                       <Link className="font-semibold text-brand" href={`/sales/leads/${lead.id}`}>
                         {lead.member_name}
                       </Link>
                     </td>
-                    <td>{formatDate(lead.inquiry_date)}</td>
-                    <td>
-                      {lead.stage} / {canonicalLeadStatus(lead.status, lead.stage)}
-                    </td>
+                    <td>{lead.inquiry_date ? formatDate(lead.inquiry_date) : "-"}</td>
+                    <td>{lead.stage} / {lead.status}</td>
                     <td>{lead.next_follow_up_date ? formatDate(lead.next_follow_up_date) : "-"}</td>
                   </tr>
                 ))

@@ -18,6 +18,7 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
+import { resolveActiveEffectiveMemberRowForDate } from "@/lib/services/billing-supabase";
 import {
   getAvailableLockerNumbersForMemberSupabase,
   getMemberCommandCenterDetailSupabase,
@@ -30,6 +31,7 @@ import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
+import { getScheduledDayAbbreviations } from "@/lib/services/member-schedule-selectors";
 import { listScheduleChangesSupabase, SCHEDULE_WEEKDAY_KEYS } from "@/lib/services/schedule-changes-supabase";
 import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-supabase";
 import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
@@ -188,13 +190,11 @@ export default async function MemberCommandCenterDetailPage({
       : "-";
   const activeOverrideCount = activeScheduleChangesForToday.length;
   const memberBillingSettings = await listMemberBillingSettingsSupabase(detail.member.id);
-  const activeMemberBillingSetting =
+  const activeMemberBillingSetting = resolveActiveEffectiveMemberRowForDate(
+    detail.member.id,
+    billingDate,
     memberBillingSettings
-      .filter((row) => row.member_id === detail.member.id)
-      .filter((row) => row.active)
-      .filter((row) => row.effective_start_date <= billingDate)
-      .filter((row) => !row.effective_end_date || row.effective_end_date >= billingDate)
-      .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1))[0] ?? null;
+  );
   const activePayorOptions = (await listActivePayorsSupabase())
     .filter((row) => row.status === "active")
     .sort((left, right) => left.payor_name.localeCompare(right.payor_name, undefined, { sensitivity: "base" }))
@@ -202,13 +202,7 @@ export default async function MemberCommandCenterDetailPage({
   const lockerOptions = await getAvailableLockerNumbersForMemberSupabase(memberId);
   const busNumberOptions = await getConfiguredBusNumbers();
 
-  const scheduleDays = [
-    detail.schedule?.monday ? "Mon" : null,
-    detail.schedule?.tuesday ? "Tue" : null,
-    detail.schedule?.wednesday ? "Wed" : null,
-    detail.schedule?.thursday ? "Thu" : null,
-    detail.schedule?.friday ? "Fri" : null
-  ].filter(Boolean) as string[];
+  const scheduleDays = getScheduledDayAbbreviations(detail.schedule);
 
   const monthsEnrolled = detail.monthsEnrolled;
   const defaultDoorToDoorAddress =
@@ -444,7 +438,7 @@ export default async function MemberCommandCenterDetailPage({
           <div className="mt-3 grid gap-3 md:grid-cols-5">
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Enrollment Date</p><p className="font-semibold">{formatOptionalDate(detail.schedule?.enrollment_date ?? detail.member.enrollment_date)}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Months Enrolled</p><p className="font-semibold">{monthsEnrolled ?? "-"}</p></div>
-            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Scheduled Days</p><p className="font-semibold">{scheduleDays.length > 0 ? scheduleDays.join(", ") : "-"}</p></div>
+            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Scheduled Days</p><p className="font-semibold">{scheduleDays}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Transportation</p><p className="font-semibold">{transportationSummary}</p></div>
             <div className="rounded-lg border border-border p-3">
               <p className="text-xs text-muted">Effective Days (Today)</p>

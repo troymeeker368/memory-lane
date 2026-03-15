@@ -3,10 +3,11 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { formatPhoneDisplay } from "@/lib/phone";
-import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import {
+  getSalesPartnerDirectoryPageSupabase,
+  getSalesReferralSourcesForPartnerIdsSupabase
+} from "@/lib/services/sales-crm-supabase";
 import { formatOptionalDate } from "@/lib/utils";
-
-const PAGE_SIZE = 25;
 
 function parsePage(raw: string | string[] | undefined) {
   const value = Array.isArray(raw) ? raw[0] : raw;
@@ -20,10 +21,6 @@ function normalizeQuery(raw: string | string[] | undefined) {
   return (value ?? "").trim();
 }
 
-function includesQuery(value: unknown, query: string) {
-  return String(value ?? "").toLowerCase().includes(query.toLowerCase());
-}
-
 function normalizeKey(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
@@ -35,45 +32,30 @@ export default async function CommunityPartnerOrganizationsPage({
 }) {
   await requireModuleAccess("sales");
   const params = await searchParams;
-  const { partners, referralSources } = await getSalesWorkflows();
 
   const query = normalizeQuery(params.q);
   const requestedPage = parsePage(params.page);
-
-  const seen = new Set<string>();
-  const dedupedPartners = (partners as any[]).filter((partner) => {
-    const key = String(partner.id ?? "").trim();
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
+  const partnerPage = await getSalesPartnerDirectoryPageSupabase({
+    q: query || undefined,
+    page: requestedPage,
+    pageSize: 25
   });
+  const pageRows = partnerPage.rows;
+  const referralSources = await getSalesReferralSourcesForPartnerIdsSupabase(pageRows.map((partner) => partner.id));
 
   const sourcesByPartner = new Map<string, any[]>();
-  (referralSources as any[]).forEach((source) => {
-    const partnerKeys = [normalizeKey(source.partner_id), normalizeKey(source.partnerId)].filter(Boolean);
+  referralSources.forEach((source) => {
+    const partnerKeys = [normalizeKey(source.partner_id)].filter(Boolean);
     partnerKeys.forEach((key) => {
       const existing = sourcesByPartner.get(key) ?? [];
       existing.push(source);
       sourcesByPartner.set(key, existing);
     });
   });
-
-  const filteredPartners = query
-    ? dedupedPartners.filter((partner) =>
-        includesQuery(partner.organization_name, query) ||
-        includesQuery(partner.referral_source_category, query) ||
-        includesQuery(partner.contact_name, query) ||
-        includesQuery(partner.primary_phone, query) ||
-        includesQuery(partner.primary_email, query) ||
-        includesQuery(partner.location, query)
-      )
-    : dedupedPartners;
-
-  const totalRows = filteredPartners.length;
-  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
-  const currentPage = Math.min(requestedPage, totalPages);
-  const startIndex = (currentPage - 1) * PAGE_SIZE;
-  const pageRows = filteredPartners.slice(startIndex, startIndex + PAGE_SIZE);
+  const totalRows = partnerPage.totalRows;
+  const totalPages = partnerPage.totalPages;
+  const currentPage = partnerPage.page;
+  const startIndex = (currentPage - 1) * partnerPage.pageSize;
 
   const pageHref = (page: number) => {
     const qs = new URLSearchParams();
@@ -116,23 +98,21 @@ export default async function CommunityPartnerOrganizationsPage({
                 const partnerKeys = [normalizeKey(partner.partner_id), normalizeKey(partner.id)].filter(Boolean);
                 const linkedSources = partnerKeys.flatMap((key) => sourcesByPartner.get(key) ?? []);
                 const linkedSource =
-                  linkedSources.find((source) => normalizeKey(source.contact_name) === normalizeKey(partner.contact_name)) ??
-                  linkedSources[0] ??
-                  null;
+                  linkedSources[0] ?? null;
 
                 return (
                   <tr key={partner.id}>
                     <td>
                       <Link className="font-semibold text-brand" href={`/sales/community-partners/organizations/${partner.id}`}>{partner.organization_name}</Link>
                     </td>
-                    <td>{partner.referral_source_category}</td>
+                    <td>{partner.category ?? "-"}</td>
                     <td>
                       {linkedSource ? (
                         <Link className="font-semibold text-brand" href={`/sales/community-partners/referral-sources/${linkedSource.id}`}>
-                          {partner.contact_name || linkedSource.contact_name || "-"}
+                          {linkedSource.contact_name || "-"}
                         </Link>
                       ) : (
-                        partner.contact_name || "-"
+                        "-"
                       )}
                     </td>
                     <td>{formatPhoneDisplay(partner.primary_phone)}</td>

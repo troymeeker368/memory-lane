@@ -2,27 +2,24 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import { getSalesFormLookupsSupabase, getSalesRecentActivitySnapshotSupabase } from "@/lib/services/sales-crm-supabase";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 export default async function SalesRecentActivityPage() {
   await requireModuleAccess("sales");
-  const { activities, partnerActivities, openLeads, wonLeads, lostLeads, partners, referralSources } = await getSalesWorkflows();
+  const [{ activities, partnerActivities }, { leads, partners, referralSources }] = await Promise.all([
+    getSalesRecentActivitySnapshotSupabase(),
+    getSalesFormLookupsSupabase({ leadLimit: 500 })
+  ]);
 
-  const allLeads = [...openLeads, ...wonLeads, ...lostLeads].reduce<any[]>((acc, lead) => {
-    if (acc.some((row) => row.id === lead.id)) return acc;
-    acc.push(lead);
-    return acc;
-  }, []);
-
-  const leadNameById = new Map(allLeads.map((lead: any) => [lead.id, lead.member_name]));
+  const leadNameById = new Map(leads.map((lead) => [lead.id, lead.member_name]));
   const partnerByPartnerId = new Map<string, any>();
-  partners.forEach((partner: any) => {
+  partners.forEach((partner) => {
     if (partner.partner_id) partnerByPartnerId.set(String(partner.partner_id), partner);
     if (partner.id) partnerByPartnerId.set(String(partner.id), partner);
   });
   const referralById = new Map<string, any>();
-  referralSources.forEach((source: any) => {
+  referralSources.forEach((source) => {
     if (source.referral_source_id) referralById.set(String(source.referral_source_id), source);
     if (source.id) referralById.set(String(source.id), source);
   });

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
 type ParticipationUpdateInput = {
@@ -17,6 +18,30 @@ type ParticipationUpdateInput = {
   reasonMissing5?: string;
   notes?: string | null;
 };
+
+async function recordDocumentationWorkflowEvent(input: {
+  eventType: string;
+  entityType: string;
+  entityId: string;
+  memberId?: string | null;
+  actorUserId?: string | null;
+  status: "created" | "updated" | "deleted";
+  metadata?: Record<string, unknown>;
+}) {
+  await recordWorkflowEvent({
+    eventType: input.eventType,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    actorType: "user",
+    actorUserId: input.actorUserId ?? null,
+    status: input.status,
+    severity: "low",
+    metadata: {
+      member_id: input.memberId ?? null,
+      ...(input.metadata ?? {})
+    }
+  });
+}
 
 export async function createDailyActivityLogSupabase(input: {
   memberId: string;
@@ -56,6 +81,14 @@ export async function createDailyActivityLogSupabase(input: {
     .select("id")
     .single();
   if (error) throw new Error(error.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_created",
+    entityType: "daily_activity_log",
+    entityId: String(data.id),
+    memberId: input.memberId,
+    actorUserId: input.staffUserId,
+    status: "created"
+  });
   return { id: String(data.id) };
 }
 
@@ -83,6 +116,14 @@ export async function createToiletLogSupabase(input: {
     .select("id")
     .single();
   if (error) throw new Error(error.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_created",
+    entityType: "toilet_log",
+    entityId: String(data.id),
+    memberId: input.memberId,
+    actorUserId: input.staffUserId,
+    status: "created"
+  });
   return { id: String(data.id) };
 }
 
@@ -106,6 +147,14 @@ export async function createShowerLogSupabase(input: {
     .select("id")
     .single();
   if (error) throw new Error(error.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_created",
+    entityType: "shower_log",
+    entityId: String(data.id),
+    memberId: input.memberId,
+    actorUserId: input.staffUserId,
+    status: "created"
+  });
   return { id: String(data.id) };
 }
 
@@ -154,6 +203,14 @@ export async function createTransportationLogSupabase(input: {
     event_at: createdAt
   });
   if (eventError) throw new Error(eventError.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_created",
+    entityType: "transportation_log",
+    entityId: String(data.id),
+    memberId: input.memberId,
+    actorUserId: input.staffUserId,
+    status: "created"
+  });
 
   return { id: String(data.id) };
 }
@@ -178,6 +235,14 @@ export async function createBloodSugarLogSupabase(input: {
     .select("id")
     .single();
   if (error) throw new Error(error.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_created",
+    entityType: "blood_sugar_log",
+    entityId: String(data.id),
+    memberId: input.memberId,
+    actorUserId: input.nurseUserId,
+    status: "created"
+  });
   return { id: String(data.id) };
 }
 
@@ -208,6 +273,13 @@ export async function createPhotoUploadSupabase(input: {
     event_at: input.uploadedAt
   });
   if (eventError) throw new Error(eventError.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_created",
+    entityType: "member_photo_upload",
+    entityId: String(data.id),
+    actorUserId: input.uploadedByUserId,
+    status: "created"
+  });
 
   return { id: String(data.id) };
 }
@@ -239,6 +311,12 @@ export async function updateDailyActivityParticipationSupabase(input: Participat
   if (updatedCount > 1) {
     throw new Error(`Daily activity log update failed: expected exactly one row for id ${input.id}, affected ${updatedCount}.`);
   }
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_updated",
+    entityType: "daily_activity_log",
+    entityId: input.id,
+    status: "updated"
+  });
 }
 
 export async function updateShowerLogSupabase(input: {
@@ -252,6 +330,12 @@ export async function updateShowerLogSupabase(input: {
     .update({ laundry: input.laundry, briefs: input.briefs })
     .eq("id", input.id);
   if (error) throw new Error(error.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_updated",
+    entityType: "shower_log",
+    entityId: input.id,
+    status: "updated"
+  });
 }
 
 export async function updateTransportationLogSupabase(input: {
@@ -268,6 +352,12 @@ export async function updateTransportationLogSupabase(input: {
     })
     .eq("id", input.id);
   if (error) throw new Error(error.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_updated",
+    entityType: "transportation_log",
+    entityId: input.id,
+    status: "updated"
+  });
 }
 
 export async function updateBloodSugarLogSupabase(input: {
@@ -281,6 +371,12 @@ export async function updateBloodSugarLogSupabase(input: {
     .update({ reading_mg_dl: input.readingMgDl, notes: input.notes ?? null })
     .eq("id", input.id);
   if (error) throw new Error(error.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_updated",
+    entityType: "blood_sugar_log",
+    entityId: input.id,
+    status: "updated"
+  });
 }
 
 export async function updateAncillaryLogNotesSupabase(input: {
@@ -293,6 +389,12 @@ export async function updateAncillaryLogNotesSupabase(input: {
     .update({ notes: input.notes ?? null })
     .eq("id", input.id);
   if (error) throw new Error(error.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_updated",
+    entityType: "ancillary_charge_log",
+    entityId: input.id,
+    status: "updated"
+  });
 }
 
 export async function setAncillaryReconciliationSupabase(input: {
@@ -321,6 +423,15 @@ export async function setAncillaryReconciliationSupabase(input: {
         };
   const { error } = await supabase.from("ancillary_charge_logs").update(nextPatch).eq("id", input.id);
   if (error) throw new Error(error.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_updated",
+    entityType: "ancillary_charge_log",
+    entityId: input.id,
+    status: "updated",
+    metadata: {
+      reconciliation_status: input.status
+    }
+  });
 }
 
 export async function deleteWorkflowRecordSupabase(input: {
@@ -344,4 +455,10 @@ export async function deleteWorkflowRecordSupabase(input: {
   const supabase = await createClient();
   const { error } = await supabase.from(table).delete().eq("id", input.id);
   if (error) throw new Error(error.message);
+  await recordDocumentationWorkflowEvent({
+    eventType: "documentation_entry_deleted",
+    entityType: input.entity,
+    entityId: input.id,
+    status: "deleted"
+  });
 }

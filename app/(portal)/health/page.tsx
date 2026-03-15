@@ -4,11 +4,7 @@ import { BloodSugarForm } from "@/components/forms/workflow-forms";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
-import { getCarePlanDashboard } from "@/lib/services/care-plans";
-import { getMembers } from "@/lib/services/documentation";
-import { getHealthSnapshot } from "@/lib/services/health-workflows";
-import { getClinicalOverview } from "@/lib/services/health";
-import { createClient } from "@/lib/supabase/server";
+import { getHealthDashboardData } from "@/lib/services/health-dashboard";
 import { formatDateTime, formatOptionalDateTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -38,134 +34,19 @@ function parseDate(value: string | null | undefined) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function toMarRows(rows: unknown[]): MarRow[] {
-  return rows.map((row, idx) => {
-    const candidate = row as Partial<MarRow>;
-    return {
-      id: String(candidate.id ?? `mar-row-${idx}`),
-      member_name: String(candidate.member_name ?? "Member"),
-      medication_name: String(candidate.medication_name ?? "Medication"),
-      due_at: String(candidate.due_at ?? ""),
-      administered_at: candidate.administered_at ? String(candidate.administered_at) : null,
-      nurse_name: candidate.nurse_name ? String(candidate.nurse_name) : null,
-      status: String(candidate.status ?? "scheduled")
-    };
-  });
-}
-
-function toBloodSugarRows(rows: unknown[]): BloodSugarRow[] {
-  return rows.map((row, idx) => {
-    const candidate = row as Partial<BloodSugarRow>;
-    return {
-      id: String(candidate.id ?? `bg-row-${idx}`),
-      checked_at: String(candidate.checked_at ?? ""),
-      member_name: String(candidate.member_name ?? "Member"),
-      reading_mg_dl: candidate.reading_mg_dl ?? "-",
-      nurse_name: candidate.nurse_name ? String(candidate.nurse_name) : null,
-      notes: candidate.notes ? String(candidate.notes) : null
-    };
-  });
-}
-
 export default async function HealthPage() {
   const profile = await requireModuleAccess("health");
   const canViewCarePlans = canAccessCarePlansForRole(profile.role);
-  const emptyCarePlanDashboard = {
-    summary: { total: 0, dueSoon: 0, dueNow: 0, overdue: 0, completedRecently: 0 },
-    dueSoon: [],
-    dueNow: [],
-    overdue: [],
-    recentlyCompleted: [],
-    plans: []
-  };
-  const [{ mar, bloodSugar }, members, snapshot, carePlans] = await Promise.all([
-    getClinicalOverview(),
-    getMembers(),
-    getHealthSnapshot(),
-    canViewCarePlans ? getCarePlanDashboard() : Promise.resolve(emptyCarePlanDashboard)
-  ]);
-
-  const marRows = toMarRows(mar as unknown[]);
-  const bloodSugarRows = toBloodSugarRows(bloodSugar as unknown[]);
+  const dashboard = await getHealthDashboardData({ includeCarePlans: canViewCarePlans });
+  const marRows = dashboard.marRows as MarRow[];
+  const bloodSugarRows = dashboard.bloodSugarRows as BloodSugarRow[];
+  const dueMedicationRows = dashboard.dueMedicationRows as MarRow[];
+  const overdueMedicationRows = dashboard.overdueMedicationRows as MarRow[];
+  const recentHealthDocs = dashboard.recentHealthDocs;
+  const careAlerts = dashboard.careAlerts;
+  const carePlans = dashboard.carePlans;
+  const members = dashboard.members;
   const now = new Date();
-  const fourHoursAhead = new Date(now.getTime() + 4 * 60 * 60 * 1000);
-
-  const dueMedicationRows = toMarRows(snapshot.marToday as unknown[])
-    .filter((row) => row.status === "scheduled")
-    .filter((row) => {
-      const dueAt = parseDate(row.due_at);
-      if (!dueAt) return false;
-      return dueAt <= fourHoursAhead;
-    })
-    .sort((left, right) => left.due_at.localeCompare(right.due_at));
-
-  const overdueMedicationRows = dueMedicationRows.filter((row) => {
-    const dueAt = parseDate(row.due_at);
-    return Boolean(dueAt && dueAt < now);
-  });
-
-  const recentHealthDocs = [
-    ...bloodSugarRows.slice(0, 8).map((row) => ({
-      id: `bg-${row.id}`,
-      when: row.checked_at,
-      memberName: row.member_name,
-      source: "Blood Sugar",
-      detail: `${row.reading_mg_dl} mg/dL`
-    })),
-    ...marRows
-      .filter((row) => Boolean(row.administered_at))
-      .slice(0, 8)
-      .map((row) => ({
-        id: `mar-${row.id}`,
-        when: row.administered_at as string,
-        memberName: row.member_name,
-        source: "MAR",
-        detail: row.medication_name
-      }))
-  ].sort((left, right) => (left.when < right.when ? 1 : -1));
-
-  const supabase = await createClient();
-  const [{ data: memberRows }, { data: mccRows }, { data: mhpRows }] = await Promise.all([
-    supabase.from("members").select("id, display_name, status, code_status"),
-    supabase.from("member_command_centers").select("*"),
-    supabase.from("member_health_profiles").select("*")
-  ]);
-  const mccByMember = new Map((mccRows ?? []).map((row: any) => [row.member_id, row] as const));
-  const mhpByMember = new Map((mhpRows ?? []).map((row: any) => [row.member_id, row] as const));
-  const careAlerts = (memberRows ?? [])
-    .filter((member) => member.status === "active")
-    .map((member) => {
-      const mcc = mccByMember.get(member.id);
-      const mhp = mhpByMember.get(member.id);
-      const flags: string[] = [];
-      const allergyText = `${mcc?.food_allergies ?? ""} ${mcc?.medication_allergies ?? ""} ${mcc?.environmental_allergies ?? ""}`.trim();
-      const dietType = (mcc?.diet_type ?? mhp?.diet_type ?? "").trim().toLowerCase();
-      const dietaryRestrictions = `${mcc?.dietary_preferences_restrictions ?? ""} ${mhp?.dietary_restrictions ?? ""}`.trim();
-      const codeStatus = (mcc?.code_status ?? mhp?.code_status ?? member.code_status ?? "").trim();
-
-      if (allergyText.length > 0) flags.push("Allergies");
-      if ((dietType && dietType !== "regular") || dietaryRestrictions.length > 0) flags.push("Special diet");
-      if (codeStatus === "DNR") flags.push("DNR");
-      if ((mhp?.important_alerts ?? "").trim().length > 0 || (mcc?.command_center_notes ?? "").trim().length > 0) {
-        flags.push("Care alert");
-      }
-      if ((mhp?.cognitive_behavior_comments ?? "").trim().length > 0) flags.push("Behavior notes");
-
-      return {
-        memberId: member.id,
-        memberName: member.display_name,
-        flags,
-        summary:
-          (mhp?.important_alerts ?? "").trim() ||
-          (mcc?.command_center_notes ?? "").trim() ||
-          dietaryRestrictions ||
-          (mhp?.cognitive_behavior_comments ?? "").trim() ||
-          "-"
-      };
-    })
-    .filter((row) => row.flags.length > 0)
-    .sort((left, right) => left.memberName.localeCompare(right.memberName, undefined, { sensitivity: "base" }))
-    .slice(0, 12);
 
   return (
     <div className="space-y-4">

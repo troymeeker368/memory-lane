@@ -1,5 +1,5 @@
-import { canonicalLeadStatus } from "@/lib/canonical";
 import { createClient } from "@/lib/supabase/server";
+import { summarizeLeadPipeline } from "@/lib/services/sales-workflows";
 
 export async function getOperationsReports() {
   const supabase = await createClient();
@@ -73,12 +73,7 @@ export async function getOperationsReports() {
     timeSummaryMap.set(row.staff_user_id, current);
   });
 
-  const normalizedLeads = (leads ?? []).map((lead) => canonicalLeadStatus(lead.status, lead.stage));
-  const pipeline = {
-    open: normalizedLeads.filter((status) => status === "Open" || status === "Nurture").length,
-    won: normalizedLeads.filter((status) => status === "Won").length,
-    lost: normalizedLeads.filter((status) => status === "Lost").length
-  };
+  const pipeline = summarizeLeadPipeline(leads ?? []);
 
   const ancillaryByMonth = new Map<string, number>();
   (ancillaryRows ?? []).forEach((row) => {

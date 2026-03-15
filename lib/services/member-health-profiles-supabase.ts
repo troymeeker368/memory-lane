@@ -24,6 +24,22 @@ type MemberRow = {
   latest_assessment_track: string | null;
 };
 
+export interface MemberHealthProfileIndexResult {
+  rows: Array<{
+    member: MemberRow;
+    profile: MemberHealthProfileRow;
+    latestAssessment: IntakeAssessmentRow | null;
+    age: number | null;
+    alerts: string[];
+  }>;
+  page: number;
+  pageSize: number;
+  totalRows: number;
+  totalPages: number;
+  activeCount: number;
+  withAlertsCount: number;
+}
+
 export type MemberHealthProfileRow = {
   id: string;
   member_id: string;
@@ -290,28 +306,65 @@ export async function ensureMemberHealthProfileSupabase(memberId: string, option
   return data as MemberHealthProfileRow;
 }
 
-export async function getMemberHealthProfileIndexSupabase(filters?: { q?: string; status?: "all" | "active" | "inactive" }) {
+export async function getMemberHealthProfileIndexSupabase(filters?: {
+  q?: string;
+  status?: "all" | "active" | "inactive";
+  page?: number;
+  pageSize?: number;
+}): Promise<MemberHealthProfileIndexResult> {
   const supabase = await createClient();
-  const queryText = filters?.q?.trim().toLowerCase() ?? "";
+  const queryText = filters?.q?.trim() ?? "";
   const status = filters?.status ?? "all";
+  const page = Number.isFinite(filters?.page) && Number(filters?.page) > 0 ? Math.floor(Number(filters?.page)) : 1;
+  const pageSize =
+    Number.isFinite(filters?.pageSize) && Number(filters?.pageSize) > 0 ? Math.floor(Number(filters?.pageSize)) : 25;
 
-  let membersQuery = supabase
+  let membersQuery: any = supabase
     .from("members")
-    .select("id, display_name, status, dob, enrollment_date, city, code_status, latest_assessment_track")
-    .order("display_name", { ascending: true });
+    .select("id, display_name, status, dob, enrollment_date, city, code_status, latest_assessment_track", { count: "exact" })
+    .order("display_name", { ascending: true })
+    .range((page - 1) * pageSize, page * pageSize - 1);
   if (status !== "all") {
     membersQuery = membersQuery.eq("status", status);
   }
+  if (queryText) {
+    membersQuery = membersQuery.ilike("display_name", `%${queryText.replace(/[%,_]/g, (match) => `\\${match}`)}%`);
+  }
 
-  const { data: membersData, error: membersError } = await membersQuery;
+  const { data: membersData, error: membersError, count: totalRows } = await membersQuery;
   if (membersError) throw new Error(membersError.message);
-  const members = ((membersData ?? []) as MemberRow[])
-    .filter((member) => (queryText ? member.display_name.toLowerCase().includes(queryText) : true));
+  const members = (membersData ?? []) as MemberRow[];
 
-  if (members.length === 0) return [];
+  let aggregateMembersQuery: any = supabase
+    .from("members")
+    .select("id, status")
+    .order("display_name", { ascending: true });
+  if (status !== "all") {
+    aggregateMembersQuery = aggregateMembersQuery.eq("status", status);
+  }
+  if (queryText) {
+    aggregateMembersQuery = aggregateMembersQuery.ilike("display_name", `%${queryText.replace(/[%,_]/g, (match) => `\\${match}`)}%`);
+  }
+  const { data: aggregateMembersData, error: aggregateMembersError } = await aggregateMembersQuery;
+  if (aggregateMembersError) throw new Error(aggregateMembersError.message);
+  const aggregateMembers = (aggregateMembersData ?? []) as Array<{ id: string; status: "active" | "inactive" }>;
+  const activeCount = aggregateMembers.filter((member) => member.status === "active").length;
+
+  if (members.length === 0) {
+    return {
+      rows: [],
+      page,
+      pageSize,
+      totalRows: totalRows ?? 0,
+      totalPages: Math.max(1, Math.ceil((totalRows ?? 0) / pageSize)),
+      activeCount,
+      withAlertsCount: 0
+    };
+  }
   const memberIds = members.map((member) => member.id);
+  const aggregateMemberIds = aggregateMembers.map((member) => member.id);
 
-  const [profilesResult, mccResult, assessmentsResult] = await Promise.all([
+  const [profilesResult, mccResult, assessmentsResult, aggregateProfilesResult, aggregateAssessmentsResult] = await Promise.all([
     supabase.from("member_health_profiles").select("*").in("member_id", memberIds),
     supabase.from("member_command_centers").select("member_id, profile_image_url").in("member_id", memberIds),
     supabase
@@ -319,12 +372,25 @@ export async function getMemberHealthProfileIndexSupabase(filters?: { q?: string
       .select("id, member_id, assessment_date, admission_review_required, recommended_track, created_at")
       .in("member_id", memberIds)
       .order("assessment_date", { ascending: false })
-      .order("created_at", { ascending: false })
+      .order("created_at", { ascending: false }),
+    aggregateMemberIds.length > 0
+      ? supabase.from("member_health_profiles").select("member_id, important_alerts").in("member_id", aggregateMemberIds)
+      : Promise.resolve({ data: [], error: null }),
+    aggregateMemberIds.length > 0
+      ? supabase
+          .from("intake_assessments")
+          .select("member_id, admission_review_required, assessment_date, created_at")
+          .in("member_id", aggregateMemberIds)
+          .order("assessment_date", { ascending: false })
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null })
   ]);
 
   if (profilesResult.error) throw new Error(profilesResult.error.message);
   if (mccResult.error) throw new Error(mccResult.error.message);
   if (assessmentsResult.error) throw new Error(assessmentsResult.error.message);
+  if (aggregateProfilesResult.error) throw new Error(aggregateProfilesResult.error.message);
+  if (aggregateAssessmentsResult.error) throw new Error(aggregateAssessmentsResult.error.message);
 
   const profileByMemberId = new Map((profilesResult.data ?? []).map((row: any) => [String(row.member_id), row as MemberHealthProfileRow] as const));
   const mccPhotoByMemberId = new Map((mccResult.data ?? []).map((row: any) => [String(row.member_id), (row.profile_image_url as string | null) ?? null] as const));
@@ -348,7 +414,7 @@ export async function getMemberHealthProfileIndexSupabase(filters?: { q?: string
     }
   });
 
-  return members
+  const rows = members
     .map((member) => {
       const profile = profileByMemberId.get(member.id);
       if (!profile) {
@@ -368,10 +434,36 @@ export async function getMemberHealthProfileIndexSupabase(filters?: { q?: string
         alerts: [
           latestAssessment?.admission_review_required ? "Assessment review required" : null,
           effectiveProfile.important_alerts
-        ].filter(Boolean)
+        ].filter((alert): alert is string => Boolean(alert))
       };
     })
     .sort((a, b) => sortByLastName(a.member.display_name, b.member.display_name));
+  const aggregateAssessmentByMemberId = new Map<string, { admission_review_required: boolean | null }>();
+  ((aggregateAssessmentsResult.data ?? []) as Array<{ member_id: string; admission_review_required: boolean | null }>).forEach((row) => {
+    if (!aggregateAssessmentByMemberId.has(row.member_id)) {
+      aggregateAssessmentByMemberId.set(row.member_id, row);
+    }
+  });
+  const aggregateProfileByMemberId = new Map(
+    ((aggregateProfilesResult.data ?? []) as Array<{ member_id: string; important_alerts: string | null }>).map((row) => [
+      row.member_id,
+      row.important_alerts
+    ] as const)
+  );
+  const withAlertsCount = aggregateMemberIds.reduce((count, memberId) => {
+    const assessmentAlert = aggregateAssessmentByMemberId.get(memberId)?.admission_review_required;
+    const profileAlert = (aggregateProfileByMemberId.get(memberId) ?? "").trim().length > 0;
+    return assessmentAlert || profileAlert ? count + 1 : count;
+  }, 0);
+  return {
+    rows,
+    page,
+    pageSize,
+    totalRows: totalRows ?? rows.length,
+    totalPages: Math.max(1, Math.ceil((totalRows ?? rows.length) / pageSize)),
+    activeCount,
+    withAlertsCount
+  };
 }
 
 export async function getMemberHealthProfileDetailSupabase(memberId: string) {

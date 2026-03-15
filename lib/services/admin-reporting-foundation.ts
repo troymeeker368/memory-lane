@@ -1,10 +1,16 @@
 import type { ReportDateRange } from "@/lib/services/report-date-range";
-import { canonicalLeadStage, canonicalLeadStatus } from "@/lib/canonical";
+import {
+  resolveActiveEffectiveMemberRowForDate,
+  resolveActiveEffectiveRowForDate,
+  resolveConfiguredDailyRate,
+  resolveEffectiveBillingMode
+} from "@/lib/services/billing-supabase";
 import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
 import { getWeekdayForDate } from "@/lib/services/operations-calendar";
+import { buildLeadStageOutcomeSummaryRows } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate } from "@/lib/timezone";
 
@@ -141,60 +147,19 @@ function listDatesInRange(range: ReportDateRange) {
   return out;
 }
 
-function isDateWithinRange(date: string, start: string, end: string | null) {
-  if (date < start) return false;
-  if (end && date > end) return false;
-  return true;
-}
-
-function resolveApplicableCenterSetting(
-  dateOnly: string,
-  centerSettings: ReportingCenterBillingSettingRow[]
-) {
-  const sorted = [...centerSettings].sort((left, right) =>
-    left.effective_start_date < right.effective_start_date ? 1 : -1
-  );
-  return (
-    sorted.find((row) =>
-      row.active &&
-      isDateWithinRange(dateOnly, row.effective_start_date, row.effective_end_date)
-    ) ?? null
-  );
-}
-
-function resolveApplicableMemberSetting(
-  memberId: string,
-  dateOnly: string,
-  memberSettingsByMember: Map<string, ReportingMemberBillingSettingRow[]>
-) {
-  const settings = memberSettingsByMember.get(memberId) ?? [];
-  const sorted = [...settings].sort((left, right) =>
-    left.effective_start_date < right.effective_start_date ? 1 : -1
-  );
-  return (
-    sorted.find((row) =>
-      row.active &&
-      isDateWithinRange(dateOnly, row.effective_start_date, row.effective_end_date)
-    ) ?? null
-  );
-}
-
 function resolveBillingModeForDate(input: {
   memberId: string;
   dateOnly: string;
   memberSettingsByMember: Map<string, ReportingMemberBillingSettingRow[]>;
   centerSettings: ReportingCenterBillingSettingRow[];
 }) {
-  const memberSetting = resolveApplicableMemberSetting(
+  const memberSetting = resolveActiveEffectiveMemberRowForDate(
     input.memberId,
     input.dateOnly,
-    input.memberSettingsByMember
+    input.memberSettingsByMember.get(input.memberId) ?? []
   );
-  if (memberSetting && !memberSetting.use_center_default_billing_mode && memberSetting.billing_mode) {
-    return memberSetting.billing_mode;
-  }
-  const centerSetting = resolveApplicableCenterSetting(input.dateOnly, input.centerSettings);
-  return centerSetting?.default_billing_mode ?? "Membership";
+  const centerSetting = resolveActiveEffectiveRowForDate(input.dateOnly, input.centerSettings);
+  return resolveEffectiveBillingMode({ memberSetting, centerSetting });
 }
 
 function resolveDailyRateForDate(input: {
@@ -203,17 +168,13 @@ function resolveDailyRateForDate(input: {
   memberSettingsByMember: Map<string, ReportingMemberBillingSettingRow[]>;
   centerSettings: ReportingCenterBillingSettingRow[];
 }) {
-  const memberSetting = resolveApplicableMemberSetting(
+  const memberSetting = resolveActiveEffectiveMemberRowForDate(
     input.memberId,
     input.dateOnly,
-    input.memberSettingsByMember
+    input.memberSettingsByMember.get(input.memberId) ?? []
   );
-  const centerSetting = resolveApplicableCenterSetting(input.dateOnly, input.centerSettings);
-  const centerRate = Number(centerSetting?.default_daily_rate ?? 0);
-  if (memberSetting && !memberSetting.use_center_default_rate && Number(memberSetting.custom_daily_rate ?? 0) > 0) {
-    return Number(memberSetting.custom_daily_rate ?? 0);
-  }
-  return centerRate;
+  const centerSetting = resolveActiveEffectiveRowForDate(input.dateOnly, input.centerSettings);
+  return resolveConfiguredDailyRate({ memberSetting, centerSetting });
 }
 
 async function loadAttendanceDataset(input: {
@@ -592,16 +553,6 @@ export async function getOnDemandReportData(input: {
       .gte("created_at", `${normalizedRange.from}T00:00:00.000Z`)
       .lte("created_at", `${normalizedRange.to}T23:59:59.999Z`);
     if (error) throw new Error(error.message);
-    const stageCounts = new Map<string, { total: number; won: number; lost: number }>();
-    (data ?? []).forEach((row: any) => {
-      const stage = canonicalLeadStage(String(row.stage ?? "Inquiry"));
-      const status = canonicalLeadStatus(String(row.status ?? "Open"), stage).toLowerCase();
-      const current = stageCounts.get(stage) ?? { total: 0, won: 0, lost: 0 };
-      current.total += 1;
-      if (status === "won") current.won += 1;
-      if (status === "lost") current.lost += 1;
-      stageCounts.set(stage, current);
-    });
     return {
       category: input.category,
       title,
@@ -612,14 +563,12 @@ export async function getOnDemandReportData(input: {
         { key: "won", label: "Won", kind: "integer" },
         { key: "lost", label: "Lost", kind: "integer" }
       ],
-      rows: Array.from(stageCounts.entries())
-        .map(([stage, counts]) => ({
-          stage,
-          total: counts.total,
-          won: counts.won,
-          lost: counts.lost
-        }))
-        .sort((left, right) => String(left.stage).localeCompare(String(right.stage)))
+      rows: buildLeadStageOutcomeSummaryRows(data ?? []).map((row) => ({
+        stage: row.stage,
+        total: row.total,
+        won: row.won,
+        lost: row.lost
+      }))
     };
   }
 

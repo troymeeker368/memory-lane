@@ -2,14 +2,14 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import { getSalesSummarySnapshotSupabase } from "@/lib/services/sales-crm-supabase";
 
 function stageHref(stage: string) {
   if (stage === "Inquiry") return "/sales/pipeline/leads-table?stage=Inquiry";
   if (stage === "Tour") return "/sales/pipeline/leads-table?stage=Tour";
   if (stage === "Enrollment in Progress") return "/sales/pipeline/leads-table?stage=Enrollment%20in%20Progress";
   if (stage === "Nurture") return "/sales/pipeline/leads-table?stage=Nurture";
-  if (stage === "Referrals Only") return "/sales/pipeline/leads-table?leadSource=Referral";
+  if (stage === "Referrals Only") return "/sales/pipeline/leads-table?lead_source=Referral";
   if (stage === "Closed - Won") return "/sales/pipeline/closed-won";
   if (stage === "Closed - Lost") return "/sales/pipeline/closed-lost";
   return "/sales/pipeline/leads-table";
@@ -17,7 +17,7 @@ function stageHref(stage: string) {
 
 export default async function PipelineByStagePage() {
   await requireModuleAccess("sales");
-  const { stageCounts } = await getSalesWorkflows();
+  const { stageCounts } = await getSalesSummarySnapshotSupabase();
 
   return (
     <Card>

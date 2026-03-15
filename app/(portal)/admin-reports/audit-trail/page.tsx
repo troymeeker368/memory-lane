@@ -2,7 +2,11 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import {
+  listAdminAuditTrailRows,
+  resolveAdminAuditArea,
+  type AdminAuditTrailRow
+} from "@/lib/services/admin-audit-trail";
 import { formatDateTime } from "@/lib/utils";
 
 function parseDetails(details: unknown) {
@@ -23,21 +27,6 @@ function parseDetails(details: unknown) {
   return {};
 }
 
-interface AuditRow {
-  id: string;
-  actor_user_id: string | null;
-  actor_role: string | null;
-  action: string;
-  entity_type: string;
-  entity_id: string | null;
-  details: unknown;
-  created_at: string;
-}
-
-interface AuditRowView extends AuditRow {
-  actor_name: string | null;
-}
-
 function firstText(value: unknown) {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
@@ -48,18 +37,7 @@ function yesNo(value: unknown) {
   return value === true ? "Yes" : "No";
 }
 
-function friendlyArea(entityType: string) {
-  const normalized = entityType.toLowerCase();
-  if (normalized.includes("time")) return "Time & Attendance";
-  if (normalized.includes("lead")) return "Sales";
-  if (normalized.includes("photo")) return "Documentation";
-  if (normalized.includes("transport")) return "Transportation";
-  if (normalized.includes("member")) return "Member";
-  if (normalized.includes("charge") || normalized.includes("ancillary")) return "Charges";
-  return "General";
-}
-
-function buildSummary(row: AuditRowView) {
+function buildSummary(row: AdminAuditTrailRow) {
   const details = parseDetails(row.details);
 
   if (row.action === "clock_in") {
@@ -135,45 +113,11 @@ export default async function AdminAuditTrailPage({
   const actionFilter = typeof query.action === "string" ? query.action.trim() : "";
   const areaFilter = typeof query.area === "string" ? query.area.trim().toLowerCase() : "";
 
-  const supabase = await createClient();
-  const { data: auditRows, error } = await supabase
-    .from("audit_logs")
-    .select("id, actor_user_id, actor_role, action, entity_type, entity_id, details, created_at")
-    .order("created_at", { ascending: false })
-    .limit(1000);
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  const actorIds = Array.from(
-    new Set(
-      (auditRows ?? [])
-        .map((row: any) => row.actor_user_id)
-        .filter((value: string | null): value is string => Boolean(value))
-    )
-  );
-  const profileNameById = new Map<string, string>();
-  if (actorIds.length > 0) {
-    const { data: profiles, error: profilesError } = await supabase
-      .from("profiles")
-      .select("id, full_name")
-      .in("id", actorIds);
-    if (profilesError) {
-      throw new Error(profilesError.message);
-    }
-    (profiles ?? []).forEach((profile: any) => {
-      profileNameById.set(String(profile.id), String(profile.full_name ?? ""));
-    });
-  }
-
-  const rows = ((auditRows ?? []) as AuditRow[])
-    .map((row) => ({
-      ...row,
-      actor_name: row.actor_user_id ? profileNameById.get(row.actor_user_id) ?? null : null
-    }))
-    .filter((row) => (actionFilter ? row.action === actionFilter : true))
-    .filter((row) => (areaFilter ? friendlyArea(row.entity_type).toLowerCase().includes(areaFilter) : true))
-    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  const rows = await listAdminAuditTrailRows({
+    actionFilter,
+    areaFilter,
+    limit: 1000
+  });
 
   return (
     <div className="space-y-4">
@@ -242,7 +186,7 @@ export default async function AdminAuditTrailPage({
                   <td>{row.actor_name ?? row.actor_user_id ?? "-"}</td>
                   <td className="uppercase">{row.actor_role ?? "-"}</td>
                   <td>{buildSummary(row)}</td>
-                  <td>{friendlyArea(row.entity_type)}</td>
+                  <td>{resolveAdminAuditArea(row.entity_type)}</td>
                 </tr>
               ))
             )}

@@ -1,0 +1,842 @@
+import { randomUUID } from "node:crypto";
+
+import { normalizePhoneForStorage } from "@/lib/phone";
+import { createClient } from "@/lib/supabase/server";
+import { toEasternDate, toEasternISO } from "@/lib/timezone";
+
+function clean(value: unknown) {
+  const normalized = String(value ?? "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isUuid(value: string | null | undefined) {
+  const normalized = clean(value);
+  if (!normalized) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized);
+}
+
+function makeShortCode(prefix: string) {
+  const token = randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+  return `${prefix}-${token}`;
+}
+
+export interface SalesPartnerRow {
+  id: string;
+  partner_id: string;
+  organization_name: string;
+  category: string | null;
+  location?: string | null;
+  primary_phone?: string | null;
+  primary_email?: string | null;
+  active: boolean;
+  last_touched: string | null;
+}
+
+export interface SalesReferralSourceRow {
+  id: string;
+  referral_source_id: string;
+  partner_id: string;
+  contact_name: string;
+  organization_name: string | null;
+  job_title?: string | null;
+  primary_phone?: string | null;
+  primary_email?: string | null;
+  preferred_contact_method?: string | null;
+  active: boolean;
+  last_touched: string | null;
+}
+
+export interface SalesLeadEnrollmentRow {
+  id: string;
+  stage: string;
+  status: string;
+  member_name: string | null;
+  member_dob: string | null;
+  lead_source: string | null;
+  member_start_date: string | null;
+}
+
+export interface SalesLeadLookupRow {
+  id: string;
+  member_name: string | null;
+  caregiver_name: string | null;
+  stage: string;
+  status: string;
+  created_at: string;
+  partner_id: string | null;
+  referral_source_id: string | null;
+}
+
+export interface SalesLeadReadRow extends SalesLeadLookupRow {
+  inquiry_date: string | null;
+  caregiver_relationship: string | null;
+  caregiver_phone: string | null;
+  caregiver_email: string | null;
+  member_dob: string | null;
+  lead_source: string | null;
+  lead_source_other: string | null;
+  referral_name: string | null;
+  likelihood: string | null;
+  next_follow_up_date: string | null;
+  next_follow_up_type: string | null;
+  tour_date: string | null;
+  tour_completed: boolean | null;
+  discovery_date: string | null;
+  member_start_date: string | null;
+  notes_summary: string | null;
+  lost_reason: string | null;
+  closed_date: string | null;
+  created_by_name: string | null;
+}
+
+export interface SalesLeadListResult {
+  rows: SalesLeadReadRow[];
+  page: number;
+  pageSize: number;
+  totalRows: number;
+  totalPages: number;
+}
+
+export interface SalesStageCountRow {
+  stage: string;
+  count: number;
+}
+
+export interface SalesSummarySnapshot {
+  totalLeadCount: number;
+  openLeadCount: number;
+  eipLeadCount: number;
+  wonLeadCount: number;
+  lostLeadCount: number;
+  convertedOrEnrolledCount: number;
+  recentInquiryActivityCount: number;
+  recentInquiries: SalesLeadReadRow[];
+  stageCounts: SalesStageCountRow[];
+}
+
+const SALES_LEAD_READ_SELECT = [
+  "id",
+  "stage",
+  "status",
+  "created_at",
+  "inquiry_date",
+  "member_name",
+  "caregiver_name",
+  "caregiver_relationship",
+  "caregiver_phone",
+  "caregiver_email",
+  "member_dob",
+  "lead_source",
+  "lead_source_other",
+  "partner_id",
+  "referral_source_id",
+  "referral_name",
+  "likelihood",
+  "next_follow_up_date",
+  "next_follow_up_type",
+  "tour_date",
+  "tour_completed",
+  "discovery_date",
+  "member_start_date",
+  "notes_summary",
+  "lost_reason",
+  "closed_date",
+  "created_by_name"
+].join(", ");
+
+const SALES_LEAD_LOOKUP_SELECT = "id, member_name, caregiver_name, stage, status, created_at, partner_id, referral_source_id";
+const SALES_PARTNER_LOOKUP_SELECT = "id, partner_id, organization_name, category, location, primary_phone, primary_email, active, last_touched";
+const SALES_REFERRAL_SOURCE_LOOKUP_SELECT =
+  "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, active, last_touched";
+
+function normalizeLeadStage(value: string | null | undefined) {
+  const normalized = clean(value) ?? "Inquiry";
+  if (normalized === "EIP") return "Enrollment in Progress";
+  return normalized;
+}
+
+function normalizeLeadStatus(value: string | null | undefined, stage: string) {
+  const normalized = (clean(value) ?? "open").toLowerCase();
+  if (normalized === "won") return "Won";
+  if (normalized === "lost") return "Lost";
+  if (stage === "Closed - Won") return "Won";
+  if (stage === "Closed - Lost") return "Lost";
+  return "Open";
+}
+
+function toSalesLeadReadRow(row: Record<string, unknown>): SalesLeadReadRow {
+  const stage = normalizeLeadStage(typeof row.stage === "string" ? row.stage : null);
+  return {
+    id: String(row.id ?? ""),
+    member_name: clean(row.member_name),
+    caregiver_name: clean(row.caregiver_name),
+    stage,
+    status: normalizeLeadStatus(typeof row.status === "string" ? row.status : null, stage),
+    created_at: String(row.created_at ?? ""),
+    partner_id: clean(row.partner_id),
+    referral_source_id: clean(row.referral_source_id),
+    inquiry_date: clean(row.inquiry_date),
+    caregiver_relationship: clean(row.caregiver_relationship),
+    caregiver_phone: clean(row.caregiver_phone),
+    caregiver_email: clean(row.caregiver_email),
+    member_dob: clean(row.member_dob),
+    lead_source: clean(row.lead_source),
+    lead_source_other: clean(row.lead_source_other),
+    referral_name: clean(row.referral_name),
+    likelihood: clean(row.likelihood),
+    next_follow_up_date: clean(row.next_follow_up_date),
+    next_follow_up_type: clean(row.next_follow_up_type),
+    tour_date: clean(row.tour_date),
+    tour_completed: typeof row.tour_completed === "boolean" ? row.tour_completed : null,
+    discovery_date: clean(row.discovery_date),
+    member_start_date: clean(row.member_start_date),
+    notes_summary: clean(row.notes_summary),
+    lost_reason: clean(row.lost_reason),
+    closed_date: clean(row.closed_date),
+    created_by_name: clean(row.created_by_name)
+  };
+}
+
+function normalizePage(rawPage?: number | null) {
+  if (!Number.isFinite(rawPage) || !rawPage || rawPage < 1) return 1;
+  return Math.floor(rawPage);
+}
+
+function normalizePageSize(rawPageSize?: number | null, fallback = 25) {
+  if (!Number.isFinite(rawPageSize) || !rawPageSize || rawPageSize < 1) return fallback;
+  return Math.floor(rawPageSize);
+}
+
+function escapeIlike(value: string) {
+  return value.replace(/[%,_]/g, (match) => `\\${match}`);
+}
+
+async function fetchLeadByIdSupabase(leadId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("leads")
+    .select(SALES_LEAD_READ_SELECT)
+    .eq("id", leadId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? toSalesLeadReadRow(data as unknown as Record<string, unknown>) : null;
+}
+
+async function fetchPartnerByIdSupabase(partnerId: string) {
+  const partner = await getSalesPartnerByIdOrCodeSupabase(partnerId);
+  return partner
+    ? {
+        ...partner,
+        location: partner.location ?? null,
+        primary_phone: partner.primary_phone ?? null,
+        primary_email: partner.primary_email ?? null
+      }
+    : null;
+}
+
+async function fetchReferralSourceByIdSupabase(sourceId: string) {
+  const source = await getSalesReferralSourceByIdOrCodeSupabase(sourceId);
+  return source
+    ? {
+        ...source,
+        job_title: source.job_title ?? null,
+        primary_phone: source.primary_phone ?? null,
+        primary_email: source.primary_email ?? null,
+        preferred_contact_method: source.preferred_contact_method ?? null
+      }
+    : null;
+}
+
+function normalizeReferralSources(
+  partners: SalesPartnerRow[],
+  referralSources: SalesReferralSourceRow[]
+) {
+  const partnerByInternalId = new Map(partners.map((partner) => [String(partner.id), partner]));
+  return referralSources.map((source) => ({
+    ...source,
+    partner_id: partnerByInternalId.get(String(source.partner_id))?.partner_id ?? source.partner_id
+  }));
+}
+
+export async function getSalesPartnerByIdOrCodeSupabase(rawPartnerId: string) {
+  const partnerId = clean(rawPartnerId);
+  if (!partnerId) return null;
+
+  const supabase = await createClient();
+  const filters = [
+    isUuid(partnerId) ? `id.eq.${partnerId}` : null,
+    `partner_id.eq.${partnerId}`
+  ].filter(Boolean);
+
+  const { data, error } = await supabase
+    .from("community_partner_organizations")
+    .select("id, partner_id, organization_name, category, active, last_touched")
+    .or(filters.join(","))
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as SalesPartnerRow | null) ?? null;
+}
+
+export async function getSalesReferralSourceByIdOrCodeSupabase(rawSourceId: string) {
+  const sourceId = clean(rawSourceId);
+  if (!sourceId) return null;
+
+  const supabase = await createClient();
+  const filters = [
+    isUuid(sourceId) ? `id.eq.${sourceId}` : null,
+    `referral_source_id.eq.${sourceId}`
+  ].filter(Boolean);
+
+  const { data, error } = await supabase
+    .from("referral_sources")
+    .select("id, referral_source_id, partner_id, contact_name, organization_name, active, last_touched")
+    .or(filters.join(","))
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as SalesReferralSourceRow | null) ?? null;
+}
+
+export async function resolveSalesPartnerAndReferralSupabase(input: {
+  partnerId?: string | null;
+  referralSourceId?: string | null;
+}) {
+  const requestedPartnerId = clean(input.partnerId);
+  const requestedReferralSourceId = clean(input.referralSourceId);
+
+  const [partner, referralSource] = await Promise.all([
+    requestedPartnerId ? getSalesPartnerByIdOrCodeSupabase(requestedPartnerId) : Promise.resolve(null),
+    requestedReferralSourceId ? getSalesReferralSourceByIdOrCodeSupabase(requestedReferralSourceId) : Promise.resolve(null)
+  ]);
+
+  if (requestedPartnerId && !partner) {
+    throw new Error("Community partner organization not found.");
+  }
+  if (requestedReferralSourceId && !referralSource) {
+    throw new Error("Referral source not found.");
+  }
+  if (partner && referralSource && referralSource.partner_id !== partner.id) {
+    throw new Error("Referral Source must belong to the selected Community Partner Organization.");
+  }
+
+  return {
+    partner,
+    referralSource
+  };
+}
+
+export async function createSalesLeadSupabase(input: {
+  leadPatch: Record<string, unknown>;
+  createdByUserId: string;
+}) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("leads")
+    .insert({
+      ...input.leadPatch,
+      created_by_user_id: input.createdByUserId
+    })
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+  return { id: String(data.id) };
+}
+
+export async function insertSalesAuditLogSupabase(input: {
+  actorUserId: string;
+  actorRole: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  details?: Record<string, unknown>;
+}) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("audit_logs").insert({
+    actor_user_id: input.actorUserId,
+    actor_role: input.actorRole,
+    action: input.action,
+    entity_type: input.entityType,
+    entity_id: input.entityId,
+    details: input.details ?? {}
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function getSalesLeadForEnrollmentSupabase(leadId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("leads")
+    .select("id, stage, status, member_name, member_dob, lead_source, member_start_date")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as SalesLeadEnrollmentRow | null) ?? null;
+}
+
+export async function createPartnerActivitySupabase(input: {
+  partnerId: string;
+  referralSourceId: string;
+  activityAt?: string | null;
+  activityType: string;
+  notes?: string | null;
+  nextFollowUpDate?: string | null;
+  nextFollowUpType?: string | null;
+  completedByName: string;
+}) {
+  const { partner, referralSource } = await resolveSalesPartnerAndReferralSupabase({
+    partnerId: input.partnerId,
+    referralSourceId: input.referralSourceId
+  });
+  if (!partner) throw new Error("Community partner organization not found.");
+  if (!referralSource) throw new Error("Referral source not found.");
+
+  const nowDate = toEasternDate();
+  const supabase = await createClient();
+  const { error: insertError } = await supabase.from("partner_activities").insert({
+    referral_source_id: referralSource.id,
+    partner_id: partner.id,
+    organization_name: partner.organization_name,
+    contact_name: referralSource.contact_name,
+    activity_at: clean(input.activityAt) ?? toEasternISO(),
+    activity_type: input.activityType,
+    notes: clean(input.notes),
+    completed_by_name: input.completedByName,
+    next_follow_up_date: clean(input.nextFollowUpDate),
+    next_follow_up_type: clean(input.nextFollowUpType),
+    last_touched: nowDate
+  });
+  if (insertError) throw new Error(insertError.message);
+
+  await Promise.all([
+    supabase.from("community_partner_organizations").update({ last_touched: nowDate }).eq("id", partner.id),
+    supabase.from("referral_sources").update({ last_touched: nowDate }).eq("id", referralSource.id)
+  ]);
+
+  return {
+    partner,
+    referralSource
+  };
+}
+
+export async function createCommunityPartnerSupabase(input: {
+  organizationName: string;
+  referralSourceCategory: string;
+  location?: string | null;
+  primaryPhone?: string | null;
+  secondaryPhone?: string | null;
+  primaryEmail?: string | null;
+  notes?: string | null;
+  active: boolean;
+}) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("community_partner_organizations")
+    .insert({
+      partner_id: makeShortCode("P"),
+      organization_name: input.organizationName.trim(),
+      category: input.referralSourceCategory.trim(),
+      location: clean(input.location),
+      primary_phone: normalizePhoneForStorage(input.primaryPhone ?? null),
+      secondary_phone: normalizePhoneForStorage(input.secondaryPhone ?? null),
+      primary_email: clean(input.primaryEmail),
+      active: input.active,
+      notes: clean(input.notes),
+      last_touched: null
+    })
+    .select("id, partner_id, organization_name")
+    .single();
+  if (error) throw new Error(error.message);
+  return {
+    id: String(data.id),
+    partner: {
+      id: String(data.id),
+      partner_id: String(data.partner_id),
+      organization_name: String(data.organization_name)
+    }
+  };
+}
+
+export async function createReferralSourceSupabase(input: {
+  partnerId: string;
+  contactName: string;
+  jobTitle?: string | null;
+  primaryPhone?: string | null;
+  secondaryPhone?: string | null;
+  primaryEmail?: string | null;
+  preferredContactMethod?: string | null;
+  notes?: string | null;
+  active: boolean;
+}) {
+  const partner = await getSalesPartnerByIdOrCodeSupabase(input.partnerId);
+  if (!partner) throw new Error("Select a valid organization first.");
+
+  const sourceCode = makeShortCode("RS");
+  const nowDate = toEasternDate();
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("referral_sources")
+    .insert({
+      referral_source_id: sourceCode,
+      partner_id: partner.id,
+      contact_name: input.contactName.trim(),
+      organization_name: partner.organization_name,
+      job_title: clean(input.jobTitle),
+      primary_phone: normalizePhoneForStorage(input.primaryPhone ?? null),
+      secondary_phone: normalizePhoneForStorage(input.secondaryPhone ?? null),
+      primary_email: clean(input.primaryEmail),
+      preferred_contact_method: clean(input.preferredContactMethod),
+      active: input.active,
+      notes: clean(input.notes),
+      last_touched: nowDate
+    })
+    .select("id, referral_source_id, partner_id, contact_name, organization_name")
+    .single();
+  if (error) throw new Error(error.message);
+
+  await supabase
+    .from("community_partner_organizations")
+    .update({ last_touched: nowDate })
+    .eq("id", partner.id);
+
+  return {
+    id: String(data.id),
+    source: {
+      id: String(data.id),
+      referral_source_id: String(data.referral_source_id),
+      partner_id: String(partner.partner_id ?? data.partner_id),
+      contact_name: String(data.contact_name),
+      organization_name: String(data.organization_name ?? "")
+    }
+  };
+}
+
+export async function getSalesFormLookupsSupabase(options?: {
+  leadLimit?: number;
+  includeLeadId?: string | null;
+  includePartnerId?: string | null;
+  includeReferralSourceId?: string | null;
+}) {
+  const leadLimit = normalizePageSize(options?.leadLimit ?? 500, 500);
+  const supabase = await createClient();
+  const [{ data: leads, error: leadsError }, { data: partners, error: partnersError }, { data: referralSources, error: referralSourcesError }] = await Promise.all([
+    supabase
+      .from("leads")
+      .select(SALES_LEAD_LOOKUP_SELECT)
+      .order("created_at", { ascending: false })
+      .limit(leadLimit),
+    supabase
+      .from("community_partner_organizations")
+      .select(SALES_PARTNER_LOOKUP_SELECT)
+      .order("organization_name", { ascending: true })
+      .limit(500),
+    supabase
+      .from("referral_sources")
+      .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT)
+      .order("organization_name", { ascending: true })
+      .limit(500)
+  ]);
+  if (leadsError) throw new Error(leadsError.message);
+  if (partnersError) throw new Error(partnersError.message);
+  if (referralSourcesError) throw new Error(referralSourcesError.message);
+
+  const leadRows = [...(leads as SalesLeadLookupRow[])];
+  const partnerRows = [...(partners as SalesPartnerRow[])];
+  const referralRows = [...(referralSources as SalesReferralSourceRow[])];
+
+  if (options?.includeLeadId && !leadRows.some((row) => row.id === options.includeLeadId)) {
+    const extraLead = await fetchLeadByIdSupabase(options.includeLeadId);
+    if (extraLead) {
+      leadRows.unshift({
+        id: extraLead.id,
+        member_name: extraLead.member_name,
+        caregiver_name: extraLead.caregiver_name,
+        stage: extraLead.stage,
+        status: extraLead.status,
+        created_at: extraLead.created_at,
+        partner_id: extraLead.partner_id,
+        referral_source_id: extraLead.referral_source_id
+      });
+    }
+  }
+  if (options?.includePartnerId && !partnerRows.some((row) => row.id === options.includePartnerId)) {
+    const extraPartner = await fetchPartnerByIdSupabase(options.includePartnerId);
+    if (extraPartner) partnerRows.unshift(extraPartner);
+  }
+  if (options?.includeReferralSourceId && !referralRows.some((row) => row.id === options.includeReferralSourceId)) {
+    const extraReferralSource = await fetchReferralSourceByIdSupabase(options.includeReferralSourceId);
+    if (extraReferralSource) referralRows.unshift(extraReferralSource);
+  }
+
+  return {
+    leads: leadRows,
+    partners: partnerRows,
+    referralSources: normalizeReferralSources(partnerRows, referralRows)
+  };
+}
+
+export async function getSalesHomeSnapshotSupabase() {
+  const supabase = await createClient();
+  const [
+    openLeadsResult,
+    activitiesResult,
+    partnersResult,
+    referralSourcesResult,
+    partnerActivitiesResult
+  ] = await Promise.all([
+    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open"),
+    supabase.from("lead_activities").select("id", { count: "exact", head: true }),
+    supabase.from("community_partner_organizations").select("id", { count: "exact", head: true }),
+    supabase.from("referral_sources").select("id", { count: "exact", head: true }),
+    supabase.from("partner_activities").select("id", { count: "exact", head: true })
+  ]);
+  if (openLeadsResult.error) throw new Error(openLeadsResult.error.message);
+  if (activitiesResult.error) throw new Error(activitiesResult.error.message);
+  if (partnersResult.error) throw new Error(partnersResult.error.message);
+  if (referralSourcesResult.error) throw new Error(referralSourcesResult.error.message);
+  if (partnerActivitiesResult.error) throw new Error(partnerActivitiesResult.error.message);
+
+  return {
+    openLeadCount: openLeadsResult.count ?? 0,
+    leadActivityCount: activitiesResult.count ?? 0,
+    partnerCount: partnersResult.count ?? 0,
+    referralSourceCount: referralSourcesResult.count ?? 0,
+    partnerActivityCount: partnerActivitiesResult.count ?? 0
+  };
+}
+
+export async function getSalesSummarySnapshotSupabase(): Promise<SalesSummarySnapshot> {
+  const supabase = await createClient();
+  const thirtyDaysAgo = toEasternDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+  const [
+    totalResult,
+    openResult,
+    eipResult,
+    wonResult,
+    lostResult,
+    convertedResult,
+    recentInquiryCountResult,
+    recentInquiriesResult,
+    inquiryStageResult,
+    tourStageResult,
+    nurtureStageResult,
+    referralOnlyResult
+  ] = await Promise.all([
+    supabase.from("leads").select("id", { count: "exact", head: true }),
+    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open"),
+    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open").in("stage", ["Enrollment in Progress", "EIP"]),
+    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "won"),
+    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "lost"),
+    supabase.from("leads").select("id", { count: "exact", head: true }).or("status.eq.won,member_start_date.not.is.null"),
+    supabase.from("leads").select("id", { count: "exact", head: true }).gte("inquiry_date", thirtyDaysAgo),
+    supabase.from("leads").select(SALES_LEAD_READ_SELECT).order("inquiry_date", { ascending: false }).limit(10),
+    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open").eq("stage", "Inquiry"),
+    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open").eq("stage", "Tour"),
+    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open").eq("stage", "Nurture"),
+    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open").ilike("lead_source", "%referral%")
+  ]);
+  if (totalResult.error) throw new Error(totalResult.error.message);
+  if (openResult.error) throw new Error(openResult.error.message);
+  if (eipResult.error) throw new Error(eipResult.error.message);
+  if (wonResult.error) throw new Error(wonResult.error.message);
+  if (lostResult.error) throw new Error(lostResult.error.message);
+  if (convertedResult.error) throw new Error(convertedResult.error.message);
+  if (recentInquiryCountResult.error) throw new Error(recentInquiryCountResult.error.message);
+  if (recentInquiriesResult.error) throw new Error(recentInquiriesResult.error.message);
+  if (inquiryStageResult.error) throw new Error(inquiryStageResult.error.message);
+  if (tourStageResult.error) throw new Error(tourStageResult.error.message);
+  if (nurtureStageResult.error) throw new Error(nurtureStageResult.error.message);
+  if (referralOnlyResult.error) throw new Error(referralOnlyResult.error.message);
+
+  return {
+    totalLeadCount: totalResult.count ?? 0,
+    openLeadCount: openResult.count ?? 0,
+    eipLeadCount: eipResult.count ?? 0,
+    wonLeadCount: wonResult.count ?? 0,
+    lostLeadCount: lostResult.count ?? 0,
+    convertedOrEnrolledCount: convertedResult.count ?? 0,
+    recentInquiryActivityCount: recentInquiryCountResult.count ?? 0,
+    recentInquiries: ((recentInquiriesResult.data ?? []) as unknown as Record<string, unknown>[]).map((row) => toSalesLeadReadRow(row)),
+    stageCounts: [
+      { stage: "Inquiry", count: inquiryStageResult.count ?? 0 },
+      { stage: "Tour", count: tourStageResult.count ?? 0 },
+      { stage: "Enrollment in Progress", count: eipResult.count ?? 0 },
+      { stage: "Nurture", count: nurtureStageResult.count ?? 0 },
+      { stage: "Referrals Only", count: referralOnlyResult.count ?? 0 },
+      { stage: "Closed - Won", count: wonResult.count ?? 0 },
+      { stage: "Closed - Lost", count: lostResult.count ?? 0 }
+    ]
+  };
+}
+
+export async function getSalesLeadListSupabase(input?: {
+  status?: "open" | "won" | "lost";
+  stage?: "Inquiry" | "Tour" | "Enrollment in Progress" | "Nurture";
+  referralOnly?: boolean;
+  q?: string;
+  leadSource?: string;
+  likelihood?: string;
+  sort?: "member_name" | "stage" | "status" | "inquiry_date" | "caregiver_name" | "caregiver_relationship" | "lead_source" | "referral_name" | "likelihood" | "next_follow_up";
+  dir?: "asc" | "desc";
+  page?: number;
+  pageSize?: number;
+  limit?: number;
+}): Promise<SalesLeadListResult> {
+  const supabase = await createClient();
+  const page = normalizePage(input?.page);
+  const hasPagination = Boolean(input?.pageSize || input?.limit);
+  const pageSize = hasPagination ? normalizePageSize(input?.pageSize ?? input?.limit ?? 25, input?.limit ?? 25) : 0;
+  let query: any = supabase.from("leads").select(SALES_LEAD_READ_SELECT, { count: "exact" });
+
+  if (input?.status) {
+    query = query.eq("status", input.status);
+  }
+  if (input?.stage === "Enrollment in Progress") {
+    query = query.in("stage", ["Enrollment in Progress", "EIP"]);
+  } else if (input?.stage) {
+    query = query.eq("stage", input.stage);
+  }
+  if (input?.referralOnly) {
+    query = query.ilike("lead_source", "%referral%");
+  }
+  if (input?.leadSource) {
+    query = query.eq("lead_source", input.leadSource);
+  }
+  if (input?.likelihood) {
+    query = query.eq("likelihood", input.likelihood);
+  }
+  const q = clean(input?.q);
+  if (q) {
+    const escaped = escapeIlike(q);
+    query = query.or(`member_name.ilike.%${escaped}%,caregiver_name.ilike.%${escaped}%`);
+  }
+
+  const sortColumn =
+    input?.sort === "next_follow_up"
+      ? "next_follow_up_date"
+      : input?.sort || "inquiry_date";
+  const ascending = input?.dir === "asc";
+  query = query.order(sortColumn, { ascending, nullsFirst: false });
+  if (sortColumn !== "member_name") {
+    query = query.order("member_name", { ascending: true });
+  }
+  if (hasPagination) {
+    query = query.range((page - 1) * pageSize, page * pageSize - 1);
+  }
+
+  const { data, error, count } = await query;
+  if (error) throw new Error(error.message);
+  const rows = ((data ?? []) as unknown as Record<string, unknown>[]).map((row) => toSalesLeadReadRow(row));
+  const totalRows = count ?? rows.length;
+  const effectivePageSize = hasPagination ? pageSize : Math.max(rows.length, 1);
+  return {
+    rows,
+    page: hasPagination ? page : 1,
+    pageSize: effectivePageSize,
+    totalRows,
+    totalPages: hasPagination ? Math.max(1, Math.ceil(totalRows / pageSize)) : 1
+  };
+}
+
+export async function getSalesRecentActivitySnapshotSupabase(options?: { leadId?: string | null }) {
+  const supabase = await createClient();
+  let leadActivitiesQuery: any = supabase
+    .from("lead_activities")
+    .select("id, lead_id, activity_at, activity_type, outcome, lost_reason, next_follow_up_date, next_follow_up_type, completed_by_name, notes, member_name")
+    .order("activity_at", { ascending: false })
+    .limit(100);
+  if (options?.leadId) {
+    leadActivitiesQuery = leadActivitiesQuery.eq("lead_id", options.leadId);
+  }
+  const [leadActivitiesResult, partnerActivitiesResult] = await Promise.all([
+    leadActivitiesQuery,
+    supabase
+      .from("partner_activities")
+      .select("id, partner_id, referral_source_id, lead_id, organization_name, contact_name, activity_at, activity_type, next_follow_up_date, next_follow_up_type, completed_by, completed_by_name, notes")
+      .order("activity_at", { ascending: false })
+      .limit(100)
+  ]);
+  if (leadActivitiesResult.error) throw new Error(leadActivitiesResult.error.message);
+  if (partnerActivitiesResult.error) throw new Error(partnerActivitiesResult.error.message);
+
+  return {
+    activities: leadActivitiesResult.data ?? [],
+    partnerActivities: (partnerActivitiesResult.data ?? []).map((activity: any) => ({
+      ...activity,
+      completed_by: activity.completed_by ?? activity.completed_by_name ?? null
+    }))
+  };
+}
+
+export async function getSalesPartnerDirectoryPageSupabase(input?: { q?: string; page?: number; pageSize?: number }) {
+  const supabase = await createClient();
+  const page = normalizePage(input?.page);
+  const pageSize = normalizePageSize(input?.pageSize ?? 25, 25);
+  let query: any = supabase
+    .from("community_partner_organizations")
+    .select(SALES_PARTNER_LOOKUP_SELECT, { count: "exact" })
+    .order("organization_name", { ascending: true });
+  const q = clean(input?.q);
+  if (q) {
+    const escaped = escapeIlike(q);
+    query = query.or(`organization_name.ilike.%${escaped}%,category.ilike.%${escaped}%,location.ilike.%${escaped}%,primary_phone.ilike.%${escaped}%,primary_email.ilike.%${escaped}%`);
+  }
+  query = query.range((page - 1) * pageSize, page * pageSize - 1);
+  const { data, error, count } = await query;
+  if (error) throw new Error(error.message);
+  return {
+    rows: (data ?? []) as SalesPartnerRow[],
+    page,
+    pageSize,
+    totalRows: count ?? 0,
+    totalPages: Math.max(1, Math.ceil((count ?? 0) / pageSize))
+  };
+}
+
+export async function getSalesReferralSourceDirectoryPageSupabase(input?: { q?: string; page?: number; pageSize?: number }) {
+  const supabase = await createClient();
+  const page = normalizePage(input?.page);
+  const pageSize = normalizePageSize(input?.pageSize ?? 25, 25);
+  const { data: partners, error: partnersError } = await supabase
+    .from("community_partner_organizations")
+    .select("id, partner_id, organization_name, category, location, primary_phone, primary_email, active, last_touched")
+    .order("organization_name", { ascending: true })
+    .limit(500);
+  if (partnersError) throw new Error(partnersError.message);
+  let query: any = supabase
+    .from("referral_sources")
+    .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT, { count: "exact" })
+    .order("organization_name", { ascending: true });
+  const q = clean(input?.q);
+  if (q) {
+    const escaped = escapeIlike(q);
+    query = query.or(`contact_name.ilike.%${escaped}%,organization_name.ilike.%${escaped}%,job_title.ilike.%${escaped}%,primary_phone.ilike.%${escaped}%,primary_email.ilike.%${escaped}%,preferred_contact_method.ilike.%${escaped}%`);
+  }
+  query = query.range((page - 1) * pageSize, page * pageSize - 1);
+  const { data, error, count } = await query;
+  if (error) throw new Error(error.message);
+  return {
+    rows: normalizeReferralSources((partners ?? []) as SalesPartnerRow[], (data ?? []) as SalesReferralSourceRow[]),
+    page,
+    pageSize,
+    totalRows: count ?? 0,
+    totalPages: Math.max(1, Math.ceil((count ?? 0) / pageSize))
+  };
+}
+
+export async function getSalesReferralSourcesForPartnerIdsSupabase(partnerIds: string[]) {
+  if (partnerIds.length === 0) return [] as SalesReferralSourceRow[];
+  const supabase = await createClient();
+  const [{ data: partners, error: partnersError }, { data: referralSources, error: referralSourcesError }] = await Promise.all([
+    supabase
+      .from("community_partner_organizations")
+      .select("id, partner_id, organization_name, category, location, primary_phone, primary_email, active, last_touched")
+      .in("id", partnerIds),
+    supabase
+      .from("referral_sources")
+      .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT)
+      .in("partner_id", partnerIds)
+      .order("organization_name", { ascending: true })
+  ]);
+  if (partnersError) throw new Error(partnersError.message);
+  if (referralSourcesError) throw new Error(referralSourcesError.message);
+  return normalizeReferralSources((partners ?? []) as SalesPartnerRow[], (referralSources ?? []) as SalesReferralSourceRow[]);
+}

@@ -1,5 +1,6 @@
 import { canonicalLeadStage, canonicalLeadStatus } from "@/lib/canonical";
 import { createClient } from "@/lib/supabase/server";
+import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export type CanonicalLeadStage =
@@ -125,6 +126,24 @@ export async function applyLeadStageTransitionSupabase(input: {
       created_at: now
     });
     if (historyError) throw new Error(historyError.message);
+
+    await recordWorkflowEvent({
+      eventType: "lead_stage_transitioned",
+      entityType: "lead",
+      entityId: input.leadId,
+      actorType: "user",
+      actorUserId: input.actorUserId,
+      status: resolved.businessStatus.toLowerCase(),
+      severity: "low",
+      metadata: {
+        from_stage: fromStage || null,
+        to_stage: resolved.stage,
+        from_status: fromStatus || null,
+        to_status: resolved.dbStatus,
+        source: input.source,
+        reason: input.reason ?? null
+      }
+    });
   }
 
   return {

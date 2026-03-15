@@ -3187,7 +3187,38 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
         city: row.city,
         code_status: row.code_status,
         discharged_by: row.discharged_by,
-        latest_assessment_id: row.latest_assessment_id,
+        latest_assessment_id: null,
+        latest_assessment_date: row.latest_assessment_date,
+        latest_assessment_score: row.latest_assessment_score,
+        latest_assessment_track: row.latest_assessment_track,
+        latest_assessment_admission_review_required: row.latest_assessment_admission_review_required,
+        preferred_name: preferredName,
+        legal_first_name: legalFirstName,
+        legal_last_name: legalLastName,
+        ssn_last4: String(1000 + ((idx * 37) % 8999)).slice(-4)
+      };
+    }),
+    memberLatestAssessmentLinks: db.members.map((row, idx) => {
+      const nameParts = row.display_name.trim().split(/\s+/g);
+      const legalFirstName = nameParts.slice(0, -1).join(" ") || nameParts[0] || row.display_name;
+      const legalLastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : "Member";
+      const preferredName = nameParts[0] ?? row.display_name;
+      return {
+        id: row.id,
+        display_name: row.display_name,
+        status: row.status,
+        qr_code: row.qr_code,
+        enrollment_date: row.enrollment_date,
+        dob: row.dob,
+        source_lead_id: salesSeed.memberLeadByMemberId.get(row.id) ?? null,
+        discharge_date: row.discharge_date,
+        discharge_reason: row.discharge_reason,
+        discharge_disposition: row.discharge_disposition,
+        locker_number: row.locker_number,
+        city: row.city,
+        code_status: row.code_status,
+        discharged_by: row.discharged_by,
+        latest_assessment_id: row.latest_assessment_id ?? null,
         latest_assessment_date: row.latest_assessment_date,
         latest_assessment_score: row.latest_assessment_score,
         latest_assessment_track: row.latest_assessment_track,
@@ -3338,6 +3369,11 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
       linked_adjustment_id: row.linked_adjustment_id ?? null
     })),
     memberCommandCenters: db.memberCommandCenters.map((row) => ({
+      ...row,
+      source_assessment_id: null,
+      updated_by_user_id: mapStaff(row.updated_by_user_id)
+    })),
+    memberCommandCenterAssessmentLinks: db.memberCommandCenters.map((row) => ({
       ...row,
       source_assessment_id: row.source_assessment_id ?? null,
       updated_by_user_id: mapStaff(row.updated_by_user_id)
@@ -3927,6 +3963,8 @@ async function main() {
     { table: "intake_assessments", rows: rows.intakeAssessments, module: "intake" },
     { table: "intake_assessment_signatures", rows: rows.intakeAssessmentSignatures, module: "intake" },
     { table: "assessment_responses", rows: rows.assessmentResponses, module: "intake" },
+    { table: "members", rows: rows.memberLatestAssessmentLinks, module: "intake", legacy: true },
+    { table: "member_command_centers", rows: rows.memberCommandCenterAssessmentLinks, module: "intake", legacy: true },
     { table: "physician_orders", rows: rows.physicianOrders, module: "intake" },
     { table: "pof_requests", rows: rows.pofRequests, module: "intake" },
     { table: "pof_signatures", rows: rows.pofSignatures, module: "intake" },

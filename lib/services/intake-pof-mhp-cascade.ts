@@ -11,7 +11,7 @@ import {
   updatePhysicianOrder
 } from "@/lib/services/physician-orders-supabase";
 import { requireSignedIntakeAssessment } from "@/lib/services/intake-assessment-esign";
-import { logSystemEvent } from "@/lib/services/system-event-service";
+import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
 export type CreateIntakeAssessmentPayload = {
@@ -274,12 +274,14 @@ export async function createIntakeAssessmentWithResponses(input: {
     }
   }
 
-  await logSystemEvent({
-    event_type: "intake_assessment_created",
-    entity_type: "intake_assessment",
-    entity_id: String(assessment.id),
-    actor_type: "user",
-    actor_id: input.actor.id,
+  await recordWorkflowEvent({
+    eventType: "intake_assessment_created",
+    entityType: "intake_assessment",
+    entityId: String(assessment.id),
+    actorType: "user",
+    actorUserId: input.actor.id,
+    status: input.payload.complete ? "completed" : "draft",
+    severity: "low",
     metadata: {
       member_id: input.payload.memberId,
       lead_id: input.payload.leadId ?? null,

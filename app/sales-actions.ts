@@ -6,7 +6,6 @@ import { z } from "zod";
 
 import { getCurrentProfile, requireModuleAction } from "@/lib/auth";
 import {
-  LEAD_ACTIVITY_OUTCOMES,
   LEAD_ACTIVITY_TYPES,
   LEAD_FOLLOW_UP_TYPES,
   LEAD_LIKELIHOOD_OPTIONS,
@@ -30,9 +29,18 @@ import {
   applyLeadStageTransitionWithMemberUpsertSupabase,
   createLeadWithMemberConversionSupabase
 } from "@/lib/services/sales-lead-conversion-supabase";
+import {
+  createCommunityPartnerSupabase,
+  createPartnerActivitySupabase,
+  createReferralSourceSupabase,
+  createSalesLeadSupabase,
+  getSalesFormLookupsSupabase,
+  getSalesLeadForEnrollmentSupabase,
+  insertSalesAuditLogSupabase,
+  resolveSalesPartnerAndReferralSupabase
+} from "@/lib/services/sales-crm-supabase";
 import { applyLeadStageTransitionSupabase } from "@/lib/services/sales-lead-stage-supabase";
 import { normalizePhoneForStorage } from "@/lib/phone";
-import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternDateTimeLocal, toEasternISO } from "@/lib/timezone";
 
 const optionalString = z.string().optional().or(z.literal(""));
@@ -70,21 +78,6 @@ function revalidateSalesLeadViews(leadId?: string) {
 
 function normalizePhone(phone: string | undefined) {
   return normalizePhoneForStorage(phone) ?? "";
-}
-
-function normalizeText(value: string | null | undefined) {
-  return (value ?? "").trim().toLowerCase();
-}
-
-function isUuid(value: string | null | undefined) {
-  const normalized = (value ?? "").trim();
-  if (!normalized) return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized);
-}
-
-function makeShortId(prefix: string) {
-  const random = Math.random().toString(16).slice(2, 10);
-  return `${prefix}-${random}`;
 }
 
 async function resolveSalesLeadId(rawLeadId: string, actionLabel: string) {
@@ -299,161 +292,92 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
     return { error: "Invalid inquiry submission." };
   }
 
-      const supabase = await createClient();
-    const profile = await getCurrentProfile();
-    let stage = canonicalLeadStage(payload.data.stage);
-    let status = canonicalLeadStatus(payload.data.status, stage);
-    if (stage === "Closed - Lost") status = "Lost";
-    if (status === "Lost") stage = "Closed - Lost";
-    if (status === "Won") stage = "Closed - Won";
-    if (status === "Nurture" && stage !== "Nurture") stage = "Nurture";
-    status = canonicalLeadStatus(status, stage);
-    const dbStatus: "open" | "won" | "lost" = status === "Won" ? "won" : status === "Lost" ? "lost" : "open";
-    const isLostStatus = status === "Lost";
-    const isEipStage = stage === "Enrollment in Progress";
-    const resolvedLostReason = isLostStatus ? resolveLostReason(payload.data.lostReason, payload.data.lostReasonOther) : null;
+  const profile = await getCurrentProfile();
+  let stage = canonicalLeadStage(payload.data.stage);
+  let status = canonicalLeadStatus(payload.data.status, stage);
+  if (stage === "Closed - Lost") status = "Lost";
+  if (status === "Lost") stage = "Closed - Lost";
+  if (status === "Won") stage = "Closed - Won";
+  if (status === "Nurture" && stage !== "Nurture") stage = "Nurture";
+  status = canonicalLeadStatus(status, stage);
+  const dbStatus: "open" | "won" | "lost" = status === "Won" ? "won" : status === "Lost" ? "lost" : "open";
+  const isLostStatus = status === "Lost";
+  const isEipStage = stage === "Enrollment in Progress";
+  const resolvedLostReason = isLostStatus ? resolveLostReason(payload.data.lostReason, payload.data.lostReasonOther) : null;
 
-    const requestedPartner = payload.data.partnerId?.trim() || null;
-    const requestedSource = payload.data.referralSourceId?.trim() || null;
-    const selectedPartnerResult = requestedPartner
-      ? await supabase
-          .from("community_partner_organizations")
-          .select("id, partner_id")
-          .or([isUuid(requestedPartner) ? `id.eq.${requestedPartner}` : null, `partner_id.eq.${requestedPartner}`].filter(Boolean).join(","))
-          .maybeSingle()
-      : { data: null, error: null };
-    if (selectedPartnerResult.error) return { error: selectedPartnerResult.error.message };
-    const selectedPartner = selectedPartnerResult.data ?? null;
-    const selectedReferralSourceResult = requestedSource
-      ? await supabase
-          .from("referral_sources")
-          .select("id, partner_id, referral_source_id, contact_name")
-          .or([isUuid(requestedSource) ? `id.eq.${requestedSource}` : null, `referral_source_id.eq.${requestedSource}`].filter(Boolean).join(","))
-          .maybeSingle()
-      : { data: null, error: null };
-    if (selectedReferralSourceResult.error) return { error: selectedReferralSourceResult.error.message };
-    const selectedReferralSource = selectedReferralSourceResult.data ?? null;
-
-    if (requestedPartner && !selectedPartner) return { error: "Community partner organization not found." };
-    if (requestedSource && !selectedReferralSource) return { error: "Referral source not found." };
-
-    if (payload.data.leadSource === "Referral" && selectedPartner && selectedReferralSource && selectedReferralSource.partner_id !== selectedPartner.id) {
-      return { error: "Referral Source must belong to the selected Community Partner Organization." };
-    }
-    const resolvedPartnerId = selectedPartner?.partner_id ?? null;
-    const resolvedReferralSourceId = selectedReferralSource?.referral_source_id ?? null;
-    const resolvedReferralName = payload.data.referralName?.trim() || selectedReferralSource?.contact_name || null;
-
-    const leadPatch = {
-      stage,
-      status: dbStatus,
-      stage_updated_at: toEasternISO(),
-      inquiry_date: payload.data.inquiryDate,
-      tour_date: payload.data.tourDate?.trim() || null,
-      tour_completed: payload.data.tourDate?.trim() ? Boolean(payload.data.tourCompleted) : false,
-      discovery_date: payload.data.discoveryDate?.trim() || null,
-      member_start_date: isEipStage ? payload.data.memberStartDate?.trim() || null : null,
-      caregiver_name: payload.data.caregiverName.trim(),
-      caregiver_relationship: payload.data.caregiverRelationship?.trim() || null,
-      caregiver_email: payload.data.caregiverEmail?.trim() || null,
-      caregiver_phone: normalizePhone(payload.data.caregiverPhone),
-      member_name: payload.data.memberName.trim(),
-      member_dob: payload.data.memberDob?.trim() || null,
-      lead_source: payload.data.leadSource,
-      lead_source_other: payload.data.leadSource === "Other" ? payload.data.leadSourceOther?.trim() || null : null,
-      partner_id: resolvedPartnerId,
-      referral_source_id: resolvedReferralSourceId,
-      referral_name: resolvedReferralName,
-      likelihood: payload.data.likelihood || null,
-      next_follow_up_date: isLostStatus ? null : payload.data.nextFollowUpDate || null,
-      next_follow_up_type: isLostStatus ? null : payload.data.nextFollowUpType || null,
-      notes_summary: payload.data.notesSummary || null,
-      lost_reason: resolvedLostReason,
-      closed_date: isLostStatus ? payload.data.closedDate?.trim() || toEasternDate() : status === "Won" ? toEasternDate() : null,
-      updated_at: toEasternISO()
-    };
-
-    let leadId = payload.data.leadId?.trim() || "";
-    let canonicalMemberId: string | null = null;
-    let wonConversionHandled = false;
-    if (leadId) {
-      try {
-        const canonicalLead = await resolveSalesLeadId(leadId, "saveSalesLeadAction");
-        leadId = canonicalLead.leadId;
-        canonicalMemberId = canonicalLead.memberId;
-      } catch (error) {
-        return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
-      }
-      try {
-        if (status === "Won") {
-          await applyClosedWonLeadConversion({
-            leadId,
-            actorUserId: profile.id,
-            actorName: profile.full_name,
-            source: "saveSalesLeadAction",
-            reason: "Lead updated from sales intake form.",
-            memberDisplayName: payload.data.memberName.trim(),
-            memberDob: payload.data.memberDob?.trim() || null,
-            memberEnrollmentDate: payload.data.memberStartDate?.trim() || toEasternDate(),
-            existingMemberId: canonicalMemberId,
-            additionalLeadPatch: leadPatch
-          });
-          wonConversionHandled = true;
-        } else {
-          await applyLeadStageTransitionSupabase({
-            leadId,
-            requestedStage: stage,
-            requestedStatus: status,
-            actorUserId: profile.id,
-            actorName: profile.full_name,
-            source: "saveSalesLeadAction",
-            reason: "Lead updated from sales intake form.",
-            additionalLeadPatch: leadPatch
-          });
+  const requestedPartner = payload.data.partnerId?.trim() || null;
+  const requestedSource = payload.data.referralSourceId?.trim() || null;
+  let selectedPartner: { id: string; partner_id: string } | null = null;
+  let selectedReferralSource: { id: string; partner_id: string; referral_source_id: string; contact_name: string } | null = null;
+  try {
+    const resolved = await resolveSalesPartnerAndReferralSupabase({
+      partnerId: requestedPartner,
+      referralSourceId: requestedSource
+    });
+    selectedPartner = resolved.partner
+      ? {
+          id: resolved.partner.id,
+          partner_id: resolved.partner.partner_id
         }
-      } catch (error) {
-        return { error: error instanceof Error ? error.message : "Unable to update lead." };
-      }
-    } else {
+      : null;
+    selectedReferralSource = resolved.referralSource
+      ? {
+          id: resolved.referralSource.id,
+          partner_id: resolved.referralSource.partner_id,
+          referral_source_id: resolved.referralSource.referral_source_id,
+          contact_name: resolved.referralSource.contact_name
+        }
+      : null;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to resolve referral linkage." };
+  }
+
+  const resolvedPartnerId = selectedPartner?.partner_id ?? null;
+  const resolvedReferralSourceId = selectedReferralSource?.referral_source_id ?? null;
+  const resolvedReferralName = payload.data.referralName?.trim() || selectedReferralSource?.contact_name || null;
+
+  const leadPatch = {
+    stage,
+    status: dbStatus,
+    stage_updated_at: toEasternISO(),
+    inquiry_date: payload.data.inquiryDate,
+    tour_date: payload.data.tourDate?.trim() || null,
+    tour_completed: payload.data.tourDate?.trim() ? Boolean(payload.data.tourCompleted) : false,
+    discovery_date: payload.data.discoveryDate?.trim() || null,
+    member_start_date: isEipStage ? payload.data.memberStartDate?.trim() || null : null,
+    caregiver_name: payload.data.caregiverName.trim(),
+    caregiver_relationship: payload.data.caregiverRelationship?.trim() || null,
+    caregiver_email: payload.data.caregiverEmail?.trim() || null,
+    caregiver_phone: normalizePhone(payload.data.caregiverPhone),
+    member_name: payload.data.memberName.trim(),
+    member_dob: payload.data.memberDob?.trim() || null,
+    lead_source: payload.data.leadSource,
+    lead_source_other: payload.data.leadSource === "Other" ? payload.data.leadSourceOther?.trim() || null : null,
+    partner_id: resolvedPartnerId,
+    referral_source_id: resolvedReferralSourceId,
+    referral_name: resolvedReferralName,
+    likelihood: payload.data.likelihood || null,
+    next_follow_up_date: isLostStatus ? null : payload.data.nextFollowUpDate || null,
+    next_follow_up_type: isLostStatus ? null : payload.data.nextFollowUpType || null,
+    notes_summary: payload.data.notesSummary || null,
+    lost_reason: resolvedLostReason,
+    closed_date: isLostStatus ? payload.data.closedDate?.trim() || toEasternDate() : status === "Won" ? toEasternDate() : null,
+    updated_at: toEasternISO()
+  };
+
+  let leadId = payload.data.leadId?.trim() || "";
+  let canonicalMemberId: string | null = null;
+  let wonConversionHandled = false;
+  if (leadId) {
+    try {
+      const canonicalLead = await resolveSalesLeadId(leadId, "saveSalesLeadAction");
+      leadId = canonicalLead.leadId;
+      canonicalMemberId = canonicalLead.memberId;
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
+    }
+    try {
       if (status === "Won") {
-        try {
-          const conversion = await createLeadWithMemberConversionSupabase({
-            requestedStage: stage,
-            requestedStatus: status,
-            createdByUserId: profile.id,
-            actorUserId: profile.id,
-            actorName: profile.full_name,
-            source: "saveSalesLeadAction",
-            reason: "Lead updated from sales intake form.",
-            memberDisplayName: payload.data.memberName.trim(),
-            memberDob: payload.data.memberDob?.trim() || null,
-            memberEnrollmentDate: payload.data.memberStartDate?.trim() || toEasternDate(),
-            leadPatch
-          });
-          leadId = conversion.leadId;
-          wonConversionHandled = true;
-        } catch (error) {
-          return { error: error instanceof Error ? error.message : "Unable to create and convert lead." };
-        }
-      } else {
-        const { data, error } = await supabase
-          .from("leads")
-          .insert({
-            ...leadPatch,
-            status: dbStatus,
-            created_by_user_id: profile.id
-          })
-          .select("id")
-          .single();
-        if (error) return { error: error.message };
-        leadId = data.id;
-      }
-    }
-
-    if (status === "Won" && !wonConversionHandled) {
-      const enrollmentDate = payload.data.memberStartDate?.trim() || toEasternDate();
-      try {
-        const canonicalLead = await resolveSalesLeadId(leadId, "saveSalesLeadAction:closed-won");
         await applyClosedWonLeadConversion({
           leadId,
           actorUserId: profile.id,
@@ -462,30 +386,100 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
           reason: "Lead updated from sales intake form.",
           memberDisplayName: payload.data.memberName.trim(),
           memberDob: payload.data.memberDob?.trim() || null,
-          memberEnrollmentDate: enrollmentDate,
-          existingMemberId: canonicalLead.memberId
+          memberEnrollmentDate: payload.data.memberStartDate?.trim() || toEasternDate(),
+          existingMemberId: canonicalMemberId,
+          additionalLeadPatch: leadPatch
         });
+        wonConversionHandled = true;
+      } else {
+        await applyLeadStageTransitionSupabase({
+          leadId,
+          requestedStage: stage,
+          requestedStatus: status,
+          actorUserId: profile.id,
+          actorName: profile.full_name,
+          source: "saveSalesLeadAction",
+          reason: "Lead updated from sales intake form.",
+          additionalLeadPatch: leadPatch
+        });
+      }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Unable to update lead." };
+    }
+  } else {
+    if (status === "Won") {
+      try {
+        const conversion = await createLeadWithMemberConversionSupabase({
+          requestedStage: stage,
+          requestedStatus: status,
+          createdByUserId: profile.id,
+          actorUserId: profile.id,
+          actorName: profile.full_name,
+          source: "saveSalesLeadAction",
+          reason: "Lead updated from sales intake form.",
+          memberDisplayName: payload.data.memberName.trim(),
+          memberDob: payload.data.memberDob?.trim() || null,
+          memberEnrollmentDate: payload.data.memberStartDate?.trim() || toEasternDate(),
+          leadPatch
+        });
+        leadId = conversion.leadId;
+        wonConversionHandled = true;
       } catch (error) {
-        return { error: error instanceof Error ? error.message : "Unable to convert lead to member." };
+        return { error: error instanceof Error ? error.message : "Unable to create and convert lead." };
+      }
+    } else {
+      try {
+        const created = await createSalesLeadSupabase({
+          leadPatch,
+          createdByUserId: profile.id
+        });
+        leadId = created.id;
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Unable to create lead." };
       }
     }
+  }
 
-    const { error: auditInsertError } = await supabase.from("audit_logs").insert({
-      actor_user_id: profile.id,
-      actor_role: normalizeRoleKey(profile.role),
+  if (status === "Won" && !wonConversionHandled) {
+    const enrollmentDate = payload.data.memberStartDate?.trim() || toEasternDate();
+    try {
+      const canonicalLead = await resolveSalesLeadId(leadId, "saveSalesLeadAction:closed-won");
+      await applyClosedWonLeadConversion({
+        leadId,
+        actorUserId: profile.id,
+        actorName: profile.full_name,
+        source: "saveSalesLeadAction",
+        reason: "Lead updated from sales intake form.",
+        memberDisplayName: payload.data.memberName.trim(),
+        memberDob: payload.data.memberDob?.trim() || null,
+        memberEnrollmentDate: enrollmentDate,
+        existingMemberId: canonicalLead.memberId
+      });
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Unable to convert lead to member." };
+    }
+  }
+
+  try {
+    await insertSalesAuditLogSupabase({
+      actorUserId: profile.id,
+      actorRole: normalizeRoleKey(profile.role),
       action: "upsert_lead",
-      entity_type: "lead",
-      entity_id: leadId,
+      entityType: "lead",
+      entityId: leadId,
       details: {
         stage,
         status,
         leadSource: payload.data.leadSource
       }
     });
-    if (auditInsertError) return { error: auditInsertError.message };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to write lead audit log." };
+  }
 
-    revalidateSalesLeadViews(leadId);
-    return { ok: true, id: leadId };}
+  revalidateSalesLeadViews(leadId);
+  return { ok: true, id: leadId };
+}
 
 const enrollLeadSchema = z.object({
   leadId: z.string().min(1)
@@ -498,73 +492,76 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
     return { error: "Invalid lead conversion request." };
   }
 
-    let canonicalLeadId = "";
-    let canonicalMemberIdFromLead: string | null = null;
-    try {
-      const canonicalLead = await resolveSalesLeadId(payload.data.leadId, "enrollMemberFromLeadAction");
-      canonicalLeadId = canonicalLead.leadId;
-      canonicalMemberIdFromLead = canonicalLead.memberId;
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
-    }
+  let canonicalLeadId = "";
+  let canonicalMemberIdFromLead: string | null = null;
+  try {
+    const canonicalLead = await resolveSalesLeadId(payload.data.leadId, "enrollMemberFromLeadAction");
+    canonicalLeadId = canonicalLead.leadId;
+    canonicalMemberIdFromLead = canonicalLead.memberId;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
+  }
 
-      const supabase = await createClient();
-    const profile = await getCurrentProfile();
-    const { data: lead, error: leadError } = await supabase
-      .from("leads")
-      .select("id, stage, status, member_name, member_dob, lead_source, member_start_date")
-      .eq("id", canonicalLeadId)
-      .maybeSingle();
-    if (leadError) return { error: leadError.message };
-    if (!lead) return { error: "Lead not found." };
-    if (canonicalLeadStage(lead.stage) !== "Enrollment in Progress") {
-      return { error: "Enroll Member is only available for leads in Enrollment in Progress." };
-    }
+  const profile = await getCurrentProfile();
+  let lead;
+  try {
+    lead = await getSalesLeadForEnrollmentSupabase(canonicalLeadId);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to load lead for enrollment." };
+  }
+  if (!lead) return { error: "Lead not found." };
+  if (canonicalLeadStage(lead.stage) !== "Enrollment in Progress") {
+    return { error: "Enroll Member is only available for leads in Enrollment in Progress." };
+  }
 
-    const enrollmentDate = lead.member_start_date?.trim() || toEasternDate();
-    let memberId = "";
-    try {
-      const conversion = await applyClosedWonLeadConversion({
-        leadId: lead.id,
-        actorUserId: profile.id,
-        actorName: profile.full_name,
-        source: "enrollMemberFromLeadAction",
-        reason: "Enrollment in progress lead converted to member.",
-        memberDisplayName: String(lead.member_name ?? "").trim(),
-        memberDob: lead.member_dob ?? null,
-        memberEnrollmentDate: enrollmentDate,
-        existingMemberId: canonicalMemberIdFromLead,
-        additionalLeadPatch: {
-          member_start_date: enrollmentDate
-        }
-      });
-      memberId = conversion.memberId;
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : "Unable to convert lead to member." };
-    }
+  const enrollmentDate = lead.member_start_date?.trim() || toEasternDate();
+  let memberId = "";
+  try {
+    const conversion = await applyClosedWonLeadConversion({
+      leadId: lead.id,
+      actorUserId: profile.id,
+      actorName: profile.full_name,
+      source: "enrollMemberFromLeadAction",
+      reason: "Enrollment in progress lead converted to member.",
+      memberDisplayName: String(lead.member_name ?? "").trim(),
+      memberDob: lead.member_dob ?? null,
+      memberEnrollmentDate: enrollmentDate,
+      existingMemberId: canonicalMemberIdFromLead,
+      additionalLeadPatch: {
+        member_start_date: enrollmentDate
+      }
+    });
+    memberId = conversion.memberId;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to convert lead to member." };
+  }
 
-    const { error: auditInsertError } = await supabase.from("audit_logs").insert({
-      actor_user_id: profile.id,
-      actor_role: normalizeRoleKey(profile.role),
+  try {
+    await insertSalesAuditLogSupabase({
+      actorUserId: profile.id,
+      actorRole: normalizeRoleKey(profile.role),
       action: "manager_review",
-      entity_type: "lead",
-      entity_id: lead.id,
+      entityType: "lead",
+      entityId: lead.id,
       details: {
         operation: "enroll-member",
         convertedMemberId: memberId,
         convertedMemberName: lead.member_name
       }
     });
-    if (auditInsertError) return { error: auditInsertError.message };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to write lead conversion audit log." };
+  }
 
-    revalidateSalesLeadViews(lead.id);
-    revalidatePath("/members");
-    revalidatePath(`/members/${memberId}`);
-    revalidatePath("/operations/member-command-center");
-    revalidatePath(`/operations/member-command-center/${memberId}`);
-    revalidatePath("/health/member-health-profiles");
-    revalidatePath(`/health/member-health-profiles/${memberId}`);
-    return { ok: true, leadId: lead.id, memberId };}
+  revalidateSalesLeadViews(lead.id);
+  revalidatePath("/members");
+  revalidatePath(`/members/${memberId}`);
+  revalidatePath("/operations/member-command-center");
+  revalidatePath(`/operations/member-command-center/${memberId}`);
+  revalidatePath("/health/member-health-profiles");
+  revalidatePath(`/health/member-health-profiles/${memberId}`);
+  return { ok: true, leadId: lead.id, memberId };
+}
 
 export async function createSalesLeadActivityAction(raw: z.infer<typeof salesLeadActivityInputSchema>) {
   await requireSalesRoles();
@@ -608,53 +605,50 @@ export async function createLeadQuickContactActivityAction(raw: z.infer<typeof q
     return { error: "Invalid quick contact action." };
   }
 
-    let leadId = "";
-    try {
-      leadId = (await resolveSalesLeadId(payload.data.leadId, "createLeadQuickContactActivityAction")).leadId;
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
-    }
+  let leadId = "";
+  try {
+    leadId = (await resolveSalesLeadId(payload.data.leadId, "createLeadQuickContactActivityAction")).leadId;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to resolve canonical lead identity." };
+  }
 
-      const supabase = await createClient();
-    const profile = await getCurrentProfile();
-    const { data: lead, error: leadError } = await supabase
-      .from("leads")
-      .select("id, member_name, next_follow_up_date, next_follow_up_type, partner_id, referral_source_id")
-      .eq("id", leadId)
-      .maybeSingle();
-    if (leadError) return { error: leadError.message };
-    if (!lead) return { error: "Lead not found." };
-
-    const isCall = payload.data.channel === "call";
-    const { data: created, error: insertError } = await supabase
-      .from("lead_activities")
-      .insert({
-        lead_id: leadId,
-        member_name: lead.member_name,
-        activity_at: toEasternISO(),
-        activity_type: isCall ? "Call" : "Email",
+  const profile = await getCurrentProfile();
+  const isCall = payload.data.channel === "call";
+  let created;
+  try {
+    created = await createSalesLeadActivity({
+      activity: {
+        leadId,
+        activityAt: toEasternISO(),
+        activityType: isCall ? "Call" : "Email",
         outcome: isCall ? "No answer" : "Sent info/packet",
-        lost_reason: null,
+        lostReason: "",
         notes: isCall
           ? "Quick Call action launched from lead detail. Add call notes after completion."
           : "Quick Email action launched from lead detail. Add message notes after sending.",
-        next_follow_up_date: lead.next_follow_up_date ?? null,
-        next_follow_up_type: lead.next_follow_up_type ?? null,
-        completed_by_user_id: profile.id,
-        completed_by_name: profile.full_name,
-        partner_id: lead.partner_id ?? null,
-        referral_source_id: lead.referral_source_id ?? null
-      })
-      .select("id")
-      .single();
-    if (insertError) return { error: insertError.message };
+        nextFollowUpDate: "",
+        nextFollowUpType: "",
+        partnerId: "",
+        referralSourceId: ""
+      },
+      actor: {
+        id: profile.id,
+        fullName: profile.full_name,
+        role: profile.role
+      },
+      source: "createLeadQuickContactActivityAction"
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create quick contact activity." };
+  }
 
-    revalidatePath("/sales/activities");
-    revalidatePath("/sales/new-entries/log-lead-activity");
-    revalidatePath("/sales/pipeline/follow-up-dashboard");
-    revalidatePath(`/sales/leads/${lead.id}`);
+  revalidatePath("/sales/activities");
+  revalidatePath("/sales/new-entries/log-lead-activity");
+  revalidatePath("/sales/pipeline/follow-up-dashboard");
+  revalidatePath(`/sales/leads/${created.leadId}`);
 
-    return { ok: true, id: created.id };}
+  return { ok: true, id: created.activityId };
+}
 
 const partnerActivitySchema = z.object({
   partnerId: z.string().min(1),
@@ -674,55 +668,30 @@ export async function createPartnerActivityAction(raw: z.infer<typeof partnerAct
     return { error: "Invalid partner activity." };
   }
 
-      const supabase = await createClient();
-    const profile = await getCurrentProfile();
-
-    const [{ data: partner, error: partnerError }, { data: source, error: sourceError }] = await Promise.all([
-      supabase
-        .from("community_partner_organizations")
-        .select("id, partner_id, organization_name")
-        .or([isUuid(payload.data.partnerId) ? `id.eq.${payload.data.partnerId}` : null, `partner_id.eq.${payload.data.partnerId}`].filter(Boolean).join(","))
-        .maybeSingle(),
-      supabase
-        .from("referral_sources")
-        .select("id, partner_id, contact_name, referral_source_id")
-        .or([isUuid(payload.data.referralSourceId) ? `id.eq.${payload.data.referralSourceId}` : null, `referral_source_id.eq.${payload.data.referralSourceId}`].filter(Boolean).join(","))
-        .maybeSingle()
-    ]);
-    if (partnerError) return { error: partnerError.message };
-    if (sourceError) return { error: sourceError.message };
-    if (!partner) return { error: "Community partner organization not found." };
-    if (!source) return { error: "Referral source not found." };
-    if (source.partner_id !== partner.id) {
-      return { error: "Referral source must belong to the selected organization." };
-    }
-
-    const { error: insertError } = await supabase.from("partner_activities").insert({
-      referral_source_id: source.id,
-      partner_id: partner.id,
-      organization_name: partner.organization_name,
-      contact_name: source.contact_name,
-      activity_at: payload.data.activityAt || toEasternISO(),
-      activity_type: payload.data.activityType,
+  const profile = await getCurrentProfile();
+  let created;
+  try {
+    created = await createPartnerActivitySupabase({
+      partnerId: payload.data.partnerId,
+      referralSourceId: payload.data.referralSourceId,
+      activityAt: payload.data.activityAt || null,
+      activityType: payload.data.activityType,
       notes: payload.data.notes || null,
-      completed_by_name: profile.full_name,
-      next_follow_up_date: payload.data.nextFollowUpDate || null,
-      next_follow_up_type: payload.data.nextFollowUpType || null,
-      last_touched: toEasternDate()
+      nextFollowUpDate: payload.data.nextFollowUpDate || null,
+      nextFollowUpType: payload.data.nextFollowUpType || null,
+      completedByName: profile.full_name
     });
-    if (insertError) return { error: insertError.message };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create partner activity." };
+  }
 
-    await Promise.all([
-      supabase.from("community_partner_organizations").update({ last_touched: toEasternDate() }).eq("id", partner.id),
-      supabase.from("referral_sources").update({ last_touched: toEasternDate() }).eq("id", source.id)
-    ]);
-
-    revalidatePath("/sales/community-partners");
-    revalidatePath("/sales/new-entries/log-partner-activities");
-    revalidatePath("/sales/activities");
-    revalidatePath(`/sales/community-partners/organizations/${partner.id}`);
-    revalidatePath(`/sales/community-partners/referral-sources/${source.id}`);
-    return { ok: true };}
+  revalidatePath("/sales/community-partners");
+  revalidatePath("/sales/new-entries/log-partner-activities");
+  revalidatePath("/sales/activities");
+  revalidatePath(`/sales/community-partners/organizations/${created.partner.id}`);
+  revalidatePath(`/sales/community-partners/referral-sources/${created.referralSource.id}`);
+  return { ok: true };
+}
 
 const communityPartnerSchema = z.object({
   organizationName: z.string().min(1),
@@ -743,32 +712,28 @@ export async function createCommunityPartnerAction(raw: z.infer<typeof community
     return { error: "Invalid community partner entry." };
   }
 
-  const supabase = await createClient();
-  const partnerCode = makeShortId("P").toUpperCase();
-  const { data: partner, error } = await supabase
-    .from("community_partner_organizations")
-    .insert({
-      partner_id: partnerCode,
-      organization_name: payload.data.organizationName.trim(),
-      category: payload.data.referralSourceCategory.trim(),
-      location: payload.data.location?.trim() || null,
-      primary_phone: normalizePhoneForStorage(payload.data.primaryPhone),
-      secondary_phone: normalizePhoneForStorage(payload.data.secondaryPhone),
-      primary_email: payload.data.primaryEmail?.trim() || null,
-      active: payload.data.active,
-      notes: payload.data.notes?.trim() || null,
-      last_touched: null
-    })
-    .select("id, partner_id, organization_name")
-    .single();
-  if (error) return { error: error.message };
+  let created;
+  try {
+    created = await createCommunityPartnerSupabase({
+      organizationName: payload.data.organizationName,
+      referralSourceCategory: payload.data.referralSourceCategory,
+      location: payload.data.location || null,
+      primaryPhone: payload.data.primaryPhone || null,
+      secondaryPhone: payload.data.secondaryPhone || null,
+      primaryEmail: payload.data.primaryEmail || null,
+      notes: payload.data.notes || null,
+      active: payload.data.active
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create community partner." };
+  }
 
   revalidatePath("/sales/community-partners/organizations");
   revalidatePath("/sales/new-entries/new-community-partner");
   return {
     ok: true,
-    id: partner.id,
-    partner
+    id: created.id,
+    partner: created.partner
   };
 }
 
@@ -791,80 +756,35 @@ export async function createReferralSourceAction(raw: z.infer<typeof referralSou
     return { error: "Invalid referral source entry." };
   }
 
-  const supabase = await createClient();
-  const { data: partner, error: partnerError } = await supabase
-    .from("community_partner_organizations")
-    .select("id, partner_id, organization_name")
-    .or([isUuid(payload.data.partnerId) ? `id.eq.${payload.data.partnerId}` : null, `partner_id.eq.${payload.data.partnerId}`].filter(Boolean).join(","))
-    .maybeSingle();
-  if (partnerError) return { error: partnerError.message };
-  if (!partner) return { error: "Select a valid organization first." };
-
-  const sourceCode = makeShortId("RS").toUpperCase();
-  const { data: source, error: insertError } = await supabase
-    .from("referral_sources")
-    .insert({
-      referral_source_id: sourceCode,
-      partner_id: partner.id,
-      contact_name: payload.data.contactName.trim(),
-      organization_name: partner.organization_name,
-      job_title: payload.data.jobTitle?.trim() || null,
-      primary_phone: normalizePhoneForStorage(payload.data.primaryPhone),
-      secondary_phone: normalizePhoneForStorage(payload.data.secondaryPhone),
-      primary_email: payload.data.primaryEmail?.trim() || null,
-      preferred_contact_method: payload.data.preferredContactMethod?.trim() || null,
-      active: payload.data.active,
-      notes: payload.data.notes?.trim() || null,
-      last_touched: toEasternDate()
-    })
-    .select("id, referral_source_id, partner_id, contact_name, organization_name")
-    .single();
-  if (insertError) return { error: insertError.message };
-
-  await supabase
-    .from("community_partner_organizations")
-    .update({ last_touched: toEasternDate() })
-    .eq("id", partner.id);
+  let created;
+  try {
+    created = await createReferralSourceSupabase({
+      partnerId: payload.data.partnerId,
+      contactName: payload.data.contactName,
+      jobTitle: payload.data.jobTitle || null,
+      primaryPhone: payload.data.primaryPhone || null,
+      secondaryPhone: payload.data.secondaryPhone || null,
+      primaryEmail: payload.data.primaryEmail || null,
+      preferredContactMethod: payload.data.preferredContactMethod || null,
+      notes: payload.data.notes || null,
+      active: payload.data.active
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create referral source." };
+  }
 
   revalidatePath("/sales/community-partners/referral-sources");
   revalidatePath("/sales/new-entries/new-referral-source");
   return {
     ok: true,
-    id: source.id,
-    source: {
-      ...source,
-      partner_id: partner.partner_id ?? source.partner_id
-    }
+    id: created.id,
+    source: created.source
   };
 }
 
 export async function getSalesFormLookups() {
   await requireSalesRoles();
-  const supabase = await createClient();
-  const [{ data: leads }, { data: partners }, { data: referralSources }] = await Promise.all([
-    supabase
-      .from("leads")
-      .select("id, member_name, caregiver_name, stage, status, created_at, partner_id, referral_source_id")
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("community_partner_organizations")
-      .select("id, partner_id, organization_name, category, active, last_touched")
-      .order("organization_name", { ascending: true }),
-    supabase
-      .from("referral_sources")
-      .select("id, referral_source_id, partner_id, contact_name, organization_name, active, last_touched")
-      .order("organization_name", { ascending: true })
-  ]);
-  const partnerById = new Map((partners ?? []).map((partner: any) => [partner.id, partner]));
-  const normalizedReferralSources = (referralSources ?? []).map((source: any) => ({
-    ...source,
-    partner_id: partnerById.get(source.partner_id)?.partner_id ?? source.partner_id
-  }));
-  return {
-    leads: leads ?? [],
-    partners: partners ?? [],
-    referralSources: normalizedReferralSources
-  };
+  return getSalesFormLookupsSupabase();
 }
 
 const enrollmentPacketSendSchema = z.object({

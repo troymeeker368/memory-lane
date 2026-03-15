@@ -18,6 +18,13 @@ function StatusLink({ status, href }: { status: string; href: string }) {
   return <span>{status}</span>;
 }
 
+function parsePage(value: string | string[] | undefined) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.floor(parsed);
+}
+
 export default async function CarePlanDueReportPage({
   searchParams
 }: {
@@ -29,13 +36,24 @@ export default async function CarePlanDueReportPage({
   const status = typeof params.status === "string" ? params.status : "All";
   const track = typeof params.track === "string" ? params.track : "All";
   const memberId = typeof params.memberId === "string" ? params.memberId : "All";
+  const page = parsePage(params.page);
   const members = await getMembers();
   const tracks = getCarePlanTracks();
-  const plans = await getCarePlans({
+  const result = await getCarePlans({
     status,
     track: track === "All" ? undefined : track,
-    memberId: memberId === "All" ? undefined : memberId
+    memberId: memberId === "All" ? undefined : memberId,
+    page,
+    pageSize: 25
   });
+  const pageHref = (targetPage: number) => {
+    const search = new URLSearchParams();
+    if (status !== "All") search.set("status", status);
+    if (track !== "All") search.set("track", track);
+    if (memberId !== "All") search.set("memberId", memberId);
+    if (targetPage > 1) search.set("page", String(targetPage));
+    return `/health/care-plans/due-report?${search.toString()}`;
+  };
 
   return (
     <div className="space-y-4">
@@ -68,7 +86,7 @@ export default async function CarePlanDueReportPage({
         <table>
           <thead><tr><th>Member</th><th>Track</th><th>Enrollment Date</th><th>Last Completed</th><th>Next Due Date</th><th>Status</th><th>Open</th></tr></thead>
           <tbody>
-            {plans.map((plan) => (
+            {result.rows.map((plan) => (
               <tr key={plan.id}>
                 <td><Link className="font-semibold text-brand" href={`/health/care-plans/list?memberId=${plan.memberId}`}>{plan.memberName}</Link></td>
                 <td>{plan.track}</td>
@@ -85,6 +103,32 @@ export default async function CarePlanDueReportPage({
             ))}
           </tbody>
         </table>
+      </Card>
+
+      <Card>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Link
+            href={result.page > 1 ? pageHref(result.page - 1) : "#"}
+            className={`rounded border px-3 py-1 font-semibold ${result.page > 1 ? "border-border text-brand" : "cursor-not-allowed border-border text-muted"}`}
+          >
+            Previous
+          </Link>
+          {Array.from({ length: result.totalPages }, (_, index) => index + 1).map((pageNumber) => (
+            <Link
+              key={pageNumber}
+              href={pageHref(pageNumber)}
+              className={`rounded border px-3 py-1 ${pageNumber === result.page ? "border-brand bg-brand text-white" : "border-border text-brand"}`}
+            >
+              {pageNumber}
+            </Link>
+          ))}
+          <Link
+            href={result.page < result.totalPages ? pageHref(result.page + 1) : "#"}
+            className={`rounded border px-3 py-1 font-semibold ${result.page < result.totalPages ? "border-border text-brand" : "cursor-not-allowed border-border text-muted"}`}
+          >
+            Next
+          </Link>
+        </div>
       </Card>
     </div>
   );

@@ -1,98 +1,69 @@
 import { canonicalLeadStage, canonicalLeadStatus, isOpenLeadStatus } from "@/lib/canonical";
 import { createClient } from "@/lib/supabase/server";
 
-const CANONICAL_STAGE_GROUPS = {
-  inquiry: ["Inquiry"],
-  tour: ["Tour"],
-  eip: ["Enrollment in Progress", "EIP"],
-  nurture: ["Nurture"]
+type LeadSummaryLike = {
+  stage: string | null | undefined;
+  status: string | null | undefined;
+  lead_source?: string | null | undefined;
 };
 
-function normalize(text: string | null | undefined) {
-  return (text ?? "").trim().toLowerCase();
+export interface LeadPipelineSummary {
+  open: number;
+  won: number;
+  lost: number;
 }
 
-function hasStage(leadStage: string, allowed: string[]) {
-  const normalized = normalize(canonicalLeadStage(leadStage));
-  return allowed.some((stage) => normalized === normalize(canonicalLeadStage(stage)));
+export interface LeadStageOutcomeSummaryRow {
+  stage: string;
+  total: number;
+  won: number;
+  lost: number;
 }
 
-export async function getSalesWorkflows() {
-  const supabase = await createClient();
-  const [{ data: leads }, { data: activities }, { data: partners }, { data: referralSources }, { data: partnerActivities }] = await Promise.all([
-    supabase.from("leads").select("*").order("created_at", { ascending: false }),
-    supabase.from("lead_activities").select("*").order("activity_at", { ascending: false }),
-    supabase.from("community_partner_organizations").select("*").order("organization_name", { ascending: true }),
-    supabase.from("referral_sources").select("*").order("organization_name", { ascending: true }),
-    supabase.from("partner_activities").select("*").order("activity_at", { ascending: false })
-  ]);
+function resolveCanonicalLeadStageStatus(lead: Pick<LeadSummaryLike, "stage" | "status">) {
+  const stage = canonicalLeadStage(String(lead.stage ?? "Inquiry"));
+  const status = canonicalLeadStatus(String(lead.status ?? "Open"), stage);
+  return { stage, status };
+}
 
-  const allLeads = leads ?? [];
-  const openLeads: typeof allLeads = [];
-  const wonLeads: typeof allLeads = [];
-  const lostLeads: typeof allLeads = [];
-  const inquiryLeads: typeof allLeads = [];
-  const tourLeads: typeof allLeads = [];
-  const eipLeads: typeof allLeads = [];
-  const nurtureLeads: typeof allLeads = [];
-  const referralOnlyLeads: typeof allLeads = [];
+export function summarizeLeadPipeline(leads: LeadSummaryLike[]): LeadPipelineSummary {
+  return leads.reduce<LeadPipelineSummary>(
+    (summary, lead) => {
+      const { status } = resolveCanonicalLeadStageStatus(lead);
+      if (isOpenLeadStatus(status)) {
+        summary.open += 1;
+      } else if (status === "Won") {
+        summary.won += 1;
+      } else if (status === "Lost") {
+        summary.lost += 1;
+      }
+      return summary;
+    },
+    { open: 0, won: 0, lost: 0 }
+  );
+}
 
-  allLeads.forEach((lead) => {
-    const stage = canonicalLeadStage(String(lead.stage ?? "Inquiry"));
-    const status = canonicalLeadStatus(String(lead.status ?? "Open"), stage);
-    const normalizedLead = {
-      ...lead,
-      stage,
-      status
-    };
-    if (isOpenLeadStatus(status)) {
-      openLeads.push(normalizedLead);
-      if (hasStage(stage, CANONICAL_STAGE_GROUPS.inquiry)) inquiryLeads.push(normalizedLead);
-      if (hasStage(stage, CANONICAL_STAGE_GROUPS.tour)) tourLeads.push(normalizedLead);
-      if (hasStage(stage, CANONICAL_STAGE_GROUPS.eip)) eipLeads.push(normalizedLead);
-      if (hasStage(stage, CANONICAL_STAGE_GROUPS.nurture)) nurtureLeads.push(normalizedLead);
-      if (normalize(String(lead.lead_source ?? "")).includes("referral")) referralOnlyLeads.push(normalizedLead);
-      return;
-    }
-    if (status === "Won") wonLeads.push(normalizedLead);
-    if (status === "Lost") lostLeads.push(normalizedLead);
+export function buildLeadStageOutcomeSummaryRows(
+  leads: Array<Pick<LeadSummaryLike, "stage" | "status">>
+): LeadStageOutcomeSummaryRow[] {
+  const stageCounts = new Map<string, { total: number; won: number; lost: number }>();
+  leads.forEach((lead) => {
+    const { stage, status } = resolveCanonicalLeadStageStatus(lead);
+    const current = stageCounts.get(stage) ?? { total: 0, won: 0, lost: 0 };
+    current.total += 1;
+    if (status === "Won") current.won += 1;
+    if (status === "Lost") current.lost += 1;
+    stageCounts.set(stage, current);
   });
 
-  const stageCounts = [
-    { stage: "Inquiry", count: inquiryLeads.length },
-    { stage: "Tour", count: tourLeads.length },
-    { stage: "Enrollment in Progress", count: eipLeads.length },
-    { stage: "Nurture", count: nurtureLeads.length },
-    { stage: "Referrals Only", count: referralOnlyLeads.length },
-    { stage: "Closed - Won", count: wonLeads.length },
-    { stage: "Closed - Lost", count: lostLeads.length }
-  ];
-
-  const partnerById = new Map((partners ?? []).map((partner: any) => [partner.id, partner]));
-  const normalizedReferralSources = (referralSources ?? []).map((source: any) => ({
-    ...source,
-    partner_id: partnerById.get(source.partner_id)?.partner_id ?? source.partner_id
-  }));
-  const normalizedPartnerActivities = (partnerActivities ?? []).map((activity: any) => ({
-    ...activity,
-    completed_by: activity.completed_by ?? activity.completed_by_name ?? null
-  }));
-
-  return {
-    openLeads,
-    wonLeads,
-    lostLeads,
-    inquiryLeads,
-    tourLeads,
-    eipLeads,
-    nurtureLeads,
-    referralOnlyLeads,
-    stageCounts,
-    activities: activities ?? [],
-    partners: partners ?? [],
-    referralSources: normalizedReferralSources,
-    partnerActivities: normalizedPartnerActivities
-  };
+  return Array.from(stageCounts.entries())
+    .map(([stage, counts]) => ({
+      stage,
+      total: counts.total,
+      won: counts.won,
+      lost: counts.lost
+    }))
+    .sort((left, right) => left.stage.localeCompare(right.stage));
 }
 
 export async function getSalesOpenLeadSummary() {
@@ -101,18 +72,11 @@ export async function getSalesOpenLeadSummary() {
   if (error) {
     throw new Error(`Unable to load sales lead summary: ${error.message}`);
   }
-
-  let unresolvedLeads = 0;
-  let unresolvedInquiryLeads = 0;
-  for (const lead of leads ?? []) {
-    const stage = canonicalLeadStage(String(lead.stage ?? "Inquiry"));
-    const status = canonicalLeadStatus(String(lead.status ?? "Open"), stage);
-    if (!isOpenLeadStatus(status)) continue;
-    unresolvedLeads += 1;
-    if (stage === "Inquiry") {
-      unresolvedInquiryLeads += 1;
-    }
-  }
+  const unresolvedLeads = summarizeLeadPipeline(leads ?? []).open;
+  const unresolvedInquiryLeads = (leads ?? []).reduce((count, lead) => {
+    const { stage, status } = resolveCanonicalLeadStageStatus(lead);
+    return isOpenLeadStatus(status) && stage === "Inquiry" ? count + 1 : count;
+  }, 0);
 
   return {
     unresolvedLeads,

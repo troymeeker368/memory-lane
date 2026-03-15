@@ -42,6 +42,16 @@ export const BILLING_INVOICE_SOURCE_OPTIONS = ["BatchGenerated", "Custom"] as co
 
 type DateRange = { start: string; end: string };
 
+type ActiveEffectiveDatedRow = {
+  active: boolean;
+  effective_start_date: string;
+  effective_end_date: string | null;
+};
+
+type MemberScopedActiveEffectiveDatedRow = ActiveEffectiveDatedRow & {
+  member_id: string;
+};
+
 type BillingSettingRow = {
   id: string;
   member_id: string;
@@ -549,42 +559,41 @@ async function getScheduleTemplatesRows() {
   return (data ?? []) as ScheduleTemplateRow[];
 }
 
-async function getActiveCenterSettingForDate(dateOnly: string) {
-  const settings = await listCenterBillingSettingsRows();
+export function resolveActiveEffectiveRowForDate<T extends ActiveEffectiveDatedRow>(dateOnly: string, rows: readonly T[]) {
   const target = normalizeDateOnly(dateOnly);
   return (
-    settings
+    [...rows]
       .filter((row) => row.active)
       .filter((row) => normalizeDateOnly(row.effective_start_date) <= target)
       .filter((row) => !row.effective_end_date || normalizeDateOnly(row.effective_end_date) >= target)
       .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1))[0] ?? null
   );
+}
+
+export function resolveActiveEffectiveMemberRowForDate<T extends MemberScopedActiveEffectiveDatedRow>(
+  memberId: string,
+  dateOnly: string,
+  rows: readonly T[]
+) {
+  return resolveActiveEffectiveRowForDate(
+    dateOnly,
+    rows.filter((row) => row.member_id === memberId)
+  );
+}
+
+async function getActiveCenterSettingForDate(dateOnly: string) {
+  const settings = await listCenterBillingSettingsRows();
+  return resolveActiveEffectiveRowForDate(dateOnly, settings);
 }
 
 async function getActiveMemberSettingForDate(memberId: string, dateOnly: string) {
   const settings = await getMemberSettingsRows();
-  const target = normalizeDateOnly(dateOnly);
-  return (
-    settings
-      .filter((row) => row.member_id === memberId)
-      .filter((row) => row.active)
-      .filter((row) => normalizeDateOnly(row.effective_start_date) <= target)
-      .filter((row) => !row.effective_end_date || normalizeDateOnly(row.effective_end_date) >= target)
-      .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1))[0] ?? null
-  );
+  return resolveActiveEffectiveMemberRowForDate(memberId, dateOnly, settings);
 }
 
 async function getActiveScheduleTemplateForDate(memberId: string, dateOnly: string) {
   const templates = await getScheduleTemplatesRows();
-  const target = normalizeDateOnly(dateOnly);
-  return (
-    templates
-      .filter((row) => row.member_id === memberId)
-      .filter((row) => row.active)
-      .filter((row) => normalizeDateOnly(row.effective_start_date) <= target)
-      .filter((row) => !row.effective_end_date || normalizeDateOnly(row.effective_end_date) >= target)
-      .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1))[0] ?? null
-  );
+  return resolveActiveEffectiveMemberRowForDate(memberId, dateOnly, templates);
 }
 
 async function getNonBillableCenterClosureSet(range: DateRange) {
@@ -1196,11 +1205,28 @@ export async function upsertBillingAdjustment(input: {
   return data;
 }
 
-function getEffectiveBillingMode(input: { memberSetting: BillingSettingRow; centerSetting: CenterBillingSettingRow | null }) {
-  if (!input.memberSetting.use_center_default_billing_mode && input.memberSetting.billing_mode) {
+export function resolveEffectiveBillingMode(input: {
+  memberSetting:
+    | Pick<BillingSettingRow, "use_center_default_billing_mode" | "billing_mode">
+    | null;
+  centerSetting: Pick<CenterBillingSettingRow, "default_billing_mode"> | null;
+}) {
+  if (input.memberSetting && !input.memberSetting.use_center_default_billing_mode && input.memberSetting.billing_mode) {
     return input.memberSetting.billing_mode;
   }
   return input.centerSetting?.default_billing_mode ?? "Membership";
+}
+
+export function resolveConfiguredDailyRate(input: {
+  memberSetting:
+    | Pick<BillingSettingRow, "use_center_default_rate" | "custom_daily_rate">
+    | null;
+  centerSetting: Pick<CenterBillingSettingRow, "default_daily_rate"> | null;
+}) {
+  if (input.memberSetting && !input.memberSetting.use_center_default_rate && Number(input.memberSetting.custom_daily_rate ?? 0) > 0) {
+    return Number(input.memberSetting.custom_daily_rate ?? 0);
+  }
+  return Number(input.centerSetting?.default_daily_rate ?? 0);
 }
 
 function getMonthlyBillingBasis(setting: BillingSettingRow) {
@@ -1702,16 +1728,10 @@ async function getBillingPreviewRows(input: {
 
   const previewRows: BillingPreviewRow[] = [];
   for (const member of activeMembers) {
-    const memberSetting =
-      memberSettings
-        .filter((row) => row.member_id === member.id)
-        .filter((row) => row.active)
-        .filter((row) => normalizeDateOnly(row.effective_start_date) <= invoiceMonthStart)
-        .filter((row) => !row.effective_end_date || normalizeDateOnly(row.effective_end_date) >= invoiceMonthStart)
-        .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1))[0] ?? null;
+    const memberSetting = resolveActiveEffectiveMemberRowForDate(member.id, invoiceMonthStart, memberSettings);
     if (!memberSetting) continue;
 
-    const mode = getEffectiveBillingMode({ memberSetting, centerSetting });
+    const mode = resolveEffectiveBillingMode({ memberSetting, centerSetting });
     if (!shouldProcessModeInBatch({ mode, batchType: input.batchType })) continue;
 
     const periods = resolveMemberInvoicePeriods({

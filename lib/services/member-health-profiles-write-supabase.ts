@@ -1,5 +1,6 @@
 import { ensureMemberHealthProfileSupabase } from "@/lib/services/member-health-profiles-supabase";
 import { createClient } from "@/lib/supabase/server";
+import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
 type DbRow = Record<string, unknown>;
@@ -17,9 +18,32 @@ function toNullableUuid(value: string | null | undefined) {
   return isUuid(value) ? String(value) : null;
 }
 
+async function recordMhpWriteEvent(input: {
+  eventType: string;
+  entityType: string;
+  entityId: string;
+  memberId: string;
+  actor?: MhpWriteActor;
+  status: "created" | "updated" | "deleted";
+}) {
+  await recordWorkflowEvent({
+    eventType: input.eventType,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    actorType: "user",
+    actorUserId: toNullableUuid(input.actor?.actorUserId),
+    status: input.status,
+    severity: "low",
+    metadata: {
+      member_id: input.memberId
+    }
+  });
+}
+
 export async function updateMemberHealthProfileByMemberIdSupabase(input: {
   memberId: string;
   patch: Record<string, unknown>;
+  actor?: MhpWriteActor;
 }) {
   const profile = await ensureMemberHealthProfileSupabase(input.memberId, { serviceRole: true });
   const supabase = await createClient({ serviceRole: true });
@@ -30,6 +54,14 @@ export async function updateMemberHealthProfileByMemberIdSupabase(input: {
     .select("*")
     .single();
   if (error) throw new Error(error.message);
+  await recordMhpWriteEvent({
+    eventType: "member_health_profile_updated",
+    entityType: "member_health_profile",
+    entityId: String(data.id ?? profile.id),
+    memberId: input.memberId,
+    actor: input.actor,
+    status: "updated"
+  });
   return data as DbRow;
 }
 
@@ -45,7 +77,8 @@ export async function touchMemberHealthProfileSupabase(input: {
       updated_at: now,
       updated_by_user_id: toNullableUuid(input.actor.actorUserId),
       updated_by_name: input.actor.actorName ?? null
-    }
+    },
+    actor: input.actor
   });
 }
 
@@ -94,6 +127,13 @@ export async function createMemberDiagnosisSupabase(record: Record<string, unkno
   const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_diagnoses").insert(record).select("*").single();
   if (error) throw new Error(error.message);
+  await recordMhpWriteEvent({
+    eventType: "member_diagnosis_created",
+    entityType: "member_diagnosis",
+    entityId: String(data.id),
+    memberId: String(record.member_id ?? ""),
+    status: "created"
+  });
   return data as DbRow;
 }
 
@@ -106,6 +146,15 @@ export async function updateMemberDiagnosisSupabase(id: string, patch: Record<st
     .select("*")
     .maybeSingle();
   if (error) throw new Error(error.message);
+  if (data?.id && data?.member_id) {
+    await recordMhpWriteEvent({
+      eventType: "member_diagnosis_updated",
+      entityType: "member_diagnosis",
+      entityId: String(data.id),
+      memberId: String(data.member_id),
+      status: "updated"
+    });
+  }
   return (data as DbRow | null) ?? null;
 }
 
@@ -113,6 +162,15 @@ export async function deleteMemberDiagnosisSupabase(id: string) {
   const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_diagnoses").delete().eq("id", id).select("*").maybeSingle();
   if (error) throw new Error(error.message);
+  if (data?.id && data?.member_id) {
+    await recordMhpWriteEvent({
+      eventType: "member_diagnosis_deleted",
+      entityType: "member_diagnosis",
+      entityId: String(data.id),
+      memberId: String(data.member_id),
+      status: "deleted"
+    });
+  }
   return (data as DbRow | null) ?? null;
 }
 
@@ -120,6 +178,13 @@ export async function createMemberMedicationSupabase(record: Record<string, unkn
   const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_medications").insert(record).select("*").single();
   if (error) throw new Error(error.message);
+  await recordMhpWriteEvent({
+    eventType: "member_medication_created",
+    entityType: "member_medication",
+    entityId: String(data.id),
+    memberId: String(record.member_id ?? ""),
+    status: "created"
+  });
   return data as DbRow;
 }
 
@@ -132,6 +197,15 @@ export async function updateMemberMedicationSupabase(id: string, patch: Record<s
     .select("*")
     .maybeSingle();
   if (error) throw new Error(error.message);
+  if (data?.id && data?.member_id) {
+    await recordMhpWriteEvent({
+      eventType: "member_medication_updated",
+      entityType: "member_medication",
+      entityId: String(data.id),
+      memberId: String(data.member_id),
+      status: "updated"
+    });
+  }
   return (data as DbRow | null) ?? null;
 }
 
@@ -139,6 +213,15 @@ export async function deleteMemberMedicationSupabase(id: string) {
   const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_medications").delete().eq("id", id).select("*").maybeSingle();
   if (error) throw new Error(error.message);
+  if (data?.id && data?.member_id) {
+    await recordMhpWriteEvent({
+      eventType: "member_medication_deleted",
+      entityType: "member_medication",
+      entityId: String(data.id),
+      memberId: String(data.member_id),
+      status: "deleted"
+    });
+  }
   return (data as DbRow | null) ?? null;
 }
 
@@ -146,6 +229,13 @@ export async function createMemberAllergySupabase(record: Record<string, unknown
   const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_allergies").insert(record).select("*").single();
   if (error) throw new Error(error.message);
+  await recordMhpWriteEvent({
+    eventType: "member_allergy_created",
+    entityType: "member_allergy",
+    entityId: String(data.id),
+    memberId: String(record.member_id ?? ""),
+    status: "created"
+  });
   return data as DbRow;
 }
 
@@ -158,6 +248,15 @@ export async function updateMemberAllergySupabase(id: string, patch: Record<stri
     .select("*")
     .maybeSingle();
   if (error) throw new Error(error.message);
+  if (data?.id && data?.member_id) {
+    await recordMhpWriteEvent({
+      eventType: "member_allergy_updated",
+      entityType: "member_allergy",
+      entityId: String(data.id),
+      memberId: String(data.member_id),
+      status: "updated"
+    });
+  }
   return (data as DbRow | null) ?? null;
 }
 
@@ -165,6 +264,15 @@ export async function deleteMemberAllergySupabase(id: string) {
   const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_allergies").delete().eq("id", id).select("*").maybeSingle();
   if (error) throw new Error(error.message);
+  if (data?.id && data?.member_id) {
+    await recordMhpWriteEvent({
+      eventType: "member_allergy_deleted",
+      entityType: "member_allergy",
+      entityId: String(data.id),
+      memberId: String(data.member_id),
+      status: "deleted"
+    });
+  }
   return (data as DbRow | null) ?? null;
 }
 

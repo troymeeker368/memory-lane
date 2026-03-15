@@ -4,7 +4,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
 import { formatPhoneDisplay } from "@/lib/phone";
-import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import { getSalesLeadListSupabase } from "@/lib/services/sales-crm-supabase";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDate } from "@/lib/utils";
 
@@ -25,7 +25,11 @@ function asFollowUpDateValue(date: string | null): string {
 
 export default async function FollowUpDashboardPage() {
   await requireModuleAccess("sales");
-  const { openLeads } = await getSalesWorkflows();
+  const { rows: openLeads } = await getSalesLeadListSupabase({
+    status: "open",
+    sort: "next_follow_up",
+    dir: "asc"
+  });
 
   const seenLeadIds = new Set<string>();
   const dedupedLeads = (openLeads as LeadRow[]).filter((lead) => {

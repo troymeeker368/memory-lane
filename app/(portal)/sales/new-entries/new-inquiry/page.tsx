@@ -1,7 +1,7 @@
 import { SalesInquiryForm, type PartnerLookup, type ReferralSourceLookup } from "@/components/forms/sales-inquiry-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getSalesWorkflows } from "@/lib/services/sales-workflows";
+import { getSalesFormLookupsSupabase } from "@/lib/services/sales-crm-supabase";
 
 export default async function NewInquiryPage({
   searchParams
@@ -10,9 +10,12 @@ export default async function NewInquiryPage({
 }) {
   await requireModuleAccess("sales");
   const params = await searchParams;
-  const { partners, referralSources } = await getSalesWorkflows();
   const partnerId = typeof params.partnerId === "string" ? params.partnerId : undefined;
   const referralSourceId = typeof params.referralSourceId === "string" ? params.referralSourceId : undefined;
+  const { partners, referralSources } = await getSalesFormLookupsSupabase({
+    includePartnerId: partnerId,
+    includeReferralSourceId: referralSourceId
+  });
 
   return (
     <Card>
