@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { generateMarSchedulesForMember } from "@/lib/services/mar-workflow";
+import { saveMemberHealthProfileBundle, updateMemberTrackWithCarePlanNote } from "@/lib/services/member-health-profiles";
 import { syncMhpToCommandCenter as syncMhpToCommandCenterService } from "@/lib/services/member-profile-sync";
 import {
   countMemberDiagnosesSupabase,
@@ -27,12 +28,10 @@ import {
   updateMemberAllergySupabase,
   updateMemberDiagnosisSupabase,
   updateMemberEquipmentSupabase,
-  updateMemberFromMhpSupabase,
   updateMemberHealthProfileByMemberIdSupabase,
   updateMemberMedicationSupabase,
   updateMemberNoteSupabase,
   updateMemberProviderSupabase,
-  upsertHospitalPreferenceDirectoryFromMhpSupabase,
   upsertProviderDirectoryFromMhpSupabase
 } from "@/lib/services/member-health-profiles-write-supabase";
 import { ensureMemberHealthProfileSupabase } from "@/lib/services/member-health-profiles-supabase";
@@ -200,21 +199,6 @@ async function upsertProviderDirectoryFromValues(input: {
   });
 }
 
-async function upsertHospitalPreferenceDirectoryFromValue(input: {
-  hospitalName: string | null;
-  actor: { id: string; full_name: string };
-  now: string;
-}) {
-  await upsertHospitalPreferenceDirectoryFromMhpSupabase({
-    hospitalName: input.hospitalName,
-    actor: {
-      actorUserId: input.actor.id,
-      actorName: input.actor.full_name
-    },
-    atIso: input.now
-  });
-}
-
 async function requireNurseAdmin() {
   const profile = await getCurrentProfile();
   if (profile.role !== "admin" && profile.role !== "nurse") {
@@ -290,32 +274,33 @@ export async function saveMhpOverviewAction(formData: FormData) {
     : normalizePhoneForStorage(asNullableString(formData, "responsiblePartyPhone"));
   const memberDob = asNullableString(formData, "memberDob");
 
-  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
-    gender: asNullableString(formData, "gender"),
-    payor: asNullableString(formData, "payor"),
-    original_referral_source: asNullableString(formData, "originalReferralSource"),
-    photo_consent: asNullableBool(formData, "photoConsent"),
-    profile_image_url: profileImageUrl,
-    primary_caregiver_name: primaryCaregiverName,
-    primary_caregiver_phone: primaryCaregiverPhone,
-    responsible_party_name: responsiblePartyName,
-    responsible_party_phone: responsiblePartyPhone,
-    important_alerts: asNullableString(formData, "importantAlerts"),
-    updated_at: now,
-    updated_by_user_id: toNullableUuid(actor.id),
-    updated_by_name: actor.full_name
-  }});
-  await updateMemberFromMhpSupabase({ memberId, patch: {
-    dob: memberDob
-  }});
-  await syncMhpToCommandCenter(
+  await saveMemberHealthProfileBundle({
     memberId,
-    {
+    mhpPatch: {
+      gender: asNullableString(formData, "gender"),
+      payor: asNullableString(formData, "payor"),
+      original_referral_source: asNullableString(formData, "originalReferralSource"),
+      photo_consent: asNullableBool(formData, "photoConsent"),
+      profile_image_url: profileImageUrl,
+      primary_caregiver_name: primaryCaregiverName,
+      primary_caregiver_phone: primaryCaregiverPhone,
+      responsible_party_name: responsiblePartyName,
+      responsible_party_phone: responsiblePartyPhone,
+      important_alerts: asNullableString(formData, "importantAlerts"),
+      updated_at: now,
+      updated_by_user_id: toNullableUuid(actor.id),
+      updated_by_name: actor.full_name
+    },
+    memberPatch: {
+      dob: memberDob
+    },
+    actor: {
       id: actor.id,
       fullName: actor.full_name
     },
-    now
-  );
+    now,
+    syncToCommandCenter: true
+  });
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=overview`);
@@ -330,20 +315,21 @@ export async function updateMhpPhotoAction(formData: FormData) {
   const profile = await ensureMemberHealthProfileSupabase(memberId);
   const profileImageUrl = await asUploadedImageDataUrl(formData, "photoFile", profile.profile_image_url ?? null);
 
-  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
-    profile_image_url: profileImageUrl,
-    updated_at: now,
-    updated_by_user_id: toNullableUuid(actor.id),
-    updated_by_name: actor.full_name
-  }});
-  await syncMhpToCommandCenter(
+  await saveMemberHealthProfileBundle({
     memberId,
-    {
+    mhpPatch: {
+      profile_image_url: profileImageUrl,
+      updated_at: now,
+      updated_by_user_id: toNullableUuid(actor.id),
+      updated_by_name: actor.full_name
+    },
+    actor: {
       id: actor.id,
       fullName: actor.full_name
     },
-    now
-  );
+    now,
+    syncToCommandCenter: true
+  });
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=${returnTab}`);
@@ -358,25 +344,26 @@ export async function saveMhpMedicalAction(formData: FormData) {
   const dietTypeOther = asNullableString(formData, "dietTypeOther");
   const normalizedDietType = dietType === "Other" ? (dietTypeOther ?? "Other") : (dietType || null);
 
-  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
-    diet_type: normalizedDietType,
-    dietary_restrictions: asNullableString(formData, "dietaryRestrictions"),
-    swallowing_difficulty: asNullableString(formData, "swallowingDifficulty"),
-    diet_texture: asNullableString(formData, "dietTexture"),
-    supplements: asNullableString(formData, "supplements"),
-    foods_to_omit: asNullableString(formData, "foodsToOmit"),
-    updated_at: now,
-    updated_by_user_id: toNullableUuid(actor.id),
-    updated_by_name: actor.full_name
-  }});
-  await syncMhpToCommandCenter(
+  await saveMemberHealthProfileBundle({
     memberId,
-    {
+    mhpPatch: {
+      diet_type: normalizedDietType,
+      dietary_restrictions: asNullableString(formData, "dietaryRestrictions"),
+      swallowing_difficulty: asNullableString(formData, "swallowingDifficulty"),
+      diet_texture: asNullableString(formData, "dietTexture"),
+      supplements: asNullableString(formData, "supplements"),
+      foods_to_omit: asNullableString(formData, "foodsToOmit"),
+      updated_at: now,
+      updated_by_user_id: toNullableUuid(actor.id),
+      updated_by_name: actor.full_name
+    },
+    actor: {
       id: actor.id,
       fullName: actor.full_name
     },
-    now
-  );
+    now,
+    syncToCommandCenter: true
+  });
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=medical`);
@@ -459,33 +446,33 @@ export async function saveMhpLegalAction(formData: FormData) {
   const computedDnr = codeStatus === "DNR" ? true : codeStatus === "Full Code" ? false : asNullableBool(formData, "dnr");
   const hospitalPreference = asNullableString(formData, "hospitalPreference");
 
-  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
-    code_status: codeStatus,
-    dnr: computedDnr,
-    dni: asNullableBool(formData, "dni"),
-    polst_molst_colst: asNullableString(formData, "polst"),
-    hospice: asNullableBool(formData, "hospice"),
-    advanced_directives_obtained: asNullableBool(formData, "advancedDirectivesObtained"),
-    power_of_attorney: asNullableString(formData, "powerOfAttorney"),
-    hospital_preference: hospitalPreference,
-    legal_comments: asNullableString(formData, "legalComments"),
-    updated_at: now,
-    updated_by_user_id: toNullableUuid(actor.id),
-    updated_by_name: actor.full_name
-  }});
-  await upsertHospitalPreferenceDirectoryFromValue({
-    hospitalName: hospitalPreference,
-    actor,
-    now
-  });
-  await syncMhpToCommandCenter(
+  await saveMemberHealthProfileBundle({
     memberId,
-    {
+    mhpPatch: {
+      code_status: codeStatus,
+      dnr: computedDnr,
+      dni: asNullableBool(formData, "dni"),
+      polst_molst_colst: asNullableString(formData, "polst"),
+      hospice: asNullableBool(formData, "hospice"),
+      advanced_directives_obtained: asNullableBool(formData, "advancedDirectivesObtained"),
+      power_of_attorney: asNullableString(formData, "powerOfAttorney"),
+      hospital_preference: hospitalPreference,
+      legal_comments: asNullableString(formData, "legalComments"),
+      updated_at: now,
+      updated_by_user_id: toNullableUuid(actor.id),
+      updated_by_name: actor.full_name
+    },
+    memberPatch: {
+      code_status: codeStatus
+    },
+    actor: {
       id: actor.id,
       fullName: actor.full_name
     },
-    now
-  );
+    now,
+    syncToCommandCenter: true,
+    hospitalName: hospitalPreference
+  });
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=legal`);
@@ -1409,21 +1396,15 @@ export async function updateMhpTrackInlineAction(formData: FormData) {
   if (!changed) return { ok: true, changed: false, track };
 
   const now = toEasternISO();
-  await updateMemberFromMhpSupabase({ memberId, patch: {
-    latest_assessment_track: track
-  }});
-
-  await createMemberNoteSupabase({
-    member_id: memberId,
-    note_type: "Care Plan",
-    note_text: `Track changed to ${track}. Care plan review requested.`,
-    created_by_user_id: toNullableUuid(actor.id),
-    created_by_name: actor.full_name,
-    created_at: now,
-    updated_at: now
+  await updateMemberTrackWithCarePlanNote({
+    memberId,
+    track: track as "Track 1" | "Track 2" | "Track 3",
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-
-  await touchMhpProfile(memberId, actor, now);
   revalidateMhp(memberId);
 
   return { ok: true, changed: true, track };

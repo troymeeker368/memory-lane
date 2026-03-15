@@ -1,7 +1,6 @@
-import { ensureMemberCommandCenterProfileSupabase, updateMemberCommandCenterProfileSupabase, updateMemberSupabase } from "@/lib/services/member-command-center-supabase";
-import { ensureMemberHealthProfileSupabase } from "@/lib/services/member-health-profiles-supabase";
-import { updateMemberHealthProfileByMemberIdSupabase } from "@/lib/services/member-health-profiles-write-supabase";
 import { syncMemberHealthProfileFromSignedPhysicianOrder } from "@/lib/services/physician-orders-supabase";
+import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
 
 export type SyncActor = {
@@ -17,6 +16,10 @@ type PofSyncInput = {
   atIso?: string | null;
 };
 
+const SYNC_MHP_TO_COMMAND_CENTER_RPC = "rpc_sync_member_health_profile_to_command_center";
+const SYNC_COMMAND_CENTER_TO_MHP_RPC = "rpc_sync_command_center_to_member_health_profile";
+const MEMBER_PROFILE_SYNC_RPC_MIGRATION = "0056_shared_rpc_orchestration_hardening.sql";
+
 function isUuid(value: string | null | undefined) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value ?? ""));
 }
@@ -27,90 +30,43 @@ function toNullableUuid(value: string | null | undefined) {
 
 export async function syncMhpToCommandCenter(memberId: string, actor: SyncActor = {}, at?: string) {
   const now = at ?? toEasternISO();
-  const profile = await ensureMemberHealthProfileSupabase(memberId);
-  const commandCenterProfile = await ensureMemberCommandCenterProfileSupabase(memberId, {
-    actor: {
-      userId: toNullableUuid(actor.actorUserId),
-      name: actor.actorName ?? null
+  const supabase = await createClient();
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(supabase, SYNC_MHP_TO_COMMAND_CENTER_RPC, {
+      p_member_id: memberId,
+      p_actor_user_id: toNullableUuid(actor.actorUserId),
+      p_actor_name: actor.actorName ?? null,
+      p_now: now
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to sync MHP to Command Center.";
+    if (message.includes(SYNC_MHP_TO_COMMAND_CENTER_RPC)) {
+      throw new Error(
+        `Member profile sync RPC is not available. Apply Supabase migration ${MEMBER_PROFILE_SYNC_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
     }
-  });
-
-  await updateMemberCommandCenterProfileSupabase(commandCenterProfile.id, {
-    member_id: memberId,
-    gender: profile.gender,
-    payor: profile.payor,
-    original_referral_source: profile.original_referral_source,
-    photo_consent: profile.photo_consent,
-    profile_image_url: profile.profile_image_url,
-    code_status: profile.code_status,
-    dnr: profile.dnr,
-    dni: profile.dni,
-    polst_molst_colst: profile.polst_molst_colst,
-    hospice: profile.hospice,
-    advanced_directives_obtained: profile.advanced_directives_obtained,
-    power_of_attorney: profile.power_of_attorney,
-    legal_comments: profile.legal_comments,
-    diet_type: profile.diet_type,
-    dietary_preferences_restrictions: profile.dietary_restrictions,
-    swallowing_difficulty: profile.swallowing_difficulty,
-    supplements: profile.supplements,
-    foods_to_omit: profile.foods_to_omit,
-    diet_texture: profile.diet_texture,
-    command_center_notes: profile.important_alerts,
-    updated_by_user_id: toNullableUuid(actor.actorUserId),
-    updated_by_name: actor.actorName ?? null,
-    updated_at: now
-  });
-
-  if (profile.code_status) {
-    await updateMemberSupabase(memberId, { code_status: profile.code_status });
+    throw error;
   }
 }
 
 export async function syncCommandCenterToMhp(memberId: string, actor: SyncActor = {}, at?: string) {
   const now = at ?? toEasternISO();
-  const commandCenterProfile = await ensureMemberCommandCenterProfileSupabase(memberId, {
-    actor: {
-      userId: toNullableUuid(actor.actorUserId),
-      name: actor.actorName ?? null
+  const supabase = await createClient();
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(supabase, SYNC_COMMAND_CENTER_TO_MHP_RPC, {
+      p_member_id: memberId,
+      p_actor_user_id: toNullableUuid(actor.actorUserId),
+      p_actor_name: actor.actorName ?? null,
+      p_now: now
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to sync Command Center to MHP.";
+    if (message.includes(SYNC_COMMAND_CENTER_TO_MHP_RPC)) {
+      throw new Error(
+        `Command Center sync RPC is not available. Apply Supabase migration ${MEMBER_PROFILE_SYNC_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
     }
-  });
-  await ensureMemberHealthProfileSupabase(memberId);
-
-  await updateMemberHealthProfileByMemberIdSupabase({
-    memberId,
-    patch: {
-      member_id: memberId,
-      gender: commandCenterProfile.gender,
-      payor: commandCenterProfile.payor,
-      original_referral_source: commandCenterProfile.original_referral_source,
-      photo_consent: commandCenterProfile.photo_consent,
-      profile_image_url: commandCenterProfile.profile_image_url,
-      code_status: commandCenterProfile.code_status,
-      dnr: commandCenterProfile.dnr,
-      dni: commandCenterProfile.dni,
-      polst_molst_colst: commandCenterProfile.polst_molst_colst,
-      hospice: commandCenterProfile.hospice,
-      advanced_directives_obtained: commandCenterProfile.advanced_directives_obtained,
-      power_of_attorney: commandCenterProfile.power_of_attorney,
-      legal_comments: commandCenterProfile.legal_comments,
-      diet_type: commandCenterProfile.diet_type,
-      dietary_restrictions: commandCenterProfile.dietary_preferences_restrictions,
-      swallowing_difficulty: commandCenterProfile.swallowing_difficulty,
-      supplements: commandCenterProfile.supplements,
-      foods_to_omit: commandCenterProfile.foods_to_omit,
-      diet_texture: commandCenterProfile.diet_texture,
-      important_alerts: commandCenterProfile.command_center_notes,
-      source_assessment_id: commandCenterProfile.source_assessment_id,
-      source_assessment_at: commandCenterProfile.source_assessment_at,
-      updated_by_user_id: toNullableUuid(actor.actorUserId),
-      updated_by_name: actor.actorName ?? null,
-      updated_at: now
-    }
-  });
-
-  if (commandCenterProfile.code_status) {
-    await updateMemberSupabase(memberId, { code_status: commandCenterProfile.code_status });
+    throw error;
   }
 }
 

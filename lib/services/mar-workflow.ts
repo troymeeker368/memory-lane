@@ -11,9 +11,10 @@ import {
 } from "@/lib/services/mar-shared";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
-import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/timezone";
+import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export { MAR_NOT_GIVEN_REASON_OPTIONS, MAR_PRN_OUTCOME_OPTIONS };
 export type {
@@ -31,58 +32,6 @@ type PhysicianOrderForSyncRow = {
   status: string;
 };
 
-type PofMedicationRow = {
-  id: string;
-  member_id: string;
-  medication_name: string;
-  dose: string | null;
-  route: string | null;
-  frequency: string | null;
-  instructions: string | null;
-  prn: boolean | null;
-  active: boolean | null;
-  given_at_center: boolean | null;
-  scheduled_times: string[] | null;
-  start_date: string | null;
-  end_date: string | null;
-};
-
-type MemberMedicationForMarRow = {
-  id: string;
-  member_id: string;
-  medication_name: string;
-  date_started: string | null;
-  inactivated_at: string | null;
-  medication_status: "active" | "inactive" | null;
-  dose: string | null;
-  frequency: string | null;
-  route: string | null;
-  given_at_center: boolean | null;
-  prn: boolean | null;
-  prn_instructions: string | null;
-  scheduled_times: string[] | null;
-  comments: string | null;
-};
-
-type MarScheduleRow = {
-  id: string;
-  pof_medication_id: string;
-  scheduled_time: string;
-  active: boolean;
-  medication_name: string;
-  dose: string | null;
-  route: string | null;
-  frequency: string | null;
-  instructions: string | null;
-  prn: boolean;
-  start_date: string | null;
-  end_date: string | null;
-};
-
-type MarAdministrationLinkRow = {
-  mar_schedule_id: string | null;
-};
-
 type MemberPhotoRow = {
   member_id: string;
   profile_image_url: string | null;
@@ -95,6 +44,23 @@ const MAR_BASE_SCHEMA_MIGRATION = "0028_pof_seeded_mar_workflow.sql";
 const MAR_OVERDUE_VIEW_MIGRATION = "0030_mar_overdue_view.sql";
 const MHP_MEDICATIONS_MIGRATION = "0012_legacy_operational_health_alignment.sql";
 const MAR_MHP_SOURCE_PREFIX = "mhp-";
+const MAR_MEDICATION_SYNC_RPC = "rpc_sync_mar_medications_from_member_profile";
+const MAR_RECONCILE_RPC = "rpc_reconcile_member_mar_state";
+const MAR_RPC_MIGRATION = "0056_shared_rpc_orchestration_hardening.sql";
+
+type MarMedicationSyncRpcRow = {
+  anchor_physician_order_id: string;
+  synced_medications: number;
+};
+
+type MarReconcileRpcRow = {
+  anchor_physician_order_id: string;
+  synced_medications: number;
+  inserted_schedules: number;
+  patched_schedules: number;
+  reactivated_schedules: number;
+  deactivated_schedules: number;
+};
 
 type MarSchemaObjectName =
   | "pof_medications"
@@ -199,13 +165,6 @@ function normalizeScheduledTimes(value: unknown): string[] {
   );
 }
 
-function canonicalInstant(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString();
-}
-
 function compareDate(left: string, right: string) {
   if (left === right) return 0;
   return left < right ? -1 : 1;
@@ -219,25 +178,6 @@ function addDays(dateValue: string, days: number): string {
   const seed = new Date(Date.UTC(year, month - 1, day));
   seed.setUTCDate(seed.getUTCDate() + days);
   return `${seed.getUTCFullYear()}-${String(seed.getUTCMonth() + 1).padStart(2, "0")}-${String(seed.getUTCDate()).padStart(2, "0")}`;
-}
-
-function diffDays(startDate: string, endDate: string): number {
-  const start = new Date(`${startDate}T00:00:00.000Z`);
-  const end = new Date(`${endDate}T00:00:00.000Z`);
-  return Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
-}
-
-function buildDateRange(startDate: string, endDate: string): string[] {
-  const days = diffDays(startDate, endDate);
-  if (days < 0) return [];
-  return Array.from({ length: days + 1 }, (_, idx) => addDays(startDate, idx));
-}
-
-function toIsoBounds(startDate: string, endDate: string) {
-  return {
-    startIso: easternDateTimeLocalToISO(`${startDate}T00:00`),
-    endIso: easternDateTimeLocalToISO(`${endDate}T23:59`)
-  };
 }
 
 function normalizeGenerationWindow(startDate?: string | null, endDate?: string | null) {
@@ -273,83 +213,6 @@ async function resolveMarMemberId(memberId: string, actionLabel: string, service
   return canonical.memberId;
 }
 
-async function resolveMarAnchorPhysicianOrderId(input: {
-  memberId: string;
-  preferredOrderId?: string | null;
-  serviceRole?: boolean;
-}) {
-  const preferredOrderId = clean(input.preferredOrderId);
-  if (preferredOrderId) return preferredOrderId;
-
-  const supabase = await createClient({ serviceRole: input.serviceRole });
-  const { data: profileData, error: profileError } = await supabase
-    .from("member_health_profiles")
-    .select("active_physician_order_id")
-    .eq("member_id", input.memberId)
-    .maybeSingle();
-  if (profileError) throw new Error(profileError.message);
-
-  const profileOrderId = clean((profileData as { active_physician_order_id?: string | null } | null)?.active_physician_order_id);
-  if (profileOrderId) return profileOrderId;
-
-  const [{ data: orderRows, error: orderError }, { data: memberData, error: memberError }] = await Promise.all([
-    supabase
-      .from("physician_orders")
-      .select("id, version_number")
-      .eq("member_id", input.memberId)
-      .order("version_number", { ascending: false })
-      .order("created_at", { ascending: false }),
-    supabase.from("members").select("display_name").eq("id", input.memberId).maybeSingle()
-  ]);
-  if (orderError) throw new Error(orderError.message);
-  if (memberError) throw new Error(memberError.message);
-
-  const existingOrderId = clean(((orderRows ?? [])[0] as { id?: string } | undefined)?.id);
-  if (existingOrderId) return existingOrderId;
-
-  const now = toEasternISO();
-  const memberNameSnapshot = clean((memberData as { display_name?: string | null } | null)?.display_name);
-  const { data: insertedOrder, error: insertError } = await supabase
-    .from("physician_orders")
-    .insert({
-      member_id: input.memberId,
-      version_number: 1,
-      status: "superseded",
-      is_active_signed: false,
-      superseded_at: now,
-      signed_at: now,
-      effective_at: now,
-      member_name_snapshot: memberNameSnapshot,
-      signature_metadata: {
-        system_generated_for: "mar_anchor",
-        generated_by_service: "mar-workflow",
-        generated_at: now
-      },
-      created_by_name: "System MAR Anchor",
-      updated_by_name: "System MAR Anchor"
-    })
-    .select("id")
-    .single();
-  if (insertError) {
-    if ((insertError as { code?: string }).code === "23505") {
-      const { data: retryRows, error: retryError } = await supabase
-        .from("physician_orders")
-        .select("id")
-        .eq("member_id", input.memberId)
-        .order("version_number", { ascending: false })
-        .order("created_at", { ascending: false })
-        .limit(1);
-      if (retryError) throw new Error(retryError.message);
-      const retryId = clean(((retryRows ?? [])[0] as { id?: string } | undefined)?.id);
-      if (retryId) return retryId;
-    }
-    throw new Error(insertError.message);
-  }
-  const insertedOrderId = clean((insertedOrder as { id?: string } | null)?.id);
-  if (!insertedOrderId) throw new Error("Unable to create MAR anchor physician order.");
-  return insertedOrderId;
-}
-
 async function syncMarMedicationsFromMhp(input: {
   memberId: string;
   anchorPhysicianOrderId?: string | null;
@@ -358,92 +221,23 @@ async function syncMarMedicationsFromMhp(input: {
   const serviceRole = input.serviceRole ?? true;
   const memberId = await resolveMarMemberId(input.memberId, "syncMarMedicationsFromMhp", serviceRole);
   const supabase = await createClient({ serviceRole });
-  const anchorPhysicianOrderId = await resolveMarAnchorPhysicianOrderId({
-    memberId,
-    preferredOrderId: input.anchorPhysicianOrderId,
-    serviceRole
-  });
-
-  const { data: mhpMedicationData, error: mhpMedicationError } = await supabase
-    .from("member_medications")
-    .select(
-      "id, member_id, medication_name, date_started, inactivated_at, medication_status, dose, frequency, route, given_at_center, prn, prn_instructions, scheduled_times, comments"
-    )
-    .eq("member_id", memberId)
-    .eq("medication_status", "active")
-    .eq("given_at_center", true);
-  if (mhpMedicationError) throwMarSupabaseError(mhpMedicationError, "member_medications");
-
-  const now = toEasternISO();
-  const medicationRows = (mhpMedicationData ?? []) as MemberMedicationForMarRow[];
-  const upsertRows = medicationRows
-    .map((row) => {
-      const medicationName = clean(row.medication_name);
-      if (!medicationName) return null;
-
-      return {
-        physician_order_id: anchorPhysicianOrderId,
-        member_id: memberId,
-        source_medication_id: `${MAR_MHP_SOURCE_PREFIX}${row.id}`,
-        medication_name: medicationName,
-        strength: null,
-        dose: clean(row.dose),
-        route: clean(row.route),
-        frequency: clean(row.frequency),
-        scheduled_times: normalizeScheduledTimes(row.scheduled_times),
-        given_at_center: true,
-        prn: toBoolean(row.prn, false),
-        prn_instructions: clean(row.prn_instructions),
-        start_date: toDateValue(row.date_started),
-        end_date: toDateValue(row.inactivated_at),
-        active: true,
-        provider: null,
-        instructions: clean(row.comments),
-        created_by_user_id: null,
-        created_by_name: null,
-        updated_by_user_id: null,
-        updated_by_name: null,
-        created_at: now,
-        updated_at: now
-      };
-    })
-    .filter(Boolean) as Record<string, unknown>[];
-
-  if (upsertRows.length > 0) {
-    const { error: upsertError } = await supabase
-      .from("pof_medications")
-      .upsert(upsertRows, { onConflict: "physician_order_id,source_medication_id" });
-    if (upsertError) throwMarSupabaseError(upsertError, "pof_medications");
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, MAR_MEDICATION_SYNC_RPC, {
+      p_member_id: memberId,
+      p_preferred_physician_order_id: input.anchorPhysicianOrderId ?? null,
+      p_now: toEasternISO()
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as MarMedicationSyncRpcRow | null;
+    return { synced: Number(row?.synced_medications ?? 0) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to sync MAR medications from member profile.";
+    if (message.includes(MAR_MEDICATION_SYNC_RPC)) {
+      throw new Error(
+        `MAR medication sync RPC is not available. Apply Supabase migration ${MAR_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
   }
-
-  const { data: activeRows, error: activeRowsError } = await supabase
-    .from("pof_medications")
-    .select("id, physician_order_id, source_medication_id")
-    .eq("member_id", memberId)
-    .eq("active", true)
-    .like("source_medication_id", `${MAR_MHP_SOURCE_PREFIX}%`);
-  if (activeRowsError) throwMarSupabaseError(activeRowsError, "pof_medications");
-
-  const keepSourceMedicationIds = new Set(
-    upsertRows
-      .map((row) => clean(row.source_medication_id))
-      .filter((row): row is string => Boolean(row))
-  );
-  const idsToDeactivate = (activeRows ?? [])
-    .filter((row: { physician_order_id: string | null; source_medication_id: string | null }) => {
-      const sourceId = clean(row.source_medication_id);
-      if (!sourceId) return true;
-      if (clean(row.physician_order_id) !== anchorPhysicianOrderId) return true;
-      return !keepSourceMedicationIds.has(sourceId);
-    })
-    .map((row: { id: string }) => row.id);
-
-  if (idsToDeactivate.length > 0) {
-    const { error: deactivateError } = await supabase.from("pof_medications").update({ active: false }).in("id", idsToDeactivate);
-    if (deactivateError) throwMarSupabaseError(deactivateError, "pof_medications");
-  }
-
-  return { synced: upsertRows.length };
 }
 
 function mapMarHistoryRow(row: Record<string, unknown>): MarAdministrationHistoryRow | null {
@@ -591,249 +385,31 @@ export async function generateMarSchedulesForMember(input: {
   const serviceRole = input.serviceRole ?? true;
   const memberId = await resolveMarMemberId(input.memberId, "generateMarSchedulesForMember", serviceRole);
   const { startDate, endDate } = normalizeGenerationWindow(input.startDate, input.endDate);
-  const { startIso, endIso } = toIsoBounds(startDate, endDate);
   const supabase = await createClient({ serviceRole });
-
-  await syncMarMedicationsFromMhp({ memberId, serviceRole });
-
-  const { data: pofRows, error: pofRowsError } = await supabase
-    .from("pof_medications")
-    .select(
-      "id, member_id, medication_name, dose, route, frequency, instructions, prn, active, given_at_center, scheduled_times, start_date, end_date"
-    )
-    .eq("member_id", memberId)
-    .eq("active", true)
-    .eq("given_at_center", true)
-    .eq("prn", false)
-    .like("source_medication_id", `${MAR_MHP_SOURCE_PREFIX}%`);
-  if (pofRowsError) throwMarSupabaseError(pofRowsError, "pof_medications");
-  const medicationRows = (pofRows ?? []) as PofMedicationRow[];
-
-  if (medicationRows.length === 0) {
-    const { data: scheduleRows, error: scheduleError } = await supabase
-      .from("mar_schedules")
-      .select("id")
-      .eq("member_id", memberId)
-      .eq("active", true)
-      .gte("scheduled_time", startIso)
-      .lte("scheduled_time", endIso);
-    if (scheduleError) throwMarSupabaseError(scheduleError, "mar_schedules");
-
-    const activeScheduleIds = (scheduleRows ?? []).map((row: { id: string }) => row.id);
-    if (activeScheduleIds.length > 0) {
-      const { data: documentedRows, error: documentedError } = await supabase
-        .from("mar_administrations")
-        .select("mar_schedule_id")
-        .in("mar_schedule_id", activeScheduleIds);
-      if (documentedError) throwMarSupabaseError(documentedError, "mar_administrations");
-
-      const documentedIds = new Set(
-        (documentedRows ?? [])
-          .map((row: MarAdministrationLinkRow) => clean(row.mar_schedule_id))
-          .filter((row): row is string => Boolean(row))
-      );
-      const idsToDeactivate = activeScheduleIds.filter((id) => !documentedIds.has(id));
-      if (idsToDeactivate.length > 0) {
-        const { error: deactivateError } = await supabase.from("mar_schedules").update({ active: false }).in("id", idsToDeactivate);
-        if (deactivateError) throwMarSupabaseError(deactivateError, "mar_schedules");
-      }
-      return { inserted: 0, patched: 0, reactivated: 0, deactivated: idsToDeactivate.length };
-    }
-
-    return { inserted: 0, patched: 0, reactivated: 0, deactivated: 0 };
-  }
-
-  const expectedRows = medicationRows.flatMap((medication) => {
-    const normalizedTimes = normalizeScheduledTimes(medication.scheduled_times);
-    if (normalizedTimes.length === 0) return [];
-
-    const medStart = medication.start_date && compareDate(medication.start_date, startDate) > 0 ? medication.start_date : startDate;
-    const medEnd = medication.end_date && compareDate(medication.end_date, endDate) < 0 ? medication.end_date : endDate;
-    if (compareDate(medStart, medEnd) > 0) return [];
-
-    return buildDateRange(medStart, medEnd).flatMap((dateValue) =>
-      normalizedTimes.map((timeValue) => ({
-        member_id: memberId,
-        pof_medication_id: medication.id,
-        medication_name: medication.medication_name,
-        dose: medication.dose,
-        route: medication.route,
-        scheduled_time: easternDateTimeLocalToISO(`${dateValue}T${timeValue}`),
-        frequency: medication.frequency,
-        instructions: medication.instructions,
-        prn: Boolean(medication.prn),
-        active: true,
-        start_date: medication.start_date,
-        end_date: medication.end_date
-      }))
-    );
-  });
-
-  const expectedKeys = new Set(
-    expectedRows
-      .map((row) => {
-        const instant = canonicalInstant(row.scheduled_time);
-        return instant ? `${row.pof_medication_id}|${instant}` : null;
-      })
-      .filter((key): key is string => Boolean(key))
-  );
-
-  const { data: existingRows, error: existingRowsError } = await supabase
-    .from("mar_schedules")
-    .select(
-      "id, pof_medication_id, scheduled_time, active, medication_name, dose, route, frequency, instructions, prn, start_date, end_date"
-    )
-    .eq("member_id", memberId)
-    .gte("scheduled_time", startIso)
-    .lte("scheduled_time", endIso);
-  if (existingRowsError) throwMarSupabaseError(existingRowsError, "mar_schedules");
-
-  const schedules = (existingRows ?? []) as MarScheduleRow[];
-  const scheduleByKey = new Map<string, MarScheduleRow>();
-  schedules.forEach((row) => {
-    const instant = canonicalInstant(row.scheduled_time);
-    if (!instant) return;
-    scheduleByKey.set(`${row.pof_medication_id}|${instant}`, row);
-  });
-
-  const existingScheduleIds = schedules.map((row) => row.id);
-  const documentedIds = new Set<string>();
-  if (existingScheduleIds.length > 0) {
-    const { data: documentedRows, error: documentedError } = await supabase
-      .from("mar_administrations")
-      .select("mar_schedule_id")
-      .in("mar_schedule_id", existingScheduleIds);
-    if (documentedError) throwMarSupabaseError(documentedError, "mar_administrations");
-    (documentedRows ?? []).forEach((row: MarAdministrationLinkRow) => {
-      const scheduleId = clean(row.mar_schedule_id);
-      if (scheduleId) documentedIds.add(scheduleId);
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, MAR_RECONCILE_RPC, {
+      p_member_id: memberId,
+      p_start_date: startDate,
+      p_end_date: endDate,
+      p_preferred_physician_order_id: null,
+      p_now: toEasternISO()
     });
-  }
-
-  const rowsToInsert = expectedRows.filter((row) => {
-    const instant = canonicalInstant(row.scheduled_time);
-    if (!instant) return false;
-    const existing = scheduleByKey.get(`${row.pof_medication_id}|${instant}`);
-    return !existing;
-  });
-
-  if (rowsToInsert.length > 0) {
-    const { error: insertError } = await supabase.from("mar_schedules").insert(rowsToInsert);
-    if (insertError && insertError.code !== "23505") {
-      throwMarSupabaseError(insertError, "mar_schedules");
-    }
-  }
-
-  const expectedByKey = new Map<string, (typeof expectedRows)[number]>();
-  expectedRows.forEach((row) => {
-    const instant = canonicalInstant(row.scheduled_time);
-    if (!instant) return;
-    expectedByKey.set(`${row.pof_medication_id}|${instant}`, row);
-  });
-
-  const rowsToPatch: Array<{
-    id: string;
-    patch: {
-      medication_name: string;
-      dose: string | null;
-      route: string | null;
-      frequency: string | null;
-      instructions: string | null;
-      prn: boolean;
-      start_date: string | null;
-      end_date: string | null;
+    const row = (Array.isArray(data) ? data[0] : null) as MarReconcileRpcRow | null;
+    return {
+      inserted: Number(row?.inserted_schedules ?? 0),
+      patched: Number(row?.patched_schedules ?? 0),
+      reactivated: Number(row?.reactivated_schedules ?? 0),
+      deactivated: Number(row?.deactivated_schedules ?? 0)
     };
-  }> = [];
-
-  schedules.forEach((row) => {
-    if (documentedIds.has(row.id)) return;
-    const instant = canonicalInstant(row.scheduled_time);
-    if (!instant) return;
-    const expected = expectedByKey.get(`${row.pof_medication_id}|${instant}`);
-    if (!expected) return;
-
-    const medicationNameChanged = clean(row.medication_name) !== clean(expected.medication_name);
-    const doseChanged = clean(row.dose) !== clean(expected.dose);
-    const routeChanged = clean(row.route) !== clean(expected.route);
-    const frequencyChanged = clean(row.frequency) !== clean(expected.frequency);
-    const instructionsChanged = clean(row.instructions) !== clean(expected.instructions);
-    const prnChanged = Boolean(row.prn) !== Boolean(expected.prn);
-    const startDateChanged = toDateValue(row.start_date) !== toDateValue(expected.start_date);
-    const endDateChanged = toDateValue(row.end_date) !== toDateValue(expected.end_date);
-
-    if (
-      !medicationNameChanged &&
-      !doseChanged &&
-      !routeChanged &&
-      !frequencyChanged &&
-      !instructionsChanged &&
-      !prnChanged &&
-      !startDateChanged &&
-      !endDateChanged
-    ) {
-      return;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to reconcile MAR schedules.";
+    if (message.includes(MAR_RECONCILE_RPC)) {
+      throw new Error(
+        `MAR reconciliation RPC is not available. Apply Supabase migration ${MAR_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
     }
-
-    rowsToPatch.push({
-      id: row.id,
-      patch: {
-        medication_name: expected.medication_name,
-        dose: expected.dose,
-        route: expected.route,
-        frequency: expected.frequency,
-        instructions: expected.instructions,
-        prn: expected.prn,
-        start_date: expected.start_date,
-        end_date: expected.end_date
-      }
-    });
-  });
-
-  if (rowsToPatch.length > 0) {
-    await Promise.all(
-      rowsToPatch.map(async (row) => {
-        const { error: patchError } = await supabase.from("mar_schedules").update(row.patch).eq("id", row.id);
-        if (patchError) throwMarSupabaseError(patchError, "mar_schedules");
-      })
-    );
+    throw error;
   }
-
-  const idsToReactivate = schedules
-    .filter((row) => {
-      if (row.active) return false;
-      if (documentedIds.has(row.id)) return false;
-      const instant = canonicalInstant(row.scheduled_time);
-      if (!instant) return false;
-      return expectedKeys.has(`${row.pof_medication_id}|${instant}`);
-    })
-    .map((row) => row.id);
-
-  if (idsToReactivate.length > 0) {
-    const { error: reactivateError } = await supabase.from("mar_schedules").update({ active: true }).in("id", idsToReactivate);
-    if (reactivateError) throwMarSupabaseError(reactivateError, "mar_schedules");
-  }
-
-  const idsToDeactivate = schedules
-    .filter((row) => {
-      if (!row.active) return false;
-      if (documentedIds.has(row.id)) return false;
-      const instant = canonicalInstant(row.scheduled_time);
-      if (!instant) return false;
-      return !expectedKeys.has(`${row.pof_medication_id}|${instant}`);
-    })
-    .map((row) => row.id);
-
-  if (idsToDeactivate.length > 0) {
-    const { error: deactivateError } = await supabase.from("mar_schedules").update({ active: false }).in("id", idsToDeactivate);
-    if (deactivateError) throwMarSupabaseError(deactivateError, "mar_schedules");
-  }
-
-  return {
-    inserted: rowsToInsert.length,
-    patched: rowsToPatch.length,
-    reactivated: idsToReactivate.length,
-    deactivated: idsToDeactivate.length
-  };
 }
 
 export async function syncTodayMarSchedules(options?: { serviceRole?: boolean }) {

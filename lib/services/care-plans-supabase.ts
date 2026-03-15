@@ -48,8 +48,15 @@ export type { CarePlanSectionType, CarePlanTrack };
 
 export type CarePlanStatus = "Due Soon" | "Due Now" | "Overdue" | "Completed";
 
+const CARE_PLAN_CORE_RPC = "rpc_upsert_care_plan_core";
+const CARE_PLAN_CORE_RPC_MIGRATION = "0056_shared_rpc_orchestration_hardening.sql";
 const CARE_PLAN_SNAPSHOT_RPC = "rpc_record_care_plan_snapshot";
 const CARE_PLAN_SNAPSHOT_RPC_MIGRATION = "0054_care_plan_snapshot_atomicity.sql";
+
+type CarePlanCoreRpcRow = {
+  care_plan_id: string;
+  was_created: boolean;
+};
 
 type CarePlanSnapshotRpcRow = {
   version_id: string;
@@ -670,6 +677,71 @@ async function syncCarePlanSectionsToCanonical(
   if (error) throw new Error(error.message);
 }
 
+async function upsertCarePlanCore(input: {
+  carePlanId?: string | null;
+  memberId: string;
+  track: CarePlanTrack;
+  enrollmentDate: string;
+  reviewDate: string;
+  lastCompletedDate: string;
+  nextDueDate: string;
+  status: CarePlanStatus;
+  careTeamNotes: string;
+  noChangesNeeded: boolean;
+  modificationsRequired: boolean;
+  modificationsDescription: string;
+  caregiverName?: string | null;
+  caregiverEmail?: string | null;
+  actor: { id: string; fullName: string };
+  now: string;
+  sections: Array<{
+    sectionType: CarePlanSectionType;
+    shortTermGoals: string;
+    longTermGoals: string;
+    displayOrder: number;
+  }>;
+}) {
+  const supabase = await createClient();
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, CARE_PLAN_CORE_RPC, {
+      p_care_plan_id: input.carePlanId ?? null,
+      p_member_id: input.memberId,
+      p_track: input.track,
+      p_enrollment_date: input.enrollmentDate,
+      p_review_date: input.reviewDate,
+      p_last_completed_date: input.lastCompletedDate,
+      p_next_due_date: input.nextDueDate,
+      p_status: input.status,
+      p_care_team_notes: input.careTeamNotes,
+      p_no_changes_needed: input.noChangesNeeded,
+      p_modifications_required: input.modificationsRequired,
+      p_modifications_description: input.modificationsDescription,
+      p_caregiver_name: input.caregiverName ?? null,
+      p_caregiver_email: input.caregiverEmail ?? null,
+      p_actor_user_id: input.actor.id,
+      p_actor_name: input.actor.fullName,
+      p_now: input.now,
+      p_sections: serializeSectionsSnapshot(input.sections)
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as CarePlanCoreRpcRow | null;
+    if (!row?.care_plan_id) {
+      throw new Error("Care plan core RPC did not return a care plan id.");
+    }
+    return {
+      carePlanId: String(row.care_plan_id),
+      wasCreated: Boolean(row.was_created)
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save care plan core.";
+    if (message.includes(CARE_PLAN_CORE_RPC)) {
+      throw new Error(
+        `Care plan core RPC is not available. Apply Supabase migration ${CARE_PLAN_CORE_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
+}
+
 async function findCarePlanRootByMemberTrack(memberId: string, track: CarePlanTrack, serviceRole = false) {
   const supabase = await createClient({ serviceRole });
   const { data, error } = await supabase
@@ -1085,77 +1157,46 @@ export async function createCarePlan(input: {
   if (existingCarePlanId) {
     throw new Error("A care plan already exists for this member and track. Review the existing plan instead of creating a new root record.");
   }
-  const supabase = await createClient();
   const now = toEasternISO();
   const completionDate = input.reviewDate;
   const nextDueDate = computeNextReviewDueDate(completionDate);
   const normalizedSections = buildNormalizedSectionsForTrack(input.track, input.sections);
   const caregiverName = sanitizeCaregiverName(input.caregiverName);
   const caregiverEmail = sanitizeCaregiverEmail(input.caregiverEmail);
-
-  const { data, error } = await supabase
-    .from("care_plans")
-    .insert({
-      member_id: canonicalMemberId,
+  let createdCarePlanId: string;
+  try {
+    const saved = await upsertCarePlanCore({
+      memberId: canonicalMemberId,
       track: input.track,
-      enrollment_date: input.enrollmentDate,
-      review_date: input.reviewDate,
-      last_completed_date: completionDate,
-      next_due_date: nextDueDate,
+      enrollmentDate: input.enrollmentDate,
+      reviewDate: input.reviewDate,
+      lastCompletedDate: completionDate,
+      nextDueDate,
       status: computeCarePlanStatus(nextDueDate),
-      completed_by: null,
-      date_of_completion: null,
-      responsible_party_signature: null,
-      responsible_party_signature_date: null,
-      administrator_signature: null,
-      administrator_signature_date: null,
-      care_team_notes: input.careTeamNotes,
-      no_changes_needed: Boolean(input.noChangesNeeded),
-      modifications_required: Boolean(input.modificationsRequired),
-      modifications_description: input.modificationsDescription ?? "",
-      nurse_designee_user_id: null,
-      nurse_designee_name: null,
-      nurse_signed_at: null,
-      nurse_signature_status: "unsigned",
-      nurse_signed_by_user_id: null,
-      nurse_signed_by_name: null,
-      nurse_signature_artifact_storage_path: null,
-      nurse_signature_artifact_member_file_id: null,
-      nurse_signature_metadata: {},
-      caregiver_name: caregiverName,
-      caregiver_email: caregiverEmail,
-      caregiver_signature_status: "not_requested",
-      caregiver_sent_at: null,
-      caregiver_sent_by_user_id: null,
-      caregiver_viewed_at: null,
-      caregiver_signed_at: null,
-      caregiver_signature_request_token: null,
-      caregiver_signature_expires_at: null,
-      caregiver_signature_request_url: null,
-      caregiver_signed_name: null,
-      caregiver_signature_image_url: null,
-      caregiver_signature_ip: null,
-      caregiver_signature_user_agent: null,
-      final_member_file_id: null,
-      legacy_cleanup_flag: false,
-      created_by_user_id: input.actor.id,
-      created_by_name: input.actor.fullName,
-      updated_by_user_id: input.actor.id,
-      updated_by_name: input.actor.fullName,
-      created_at: now,
-      updated_at: now
-    })
-    .select("*, member:members!care_plans_member_id_fkey(display_name)")
-    .single();
-  if (error) {
-    if (isCarePlanRootUniqueViolation(error)) {
+      careTeamNotes: input.careTeamNotes,
+      noChangesNeeded: Boolean(input.noChangesNeeded),
+      modificationsRequired: Boolean(input.modificationsRequired),
+      modificationsDescription: input.modificationsDescription ?? "",
+      caregiverName,
+      caregiverEmail,
+      actor: {
+        id: input.actor.id,
+        fullName: input.actor.fullName
+      },
+      now,
+      sections: normalizedSections
+    });
+    createdCarePlanId = saved.carePlanId;
+  } catch (error) {
+    if (
+      isCarePlanRootUniqueViolation(
+        error as { code?: string | null; message?: string | null; details?: string | null } | null | undefined
+      )
+    ) {
       throw new Error("A care plan already exists for this member and track. Review the existing plan instead of creating a new root record.");
     }
-    throw new Error(error.message);
+    throw error;
   }
-
-  const createdCarePlanId = String(data.id);
-  await syncCarePlanSectionsToCanonical(createdCarePlanId, input.track, normalizedSections);
 
   let signedState: Awaited<ReturnType<typeof signCarePlanNurseEsign>>;
   try {
@@ -1239,7 +1280,7 @@ export async function reviewCarePlan(input: {
   const supabase = await createClient();
   const { data: existing, error: existingError } = await supabase
     .from("care_plans")
-    .select("id, track")
+    .select("id, member_id, track, enrollment_date")
     .eq("id", input.carePlanId)
     .maybeSingle();
   if (existingError) throw new Error(existingError.message);
@@ -1247,62 +1288,32 @@ export async function reviewCarePlan(input: {
 
   const track = assertCarePlanTrack(existing.track);
   const normalizedSections = buildNormalizedSectionsForTrack(track, input.sections);
-  await syncCarePlanSectionsToCanonical(input.carePlanId, track, normalizedSections);
   const now = toEasternISO();
   const nextDueDate = computeNextReviewDueDate(input.reviewDate);
   const caregiverName = sanitizeCaregiverName(input.caregiverName);
   const caregiverEmail = sanitizeCaregiverEmail(input.caregiverEmail);
-
-  const { error } = await supabase
-    .from("care_plans")
-    .update({
-      review_date: input.reviewDate,
-      last_completed_date: input.reviewDate,
-      next_due_date: nextDueDate,
-      status: computeCarePlanStatus(nextDueDate),
-      completed_by: null,
-      date_of_completion: null,
-      no_changes_needed: input.noChangesNeeded,
-      modifications_required: input.modificationsRequired,
-      modifications_description: input.modificationsDescription,
-      care_team_notes: input.careTeamNotes,
-      administrator_signature: null,
-      administrator_signature_date: null,
-      nurse_designee_user_id: null,
-      nurse_designee_name: null,
-      nurse_signed_at: null,
-      nurse_signature_status: "unsigned",
-      nurse_signed_by_user_id: null,
-      nurse_signed_by_name: null,
-      nurse_signature_artifact_storage_path: null,
-      nurse_signature_artifact_member_file_id: null,
-      nurse_signature_metadata: {},
-      caregiver_name: caregiverName,
-      caregiver_email: caregiverEmail,
-      caregiver_signature_status: "not_requested",
-      caregiver_sent_at: null,
-      caregiver_sent_by_user_id: null,
-      caregiver_viewed_at: null,
-      caregiver_signed_at: null,
-      caregiver_signature_request_token: null,
-      caregiver_signature_expires_at: null,
-      caregiver_signature_request_url: null,
-      caregiver_signed_name: null,
-      caregiver_signature_image_url: null,
-      caregiver_signature_ip: null,
-      caregiver_signature_user_agent: null,
-      final_member_file_id: null,
-      responsible_party_signature: null,
-      responsible_party_signature_date: null,
-      legacy_cleanup_flag: false,
-      updated_by_user_id: input.actor.id,
-      updated_by_name: input.actor.fullName,
-      updated_at: now
-    })
-    .eq("id", input.carePlanId)
-    .select("id")
-    .single();
-  if (error) throw new Error(error.message);
+  await upsertCarePlanCore({
+    carePlanId: input.carePlanId,
+    memberId: String(existing.member_id),
+    track,
+    enrollmentDate: String(existing.enrollment_date),
+    reviewDate: input.reviewDate,
+    lastCompletedDate: input.reviewDate,
+    nextDueDate,
+    status: computeCarePlanStatus(nextDueDate),
+    careTeamNotes: input.careTeamNotes,
+    noChangesNeeded: input.noChangesNeeded,
+    modificationsRequired: input.modificationsRequired,
+    modificationsDescription: input.modificationsDescription,
+    caregiverName,
+    caregiverEmail,
+    actor: {
+      id: input.actor.id,
+      fullName: input.actor.fullName
+    },
+    now,
+    sections: normalizedSections
+  });
 
   const signedState = await signCarePlanNurseEsign({
     carePlanId: input.carePlanId,

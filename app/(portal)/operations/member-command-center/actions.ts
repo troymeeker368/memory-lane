@@ -8,6 +8,11 @@ import { normalizePhoneForStorage } from "@/lib/phone";
 import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import { resolveActiveEffectiveRowForDate } from "@/lib/services/billing-supabase";
 import {
+  saveMemberCommandCenterAttendanceBillingWorkflow,
+  saveMemberCommandCenterBundle,
+  saveMemberCommandCenterTransportationWorkflow
+} from "@/lib/services/member-command-center";
+import {
   MEMBER_CONTACT_CATEGORY_OPTIONS,
   MEMBER_FILE_CATEGORY_OPTIONS,
   MEMBER_TRANSPORTATION_SERVICE_OPTIONS
@@ -25,12 +30,6 @@ import {
   listMemberBillingSettingsSupabase,
   listMembersSupabase,
   updateMemberAllergySupabase,
-  updateMemberAttendanceScheduleSupabase,
-  updateMemberCommandCenterProfileSupabase,
-  updateMemberSupabase,
-  upsertBillingScheduleTemplateSupabase,
-  upsertBusStopDirectoryFromValuesSupabase,
-  upsertMemberBillingSettingSupabase,
   upsertMemberContactSupabase
 } from "@/lib/services/member-command-center-supabase";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
@@ -139,18 +138,6 @@ function revalidateCommandCenter(memberId: string) {
   revalidatePath(`/members/${memberId}`);
 }
 
-function upsertBusStopDirectoryFromValues(input: {
-  busStopNames: Array<string | null | undefined>;
-  actor: { id: string; full_name: string };
-  now: string;
-}) {
-  return upsertBusStopDirectoryFromValuesSupabase({
-    busStopNames: input.busStopNames.map((value) => normalizeBusStopName(value)),
-    actor: input.actor,
-    now: input.now
-  });
-}
-
 export async function saveMemberCommandCenterSummaryAction(formData: FormData) {
   const actor = await requireCommandCenterEditor();
   const memberId = asString(formData, "memberId");
@@ -174,18 +161,22 @@ export async function saveMemberCommandCenterSummaryAction(formData: FormData) {
   const now = toEasternISO();
   const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
   const defaultLocation = profile.location ?? "Fort Mill";
-
-  await updateMemberCommandCenterProfileSupabase(profile.id, {
-    payor: asNullableString(formData, "payor"),
-    original_referral_source: asNullableString(formData, "originalReferralSource"),
-    photo_consent: asNullableBoolSelect(formData, "photoConsent"),
-    location: defaultLocation,
-    updated_by_user_id: actor.id,
-    updated_by_name: actor.full_name,
-    updated_at: now
-  });
-  await updateMemberSupabase(memberId, {
-    locker_number: lockerNumber
+  await saveMemberCommandCenterBundle({
+    memberId,
+    mccPatch: {
+      payor: asNullableString(formData, "payor"),
+      original_referral_source: asNullableString(formData, "originalReferralSource"),
+      photo_consent: asNullableBoolSelect(formData, "photoConsent"),
+      location: defaultLocation
+    },
+    memberPatch: {
+      locker_number: lockerNumber
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
 
   revalidateCommandCenter(memberId);
@@ -200,11 +191,16 @@ export async function updateMemberCommandCenterPhotoAction(formData: FormData) {
   const now = toEasternISO();
   const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
   const profileImageUrl = await asUploadedImageDataUrl(formData, "photoFile", profile.profile_image_url ?? null);
-  await updateMemberCommandCenterProfileSupabase(profile.id, {
-    profile_image_url: profileImageUrl,
-    updated_by_user_id: actor.id,
-    updated_by_name: actor.full_name,
-    updated_at: now
+  await saveMemberCommandCenterBundle({
+    memberId,
+    mccPatch: {
+      profile_image_url: profileImageUrl
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
 
   revalidateCommandCenter(memberId);
@@ -468,7 +464,7 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     return null;
   };
 
-  const updatedSchedule = await updateMemberAttendanceScheduleSupabase(schedule.id, {
+  const schedulePatch = {
     enrollment_date: enrollmentDate,
     monday,
     tuesday,
@@ -531,14 +527,8 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     use_custom_daily_rate: false,
     custom_daily_rate: null,
     make_up_days_available: resolvedMakeupBalance,
-    attendance_notes: asNullableString(formData, "attendanceNotes"),
-    updated_by_user_id: actor.id,
-    updated_by_name: actor.full_name,
-    updated_at: now
-  });
-  if (!updatedSchedule) return { ok: false, error: "Unable to save attendance schedule." };
-
-  await updateMemberSupabase(memberId, { enrollment_date: enrollmentDate ?? null });
+    attendance_notes: asNullableString(formData, "attendanceNotes")
+  };
 
   const activeMemberBillingSettings = (await listMemberBillingSettingsSupabase(memberId))
     .filter((row) => row.member_id === memberId)
@@ -549,53 +539,11 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     activeMemberBillingSettings[0] ??
     null;
 
-  if (existingBillingSetting) {
-    await upsertMemberBillingSettingSupabase(existingBillingSetting.id, {
-      member_id: existingBillingSetting.member_id,
-      payor_id: payorId ?? existingBillingSetting.payor_id,
-      use_center_default_billing_mode: useCenterDefaultBillingMode,
-      billing_mode: useCenterDefaultBillingMode ? null : billingMode ?? existingBillingSetting.billing_mode ?? "Membership",
-      monthly_billing_basis: monthlyBillingBasis,
-      use_center_default_rate: false,
-      custom_daily_rate: dailyRate,
-      flat_monthly_rate: existingBillingSetting.flat_monthly_rate,
-      bill_extra_days: billExtraDays,
-      transportation_billing_status: transportationBillingStatus,
-      bill_ancillary_arrears: billAncillaryArrears,
-      active: existingBillingSetting.active,
-      effective_start_date: existingBillingSetting.effective_start_date,
-      effective_end_date: existingBillingSetting.effective_end_date,
-      billing_notes: billingNotes ?? existingBillingSetting.billing_notes,
-      updated_by_user_id: actor.id,
-      updated_by_name: actor.full_name
-    });
-  } else {
-    const fallbackPayorId =
-      activeMemberBillingSettings
-        .filter((row) => row.member_id === memberId)
-        .map((row) => row.payor_id)
-        .find((row): row is string => Boolean(row)) ?? null;
-    await upsertMemberBillingSettingSupabase(null, {
-      member_id: memberId,
-      payor_id: payorId ?? fallbackPayorId,
-      use_center_default_billing_mode: useCenterDefaultBillingMode,
-      billing_mode: useCenterDefaultBillingMode ? null : billingMode ?? "Membership",
-      monthly_billing_basis: monthlyBillingBasis,
-      use_center_default_rate: false,
-      custom_daily_rate: dailyRate,
-      flat_monthly_rate: null,
-      bill_extra_days: billExtraDays,
-      transportation_billing_status: transportationBillingStatus,
-      bill_ancillary_arrears: billAncillaryArrears,
-      active: true,
-      effective_start_date: rateEffectiveDate,
-      effective_end_date: null,
-      billing_notes:
-        billingNotes ?? `MCC attendance billing daily rate synced ($${dailyRate.toFixed(2)}).`,
-      updated_by_user_id: actor.id,
-      updated_by_name: actor.full_name
-    });
-  }
+  const fallbackPayorId =
+    activeMemberBillingSettings
+      .filter((row) => row.member_id === memberId)
+      .map((row) => row.payor_id)
+      .find((row): row is string => Boolean(row)) ?? null;
 
   const activeScheduleTemplates = (await listBillingScheduleTemplatesSupabase(memberId))
     .filter((row) => row.member_id === memberId)
@@ -606,41 +554,80 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     activeScheduleTemplates[0] ??
     null;
 
-  if (existingScheduleTemplate) {
-    await upsertBillingScheduleTemplateSupabase(existingScheduleTemplate.id, {
-      member_id: existingScheduleTemplate.member_id,
-      effective_start_date: existingScheduleTemplate.effective_start_date,
-      effective_end_date: existingScheduleTemplate.effective_end_date,
-      monday,
-      tuesday,
-      wednesday,
-      thursday,
-      friday,
-      saturday: false,
-      sunday: false,
-      active: existingScheduleTemplate.active,
-      notes: existingScheduleTemplate.notes ?? "Auto-synced from MCC attendance pattern.",
-      updated_by_user_id: actor.id,
-      updated_by_name: actor.full_name
-    });
-  } else {
-    await upsertBillingScheduleTemplateSupabase(null, {
-      member_id: memberId,
-      effective_start_date: enrollmentDate ?? rateEffectiveDate,
-      effective_end_date: null,
-      monday,
-      tuesday,
-      wednesday,
-      thursday,
-      friday,
-      saturday: false,
-      sunday: false,
-      active: true,
-      notes: "Auto-created from MCC attendance pattern.",
-      updated_by_user_id: actor.id,
-      updated_by_name: actor.full_name
-    });
-  }
+  await saveMemberCommandCenterAttendanceBillingWorkflow({
+    memberId,
+    schedulePatch,
+    memberPatch: {
+      enrollment_date: enrollmentDate ?? null
+    },
+    billingPayload: existingBillingSetting
+      ? {
+          id: existingBillingSetting.id,
+          payor_id: payorId ?? existingBillingSetting.payor_id,
+          use_center_default_billing_mode: useCenterDefaultBillingMode,
+          billing_mode: useCenterDefaultBillingMode ? null : billingMode ?? existingBillingSetting.billing_mode ?? "Membership",
+          monthly_billing_basis: monthlyBillingBasis,
+          use_center_default_rate: false,
+          custom_daily_rate: dailyRate,
+          flat_monthly_rate: existingBillingSetting.flat_monthly_rate,
+          bill_extra_days: billExtraDays,
+          transportation_billing_status: transportationBillingStatus,
+          bill_ancillary_arrears: billAncillaryArrears,
+          active: existingBillingSetting.active,
+          effective_start_date: existingBillingSetting.effective_start_date,
+          effective_end_date: existingBillingSetting.effective_end_date,
+          billing_notes: billingNotes ?? existingBillingSetting.billing_notes
+        }
+      : {
+          payor_id: payorId ?? fallbackPayorId,
+          use_center_default_billing_mode: useCenterDefaultBillingMode,
+          billing_mode: useCenterDefaultBillingMode ? null : billingMode ?? "Membership",
+          monthly_billing_basis: monthlyBillingBasis,
+          use_center_default_rate: false,
+          custom_daily_rate: dailyRate,
+          flat_monthly_rate: null,
+          bill_extra_days: billExtraDays,
+          transportation_billing_status: transportationBillingStatus,
+          bill_ancillary_arrears: billAncillaryArrears,
+          active: true,
+          effective_start_date: rateEffectiveDate,
+          effective_end_date: null,
+          billing_notes: billingNotes ?? `MCC attendance billing daily rate synced ($${dailyRate.toFixed(2)}).`
+        },
+    templatePayload: existingScheduleTemplate
+      ? {
+          id: existingScheduleTemplate.id,
+          effective_start_date: existingScheduleTemplate.effective_start_date,
+          effective_end_date: existingScheduleTemplate.effective_end_date,
+          monday,
+          tuesday,
+          wednesday,
+          thursday,
+          friday,
+          saturday: false,
+          sunday: false,
+          active: existingScheduleTemplate.active,
+          notes: existingScheduleTemplate.notes ?? "Auto-synced from MCC attendance pattern."
+        }
+      : {
+          effective_start_date: enrollmentDate ?? rateEffectiveDate,
+          effective_end_date: null,
+          monday,
+          tuesday,
+          wednesday,
+          thursday,
+          friday,
+          saturday: false,
+          sunday: false,
+          active: true,
+          notes: "Auto-created from MCC attendance pattern."
+        },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
+  });
 
   revalidateCommandCenter(memberId);
   return { ok: true };
@@ -774,7 +761,7 @@ export async function saveMemberCommandCenterTransportationAction(formData: Form
       fridayAm.busStop ??
       fridayPm.busStop;
 
-    const updatedSchedule = await updateMemberAttendanceScheduleSupabase(schedule.id, {
+    const schedulePatch = {
       transportation_required: transportationRequired,
       transportation_mode: transportationRequired === true ? firstMode : null,
       transport_bus_number: transportationRequired === true ? firstBusNumber : null,
@@ -823,16 +810,12 @@ export async function saveMemberCommandCenterTransportationAction(formData: Form
       transport_friday_pm_mode: schedule.friday ? fridayPm.mode : null,
       transport_friday_pm_door_to_door_address: schedule.friday ? fridayPm.doorToDoorAddress : null,
       transport_friday_pm_bus_number: schedule.friday ? fridayPm.busNumber : null,
-      transport_friday_pm_bus_stop: schedule.friday ? fridayPm.busStop : null,
-      updated_by_user_id: actor.id,
-      updated_by_name: actor.full_name,
-      updated_at: now
-    });
-    if (!updatedSchedule) {
-      return { ok: false, error: "Unable to save transportation updates." };
-    }
+      transport_friday_pm_bus_stop: schedule.friday ? fridayPm.busStop : null
+    };
 
-    await upsertBusStopDirectoryFromValues({
+    await saveMemberCommandCenterTransportationWorkflow({
+      memberId,
+      schedulePatch,
       busStopNames: [
         mondayAm.busStop,
         mondayPm.busStop,
@@ -844,8 +827,11 @@ export async function saveMemberCommandCenterTransportationAction(formData: Form
         thursdayPm.busStop,
         fridayAm.busStop,
         fridayPm.busStop
-      ],
-      actor,
+      ].filter((value): value is string => Boolean(value)),
+      actor: {
+        id: actor.id,
+        fullName: actor.full_name
+      },
       now
     });
 
@@ -866,7 +852,6 @@ export async function saveMemberCommandCenterDemographicsAction(formData: FormDa
   const memberId = asString(formData, "memberId");
   if (!memberId) return { ok: false, error: "Member is required." };
 
-  const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
   const now = toEasternISO();
   const city = asNullableString(formData, "city");
   const isVeteran = asNullableBoolSelect(formData, "isVeteran");
@@ -876,31 +861,35 @@ export async function saveMemberCommandCenterDemographicsAction(formData: FormDa
   const memberDisplayName = asString(formData, "memberDisplayName");
   const memberDob = asNullableString(formData, "memberDob");
 
-  await updateMemberCommandCenterProfileSupabase(profile.id, {
-    gender,
-    street_address: asNullableString(formData, "streetAddress"),
-    city,
-    state: asNullableString(formData, "state"),
-    zip: asNullableString(formData, "zip"),
-    marital_status: asNullableString(formData, "maritalStatus"),
-    primary_language: asNullableString(formData, "primaryLanguage") ?? "English",
-    secondary_language: asNullableString(formData, "secondaryLanguage"),
-    religion: asNullableString(formData, "religion"),
-    ethnicity: asNullableString(formData, "ethnicity"),
-    is_veteran: isVeteran,
-    veteran_branch: veteranBranch,
-    updated_by_user_id: actor.id,
-    updated_by_name: actor.full_name,
-    updated_at: now
-  });
-
   const memberPatch: Record<string, string | null> = { city };
   if (memberDisplayName.length > 0) {
     memberPatch.display_name = memberDisplayName;
   }
-  await updateMemberSupabase(memberId, {
-    ...memberPatch,
-    dob: memberDob ?? null
+  await saveMemberCommandCenterBundle({
+    memberId,
+    mccPatch: {
+      gender,
+      street_address: asNullableString(formData, "streetAddress"),
+      city,
+      state: asNullableString(formData, "state"),
+      zip: asNullableString(formData, "zip"),
+      marital_status: asNullableString(formData, "maritalStatus"),
+      primary_language: asNullableString(formData, "primaryLanguage") ?? "English",
+      secondary_language: asNullableString(formData, "secondaryLanguage"),
+      religion: asNullableString(formData, "religion"),
+      ethnicity: asNullableString(formData, "ethnicity"),
+      is_veteran: isVeteran,
+      veteran_branch: veteranBranch
+    },
+    memberPatch: {
+      ...memberPatch,
+      dob: memberDob ?? null
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
 
   revalidateCommandCenter(memberId);
@@ -913,28 +902,31 @@ export async function saveMemberCommandCenterLegalAction(formData: FormData) {
   if (!memberId) return { ok: false, error: "Member is required." };
 
   const now = toEasternISO();
-  const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
   const codeStatusInput = asNullableString(formData, "codeStatus");
   const dnrInput = asNullableBoolSelect(formData, "dnr");
   const codeStatus =
     codeStatusInput ?? (dnrInput === true ? "DNR" : dnrInput === false ? "Full Code" : null);
   const dnr = codeStatus === "DNR" ? true : codeStatus === "Full Code" ? false : dnrInput;
 
-  await updateMemberCommandCenterProfileSupabase(profile.id, {
-    code_status: codeStatus,
-    dnr,
-    dni: asNullableBoolSelect(formData, "dni"),
-    polst_molst_colst: asNullableString(formData, "polstMolstColst"),
-    hospice: asNullableBoolSelect(formData, "hospice"),
-    advanced_directives_obtained: asNullableBoolSelect(formData, "advancedDirectivesObtained"),
-    power_of_attorney: asNullableString(formData, "powerOfAttorney"),
-    legal_comments: asNullableString(formData, "legalComments"),
-    updated_by_user_id: actor.id,
-    updated_by_name: actor.full_name,
-    updated_at: now
+  await saveMemberCommandCenterBundle({
+    memberId,
+    mccPatch: {
+      code_status: codeStatus,
+      dnr,
+      dni: asNullableBoolSelect(formData, "dni"),
+      polst_molst_colst: asNullableString(formData, "polstMolstColst"),
+      hospice: asNullableBoolSelect(formData, "hospice"),
+      advanced_directives_obtained: asNullableBoolSelect(formData, "advancedDirectivesObtained"),
+      power_of_attorney: asNullableString(formData, "powerOfAttorney"),
+      legal_comments: asNullableString(formData, "legalComments")
+    },
+    memberPatch: { code_status: codeStatus },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
-
-  await updateMemberSupabase(memberId, { code_status: codeStatus });
 
   revalidateCommandCenter(memberId);
   return { ok: true };
@@ -946,23 +938,27 @@ export async function saveMemberCommandCenterDietAction(formData: FormData) {
   if (!memberId) return { ok: false, error: "Member is required." };
 
   const now = toEasternISO();
-  const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
   const dietType = asString(formData, "dietType");
   const dietTypeOther = asNullableString(formData, "dietTypeOther");
   const normalizedDietType = dietType === "Other" ? (dietTypeOther ?? "Other") : dietType || "Regular";
 
-  await updateMemberCommandCenterProfileSupabase(profile.id, {
-    diet_type: normalizedDietType,
-    dietary_preferences_restrictions: asNullableString(formData, "dietaryPreferencesRestrictions"),
-    swallowing_difficulty: asNullableString(formData, "swallowingDifficulty"),
-    supplements: asNullableString(formData, "supplements"),
-    food_dislikes: asNullableString(formData, "foodDislikes"),
-    foods_to_omit: asNullableString(formData, "foodsToOmit"),
-    diet_texture: asNullableString(formData, "dietTexture") ?? "Regular",
-    command_center_notes: asNullableString(formData, "commandCenterNotes"),
-    updated_by_user_id: actor.id,
-    updated_by_name: actor.full_name,
-    updated_at: now
+  await saveMemberCommandCenterBundle({
+    memberId,
+    mccPatch: {
+      diet_type: normalizedDietType,
+      dietary_preferences_restrictions: asNullableString(formData, "dietaryPreferencesRestrictions"),
+      swallowing_difficulty: asNullableString(formData, "swallowingDifficulty"),
+      supplements: asNullableString(formData, "supplements"),
+      food_dislikes: asNullableString(formData, "foodDislikes"),
+      foods_to_omit: asNullableString(formData, "foodsToOmit"),
+      diet_texture: asNullableString(formData, "dietTexture") ?? "Regular",
+      command_center_notes: asNullableString(formData, "commandCenterNotes")
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now
   });
   revalidateCommandCenter(memberId);
   return { ok: true };

@@ -474,6 +474,20 @@ Implemented production-safety fixes:
   - `rpc_finalize_care_plan_nurse_signature` now atomically finalizes `care_plan_nurse_signatures` + `care_plans`
   - `rpc_finalize_enrollment_packet_submission` now files packets before downstream mapping and finalizes staged upload batches
 - Added `0054_care_plan_snapshot_atomicity.sql` and moved care-plan version snapshot + review-history persistence onto `rpc_record_care_plan_snapshot` so signed care plan reviews cannot save one without the other.
+- Added `0055_intake_draft_pof_atomic_creation.sql` and moved signed-intake -> draft POF creation onto `rpc_create_draft_physician_order_from_intake` so `physician_orders` creation and `intake_assessments.draft_pof_status` stay transactionally aligned.
+- Added `0056_shared_rpc_orchestration_hardening.sql` and moved remaining multi-step relay/orchestration paths onto shared RPC boundaries:
+  - `rpc_upsert_care_plan_core` now owns `care_plans` + `care_plan_sections` create/review persistence in one transaction
+  - `rpc_sync_mar_medications_from_member_profile` now owns MAR medication anchor resolution + `pof_medications` upsert/deactivation
+  - `rpc_reconcile_member_mar_state` now owns member MAR medication sync + `mar_schedules` reconciliation in one transaction
+  - `rpc_sync_member_health_profile_to_command_center` now owns MHP -> MCC/member cross-domain sync
+  - `rpc_sync_command_center_to_member_health_profile` now owns MCC -> MHP/member cross-domain sync
+  - `rpc_prefill_member_command_center_from_assessment` now owns intake-assessment -> MCC/member propagation
+- Added `0057_mcc_mhp_workflow_rpc_hardening.sql` and moved remaining Member Command Center / Member Health Profile multi-step bundle workflows onto shared RPC boundaries:
+  - `rpc_update_member_command_center_bundle` now owns MCC + `members` summary/demographics/legal/photo/diet persistence in one transaction
+  - `rpc_save_member_command_center_attendance_billing` now owns attendance schedule + enrollment date + billing settings + billing schedule template persistence in one transaction
+  - `rpc_save_member_command_center_transportation` now owns attendance transportation fields + bus stop directory upserts in one transaction
+  - `rpc_update_member_health_profile_bundle` now owns MHP + `members` + hospital preference directory + optional MHP -> MCC sync in one transaction
+  - `rpc_update_member_track_with_note` now owns `members.latest_assessment_track` + required care-plan review note creation in one transaction
 - Normalized remaining service-layer `audit_logs` writers in `lib/services/sales-crm-supabase.ts`, `lib/services/sales-lead-activities.ts`, and `lib/services/staff-auth.ts` behind shared service `lib/services/audit-log-service.ts`.
 - Added storage cleanup helper `deleteMemberDocumentObject(...)` and metadata cleanup helper `deleteMemberFileRecord(...)` in `lib/services/member-files.ts`.
 - Hardened `lib/services/clinical-esign-artifacts.ts` so failed `member_files` persistence cleans up the just-uploaded storage object.
@@ -495,6 +509,11 @@ Implemented production-safety fixes:
   - finalizes signature row + parent care plan state in one RPC
   - cleans new artifact/member-file rows or raises explicit split-brain alerts when cleanup is unsafe
 - Hardened `app/actions.ts` intake create flow so signed-assessment failures no longer delete a successfully created assessment; failures now return a retryable saved-state result instead of simulating a rollback.
+- Hardened `lib/services/physician-orders-supabase.ts` and `app/actions.ts` so intake draft POF creation now:
+  - uses one replay-safe RPC boundary for draft `physician_orders` creation
+  - atomically sets `draft_pof_status = created` only when the draft POF row exists
+  - reuses existing draft/sent POF rows safely under retry
+  - leaves `draft_pof_status = failed` only on genuine post-RPC failure paths
 - Hardened `lib/services/care-plans-supabase.ts` and `app/care-plan-actions.ts` so:
   - care plan create no longer deletes the newly created parent row when later signing fails
   - create/review/sign actions now return recoverable saved-state errors with the committed `carePlanId`
@@ -524,13 +543,18 @@ Implemented production-safety fixes:
 - Care plan caregiver signing drift window caused by pre-finalization parent/member-file writes.
 - Care plan nurse signing drift window caused by separate artifact, signature-row, and parent finalization writes.
 - Enrollment packet filing drift caused by staging artifacts and downstream mapping before canonical filed-state commit.
+- Care plan core create/review parent+section persistence previously split across direct table writes.
+- MAR medication + schedule regeneration previously ran as direct service-layer multi-write orchestration.
+- Shared MHP/MCC/member propagation relays previously wrote cross-domain state directly instead of using one canonical RPC boundary.
+- Member Command Center summary/photo/demographics/legal/diet, attendance/billing, and transportation flows previously orchestrated related writes directly from action/service layers.
+- Member Health Profile overview/photo/medical/legal/track workflows previously wrote cross-table state through direct relay paths instead of one canonical RPC boundary.
 
 ## Production Blockers Still Open After This Pass
 
 - Enrollment packet downstream mapping is still not inside one shared RPC/transaction boundary.
-- Intake assessment create + signature + draft POF cascade is still not one end-to-end atomic DB boundary, even though base assessment creation and signature DB finalization are now RPC-backed.
-- Care plan create/review workflow still has non-artifact transactional gaps outside one end-to-end transaction, even though rollback-delete compensation is removed and version/review history is now atomic.
+- Intake assessment create + signature + draft POF cascade is still not one end-to-end atomic DB boundary, even though base assessment creation, signature finalization, and draft POF creation now each have canonical transaction boundaries.
+- Care plan create/review workflow still spans multiple canonical boundaries (`care plan core`, `nurse sign`, `snapshot/history`, caregiver dispatch) rather than one end-to-end transaction, even though the direct parent/child write gap is removed.
 - POF post-sign clinical sync remains a post-commit derived process rather than a single end-to-end transaction, though canonical signed state is now protected.
-- MAR schedule regeneration remains multi-step and non-transactional under retry/concurrency.
+- Some Member Health Profile child-row workflows still combine child-row CRUD with downstream sync outside one shared RPC boundary.
 - Service-layer `audit_logs` writes still exist in some service modules and should be normalized behind one shared audit writer.
 - RLS/policy parity, public-token replay safety, and cross-domain downstream propagation still require deeper workflow-by-workflow verification beyond this code pass.

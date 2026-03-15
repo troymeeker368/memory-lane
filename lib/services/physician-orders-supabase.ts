@@ -49,6 +49,15 @@ export type ProviderSignatureStatus = "Pending" | "Signed";
 export type PhysicianOrderRenewalStatus = "Current" | "Due Soon" | "Overdue" | "Missing Completion";
 export type PhysicianOrderClinicalSyncStatus = "not_signed" | "pending" | "synced";
 
+const CREATE_DRAFT_POF_FROM_INTAKE_RPC = "rpc_create_draft_physician_order_from_intake";
+const CREATE_DRAFT_POF_FROM_INTAKE_MIGRATION = "0055_intake_draft_pof_atomic_creation.sql";
+
+type CreateDraftPofFromIntakeRpcRow = {
+  physician_order_id: string;
+  draft_pof_status: string;
+  was_existing: boolean;
+};
+
 export interface PhysicianOrderMedication {
   id: string;
   name: string;
@@ -832,8 +841,6 @@ async function runPostSignSyncCascade(input: {
   let step: PofPostSignSyncStep = "mhp_mcc";
   try {
     await syncMemberHealthProfileFromSignedPhysicianOrder(input.pofId, { serviceRole: input.serviceRole });
-    step = "mar_medications";
-    await syncPofMedicationsFromSignedOrder({ physicianOrderId: input.pofId, serviceRole: input.serviceRole ?? true });
     step = "mar_schedules";
     const scheduleStartDate = toEasternDate(input.syncTimestamp);
     const scheduleEndDate = addDaysDateOnly(scheduleStartDate, 30);
@@ -1320,35 +1327,14 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
   intakeSignature?: IntakeAssessmentSignatureState;
 }) {
   const supabase = await createClient();
-  const { data: existing, error: existingError } = await supabase
-    .from("physician_orders")
-    .select("id")
-    .eq("intake_assessment_id", input.assessment.id)
-    .in("status", ["draft", "sent"])
-    .limit(1)
-    .maybeSingle();
-  if (existingError) {
-    if (isMissingPhysicianOrdersTableError(existingError)) throw physicianOrdersTableRequiredError();
-    throw new Error(existingError.message);
-  }
-
-  if (existing?.id) {
-    const existingForm = await getPhysicianOrderById(existing.id);
-    if (!existingForm) throw new Error("Unable to load existing draft physician order.");
-    return existingForm;
-  }
-
   const member = await getMember(input.assessment.member_id);
   if (!member) throw new Error("Member not found for intake assessment.");
 
   const mapped = mapIntakeAssessmentToPofPrefill(input.assessment);
   const now = toEasternISO();
-  const version = await nextVersionNumber(input.assessment.member_id);
-
   const payload = {
     member_id: input.assessment.member_id,
     intake_assessment_id: input.assessment.id,
-    version_number: version,
     status: "draft",
     is_active_signed: false,
     member_name_snapshot: member.display_name,
@@ -1410,12 +1396,30 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
     updated_at: now
   };
 
-  const { data, error } = await supabase.from("physician_orders").insert(payload).select("id").single();
-  if (error) {
-    if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
-    throw new Error(mapPhysicianOrderWriteError(error, "Unable to create draft physician order from intake."));
+  let rpcData: unknown;
+  try {
+    rpcData = await invokeSupabaseRpcOrThrow<unknown>(supabase, CREATE_DRAFT_POF_FROM_INTAKE_RPC, {
+      p_assessment_id: input.assessment.id,
+      p_member_id: input.assessment.member_id,
+      p_payload: payload,
+      p_attempted_at: now
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to create draft physician order from intake.";
+    if (message.includes(CREATE_DRAFT_POF_FROM_INTAKE_RPC)) {
+      throw new Error(
+        `Intake draft physician order RPC is not available. Apply Supabase migration ${CREATE_DRAFT_POF_FROM_INTAKE_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw new Error(mapPhysicianOrderWriteError(error as PostgrestErrorLike, "Unable to create draft physician order from intake."));
   }
-  const saved = await getPhysicianOrderById(data.id);
+
+  const row = (Array.isArray(rpcData) ? rpcData[0] : null) as CreateDraftPofFromIntakeRpcRow | null;
+  if (!row?.physician_order_id) {
+    throw new Error("Intake draft physician order RPC did not return the physician order id.");
+  }
+
+  const saved = await getPhysicianOrderById(row.physician_order_id);
   if (!saved) throw new Error("Unable to load created physician order.");
   return saved;
 }

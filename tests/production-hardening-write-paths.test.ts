@@ -175,3 +175,141 @@ test("rollback-delete workflow compensation is removed from intake and care plan
   assert.equal(snapshotMigrationSource.includes("insert into public.care_plan_versions"), true);
   assert.equal(snapshotMigrationSource.includes("insert into public.care_plan_review_history"), true);
 });
+
+test("intake draft POF creation is RPC-backed so intake status and physician order creation stay aligned", () => {
+  const appActionsSource = readWorkspaceFile("app/actions.ts");
+  const pofServiceSource = readWorkspaceFile("lib/services/physician-orders-supabase.ts");
+  const migrationSource = readWorkspaceFile("supabase/migrations/0055_intake_draft_pof_atomic_creation.sql");
+
+  assert.equal(
+    pofServiceSource.includes('const CREATE_DRAFT_POF_FROM_INTAKE_RPC = "rpc_create_draft_physician_order_from_intake";'),
+    true
+  );
+  assert.equal(pofServiceSource.includes("invokeSupabaseRpcOrThrow"), true);
+  assert.equal(pofServiceSource.includes("p_assessment_id: input.assessment.id"), true);
+  assert.equal(pofServiceSource.includes("p_payload: payload"), true);
+  assert.equal(pofServiceSource.includes("Intake draft physician order RPC is not available. Apply Supabase migration"), true);
+  assert.equal(pofServiceSource.includes("CREATE_DRAFT_POF_FROM_INTAKE_MIGRATION"), true);
+
+  assert.equal(
+    appActionsSource.includes("await autoCreateDraftPhysicianOrderFromIntake({"),
+    true
+  );
+  assert.equal(
+    appActionsSource.includes('await updateIntakeAssessmentDraftPofStatus({\n      assessmentId: created.id,\n      status: "pending"'),
+    false
+  );
+  assert.equal(
+    appActionsSource.includes('await updateIntakeAssessmentDraftPofStatus({\n      assessmentId: created.id,\n      status: "created"'),
+    false
+  );
+  assert.equal(
+    appActionsSource.includes('await updateIntakeAssessmentDraftPofStatus({\n      assessmentId: created.id,\n      status: "failed"'),
+    true
+  );
+
+  assert.equal(migrationSource.includes("create or replace function public.rpc_create_draft_physician_order_from_intake("), true);
+  assert.equal(migrationSource.includes("draft_pof_status = 'created'"), true);
+  assert.equal(migrationSource.includes("where intake_assessment_id = p_assessment_id"), true);
+  assert.equal(migrationSource.includes("status in ('draft', 'sent')"), true);
+});
+
+test("care plan core save, MAR reconciliation, and shared profile sync now use canonical RPC boundaries", () => {
+  const carePlanSource = readWorkspaceFile("lib/services/care-plans-supabase.ts");
+  const marSource = readWorkspaceFile("lib/services/mar-workflow.ts");
+  const profileSyncSource = readWorkspaceFile("lib/services/member-profile-sync.ts");
+  const memberCommandCenterSource = readWorkspaceFile("lib/services/member-command-center.ts");
+  const migrationSource = readWorkspaceFile("supabase/migrations/0056_shared_rpc_orchestration_hardening.sql");
+
+  assert.equal(carePlanSource.includes('const CARE_PLAN_CORE_RPC = "rpc_upsert_care_plan_core";'), true);
+  assert.equal(carePlanSource.includes("Care plan core RPC is not available."), true);
+  assert.equal(carePlanSource.includes("await upsertCarePlanCore({"), true);
+  assert.equal(carePlanSource.includes('.from("care_plans").insert({'), false);
+
+  assert.equal(marSource.includes('const MAR_MEDICATION_SYNC_RPC = "rpc_sync_mar_medications_from_member_profile";'), true);
+  assert.equal(marSource.includes('const MAR_RECONCILE_RPC = "rpc_reconcile_member_mar_state";'), true);
+  assert.equal(marSource.includes("MAR reconciliation RPC is not available."), true);
+  assert.equal(marSource.includes('.from("mar_schedules").insert(rowsToInsert)'), false);
+  assert.equal(marSource.includes('.from("pof_medications").upsert(upsertRows'), false);
+
+  assert.equal(profileSyncSource.includes('const SYNC_MHP_TO_COMMAND_CENTER_RPC = "rpc_sync_member_health_profile_to_command_center";'), true);
+  assert.equal(profileSyncSource.includes('const SYNC_COMMAND_CENTER_TO_MHP_RPC = "rpc_sync_command_center_to_member_health_profile";'), true);
+  assert.equal(profileSyncSource.includes("Member profile sync RPC is not available."), true);
+  assert.equal(profileSyncSource.includes('updateMemberCommandCenterProfileSupabase('), false);
+  assert.equal(profileSyncSource.includes('updateMemberHealthProfileByMemberIdSupabase('), false);
+
+  assert.equal(memberCommandCenterSource.includes('const PREFILL_MEMBER_COMMAND_CENTER_RPC = "rpc_prefill_member_command_center_from_assessment";'), true);
+  assert.equal(memberCommandCenterSource.includes("Member Command Center prefill RPC is not available."), true);
+  assert.equal(memberCommandCenterSource.includes('.from("intake_assessments")'), false);
+
+  assert.equal(migrationSource.includes("create or replace function public.rpc_upsert_care_plan_core("), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_sync_member_health_profile_to_command_center("), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_sync_command_center_to_member_health_profile("), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_prefill_member_command_center_from_assessment("), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_sync_mar_medications_from_member_profile("), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_reconcile_member_mar_state("), true);
+});
+
+test("MCC and MHP bundle workflows now use 0057 shared RPC boundaries", () => {
+  const mccActionsSource = readWorkspaceFile("app/(portal)/operations/member-command-center/actions.ts");
+  const mhpActionsSource = readWorkspaceFile("app/(portal)/health/member-health-profiles/actions.ts");
+  const memberCommandCenterSource = readWorkspaceFile("lib/services/member-command-center.ts");
+  const memberHealthProfilesSource = readWorkspaceFile("lib/services/member-health-profiles.ts");
+  const migrationSource = readWorkspaceFile("supabase/migrations/0057_mcc_mhp_workflow_rpc_hardening.sql");
+
+  assert.equal(
+    memberCommandCenterSource.includes('const UPDATE_MEMBER_COMMAND_CENTER_BUNDLE_RPC = "rpc_update_member_command_center_bundle";'),
+    true
+  );
+  assert.equal(
+    memberCommandCenterSource.includes(
+      'const SAVE_MEMBER_COMMAND_CENTER_ATTENDANCE_BILLING_RPC = "rpc_save_member_command_center_attendance_billing";'
+    ),
+    true
+  );
+  assert.equal(
+    memberCommandCenterSource.includes(
+      'const SAVE_MEMBER_COMMAND_CENTER_TRANSPORTATION_RPC = "rpc_save_member_command_center_transportation";'
+    ),
+    true
+  );
+  assert.equal(memberCommandCenterSource.includes("MEMBER_COMMAND_CENTER_WORKFLOW_RPC_MIGRATION"), true);
+
+  assert.equal(
+    memberHealthProfilesSource.includes('const UPDATE_MEMBER_HEALTH_PROFILE_BUNDLE_RPC = "rpc_update_member_health_profile_bundle";'),
+    true
+  );
+  assert.equal(
+    memberHealthProfilesSource.includes('const UPDATE_MEMBER_TRACK_WITH_NOTE_RPC = "rpc_update_member_track_with_note";'),
+    true
+  );
+  assert.equal(memberHealthProfilesSource.includes("MEMBER_HEALTH_PROFILE_WORKFLOW_RPC_MIGRATION"), true);
+
+  assert.equal(mccActionsSource.includes("saveMemberCommandCenterBundle({"), true);
+  assert.equal(mccActionsSource.includes("saveMemberCommandCenterAttendanceBillingWorkflow({"), true);
+  assert.equal(mccActionsSource.includes("saveMemberCommandCenterTransportationWorkflow({"), true);
+  assert.equal(mccActionsSource.includes("updateMemberCommandCenterProfileSupabase("), false);
+  assert.equal(mccActionsSource.includes("updateMemberAttendanceScheduleSupabase("), false);
+  assert.equal(mccActionsSource.includes("upsertMemberBillingSettingSupabase("), false);
+  assert.equal(mccActionsSource.includes("upsertBillingScheduleTemplateSupabase("), false);
+  assert.equal(mccActionsSource.includes("upsertBusStopDirectoryFromValuesSupabase("), false);
+
+  assert.equal(mhpActionsSource.includes("saveMemberHealthProfileBundle({"), true);
+  assert.equal(mhpActionsSource.includes("updateMemberTrackWithCarePlanNote({"), true);
+  assert.equal(
+    mhpActionsSource.includes('await updateMemberFromMhpSupabase({ memberId, patch: {\n    latest_assessment_track: track'),
+    false
+  );
+
+  assert.equal(migrationSource.includes("create or replace function public.rpc_update_member_command_center_bundle("), true);
+  assert.equal(
+    migrationSource.includes("create or replace function public.rpc_save_member_command_center_attendance_billing("),
+    true
+  );
+  assert.equal(
+    migrationSource.includes("create or replace function public.rpc_save_member_command_center_transportation("),
+    true
+  );
+  assert.equal(migrationSource.includes("create or replace function public.rpc_update_member_health_profile_bundle("), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_update_member_track_with_note("), true);
+});

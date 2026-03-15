@@ -4,11 +4,10 @@ import {
   getAvailableLockerNumbersForMemberSupabase,
   getMemberCommandCenterDetailSupabase,
   getMemberCommandCenterIndexSupabase,
-  updateMemberCommandCenterProfileSupabase,
   updateMemberSupabase
 } from "@/lib/services/member-command-center-supabase";
-import { mapCodeStatusToDnr } from "@/lib/services/intake-pof-shared";
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
 
 export function calculateAgeYears(dob: string | null) {
@@ -55,6 +54,13 @@ export async function getMemberCommandCenterDetail(memberId: string) {
   return getMemberCommandCenterDetailSupabase(memberId);
 }
 
+const PREFILL_MEMBER_COMMAND_CENTER_RPC = "rpc_prefill_member_command_center_from_assessment";
+const MEMBER_COMMAND_CENTER_RPC_MIGRATION = "0056_shared_rpc_orchestration_hardening.sql";
+const UPDATE_MEMBER_COMMAND_CENTER_BUNDLE_RPC = "rpc_update_member_command_center_bundle";
+const SAVE_MEMBER_COMMAND_CENTER_ATTENDANCE_BILLING_RPC = "rpc_save_member_command_center_attendance_billing";
+const SAVE_MEMBER_COMMAND_CENTER_TRANSPORTATION_RPC = "rpc_save_member_command_center_transportation";
+const MEMBER_COMMAND_CENTER_WORKFLOW_RPC_MIGRATION = "0057_mcc_mhp_workflow_rpc_hardening.sql";
+
 function clean(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
@@ -68,19 +74,6 @@ function toNullableUuid(value: string | null | undefined) {
     : null;
 }
 
-function combineText(parts: Array<string | null | undefined>, separator = " | ") {
-  const joined = parts
-    .map((part) => clean(part))
-    .filter((part): part is string => Boolean(part))
-    .join(separator);
-  return joined.length > 0 ? joined : null;
-}
-
-function toNullableNumber(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 export async function prefillMemberCommandCenterFromAssessment(input: {
   memberId: string;
   assessmentId: string;
@@ -88,61 +81,113 @@ export async function prefillMemberCommandCenterFromAssessment(input: {
   actorName: string;
 }) {
   const supabase = await createClient();
-  const { data: assessment, error } = await supabase
-    .from("intake_assessments")
-    .select(
-      "id, member_id, assessment_date, signed_at, code_status, diet_type, diet_other, diet_restrictions_notes, incontinence_products, social_triggers, emotional_wellness_notes, transport_notes, notes, total_score, recommended_track, admission_review_required"
-    )
-    .eq("id", input.assessmentId)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!assessment) throw new Error("Assessment not found.");
-  if (String(assessment.member_id) !== input.memberId) {
-    throw new Error("Assessment/member mismatch.");
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(supabase, PREFILL_MEMBER_COMMAND_CENTER_RPC, {
+      p_member_id: input.memberId,
+      p_assessment_id: input.assessmentId,
+      p_actor_user_id: toNullableUuid(input.actorUserId),
+      p_actor_name: clean(input.actorName),
+      p_now: toEasternISO()
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to prefill Member Command Center from assessment.";
+    if (message.includes(PREFILL_MEMBER_COMMAND_CENTER_RPC)) {
+      throw new Error(
+        `Member Command Center prefill RPC is not available. Apply Supabase migration ${MEMBER_COMMAND_CENTER_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
   }
 
-  const profile = await ensureMemberCommandCenterProfileSupabase(input.memberId, {
-    actor: {
-      userId: toNullableUuid(input.actorUserId),
-      name: clean(input.actorName)
+  return ensureMemberCommandCenterProfileSupabase(input.memberId);
+}
+
+export async function saveMemberCommandCenterBundle(input: {
+  memberId: string;
+  mccPatch: Record<string, unknown>;
+  memberPatch?: Record<string, unknown>;
+  actor: { id: string; fullName: string };
+  now?: string;
+}) {
+  const supabase = await createClient();
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(supabase, UPDATE_MEMBER_COMMAND_CENTER_BUNDLE_RPC, {
+      p_member_id: input.memberId,
+      p_mcc_patch: input.mccPatch,
+      p_member_patch: input.memberPatch ?? {},
+      p_actor_user_id: toNullableUuid(input.actor.id),
+      p_actor_name: clean(input.actor.fullName),
+      p_now: input.now ?? toEasternISO()
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save Member Command Center bundle.";
+    if (message.includes(UPDATE_MEMBER_COMMAND_CENTER_BUNDLE_RPC)) {
+      throw new Error(
+        `Member Command Center workflow RPC is not available. Apply Supabase migration ${MEMBER_COMMAND_CENTER_WORKFLOW_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
     }
-  });
-  const now = toEasternISO();
+    throw error;
+  }
+}
 
-  const updatedProfile = await updateMemberCommandCenterProfileSupabase(profile.id, {
-    source_assessment_id: input.assessmentId,
-    source_assessment_at:
-      clean(String(assessment.signed_at ?? "")) ??
-      (clean(String(assessment.assessment_date ?? "")) ? `${String(assessment.assessment_date)}T12:00:00.000Z` : null),
-    code_status: clean(String(assessment.code_status ?? "")),
-    dnr: mapCodeStatusToDnr(clean(String(assessment.code_status ?? ""))),
-    diet_type: clean(String(assessment.diet_type ?? "")),
-    dietary_preferences_restrictions: combineText([
-      String(assessment.diet_restrictions_notes ?? ""),
-      String(assessment.diet_other ?? "")
-    ]),
-    swallowing_difficulty: clean(String(assessment.incontinence_products ?? "")),
-    command_center_notes: combineText([
-      String(assessment.transport_notes ?? ""),
-      String(assessment.social_triggers ?? ""),
-      String(assessment.emotional_wellness_notes ?? ""),
-      String(assessment.notes ?? "")
-    ]),
-    updated_by_user_id: toNullableUuid(input.actorUserId),
-    updated_by_name: clean(input.actorName),
-    updated_at: now
-  });
+export async function saveMemberCommandCenterAttendanceBillingWorkflow(input: {
+  memberId: string;
+  schedulePatch: Record<string, unknown>;
+  memberPatch?: Record<string, unknown>;
+  billingPayload: Record<string, unknown>;
+  templatePayload: Record<string, unknown>;
+  actor: { id: string; fullName: string };
+  now?: string;
+}) {
+  const supabase = await createClient();
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(supabase, SAVE_MEMBER_COMMAND_CENTER_ATTENDANCE_BILLING_RPC, {
+      p_member_id: input.memberId,
+      p_schedule_patch: input.schedulePatch,
+      p_member_patch: input.memberPatch ?? {},
+      p_billing_payload: input.billingPayload,
+      p_template_payload: input.templatePayload,
+      p_actor_user_id: toNullableUuid(input.actor.id),
+      p_actor_name: clean(input.actor.fullName),
+      p_now: input.now ?? toEasternISO()
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save attendance billing workflow.";
+    if (message.includes(SAVE_MEMBER_COMMAND_CENTER_ATTENDANCE_BILLING_RPC)) {
+      throw new Error(
+        `Member Command Center attendance workflow RPC is not available. Apply Supabase migration ${MEMBER_COMMAND_CENTER_WORKFLOW_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
+}
 
-  await updateMemberSupabase(input.memberId, {
-    latest_assessment_id: input.assessmentId,
-    latest_assessment_date: clean(String(assessment.assessment_date ?? "")),
-    latest_assessment_score: toNullableNumber(assessment.total_score),
-    latest_assessment_track: clean(String(assessment.recommended_track ?? "")),
-    latest_assessment_admission_review_required: Boolean(assessment.admission_review_required),
-    code_status: clean(String(assessment.code_status ?? ""))
-  });
-
-  return updatedProfile;
+export async function saveMemberCommandCenterTransportationWorkflow(input: {
+  memberId: string;
+  schedulePatch: Record<string, unknown>;
+  busStopNames: string[];
+  actor: { id: string; fullName: string };
+  now?: string;
+}) {
+  const supabase = await createClient();
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(supabase, SAVE_MEMBER_COMMAND_CENTER_TRANSPORTATION_RPC, {
+      p_member_id: input.memberId,
+      p_schedule_patch: input.schedulePatch,
+      p_bus_stop_names: input.busStopNames,
+      p_actor_user_id: toNullableUuid(input.actor.id),
+      p_actor_name: clean(input.actor.fullName),
+      p_now: input.now ?? toEasternISO()
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save transportation workflow.";
+    if (message.includes(SAVE_MEMBER_COMMAND_CENTER_TRANSPORTATION_RPC)) {
+      throw new Error(
+        `Member Command Center transportation workflow RPC is not available. Apply Supabase migration ${MEMBER_COMMAND_CENTER_WORKFLOW_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
 }
 
 export async function updateMemberDobFromCommandCenter(memberId: string, dob: string | null) {

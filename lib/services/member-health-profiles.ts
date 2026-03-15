@@ -8,9 +8,14 @@ import {
 import { mapCodeStatusToDnr } from "@/lib/services/intake-pof-shared";
 import { updateMemberHealthProfileByMemberIdSupabase } from "@/lib/services/member-health-profiles-write-supabase";
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
 
 export { MHP_TABS, type MhpTab };
+
+const UPDATE_MEMBER_HEALTH_PROFILE_BUNDLE_RPC = "rpc_update_member_health_profile_bundle";
+const UPDATE_MEMBER_TRACK_WITH_NOTE_RPC = "rpc_update_member_track_with_note";
+const MEMBER_HEALTH_PROFILE_WORKFLOW_RPC_MIGRATION = "0057_mcc_mhp_workflow_rpc_hardening.sql";
 
 export async function ensureMemberHealthProfile(memberId: string) {
   return ensureMemberHealthProfileSupabase(memberId);
@@ -108,4 +113,67 @@ export async function prefillMemberHealthProfileFromAssessment(input: {
       updated_at: toEasternISO()
     }
   });
+}
+
+export async function saveMemberHealthProfileBundle(input: {
+  memberId: string;
+  mhpPatch: Record<string, unknown>;
+  memberPatch?: Record<string, unknown>;
+  actor: { id: string; fullName: string };
+  now?: string;
+  syncToCommandCenter?: boolean;
+  hospitalName?: string | null;
+}) {
+  const supabase = await createClient();
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(supabase, UPDATE_MEMBER_HEALTH_PROFILE_BUNDLE_RPC, {
+      p_member_id: input.memberId,
+      p_mhp_patch: input.mhpPatch,
+      p_member_patch: input.memberPatch ?? {},
+      p_actor_user_id: toNullableUuid(input.actor.id),
+      p_actor_name: clean(input.actor.fullName),
+      p_now: input.now ?? toEasternISO(),
+      p_sync_to_mcc: input.syncToCommandCenter ?? true,
+      p_hospital_name: clean(input.hospitalName)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save Member Health Profile workflow.";
+    if (message.includes(UPDATE_MEMBER_HEALTH_PROFILE_BUNDLE_RPC)) {
+      throw new Error(
+        `Member Health Profile workflow RPC is not available. Apply Supabase migration ${MEMBER_HEALTH_PROFILE_WORKFLOW_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
+}
+
+export async function updateMemberTrackWithCarePlanNote(input: {
+  memberId: string;
+  track: "Track 1" | "Track 2" | "Track 3";
+  actor: { id: string; fullName: string };
+  now?: string;
+}) {
+  const supabase = await createClient();
+  try {
+    const [result] = await invokeSupabaseRpcOrThrow<Array<{ changed: boolean; member_note_id: string | null }>>(
+      supabase,
+      UPDATE_MEMBER_TRACK_WITH_NOTE_RPC,
+      {
+        p_member_id: input.memberId,
+        p_track: input.track,
+        p_actor_user_id: toNullableUuid(input.actor.id),
+        p_actor_name: clean(input.actor.fullName),
+        p_now: input.now ?? toEasternISO()
+      }
+    );
+    return result ?? { changed: false, member_note_id: null };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to update member track.";
+    if (message.includes(UPDATE_MEMBER_TRACK_WITH_NOTE_RPC)) {
+      throw new Error(
+        `Member Health Profile track workflow RPC is not available. Apply Supabase migration ${MEMBER_HEALTH_PROFILE_WORKFLOW_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
 }

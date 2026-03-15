@@ -1207,19 +1207,9 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
 
   const draftPofAttemptedAt = toEasternISO();
   try {
-    await updateIntakeAssessmentDraftPofStatus({
-      assessmentId: created.id,
-      status: "pending",
-      attemptedAt: draftPofAttemptedAt
-    });
     await autoCreateDraftPhysicianOrderFromIntake({
       assessment: created,
       actor: { id: profile.id, fullName: profile.full_name, signoffName: signerName }
-    });
-    await updateIntakeAssessmentDraftPofStatus({
-      assessmentId: created.id,
-      status: "created",
-      attemptedAt: draftPofAttemptedAt
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to create draft physician order from intake.";
