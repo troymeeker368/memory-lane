@@ -5,7 +5,6 @@ import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export const MEMBER_DOCUMENTS_BUCKET = "member-documents";
@@ -124,6 +123,73 @@ async function loadMemberFileRowById(memberFileId: string) {
   const { data, error } = await admin.from("member_files").select("*").eq("id", normalized).maybeSingle();
   if (error) throw new Error(error.message);
   return data;
+}
+
+async function createSignedMemberDocumentUrl(objectPath: string, expiresInSeconds = 60 * 15) {
+  const normalized = String(objectPath ?? "").trim();
+  if (!normalized) throw new Error("Storage object path is required.");
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).createSignedUrl(normalized, expiresInSeconds);
+  if (error || !data?.signedUrl) {
+    throw new Error(error?.message ?? "Unable to create member file download URL.");
+  }
+  return data.signedUrl;
+}
+
+async function backfillLegacyMemberFileStorage(row: {
+  id: string;
+  member_id: string;
+  file_name: string | null;
+  file_type: string | null;
+  file_data_url: string | null;
+  storage_object_path?: string | null;
+}) {
+  const existingStoragePath = String(row.storage_object_path ?? "").trim();
+  if (existingStoragePath) return existingStoragePath;
+
+  const dataUrl = String(row.file_data_url ?? "").trim();
+  if (!dataUrl) return null;
+
+  const parsed = parseDataUrlPayload(dataUrl, "Stored member file data is invalid.");
+  const objectName = slugifyMemberFileSegment(String(row.file_name ?? "").trim() || `${row.id}.pdf`) || `${row.id}.pdf`;
+  const objectPath = `members/${row.member_id}/member-files/legacy/${row.id}-${objectName}`;
+  await uploadMemberDocumentObject({
+    objectPath,
+    bytes: parsed.bytes,
+    contentType: String(row.file_type ?? "").trim() || parsed.contentType || "application/octet-stream"
+  });
+
+  const admin = createSupabaseAdminClient();
+  const { error: updateError } = await admin
+    .from("member_files")
+    .update({
+      storage_object_path: objectPath,
+      file_data_url: null,
+      updated_at: toEasternISO()
+    })
+    .eq("id", row.id);
+  if (updateError) {
+    try {
+      await deleteMemberDocumentObject(objectPath);
+    } catch (cleanupError) {
+      await recordImmediateSystemAlert({
+        entityType: "member_file",
+        entityId: row.id,
+        severity: "high",
+        alertKey: "member_file_legacy_backfill_cleanup_failed",
+        metadata: {
+          member_id: row.member_id,
+          storage_object_path: objectPath,
+          backfill_error: updateError.message,
+          cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
+        }
+      });
+    }
+    throw new Error(updateError.message);
+  }
+
+  return objectPath;
 }
 
 export async function uploadMemberDocumentObject(input: {
@@ -377,26 +443,26 @@ export async function getMemberFileDownloadUrl(input: {
 
   const storageObjectPath = String(existing.storage_object_path ?? "").trim() || null;
   if (storageObjectPath) {
-    const admin = createSupabaseAdminClient();
-    const { data, error } = await admin
-      .storage
-      .from(MEMBER_DOCUMENTS_BUCKET)
-      .createSignedUrl(storageObjectPath, input.expiresInSeconds ?? 60 * 15);
-    if (error || !data?.signedUrl) {
-      throw new Error(error?.message ?? "Unable to create member file download URL.");
-    }
     return {
-      url: data.signedUrl,
+      url: await createSignedMemberDocumentUrl(storageObjectPath, input.expiresInSeconds ?? 60 * 15),
       fileName: String(existing.file_name ?? "member-file")
     };
   }
 
-  const dataUrl = String(existing.file_data_url ?? "").trim();
-  if (!dataUrl) {
+  const backfilledStoragePath = await backfillLegacyMemberFileStorage({
+    id: String(existing.id),
+    member_id: String(existing.member_id),
+    file_name: String(existing.file_name ?? ""),
+    file_type: String(existing.file_type ?? ""),
+    file_data_url: String(existing.file_data_url ?? ""),
+    storage_object_path: null
+  });
+  if (!backfilledStoragePath) {
     throw new Error("Member file is missing both storage and inline data.");
   }
+
   return {
-    url: dataUrl,
+    url: await createSignedMemberDocumentUrl(backfilledStoragePath, input.expiresInSeconds ?? 60 * 15),
     fileName: String(existing.file_name ?? "member-file")
   };
 }
@@ -417,13 +483,25 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     throw new Error("saveGeneratedMemberPdfToFiles expected member.id but canonical member resolution returned empty memberId.");
   }
   const memberId = canonical.memberId;
-  const supabase = await createClient();
+  const admin = createSupabaseAdminClient();
   const defaultName =
     safeFileName(input.fileNameOverride ?? "") || buildDatedPdfFileName(input.documentLabel, input.memberName, now);
   const categoryOther = input.category === "Other" ? input.categoryOther ?? null : null;
+  const parsed = parseDataUrlPayload(input.dataUrl, "Invalid generated PDF payload.");
+
+  async function uploadGeneratedPdfObject(memberFileId: string, fileName: string) {
+    const objectName = slugifyMemberFileSegment(fileName) || `${memberFileId}.pdf`;
+    const objectPath = `members/${memberId}/member-files/generated/${memberFileId}-${objectName}`;
+    await uploadMemberDocumentObject({
+      objectPath,
+      bytes: parsed.bytes,
+      contentType: "application/pdf"
+    });
+    return objectPath;
+  }
 
   if (input.replaceExistingByDocumentSource) {
-    const { data: existing, error: existingError } = await supabase
+    const { data: existing, error: existingError } = await admin
       .from("member_files")
       .select("id")
       .eq("member_id", memberId)
@@ -437,12 +515,15 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     }
 
     if (existing) {
-      const { data: updated, error: updateError } = await supabase
+      const existingId = String(existing.id);
+      const storageObjectPath = await uploadGeneratedPdfObject(existingId, defaultName);
+      const { data: updated, error: updateError } = await admin
         .from("member_files")
         .update({
           file_name: defaultName,
           file_type: "application/pdf",
-          file_data_url: input.dataUrl,
+          file_data_url: null,
+          storage_object_path: storageObjectPath,
           care_plan_id: input.carePlanId ?? null,
           category: input.category,
           category_other: categoryOther,
@@ -452,11 +533,28 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
           uploaded_at: now,
           updated_at: now
         })
-        .eq("id", existing.id)
+        .eq("id", existingId)
         .select("*")
         .maybeSingle();
 
       if (updateError) {
+        try {
+          await deleteMemberDocumentObject(storageObjectPath);
+        } catch (cleanupError) {
+          await recordImmediateSystemAlert({
+            entityType: "member_file",
+            entityId: existingId,
+            severity: "high",
+            alertKey: "generated_member_file_cleanup_failed",
+            metadata: {
+              member_id: memberId,
+              document_source: input.documentSource,
+              storage_object_path: storageObjectPath,
+              save_error: updateError.message,
+              cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
+            }
+          });
+        }
         throw new Error(updateError.message);
       }
 
@@ -470,7 +568,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     }
   }
 
-  const { data: duplicateRows, error: duplicateError } = await supabase
+  const { data: duplicateRows, error: duplicateError } = await admin
     .from("member_files")
     .select("id")
     .eq("member_id", memberId)
@@ -482,15 +580,18 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
 
   const hasConflict = (duplicateRows ?? []).length > 0;
   const fileName = hasConflict ? withDuplicateFileSuffix(defaultName, now) : defaultName;
+  const memberFileId = nextMemberFileId();
+  const storageObjectPath = await uploadGeneratedPdfObject(memberFileId, fileName);
 
-  const { data: created, error: createError } = await supabase
+  const { data: created, error: createError } = await admin
     .from("member_files")
     .insert({
-      id: nextMemberFileId(),
+      id: memberFileId,
       member_id: memberId,
       file_name: fileName,
       file_type: "application/pdf",
-      file_data_url: input.dataUrl,
+      file_data_url: null,
+      storage_object_path: storageObjectPath,
       care_plan_id: input.carePlanId ?? null,
       category: input.category,
       category_other: categoryOther,
@@ -504,6 +605,23 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     .single();
 
   if (createError) {
+    try {
+      await deleteMemberDocumentObject(storageObjectPath);
+    } catch (cleanupError) {
+      await recordImmediateSystemAlert({
+        entityType: "member_file",
+        entityId: memberFileId,
+        severity: "high",
+        alertKey: "generated_member_file_cleanup_failed",
+        metadata: {
+          member_id: memberId,
+          document_source: input.documentSource,
+          storage_object_path: storageObjectPath,
+          save_error: createError.message,
+          cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
+        }
+      });
+    }
     throw new Error(createError.message);
   }
 
