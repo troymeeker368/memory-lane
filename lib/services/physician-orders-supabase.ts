@@ -23,6 +23,7 @@ import { generateMarSchedulesForMember, syncPofMedicationsFromSignedOrder } from
 import { type IntakeAssessmentForPofPrefill, mapIntakeAssessmentToPofPrefill } from "@/lib/services/intake-to-pof-mapping";
 import type { IntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
 import { logSystemEvent } from "@/lib/services/system-event-service";
+import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import {
   deriveEnrollmentPacketPofRiskSignals,
   getLatestEnrollmentPacketPofStagingSummary,
@@ -663,7 +664,7 @@ async function invokeSignPhysicianOrderRpc(input: {
   pofRequestId?: string | null;
   serviceRole?: boolean;
 }) {
-  const supabase = await createClient({ serviceRole: input.serviceRole });
+  const supabase = await createClient({ serviceRole: input.serviceRole ?? true });
   try {
     const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_SIGN_PHYSICIAN_ORDER, {
       p_pof_id: input.pofId,
@@ -689,7 +690,7 @@ async function invokeSyncSignedPofToMemberClinicalProfileRpc(input: {
   syncTimestamp: string;
   serviceRole?: boolean;
 }) {
-  const supabase = await createClient({ serviceRole: input.serviceRole });
+  const supabase = await createClient({ serviceRole: input.serviceRole ?? true });
   try {
     const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_SYNC_SIGNED_POF_TO_MEMBER_CLINICAL_PROFILE, {
       p_pof_id: input.pofId,
@@ -1475,6 +1476,9 @@ export async function processSignedPhysicianOrderPostSignSync(input: {
       entity_id: input.pofId,
       actor_type: "user",
       actor_id: input.actor.id,
+      actor_user_id: input.actor.id,
+      status: "completed",
+      severity: "low",
       metadata: {
         member_id: input.memberId,
         queue_id: input.queueId,
@@ -1509,6 +1513,9 @@ export async function processSignedPhysicianOrderPostSignSync(input: {
     entity_id: input.pofId,
     actor_type: "user",
     actor_id: input.actor.id,
+    actor_user_id: input.actor.id,
+    status: "retry_pending",
+    severity: attemptCount >= 3 ? "high" : "medium",
     metadata: {
       member_id: input.memberId,
       queue_id: input.queueId,
@@ -1519,6 +1526,24 @@ export async function processSignedPhysicianOrderPostSignSync(input: {
       pof_request_id: clean(input.pofRequestId)
     }
   });
+  if (attemptCount >= 3) {
+    await recordImmediateSystemAlert({
+      entityType: "physician_order",
+      entityId: input.pofId,
+      actorUserId: input.actor.id,
+      severity: "high",
+      alertKey: "pof_post_sign_sync_failed",
+      metadata: {
+        member_id: input.memberId,
+        queue_id: input.queueId,
+        attempt_count: attemptCount,
+        failed_step: postSign.step,
+        next_retry_at: nextRetryAt,
+        last_error: postSign.errorMessage,
+        pof_request_id: clean(input.pofRequestId)
+      }
+    });
+  }
   return {
     postSignStatus: "queued",
     queueId: input.queueId,

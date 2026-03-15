@@ -23,8 +23,15 @@ import {
   upsertMemberFileByDocumentSource
 } from "@/lib/services/member-files";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
+import {
+  maybeRecordRepeatedFailureAlert,
+  recordImmediateSystemAlert,
+  recordWorkflowEvent
+} from "@/lib/services/workflow-observability";
 
 const TOKEN_BYTE_LENGTH = 32;
+const CARE_PLAN_CAREGIVER_FINALIZATION_RPC = "rpc_finalize_care_plan_caregiver_signature";
+const CARE_PLAN_CAREGIVER_FINALIZATION_MIGRATION = "0044_atomic_billing_and_completion_finalization.sql";
 
 export type CarePlanSignatureEventType =
   | "sent"
@@ -70,6 +77,29 @@ function isEmail(value: string | null | undefined) {
   const normalized = clean(value);
   if (!normalized) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+}
+
+function isMissingRpcFunctionError(error: any, functionName: string) {
+  const code = String(error?.code ?? error?.cause?.code ?? "").toUpperCase();
+  const message = [
+    error?.message,
+    error?.details,
+    error?.hint,
+    error?.cause?.message,
+    error?.cause?.details,
+    error?.cause?.hint
+  ]
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+  const normalizedName = functionName.toLowerCase();
+
+  return (
+    code === "PGRST202" ||
+    message.includes(`function ${normalizedName}`) ||
+    (message.includes(normalizedName) && message.includes("could not find")) ||
+    (message.includes(normalizedName) && message.includes("does not exist"))
+  );
 }
 
 function hashToken(token: string) {
@@ -330,6 +360,32 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
       actorEmail: senderEmail,
       metadata: { error: message }
     });
+    await recordWorkflowEvent({
+      eventType: "care_plan_failed",
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorType: "user",
+      actorUserId: input.actor.id,
+      status: "failed",
+      severity: "medium",
+      metadata: {
+        member_id: detail.carePlan.memberId,
+        phase: "delivery",
+        caregiver_email: caregiverEmail,
+        error: message
+      }
+    });
+    await maybeRecordRepeatedFailureAlert({
+      workflowEventType: "care_plan_failed",
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorUserId: input.actor.id,
+      threshold: 2,
+      metadata: {
+        member_id: detail.carePlan.memberId,
+        phase: "delivery"
+      }
+    });
     throw error;
   }
 
@@ -367,6 +423,21 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
     actorUserId: input.actor.id,
     actorName: input.actor.fullName,
     actorEmail: senderEmail
+  });
+  await recordWorkflowEvent({
+    eventType: "care_plan_sent",
+    entityType: "care_plan",
+    entityId: input.carePlanId,
+    actorType: "user",
+    actorUserId: input.actor.id,
+    status: "sent",
+    severity: "low",
+    metadata: {
+      member_id: detail.carePlan.memberId,
+      caregiver_email: caregiverEmail,
+      sent_at: now,
+      expires_at: expiresAt
+    }
   });
 
   const refreshed = await getCarePlanById(input.carePlanId);
@@ -460,6 +531,45 @@ async function upsertFinalSignedMemberFile(input: {
   return result.id;
 }
 
+async function invokeFinalizeCarePlanCaregiverSignatureRpc(input: {
+  carePlanId: string;
+  rotatedToken: string;
+  signedAt: string;
+  updatedAt: string;
+  finalMemberFileId: string;
+  actorName: string;
+  actorEmail: string | null;
+  actorIp: string | null;
+  actorUserAgent: string | null;
+  signatureImageUrl: string;
+}) {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin.rpc(CARE_PLAN_CAREGIVER_FINALIZATION_RPC, {
+    p_care_plan_id: input.carePlanId,
+    p_rotated_token: input.rotatedToken,
+    p_signed_at: input.signedAt,
+    p_updated_at: input.updatedAt,
+    p_final_member_file_id: input.finalMemberFileId,
+    p_actor_name: input.actorName,
+    p_actor_email: input.actorEmail,
+    p_actor_ip: input.actorIp,
+    p_actor_user_agent: input.actorUserAgent,
+    p_signature_image_url: input.signatureImageUrl,
+    p_metadata: {
+      finalMemberFileId: input.finalMemberFileId,
+      signatureImageUrl: input.signatureImageUrl
+    }
+  });
+  if (error) {
+    if (isMissingRpcFunctionError(error, CARE_PLAN_CAREGIVER_FINALIZATION_RPC)) {
+      throw new Error(
+        `Care plan caregiver finalization RPC is not available yet. Apply Supabase migration ${CARE_PLAN_CAREGIVER_FINALIZATION_MIGRATION} first.`
+      );
+    }
+    throw new Error(error.message);
+  }
+}
+
 export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanSignatureInput) {
   const token = clean(input.token);
   const caregiverTypedName = clean(input.caregiverTypedName);
@@ -533,46 +643,50 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     });
 
     const rotatedToken = hashToken(generateSigningToken());
-    const { error: finalLinkError } = await admin
-      .from("care_plans")
-      .update({
-        caregiver_signature_status: "signed",
-        caregiver_signed_at: now,
-        caregiver_signature_request_token: rotatedToken,
-        caregiver_signature_request_url: null,
-        final_member_file_id: finalMemberFileId,
-        updated_at: toEasternISO()
-      })
-      .eq("id", detail.carePlan.id);
-    if (finalLinkError) throw new Error(finalLinkError.message);
-
-    await createCarePlanSignatureEvent({
+    await invokeFinalizeCarePlanCaregiverSignatureRpc({
       carePlanId: detail.carePlan.id,
-      memberId: detail.carePlan.memberId,
-      eventType: "signed",
-      actorType: "caregiver",
+      rotatedToken,
+      signedAt: now,
+      updatedAt: toEasternISO(),
+      finalMemberFileId,
       actorName: caregiverTypedName,
       actorEmail: detail.carePlan.caregiverEmail,
       actorIp: clean(input.caregiverIp),
       actorUserAgent: clean(input.caregiverUserAgent),
-      metadata: {
-        finalMemberFileId,
-        signatureImageUrl: signatureUri
-      }
+      signatureImageUrl: signatureUri
     });
 
-    await recordWorkflowMilestone({
-      event: {
-        event_type: "care_plan_caregiver_signed",
-        entity_type: "care_plan",
-        entity_id: detail.carePlan.id,
-        actor_type: "caregiver",
-        metadata: {
-          member_id: detail.carePlan.memberId,
-          final_member_file_id: finalMemberFileId,
-          caregiver_email: detail.carePlan.caregiverEmail,
-          signature_image_url: signatureUri
+    try {
+      await recordWorkflowMilestone({
+        event: {
+          event_type: "care_plan_caregiver_signed",
+          entity_type: "care_plan",
+          entity_id: detail.carePlan.id,
+          actor_type: "caregiver",
+          status: "signed",
+          severity: "low",
+          metadata: {
+            member_id: detail.carePlan.memberId,
+            final_member_file_id: finalMemberFileId,
+            caregiver_email: detail.carePlan.caregiverEmail,
+            signature_image_url: signatureUri
+          }
         }
+      });
+    } catch (error) {
+      console.error("[care-plan-esign] unable to emit caregiver signature workflow milestone", error);
+    }
+    await recordWorkflowEvent({
+      eventType: "care_plan_signed",
+      entityType: "care_plan",
+      entityId: detail.carePlan.id,
+      actorType: "caregiver",
+      status: "signed",
+      severity: "low",
+      metadata: {
+        member_id: detail.carePlan.memberId,
+        final_member_file_id: finalMemberFileId,
+        caregiver_email: detail.carePlan.caregiverEmail
       }
     });
 
@@ -590,6 +704,32 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         updated_at: toEasternISO()
       })
       .eq("id", detail.carePlan.id);
+    await recordWorkflowEvent({
+      eventType: "care_plan_failed",
+      entityType: "care_plan",
+      entityId: detail.carePlan.id,
+      actorType: "caregiver",
+      status: "failed",
+      severity: "high",
+      metadata: {
+        member_id: detail.carePlan.memberId,
+        phase: "signature_completion",
+        caregiver_email: detail.carePlan.caregiverEmail,
+        error: reason
+      }
+    });
+    await recordImmediateSystemAlert({
+      entityType: "care_plan",
+      entityId: detail.carePlan.id,
+      actorUserId: detail.carePlan.caregiverSentByUserId,
+      severity: "high",
+      alertKey: "care_plan_signature_completion_failed",
+      metadata: {
+        member_id: detail.carePlan.memberId,
+        caregiver_email: detail.carePlan.caregiverEmail,
+        error: reason
+      }
+    });
     throw error;
   }
 }

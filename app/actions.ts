@@ -39,6 +39,12 @@ import {
   signIntakeAssessment
 } from "@/lib/services/intake-assessment-esign";
 import {
+  createBloodSugarLogSupabase,
+  createDailyActivityLogSupabase,
+  createPhotoUploadSupabase,
+  createShowerLogSupabase,
+  createToiletLogSupabase,
+  createTransportationLogSupabase,
   deleteWorkflowRecordSupabase,
   setAncillaryReconciliationSupabase,
   updateAncillaryLogNotesSupabase,
@@ -217,9 +223,6 @@ export async function createDailyActivityAction(raw: z.infer<typeof dailyActivit
   }
 
   const profile = await getCurrentProfile();
-  const participation = Math.round(
-    (payload.data.activity1 + payload.data.activity2 + payload.data.activity3 + payload.data.activity4 + payload.data.activity5) / 5
-  );
 
   let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
   try {
@@ -235,34 +238,29 @@ export async function createDailyActivityAction(raw: z.infer<typeof dailyActivit
     return { error: "createDailyActivityAction expected member.id but canonical member resolution returned empty memberId." };
   }
   const memberId = canonicalMember.memberId;
-
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("daily_activity_logs")
-    .insert({
-      member_id: memberId,
-      activity_date: payload.data.activityDate,
-      staff_user_id: profile.id,
-      activity_1_level: payload.data.activity1,
-      missing_reason_1: payload.data.activity1 === 0 ? payload.data.reasonMissing1?.trim() ?? null : null,
-      activity_2_level: payload.data.activity2,
-      missing_reason_2: payload.data.activity2 === 0 ? payload.data.reasonMissing2?.trim() ?? null : null,
-      activity_3_level: payload.data.activity3,
-      missing_reason_3: payload.data.activity3 === 0 ? payload.data.reasonMissing3?.trim() ?? null : null,
-      activity_4_level: payload.data.activity4,
-      missing_reason_4: payload.data.activity4 === 0 ? payload.data.reasonMissing4?.trim() ?? null : null,
-      activity_5_level: payload.data.activity5,
-      missing_reason_5: payload.data.activity5 === 0 ? payload.data.reasonMissing5?.trim() ?? null : null,
+  let created;
+  try {
+    created = await createDailyActivityLogSupabase({
+      memberId,
+      activityDate: payload.data.activityDate,
+      staffUserId: profile.id,
+      activity1: payload.data.activity1,
+      reasonMissing1: payload.data.reasonMissing1,
+      activity2: payload.data.activity2,
+      reasonMissing2: payload.data.reasonMissing2,
+      activity3: payload.data.activity3,
+      reasonMissing3: payload.data.reasonMissing3,
+      activity4: payload.data.activity4,
+      reasonMissing4: payload.data.reasonMissing4,
+      activity5: payload.data.activity5,
+      reasonMissing5: payload.data.reasonMissing5,
       notes: payload.data.notes ?? null
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    return { error: error.message };
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create daily activity log." };
   }
 
-  await insertAudit("create_log", "daily_activity_log", data.id, payload.data);
+  await insertAudit("create_log", "daily_activity_log", created.id, payload.data);
   revalidatePath("/documentation");
   revalidatePath("/");
   return { ok: true };
@@ -676,27 +674,24 @@ export async function createToiletLogAction(raw: z.infer<typeof toiletSchema>) {
   const memberId = canonicalMember.memberId;
 
   const profile = await getCurrentProfile();
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("toilet_logs")
-    .insert({
-      member_id: memberId,
-      event_at: payload.data.eventAt,
+  let created;
+  try {
+    created = await createToiletLogSupabase({
+      memberId,
+      eventAt: payload.data.eventAt,
       briefs: payload.data.briefs,
-      member_supplied: payload.data.memberSupplied,
-      use_type: payload.data.useType,
-      staff_user_id: profile.id,
+      memberSupplied: payload.data.memberSupplied,
+      useType: payload.data.useType,
+      staffUserId: profile.id,
       notes: payload.data.notes ?? null
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    return { error: error.message };
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create toilet log." };
   }
 
-  await insertAudit("create_log", "toilet_log", data.id, payload.data);
+  await insertAudit("create_log", "toilet_log", created.id, payload.data);
   let warning: string | null = null;
+  const supabase = await createClient();
 
   if (payload.data.briefs && !payload.data.memberSupplied) {
     const { data: briefsCategory, error: briefsCategoryError } = await supabase
@@ -715,7 +710,7 @@ export async function createToiletLogAction(raw: z.infer<typeof toiletSchema>) {
         latePickupTime: "",
         notes: "Auto-generated from Toilet Log (briefs changed and not member supplied)",
         sourceEntity: "toiletLogs",
-        sourceEntityId: data.id
+        sourceEntityId: created.id
       });
       if ("error" in ancillaryResult) {
         warning = `Toilet log saved, but linked ancillary charge could not be created (${ancillaryResult.error}).`;
@@ -759,24 +754,20 @@ export async function createShowerLogAction(raw: z.infer<typeof showerSchema>) {
   const memberId = canonicalMember.memberId;
 
   const profile = await getCurrentProfile();
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("shower_logs")
-    .insert({
-      member_id: memberId,
-      event_at: payload.data.eventAt,
+  let created;
+  try {
+    created = await createShowerLogSupabase({
+      memberId,
+      eventAt: payload.data.eventAt,
       laundry: payload.data.laundry,
       briefs: payload.data.briefs,
-      staff_user_id: profile.id
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    return { error: error.message };
+      staffUserId: profile.id
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create shower log." };
   }
 
-  await insertAudit("create_log", "shower_log", data.id, payload.data);
+  await insertAudit("create_log", "shower_log", created.id, payload.data);
   revalidatePath("/documentation/shower");
   revalidatePath("/documentation");
   return { ok: true };
@@ -810,47 +801,20 @@ export async function createTransportationLogAction(raw: z.infer<typeof transpor
   const memberId = canonicalMember.memberId;
 
   const profile = await getCurrentProfile();
-  const supabase = await createClient();
-  const { data: memberRow, error: memberRowError } = await supabase
-    .from("members")
-    .select("display_name")
-    .eq("id", memberId)
-    .maybeSingle();
-  if (memberRowError) {
-    return { error: `Unable to load member for transportation log: ${memberRowError.message}` };
-  }
-  if (!memberRow) {
-    return { error: "Unable to load member for transportation log." };
-  }
-  const firstName = String(memberRow?.display_name ?? "").trim().split(/\s+/)[0] ?? "";
-
-  const { data, error } = await supabase
-    .from("transportation_logs")
-    .insert({
-      member_id: memberId,
-      first_name: firstName,
+  let created;
+  try {
+    created = await createTransportationLogSupabase({
+      memberId,
       period: payload.data.period,
-      transport_type: payload.data.transportType,
-      service_date: payload.data.serviceDate,
-      staff_user_id: profile.id
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    return { error: error.message };
+      transportType: payload.data.transportType,
+      serviceDate: payload.data.serviceDate,
+      staffUserId: profile.id
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create transportation log." };
   }
 
-  await supabase.from("documentation_events").insert({
-    event_type: "transportation_logs",
-    event_table: "transportation_logs",
-    event_row_id: data.id,
-    member_id: memberId,
-    staff_user_id: profile.id,
-    event_at: toEasternISO()
-  });
-
-  await insertAudit("create_log", "transportation_log", data.id, payload.data);
+  await insertAudit("create_log", "transportation_log", created.id, payload.data);
 
   revalidatePath("/documentation/transportation");
   revalidatePath("/documentation");
@@ -903,32 +867,18 @@ export async function createPhotoUploadAction(raw: z.infer<typeof photoSchema>) 
   const profile = await getCurrentProfile();
   const uploadedAt = toEasternISO();
   const photoUrl = photoDataUrl;
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("member_photo_uploads")
-    .insert({
-      member_id: null,
-      photo_url: photoUrl,
-      uploaded_by: profile.id,
-      uploaded_at: uploadedAt
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    return { error: error.message };
+  let created;
+  try {
+    created = await createPhotoUploadSupabase({
+      uploadedByUserId: profile.id,
+      uploadedAt,
+      photoUrl
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create photo upload." };
   }
 
-  await supabase.from("documentation_events").insert({
-    event_type: "member_photo_uploads",
-    event_table: "member_photo_uploads",
-    event_row_id: data.id,
-    member_id: null,
-    staff_user_id: profile.id,
-    event_at: uploadedAt
-  });
-
-  await insertAudit("create_log", "member_photo_upload", data.id, {
+  await insertAudit("create_log", "member_photo_upload", created.id, {
     fileName: buildPhotoFileName(payload.data.fileName, uploadedAt),
     fileType: payload.data.fileType ?? inferPhotoMimeType(payload.data.fileDataUrl)
   });
@@ -966,20 +916,19 @@ export async function createBloodSugarLogAction(raw: z.infer<typeof bloodSugarSc
   const memberId = canonicalMember.memberId;
 
   const profile = await getCurrentProfile();
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("blood_sugar_logs")
-    .insert({
-      member_id: memberId,
-      checked_at: payload.data.checkedAt,
-      reading_mg_dl: payload.data.readingMgDl,
-      nurse_user_id: profile.id,
+  let created;
+  try {
+    created = await createBloodSugarLogSupabase({
+      memberId,
+      checkedAt: payload.data.checkedAt,
+      readingMgDl: payload.data.readingMgDl,
+      nurseUserId: profile.id,
       notes: payload.data.notes ?? null
-    })
-    .select("id")
-    .single();
-  if (error) return { error: error.message };
-  await insertAudit("create_log", "blood_sugar_log", data.id, payload.data);
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create blood sugar log." };
+  }
+  await insertAudit("create_log", "blood_sugar_log", created.id, payload.data);
 
   revalidatePath("/health");
   revalidatePath("/documentation/blood-sugar");

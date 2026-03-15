@@ -1106,7 +1106,7 @@ export async function listMemberAllergiesSupabase(memberId: string) {
 
 export async function addMemberAllergySupabase(input: Omit<MemberAllergyRow, "id">) {
   const canonicalMemberId = await resolveMccMemberId(input.member_id, "addMemberAllergySupabase");
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase
     .from("member_allergies")
     .insert({ ...input, member_id: canonicalMemberId, id: toId("allergy") })
@@ -1117,14 +1117,14 @@ export async function addMemberAllergySupabase(input: Omit<MemberAllergyRow, "id
 }
 
 export async function updateMemberAllergySupabase(id: string, patch: Partial<MemberAllergyRow>) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_allergies").update(patch).eq("id", id).select("*").maybeSingle();
   if (error) throw new Error(error.message);
   return (data as MemberAllergyRow | null) ?? null;
 }
 
 export async function deleteMemberAllergySupabase(id: string) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { error } = await supabase.from("member_allergies").delete().eq("id", id);
   if (error) throw new Error(error.message);
   return true;

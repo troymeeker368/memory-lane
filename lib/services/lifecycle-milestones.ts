@@ -15,12 +15,16 @@ export type WorkflowMilestoneInput = {
 };
 
 export async function recordWorkflowMilestone(input: WorkflowMilestoneInput) {
-  await logSystemEvent(input.event);
+  await logSystemEvent(input.event, { required: false });
 
   if (input.notification) {
-    await createUserNotification({
-      ...input.notification,
-      serviceRole: input.notification.serviceRole ?? true
-    });
+    try {
+      await createUserNotification({
+        ...input.notification,
+        serviceRole: input.notification.serviceRole ?? true
+      });
+    } catch (error) {
+      console.error("[workflow-milestones] unable to create optional notification", error);
+    }
   }
 }

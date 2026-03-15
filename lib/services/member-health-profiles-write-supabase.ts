@@ -21,8 +21,8 @@ export async function updateMemberHealthProfileByMemberIdSupabase(input: {
   memberId: string;
   patch: Record<string, unknown>;
 }) {
-  const profile = await ensureMemberHealthProfileSupabase(input.memberId);
-  const supabase = await createClient();
+  const profile = await ensureMemberHealthProfileSupabase(input.memberId, { serviceRole: true });
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase
     .from("member_health_profiles")
     .update(input.patch)
@@ -91,14 +91,14 @@ export async function countMemberDiagnosesSupabase(memberId: string) {
 }
 
 export async function createMemberDiagnosisSupabase(record: Record<string, unknown>) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_diagnoses").insert(record).select("*").single();
   if (error) throw new Error(error.message);
   return data as DbRow;
 }
 
 export async function updateMemberDiagnosisSupabase(id: string, patch: Record<string, unknown>) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase
     .from("member_diagnoses")
     .update(patch)
@@ -110,21 +110,21 @@ export async function updateMemberDiagnosisSupabase(id: string, patch: Record<st
 }
 
 export async function deleteMemberDiagnosisSupabase(id: string) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_diagnoses").delete().eq("id", id).select("*").maybeSingle();
   if (error) throw new Error(error.message);
   return (data as DbRow | null) ?? null;
 }
 
 export async function createMemberMedicationSupabase(record: Record<string, unknown>) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_medications").insert(record).select("*").single();
   if (error) throw new Error(error.message);
   return data as DbRow;
 }
 
 export async function updateMemberMedicationSupabase(id: string, patch: Record<string, unknown>) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase
     .from("member_medications")
     .update(patch)
@@ -136,21 +136,21 @@ export async function updateMemberMedicationSupabase(id: string, patch: Record<s
 }
 
 export async function deleteMemberMedicationSupabase(id: string) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_medications").delete().eq("id", id).select("*").maybeSingle();
   if (error) throw new Error(error.message);
   return (data as DbRow | null) ?? null;
 }
 
 export async function createMemberAllergySupabase(record: Record<string, unknown>) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_allergies").insert(record).select("*").single();
   if (error) throw new Error(error.message);
   return data as DbRow;
 }
 
 export async function updateMemberAllergySupabase(id: string, patch: Record<string, unknown>) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase
     .from("member_allergies")
     .update(patch)
@@ -162,7 +162,7 @@ export async function updateMemberAllergySupabase(id: string, patch: Record<stri
 }
 
 export async function deleteMemberAllergySupabase(id: string) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("member_allergies").delete().eq("id", id).select("*").maybeSingle();
   if (error) throw new Error(error.message);
   return (data as DbRow | null) ?? null;

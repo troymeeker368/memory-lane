@@ -12,6 +12,10 @@ import {
 } from "@/lib/services/expected-attendance";
 import type { ScheduleChangeRow } from "@/lib/services/schedule-changes-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
+import {
+  recordImmediateSystemAlert,
+  recordWorkflowEvent
+} from "@/lib/services/workflow-observability";
 
 export type BillingModuleRole = "admin" | "manager" | "director" | "coordinator";
 
@@ -141,6 +145,116 @@ type BillingPreviewRow = {
   }>;
 };
 
+type BillingBatchInvoiceRpcPayload = {
+  id: string;
+  member_id: string;
+  payor_id: string | null;
+  invoice_number: string;
+  invoice_month: string;
+  invoice_source: "BatchGenerated" | "Custom";
+  invoice_status: "Draft" | "Finalized" | "Sent" | "Paid" | "PartiallyPaid" | "Void";
+  export_status: string;
+  billing_mode_snapshot: string;
+  monthly_billing_basis_snapshot: string | null;
+  transportation_billing_status_snapshot: string;
+  billing_method_snapshot: string;
+  base_period_start: string;
+  base_period_end: string;
+  variable_charge_period_start: string;
+  variable_charge_period_end: string;
+  invoice_date: string | null;
+  due_date: string | null;
+  base_program_billed_days: number;
+  member_daily_rate_snapshot: number;
+  base_program_amount: number;
+  transportation_amount: number;
+  ancillary_amount: number;
+  adjustment_amount: number;
+  total_amount: number;
+  notes: string | null;
+  created_by_user_id: string;
+  created_by_name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type BillingBatchInvoiceLineRpcPayload = {
+  id: string;
+  invoice_id: string;
+  member_id: string;
+  payor_id: string | null;
+  service_date: string | null;
+  service_period_start: string;
+  service_period_end: string;
+  line_type: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment" | "Credit" | "PriorBalance";
+  description: string;
+  quantity: number;
+  unit_rate: number;
+  amount: number;
+  source_table: "attendance_records" | "transportation_logs" | "ancillary_charge_logs" | "billing_adjustments" | null;
+  source_record_id: string | null;
+  billing_status: "Billed";
+  created_at: string;
+  updated_at: string;
+};
+
+type BillingBatchCoverageRpcPayload = {
+  member_id: string;
+  coverage_type: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment";
+  coverage_start_date: string;
+  coverage_end_date: string;
+  source_invoice_id: string;
+  source_invoice_line_id: string;
+  source_table: string | null;
+  source_record_id: string | null;
+  created_at: string;
+};
+
+type BillingBatchSourceUpdateRpcPayload = {
+  source_table: "transportation_logs" | "ancillary_charge_logs" | "billing_adjustments";
+  source_record_id: string;
+  invoice_id: string;
+  updated_at: string;
+};
+
+type BillingBatchWritePlan = {
+  batchId: string;
+  batchPayload: {
+    id: string;
+    batch_type: (typeof BILLING_BATCH_TYPE_OPTIONS)[number];
+    billing_month: string;
+    run_date: string;
+    batch_status: "Draft";
+    invoice_count: number;
+    total_amount: number;
+    completion_date: null;
+    next_due_date: string;
+    generated_by_user_id: string;
+    generated_by_name: string;
+    created_at: string;
+    updated_at: string;
+  };
+  invoicePayloads: BillingBatchInvoiceRpcPayload[];
+  invoiceLinePayloads: BillingBatchInvoiceLineRpcPayload[];
+  coveragePayloads: BillingBatchCoverageRpcPayload[];
+  sourceUpdates: BillingBatchSourceUpdateRpcPayload[];
+};
+
+type BillingExportRpcPayload = {
+  id: string;
+  billing_batch_id: string;
+  export_type: (typeof BILLING_EXPORT_TYPES)[number];
+  quickbooks_detail_level: "Summary" | "Detailed";
+  file_name: string;
+  file_data_url: string;
+  generated_at: string;
+  generated_by: string;
+  status: "Generated";
+  notes: null;
+  created_at: string;
+  updated_at: string;
+};
+
 interface BatchGenerationInput {
   billingMonth: string;
   batchType?: (typeof BILLING_BATCH_TYPE_OPTIONS)[number];
@@ -187,6 +301,10 @@ interface CreateCustomInvoiceInput {
   runByUser: string;
   runByName: string;
 }
+
+const BILLING_ATOMIC_WORKFLOW_MIGRATION = "0044_atomic_billing_and_completion_finalization.sql";
+const RPC_GENERATE_BILLING_BATCH = "rpc_generate_billing_batch";
+const RPC_CREATE_BILLING_EXPORT = "rpc_create_billing_export";
 
 function normalizeDateOnly(value: string | null | undefined, fallback = toEasternDate()) {
   const dateOnly = String(value ?? "").trim().slice(0, 10);
@@ -1214,6 +1332,214 @@ function normalizeInvoiceRow(row: any) {
   };
 }
 
+function buildMissingBillingAtomicWorkflowMessage(functionName: string) {
+  return `Billing atomic workflow RPC ${functionName} is not available yet. Apply Supabase migration ${BILLING_ATOMIC_WORKFLOW_MIGRATION} first.`;
+}
+
+function isMissingRpcFunctionError(error: any, functionName: string) {
+  const code = String(error?.code ?? error?.cause?.code ?? "").toUpperCase();
+  const message = [
+    error?.message,
+    error?.details,
+    error?.hint,
+    error?.cause?.message,
+    error?.cause?.details,
+    error?.cause?.hint
+  ]
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+  const normalizedName = functionName.toLowerCase();
+
+  return (
+    code === "PGRST202" ||
+    message.includes(`function ${normalizedName}`) ||
+    (message.includes(normalizedName) && message.includes("could not find")) ||
+    (message.includes(normalizedName) && message.includes("does not exist"))
+  );
+}
+
+function buildBillingBatchWritePlan(input: {
+  batchType: (typeof BILLING_BATCH_TYPE_OPTIONS)[number];
+  billingMonthStart: string;
+  runDate: string;
+  runByUser: string;
+  runByName: string;
+  now: string;
+  previewRows: BillingPreviewRow[];
+  totalAmount: number;
+  existingCountByMonth: Map<string, number>;
+}): BillingBatchWritePlan {
+  const batchId = randomUUID();
+  const invoicePayloads: BillingBatchInvoiceRpcPayload[] = [];
+  const invoiceLinePayloads: BillingBatchInvoiceLineRpcPayload[] = [];
+  const coveragePayloads: BillingBatchCoverageRpcPayload[] = [];
+  const sourceUpdates: BillingBatchSourceUpdateRpcPayload[] = [];
+
+  for (const row of input.previewRows) {
+    const monthKey = startOfMonth(row.invoiceMonth);
+    const sequence = input.existingCountByMonth.get(monthKey) ?? 0;
+    input.existingCountByMonth.set(monthKey, sequence + 1);
+
+    const invoiceId = randomUUID();
+    const invoiceNumber = buildInvoiceNumber(monthKey, sequence);
+    invoicePayloads.push({
+      id: invoiceId,
+      member_id: row.memberId,
+      payor_id: row.payorId,
+      invoice_number: invoiceNumber,
+      invoice_month: monthKey,
+      invoice_source: "BatchGenerated",
+      invoice_status: "Draft",
+      export_status: "NotExported",
+      billing_mode_snapshot: row.billingMode,
+      monthly_billing_basis_snapshot: row.monthlyBillingBasis,
+      transportation_billing_status_snapshot: row.transportationBillingStatusSnapshot,
+      billing_method_snapshot: row.billingMethod,
+      base_period_start: row.basePeriodStart,
+      base_period_end: row.basePeriodEnd,
+      variable_charge_period_start: row.variableChargePeriodStart,
+      variable_charge_period_end: row.variableChargePeriodEnd,
+      invoice_date: null,
+      due_date: null,
+      base_program_billed_days: row.baseProgramBilledDays,
+      member_daily_rate_snapshot: row.memberDailyRateSnapshot,
+      base_program_amount: row.baseProgramAmount,
+      transportation_amount: row.transportationAmount,
+      ancillary_amount: row.ancillaryAmount,
+      adjustment_amount: row.adjustmentAmount,
+      total_amount: row.totalAmount,
+      notes: null,
+      created_by_user_id: input.runByUser,
+      created_by_name: input.runByName,
+      created_at: input.now,
+      updated_at: input.now
+    });
+
+    const invoiceLines: BillingBatchInvoiceLineRpcPayload[] = [
+      {
+        id: randomUUID(),
+        invoice_id: invoiceId,
+        member_id: row.memberId,
+        payor_id: row.payorId,
+        service_date: null,
+        service_period_start: row.basePeriodStart,
+        service_period_end: row.basePeriodEnd,
+        line_type: "BaseProgram",
+        description: `Base program charges (${row.baseProgramBilledDays} day(s))`,
+        quantity: row.baseProgramBilledDays,
+        unit_rate: row.memberDailyRateSnapshot,
+        amount: row.baseProgramAmount,
+        source_table: "attendance_records",
+        source_record_id: null,
+        billing_status: "Billed",
+        created_at: input.now,
+        updated_at: input.now
+      },
+      ...row.variableSourceRows.map((sourceLine) => ({
+        id: randomUUID(),
+        invoice_id: invoiceId,
+        member_id: row.memberId,
+        payor_id: row.payorId,
+        service_date: sourceLine.service_date,
+        service_period_start: sourceLine.service_period_start,
+        service_period_end: sourceLine.service_period_end,
+        line_type: sourceLine.line_type,
+        description: sourceLine.description,
+        quantity: sourceLine.quantity,
+        unit_rate: sourceLine.unit_rate,
+        amount: sourceLine.amount,
+        source_table: sourceLine.source_table,
+        source_record_id: sourceLine.source_record_id,
+        billing_status: "Billed" as const,
+        created_at: input.now,
+        updated_at: input.now
+      }))
+    ];
+    invoiceLinePayloads.push(...invoiceLines);
+
+    coveragePayloads.push(
+      ...invoiceLines.map((line) => ({
+        member_id: row.memberId,
+        coverage_type: mapCoverageTypeForLineType(line.line_type),
+        coverage_start_date: normalizeDateOnly(line.service_period_start, row.basePeriodStart),
+        coverage_end_date: normalizeDateOnly(line.service_period_end, row.basePeriodEnd),
+        source_invoice_id: invoiceId,
+        source_invoice_line_id: line.id,
+        source_table: line.source_table,
+        source_record_id: line.source_record_id,
+        created_at: input.now
+      }))
+    );
+
+    sourceUpdates.push(
+      ...row.variableSourceRows.map((sourceLine) => ({
+        source_table: sourceLine.source_table,
+        source_record_id: sourceLine.source_record_id,
+        invoice_id: invoiceId,
+        updated_at: input.now
+      }))
+    );
+  }
+
+  return {
+    batchId,
+    batchPayload: {
+      id: batchId,
+      batch_type: input.batchType,
+      billing_month: input.billingMonthStart,
+      run_date: input.runDate,
+      batch_status: "Draft",
+      invoice_count: input.previewRows.length,
+      total_amount: input.totalAmount,
+      completion_date: null,
+      next_due_date: addMonths(input.billingMonthStart, 1),
+      generated_by_user_id: input.runByUser,
+      generated_by_name: input.runByName,
+      created_at: input.now,
+      updated_at: input.now
+    },
+    invoicePayloads,
+    invoiceLinePayloads,
+    coveragePayloads,
+    sourceUpdates
+  };
+}
+
+async function invokeGenerateBillingBatchRpc(plan: BillingBatchWritePlan) {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc(RPC_GENERATE_BILLING_BATCH, {
+    p_batch: plan.batchPayload,
+    p_invoices: plan.invoicePayloads,
+    p_invoice_lines: plan.invoiceLinePayloads,
+    p_coverages: plan.coveragePayloads,
+    p_source_updates: plan.sourceUpdates
+  });
+  if (error) {
+    if (isMissingRpcFunctionError(error, RPC_GENERATE_BILLING_BATCH)) {
+      throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_GENERATE_BILLING_BATCH));
+    }
+    throw new Error(error.message);
+  }
+}
+
+async function invokeCreateBillingExportRpc(input: {
+  exportJobPayload: BillingExportRpcPayload;
+  invoiceIds: string[];
+}) {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc(RPC_CREATE_BILLING_EXPORT, {
+    p_export_job: input.exportJobPayload,
+    p_invoice_ids: input.invoiceIds
+  });
+  if (error) {
+    if (isMissingRpcFunctionError(error, RPC_CREATE_BILLING_EXPORT)) {
+      throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_CREATE_BILLING_EXPORT));
+    }
+    throw new Error(error.message);
+  }
+}
+
 function isMissingSchemaObjectError(error: any) {
   const code = String(error?.code ?? error?.cause?.code ?? "").toUpperCase();
   const message = [
@@ -1710,26 +2036,6 @@ export async function generateBillingBatch(input: BatchGenerationInput) {
     const now = toEasternISO();
     const billingMonthStart = startOfMonth(input.billingMonth);
     const runDate = normalizeDateOnly(input.runDate, toEasternDate());
-    const { data: batchData, error: batchError } = await supabase
-      .from("billing_batches")
-      .insert({
-        batch_type: batchType,
-        billing_month: billingMonthStart,
-        run_date: runDate,
-        batch_status: "Draft",
-        invoice_count: preview.rows.length,
-        total_amount: preview.totalAmount,
-        completion_date: null,
-        next_due_date: addMonths(billingMonthStart, 1),
-        generated_by_user_id: input.runByUser,
-        generated_by_name: input.runByName,
-        created_at: now,
-        updated_at: now
-      })
-      .select("id")
-      .single();
-    if (batchError) throw new Error(batchError.message);
-    const billingBatchId = String(batchData.id);
 
     const { data: existingInvoiceRows, error: existingInvoiceError } = await supabase
       .from("billing_invoices")
@@ -1740,154 +2046,67 @@ export async function generateBillingBatch(input: BatchGenerationInput) {
       const month = startOfMonth(String(row.invoice_month));
       existingCountByMonth.set(month, (existingCountByMonth.get(month) ?? 0) + 1);
     });
-
-    for (const row of preview.rows) {
-      const monthKey = startOfMonth(row.invoiceMonth);
-      const sequence = existingCountByMonth.get(monthKey) ?? 0;
-      existingCountByMonth.set(monthKey, sequence + 1);
-      const invoiceNumber = buildInvoiceNumber(monthKey, sequence);
-      const { data: invoiceData, error: invoiceError } = await supabase
-        .from("billing_invoices")
-        .insert({
-          billing_batch_id: billingBatchId,
-          member_id: row.memberId,
-          payor_id: row.payorId,
-          invoice_number: invoiceNumber,
-          invoice_month: monthKey,
-          invoice_source: "BatchGenerated",
-          invoice_status: "Draft",
-          export_status: "NotExported",
-          billing_mode_snapshot: row.billingMode,
-          monthly_billing_basis_snapshot: row.monthlyBillingBasis,
-          transportation_billing_status_snapshot: row.transportationBillingStatusSnapshot,
-          billing_method_snapshot: row.billingMethod,
-          base_period_start: row.basePeriodStart,
-          base_period_end: row.basePeriodEnd,
-          variable_charge_period_start: row.variableChargePeriodStart,
-          variable_charge_period_end: row.variableChargePeriodEnd,
-          invoice_date: null,
-          due_date: null,
-          base_program_billed_days: row.baseProgramBilledDays,
-          member_daily_rate_snapshot: row.memberDailyRateSnapshot,
-          base_program_amount: row.baseProgramAmount,
-          transportation_amount: row.transportationAmount,
-          ancillary_amount: row.ancillaryAmount,
-          adjustment_amount: row.adjustmentAmount,
-          total_amount: row.totalAmount,
-          notes: null,
-          created_by_user_id: input.runByUser,
-          created_by_name: input.runByName,
-          created_at: now,
-          updated_at: now
-        })
-        .select("*")
-        .single();
-      if (invoiceError) throw new Error(invoiceError.message);
-      const invoiceId = String(invoiceData.id);
-
-      const linePayload = [
-        {
-          invoice_id: invoiceId,
-          member_id: row.memberId,
-          payor_id: row.payorId,
-          service_date: null,
-          service_period_start: row.basePeriodStart,
-          service_period_end: row.basePeriodEnd,
-          line_type: "BaseProgram",
-          description: `Base program charges (${row.baseProgramBilledDays} day(s))`,
-          quantity: row.baseProgramBilledDays,
-          unit_rate: row.memberDailyRateSnapshot,
-          amount: row.baseProgramAmount,
-          source_table: "attendance_records",
-          source_record_id: null,
-          billing_status: "Billed",
-          created_at: now,
-          updated_at: now
-        },
-        ...row.variableSourceRows.map((sourceLine) => ({
-          invoice_id: invoiceId,
-          member_id: row.memberId,
-          payor_id: row.payorId,
-          service_date: sourceLine.service_date,
-          service_period_start: sourceLine.service_period_start,
-          service_period_end: sourceLine.service_period_end,
-          line_type: sourceLine.line_type,
-          description: sourceLine.description,
-          quantity: sourceLine.quantity,
-          unit_rate: sourceLine.unit_rate,
-          amount: sourceLine.amount,
-          source_table: sourceLine.source_table,
-          source_record_id: sourceLine.source_record_id,
-          billing_status: "Billed",
-          created_at: now,
-          updated_at: now
-        }))
-      ];
-      const { data: insertedLines, error: lineError } = await supabase
-        .from("billing_invoice_lines")
-        .insert(linePayload)
-        .select("id, line_type, source_table, source_record_id, service_period_start, service_period_end");
-      if (lineError) throw new Error(lineError.message);
-
-      for (const sourceLine of row.variableSourceRows) {
-        if (sourceLine.source_table === "transportation_logs") {
-          const { error } = await supabase
-            .from("transportation_logs")
-            .update({
-              billing_status: "Billed",
-              billing_exclusion_reason: null,
-              invoice_id: invoiceId,
-              updated_at: now
-            })
-            .eq("id", sourceLine.source_record_id);
-          if (error) throw new Error(error.message);
-        } else if (sourceLine.source_table === "ancillary_charge_logs") {
-          const { error } = await supabase
-            .from("ancillary_charge_logs")
-            .update({
-              billing_status: "Billed",
-              billing_exclusion_reason: null,
-              invoice_id: invoiceId,
-              updated_at: now
-            })
-            .eq("id", sourceLine.source_record_id);
-          if (error) throw new Error(error.message);
-        } else {
-          const { error } = await supabase
-            .from("billing_adjustments")
-            .update({
-              billing_status: "Billed",
-              exclusion_reason: null,
-              invoice_id: invoiceId,
-              updated_at: now
-            })
-            .eq("id", sourceLine.source_record_id);
-          if (error) throw new Error(error.message);
-        }
+    const writePlan = buildBillingBatchWritePlan({
+      batchType,
+      billingMonthStart,
+      runDate,
+      runByUser: input.runByUser,
+      runByName: input.runByName,
+      now,
+      previewRows: preview.rows,
+      totalAmount: preview.totalAmount,
+      existingCountByMonth
+    });
+    await invokeGenerateBillingBatchRpc(writePlan);
+    await recordWorkflowEvent({
+      eventType: "billing_batch_created",
+      entityType: "billing_batch",
+      entityId: writePlan.batchId,
+      actorType: "user",
+      actorUserId: input.runByUser,
+      status: "created",
+      severity: "low",
+      metadata: {
+        billing_month: billingMonthStart,
+        batch_type: batchType,
+        invoice_count: writePlan.invoicePayloads.length,
+        total_amount: preview.totalAmount,
+        run_date: runDate,
+        generated_by_name: input.runByName
       }
+    });
 
-      const coverageRows = (insertedLines ?? []).map((line: any) => ({
-        member_id: row.memberId,
-        coverage_type: mapCoverageTypeForLineType(line.line_type),
-        coverage_start_date: normalizeDateOnly(line.service_period_start, row.basePeriodStart),
-        coverage_end_date: normalizeDateOnly(line.service_period_end, row.basePeriodEnd),
-        source_invoice_id: invoiceId,
-        source_invoice_line_id: String(line.id),
-        source_table: line.source_table ?? null,
-        source_record_id: line.source_record_id ?? null,
-        created_at: now
-      }));
-      if (coverageRows.length > 0) {
-        const { error: coverageError } = await supabase.from("billing_coverages").insert(coverageRows);
-        if (coverageError) throw new Error(coverageError.message);
-      }
-    }
-
-    return { ok: true as const, billingBatchId };
+    return { ok: true as const, billingBatchId: writePlan.batchId };
   } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unable to generate billing batch.";
+    await recordWorkflowEvent({
+      eventType: "billing_batch_failed",
+      entityType: "billing_batch",
+      actorType: "user",
+      actorUserId: input.runByUser,
+      status: "failed",
+      severity: "high",
+      metadata: {
+        billing_month: input.billingMonth,
+        batch_type: input.batchType ?? "Mixed",
+        run_by_name: input.runByName,
+        error: reason
+      }
+    });
+    await recordImmediateSystemAlert({
+      entityType: "billing_batch",
+      actorUserId: input.runByUser,
+      severity: "high",
+      alertKey: "billing_batch_failed",
+      metadata: {
+        billing_month: input.billingMonth,
+        batch_type: input.batchType ?? "Mixed",
+        error: reason
+      }
+    });
     return {
       ok: false as const,
-      error: error instanceof Error ? error.message : "Unable to generate billing batch."
+      error: reason
     };
   }
 }
@@ -2820,9 +3039,10 @@ export async function createBillingExport(input: {
     }
 
     const fileName = `${input.exportType}-${startOfMonth(String((batch as any).billing_month))}-${Date.now()}.csv`;
-    const { data: exportRow, error: exportError } = await supabase
-      .from("billing_export_jobs")
-      .insert({
+    const billingExportId = randomUUID();
+    await invokeCreateBillingExportRpc({
+      exportJobPayload: {
+        id: billingExportId,
         billing_batch_id: input.billingBatchId,
         export_type: input.exportType,
         quickbooks_detail_level: input.quickbooksDetailLevel,
@@ -2834,27 +3054,56 @@ export async function createBillingExport(input: {
         notes: null,
         created_at: now,
         updated_at: now
-      })
-      .select("id")
-      .single();
-    if (exportError) throw new Error(exportError.message);
+      },
+      invoiceIds
+    });
+    await recordWorkflowEvent({
+      eventType: "billing_export_generated",
+      entityType: "billing_batch",
+      entityId: input.billingBatchId,
+      actorType: "user",
+      status: "generated",
+      severity: "low",
+      metadata: {
+        billing_export_id: billingExportId,
+        export_type: input.exportType,
+        quickbooks_detail_level: input.quickbooksDetailLevel,
+        generated_by: input.generatedBy,
+        invoice_count: invoiceIds.length
+      }
+    });
 
-    const { error: batchExportUpdateError } = await supabase
-      .from("billing_batches")
-      .update({ batch_status: "Exported", updated_at: now })
-      .eq("id", input.billingBatchId);
-    if (batchExportUpdateError) throw new Error(batchExportUpdateError.message);
-    const { error: invoiceExportUpdateError } = await supabase
-      .from("billing_invoices")
-      .update({ export_status: "Exported", updated_at: now })
-      .in("id", invoiceIds);
-    if (invoiceExportUpdateError) throw new Error(invoiceExportUpdateError.message);
-
-    return { ok: true as const, billingExportId: String(exportRow.id) };
+    return { ok: true as const, billingExportId };
   } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unable to generate billing export.";
+    await recordWorkflowEvent({
+      eventType: "billing_export_failed",
+      entityType: "billing_batch",
+      entityId: input.billingBatchId,
+      actorType: "user",
+      status: "failed",
+      severity: "high",
+      metadata: {
+        export_type: input.exportType,
+        quickbooks_detail_level: input.quickbooksDetailLevel,
+        generated_by: input.generatedBy,
+        error: reason
+      }
+    });
+    await recordImmediateSystemAlert({
+      entityType: "billing_batch",
+      entityId: input.billingBatchId,
+      severity: "high",
+      alertKey: "billing_export_failed",
+      metadata: {
+        export_type: input.exportType,
+        quickbooks_detail_level: input.quickbooksDetailLevel,
+        error: reason
+      }
+    });
     return {
       ok: false as const,
-      error: error instanceof Error ? error.message : "Unable to generate billing export."
+      error: reason
     };
   }
 }

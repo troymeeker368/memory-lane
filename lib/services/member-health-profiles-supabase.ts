@@ -267,7 +267,7 @@ function sortByLastName(a: string, b: string) {
   return toKey(a).localeCompare(toKey(b));
 }
 
-export async function ensureMemberHealthProfileSupabase(memberId: string) {
+export async function ensureMemberHealthProfileSupabase(memberId: string, options?: { serviceRole?: boolean }) {
   const supabase = await createClient();
   const { data: existing, error: existingError } = await supabase
     .from("member_health_profiles")
@@ -280,7 +280,8 @@ export async function ensureMemberHealthProfileSupabase(memberId: string) {
   }
 
   const now = toEasternISO();
-  const { data, error } = await supabase
+  const writeSupabase = await createClient({ serviceRole: options?.serviceRole ?? true });
+  const { data, error } = await writeSupabase
     .from("member_health_profiles")
     .insert({ member_id: memberId, created_at: now, updated_at: now })
     .select("*")

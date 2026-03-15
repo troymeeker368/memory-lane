@@ -31,6 +31,11 @@ import {
   upsertMemberFileByDocumentSource
 } from "@/lib/services/member-files";
 import {
+  maybeRecordRepeatedFailureAlert,
+  recordImmediateSystemAlert,
+  recordWorkflowEvent
+} from "@/lib/services/workflow-observability";
+import {
   buildRetryableWorkflowDeliveryError,
   toSendWorkflowDeliveryStatus,
   type SendWorkflowDeliveryStatus
@@ -41,6 +46,8 @@ import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 const TOKEN_BYTE_LENGTH = 32;
 const STAFF_TRANSPORTATION_OPTIONS = ["None", "Door to Door", "Bus Stop", "Mixed"] as const;
+const ENROLLMENT_PACKET_COMPLETION_RPC = "rpc_finalize_enrollment_packet_request_completion";
+const ENROLLMENT_PACKET_COMPLETION_MIGRATION = "0044_atomic_billing_and_completion_finalization.sql";
 
 type StaffTransportationOption = (typeof STAFF_TRANSPORTATION_OPTIONS)[number];
 
@@ -339,6 +346,29 @@ function isEmail(value: string | null | undefined) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
 }
 
+function isMissingRpcFunctionError(error: any, functionName: string) {
+  const code = String(error?.code ?? error?.cause?.code ?? "").toUpperCase();
+  const message = [
+    error?.message,
+    error?.details,
+    error?.hint,
+    error?.cause?.message,
+    error?.cause?.details,
+    error?.cause?.hint
+  ]
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+  const normalizedName = functionName.toLowerCase();
+
+  return (
+    code === "PGRST202" ||
+    message.includes(`function ${normalizedName}`) ||
+    (message.includes(normalizedName) && message.includes("could not find")) ||
+    (message.includes(normalizedName) && message.includes("does not exist"))
+  );
+}
+
 function safeNumber(value: number | null | undefined, fallback = 0) {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Number(value.toFixed(2));
@@ -552,6 +582,45 @@ async function addLeadActivity(input: {
     completed_by_name: input.completedByName
   });
   if (error) throw new Error(error.message);
+}
+
+async function invokeFinalizeEnrollmentPacketCompletionRpc(input: {
+  packetId: string;
+  rotatedToken: string;
+  completedAt: string;
+  filedAt: string;
+  signerName: string;
+  signerEmail: string | null;
+  signatureBlob: string;
+  ipAddress: string | null;
+  actorUserId: string;
+  actorEmail: string | null;
+  completedMetadata: Record<string, unknown>;
+  filedMetadata: Record<string, unknown>;
+}) {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin.rpc(ENROLLMENT_PACKET_COMPLETION_RPC, {
+    p_packet_id: input.packetId,
+    p_rotated_token: input.rotatedToken,
+    p_completed_at: input.completedAt,
+    p_filed_at: input.filedAt,
+    p_signer_name: input.signerName,
+    p_signer_email: input.signerEmail,
+    p_signature_blob: input.signatureBlob,
+    p_ip_address: input.ipAddress,
+    p_actor_user_id: input.actorUserId,
+    p_actor_email: input.actorEmail,
+    p_completed_metadata: input.completedMetadata,
+    p_filed_metadata: input.filedMetadata
+  });
+  if (error) {
+    if (isMissingRpcFunctionError(error, ENROLLMENT_PACKET_COMPLETION_RPC)) {
+      throw new Error(
+        `Enrollment packet completion finalization RPC is not available yet. Apply Supabase migration ${ENROLLMENT_PACKET_COMPLETION_MIGRATION} first.`
+      );
+    }
+    throw new Error(error.message);
+  }
 }
 
 async function listActivePacketRows(memberId: string, leadId: string | null) {
@@ -1268,6 +1337,35 @@ export async function sendEnrollmentPacketRequest(input: {
         error: reason
       }
     });
+    await recordWorkflowEvent({
+      eventType: "enrollment_packet_failed",
+      entityType: "enrollment_packet_request",
+      entityId: requestId,
+      actorType: "user",
+      actorUserId: senderUserId,
+      status: "failed",
+      severity: "medium",
+      metadata: {
+        member_id: member.id,
+        lead_id: lead?.id ?? null,
+        phase: "delivery",
+        delivery_status: "send_failed",
+        retry_available: true,
+        error: reason
+      }
+    });
+    await maybeRecordRepeatedFailureAlert({
+      workflowEventType: "enrollment_packet_failed",
+      entityType: "enrollment_packet_request",
+      entityId: requestId,
+      actorUserId: senderUserId,
+      threshold: 2,
+      metadata: {
+        member_id: member.id,
+        lead_id: lead?.id ?? null,
+        phase: "delivery"
+      }
+    });
     throw buildRetryableWorkflowDeliveryError({
       requestId,
       requestUrl,
@@ -1292,6 +1390,21 @@ export async function sendEnrollmentPacketRequest(input: {
     eventType: "Enrollment Packet Sent",
     actorUserId: senderUserId,
     actorEmail: senderEmail
+  });
+  await recordWorkflowEvent({
+    eventType: "enrollment_packet_sent",
+    entityType: "enrollment_packet_request",
+    entityId: requestId,
+    actorType: "user",
+    actorUserId: senderUserId,
+    status: "sent",
+    severity: "low",
+    metadata: {
+      member_id: member.id,
+      lead_id: lead?.id ?? null,
+      caregiver_email: requiredCaregiverEmail,
+      sent_at: sentAt
+    }
   });
 
   if (lead?.id) {
@@ -1692,261 +1805,263 @@ export async function submitPublicEnrollmentPacket(input: {
   const member = await getMemberById(request.member_id);
   if (!member) throw new Error("Member record was not found.");
 
-  await savePublicEnrollmentPacketProgress({
-    token: normalizedToken,
-    caregiverName: input.caregiverName,
-    caregiverPhone: input.caregiverPhone,
-    caregiverEmail: input.caregiverEmail,
-    primaryContactAddress: input.primaryContactAddress,
-    primaryContactAddressLine1: input.primaryContactAddressLine1,
-    primaryContactCity: input.primaryContactCity,
-    primaryContactState: input.primaryContactState,
-    primaryContactZip: input.primaryContactZip,
-    caregiverAddressLine1: input.caregiverAddressLine1,
-    caregiverAddressLine2: input.caregiverAddressLine2,
-    caregiverCity: input.caregiverCity,
-    caregiverState: input.caregiverState,
-    caregiverZip: input.caregiverZip,
-    secondaryContactName: input.secondaryContactName,
-    secondaryContactPhone: input.secondaryContactPhone,
-    secondaryContactEmail: input.secondaryContactEmail,
-    secondaryContactRelationship: input.secondaryContactRelationship,
-    secondaryContactAddress: input.secondaryContactAddress,
-    secondaryContactAddressLine1: input.secondaryContactAddressLine1,
-    secondaryContactCity: input.secondaryContactCity,
-    secondaryContactState: input.secondaryContactState,
-    secondaryContactZip: input.secondaryContactZip,
-    notes: input.notes,
-    intakePayload: input.intakePayload
-  });
+  try {
+    await savePublicEnrollmentPacketProgress({
+      token: normalizedToken,
+      caregiverName: input.caregiverName,
+      caregiverPhone: input.caregiverPhone,
+      caregiverEmail: input.caregiverEmail,
+      primaryContactAddress: input.primaryContactAddress,
+      primaryContactAddressLine1: input.primaryContactAddressLine1,
+      primaryContactCity: input.primaryContactCity,
+      primaryContactState: input.primaryContactState,
+      primaryContactZip: input.primaryContactZip,
+      caregiverAddressLine1: input.caregiverAddressLine1,
+      caregiverAddressLine2: input.caregiverAddressLine2,
+      caregiverCity: input.caregiverCity,
+      caregiverState: input.caregiverState,
+      caregiverZip: input.caregiverZip,
+      secondaryContactName: input.secondaryContactName,
+      secondaryContactPhone: input.secondaryContactPhone,
+      secondaryContactEmail: input.secondaryContactEmail,
+      secondaryContactRelationship: input.secondaryContactRelationship,
+      secondaryContactAddress: input.secondaryContactAddress,
+      secondaryContactAddressLine1: input.secondaryContactAddressLine1,
+      secondaryContactCity: input.secondaryContactCity,
+      secondaryContactState: input.secondaryContactState,
+      secondaryContactZip: input.secondaryContactZip,
+      notes: input.notes,
+      intakePayload: input.intakePayload
+    });
 
-  const fieldsForValidation = await loadPacketFields(request.id);
-  if (!fieldsForValidation) throw new Error("Enrollment packet fields were not found.");
-  const validationPayload = normalizeStoredIntakePayload(fieldsForValidation);
-  const completionValidation = validateEnrollmentPacketCompletion({
-    payload: validationPayload
-  });
-  if (!completionValidation.isComplete) {
-    throw new Error(
-      `Complete all required packet fields before signing. Missing: ${completionValidation.missingItems.join(", ")}.`
-    );
-  }
+    const fieldsForValidation = await loadPacketFields(request.id);
+    if (!fieldsForValidation) throw new Error("Enrollment packet fields were not found.");
+    const validationPayload = normalizeStoredIntakePayload(fieldsForValidation);
+    const completionValidation = validateEnrollmentPacketCompletion({
+      payload: validationPayload
+    });
+    if (!completionValidation.isComplete) {
+      throw new Error(
+        `Complete all required packet fields before signing. Missing: ${completionValidation.missingItems.join(", ")}.`
+      );
+    }
 
-  const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
-  const rotatedToken = hashToken(generateSigningToken());
-  const { error: signatureRowError } = await admin.from("enrollment_packet_signatures").insert({
-    packet_id: request.id,
-    signer_name: caregiverTypedName,
-    signer_email: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
-    signer_role: "caregiver",
-    signature_blob: input.caregiverSignatureImageDataUrl.trim(),
-    ip_address: clean(input.caregiverIp),
-    signed_at: now,
-    created_at: now,
-    updated_at: now
-  });
-  if (signatureRowError) throw new Error(signatureRowError.message);
+    const now = toEasternISO();
+    const admin = createSupabaseAdminClient();
+    const rotatedToken = hashToken(generateSigningToken());
 
-  const senderSignature = await admin
-    .from("enrollment_packet_signatures")
-    .select("signer_name, signature_blob")
-    .eq("packet_id", request.id)
-    .eq("signer_role", "sender_staff")
-    .order("signed_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (senderSignature.error && !isRowFoundError(senderSignature.error)) {
-    throw new Error(senderSignature.error.message);
-  }
-  const senderSignatureName = senderSignature.data ? String((senderSignature.data as { signer_name: string }).signer_name) : "Staff";
+    const senderSignature = await admin
+      .from("enrollment_packet_signatures")
+      .select("signer_name, signature_blob")
+      .eq("packet_id", request.id)
+      .eq("signer_role", "sender_staff")
+      .order("signed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (senderSignature.error && !isRowFoundError(senderSignature.error)) {
+      throw new Error(senderSignature.error.message);
+    }
+    const senderSignatureName = senderSignature.data
+      ? String((senderSignature.data as { signer_name: string }).signer_name)
+      : "Staff";
 
-  const signatureArtifact = await insertUploadAndFile({
-    packetId: request.id,
-    memberId: member.id,
-    fileName: `Enrollment Packet Signature - ${toEasternDate(now)}.png`,
-    contentType: signature.contentType,
-    bytes: signature.bytes,
-    uploadCategory: "signature_artifact",
-    uploadedByUserId: null,
-    uploadedByName: caregiverTypedName,
-    dataUrl: input.caregiverSignatureImageDataUrl.trim()
-  });
-
-  const uploadedArtifacts: Array<{ uploadCategory: EnrollmentPacketUploadCategory; memberFileId: string | null }> = [
-    { uploadCategory: "signature_artifact", memberFileId: signatureArtifact.memberFileId }
-  ];
-
-  for (const upload of input.uploads ?? []) {
-    const artifact = await insertUploadAndFile({
+    const signatureArtifact = await insertUploadAndFile({
       packetId: request.id,
       memberId: member.id,
-      fileName: upload.fileName,
-      contentType: upload.contentType,
-      bytes: upload.bytes,
-      uploadCategory: upload.category,
+      fileName: `Enrollment Packet Signature - ${toEasternDate(now)}.png`,
+      contentType: signature.contentType,
+      bytes: signature.bytes,
+      uploadCategory: "signature_artifact",
       uploadedByUserId: null,
-      uploadedByName: caregiverTypedName
+      uploadedByName: caregiverTypedName,
+      dataUrl: input.caregiverSignatureImageDataUrl.trim()
+    });
+
+    const uploadedArtifacts: Array<{ uploadCategory: EnrollmentPacketUploadCategory; memberFileId: string | null }> = [
+      { uploadCategory: "signature_artifact", memberFileId: signatureArtifact.memberFileId }
+    ];
+
+    for (const upload of input.uploads ?? []) {
+      const artifact = await insertUploadAndFile({
+        packetId: request.id,
+        memberId: member.id,
+        fileName: upload.fileName,
+        contentType: upload.contentType,
+        bytes: upload.bytes,
+        uploadCategory: upload.category,
+        uploadedByUserId: null,
+        uploadedByName: caregiverTypedName
+      });
+      uploadedArtifacts.push({
+        uploadCategory: upload.category,
+        memberFileId: artifact.memberFileId
+      });
+    }
+
+    const refreshedFields = await loadPacketFields(request.id);
+    if (!refreshedFields) throw new Error("Enrollment packet fields are missing.");
+    const packetDocx = await buildCompletedPacketDocxData({
+      memberName: member.display_name,
+      request,
+      fields: refreshedFields,
+      caregiverSignatureName: caregiverTypedName,
+      senderSignatureName
+    });
+    const finalPacketArtifact = await insertUploadAndFile({
+      packetId: request.id,
+      memberId: member.id,
+      fileName: packetDocx.fileName,
+      contentType: packetDocx.contentType,
+      bytes: packetDocx.bytes,
+      uploadCategory: "completed_packet",
+      uploadedByUserId: null,
+      uploadedByName: caregiverTypedName,
+      dataUrl: packetDocx.dataUrl
     });
     uploadedArtifacts.push({
-      uploadCategory: upload.category,
-      memberFileId: artifact.memberFileId
+      uploadCategory: "completed_packet",
+      memberFileId: finalPacketArtifact.memberFileId
     });
-  }
 
-  const refreshedFields = await loadPacketFields(request.id);
-  if (!refreshedFields) throw new Error("Enrollment packet fields are missing.");
-  const packetDocx = await buildCompletedPacketDocxData({
-    memberName: member.display_name,
-    request,
-    fields: refreshedFields,
-    caregiverSignatureName: caregiverTypedName,
-    senderSignatureName
-  });
-  const finalPacketArtifact = await insertUploadAndFile({
-    packetId: request.id,
-    memberId: member.id,
-    fileName: packetDocx.fileName,
-    contentType: packetDocx.contentType,
-    bytes: packetDocx.bytes,
-    uploadCategory: "completed_packet",
-    uploadedByUserId: null,
-    uploadedByName: caregiverTypedName,
-    dataUrl: packetDocx.dataUrl
-  });
-  uploadedArtifacts.push({
-    uploadCategory: "completed_packet",
-    memberFileId: finalPacketArtifact.memberFileId
-  });
+    const downstreamMapping = await mapEnrollmentPacketToDownstream({
+      packetId: request.id,
+      memberId: member.id,
+      senderUserId: request.sender_user_id,
+      senderName: senderSignatureName,
+      senderEmail: null,
+      caregiverEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
+      fields: refreshedFields,
+      memberFileArtifacts: uploadedArtifacts.map((artifact) => ({
+        uploadCategory: artifact.uploadCategory,
+        memberFileId: artifact.memberFileId
+      }))
+    });
 
-  const { data: completedRow, error: completedError } = await admin
-    .from("enrollment_packet_requests")
-    .update({
-      status: "completed",
-      completed_at: now,
-      token: rotatedToken,
-      updated_at: now
-    })
-    .eq("id", request.id)
-    .in("status", ["prepared", "sent", "opened", "partially_completed"])
-    .select("id")
-    .maybeSingle();
-  if (completedError) throw new Error(completedError.message);
-  if (!completedRow) {
-    throw new Error("Unable to transition enrollment packet to Completed from its current status.");
-  }
-
-  await insertPacketEvent({
-    packetId: request.id,
-    eventType: "Enrollment Packet Completed",
-    actorEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
-    metadata: {
-      caregiverSignatureName: caregiverTypedName,
-      completedAt: now,
-      signatureArtifactMemberFileId: signatureArtifact.memberFileId,
-      finalPacketMemberFileId: finalPacketArtifact.memberFileId
-    }
-  });
-
-  const downstreamMapping = await mapEnrollmentPacketToDownstream({
-    packetId: request.id,
-    memberId: member.id,
-    senderUserId: request.sender_user_id,
-    senderName: senderSignatureName,
-    senderEmail: null,
-    caregiverEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
-    fields: refreshedFields,
-    memberFileArtifacts: uploadedArtifacts.map((artifact) => ({
-      uploadCategory: artifact.uploadCategory,
-      memberFileId: artifact.memberFileId
-    }))
-  });
-
-  const filedAt = toEasternISO();
-  const { data: filedRow, error: filedError } = await admin
-    .from("enrollment_packet_requests")
-    .update({
-      status: "filed",
-      updated_at: filedAt
-    })
-    .eq("id", request.id)
-    .in("status", ["completed", "filed"])
-    .select("id")
-    .maybeSingle();
-  if (filedError) throw new Error(filedError.message);
-  if (!filedRow) {
-    throw new Error("Unable to transition enrollment packet to Filed from its current status.");
-  }
-
-  await insertPacketEvent({
-    packetId: request.id,
-    eventType: "filed",
-    actorUserId: request.sender_user_id,
-    metadata: {
-      caregiverSignatureName: caregiverTypedName,
-      initiatedByUserId: request.sender_user_id,
-      initiatedByName: senderSignatureName,
+    const filedAt = toEasternISO();
+    await invokeFinalizeEnrollmentPacketCompletionRpc({
+      packetId: request.id,
+      rotatedToken,
       completedAt: now,
       filedAt,
-      downstreamSystemsUpdated: downstreamMapping.downstreamSystemsUpdated,
-      conflictsRequiringReview: downstreamMapping.conflictsRequiringReview,
-      mappingRunId: downstreamMapping.mappingRunId
-    }
-  });
-
-  if (request.lead_id) {
-    const lead = await getLeadById(request.lead_id);
-    await addLeadActivity({
-      leadId: request.lead_id,
-      memberName: lead?.member_name ?? member.display_name,
-      activityType: "Email",
-      outcome: "Enrollment Packet Completed",
-      notes: `Enrollment packet request ${request.id} completed by caregiver and filed to member records.`,
-      completedByUserId: request.sender_user_id,
-      completedByName: senderSignatureName,
-      activityAt: filedAt
+      signerName: caregiverTypedName,
+      signerEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
+      signatureBlob: input.caregiverSignatureImageDataUrl.trim(),
+      ipAddress: clean(input.caregiverIp),
+      actorUserId: request.sender_user_id,
+      actorEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
+      completedMetadata: {
+        caregiverSignatureName: caregiverTypedName,
+        completedAt: now,
+        signatureArtifactMemberFileId: signatureArtifact.memberFileId,
+        finalPacketMemberFileId: finalPacketArtifact.memberFileId
+      },
+      filedMetadata: {
+        caregiverSignatureName: caregiverTypedName,
+        initiatedByUserId: request.sender_user_id,
+        initiatedByName: senderSignatureName,
+        completedAt: now,
+        filedAt,
+        downstreamSystemsUpdated: downstreamMapping.downstreamSystemsUpdated,
+        conflictsRequiringReview: downstreamMapping.conflictsRequiringReview,
+        mappingRunId: downstreamMapping.mappingRunId
+      }
     });
-  }
 
-  await recordWorkflowMilestone({
-    event: {
-      event_type: "enrollment_packet_completed",
-      entity_type: "enrollment_packet_request",
-      entity_id: request.id,
-      actor_type: "user",
-      actor_id: request.sender_user_id,
+    if (request.lead_id) {
+      try {
+        const lead = await getLeadById(request.lead_id);
+        await addLeadActivity({
+          leadId: request.lead_id,
+          memberName: lead?.member_name ?? member.display_name,
+          activityType: "Email",
+          outcome: "Enrollment Packet Completed",
+          notes: `Enrollment packet request ${request.id} completed by caregiver and filed to member records.`,
+          completedByUserId: request.sender_user_id,
+          completedByName: senderSignatureName,
+          activityAt: filedAt
+        });
+      } catch (error) {
+        console.error("[enrollment-packets] unable to record lead activity after packet filing", error);
+      }
+    }
+
+    try {
+      await recordWorkflowMilestone({
+        event: {
+          event_type: "enrollment_packet_completed",
+          entity_type: "enrollment_packet_request",
+          entity_id: request.id,
+          actor_type: "user",
+          actor_id: request.sender_user_id,
+          actor_user_id: request.sender_user_id,
+          status: "completed",
+          severity: "low",
+          metadata: {
+            member_id: member.id,
+            lead_id: request.lead_id,
+            caregiver_signature_name: caregiverTypedName,
+            initiated_by_user_id: request.sender_user_id,
+            initiated_by_name: senderSignatureName,
+            completed_at: now,
+            filed_at: filedAt,
+            status: "filed",
+            mapping_run_id: downstreamMapping.mappingRunId,
+            downstream_systems_updated: downstreamMapping.downstreamSystemsUpdated,
+            conflicts_requiring_review: downstreamMapping.conflictsRequiringReview
+          }
+        },
+        notification: {
+          recipientUserId: request.sender_user_id,
+          title: "Enrollment Packet Completed",
+          message: `Enrollment packet completed for ${member.display_name}`,
+          entityType: "enrollment_packet_request",
+          entityId: request.id,
+          metadata: {
+            memberId: member.id,
+            leadId: request.lead_id,
+            packetId: request.id
+          },
+          serviceRole: true
+        }
+      });
+    } catch (error) {
+      console.error("[enrollment-packets] unable to emit post-completion workflow milestone", error);
+    }
+
+    return {
+      packetId: request.id,
+      memberId: member.id,
+      status: "filed" as const
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unable to complete enrollment packet.";
+    await recordWorkflowEvent({
+      eventType: "enrollment_packet_failed",
+      entityType: "enrollment_packet_request",
+      entityId: request.id,
+      actorType: "user",
+      actorUserId: request.sender_user_id,
+      status: "failed",
+      severity: "high",
       metadata: {
         member_id: member.id,
         lead_id: request.lead_id,
-        caregiver_signature_name: caregiverTypedName,
-        initiated_by_user_id: request.sender_user_id,
-        initiated_by_name: senderSignatureName,
-        completed_at: now,
-        filed_at: filedAt,
-        status: "filed",
-        mapping_run_id: downstreamMapping.mappingRunId,
-        downstream_systems_updated: downstreamMapping.downstreamSystemsUpdated,
-        conflicts_requiring_review: downstreamMapping.conflictsRequiringReview
+        phase: "completion",
+        error: reason
       }
-    },
-    notification: {
-      recipientUserId: request.sender_user_id,
-      title: "Enrollment Packet Completed",
-      message: `Enrollment packet completed for ${member.display_name}`,
+    });
+    await recordImmediateSystemAlert({
       entityType: "enrollment_packet_request",
       entityId: request.id,
+      actorUserId: request.sender_user_id,
+      severity: "high",
+      alertKey: "enrollment_packet_completion_failed",
       metadata: {
-        memberId: member.id,
-        leadId: request.lead_id,
-        packetId: request.id
-      },
-      serviceRole: true
-    }
-  });
-
-  return {
-    packetId: request.id,
-    memberId: member.id,
-    status: "filed" as const
-  };
+        member_id: member.id,
+        lead_id: request.lead_id,
+        error: reason
+      }
+    });
+    throw error;
+  }
 }

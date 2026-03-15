@@ -141,7 +141,7 @@ export async function signCarePlanNurseEsign(input: {
   const carePlanId = cleanCarePlanSignatureValue(input.carePlanId);
   if (!carePlanId) throw new Error("Care Plan ID is required to sign.");
 
-  const supabase = await createClient({ serviceRole: input.serviceRole });
+  const supabase = await createClient({ serviceRole: input.serviceRole ?? true });
   const { data: carePlan, error: carePlanError } = await supabase
     .from("care_plans")
     .select("id, member_id, review_date, caregiver_signature_status")

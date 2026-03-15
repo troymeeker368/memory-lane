@@ -22,6 +22,11 @@ import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/timezone";
 import {
+  maybeRecordRepeatedFailureAlert,
+  recordImmediateSystemAlert,
+  recordWorkflowEvent
+} from "@/lib/services/workflow-observability";
+import {
   buildRetryableWorkflowDeliveryError,
   toSendWorkflowDeliveryStatus,
   type SendWorkflowDeliveryStatus
@@ -972,6 +977,35 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
         error: reason
       }
     });
+    await recordWorkflowEvent({
+      eventType: "pof_request_failed",
+      entityType: "pof_request",
+      entityId: requestId,
+      actorType: "user",
+      actorUserId: input.actor.id,
+      status: "failed",
+      severity: "medium",
+      metadata: {
+        member_id: input.memberId,
+        physician_order_id: input.physicianOrderId,
+        phase: "delivery",
+        delivery_status: "send_failed",
+        retry_available: true,
+        error: reason
+      }
+    });
+    await maybeRecordRepeatedFailureAlert({
+      workflowEventType: "pof_request_failed",
+      entityType: "pof_request",
+      entityId: requestId,
+      actorUserId: input.actor.id,
+      threshold: 2,
+      metadata: {
+        member_id: input.memberId,
+        physician_order_id: input.physicianOrderId,
+        phase: "delivery"
+      }
+    });
     throw buildRetryableWorkflowDeliveryError({
       requestId,
       requestUrl: signatureRequestUrl,
@@ -1001,6 +1035,21 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     actorUserId: input.actor.id,
     actorName: input.actor.fullName,
     actorEmail: fromEmail
+  });
+  await recordWorkflowEvent({
+    eventType: "pof_request_sent",
+    entityType: "pof_request",
+    entityId: requestId,
+    actorType: "user",
+    actorUserId: input.actor.id,
+    status: "sent",
+    severity: "low",
+    metadata: {
+      member_id: input.memberId,
+      physician_order_id: input.physicianOrderId,
+      provider_email: providerEmail,
+      sent_at: sentAt
+    }
   });
 
   await setPhysicianOrderSentState({
@@ -1138,6 +1187,35 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
         error: reason
       }
     });
+    await recordWorkflowEvent({
+      eventType: "pof_request_failed",
+      entityType: "pof_request",
+      entityId: input.requestId,
+      actorType: "user",
+      actorUserId: input.actor.id,
+      status: "failed",
+      severity: "medium",
+      metadata: {
+        member_id: request.member_id,
+        physician_order_id: request.physician_order_id,
+        phase: "delivery",
+        delivery_status: "send_failed",
+        retry_available: true,
+        error: reason
+      }
+    });
+    await maybeRecordRepeatedFailureAlert({
+      workflowEventType: "pof_request_failed",
+      entityType: "pof_request",
+      entityId: input.requestId,
+      actorUserId: input.actor.id,
+      threshold: 2,
+      metadata: {
+        member_id: request.member_id,
+        physician_order_id: request.physician_order_id,
+        phase: "delivery"
+      }
+    });
     throw buildRetryableWorkflowDeliveryError({
       requestId: input.requestId,
       requestUrl: signatureRequestUrl,
@@ -1169,6 +1247,21 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
     actorUserId: input.actor.id,
     actorName: input.actor.fullName,
     actorEmail: fromEmail
+  });
+  await recordWorkflowEvent({
+    eventType: "pof_request_sent",
+    entityType: "pof_request",
+    entityId: input.requestId,
+    actorType: "user",
+    actorUserId: input.actor.id,
+    status: "sent",
+    severity: "low",
+    metadata: {
+      member_id: request.member_id,
+      physician_order_id: request.physician_order_id,
+      provider_email: providerEmail,
+      resent_at: now
+    }
   });
 
   await setPhysicianOrderSentState({
@@ -1311,130 +1404,179 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     throw new Error("This signature link has expired.");
   }
 
-  const now = toEasternISO();
-  const day = toEasternDate(now);
-  const snapshot = getRequestPayloadSnapshotOrThrow(request);
-  const signaturePath = `members/${request.member_id}/pof/${request.physician_order_id}/requests/${request.id}/provider-signature.png`;
-  const signatureUri = await uploadMemberDocumentObject({
-    objectPath: signaturePath,
-    bytes: signature.bytes,
-    contentType: signature.contentType
-  });
-
-  const signatureArtifact = await downloadStorageAssetOrThrow(signatureUri, "Provider signature image artifact");
-  if (!signatureArtifact.contentType.startsWith("image/")) {
-    throw new Error(
-      `Provider signature image artifact has invalid content type (${signatureArtifact.contentType}).`
-    );
-  }
-
-  const signedPdfBytes = await buildSignedPdfBytes({
-    pofPayload: snapshot,
-    providerTypedName: providerTypedName!,
-    providerCredentials: parseProviderCredentials(snapshot.providerName) ?? parseProviderCredentials(providerTypedName),
-    signatureImageBytes: signatureArtifact.bytes,
-    signatureContentType: signatureArtifact.contentType,
-    signedAt: now
-  });
-  const signedPdfPath = `members/${request.member_id}/pof/${request.physician_order_id}/requests/${request.id}/signed.pdf`;
-  const signedPdfUri = await uploadMemberDocumentObject({
-    objectPath: signedPdfPath,
-    bytes: signedPdfBytes,
-    contentType: "application/pdf"
-  });
-
-  const signedPdfDataUrl = `data:application/pdf;base64,${signedPdfBytes.toString("base64")}`;
-  const memberFileName = `POF Signed - ${snapshot.memberNameSnapshot} - ${day}.pdf`;
-  const signatureMetadata = {
-    signedVia: "pof-esign",
-    providerSignatureImageUrl: signatureUri,
-    providerIp: clean(input.providerIp),
-    providerUserAgent: clean(input.providerUserAgent),
-    signedAt: now
-  };
-  const rotatedToken = hashToken(generateSigningToken());
-  const admin = createSupabaseAdminClient();
-  let finalizedRaw: unknown;
   try {
-    finalizedRaw = await invokeSupabaseRpcOrThrow<unknown>(admin, RPC_FINALIZE_POF_SIGNATURE, {
-      p_request_id: request.id,
-      p_provider_typed_name: providerTypedName,
-      p_provider_signature_image_url: signatureUri,
-      p_provider_ip: clean(input.providerIp),
-      p_provider_user_agent: clean(input.providerUserAgent),
-      p_signed_pdf_url: signedPdfUri,
-      p_member_file_id: nextMemberFileId(),
-      p_member_file_name: memberFileName,
-      p_member_file_data_url: signedPdfDataUrl,
-      p_member_file_storage_object_path: parseMemberDocumentStorageUri(signedPdfUri),
-      p_actor_user_id: request.sent_by_user_id,
-      p_actor_name: request.nurse_name,
-      p_signed_at: now,
-      p_opened_at: request.opened_at ?? now,
-      p_signature_request_token: rotatedToken,
-      p_signature_metadata: signatureMetadata
+    const now = toEasternISO();
+    const day = toEasternDate(now);
+    const snapshot = getRequestPayloadSnapshotOrThrow(request);
+    const signaturePath = `members/${request.member_id}/pof/${request.physician_order_id}/requests/${request.id}/provider-signature.png`;
+    const signatureUri = await uploadMemberDocumentObject({
+      objectPath: signaturePath,
+      bytes: signature.bytes,
+      contentType: signature.contentType
     });
-  } catch (error) {
-    if (isMissingRpcFunctionError(error, RPC_FINALIZE_POF_SIGNATURE)) {
+
+    const signatureArtifact = await downloadStorageAssetOrThrow(signatureUri, "Provider signature image artifact");
+    if (!signatureArtifact.contentType.startsWith("image/")) {
       throw new Error(
-        "POF signing finalization RPC is not available. Apply Supabase migration 0037_shared_rpc_standardization_lead_pof.sql and refresh PostgREST schema cache."
+        `Provider signature image artifact has invalid content type (${signatureArtifact.contentType}).`
       );
     }
-    throw error;
-  }
-  const finalized = toRpcFinalizePofSignatureRow(finalizedRaw);
 
-  const postSignResult = await processSignedPhysicianOrderPostSignSync({
-    pofId: finalized.physician_order_id,
-    memberId: finalized.member_id,
-    queueId: finalized.queue_id,
-    queueAttemptCount: finalized.queue_attempt_count,
-    actor: {
-      id: request.sent_by_user_id,
-      fullName: request.nurse_name
-    },
-    signedAtIso: now,
-    pofRequestId: finalized.request_id,
-    serviceRole: true
-  });
+    const signedPdfBytes = await buildSignedPdfBytes({
+      pofPayload: snapshot,
+      providerTypedName: providerTypedName!,
+      providerCredentials: parseProviderCredentials(snapshot.providerName) ?? parseProviderCredentials(providerTypedName),
+      signatureImageBytes: signatureArtifact.bytes,
+      signatureContentType: signatureArtifact.contentType,
+      signedAt: now
+    });
+    const signedPdfPath = `members/${request.member_id}/pof/${request.physician_order_id}/requests/${request.id}/signed.pdf`;
+    const signedPdfUri = await uploadMemberDocumentObject({
+      objectPath: signedPdfPath,
+      bytes: signedPdfBytes,
+      contentType: "application/pdf"
+    });
 
-  await recordWorkflowMilestone({
-    event: {
-      event_type: "physician_order_signed",
-      entity_type: "physician_order",
-      entity_id: finalized.physician_order_id,
-      actor_type: "provider",
+    const signedPdfDataUrl = `data:application/pdf;base64,${signedPdfBytes.toString("base64")}`;
+    const memberFileName = `POF Signed - ${snapshot.memberNameSnapshot} - ${day}.pdf`;
+    const signatureMetadata = {
+      signedVia: "pof-esign",
+      providerSignatureImageUrl: signatureUri,
+      providerIp: clean(input.providerIp),
+      providerUserAgent: clean(input.providerUserAgent),
+      signedAt: now
+    };
+    const rotatedToken = hashToken(generateSigningToken());
+    const admin = createSupabaseAdminClient();
+    let finalizedRaw: unknown;
+    try {
+      finalizedRaw = await invokeSupabaseRpcOrThrow<unknown>(admin, RPC_FINALIZE_POF_SIGNATURE, {
+        p_request_id: request.id,
+        p_provider_typed_name: providerTypedName,
+        p_provider_signature_image_url: signatureUri,
+        p_provider_ip: clean(input.providerIp),
+        p_provider_user_agent: clean(input.providerUserAgent),
+        p_signed_pdf_url: signedPdfUri,
+        p_member_file_id: nextMemberFileId(),
+        p_member_file_name: memberFileName,
+        p_member_file_data_url: signedPdfDataUrl,
+        p_member_file_storage_object_path: parseMemberDocumentStorageUri(signedPdfUri),
+        p_actor_user_id: request.sent_by_user_id,
+        p_actor_name: request.nurse_name,
+        p_signed_at: now,
+        p_opened_at: request.opened_at ?? now,
+        p_signature_request_token: rotatedToken,
+        p_signature_metadata: signatureMetadata
+      });
+    } catch (error) {
+      if (isMissingRpcFunctionError(error, RPC_FINALIZE_POF_SIGNATURE)) {
+        throw new Error(
+          "POF signing finalization RPC is not available. Apply Supabase migration 0037_shared_rpc_standardization_lead_pof.sql and refresh PostgREST schema cache."
+        );
+      }
+      throw error;
+    }
+    const finalized = toRpcFinalizePofSignatureRow(finalizedRaw);
+
+    const postSignResult = await processSignedPhysicianOrderPostSignSync({
+      pofId: finalized.physician_order_id,
+      memberId: finalized.member_id,
+      queueId: finalized.queue_id,
+      queueAttemptCount: finalized.queue_attempt_count,
+      actor: {
+        id: request.sent_by_user_id,
+        fullName: request.nurse_name
+      },
+      signedAtIso: now,
+      pofRequestId: finalized.request_id,
+      serviceRole: true
+    });
+
+    await recordWorkflowMilestone({
+      event: {
+        event_type: "physician_order_signed",
+        entity_type: "physician_order",
+        entity_id: finalized.physician_order_id,
+        actor_type: "provider",
+        status: "signed",
+        severity: "low",
+        metadata: {
+          member_id: finalized.member_id,
+          pof_request_id: finalized.request_id,
+          member_file_id: finalized.member_file_id,
+          queue_id: finalized.queue_id,
+          post_sign_status: postSignResult.postSignStatus,
+          post_sign_attempt_count: postSignResult.attemptCount,
+          post_sign_next_retry_at: postSignResult.nextRetryAt
+        }
+      },
+      notification: {
+        recipientUserId: request.sent_by_user_id,
+        title: "POF Signed",
+        message: `POF signed for ${snapshot.memberNameSnapshot}`,
+        entityType: "pof_request",
+        entityId: request.id,
+        metadata: {
+          memberId: request.member_id,
+          physicianOrderId: request.physician_order_id,
+          requestId: request.id
+        },
+        serviceRole: true
+      }
+    });
+    await recordWorkflowEvent({
+      eventType: "pof_request_signed",
+      entityType: "pof_request",
+      entityId: finalized.request_id,
+      actorType: "provider",
+      status: "signed",
+      severity: "low",
       metadata: {
         member_id: finalized.member_id,
-        pof_request_id: finalized.request_id,
+        physician_order_id: finalized.physician_order_id,
         member_file_id: finalized.member_file_id,
-        queue_id: finalized.queue_id,
         post_sign_status: postSignResult.postSignStatus,
         post_sign_attempt_count: postSignResult.attemptCount,
         post_sign_next_retry_at: postSignResult.nextRetryAt
       }
-    },
-    notification: {
-      recipientUserId: request.sent_by_user_id,
-      title: "POF Signed",
-      message: `POF signed for ${snapshot.memberNameSnapshot}`,
+    });
+
+    return {
+      requestId: finalized.request_id,
+      memberId: finalized.member_id,
+      memberFileId: finalized.member_file_id,
+      signedPdfUrl: await createSignedStorageUrl(signedPdfUri, 60 * 15)
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unable to complete POF signing.";
+    await recordWorkflowEvent({
+      eventType: "pof_request_failed",
       entityType: "pof_request",
       entityId: request.id,
+      actorType: "provider",
+      status: "failed",
+      severity: "high",
       metadata: {
-        memberId: request.member_id,
-        physicianOrderId: request.physician_order_id,
-        requestId: request.id
-      },
-      serviceRole: true
-    }
-  });
-
-  return {
-    requestId: finalized.request_id,
-    memberId: finalized.member_id,
-    memberFileId: finalized.member_file_id,
-    signedPdfUrl: await createSignedStorageUrl(signedPdfUri, 60 * 15)
-  };
+        member_id: request.member_id,
+        physician_order_id: request.physician_order_id,
+        phase: "signature_completion",
+        error: reason
+      }
+    });
+    await recordImmediateSystemAlert({
+      entityType: "pof_request",
+      entityId: request.id,
+      actorUserId: request.sent_by_user_id,
+      severity: "high",
+      alertKey: "pof_signature_completion_failed",
+      metadata: {
+        member_id: request.member_id,
+        physician_order_id: request.physician_order_id,
+        error: reason
+      }
+    });
+    throw error;
+  }
 }
 
 export async function getSignedPofPdfUrlForMember(input: { requestId: string; memberId: string }) {
