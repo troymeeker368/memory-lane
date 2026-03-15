@@ -29,7 +29,7 @@ export function resolvePublicCaregiverLinkState(input: {
 }) {
   if (input.status === "signed") return "completed" as const;
   if (input.status === "expired" || isExpired(input.expiresAt)) return "expired" as const;
-  if (input.status === "sent" || input.status === "viewed") return "ready" as const;
+  if (input.status === "ready_to_send" || input.status === "sent" || input.status === "viewed") return "ready" as const;
   return "invalid" as const;
 }
 

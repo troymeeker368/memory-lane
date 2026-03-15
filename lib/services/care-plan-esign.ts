@@ -370,6 +370,32 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
   const signatureRequestUrl = `${buildAppBaseUrl()}/sign/care-plan/${token}`;
   const admin = createSupabaseAdminClient();
 
+  const { error: prepareError } = await admin
+    .from("care_plans")
+    .update({
+      caregiver_name: caregiverName,
+      caregiver_email: caregiverEmail,
+      caregiver_signature_status: "ready_to_send",
+      caregiver_sent_at: null,
+      caregiver_sent_by_user_id: input.actor.id,
+      caregiver_viewed_at: null,
+      caregiver_signed_at: null,
+      caregiver_signature_request_token: hashedToken,
+      caregiver_signature_expires_at: expiresAt,
+      caregiver_signature_request_url: signatureRequestUrl,
+      caregiver_signed_name: null,
+      caregiver_signature_image_url: null,
+      caregiver_signature_ip: null,
+      caregiver_signature_user_agent: null,
+      caregiver_signature_error: null,
+      final_member_file_id: null,
+      updated_by_user_id: input.actor.id,
+      updated_by_name: input.actor.fullName,
+      updated_at: now
+    })
+    .eq("id", input.carePlanId);
+  if (prepareError) throw new Error(prepareError.message);
+
   try {
     await sendSignatureEmail({
       toEmail: caregiverEmail!,
@@ -437,28 +463,32 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
   const { error: updateError } = await admin
     .from("care_plans")
     .update({
-      caregiver_name: caregiverName,
-      caregiver_email: caregiverEmail,
       caregiver_signature_status: "sent",
       caregiver_sent_at: now,
-      caregiver_sent_by_user_id: input.actor.id,
-      caregiver_viewed_at: null,
-      caregiver_signed_at: null,
-      caregiver_signature_request_token: hashedToken,
-      caregiver_signature_expires_at: expiresAt,
-      caregiver_signature_request_url: signatureRequestUrl,
-      caregiver_signed_name: null,
-      caregiver_signature_image_url: null,
-      caregiver_signature_ip: null,
-      caregiver_signature_user_agent: null,
       caregiver_signature_error: null,
-      final_member_file_id: null,
       updated_by_user_id: input.actor.id,
       updated_by_name: input.actor.fullName,
       updated_at: now
     })
     .eq("id", input.carePlanId);
-  if (updateError) throw new Error(updateError.message);
+  if (updateError) {
+    await recordImmediateSystemAlert({
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorUserId: input.actor.id,
+      severity: "high",
+      alertKey: "care_plan_delivery_state_finalize_failed",
+      metadata: {
+        member_id: detail.carePlan.memberId,
+        caregiver_email: caregiverEmail,
+        email_delivery_state: "email_sent_but_sent_state_not_persisted",
+        error: updateError.message
+      }
+    });
+    throw new Error(
+      "Care plan email was delivered, but the sent state could not be finalized. The signature link remains active in Ready to Send state. Review operational alerts before retrying."
+    );
+  }
 
   await createCarePlanSignatureEvent({
     carePlanId: input.carePlanId,

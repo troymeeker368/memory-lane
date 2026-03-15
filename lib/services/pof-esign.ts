@@ -966,6 +966,24 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     updated_at: now
   });
   if (createError) {
+    try {
+      await deleteMemberDocumentObject(unsignedPath);
+    } catch (cleanupError) {
+      await recordImmediateSystemAlert({
+        entityType: "pof_request",
+        entityId: requestId,
+        actorUserId: input.actor.id,
+        severity: "high",
+        alertKey: "pof_request_unsigned_pdf_cleanup_failed",
+        metadata: {
+          member_id: input.memberId,
+          physician_order_id: input.physicianOrderId,
+          unsigned_object_path: unsignedPath,
+          create_error: createError.message,
+          cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
+        }
+      });
+    }
     throw new Error(mapPofRequestWriteError(createError, "Unable to create POF signature request."));
   }
 
