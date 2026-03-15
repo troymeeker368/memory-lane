@@ -61,11 +61,18 @@ export function nextMemberFileId() {
 
 export function parseDataUrlPayload(dataUrl: string, errorMessage = "Invalid data URL payload.") {
   const normalized = dataUrl.trim();
-  const match = /^data:([^;]+);base64,(.+)$/.exec(normalized);
-  if (!match) throw new Error(errorMessage);
+  const base64Match = /^data:([^;,]+)(?:;charset=[^;,]+)?;base64,(.+)$/i.exec(normalized);
+  if (base64Match) {
+    return {
+      contentType: base64Match[1],
+      bytes: Buffer.from(base64Match[2], "base64")
+    };
+  }
+  const plainMatch = /^data:([^;,]+)(?:;charset=[^;,]+)?,(.*)$/i.exec(normalized);
+  if (!plainMatch) throw new Error(errorMessage);
   return {
-    contentType: match[1],
-    bytes: Buffer.from(match[2], "base64")
+    contentType: plainMatch[1],
+    bytes: Buffer.from(decodeURIComponent(plainMatch[2]), "utf8")
   };
 }
 
@@ -137,28 +144,40 @@ async function createSignedMemberDocumentUrl(objectPath: string, expiresInSecond
   return data.signedUrl;
 }
 
-async function backfillLegacyMemberFileStorage(row: {
+function isDataUrl(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase().startsWith("data:");
+}
+
+type LegacyMemberFileBackfillRow = {
   id: string;
   member_id: string;
   file_name: string | null;
   file_type: string | null;
   file_data_url: string | null;
   storage_object_path?: string | null;
-}) {
+};
+
+export async function backfillLegacyMemberFileStorage(row: LegacyMemberFileBackfillRow) {
   const existingStoragePath = String(row.storage_object_path ?? "").trim();
   if (existingStoragePath) return existingStoragePath;
 
-  const dataUrl = String(row.file_data_url ?? "").trim();
-  if (!dataUrl) return null;
+  const legacyValue = String(row.file_data_url ?? "").trim();
+  if (!legacyValue) return null;
 
-  const parsed = parseDataUrlPayload(dataUrl, "Stored member file data is invalid.");
-  const objectName = slugifyMemberFileSegment(String(row.file_name ?? "").trim() || `${row.id}.pdf`) || `${row.id}.pdf`;
-  const objectPath = `members/${row.member_id}/member-files/legacy/${row.id}-${objectName}`;
-  await uploadMemberDocumentObject({
-    objectPath,
-    bytes: parsed.bytes,
-    contentType: String(row.file_type ?? "").trim() || parsed.contentType || "application/octet-stream"
-  });
+  let objectPath: string | null = parseMemberDocumentStorageUri(legacyValue);
+  if (!objectPath) {
+    if (!isDataUrl(legacyValue)) {
+      throw new Error("Legacy member file data is neither a supported data URL nor a storage URI.");
+    }
+    const parsed = parseDataUrlPayload(legacyValue, "Stored member file data is invalid.");
+    const objectName = slugifyMemberFileSegment(String(row.file_name ?? "").trim() || `${row.id}.pdf`) || `${row.id}.pdf`;
+    objectPath = `members/${row.member_id}/member-files/legacy/${row.id}-${objectName}`;
+    await uploadMemberDocumentObject({
+      objectPath,
+      bytes: parsed.bytes,
+      contentType: String(row.file_type ?? "").trim() || parsed.contentType || "application/octet-stream"
+    });
+  }
 
   const admin = createSupabaseAdminClient();
   const { error: updateError } = await admin
@@ -170,26 +189,76 @@ async function backfillLegacyMemberFileStorage(row: {
     })
     .eq("id", row.id);
   if (updateError) {
-    try {
-      await deleteMemberDocumentObject(objectPath);
-    } catch (cleanupError) {
-      await recordImmediateSystemAlert({
-        entityType: "member_file",
-        entityId: row.id,
-        severity: "high",
-        alertKey: "member_file_legacy_backfill_cleanup_failed",
-        metadata: {
-          member_id: row.member_id,
-          storage_object_path: objectPath,
-          backfill_error: updateError.message,
-          cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
-        }
-      });
+    if (isDataUrl(legacyValue)) {
+      try {
+        await deleteMemberDocumentObject(objectPath);
+      } catch (cleanupError) {
+        await recordImmediateSystemAlert({
+          entityType: "member_file",
+          entityId: row.id,
+          severity: "high",
+          alertKey: "member_file_legacy_backfill_cleanup_failed",
+          metadata: {
+            member_id: row.member_id,
+            storage_object_path: objectPath,
+            backfill_error: updateError.message,
+            cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
+          }
+        });
+      }
     }
     throw new Error(updateError.message);
   }
 
   return objectPath;
+}
+
+export async function backfillLegacyMemberFileStorageBatch(input?: {
+  limit?: number;
+  actorUserId?: string | null;
+}) {
+  const limit = Math.max(1, Math.min(500, Number(input?.limit ?? 100)));
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("member_files")
+    .select("id, member_id, file_name, file_type, file_data_url, storage_object_path")
+    .is("storage_object_path", null)
+    .not("file_data_url", "is", null)
+    .order("uploaded_at", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as LegacyMemberFileBackfillRow[];
+  let repaired = 0;
+  const failures: Array<{ id: string; error: string }> = [];
+
+  for (const row of rows) {
+    try {
+      const repairedPath = await backfillLegacyMemberFileStorage(row);
+      if (repairedPath) repaired += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown legacy member file backfill error.";
+      failures.push({ id: row.id, error: message });
+      await recordImmediateSystemAlert({
+        entityType: "member_file",
+        entityId: row.id,
+        actorUserId: input?.actorUserId ?? null,
+        severity: "high",
+        alertKey: "member_file_legacy_backfill_failed",
+        metadata: {
+          member_id: row.member_id,
+          file_name: row.file_name,
+          error: message
+        }
+      });
+    }
+  }
+
+  return {
+    scanned: rows.length,
+    repaired,
+    failures
+  };
 }
 
 export async function uploadMemberDocumentObject(input: {
