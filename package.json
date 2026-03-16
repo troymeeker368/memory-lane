@@ -13,6 +13,7 @@
     "dev:clean": "npm run port:kill && npm run clean:next && npm run dev",
     "build": "next build",
     "build:turbo": "next build --turbopack",
+    "audit:module-sizes": "node scripts/audit-module-sizes.cjs",
     "start": "next start -p 3001",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",

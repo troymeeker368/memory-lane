@@ -6,10 +6,6 @@ import { headers } from "next/headers";
 
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizeEnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
-import {
-  savePublicEnrollmentPacketProgress,
-  submitPublicEnrollmentPacket
-} from "@/lib/services/enrollment-packets";
 
 type PublicEnrollmentPacketUploadCategory =
   | "medicare_card"
@@ -48,6 +44,10 @@ const ENROLLMENT_PACKET_UPLOAD_EXTENSION_TO_MIME: Record<string, string> = {
   tif: "image/tiff",
   tiff: "image/tiff"
 };
+
+async function loadEnrollmentPacketPublicService() {
+  return import("@/lib/services/enrollment-packets");
+}
 
 function asString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
@@ -140,6 +140,7 @@ async function parseFileUploads(
 
 export async function savePublicEnrollmentPacketProgressAction(formData: FormData) {
   try {
+    const { savePublicEnrollmentPacketProgress } = await loadEnrollmentPacketPublicService();
     const intakePayload = parseIntakePayload(formData);
     await savePublicEnrollmentPacketProgress({
       token: asString(formData, "token"),
@@ -179,6 +180,7 @@ export async function savePublicEnrollmentPacketProgressAction(formData: FormDat
 
 export async function submitPublicEnrollmentPacketAction(formData: FormData) {
   try {
+    const { submitPublicEnrollmentPacket } = await loadEnrollmentPacketPublicService();
     const headerMap = await headers();
     const forwardedFor = headerMap.get("x-forwarded-for");
     const caregiverIp = forwardedFor ? forwardedFor.split(",")[0].trim() : null;

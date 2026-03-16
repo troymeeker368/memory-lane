@@ -8,8 +8,6 @@ import {
   resolveCanonicalLeadRef,
   resolveCanonicalMemberRef
 } from "@/lib/services/canonical-person-ref";
-import { buildEnrollmentPacketTemplate } from "@/lib/email/templates/enrollment-packet";
-import { buildCompletedEnrollmentPacketDocxData } from "@/lib/services/enrollment-packet-docx";
 import {
   getDefaultEnrollmentPacketIntakePayload,
   normalizeEnrollmentPacketIntakePayload,
@@ -20,17 +18,10 @@ import {
   calculateInitialEnrollmentAmount,
   normalizeEnrollmentDateOnly
 } from "@/lib/services/enrollment-packet-proration";
-import { validateEnrollmentPacketCompletion } from "@/lib/services/enrollment-packet-public-schema";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import { resolveEnrollmentPricingForRequestedDays } from "@/lib/services/enrollment-pricing";
 import {
-  deleteMemberDocumentObject,
-  deleteMemberFileRecord,
   parseDataUrlPayload,
-  parseMemberDocumentStorageUri,
-  safeFileName,
-  uploadMemberDocumentObject,
-  upsertMemberFileByDocumentSource
 } from "@/lib/services/member-files";
 import {
   maybeRecordRepeatedFailureAlert,
@@ -51,6 +42,20 @@ const TOKEN_BYTE_LENGTH = 32;
 const STAFF_TRANSPORTATION_OPTIONS = ["None", "Door to Door", "Bus Stop", "Mixed"] as const;
 const ENROLLMENT_PACKET_COMPLETION_RPC = "rpc_finalize_enrollment_packet_submission";
 const ENROLLMENT_PACKET_COMPLETION_MIGRATION = "0053_artifact_drift_replay_hardening.sql";
+
+async function loadEnrollmentPacketTemplateBuilder() {
+  const { buildEnrollmentPacketTemplate } = await import("@/lib/email/templates/enrollment-packet");
+  return buildEnrollmentPacketTemplate;
+}
+
+async function loadEnrollmentPacketCompletionValidator() {
+  const { validateEnrollmentPacketCompletion } = await import("@/lib/services/enrollment-packet-public-validation");
+  return validateEnrollmentPacketCompletion;
+}
+
+async function loadEnrollmentPacketArtifactOps() {
+  return import("@/lib/services/enrollment-packet-artifacts");
+}
 
 type StaffTransportationOption = (typeof STAFF_TRANSPORTATION_OPTIONS)[number];
 
@@ -486,13 +491,6 @@ function buildAppBaseUrl(requestBaseUrl?: string | null) {
   return parsed.toString().replace(/\/$/, "");
 }
 
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 function isRowFoundError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const code = String((error as { code?: string }).code ?? "");
@@ -904,6 +902,7 @@ async function sendEnrollmentPacketEmail(input: {
   const apiKey = clean(process.env.RESEND_API_KEY);
   if (!apiKey) throw new Error("Enrollment packet email delivery is not configured. Set RESEND_API_KEY.");
   const clinicalSenderEmail = resolveClinicalSenderEmail();
+  const buildEnrollmentPacketTemplate = await loadEnrollmentPacketTemplateBuilder();
   const template = buildEnrollmentPacketTemplate({
     recipientName: clean(input.caregiverName) ?? "Family Member",
     memberName: input.memberName,
@@ -1693,259 +1692,6 @@ async function recordEnrollmentPacketExpiredIfNeeded(request: EnrollmentPacketRe
   });
 }
 
-async function upsertMemberFileBySource(input: {
-  memberId: string;
-  documentSource: string;
-  fileName: string;
-  fileType: string;
-  dataUrl: string | null;
-  storageUri: string | null;
-  category: string;
-  uploadedByUserId: string | null;
-  uploadedByName: string | null;
-  packetId: string;
-}) {
-  const now = toEasternISO();
-  return upsertMemberFileByDocumentSource({
-    memberId: input.memberId,
-    documentSource: input.documentSource,
-    fileName: input.fileName,
-    fileType: input.fileType,
-    dataUrl: input.dataUrl,
-    storageObjectPath: parseMemberDocumentStorageUri(input.storageUri),
-    category: input.category,
-    uploadedByUserId: input.uploadedByUserId,
-    uploadedByName: input.uploadedByName,
-    uploadedAtIso: now,
-    updatedAtIso: now,
-    additionalColumns: {
-      enrollment_packet_request_id: input.packetId
-    }
-  });
-}
-
-async function insertUploadAndFile(input: {
-  packetId: string;
-  memberId: string;
-  batchId: string;
-  fileName: string;
-  contentType: string;
-  bytes: Buffer;
-  uploadCategory: EnrollmentPacketUploadCategory;
-  uploadedByUserId: string | null;
-  uploadedByName: string | null;
-  dataUrl?: string | null;
-}) {
-  const safeName = safeFileName(input.fileName) || `upload-${randomUUID()}`;
-  const objectPath = `members/${input.memberId}/enrollment-packets/${input.packetId}/${input.uploadCategory}/${randomUUID()}-${slugify(safeName)}`;
-  const storageUri = await uploadMemberDocumentObject({
-    objectPath,
-    bytes: input.bytes,
-    contentType: input.contentType
-  });
-  let memberFile;
-  try {
-    memberFile = await upsertMemberFileBySource({
-      memberId: input.memberId,
-      documentSource: `Enrollment Packet ${input.uploadCategory}:${input.packetId}:${input.batchId}:${safeName}`,
-      fileName: safeName,
-      fileType: input.contentType,
-      dataUrl: input.dataUrl ?? null,
-      storageUri,
-      category: [
-        "insurance",
-        "poa",
-        "medicare_card",
-        "private_insurance",
-        "supplemental_insurance",
-        "poa_guardianship",
-        "dnr_dni_advance_directive",
-        "signed_membership_agreement",
-        "signed_exhibit_a_payment_authorization"
-      ].includes(input.uploadCategory)
-        ? "Legal"
-        : "Admin",
-      uploadedByUserId: input.uploadedByUserId,
-      uploadedByName: input.uploadedByName,
-      packetId: input.packetId
-    });
-  } catch (error) {
-    try {
-      await deleteMemberDocumentObject(objectPath);
-    } catch (cleanupError) {
-      console.error("[enrollment-packets] unable to cleanup orphaned upload object after member_files failure", cleanupError);
-    }
-    throw error;
-  }
-
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin.from("enrollment_packet_uploads").insert({
-    packet_id: input.packetId,
-    member_id: input.memberId,
-    file_path: storageUri,
-    file_name: safeName,
-    file_type: input.contentType,
-    upload_category: input.uploadCategory,
-    member_file_id: memberFile.id,
-    finalization_batch_id: input.batchId,
-    finalization_status: "staged",
-    uploaded_at: toEasternISO()
-  });
-  if (error) {
-    if (memberFile.created) {
-      try {
-        await Promise.all([deleteMemberFileRecord(memberFile.id), deleteMemberDocumentObject(objectPath)]);
-      } catch (cleanupError) {
-        console.error("[enrollment-packets] unable to cleanup upload artifacts after enrollment_packet_uploads failure", cleanupError);
-      }
-    } else {
-      try {
-        await recordImmediateSystemAlert({
-          entityType: "enrollment_packet_request",
-          entityId: input.packetId,
-          severity: "high",
-          alertKey: "enrollment_packet_upload_split_brain",
-          metadata: {
-            upload_category: input.uploadCategory,
-            member_id: input.memberId,
-            member_file_id: memberFile.id,
-            storage_uri: storageUri
-          }
-        });
-      } catch (alertError) {
-        console.error("[enrollment-packets] unable to record split-brain alert", alertError);
-      }
-    }
-
-    const text = String(error.message ?? "").toLowerCase();
-    if (
-      text.includes("enrollment_packet_uploads_upload_category_check") ||
-      text.includes("upload_category") ||
-      isMissingSchemaObjectError(error)
-    ) {
-      throw new Error(
-        buildMissingSchemaMessage({
-          objectName: "enrollment_packet_uploads",
-          migration: "0027_enrollment_packet_intake_mapping.sql"
-        })
-      );
-    }
-    throw new Error(error.message);
-  }
-  return {
-    storageUri,
-    objectPath,
-    memberFileId: memberFile.id,
-    memberFileCreated: memberFile.created
-  };
-}
-
-async function cleanupEnrollmentPacketUploadArtifacts(input: {
-  packetId: string;
-  memberId: string;
-  actorUserId: string | null;
-  reason: string;
-  uploads: Array<{
-    objectPath: string;
-    memberFileId: string | null;
-    memberFileCreated: boolean;
-  }>;
-}) {
-  const reusableArtifacts = input.uploads.filter((upload) => !upload.memberFileCreated && upload.memberFileId);
-  if (reusableArtifacts.length > 0) {
-    await recordImmediateSystemAlert({
-      entityType: "enrollment_packet_request",
-      entityId: input.packetId,
-      actorUserId: input.actorUserId,
-      severity: "high",
-      alertKey: "enrollment_packet_finalize_split_brain",
-      metadata: {
-        member_id: input.memberId,
-        reason: input.reason,
-        reusable_member_file_ids: reusableArtifacts.map((upload) => upload.memberFileId)
-      }
-    });
-  }
-
-  const cleanupTargets = input.uploads.filter((upload) => upload.memberFileCreated);
-  for (const upload of cleanupTargets) {
-    try {
-      if (upload.memberFileId) {
-        await deleteMemberFileRecord(upload.memberFileId);
-      }
-      await deleteMemberDocumentObject(upload.objectPath);
-    } catch (cleanupError) {
-      await recordImmediateSystemAlert({
-        entityType: "enrollment_packet_request",
-        entityId: input.packetId,
-        actorUserId: input.actorUserId,
-        severity: "high",
-        alertKey: "enrollment_packet_finalize_cleanup_failed",
-        metadata: {
-          member_id: input.memberId,
-          reason: input.reason,
-          cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error.",
-          object_path: upload.objectPath,
-          member_file_id: upload.memberFileId
-        }
-      });
-    }
-  }
-}
-
-async function updateEnrollmentPacketMappingSyncState(input: {
-  packetId: string;
-  status: "pending" | "completed" | "failed";
-  attemptedAt: string;
-  error?: string | null;
-  mappingRunId?: string | null;
-}) {
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin
-    .from("enrollment_packet_requests")
-    .update({
-      mapping_sync_status: input.status,
-      mapping_sync_attempted_at: input.attemptedAt,
-      mapping_sync_error: input.status === "failed" ? String(input.error ?? "").trim() || null : null,
-      latest_mapping_run_id: input.mappingRunId ?? null,
-      updated_at: input.attemptedAt
-    })
-    .eq("id", input.packetId);
-  if (error) throw new Error(error.message);
-}
-
-async function buildCompletedPacketDocxData(input: {
-  memberName: string;
-  request: EnrollmentPacketRequestRow;
-  fields: EnrollmentPacketFieldsRow;
-  caregiverSignatureName: string;
-  senderSignatureName: string;
-}) {
-  return buildCompletedEnrollmentPacketDocxData({
-    memberName: input.memberName,
-    packetId: input.request.id,
-    requestedDays: input.fields.requested_days ?? [],
-    transportation: input.fields.transportation,
-    communityFee: safeNumber(input.fields.community_fee),
-    dailyRate: safeNumber(input.fields.daily_rate),
-    caregiverName: input.fields.caregiver_name,
-    caregiverPhone: input.fields.caregiver_phone,
-    caregiverEmail: input.fields.caregiver_email,
-    caregiverAddressLine1: input.fields.caregiver_address_line1,
-    caregiverAddressLine2: input.fields.caregiver_address_line2,
-    caregiverCity: input.fields.caregiver_city,
-    caregiverState: input.fields.caregiver_state,
-    caregiverZip: input.fields.caregiver_zip,
-    secondaryContactName: input.fields.secondary_contact_name,
-    secondaryContactPhone: input.fields.secondary_contact_phone,
-    secondaryContactEmail: input.fields.secondary_contact_email,
-    secondaryContactRelationship: input.fields.secondary_contact_relationship,
-    intakePayload: normalizeStoredIntakePayload(input.fields),
-    caregiverSignatureName: input.caregiverSignatureName,
-    senderSignatureName: input.senderSignatureName
-  });
-}
-
 export async function savePublicEnrollmentPacketProgress(input: {
   token: string;
   caregiverName?: string | null;
@@ -2112,6 +1858,7 @@ export async function submitPublicEnrollmentPacket(input: {
 
   const member = await getMemberById(request.member_id);
   if (!member) throw new Error("Member record was not found.");
+  const artifactOps = await loadEnrollmentPacketArtifactOps();
   let senderSignatureName = "Staff";
   let finalizedAt: string | null = null;
   let uploadBatchId: string | null = null;
@@ -2176,6 +1923,7 @@ export async function submitPublicEnrollmentPacket(input: {
     const fieldsForValidation = await loadPacketFields(request.id);
     if (!fieldsForValidation) throw new Error("Enrollment packet fields were not found.");
     const validationPayload = normalizeStoredIntakePayload(fieldsForValidation);
+    const validateEnrollmentPacketCompletion = await loadEnrollmentPacketCompletionValidator();
     const completionValidation = validateEnrollmentPacketCompletion({
       payload: validationPayload
     });
@@ -2205,7 +1953,7 @@ export async function submitPublicEnrollmentPacket(input: {
       ? String((senderSignature.data as { signer_name: string }).signer_name)
       : "Staff";
 
-    const signatureArtifact = await insertUploadAndFile({
+    const signatureArtifact = await artifactOps.insertUploadAndFile({
       packetId: request.id,
       memberId: member.id,
       batchId: uploadBatchId,
@@ -2229,7 +1977,7 @@ export async function submitPublicEnrollmentPacket(input: {
     });
 
     for (const upload of input.uploads ?? []) {
-      const artifact = await insertUploadAndFile({
+      const artifact = await artifactOps.insertUploadAndFile({
         packetId: request.id,
         memberId: member.id,
         batchId: uploadBatchId,
@@ -2254,14 +2002,15 @@ export async function submitPublicEnrollmentPacket(input: {
 
     const refreshedFields = await loadPacketFields(request.id);
     if (!refreshedFields) throw new Error("Enrollment packet fields are missing.");
-    const packetDocx = await buildCompletedPacketDocxData({
+    const packetDocx = await artifactOps.buildCompletedPacketArtifactData({
       memberName: member.display_name,
       request,
       fields: refreshedFields,
+      intakePayload: normalizeStoredIntakePayload(refreshedFields),
       caregiverSignatureName: caregiverTypedName,
       senderSignatureName
     });
-    const finalPacketArtifact = await insertUploadAndFile({
+    const finalPacketArtifact = await artifactOps.insertUploadAndFile({
       packetId: request.id,
       memberId: member.id,
       batchId: uploadBatchId,
@@ -2315,7 +2064,7 @@ export async function submitPublicEnrollmentPacket(input: {
     });
 
     if (finalizedSubmission.wasAlreadyFiled) {
-      await cleanupEnrollmentPacketUploadArtifacts({
+      await artifactOps.cleanupEnrollmentPacketUploadArtifacts({
         packetId: request.id,
         memberId: member.id,
         actorUserId: request.sender_user_id,
@@ -2335,7 +2084,7 @@ export async function submitPublicEnrollmentPacket(input: {
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete enrollment packet.";
     if (stagedUploads.length > 0) {
-      await cleanupEnrollmentPacketUploadArtifacts({
+      await artifactOps.cleanupEnrollmentPacketUploadArtifacts({
         packetId: request.id,
         memberId: member.id,
         actorUserId: request.sender_user_id,
@@ -2433,7 +2182,7 @@ export async function submitPublicEnrollmentPacket(input: {
       error: reason
     };
     try {
-      await updateEnrollmentPacketMappingSyncState({
+      await artifactOps.updateEnrollmentPacketMappingSyncState({
         packetId: request.id,
         status: "failed",
         attemptedAt,

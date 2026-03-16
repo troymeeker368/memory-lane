@@ -24,14 +24,16 @@ import {
   ENROLLMENT_PACKET_ADL_TRANSFER_OPTIONS,
   ENROLLMENT_PACKET_BEHAVIORAL_OPTIONS,
   ENROLLMENT_PACKET_CONTINENCE_OPTIONS,
-  ENROLLMENT_PACKET_LEGAL_TEXT,
   ENROLLMENT_PACKET_LIVING_SITUATION_OPTIONS,
   ENROLLMENT_PACKET_RECREATIONAL_INTEREST_OPTIONS,
-  ENROLLMENT_PACKET_UPLOAD_FIELDS,
-  ENROLLMENT_PACKET_VETERAN_BRANCH_OPTIONS,
+  ENROLLMENT_PACKET_VETERAN_BRANCH_OPTIONS
+} from "@/lib/services/enrollment-packet-public-options";
+import { ENROLLMENT_PACKET_LEGAL_TEXT } from "@/lib/services/enrollment-packet-legal-text";
+import { ENROLLMENT_PACKET_UPLOAD_FIELDS } from "@/lib/services/enrollment-packet-public-uploads";
+import {
   formatEnrollmentPacketValue,
   validateEnrollmentPacketCompletion
-} from "@/lib/services/enrollment-packet-public-schema";
+} from "@/lib/services/enrollment-packet-public-validation";
 import {
   normalizeEnrollmentPacketIntakePayload,
   type EnrollmentPacketIntakeArrayKey,

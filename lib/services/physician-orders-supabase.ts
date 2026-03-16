@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
-import { buildPofDocumentPdfBytes } from "@/lib/services/pof-document-pdf";
 import {
   DEFAULT_PHYSICIAN_ORDER_RULE_SETTINGS,
   OPHTHALMIC_LATERALITY_OPTIONS,
@@ -51,6 +50,11 @@ export type PhysicianOrderClinicalSyncStatus = "not_signed" | "pending" | "synce
 
 const CREATE_DRAFT_POF_FROM_INTAKE_RPC = "rpc_create_draft_physician_order_from_intake";
 const CREATE_DRAFT_POF_FROM_INTAKE_MIGRATION = "0055_intake_draft_pof_atomic_creation.sql";
+
+async function loadPofDocumentPdfBuilder() {
+  const { buildPofDocumentPdfBytes } = await import("@/lib/services/pof-document-pdf");
+  return buildPofDocumentPdfBytes;
+}
 
 type CreateDraftPofFromIntakeRpcRow = {
   physician_order_id: string;
@@ -1813,6 +1817,7 @@ export async function buildPhysicianOrderPdfDataUrl(
   if (!form) throw new Error("Physician Order Form not found.");
 
   const now = toEasternISO();
+  const buildPofDocumentPdfBytes = await loadPofDocumentPdfBuilder();
   const bytes = await buildPofDocumentPdfBytes({
     form,
     title: "Physician Order Form",

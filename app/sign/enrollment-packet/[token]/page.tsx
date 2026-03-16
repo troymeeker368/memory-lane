@@ -3,7 +3,6 @@ import { headers } from "next/headers";
 import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { EnrollmentPacketPublicForm } from "@/components/enrollment-packets/enrollment-packet-public-form";
 import { Card, CardTitle } from "@/components/ui/card";
-import { getPublicEnrollmentPacketContext } from "@/lib/services/enrollment-packets";
 
 export default async function PublicEnrollmentPacketPage({
   params
@@ -15,6 +14,7 @@ export default async function PublicEnrollmentPacketPage({
   const forwardedFor = headerMap.get("x-forwarded-for");
   const ip = forwardedFor ? forwardedFor.split(",")[0].trim() : null;
   const userAgent = headerMap.get("user-agent");
+  const { getPublicEnrollmentPacketContext } = await import("@/lib/services/enrollment-packets");
   const context = await getPublicEnrollmentPacketContext(token, { ip, userAgent });
 
   if (context.state === "invalid") {

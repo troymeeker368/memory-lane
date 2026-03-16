@@ -1,6 +1,5 @@
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { Resend } from "resend";
 
 import {
   getPhysicianOrderById,
@@ -17,7 +16,6 @@ import {
   parseMemberDocumentStorageUri,
   uploadMemberDocumentObject
 } from "@/lib/services/member-files";
-import { buildPofDocumentPdfBytes } from "@/lib/services/pof-document-pdf";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
@@ -39,6 +37,16 @@ export type PofRequestStatus = (typeof POF_REQUEST_STATUS_VALUES)[number];
 
 const TOKEN_BYTE_LENGTH = 32;
 const RPC_FINALIZE_POF_SIGNATURE = "rpc_finalize_pof_signature";
+
+async function createResendClient() {
+  const { Resend } = await import("resend");
+  return new Resend(process.env.RESEND_API_KEY);
+}
+
+async function loadPofDocumentPdfBuilder() {
+  const { buildPofDocumentPdfBytes } = await import("@/lib/services/pof-document-pdf");
+  return buildPofDocumentPdfBytes;
+}
 
 type PofRequestRow = {
   id: string;
@@ -513,7 +521,7 @@ async function sendSignatureEmail(input: {
     requireResend: true
   });
 
-  const resend = new Resend(process.env.RESEND_API_KEY);
+  const resend = await createResendClient();
   const clinicalSenderEmail = getConfiguredClinicalSenderEmail();
   if (!clinicalSenderEmail) {
     throw new Error("Clinical sender email is missing or invalid. Configure CLINICAL_SENDER_EMAIL.");
@@ -763,6 +771,7 @@ async function buildSignedPdfBytes(input: {
   signatureContentType: string;
   signedAt: string;
 }) {
+  const buildPofDocumentPdfBytes = await loadPofDocumentPdfBuilder();
   return buildPofDocumentPdfBytes({
     form: input.pofPayload,
     title: "Physician Order Form",
@@ -921,6 +930,7 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
   const now = toEasternISO();
   const expiresAt = toIsoAtEndOfDate(input.expiresOnDate);
   const requestId = randomUUID();
+  const buildPofDocumentPdfBytes = await loadPofDocumentPdfBuilder();
   const unsignedPdfBytes = await buildPofDocumentPdfBytes({
     form,
     title: "Physician Order Form",
@@ -1228,6 +1238,7 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
   const hashedToken = hashToken(token);
   const signatureRequestUrl = `${buildAppBaseUrl(input.appBaseUrl)}/sign/pof/${token}`;
 
+  const buildPofDocumentPdfBytes = await loadPofDocumentPdfBuilder();
   const unsignedPdfBytes = await buildPofDocumentPdfBytes({
     form,
     title: "Physician Order Form",

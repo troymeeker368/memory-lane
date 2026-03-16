@@ -19,6 +19,15 @@ Windows helpers:
 - `netstat -ano | findstr :3001`
 - `taskkill /PID <PID> /F`
 
+## Build Performance Guardrails
+
+- Treat webpack cache warnings, including `webpack.cache.PackFileCacheStrategy` big-string warnings, as real regressions to diagnose, not noise to suppress.
+- Do not let shared service modules become oversized multi-concern files that mix canonical reads/writes with PDF builders, email templates, giant mappings, legal text, or large static constants.
+- When a service starts mixing reads, writes, templates, builders, constants, or schema-like payloads, split it into narrower domain files before adding more logic.
+- Keep large templates, legal text, mappings, config payloads, and document builders out of hot top-level service imports. Prefer narrower imports or lazy server-only imports when behavior is unchanged.
+- Avoid broad package-root imports when a narrower import or delayed import is available and materially reduces build weight.
+- Use `npm run audit:module-sizes` when touching large service or schema files, and investigate the top offenders before accepting new size growth.
+
 ## Supabase Source of Truth
 
 - Supabase is the only supported runtime backend.
