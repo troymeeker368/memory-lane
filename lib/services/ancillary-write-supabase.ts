@@ -160,6 +160,31 @@ export async function updateAncillaryCategoryPriceSupabase(input: {
   };
 }
 
+export async function getAncillaryChargeCategoryByNameSupabase(categoryName: string) {
+  const normalizedName = categoryName.trim();
+  if (!normalizedName) {
+    throw new Error("Ancillary charge category name is required.");
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("ancillary_charge_categories")
+    .select("id, name")
+    .ilike("name", normalizedName)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data
+    ? {
+        id: String(data.id),
+        name: String(data.name ?? "")
+      }
+    : null;
+}
+
 export async function updateToiletLogWithAncillarySync(input: UpdateToiletLogWithAncillarySyncInput) {
   const supabase = await createClient();
   const { data: existingRow, error: existingError } = await supabase

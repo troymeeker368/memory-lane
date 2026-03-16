@@ -212,7 +212,7 @@ function escapeIlike(value: string) {
   return value.replace(/[%,_]/g, (match) => `\\${match}`);
 }
 
-async function fetchLeadByIdSupabase(leadId: string) {
+export async function getSalesLeadByIdSupabase(leadId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("leads")
@@ -542,7 +542,7 @@ export async function getSalesFormLookupsSupabase(options?: {
   const referralRows = [...(referralSources as SalesReferralSourceRow[])];
 
   if (options?.includeLeadId && !leadRows.some((row) => row.id === options.includeLeadId)) {
-    const extraLead = await fetchLeadByIdSupabase(options.includeLeadId);
+    const extraLead = await getSalesLeadByIdSupabase(options.includeLeadId);
     if (extraLead) {
       leadRows.unshift({
         id: extraLead.id,

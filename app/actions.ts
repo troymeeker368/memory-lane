@@ -28,6 +28,7 @@ import {
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import {
   createAncillaryChargeSupabase,
+  getAncillaryChargeCategoryByNameSupabase,
   updateAncillaryCategoryPriceSupabase,
   updateToiletLogWithAncillarySync
 } from "@/lib/services/ancillary-write-supabase";
@@ -61,6 +62,12 @@ import {
 } from "@/lib/services/documentation-write-supabase";
 import { parseBusNumbersInput, updateOperationalSettings } from "@/lib/services/operations-settings";
 import { updateMemberStatusSupabase } from "@/lib/services/member-status-supabase";
+import {
+  getStaffNameByIdSupabase,
+  listActiveMemberLookupSupabase,
+  listStaffLookupSupabase
+} from "@/lib/services/shared-lookups-supabase";
+import { getSalesLeadByIdSupabase } from "@/lib/services/sales-crm-supabase";
 import { legacyLeadActivityInputSchema, normalizeLegacyLeadActivityInput } from "@/lib/services/sales-lead-activities";
 import { createTimePunchSupabase } from "@/lib/services/time-punches";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
@@ -378,17 +385,41 @@ type LegacyLeadRecord = {
 };
 
 async function getLegacyLeadRecordById(leadId: string): Promise<{ lead: LegacyLeadRecord | null; error?: string }> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("leads")
-    .select(
-      "id, stage, status, inquiry_date, caregiver_name, caregiver_relationship, caregiver_email, caregiver_phone, member_name, member_dob, lead_source, lead_source_other, partner_id, referral_source_id, referral_name, likelihood, next_follow_up_date, next_follow_up_type, tour_date, tour_completed, discovery_date, member_start_date, notes_summary, lost_reason, closed_date"
-    )
-    .eq("id", leadId)
-    .maybeSingle();
-
-  if (error) return { lead: null, error: error.message };
-  return { lead: (data as LegacyLeadRecord | null) ?? null };
+  try {
+    const lead = await getSalesLeadByIdSupabase(leadId);
+    if (!lead) return { lead: null };
+    return {
+      lead: {
+        id: lead.id,
+        stage: lead.stage,
+        status: lead.status,
+        inquiry_date: lead.inquiry_date ?? "",
+        caregiver_name: lead.caregiver_name ?? "",
+        caregiver_relationship: lead.caregiver_relationship,
+        caregiver_email: lead.caregiver_email,
+        caregiver_phone: lead.caregiver_phone ?? "",
+        member_name: lead.member_name ?? "",
+        member_dob: lead.member_dob,
+        lead_source: lead.lead_source ?? "",
+        lead_source_other: lead.lead_source_other,
+        partner_id: lead.partner_id,
+        referral_source_id: lead.referral_source_id,
+        referral_name: lead.referral_name,
+        likelihood: lead.likelihood,
+        next_follow_up_date: lead.next_follow_up_date,
+        next_follow_up_type: lead.next_follow_up_type,
+        tour_date: lead.tour_date,
+        tour_completed: Boolean(lead.tour_completed),
+        discovery_date: lead.discovery_date,
+        member_start_date: lead.member_start_date,
+        notes_summary: lead.notes_summary,
+        lost_reason: lead.lost_reason,
+        closed_date: lead.closed_date
+      }
+    };
+  } catch (error) {
+    return { lead: null, error: error instanceof Error ? error.message : "Unable to load lead." };
+  }
 }
 
 function buildLegacyLeadSavePayload(input: LegacyLeadSaveInput): Parameters<typeof saveSalesLeadAction>[0] {
@@ -692,16 +723,13 @@ export async function createToiletLogAction(raw: z.infer<typeof toiletSchema>) {
 
   await insertAudit("create_log", "toilet_log", created.id, payload.data);
   let warning: string | null = null;
-  const supabase = await createClient();
 
   if (payload.data.briefs && !payload.data.memberSupplied) {
-    const { data: briefsCategory, error: briefsCategoryError } = await supabase
-      .from("ancillary_charge_categories")
-      .select("id, name")
-      .ilike("name", "briefs")
-      .maybeSingle();
-    if (briefsCategoryError) {
-      warning = `Toilet log saved, but briefs ancillary category lookup failed (${briefsCategoryError.message}).`;
+    let briefsCategory: Awaited<ReturnType<typeof getAncillaryChargeCategoryByNameSupabase>> = null;
+    try {
+      briefsCategory = await getAncillaryChargeCategoryByNameSupabase("briefs");
+    } catch (error) {
+      warning = `Toilet log saved, but briefs ancillary category lookup failed (${error instanceof Error ? error.message : "Unknown error"}).`;
     }
     if (briefsCategory && !warning) {
       const ancillaryResult = await createAncillaryChargeAction({
@@ -1050,7 +1078,6 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     return { error: "Only nurse or admin users may electronically sign Intake Assessments." };
   }
   const signerName = await getManagedUserSignatureName(profile.id, profile.full_name);
-  const supabase = await createClient();
   if (process.env.NODE_ENV !== "production") {
     console.info("[createAssessmentAction] selected identity payload", {
       sourceType: payload.data.sourceType ?? "",
@@ -1092,13 +1119,11 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
 
   const effectiveMemberId = canonicalIdentity.memberId;
   const leadId = canonicalIdentity.leadId;
-  const { data: leadRow, error: leadLookupError } = await supabase
-    .from("leads")
-    .select("id, stage, status")
-    .eq("id", leadId)
-    .maybeSingle();
-  if (leadLookupError) {
-    return { error: `Unable to resolve canonical lead.id for intake assessment. ${leadLookupError.message}` };
+  let leadRow: Awaited<ReturnType<typeof getSalesLeadByIdSupabase>> = null;
+  try {
+    leadRow = await getSalesLeadByIdSupabase(leadId);
+  } catch (error) {
+    return { error: `Unable to resolve canonical lead.id for intake assessment. ${error instanceof Error ? error.message : "Unknown error"}` };
   }
   if (!leadRow) {
     return { error: "createAssessmentAction expected lead.id, but canonical lead lookup returned no row." };
@@ -1286,9 +1311,8 @@ export async function updateLeadStatusAction(raw: z.infer<typeof leadStatusSchem
     return { error: "Invalid lead status update." };
   }
 
-  const supabase = await createClient();
-  const { data: lead, error } = await supabase.from("leads").select("*").eq("id", payload.data.leadId).maybeSingle();
-  if (error) return { error: error.message };
+  const { lead, error } = await getLegacyLeadRecordById(payload.data.leadId);
+  if (error) return { error };
   if (!lead) return { error: "Lead not found." };
   const nextStage = normalizeLegacyLeadStageOption(payload.data.stage);
   const nextStatus = normalizeLegacyLeadStatusOption(payload.data.status, nextStage);
@@ -1326,24 +1350,15 @@ export async function updateLeadStatusAction(raw: z.infer<typeof leadStatusSchem
 }
 
 export async function getStaffLookup() {
-  const supabase = await createClient();
-  const { data, error } = await supabase.from("profiles").select("id, full_name, role").order("full_name");
-  if (error) throw new Error(error.message);
-  return (data ?? []).map((row) => ({ id: row.id, full_name: row.full_name, role: row.role }));
+  return listStaffLookupSupabase();
 }
 
 export async function getMemberLookup() {
-  const supabase = await createClient();
-  const { data, error } = await supabase.from("members").select("id, display_name, status").eq("status", "active");
-  if (error) throw new Error(error.message);
-  return (data ?? []).map((row) => ({ id: row.id, display_name: row.display_name }));
+  return listActiveMemberLookupSupabase();
 }
 
 export async function resolveStaffName(staffId: string) {
-  const supabase = await createClient();
-  const { data, error } = await supabase.from("profiles").select("full_name").eq("id", staffId).maybeSingle();
-  if (error) throw new Error(error.message);
-  return data?.full_name ?? null;
+  return getStaffNameByIdSupabase(staffId);
 }
 
 
@@ -1581,9 +1596,8 @@ export async function updateLeadDetailsAction(raw: { id: string; stage: string; 
   if (!payload.success) return { error: "Invalid lead update." };
   const editor = await requireManagerAdminEditor();
   if ("error" in editor) return editor;
-  const supabase = await createClient();
-  const { data: existingLead, error } = await supabase.from("leads").select("*").eq("id", payload.data.id).maybeSingle();
-  if (error) return { error: error.message };
+  const { lead: existingLead, error } = await getLegacyLeadRecordById(payload.data.id);
+  if (error) return { error };
   if (!existingLead) return { error: "Lead not found." };
   const nextStage = normalizeLegacyLeadStageOption(payload.data.stage);
   const nextStatus = normalizeLegacyLeadStatusOption(payload.data.status, nextStage);
