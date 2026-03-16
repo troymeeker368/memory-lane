@@ -13,7 +13,6 @@ import {
   PERMISSION_MODULES,
   resolveEffectivePermissionSet
 } from "@/lib/permissions";
-import { getManagedUserById } from "@/lib/services/user-management";
 import { createClient } from "@/lib/supabase/server";
 import { isDevAuthBypassEnabled } from "@/lib/runtime";
 
@@ -300,9 +299,4 @@ export async function getCurrentProfileForRolesOrError(roles: AppRole[], errorMe
     return { error: errorMessage } as const;
   }
   return profile;
-}
-
-export async function getCurrentManagedUser() {
-  const profile = await getCurrentProfile();
-  return await getManagedUserById(profile.id);
 }
