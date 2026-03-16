@@ -1,5 +1,5 @@
 import { QuickEditShower } from "@/components/forms/record-actions";
-import { ShowerLogForm } from "@/components/forms/workflow-forms";
+import { ShowerLogFormShell } from "@/components/forms/workflow-forms-shells";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
@@ -20,7 +20,7 @@ export default async function ShowerLogPage() {
       <Card>
         <CardTitle>Shower Log Entry</CardTitle>
         <p className="mt-1 text-sm text-muted">Capture shower completion, laundry support, and briefs changes.</p>
-        <div className="mt-3"><ShowerLogForm members={members} /></div>
+        <div className="mt-3"><ShowerLogFormShell members={members} /></div>
       </Card>
 
       <MobileList items={workflows.showers.map((row: any) => ({ id: row.id, title: row.member_name, fields: [{ label: "When", value: formatDateTime(row.event_at) }, { label: "Laundry", value: row.laundry ? "Yes" : "No" }, { label: "Briefs", value: row.briefs ? "Yes" : "No" }, ...(showStaffColumn ? [{ label: "Staff", value: row.staff_name }] : [])] }))} />

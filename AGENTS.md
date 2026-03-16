@@ -21,12 +21,20 @@ Windows helpers:
 
 ## Build Performance Guardrails
 
-- Treat webpack cache warnings, including `webpack.cache.PackFileCacheStrategy` big-string warnings, as real regressions to diagnose, not noise to suppress.
-- Do not let shared service modules become oversized multi-concern files that mix canonical reads/writes with PDF builders, email templates, giant mappings, legal text, or large static constants.
-- When a service starts mixing reads, writes, templates, builders, constants, or schema-like payloads, split it into narrower domain files before adding more logic.
-- Keep large templates, legal text, mappings, config payloads, and document builders out of hot top-level service imports. Prefer narrower imports or lazy server-only imports when behavior is unchanged.
+- Treat webpack cache warnings, including `webpack.cache.PackFileCacheStrategy` big-string warnings, oversized compiled-module warnings, and unusual bundle growth as real regressions to diagnose, not noise to suppress.
+- Oversized multi-concern shared service files are forbidden. Canonical services must not become catch-all modules that mix business reads/writes with PDF builders, email templates, legal text, giant mappings, schema-like constants, or other large static payloads.
+- Guardrail: if a shared service starts serving as both the hot orchestration layer and the storage location for large templates, document builders, mapping payloads, or static config, split it by concern before adding more behavior. Do not wait for a hard build failure before separating it.
+- Keep large templates, legal text, mappings, config payloads, and document builders out of hot top-level service imports. Move them into narrower modules or lazy server-only imports when runtime behavior is unchanged.
 - Avoid broad package-root imports when a narrower import or delayed import is available and materially reduces build weight.
 - Use `npm run audit:module-sizes` when touching large service or schema files, and investigate the top offenders before accepting new size growth.
+- Major refactors that touch already-large service modules must run `npm run audit:module-sizes` and explain any accepted size growth or retained hotspots in the completion report.
+
+## Production Safety Checks
+
+- Typecheck, lint, and build protections are part of production safety and should stay enabled when feasible.
+- Temporary ignores or bypasses for type, lint, build, or other release-safety checks must be treated as short-lived debt, not a steady-state solution.
+- When a stabilization or refactor pass touches code behind an existing ignore, prefer fixing the underlying issue and re-enabling the protection in the same pass when scope allows.
+- If a production-safety check cannot be re-enabled yet, report the exact check, scope, and blocker explicitly instead of leaving the repo in a silent degraded state.
 
 ## Supabase Source of Truth
 

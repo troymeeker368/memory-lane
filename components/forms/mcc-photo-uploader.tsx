@@ -3,7 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { updateMemberCommandCenterPhotoAction } from "@/app/(portal)/operations/member-command-center/actions";
+import { updateMemberCommandCenterPhotoAction } from "@/app/(portal)/operations/member-command-center/summary-actions";
 
 const MAX_MEMBER_PHOTO_BYTES = 5 * 1024 * 1024;
 

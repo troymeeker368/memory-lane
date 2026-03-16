@@ -114,6 +114,7 @@ This document defines canonical ownership boundaries by domain so implementation
   - public routes writing directly to many tables without single transactional boundary
   - status updates not aligned to persisted artifacts
   - duplicate token or completion replay paths
+  - packet orchestration modules absorbing public schema payloads, mapping constants, or artifact builders instead of splitting by concern
 
 ### 3) Members
 
@@ -199,6 +200,7 @@ This document defines canonical ownership boundaries by domain so implementation
   - parallel sign flows bypassing RPC
   - unsigned/expired request being treated as signed
   - unqueued post-sign sync after successful signature
+  - canonical order services growing into mixed orchestration + document content + PDF builder modules instead of keeping those concerns isolated
 
 ### 6) Member Health Profiles (MHP)
 
@@ -235,6 +237,7 @@ This document defines canonical ownership boundaries by domain so implementation
   - duplicated POF->MHP field mapping in UI/action code
   - partial replacement of diagnosis/medication/allergy sets
   - directionality confusion (POF-authored vs MHP-authored fields)
+  - hot profile services accumulating giant mapping payloads or directory/static config blobs that should live in narrower modules
 
 ### 7) Member Command Center (MCC)
 
@@ -303,6 +306,7 @@ This document defines canonical ownership boundaries by domain so implementation
   - marking signed before final artifact persistence
   - signature state transitions set manually
   - bypassing shared caregiver-link status rules
+  - e-sign orchestrators absorbing document builders, signature templates, or artifact content instead of splitting heavy static concerns out
 
 ### 9) MAR
 
@@ -425,6 +429,7 @@ This document defines canonical ownership boundaries by domain so implementation
   - recalculations outside canonical billing service
   - overlap rules bypassed
   - disconnected pricing snapshot vs runtime tables
+  - billing services absorbing export builders, proration mappings, or large rate/config payloads into hot orchestration modules
 
 ### 13) Permissions / Profiles
 
@@ -494,6 +499,10 @@ This document defines canonical ownership boundaries by domain so implementation
   - Care Plans + Member Files + signature events + Notifications
 - Billing batch generation
   - Billing + Attendance + Transportation + Ancillary + Members/Payors
+
+Cross-domain workflow build guardrail:
+- canonical orchestrators own sequencing, transaction boundaries, and completion rules
+- artifact builders, templates, PDF content, and large mapping payloads should be delegated to narrower modules instead of embedded directly into hot orchestrators when narrower imports are possible
 
 ## Workflows That Should Use Shared RPC
 
@@ -579,18 +588,21 @@ Lifecycle notes:
   - never convert lead/member outside canonical conversion service + RPC.
 - Enrollment Packets
   - never mark completed/filed unless signature + packet artifacts + required downstream persistence succeed.
+  - split packet orchestration from large public schemas, mapping payloads, and artifact builders before the service becomes a hot build hazard.
 - Members
   - never infer identity from name/text; always resolve canonical ids.
 - Intake
   - never treat unsigned intake as finalized clinical source.
 - POF
   - never bypass RPC finalize/sign path for provider signatures.
+  - keep document content/PDF generation isolated from hot sign/finalize orchestration modules when narrower service files are possible.
 - MHP
   - never duplicate POF->MHP mapping rules outside shared mapping owner.
 - MCC
   - never duplicate cross-profile sync rules in UI code.
 - Care Plans
   - never mark signed/completed before final artifact persistence.
+  - keep signature orchestration, document builders, and template/static content separated when module growth starts mixing concerns.
 - MAR
   - never document administration without schedule/source integrity checks.
 - Member Files
@@ -599,6 +611,7 @@ Lifecycle notes:
   - never rely on UI-only notification state for workflow outcomes.
 - Billing / Pricing
   - never compute invoices from ad hoc local logic outside canonical billing service.
+  - split export builders, pricing payloads, and heavy mapping/config logic out of hot billing orchestrators before bundle weight drifts upward.
 - Permissions / Profiles
   - never bypass canonical guard helpers at action boundaries.
 - System Events

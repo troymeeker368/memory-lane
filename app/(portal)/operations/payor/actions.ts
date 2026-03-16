@@ -268,7 +268,8 @@ export async function deleteCenterClosureAction(formData: FormData) {
   revalidateBillingPaths();
 }
 
-export async function ensureCenterClosuresAction(_formData: FormData) {
+export async function ensureCenterClosuresAction(formData: FormData) {
+  void formData;
   const profile = await requireBillingProfile();
   await ensureCenterClosuresForCurrentAndNextYear({
     generatedByUserId: profile.id,

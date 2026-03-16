@@ -46,8 +46,18 @@ Required write path:
 Forbidden:
 - UI direct Supabase writes
 - business writes in actions/routes that bypass service layer
+- read-only transformation logic in actions/routes that redefines canonical mappings, status derivation, or downstream payload shaping
 - duplicate business-rule logic across modules
 - parallel write paths for the same business concept
+
+## Build Health and Module Shape
+
+Architecture includes build shape, not just runtime correctness.
+
+- Hot canonical services must stay focused on orchestration, persistence, and invariant enforcement so they compile and cache predictably.
+- Large templates, document builders, legal text, giant mappings, schema-like constants, and other static payloads must be isolated from hot shared service modules and imported narrowly.
+- Actions and route handlers remain thin even for read-only flows. If local transformation logic defines canonical fields, status rules, cross-domain mappings, or heavy payload shaping, move it into shared resolver/service or narrower helper modules instead of letting routes accumulate drift.
+- Warnings indicating webpack cache serialization problems, oversized compiled modules, or tree-shaking regressions are architecture issues and must be fixed at the module-boundary level rather than suppressed.
 
 ## Schema Drift Prevention
 
@@ -290,6 +300,7 @@ A feature is complete only when all are true:
 - downstream consumers use canonical records
 - `npm run typecheck` passes
 - `npm run build` passes
+- no unresolved build-shape regression was introduced in hot canonical modules
 
 ## Architecture Violations (Forbidden)
 

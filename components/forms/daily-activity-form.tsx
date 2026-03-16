@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 
-import { createDailyActivityAction } from "@/app/actions";
+import { createDailyActivityAction } from "@/app/documentation-actions";
 import { Button } from "@/components/ui/button";
 import { PARTICIPATION_LEVEL_OPTIONS, PARTICIPATION_MISSING_REASONS } from "@/lib/canonical";
 import { toEasternDate } from "@/lib/timezone";

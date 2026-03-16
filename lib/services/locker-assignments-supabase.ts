@@ -2,13 +2,6 @@ import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternISO } from "@/lib/timezone";
 
-type MemberLockerRow = {
-  id: string;
-  display_name: string;
-  status: "active" | "inactive" | null;
-  locker_number: string | null;
-};
-
 export async function assignLockerToMemberSupabase(input: {
   memberId: string;
   lockerNumber: string;

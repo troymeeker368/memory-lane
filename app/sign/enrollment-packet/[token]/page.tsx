@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 
 import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
-import { EnrollmentPacketPublicForm } from "@/components/enrollment-packets/enrollment-packet-public-form";
+import { EnrollmentPacketPublicFormShell } from "@/components/enrollment-packets/enrollment-packet-public-form-shell";
 import { Card, CardTitle } from "@/components/ui/card";
 
 export default async function PublicEnrollmentPacketPage({
@@ -63,7 +63,7 @@ export default async function PublicEnrollmentPacketPage({
         </p>
       </Card>
       <Card>
-        <EnrollmentPacketPublicForm token={token} fields={context.fields} />
+        <EnrollmentPacketPublicFormShell token={token} fields={context.fields} />
       </Card>
     </div>
   );

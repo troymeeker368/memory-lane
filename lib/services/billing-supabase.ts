@@ -338,12 +338,6 @@ function addMonths(dateOnly: string, months: number) {
   return parsed.toISOString().slice(0, 10);
 }
 
-function addYears(dateOnly: string, years: number) {
-  const parsed = new Date(`${normalizeDateOnly(dateOnly)}T00:00:00.000Z`);
-  parsed.setUTCFullYear(parsed.getUTCFullYear() + years);
-  return parsed.toISOString().slice(0, 10);
-}
-
 function endOfMonth(value: string | null | undefined) {
   const parsed = new Date(`${startOfMonth(value)}T00:00:00.000Z`);
   parsed.setUTCMonth(parsed.getUTCMonth() + 1, 0);
@@ -613,20 +607,6 @@ async function getNonBillableCenterClosureSet(range: DateRange) {
     throw new Error(error.message);
   }
   return new Set((data ?? []).map((row: any) => normalizeDateOnly(row.closure_date)));
-}
-
-async function isDateCoveredForType(memberId: string, dateOnly: string, coverageType: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment") {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("billing_coverages")
-    .select("id")
-    .eq("member_id", memberId)
-    .eq("coverage_type", coverageType)
-    .lte("coverage_start_date", dateOnly)
-    .gte("coverage_end_date", dateOnly)
-    .limit(1);
-  if (error) throw new Error(error.message);
-  return (data ?? []).length > 0;
 }
 
 export async function listClosureRules() {

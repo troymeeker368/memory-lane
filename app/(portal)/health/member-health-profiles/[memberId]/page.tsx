@@ -41,8 +41,8 @@ import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 import {
   saveMhpCognitiveBehaviorAction,
   saveMhpFunctionalAction,
-  saveMhpMedicalAction,
-} from "@/app/(portal)/health/member-health-profiles/actions";
+  saveMhpMedicalAction
+} from "@/app/(portal)/health/member-health-profiles/profile-actions";
 
 function firstString(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0];

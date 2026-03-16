@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { saveMhpLegalAction } from "@/app/(portal)/health/member-health-profiles/actions";
+import { saveMhpLegalAction } from "@/app/(portal)/health/member-health-profiles/profile-actions";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 
 function boolToSelectValue(value: boolean | null | undefined) {

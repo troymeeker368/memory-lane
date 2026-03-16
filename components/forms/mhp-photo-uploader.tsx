@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 
-import { updateMhpPhotoAction } from "@/app/(portal)/health/member-health-profiles/actions";
+import { updateMhpPhotoAction } from "@/app/(portal)/health/member-health-profiles/profile-actions";
 
 const MAX_MEMBER_PHOTO_BYTES = 5 * 1024 * 1024;
 

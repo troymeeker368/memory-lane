@@ -853,7 +853,7 @@ export async function getAttendanceSummaryReport(input: AttendanceSummaryInput):
     );
   });
 
-  let revenueModeApplied: AttendanceSummaryRevenueBasis = input.revenueBasis;
+  const revenueModeApplied: AttendanceSummaryRevenueBasis = input.revenueBasis;
   const finalizedRevenueByMember = new Map<string, number>();
   if (input.revenueBasis === "FinalizedRevenue") {
     const supabase = await createClient();

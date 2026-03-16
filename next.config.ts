@@ -70,12 +70,6 @@ class BuildStatsReportPlugin {
 
 const nextConfig: NextConfig = {
   typedRoutes: false,
-  eslint: {
-    ignoreDuringBuilds: true
-  },
-  typescript: {
-    ignoreBuildErrors: true
-  },
   experimental: {
     serverActions: {
       bodySizeLimit: "8mb"

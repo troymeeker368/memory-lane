@@ -6,7 +6,7 @@ import {
   addMhpNoteInlineAction,
   deleteMhpNoteInlineAction,
   updateMhpNoteInlineAction
-} from "@/app/(portal)/health/member-health-profiles/actions";
+} from "@/app/(portal)/health/member-health-profiles/note-actions";
 import { MhpEditModal } from "@/components/forms/mhp-edit-modal";
 import { formatDateTime } from "@/lib/utils";
 

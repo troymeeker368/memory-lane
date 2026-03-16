@@ -658,27 +658,6 @@ async function createCarePlanVersionSnapshot(input: {
   }
 }
 
-async function syncCarePlanSectionsToCanonical(
-  carePlanId: string,
-  track: CarePlanTrack,
-  sections: CarePlanSectionInput[] | null | undefined,
-  serviceRole = false
-) {
-  const supabase = await createClient({ serviceRole });
-  const normalizedSections = buildNormalizedSectionsForTrack(track, sections).map((section) => ({
-    care_plan_id: carePlanId,
-    section_type: section.sectionType,
-    short_term_goals: section.shortTermGoals,
-    long_term_goals: section.longTermGoals,
-    display_order: section.displayOrder,
-    updated_at: toEasternISO()
-  }));
-  const { error } = await supabase
-    .from("care_plan_sections")
-    .upsert(normalizedSections, { onConflict: "care_plan_id,section_type" });
-  if (error) throw new Error(error.message);
-}
-
 async function upsertCarePlanCore(input: {
   carePlanId?: string | null;
   memberId: string;

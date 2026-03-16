@@ -1,4 +1,4 @@
-import type { EnrollmentPacketIntakeFieldKey, EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
+import type { EnrollmentPacketIntakeFieldKey } from "@/lib/services/enrollment-packet-intake-payload";
 import {
   ENROLLMENT_PACKET_ADL_AMBULATION_OPTIONS,
   ENROLLMENT_PACKET_ADL_BATHING_OPTIONS,

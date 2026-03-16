@@ -1,5 +1,5 @@
 import { QuickEditTransportation } from "@/components/forms/record-actions";
-import { TransportationLogForm } from "@/components/forms/workflow-forms";
+import { TransportationLogFormShell } from "@/components/forms/workflow-forms-shells";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
@@ -20,7 +20,7 @@ export default async function TransportationLogPage() {
       <Card>
         <CardTitle>Transportation Log Entry</CardTitle>
         <p className="mt-1 text-sm text-muted">Transport options are workbook-controlled: Door to door, Bus stop, Refused/no show.</p>
-        <div className="mt-3"><TransportationLogForm members={members} /></div>
+        <div className="mt-3"><TransportationLogFormShell members={members} /></div>
       </Card>
 
       <MobileList items={workflows.transportation.map((row: any) => ({ id: row.id, title: row.member_name, fields: [{ label: "Date", value: formatDate(row.service_date) }, { label: "AM/PM", value: row.period }, { label: "Type", value: row.transport_type }, ...(showStaffColumn ? [{ label: "Staff", value: row.staff_name }] : [])] }))} />

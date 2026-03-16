@@ -1,4 +1,4 @@
-"use server";
+import "server-only";
 
 import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
@@ -86,11 +86,6 @@ function normalizeLockerInput(raw: string) {
     }
   }
   return normalized.toUpperCase();
-}
-
-function normalizeBusStopName(value: string | null | undefined) {
-  const normalized = (value ?? "").trim().replace(/\s+/g, " ");
-  return normalized.length > 0 ? normalized : null;
 }
 
 async function asUploadedImageDataUrl(formData: FormData, key: string, fallback: string | null) {
@@ -1011,7 +1006,7 @@ export async function addMemberCommandCenterAllergyInlineAction(formData: FormDa
 
 export async function updateMemberCommandCenterAllergyInlineAction(formData: FormData) {
   try {
-    const actor = await requireCommandCenterEditor();
+    await requireCommandCenterEditor();
     const memberId = asString(formData, "memberId");
     const allergyId = asString(formData, "allergyId");
     if (!memberId || !allergyId) return { ok: false, error: "Missing allergy reference." };
@@ -1043,7 +1038,7 @@ export async function updateMemberCommandCenterAllergyInlineAction(formData: For
 
 export async function deleteMemberCommandCenterAllergyInlineAction(formData: FormData) {
   try {
-    const actor = await requireCommandCenterEditor();
+    await requireCommandCenterEditor();
     const memberId = asString(formData, "memberId");
     const allergyId = asString(formData, "allergyId");
     if (!memberId || !allergyId) return { ok: false, error: "Missing allergy reference." };

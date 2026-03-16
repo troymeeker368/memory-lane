@@ -3,7 +3,7 @@ import "server-only";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { toEasternDate, toEasternISO } from "@/lib/timezone";
+import { toEasternISO } from "@/lib/timezone";
 import { buildCarePlanPdfDataUrl } from "@/lib/services/care-plan-pdf";
 import {
   DOCUMENT_CENTER_NAME,

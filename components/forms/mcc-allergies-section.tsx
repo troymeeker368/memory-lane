@@ -6,7 +6,7 @@ import {
   addMemberCommandCenterAllergyInlineAction,
   deleteMemberCommandCenterAllergyInlineAction,
   updateMemberCommandCenterAllergyInlineAction
-} from "@/app/(portal)/operations/member-command-center/actions";
+} from "@/app/(portal)/operations/member-command-center/allergy-actions";
 import { MhpEditModal } from "@/components/forms/mhp-edit-modal";
 
 type AllergyRow = {

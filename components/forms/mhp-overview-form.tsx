@@ -2,7 +2,7 @@
 
 import { type ChangeEvent } from "react";
 
-import { saveMhpOverviewAction } from "@/app/(portal)/health/member-health-profiles/actions";
+import { saveMhpOverviewAction } from "@/app/(portal)/health/member-health-profiles/profile-actions";
 import { SegmentedChoiceGroup } from "@/components/forms/segmented-choice-group";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 import { formatPhoneInput } from "@/lib/phone";

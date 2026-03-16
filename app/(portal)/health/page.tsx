@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { BloodSugarForm } from "@/components/forms/workflow-forms";
+import { BloodSugarFormShell } from "@/components/forms/workflow-forms-shells";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
@@ -190,7 +190,7 @@ export default async function HealthPage() {
       <Card>
         <CardTitle>Blood Sugar Testing Entry</CardTitle>
         <div className="mt-3">
-          <BloodSugarForm members={members} />
+          <BloodSugarFormShell members={members} />
         </div>
       </Card>
 

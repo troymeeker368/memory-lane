@@ -1170,7 +1170,7 @@ async function resolveSendContext(input: {
     throw new Error("sendEnrollmentPacketRequest expected lead.id but canonical lead resolution returned empty leadId.");
   }
 
-  let member = await ensureCanonicalMemberForLead({
+  const member = await ensureCanonicalMemberForLead({
     leadId: canonicalLead.leadId,
     actionLabel: "sendEnrollmentPacketRequest.ensureCanonicalMemberForLead",
     serviceRole: true

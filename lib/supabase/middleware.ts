@@ -4,20 +4,6 @@ import type { SetAllCookies } from "@supabase/ssr";
 
 import { getSupabaseEnv, isDevAuthBypassEnabled } from "../runtime";
 
-function isMissingColumnError(error: unknown, column: string) {
-  if (!error || typeof error !== "object") return false;
-  const candidate = error as { code?: string; message?: string; details?: string; hint?: string };
-  const text = [candidate.message, candidate.details, candidate.hint]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  const code = String(candidate.code ?? "");
-  return (
-    (code === "42703" || code === "PGRST205" || code === "PGRST116") &&
-    (text.includes(column.toLowerCase()) || text.includes("schema cache") || text.includes("does not exist"))
-  );
-}
-
 function isPublicRoute(pathname: string) {
   if (pathname === "/login") return true;
   if (pathname.startsWith("/auth/")) return true;

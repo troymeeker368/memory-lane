@@ -6,7 +6,7 @@ import {
   addMhpDiagnosisInlineAction,
   deleteMhpDiagnosisInlineAction,
   updateMhpDiagnosisInlineAction
-} from "@/app/(portal)/health/member-health-profiles/actions";
+} from "@/app/(portal)/health/member-health-profiles/diagnosis-actions";
 import { MhpEditModal } from "@/components/forms/mhp-edit-modal";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDate } from "@/lib/utils";

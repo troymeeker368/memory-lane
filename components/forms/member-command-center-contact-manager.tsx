@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 
 import { MEMBER_CONTACT_CATEGORY_OPTIONS } from "@/lib/canonical";
 import { formatPhoneDisplay, formatPhoneInput } from "@/lib/phone";
-import { deleteMemberContactAction, upsertMemberContactAction } from "@/app/(portal)/operations/member-command-center/actions";
+import {
+  deleteMemberContactAction,
+  upsertMemberContactAction
+} from "@/app/(portal)/operations/member-command-center/contact-actions";
 
 interface ContactRow {
   id: string;

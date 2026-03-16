@@ -6,7 +6,7 @@ import {
   addMhpProviderInlineAction,
   deleteMhpProviderInlineAction,
   updateMhpProviderInlineAction
-} from "@/app/(portal)/health/member-health-profiles/actions";
+} from "@/app/(portal)/health/member-health-profiles/provider-actions";
 import { MhpEditModal } from "@/components/forms/mhp-edit-modal";
 import { formatPhoneDisplay, formatPhoneInput } from "@/lib/phone";
 

@@ -1,4 +1,4 @@
-import { PhotoUploadForm } from "@/components/forms/workflow-forms";
+import { PhotoUploadFormShell } from "@/components/forms/workflow-forms-shells";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
@@ -13,7 +13,7 @@ export default async function PhotoUploadPage() {
       <Card>
         <CardTitle>Photo Upload</CardTitle>
         <p className="mt-1 text-sm text-muted">Capture photo uploads with multi-file selection and file metadata (no URL field required).</p>
-        <div className="mt-3"><PhotoUploadForm /></div>
+        <div className="mt-3"><PhotoUploadFormShell /></div>
       </Card>
       <Card className="table-wrap">
         <CardTitle>Recent Photo Uploads</CardTitle>

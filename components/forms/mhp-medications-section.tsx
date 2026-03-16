@@ -8,7 +8,7 @@ import {
   inactivateMhpMedicationInlineAction,
   reactivateMhpMedicationInlineAction,
   updateMhpMedicationInlineAction
-} from "@/app/(portal)/health/member-health-profiles/actions";
+} from "@/app/(portal)/health/member-health-profiles/medication-actions";
 import { MhpEditModal } from "@/components/forms/mhp-edit-modal";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDate } from "@/lib/utils";

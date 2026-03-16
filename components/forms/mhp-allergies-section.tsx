@@ -6,7 +6,7 @@ import {
   addMhpAllergyInlineAction,
   deleteMhpAllergyInlineAction,
   updateMhpAllergyInlineAction
-} from "@/app/(portal)/health/member-health-profiles/actions";
+} from "@/app/(portal)/health/member-health-profiles/allergy-actions";
 import { MhpEditModal } from "@/components/forms/mhp-edit-modal";
 
 type AllergyRow = {

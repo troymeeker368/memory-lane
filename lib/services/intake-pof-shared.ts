@@ -53,8 +53,7 @@ export function splitCsv(value: string | null | undefined) {
     .filter(Boolean);
 }
 
-const SYNCABLE_DEVICE_OPTIONS = ["Walker", "Cane", "Wheelchair", "Gait Belt", "None"] as const;
-type SyncableDeviceOption = (typeof SYNCABLE_DEVICE_OPTIONS)[number];
+type SyncableDeviceOption = "Walker" | "Cane" | "Wheelchair" | "Gait Belt" | "None";
 
 function parseSyncableDeviceOption(value: string): SyncableDeviceOption | null {
   const normalized = value.trim().toLowerCase();

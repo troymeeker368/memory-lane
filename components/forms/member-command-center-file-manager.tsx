@@ -8,7 +8,7 @@ import {
   addMemberFileAction,
   deleteMemberFileAction,
   getMemberFileDownloadUrlAction
-} from "@/app/(portal)/operations/member-command-center/actions";
+} from "@/app/(portal)/operations/member-command-center/file-actions";
 import { formatDateTime } from "@/lib/utils";
 
 interface FileRow {

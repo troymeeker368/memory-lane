@@ -6,7 +6,7 @@ import {
   addMhpEquipmentInlineAction,
   deleteMhpEquipmentInlineAction,
   updateMhpEquipmentInlineAction
-} from "@/app/(portal)/health/member-health-profiles/actions";
+} from "@/app/(portal)/health/member-health-profiles/equipment-actions";
 import { MhpEditModal } from "@/components/forms/mhp-edit-modal";
 
 type EquipmentRow = {

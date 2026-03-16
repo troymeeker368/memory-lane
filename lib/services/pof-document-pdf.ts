@@ -162,7 +162,7 @@ export async function buildPofDocumentPdfBytes(input: {
   const metaLines = input.metaLines ?? [];
 
   const drawHeader = (startY: number) => {
-    let y = startY;
+    const y = startY;
     if (logoImage) {
       const scaled = logoImage.scale(42 / logoImage.height);
       page.drawImage(logoImage, {

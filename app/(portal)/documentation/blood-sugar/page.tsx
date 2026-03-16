@@ -1,5 +1,5 @@
 import { QuickEditBloodSugar } from "@/components/forms/record-actions";
-import { BloodSugarForm } from "@/components/forms/workflow-forms";
+import { BloodSugarFormShell } from "@/components/forms/workflow-forms-shells";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
@@ -19,7 +19,7 @@ export default async function BloodSugarPage() {
       <Card>
         <CardTitle>Blood Sugar Testing</CardTitle>
         <p className="mt-1 text-sm text-muted">Nurse-focused entry workflow with member lookup and timestamped clinical logs.</p>
-        <div className="mt-3"><BloodSugarForm members={members} /></div>
+        <div className="mt-3"><BloodSugarFormShell members={members} /></div>
       </Card>
 
       <MobileList items={snapshot.bloodSugarHistory.map((row: any) => ({ id: row.id, title: row.member_name, fields: [{ label: "Checked", value: formatDateTime(row.checked_at) }, { label: "Reading", value: row.reading_mg_dl }, { label: "Nurse", value: row.nurse_name }] }))} />

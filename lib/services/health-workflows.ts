@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow";
-import { toEasternDate, toEasternISO } from "@/lib/timezone";
+import { toEasternISO } from "@/lib/timezone";
 
 export async function getHealthSnapshot() {
   const supabase = await createClient();

@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { saveMemberCommandCenterDietAction } from "@/app/(portal)/operations/member-command-center/actions";
+import { saveMemberCommandCenterDietAction } from "@/app/(portal)/operations/member-command-center/summary-actions";
 import { MhpMedicalDietFields } from "@/components/forms/mhp-medical-diet-fields";
 
 export function MccDietForm({

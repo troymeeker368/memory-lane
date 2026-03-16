@@ -55,27 +55,6 @@ function formatShiftLabel(value: TransportationStationShift) {
   return value === "Both" ? "AM + PM" : value;
 }
 
-function contactPriority(category: string | null | undefined): number {
-  const normalized = (category ?? "").trim().toLowerCase();
-  if (normalized === "responsible party") return 1;
-  if (normalized === "care provider") return 2;
-  if (normalized === "emergency contact") return 3;
-  if (normalized === "spouse") return 4;
-  if (normalized === "child") return 5;
-  if (normalized === "payor") return 6;
-  if (normalized === "other") return 7;
-  return 8;
-}
-
-function joinAddress(parts: Array<string | null | undefined>) {
-  return (
-    parts
-      .map((value) => (value ?? "").trim())
-      .filter(Boolean)
-      .join(", ") || null
-  );
-}
-
 export default async function TransportationStationPage({
   searchParams
 }: {

@@ -252,49 +252,6 @@ const MISSING_ITEM_FIELD_KEY: Record<string, EnrollmentPacketIntakeFieldKey> = {
   "Photo consent selection": "photoConsentChoice"
 };
 
-const REQUIRED_FIELD_KEYS = new Set<EnrollmentPacketIntakeFieldKey>([
-  "memberLegalFirstName",
-  "memberLegalLastName",
-  "memberDob",
-  "memberGender",
-  "memberAddressLine1",
-  "memberCity",
-  "memberState",
-  "memberZip",
-  "primaryContactName",
-  "primaryContactRelationship",
-  "primaryContactPhone",
-  "primaryContactEmail",
-  "primaryContactAddressLine1",
-  "primaryContactCity",
-  "primaryContactState",
-  "primaryContactZip",
-  "secondaryContactName",
-  "secondaryContactRelationship",
-  "secondaryContactPhone",
-  "secondaryContactEmail",
-  "secondaryContactAddressLine1",
-  "secondaryContactCity",
-  "secondaryContactState",
-  "secondaryContactZip",
-  "pcpName",
-  "pcpAddress",
-  "pcpPhone",
-  "pharmacy",
-  "pharmacyAddress",
-  "pharmacyPhone",
-  "paymentMethodSelection",
-  "membershipMemberSignatureName",
-  "membershipMemberSignatureDate",
-  "membershipGuarantorSignatureName",
-  "exhibitAGuarantorSignatureName",
-  "privacyPracticesAcknowledged",
-  "statementOfRightsAcknowledged",
-  "photoConsentChoice",
-  "photoConsentAcknowledged",
-  "ancillaryChargesAcknowledged"
-]);
-
 export function EnrollmentPacketPublicForm({
   token,
   fields

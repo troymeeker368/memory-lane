@@ -2,10 +2,10 @@
 
 import type { ComponentProps } from "react";
 
-import { AssessmentForm } from "@/components/forms/workflow-forms";
+import { AssessmentFormShell } from "@/components/forms/workflow-forms-shells";
 
-type AssessmentFormBoundaryProps = ComponentProps<typeof AssessmentForm>;
+type AssessmentFormBoundaryProps = ComponentProps<typeof AssessmentFormShell>;
 
 export function AssessmentFormBoundary(props: AssessmentFormBoundaryProps) {
-  return <AssessmentForm {...props} />;
+  return <AssessmentFormShell {...props} />;
 }

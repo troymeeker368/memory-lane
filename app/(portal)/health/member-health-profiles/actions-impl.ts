@@ -1,4 +1,4 @@
-"use server";
+import "server-only";
 
 import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";

@@ -1,5 +1,5 @@
 import { QuickEditToilet } from "@/components/forms/record-actions";
-import { ToiletLogForm } from "@/components/forms/workflow-forms";
+import { ToiletLogFormShell } from "@/components/forms/workflow-forms-shells";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
@@ -26,7 +26,7 @@ export default async function ToiletLogPage() {
       <Card>
         <CardTitle>Toilet Log Entry</CardTitle>
         <p className="mt-1 text-sm text-muted">Record toileting type and briefs/member-supplied values from the AppSheet workflow.</p>
-        <div className="mt-3"><ToiletLogForm members={members} /></div>
+        <div className="mt-3"><ToiletLogFormShell members={members} /></div>
       </Card>
 
       <MobileList items={toiletRows.map((row: any) => ({ id: row.id, title: row.member_name, fields: [{ label: "When", value: formatDateTime(row.event_at) }, { label: "Type of Use", value: row.use_type }, { label: "Briefs", value: briefsLabel(row.briefs, row.member_supplied) }] }))} />

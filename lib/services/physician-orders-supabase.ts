@@ -1,6 +1,4 @@
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
-
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
@@ -18,7 +16,7 @@ import {
   POF_NUTRITION_OPTIONS,
   POF_STANDING_ORDER_OPTIONS
 } from "@/lib/services/physician-order-config";
-import { generateMarSchedulesForMember, syncPofMedicationsFromSignedOrder } from "@/lib/services/mar-workflow";
+import { generateMarSchedulesForMember } from "@/lib/services/mar-workflow";
 import { type IntakeAssessmentForPofPrefill, mapIntakeAssessmentToPofPrefill } from "@/lib/services/intake-to-pof-mapping";
 import type { IntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
 import { logSystemEvent } from "@/lib/services/system-event-service";

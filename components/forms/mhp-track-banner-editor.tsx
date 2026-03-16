@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 
-import { updateMhpTrackInlineAction } from "@/app/(portal)/health/member-health-profiles/actions";
+import { updateMhpTrackInlineAction } from "@/app/(portal)/health/member-health-profiles/profile-actions";
 
 const TRACK_OPTIONS = ["Track 1", "Track 2", "Track 3"] as const;
 

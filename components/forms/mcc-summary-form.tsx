@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { saveMemberCommandCenterSummaryAction } from "@/app/(portal)/operations/member-command-center/actions";
+import { saveMemberCommandCenterSummaryAction } from "@/app/(portal)/operations/member-command-center/summary-actions";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 
 export function MccSummaryForm({
