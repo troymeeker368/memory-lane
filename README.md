@@ -154,6 +154,12 @@ Idempotency:
 
 ## Auth Environment Variables
 
+- `NEXT_PUBLIC_SUPABASE_URL` (required, preferred): public Supabase project URL used by browser and server runtimes.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` (required, preferred): public anon key used by browser and server runtimes.
+- `SUPABASE_URL` (legacy server fallback only): accepted by server/runtime helpers if older deploy environments still use this name.
+- `SUPABASE_ANON_KEY` (legacy server fallback only): accepted by server/runtime helpers if older deploy environments still use this name.
+- `SUPABASE_SERVICE_ROLE_KEY` (required for service-role workflows): canonical server-only key for RPCs, sync jobs, and privileged writes.
+- `SUPABASE_SERVICE_KEY` (legacy fallback only): accepted as a fallback for older environments.
 - `NEXT_PUBLIC_APP_URL` (required): canonical public app URL used in invite/reset links.
 - `RESEND_API_KEY` (required for invite/reset delivery): API key for branded staff auth emails.
 - `CLINICAL_SENDER_EMAIL` (required for invite/reset delivery): sender mailbox used for branded staff auth emails.
@@ -162,6 +168,7 @@ Idempotency:
 - `DEV_AUTH_BOOTSTRAP_USERS_JSON` (optional): JSON array of `{ "email", "password", "role", "label" }` bootstrap accounts for `/dev/auth`.
 
 Production safety rules:
+- Production deployments should set the canonical `NEXT_PUBLIC_*` Supabase variables even if legacy server fallbacks are available.
 - `/dev/auth` is hard-disabled when `NODE_ENV=production` even if `ENABLE_DEV_AUTH_BYPASS=true`.
 - Staff invite/reset/set-password flows always use real Supabase auth sessions and preserve canonical role/permission enforcement.
 

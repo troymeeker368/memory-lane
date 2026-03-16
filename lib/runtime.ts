@@ -8,12 +8,26 @@ function parseBooleanEnv(value: string | null | undefined) {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
+function readSupabaseUrlEnv() {
+  return clean(process.env.NEXT_PUBLIC_SUPABASE_URL) ?? clean(process.env.SUPABASE_URL);
+}
+
+function readSupabaseAnonKeyEnv() {
+  return clean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) ?? clean(process.env.SUPABASE_ANON_KEY);
+}
+
+export function getSupabaseServiceRoleKey() {
+  return clean(process.env.SUPABASE_SERVICE_ROLE_KEY) ?? clean(process.env.SUPABASE_SERVICE_KEY);
+}
+
 export function getSupabaseEnv() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url = readSupabaseUrlEnv();
+  const anonKey = readSupabaseAnonKeyEnv();
 
   if (!url || !anonKey) {
-    throw new Error("Missing Supabase environment variables. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+    throw new Error(
+      "Missing Supabase environment variables. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY (preferred), or legacy SUPABASE_URL and SUPABASE_ANON_KEY for server/runtime contexts."
+    );
   }
 
   return { url, anonKey };

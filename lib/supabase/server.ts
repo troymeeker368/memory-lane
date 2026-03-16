@@ -3,7 +3,7 @@ import { createServerClient } from "@supabase/ssr";
 import type { SetAllCookies } from "@supabase/ssr";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
-import { getSupabaseEnv } from "@/lib/runtime";
+import { getSupabaseEnv, getSupabaseServiceRoleKey } from "@/lib/runtime";
 
 type CreateClientOptions = {
   serviceRole?: boolean;
@@ -11,7 +11,7 @@ type CreateClientOptions = {
 
 export async function createClient(options: CreateClientOptions = {}) {
   const { url, anonKey } = getSupabaseEnv();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY;
+  const serviceRoleKey = getSupabaseServiceRoleKey();
   if (options.serviceRole) {
     if (!serviceRoleKey) {
       throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY. Service-role client cannot be created.");
