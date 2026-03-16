@@ -46,7 +46,7 @@ const ENROLLMENT_PACKET_UPLOAD_EXTENSION_TO_MIME: Record<string, string> = {
 };
 
 async function loadEnrollmentPacketPublicService() {
-  return import("@/lib/services/enrollment-packets");
+  return import("@/lib/services/enrollment-packets-public");
 }
 
 function asString(formData: FormData, key: string) {

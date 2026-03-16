@@ -1,5 +1,5 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { getBillingModuleIndex } from "@/lib/services/billing-supabase";
+import { getBillingModuleIndex } from "@/lib/services/billing-read";
 
 export default async function OperationsPayorPage() {
   const index = await getBillingModuleIndex();

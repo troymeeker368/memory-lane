@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { canAccessModule, canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
-import { resolveActiveEffectiveRowForDate } from "@/lib/services/billing-supabase";
+import { resolveActiveEffectiveRowForDate } from "@/lib/services/billing-effective";
 import {
   saveMemberCommandCenterAttendanceBillingWorkflow,
   saveMemberCommandCenterBundle,

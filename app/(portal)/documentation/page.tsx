@@ -29,6 +29,7 @@ const DOCUMENTATION_ENTRY_LINKS = [
   { href: "/documentation/toilet", label: "Toilet Log" },
   { href: "/documentation/shower", label: "Shower Log" },
   { href: "/documentation/transportation", label: "Transportation Log" },
+  { href: "/documentation/incidents", label: "Incident Reports" },
   { href: "/documentation/photo-upload", label: "Photo Upload" },
   { href: "/documentation/blood-sugar", label: "Blood Sugar" },
   { href: "/ancillary", label: "Ancillary Charges" }

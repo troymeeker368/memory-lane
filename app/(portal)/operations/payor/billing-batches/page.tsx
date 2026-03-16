@@ -8,7 +8,7 @@ import {
   getBillingBatches,
   getBillingGenerationPreview,
   getBillingMemberPayorLookups
-} from "@/lib/services/billing-supabase";
+} from "@/lib/services/billing-read";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { toEasternDate } from "@/lib/timezone";
 

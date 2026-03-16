@@ -1,5 +1,5 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { getVariableChargesQueue } from "@/lib/services/billing-supabase";
+import { getVariableChargesQueue } from "@/lib/services/billing-read";
 
 import { setVariableChargeStatusAction } from "@/app/(portal)/operations/payor/actions";
 

@@ -14,7 +14,7 @@ export default async function PublicEnrollmentPacketPage({
   const forwardedFor = headerMap.get("x-forwarded-for");
   const ip = forwardedFor ? forwardedFor.split(",")[0].trim() : null;
   const userAgent = headerMap.get("user-agent");
-  const { getPublicEnrollmentPacketContext } = await import("@/lib/services/enrollment-packets");
+  const { getPublicEnrollmentPacketContext } = await import("@/lib/services/enrollment-packets-public");
   const context = await getPublicEnrollmentPacketContext(token, { ip, userAgent });
 
   if (context.state === "invalid") {

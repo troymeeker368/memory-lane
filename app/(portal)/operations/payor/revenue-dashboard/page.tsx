@@ -1,5 +1,5 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { getBillingDashboardSummary } from "@/lib/services/billing-supabase";
+import { getBillingDashboardSummary } from "@/lib/services/billing-read";
 
 export default async function BillingRevenueDashboardPage() {
   const summary = await getBillingDashboardSummary();

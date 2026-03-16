@@ -22,7 +22,7 @@ import {
   getEnrollmentPacketSenderSignatureProfile,
   sendEnrollmentPacketRequest,
   upsertEnrollmentPacketSenderSignatureProfile
-} from "@/lib/services/enrollment-packets";
+} from "@/lib/services/enrollment-packets-sender";
 import { createSalesLeadActivity, salesLeadActivityInputSchema } from "@/lib/services/sales-lead-activities";
 import { WorkflowDeliveryError } from "@/lib/services/send-workflow-state";
 import {

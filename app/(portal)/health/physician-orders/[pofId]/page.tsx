@@ -7,7 +7,7 @@ import { PhysicianOrderPdfActions } from "@/components/physician-orders/pof-pdf-
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
-import { getConfiguredClinicalSenderEmail, listPofTimelineForPhysicianOrder } from "@/lib/services/pof-esign";
+import { getConfiguredClinicalSenderEmail, listPofTimelineForPhysicianOrder } from "@/lib/services/pof-read";
 import {
   getPhysicianOrderById,
   getPhysicianOrdersForMember

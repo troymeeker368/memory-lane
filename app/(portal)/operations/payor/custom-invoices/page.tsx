@@ -5,7 +5,7 @@ import {
   getCustomInvoices,
   listMemberBillingSettings,
   listPayors
-} from "@/lib/services/billing-supabase";
+} from "@/lib/services/billing-read";
 import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
 
 import { finalizeInvoiceAction } from "@/app/(portal)/operations/payor/actions";

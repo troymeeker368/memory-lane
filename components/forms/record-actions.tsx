@@ -7,15 +7,17 @@ import {
 } from "@/app/actions";
 import {
   deleteWorkflowRecordAction,
-  reviewDocumentationAction,
-  reviewTimeCardAction,
   updateAncillaryAction,
   updateBloodSugarAction,
   updateDailyActivityAction,
   updateShowerLogAction,
   updateToiletLogAction,
   updateTransportationLogAction
-} from "@/app/documentation-actions";
+} from "@/app/documentation-update-actions";
+import {
+  reviewDocumentationAction,
+  reviewTimeCardAction
+} from "@/app/documentation-review-actions";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
 import { LEAD_STATUS_OPTIONS, PARTICIPATION_MISSING_REASONS, TOILET_USE_TYPE_OPTIONS, TRANSPORT_TYPE_OPTIONS } from "@/lib/canonical";

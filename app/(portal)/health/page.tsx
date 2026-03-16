@@ -28,6 +28,18 @@ interface BloodSugarRow {
   notes: string | null;
 }
 
+interface IncidentRow {
+  id: string;
+  incidentNumber: string;
+  category: string;
+  reportable: boolean;
+  status: string;
+  participantName: string | null;
+  staffMemberName: string | null;
+  incidentDateTime: string;
+  location: string;
+}
+
 function parseDate(value: string | null | undefined) {
   if (!value) return null;
   const parsed = new Date(value);
@@ -45,6 +57,7 @@ export default async function HealthPage() {
   const recentHealthDocs = dashboard.recentHealthDocs;
   const careAlerts = dashboard.careAlerts;
   const carePlans = dashboard.carePlans;
+  const incidents = dashboard.incidents;
   const members = dashboard.members;
   const now = new Date();
 
@@ -165,11 +178,50 @@ export default async function HealthPage() {
         <Card>
           <CardTitle>Recent Incidents</CardTitle>
           <div className="mt-3 space-y-2">
-            <p className="text-sm text-muted">
-              Incident capture and follow-up tracking will appear here once the incident workflow is enabled.
-            </p>
-            <div className="rounded-lg border border-border p-3 text-sm text-muted">
-              Placeholder area reserved for incident alerts, open follow-ups, and escalations.
+            <div className="grid gap-3 sm:grid-cols-4">
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-xs text-muted">Submitted</p>
+                <p className="text-base font-semibold">{incidents.counts.submitted}</p>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-xs text-muted">Returned</p>
+                <p className="text-base font-semibold">{incidents.counts.returned}</p>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-xs text-muted">Approved</p>
+                <p className="text-base font-semibold">{incidents.counts.approved}</p>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <p className="text-xs text-muted">Reportable Open</p>
+                <p className="text-base font-semibold">{incidents.counts.reportableOpen}</p>
+              </div>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              {incidents.recent.length === 0 ? (
+                <p className="text-sm text-muted">No recent incidents have been recorded.</p>
+              ) : (
+                <div className="space-y-2">
+                  {incidents.recent.slice(0, 4).map((incident: IncidentRow) => (
+                    <div key={incident.id} className="flex items-start justify-between gap-3 border-b border-border pb-2 last:border-b-0 last:pb-0">
+                      <div>
+                        <Link href={`/documentation/incidents/${incident.id}`} className="font-semibold text-brand">
+                          {incident.incidentNumber}
+                        </Link>
+                        <p className="text-xs text-muted">
+                          {incident.participantName ?? incident.staffMemberName ?? "General incident"} | {incident.location}
+                        </p>
+                      </div>
+                      <div className="text-right text-xs text-muted">
+                        <p className="capitalize">{incident.status.replaceAll("_", " ")}</p>
+                        <p>{formatDateTime(incident.incidentDateTime)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Link href="/documentation/incidents" className="mt-3 inline-block text-sm font-semibold text-brand">
+                Open Incident Workflow
+              </Link>
             </div>
           </div>
         </Card>
@@ -180,6 +232,7 @@ export default async function HealthPage() {
         <div className="mt-3 flex flex-wrap gap-3 text-sm">
           <Link href="/health/mar" className="font-semibold text-brand">MAR Workflow</Link>
           <Link href="/documentation/blood-sugar" className="font-semibold text-brand">Blood Sugar Workflow</Link>
+          <Link href="/documentation/incidents" className="font-semibold text-brand">Incident Reports</Link>
           <Link href="/health/assessment" className="font-semibold text-brand">New Intake Assessment</Link>
           <Link href="/health/physician-orders" className="font-semibold text-brand">Physician Orders / POF</Link>
           <Link href="/health/member-health-profiles" className="font-semibold text-brand">Member Health Profiles</Link>

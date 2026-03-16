@@ -175,6 +175,7 @@ export const NAV_ITEMS: AppNavItem[] = [
   { label: "Toilet Log", href: "/documentation/toilet", group: "Documentation", module: "documentation" },
   { label: "Shower Log", href: "/documentation/shower", group: "Documentation", module: "documentation" },
   { label: "Transportation", href: "/documentation/transportation", group: "Documentation", module: "documentation" },
+  { label: "Incident Reports", href: "/documentation/incidents", group: "Documentation", module: "documentation" },
   { label: "Photo Upload", href: "/documentation/photo-upload", group: "Documentation", module: "documentation" },
   { label: "Ancillary Charges", href: "/ancillary", group: "Documentation", module: "ancillary" },
 

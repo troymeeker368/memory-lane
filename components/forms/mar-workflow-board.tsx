@@ -7,7 +7,7 @@ import {
   recordPrnOutcomeAction,
   recordPrnMarAdministrationAction,
   recordScheduledMarAdministrationAction
-} from "@/app/(portal)/health/mar/actions";
+} from "@/app/(portal)/health/mar/administration-actions";
 import type {
   MarAdministrationHistoryRow,
   MarNotGivenReason,

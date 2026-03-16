@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 
-import { generateMonthlyMarReportPdfAction } from "@/app/(portal)/health/mar/actions";
+import { generateMonthlyMarReportPdfAction } from "@/app/(portal)/health/mar/report-actions";
 
 type MarMonthlyReportType = "summary" | "detail" | "exceptions";
 

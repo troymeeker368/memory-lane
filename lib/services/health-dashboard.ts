@@ -1,4 +1,5 @@
 import { getCarePlanDashboard } from "@/lib/services/care-plans";
+import { listIncidentDashboard } from "@/lib/services/incidents";
 import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow";
 import { createClient } from "@/lib/supabase/server";
 
@@ -41,7 +42,7 @@ export async function getHealthDashboardData(options?: { includeCarePlans?: bool
     totalRows: 0,
     totalPages: 1
   };
-  const [marSnapshot, bloodSugarResult, membersResult, carePlans] = await Promise.all([
+  const [marSnapshot, bloodSugarResult, membersResult, carePlans, incidents] = await Promise.all([
     getMarWorkflowSnapshot({ historyLimit: 150, prnLimit: 150, serviceRole: true }),
     supabase
       .from("v_blood_sugar_logs_detailed")
@@ -53,7 +54,8 @@ export async function getHealthDashboardData(options?: { includeCarePlans?: bool
       .select("id, display_name, status, code_status")
       .eq("status", "active")
       .order("display_name", { ascending: true }),
-    options?.includeCarePlans ? getCarePlanDashboard({ page: 1, pageSize: 25 }) : Promise.resolve(emptyCarePlanDashboard)
+    options?.includeCarePlans ? getCarePlanDashboard({ page: 1, pageSize: 25 }) : Promise.resolve(emptyCarePlanDashboard),
+    listIncidentDashboard({ limit: 6 })
   ]);
   if (bloodSugarResult.error) throw new Error(`Unable to load v_blood_sugar_logs_detailed: ${bloodSugarResult.error.message}`);
   if (membersResult.error) throw new Error(`Unable to load active members for health dashboard: ${membersResult.error.message}`);
@@ -159,6 +161,7 @@ export async function getHealthDashboardData(options?: { includeCarePlans?: bool
     recentHealthDocs,
     careAlerts,
     members: members.map((member) => ({ id: member.id, display_name: member.display_name })),
-    carePlans
+    carePlans,
+    incidents
   };
 }

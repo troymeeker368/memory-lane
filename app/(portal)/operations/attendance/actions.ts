@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/auth";
 import { ATTENDANCE_ABSENCE_REASON_OPTIONS } from "@/lib/canonical";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
-import { syncAttendanceBillingForDate } from "@/lib/services/billing-supabase";
+import { syncAttendanceBillingForDate } from "@/lib/services/billing-workflows";
 import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext

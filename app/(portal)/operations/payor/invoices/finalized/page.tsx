@@ -1,5 +1,5 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { getBillingMemberPayorLookups, getFinalizedInvoices } from "@/lib/services/billing-supabase";
+import { getBillingMemberPayorLookups, getFinalizedInvoices } from "@/lib/services/billing-read";
 
 export default async function FinalizedInvoicesPage() {
   const invoices = await getFinalizedInvoices();

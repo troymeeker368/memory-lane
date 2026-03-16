@@ -27,7 +27,7 @@ import {
   MHP_VISION_OPTIONS
 } from "@/lib/services/mhp-functional-options";
 import { createClient } from "@/lib/supabase/server";
-import { getConfiguredClinicalSenderEmail, listPofTimelineForPhysicianOrder } from "@/lib/services/pof-esign";
+import { getConfiguredClinicalSenderEmail, listPofTimelineForPhysicianOrder } from "@/lib/services/pof-read";
 import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
 import {
   POF_LEVEL_OF_CARE_OPTIONS,

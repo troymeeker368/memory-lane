@@ -1,5 +1,5 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { getBillingBatches, getBillingExports } from "@/lib/services/billing-supabase";
+import { getBillingBatches, getBillingExports } from "@/lib/services/billing-read";
 
 import { createBillingExportAction } from "@/app/(portal)/operations/payor/actions";
 

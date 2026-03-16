@@ -4,7 +4,7 @@ import {
   resolveActiveEffectiveRowForDate,
   resolveConfiguredDailyRate,
   resolveEffectiveBillingMode
-} from "@/lib/services/billing-supabase";
+} from "@/lib/services/billing-effective";
 import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext

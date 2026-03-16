@@ -1,5 +1,5 @@
 import { Card, CardTitle } from "@/components/ui/card";
-import { listBillingScheduleTemplates } from "@/lib/services/billing-supabase";
+import { listBillingScheduleTemplates } from "@/lib/services/billing-read";
 import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
 
 import { saveBillingScheduleTemplateAction } from "@/app/(portal)/operations/payor/actions";

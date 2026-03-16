@@ -1,7 +1,7 @@
 import { Card, CardTitle } from "@/components/ui/card";
 import { listCenterBillingSettingsSupabase } from "@/lib/services/member-command-center-supabase";
 import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
-import { listMemberBillingSettings, listPayors } from "@/lib/services/billing-supabase";
+import { listMemberBillingSettings, listPayors } from "@/lib/services/billing-read";
 
 import {
   saveCenterBillingSettingAction,

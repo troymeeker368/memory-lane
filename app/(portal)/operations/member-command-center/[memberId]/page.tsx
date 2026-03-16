@@ -1,24 +1,26 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { MemberCommandCenterContactManager } from "@/components/forms/member-command-center-contact-manager";
-import { MemberCommandCenterFileManager } from "@/components/forms/member-command-center-file-manager";
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
-import { MemberCommandCenterPofSection } from "@/components/forms/member-command-center-pof-section";
 import { MccDemographicsForm } from "@/components/forms/mcc-demographics-form";
 import { MccAttendanceForm } from "@/components/forms/mcc-attendance-form";
-import { MccTransportationForm } from "@/components/forms/mcc-transportation-form";
 import { MccLegalForm } from "@/components/forms/mcc-legal-form";
 import { MccSummaryForm } from "@/components/forms/mcc-summary-form";
 import { MccDietForm } from "@/components/forms/mcc-diet-form";
 import { MccAllergiesSection } from "@/components/forms/mcc-allergies-section";
 import { MccHeaderCards } from "@/components/forms/mcc-header-cards";
 import { MccPhotoUploader } from "@/components/forms/mcc-photo-uploader";
+import {
+  MemberCommandCenterContactManagerShell,
+  MemberCommandCenterFileManagerShell,
+  MemberCommandCenterPofSectionShell,
+  MccTransportationFormShell
+} from "@/components/forms/member-command-center-shells";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
-import { resolveActiveEffectiveMemberRowForDate } from "@/lib/services/billing-supabase";
+import { resolveActiveEffectiveMemberRowForDate } from "@/lib/services/billing-effective";
 import {
   getAvailableLockerNumbersForMemberSupabase,
   getMemberCommandCenterDetailSupabase,
@@ -26,7 +28,7 @@ import {
   listMemberBillingSettingsSupabase
 } from "@/lib/services/member-command-center-supabase";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
-import { getConfiguredClinicalSenderEmail, listPofRequestsByPhysicianOrderIds } from "@/lib/services/pof-esign";
+import { getConfiguredClinicalSenderEmail, listPofRequestsByPhysicianOrderIds } from "@/lib/services/pof-read";
 import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
@@ -567,7 +569,7 @@ export default async function MemberCommandCenterDetailPage({
           </div>
 
           {canEdit && detail.schedule ? (
-            <MccTransportationForm
+            <MccTransportationFormShell
               key={`mcc-transport-${detail.member.id}-${scheduleUpdatedAt ?? "na"}`}
               memberId={detail.member.id}
               transportationRequired={detail.schedule.transportation_required}
@@ -667,7 +669,7 @@ export default async function MemberCommandCenterDetailPage({
           <Card id="contacts">
             <SectionHeading title="Contacts" lastUpdatedAt={contactsUpdatedAt} lastUpdatedBy={contactsUpdatedBy} />
             <div className="mt-3">
-              <MemberCommandCenterContactManager
+              <MemberCommandCenterContactManagerShell
                 key={`mcc-contacts-${detail.member.id}-${contactsUpdatedAt ?? "na"}`}
                 memberId={detail.member.id}
                 rows={detail.contacts}
@@ -775,7 +777,7 @@ export default async function MemberCommandCenterDetailPage({
       <Card id="files-documents">
         <SectionHeading title="Files / Documents" lastUpdatedAt={filesUpdatedAt} lastUpdatedBy={filesUpdatedBy} />
         <div className="mt-3">
-          <MemberCommandCenterFileManager
+          <MemberCommandCenterFileManagerShell
             key={`mcc-files-${detail.member.id}-${filesUpdatedAt ?? "na"}`}
             memberId={detail.member.id}
             rows={detail.files}
@@ -792,7 +794,7 @@ export default async function MemberCommandCenterDetailPage({
             lastUpdatedBy={physicianOrdersUpdatedBy}
           />
           <div className="mt-3">
-            <MemberCommandCenterPofSection
+            <MemberCommandCenterPofSectionShell
               memberId={detail.member.id}
               physicianOrders={physicianOrders}
               requests={pofRequests}

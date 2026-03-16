@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { listCompletedEnrollmentPacketRequests } from "@/lib/services/enrollment-packets";
+import { listCompletedEnrollmentPacketRequests } from "@/lib/services/enrollment-packets-reporting";
 import { formatOptionalDateTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";

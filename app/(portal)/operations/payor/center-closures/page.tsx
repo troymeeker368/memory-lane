@@ -4,7 +4,7 @@ import {
   CENTER_CLOSURE_TYPE_OPTIONS,
   listCenterClosures,
   listClosureRules
-} from "@/lib/services/billing-supabase";
+} from "@/lib/services/billing-read";
 
 import {
   deleteCenterClosureAction,
