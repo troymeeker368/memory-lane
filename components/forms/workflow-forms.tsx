@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 
 import {
-  createAssessmentAction,
   createLeadActivityAction,
   updateLeadStatusAction
 } from "@/app/actions";
+import { createAssessmentAction } from "@/app/intake-actions";
 import {
   createBloodSugarLogAction,
   createPhotoUploadAction,

@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { setMemberStatusAction } from "@/app/actions";
+import { setMemberStatusAction } from "@/app/member-status-actions";
 import { Button } from "@/components/ui/button";
 import { MEMBER_DISCHARGE_REASON_OPTIONS, MEMBER_DISPOSITION_OPTIONS } from "@/lib/canonical";
 

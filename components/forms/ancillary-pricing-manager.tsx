@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { updateAncillaryCategoryPriceAction } from "@/app/actions";
+import { updateAncillaryCategoryPriceAction } from "@/app/operations-admin-actions";
 import { Button } from "@/components/ui/button";
 
 type PricingCategory = {
@@ -110,4 +110,3 @@ export function AncillaryPricingManager({ categories }: { categories: PricingCat
     </div>
   );
 }
-

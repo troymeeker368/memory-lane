@@ -3,7 +3,7 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { updateOperationalSettingsAction } from "@/app/actions";
+import { updateOperationalSettingsAction } from "@/app/operations-admin-actions";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 
 export function OperationsSettingsManager({

@@ -99,6 +99,8 @@ export type IncidentDetail = {
   submittedAt: string | null;
   submittedByUserId: string | null;
   submittedByName: string | null;
+  submitterSignatureName: string | null;
+  submitterSignedAt: string | null;
   directorReviewedBy: string | null;
   directorReviewedAt: string | null;
   directorDecision: IncidentDirectorDecision | null;
@@ -144,6 +146,7 @@ export type IncidentDraftInput = {
   bodyPart?: string | null;
   generalNotes?: string | null;
   followUpNote?: string | null;
+  submitterSignatureName?: string | null;
 };
 
 export type IncidentReviewInput = {

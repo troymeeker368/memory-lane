@@ -2,12 +2,13 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
-import { requireModuleAccess } from "@/lib/auth";
+import { requireModuleAccess, requireRoles } from "@/lib/auth";
 import { listIncidentDashboard } from "@/lib/services/incidents";
 import { formatDateTime } from "@/lib/utils";
 
 export default async function IncidentReportsPage() {
   await requireModuleAccess("documentation");
+  await requireRoles(["nurse", "manager", "director", "admin"]);
   const dashboard = await listIncidentDashboard({ limit: 50 });
 
   return (

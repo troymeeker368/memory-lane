@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { requireModuleAccess } from "@/lib/auth";
+import { canAccessIncidentReportsForRole } from "@/lib/permissions";
 import {
   amendApprovedIncident,
   closeIncident,
@@ -52,7 +53,8 @@ function mapDraftInput(formData: FormData) {
     injuryType: asNullableString(formData, "injuryType"),
     bodyPart: asNullableString(formData, "bodyPart"),
     generalNotes: asNullableString(formData, "generalNotes"),
-    followUpNote: asNullableString(formData, "followUpNote")
+    followUpNote: asNullableString(formData, "followUpNote"),
+    submitterSignatureName: asNullableString(formData, "submitterSignatureName")
   };
 }
 
@@ -65,6 +67,9 @@ function revalidateIncidentRoutes(incidentId: string) {
 
 async function getActor() {
   const profile = await requireModuleAccess("documentation");
+  if (!canAccessIncidentReportsForRole(profile.role)) {
+    throw new Error("Only nurses, managers, directors, and admins can access incident reports.");
+  }
   return {
     id: profile.id,
     fullName: profile.full_name,

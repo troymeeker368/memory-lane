@@ -26,8 +26,8 @@ export default async function PortalLayout({
   ]);
 
   return (
-    <div className="portal-shell mx-auto grid min-h-screen w-full max-w-7xl gap-4 p-3 md:grid-cols-[270px_minmax(0,1fr)] md:p-4">
-      <aside className="space-y-4 rounded-xl border border-white/20 bg-brand p-3 text-white md:sticky md:top-4 md:h-[calc(100vh-2rem)] md:overflow-y-auto">
+    <div className="portal-shell mx-auto grid min-h-screen w-full max-w-7xl gap-4 p-3 md:grid-cols-[320px_minmax(0,1fr)] md:p-4">
+      <aside className="space-y-4 rounded-xl border border-white/20 bg-brand p-3 text-white md:sticky md:top-4 md:h-[calc(100vh-2rem)] md:min-w-0 md:overflow-y-auto">
         <div className="text-white">
           <Link href="/" className="mb-2 block">
             <Image
@@ -35,7 +35,7 @@ export default async function PortalLayout({
               alt="Memory Lane logo"
               width={260}
               height={156}
-              className="h-auto w-full max-w-[260px]"
+              className="h-auto w-full max-w-[280px]"
               priority
             />
           </Link>

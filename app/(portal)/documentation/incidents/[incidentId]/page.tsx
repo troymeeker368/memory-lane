@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 
 import { IncidentForm } from "@/components/incidents/incident-form";
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireModuleAccess } from "@/lib/auth";
+import { requireModuleAccess, requireRoles } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { getIncidentDetail, listIncidentLookups } from "@/lib/services/incidents";
 
@@ -11,6 +11,7 @@ export default async function IncidentDetailPage({
 }: {
   params: Promise<{ incidentId: string }>;
 }) {
+  await requireRoles(["nurse", "manager", "director", "admin"]);
   const profile = await requireModuleAccess("documentation");
   const role = normalizeRoleKey(profile.role);
   const { incidentId } = await params;

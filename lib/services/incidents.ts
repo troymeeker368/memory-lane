@@ -1,6 +1,11 @@
 import "server-only";
 
-import { canPerformModuleAction, normalizeRoleKey, type PermissionAction } from "@/lib/permissions";
+import {
+  canAccessIncidentReportsForRole,
+  canPerformModuleAction,
+  normalizeRoleKey,
+  type PermissionAction
+} from "@/lib/permissions";
 import {
   INCIDENT_CATEGORY_OPTIONS,
   INCIDENT_DIRECTOR_DECISION_VALUES,
@@ -77,6 +82,8 @@ type IncidentRow = {
   submitted_at: string | null;
   submitted_by_user_id: string | null;
   submitted_by_name_snapshot: string | null;
+  submitter_signature_name: string | null;
+  submitter_signed_at: string | null;
   director_reviewed_by: string | null;
   director_reviewed_at: string | null;
   director_decision: string | null;
@@ -142,6 +149,9 @@ function canWriteDocumentation(role: string, permissions: ActorContext["permissi
 }
 
 function assertIncidentReporter(actor: ActorContext) {
+  if (!canAccessIncidentReportsForRole(actor.role)) {
+    throw new Error("Only nurses, managers, directors, and admins can work with incident reports.");
+  }
   if (!canWriteDocumentation(actor.role, actor.permissions, "canCreate") && !canWriteDocumentation(actor.role, actor.permissions, "canEdit")) {
     throw new Error("You do not have permission to create or edit incident reports.");
   }
@@ -189,6 +199,8 @@ function serializeIncidentSnapshot(row: IncidentRow) {
     submitted_at: clean(row.submitted_at),
     submitted_by_user_id: clean(row.submitted_by_user_id),
     submitted_by_name_snapshot: clean(row.submitted_by_name_snapshot),
+    submitter_signature_name: clean(row.submitter_signature_name),
+    submitter_signed_at: clean(row.submitter_signed_at),
     director_reviewed_by: clean(row.director_reviewed_by),
     director_reviewed_at: clean(row.director_reviewed_at),
     director_decision: asDirectorDecision(row.director_decision),
@@ -257,6 +269,8 @@ function mapIncidentDetail(row: IncidentRow, history: IncidentHistoryRow[]): Inc
     submittedAt: clean(row.submitted_at),
     submittedByUserId: clean(row.submitted_by_user_id),
     submittedByName: clean(row.submitted_by_name_snapshot),
+    submitterSignatureName: clean(row.submitter_signature_name),
+    submitterSignedAt: clean(row.submitter_signed_at),
     directorReviewedBy: clean(row.director_reviewed_by),
     directorReviewedAt: clean(row.director_reviewed_at),
     directorDecision: asDirectorDecision(row.director_decision),
@@ -374,7 +388,21 @@ function validateSubmissionPayload(input: IncidentDraftInput) {
   if (!clean(input.followUpNote) && !clean(input.generalNotes)) {
     throw new Error("Add either general notes or a follow-up note before submitting.");
   }
+  if (!clean(input.submitterSignatureName)) {
+    throw new Error("Type your full name to e-sign before submitting this incident.");
+  }
   return validated;
+}
+
+function assertSubmitterEsign(input: IncidentDraftInput, actor: ActorContext) {
+  const signatureName = clean(input.submitterSignatureName);
+  if (!signatureName) {
+    throw new Error("Type your full name to e-sign before submitting this incident.");
+  }
+  if (signatureName.toLowerCase() !== actor.fullName.trim().toLowerCase()) {
+    throw new Error("Submitter e-sign must match the signed-in user's full name.");
+  }
+  return signatureName;
 }
 
 async function insertIncidentHistory(input: {
@@ -638,6 +666,7 @@ export async function saveIncidentDraft(input: IncidentDraftInput, actor: ActorC
 export async function submitIncident(input: IncidentDraftInput, actor: ActorContext) {
   assertIncidentReporter(actor);
   validateSubmissionPayload(input);
+  const submitterSignatureName = assertSubmitterEsign(input, actor);
   const existing = clean(input.incidentId) ? await loadIncidentRow(String(input.incidentId)) : null;
   const saved =
     existing ??
@@ -670,6 +699,8 @@ export async function submitIncident(input: IncidentDraftInput, actor: ActorCont
       submitted_at: now,
       submitted_by_user_id: actor.id,
       submitted_by_name_snapshot: actor.fullName,
+      submitter_signature_name: submitterSignatureName,
+      submitter_signed_at: now,
       director_reviewed_by: null,
       director_reviewed_at: null,
       director_decision: null,
@@ -695,7 +726,8 @@ export async function submitIncident(input: IncidentDraftInput, actor: ActorCont
     status: submitted.status,
     metadata: {
       incident_number: submitted.incident_number,
-      reportable: submitted.reportable
+      reportable: submitted.reportable,
+      submitter_signature_name: submitterSignatureName
     }
   });
   return getIncidentDetail(submitted.id);
@@ -728,7 +760,13 @@ export async function reviewIncident(input: IncidentReviewInput, actor: ActorCon
       director_reviewed_at: now,
       director_decision: decision,
       director_signature_name: actor.fullName,
-      director_review_notes: clean(input.reviewNotes)
+      director_review_notes: clean(input.reviewNotes),
+      ...(decision === "returned"
+        ? {
+            submitter_signature_name: null,
+            submitter_signed_at: null
+          }
+        : {})
     })
     .eq("id", incidentId)
     .select("*")

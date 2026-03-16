@@ -3,6 +3,7 @@ import Link from "next/link";
 import { BloodSugarFormShell } from "@/components/forms/workflow-forms-shells";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { canAccessIncidentReportsForRole } from "@/lib/permissions";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
 import { getHealthDashboardData } from "@/lib/services/health-dashboard";
 import { formatDateTime, formatOptionalDateTime } from "@/lib/utils";
@@ -49,7 +50,8 @@ function parseDate(value: string | null | undefined) {
 export default async function HealthPage() {
   const profile = await requireModuleAccess("health");
   const canViewCarePlans = canAccessCarePlansForRole(profile.role);
-  const dashboard = await getHealthDashboardData({ includeCarePlans: canViewCarePlans });
+  const canViewIncidents = canAccessIncidentReportsForRole(profile.role);
+  const dashboard = await getHealthDashboardData({ includeCarePlans: canViewCarePlans, includeIncidents: canViewIncidents });
   const marRows = dashboard.marRows as MarRow[];
   const bloodSugarRows = dashboard.bloodSugarRows as BloodSugarRow[];
   const dueMedicationRows = dashboard.dueMedicationRows as MarRow[];
@@ -175,56 +177,58 @@ export default async function HealthPage() {
           </table>
         </Card>
 
-        <Card>
-          <CardTitle>Recent Incidents</CardTitle>
-          <div className="mt-3 space-y-2">
-            <div className="grid gap-3 sm:grid-cols-4">
-              <div className="rounded-lg border border-border p-3">
-                <p className="text-xs text-muted">Submitted</p>
-                <p className="text-base font-semibold">{incidents.counts.submitted}</p>
-              </div>
-              <div className="rounded-lg border border-border p-3">
-                <p className="text-xs text-muted">Returned</p>
-                <p className="text-base font-semibold">{incidents.counts.returned}</p>
-              </div>
-              <div className="rounded-lg border border-border p-3">
-                <p className="text-xs text-muted">Approved</p>
-                <p className="text-base font-semibold">{incidents.counts.approved}</p>
-              </div>
-              <div className="rounded-lg border border-border p-3">
-                <p className="text-xs text-muted">Reportable Open</p>
-                <p className="text-base font-semibold">{incidents.counts.reportableOpen}</p>
-              </div>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              {incidents.recent.length === 0 ? (
-                <p className="text-sm text-muted">No recent incidents have been recorded.</p>
-              ) : (
-                <div className="space-y-2">
-                  {incidents.recent.slice(0, 4).map((incident: IncidentRow) => (
-                    <div key={incident.id} className="flex items-start justify-between gap-3 border-b border-border pb-2 last:border-b-0 last:pb-0">
-                      <div>
-                        <Link href={`/documentation/incidents/${incident.id}`} className="font-semibold text-brand">
-                          {incident.incidentNumber}
-                        </Link>
-                        <p className="text-xs text-muted">
-                          {incident.participantName ?? incident.staffMemberName ?? "General incident"} | {incident.location}
-                        </p>
-                      </div>
-                      <div className="text-right text-xs text-muted">
-                        <p className="capitalize">{incident.status.replaceAll("_", " ")}</p>
-                        <p>{formatDateTime(incident.incidentDateTime)}</p>
-                      </div>
-                    </div>
-                  ))}
+        {canViewIncidents ? (
+          <Card>
+            <CardTitle>Recent Incidents</CardTitle>
+            <div className="mt-3 space-y-2">
+              <div className="grid gap-3 sm:grid-cols-4">
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-xs text-muted">Submitted</p>
+                  <p className="text-base font-semibold">{incidents.counts.submitted}</p>
                 </div>
-              )}
-              <Link href="/documentation/incidents" className="mt-3 inline-block text-sm font-semibold text-brand">
-                Open Incident Workflow
-              </Link>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-xs text-muted">Returned</p>
+                  <p className="text-base font-semibold">{incidents.counts.returned}</p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-xs text-muted">Approved</p>
+                  <p className="text-base font-semibold">{incidents.counts.approved}</p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-xs text-muted">Reportable Open</p>
+                  <p className="text-base font-semibold">{incidents.counts.reportableOpen}</p>
+                </div>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                {incidents.recent.length === 0 ? (
+                  <p className="text-sm text-muted">No recent incidents have been recorded.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {incidents.recent.slice(0, 4).map((incident: IncidentRow) => (
+                      <div key={incident.id} className="flex items-start justify-between gap-3 border-b border-border pb-2 last:border-b-0 last:pb-0">
+                        <div>
+                          <Link href={`/documentation/incidents/${incident.id}`} className="font-semibold text-brand">
+                            {incident.incidentNumber}
+                          </Link>
+                          <p className="text-xs text-muted">
+                            {incident.participantName ?? incident.staffMemberName ?? "General incident"} | {incident.location}
+                          </p>
+                        </div>
+                        <div className="text-right text-xs text-muted">
+                          <p className="capitalize">{incident.status.replaceAll("_", " ")}</p>
+                          <p>{formatDateTime(incident.incidentDateTime)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <Link href="/documentation/incidents" className="mt-3 inline-block text-sm font-semibold text-brand">
+                  Open Incident Workflow
+                </Link>
+              </div>
             </div>
-          </div>
-        </Card>
+          </Card>
+        ) : null}
       </div>
 
       <Card>
@@ -232,7 +236,7 @@ export default async function HealthPage() {
         <div className="mt-3 flex flex-wrap gap-3 text-sm">
           <Link href="/health/mar" className="font-semibold text-brand">MAR Workflow</Link>
           <Link href="/documentation/blood-sugar" className="font-semibold text-brand">Blood Sugar Workflow</Link>
-          <Link href="/documentation/incidents" className="font-semibold text-brand">Incident Reports</Link>
+          {canViewIncidents ? <Link href="/documentation/incidents" className="font-semibold text-brand">Incident Reports</Link> : null}
           <Link href="/health/assessment" className="font-semibold text-brand">New Intake Assessment</Link>
           <Link href="/health/physician-orders" className="font-semibold text-brand">Physician Orders / POF</Link>
           <Link href="/health/member-health-profiles" className="font-semibold text-brand">Member Health Profiles</Link>

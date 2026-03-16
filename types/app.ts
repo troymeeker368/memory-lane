@@ -44,6 +44,48 @@ export type ModuleKey =
   | "admin-reports"
   | "user-management";
 
+export type AppNavIconKey =
+  | "Activity"
+  | "AlarmClockCheck"
+  | "BadgeAlert"
+  | "BarChart3"
+  | "Bath"
+  | "Bell"
+  | "BookUser"
+  | "Building2"
+  | "BusFront"
+  | "CalendarCheck2"
+  | "CalendarClock"
+  | "CalendarDays"
+  | "Car"
+  | "CircleDollarSign"
+  | "CirclePause"
+  | "ClipboardCheck"
+  | "ClipboardList"
+  | "ClipboardPlus"
+  | "Clock3"
+  | "CreditCard"
+  | "FileHeart"
+  | "FilePenLine"
+  | "FileSpreadsheet"
+  | "FolderSearch"
+  | "GitBranch"
+  | "HandCoins"
+  | "HeartPulse"
+  | "ImageUp"
+  | "LayoutDashboard"
+  | "Lock"
+  | "MonitorCog"
+  | "NotebookText"
+  | "PillBottle"
+  | "ReceiptText"
+  | "ShowerHead"
+  | "TriangleAlert"
+  | "TrendingUp"
+  | "UserRoundCog"
+  | "Users"
+  | "WalletCards";
+
 export type AuditAction =
   | "login"
   | "clock_in"
@@ -61,6 +103,7 @@ export interface AppNavItem {
   href: string;
   group: NavGroup;
   module: ModuleKey;
+  icon: AppNavIconKey;
   roles?: AppRole[];
   external?: boolean;
 }

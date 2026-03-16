@@ -4,7 +4,7 @@ import { DailyActivityForm } from "@/components/forms/daily-activity-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
-import { normalizeRoleKey } from "@/lib/permissions";
+import { canAccessIncidentReportsForRole, normalizeRoleKey } from "@/lib/permissions";
 import { getStaffActivitySnapshot, staffNameToSlug } from "@/lib/services/activity-snapshots";
 import { getDocumentationSummary, getDocumentationTracker, getMembers } from "@/lib/services/documentation";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
@@ -42,6 +42,9 @@ export default async function DocumentationPage({
 }) {
   const profile = await requireModuleAccess("documentation");
   const normalizedRole = normalizeRoleKey(profile.role);
+  const documentationEntryLinks = DOCUMENTATION_ENTRY_LINKS.filter((item) =>
+    item.href === "/documentation/incidents" ? canAccessIncidentReportsForRole(normalizedRole) : true
+  );
 
   if (normalizedRole === "program-assistant") {
     const params = searchParams ? await searchParams : {};
@@ -239,7 +242,7 @@ export default async function DocumentationPage({
           <details className="mt-3 rounded-lg border border-border bg-brandSoft">
             <summary className="cursor-pointer list-none px-3 py-2 text-sm font-semibold text-brand">Documentation Entry Menu</summary>
             <div className="grid gap-2 border-t border-border p-2 sm:grid-cols-2">
-              {DOCUMENTATION_ENTRY_LINKS.map((item) => (
+              {documentationEntryLinks.map((item) => (
                 <Link key={item.href} href={item.href} className="rounded-lg border border-border bg-white px-3 py-2 text-sm font-semibold text-brand">
                   {item.label}
                 </Link>
@@ -248,7 +251,7 @@ export default async function DocumentationPage({
           </details>
         ) : (
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {DOCUMENTATION_ENTRY_LINKS.map((item) => (
+            {documentationEntryLinks.map((item) => (
               <Link key={item.href} href={item.href} className="rounded-lg border border-border bg-brandSoft px-3 py-2 text-sm font-semibold text-brand">
                 {item.label}
               </Link>

@@ -49,6 +49,8 @@ export const ROLE_RANKS: Record<CanonicalAppRole, number> = {
   admin: 7
 };
 
+export const INCIDENT_ALLOWED_ROLES: CanonicalAppRole[] = ["nurse", "manager", "director", "admin"];
+
 export const PERMISSION_MODULES: PermissionModuleKey[] = [
   "documentation",
   "operations",
@@ -169,52 +171,53 @@ const MODULE_PERMISSION_MAP: Record<ModuleKey, PermissionModuleKey> = {
 };
 
 export const NAV_ITEMS: AppNavItem[] = [
-  { label: "Documentation Home", href: "/documentation", group: "Documentation", module: "documentation" },
-  { label: "Members", href: "/members", group: "Documentation", module: "documentation" },
-  { label: "Participation Log", href: "/documentation/activity", group: "Documentation", module: "documentation" },
-  { label: "Toilet Log", href: "/documentation/toilet", group: "Documentation", module: "documentation" },
-  { label: "Shower Log", href: "/documentation/shower", group: "Documentation", module: "documentation" },
-  { label: "Transportation", href: "/documentation/transportation", group: "Documentation", module: "documentation" },
-  { label: "Incident Reports", href: "/documentation/incidents", group: "Documentation", module: "documentation" },
-  { label: "Photo Upload", href: "/documentation/photo-upload", group: "Documentation", module: "documentation" },
-  { label: "Ancillary Charges", href: "/ancillary", group: "Documentation", module: "ancillary" },
+  { label: "Documentation Home", href: "/documentation", group: "Documentation", module: "documentation", icon: "NotebookText" },
+  { label: "Members", href: "/members", group: "Documentation", module: "documentation", icon: "Users" },
+  { label: "Participation Log", href: "/documentation/activity", group: "Documentation", module: "documentation", icon: "ClipboardList" },
+  { label: "Toilet Log", href: "/documentation/toilet", group: "Documentation", module: "documentation", icon: "Bath" },
+  { label: "Shower Log", href: "/documentation/shower", group: "Documentation", module: "documentation", icon: "ShowerHead" },
+  { label: "Transportation", href: "/documentation/transportation", group: "Documentation", module: "documentation", icon: "Car" },
+  { label: "Incident Reports", href: "/documentation/incidents", group: "Documentation", module: "documentation", icon: "TriangleAlert", roles: INCIDENT_ALLOWED_ROLES },
+  { label: "Photo Upload", href: "/documentation/photo-upload", group: "Documentation", module: "documentation", icon: "ImageUp" },
+  { label: "Ancillary Charges", href: "/ancillary", group: "Documentation", module: "ancillary", icon: "ReceiptText" },
 
-  { label: "Operations Home", href: "/operations", group: "Operations", module: "operations" },
-  { label: "Attendance", href: "/operations/attendance", group: "Operations", module: "operations" },
-  { label: "Member Command Center", href: "/operations/member-command-center", group: "Operations", module: "operations" },
-  { label: "Schedule Changes", href: "/operations/schedule-changes", group: "Operations", module: "operations" },
-  { label: "Pricing", href: "/operations/pricing", group: "Operations", module: "operations", roles: ["admin", "director"] },
-  { label: "Additional Charges", href: "/operations/additional-charges", group: "Operations", module: "operations" },
-  { label: "Holds", href: "/operations/holds", group: "Operations", module: "operations" },
-  { label: "Billing", href: "/operations/payor", group: "Operations", module: "operations", roles: ["admin", "manager", "director", "coordinator"] },
-  { label: "Locker Assignments", href: "/operations/locker-assignments", group: "Operations", module: "operations" },
-  { label: "Transportation Station", href: "/operations/transportation-station", group: "Operations", module: "operations" },
+  { label: "Operations Home", href: "/operations", group: "Operations", module: "operations", icon: "LayoutDashboard" },
+  { label: "Attendance", href: "/operations/attendance", group: "Operations", module: "operations", icon: "CalendarCheck2" },
+  { label: "Member Command Center", href: "/operations/member-command-center", group: "Operations", module: "operations", icon: "MonitorCog" },
+  { label: "Schedule Changes", href: "/operations/schedule-changes", group: "Operations", module: "operations", icon: "CalendarClock" },
+  { label: "Pricing", href: "/operations/pricing", group: "Operations", module: "operations", icon: "CircleDollarSign", roles: ["admin", "director"] },
+  { label: "Additional Charges", href: "/operations/additional-charges", group: "Operations", module: "operations", icon: "HandCoins" },
+  { label: "Holds", href: "/operations/holds", group: "Operations", module: "operations", icon: "CirclePause" },
+  { label: "Billing", href: "/operations/payor", group: "Operations", module: "operations", icon: "CreditCard", roles: ["admin", "manager", "director", "coordinator"] },
+  { label: "Locker Assignments", href: "/operations/locker-assignments", group: "Operations", module: "operations", icon: "Lock" },
+  { label: "Transportation Station", href: "/operations/transportation-station", group: "Operations", module: "operations", icon: "BusFront" },
 
-  { label: "Reports", href: "/reports", group: "Reports", module: "reports" },
-  { label: "Monthly Ancillary Charges", href: "/reports/monthly-ancillary", group: "Reports", module: "reports", roles: ["manager", "director", "admin"] },
-  { label: "Member Documentation Summary", href: "/reports/member-summary", group: "Reports", module: "reports", roles: ["manager", "director", "admin"] },
-  { label: "Admin Reports", href: "/admin-reports", group: "Reports", module: "admin-reports" },
+  { label: "Reports", href: "/reports", group: "Reports", module: "reports", icon: "BarChart3" },
+  { label: "Monthly Ancillary Charges", href: "/reports/monthly-ancillary", group: "Reports", module: "reports", icon: "FileSpreadsheet", roles: ["manager", "director", "admin"] },
+  { label: "Member Documentation Summary", href: "/reports/member-summary", group: "Reports", module: "reports", icon: "FolderSearch", roles: ["manager", "director", "admin"] },
+  { label: "Admin Reports", href: "/admin-reports", group: "Reports", module: "admin-reports", icon: "FileSpreadsheet" },
 
-  { label: "Time Clock", href: "/time-card", group: "Time & HR", module: "time-card" },
-  { label: "Punch History", href: "/time-card/punch-history", group: "Time & HR", module: "time-card" },
-  { label: "Forgotten Punch", href: "/time-card/forgotten-punch", group: "Time & HR", module: "time-card" },
-  { label: "Director Timecards", href: "/time-card/director", group: "Time & HR", module: "time-card", roles: ["manager", "director", "admin"] },
-  { label: "PTO Request", href: PTO_EXTERNAL_URL, group: "Time & HR", module: "pto", external: true },
-  { label: "Notifications", href: "/notifications", group: "Time & HR", module: "time-card" },
-  { label: "User Management", href: "/time-hr/user-management", group: "Time & HR", module: "user-management" },
+  { label: "Time Clock", href: "/time-card", group: "Time & HR", module: "time-card", icon: "AlarmClockCheck" },
+  { label: "Punch History", href: "/time-card/punch-history", group: "Time & HR", module: "time-card", icon: "Clock3" },
+  { label: "Forgotten Punch", href: "/time-card/forgotten-punch", group: "Time & HR", module: "time-card", icon: "BadgeAlert" },
+  { label: "Director Timecards", href: "/time-card/director", group: "Time & HR", module: "time-card", icon: "WalletCards", roles: ["manager", "director", "admin"] },
+  { label: "PTO Request", href: PTO_EXTERNAL_URL, group: "Time & HR", module: "pto", icon: "CalendarDays", external: true },
+  { label: "Notifications", href: "/notifications", group: "Time & HR", module: "time-card", icon: "Bell" },
+  { label: "User Management", href: "/time-hr/user-management", group: "Time & HR", module: "user-management", icon: "UserRoundCog" },
 
-  { label: "Pipeline", href: "/sales/pipeline", group: "Sales Activities", module: "sales" },
-  { label: "New Entries", href: "/sales/new-entries", group: "Sales Activities", module: "sales" },
-  { label: "Community Partners", href: "/sales/community-partners", group: "Sales Activities", module: "sales" },
-  { label: "Recent Lead Activity", href: "/sales/activities", group: "Sales Activities", module: "sales" },
+  { label: "Pipeline", href: "/sales/pipeline", group: "Sales Activities", module: "sales", icon: "GitBranch" },
+  { label: "New Entries", href: "/sales/new-entries", group: "Sales Activities", module: "sales", icon: "ClipboardPlus" },
+  { label: "Community Partners", href: "/sales/community-partners", group: "Sales Activities", module: "sales", icon: "Building2" },
+  { label: "Recent Lead Activity", href: "/sales/activities", group: "Sales Activities", module: "sales", icon: "TrendingUp" },
 
-  { label: "Nursing Dashboard", href: "/health", group: "Health Unit", module: "health" },
-  { label: "MAR Workflow", href: "/health/mar", group: "Health Unit", module: "health", roles: ["admin", "manager", "director", "nurse"] },
-  { label: "Member Health Profiles", href: "/health/member-health-profiles", group: "Health Unit", module: "health", roles: ["admin", "nurse"] },
-  { label: "Blood Sugar", href: "/documentation/blood-sugar", group: "Health Unit", module: "health" },
-  { label: "New Intake Assessment", href: "/health/assessment", group: "Health Unit", module: "health" },
-  { label: "Physician Orders", href: "/health/physician-orders", group: "Health Unit", module: "health", roles: ["admin", "nurse"] },
-  { label: "Care Plans", href: "/health/care-plans", group: "Health Unit", module: "health", roles: ["admin", "nurse"] }
+  { label: "Nursing Dashboard", href: "/health", group: "Health Unit", module: "health", icon: "HeartPulse" },
+  { label: "MAR Workflow", href: "/health/mar", group: "Health Unit", module: "health", icon: "PillBottle", roles: ["admin", "manager", "director", "nurse"] },
+  { label: "Member Health Profiles", href: "/health/member-health-profiles", group: "Health Unit", module: "health", icon: "BookUser", roles: ["admin", "nurse"] },
+  { label: "Incident Reports", href: "/documentation/incidents", group: "Health Unit", module: "health", icon: "TriangleAlert", roles: INCIDENT_ALLOWED_ROLES },
+  { label: "Blood Sugar", href: "/documentation/blood-sugar", group: "Health Unit", module: "health", icon: "Activity" },
+  { label: "New Intake Assessment", href: "/health/assessment", group: "Health Unit", module: "health", icon: "ClipboardCheck" },
+  { label: "Physician Orders", href: "/health/physician-orders", group: "Health Unit", module: "health", icon: "FilePenLine", roles: ["admin", "nurse"] },
+  { label: "Care Plans", href: "/health/care-plans", group: "Health Unit", module: "health", icon: "FileHeart", roles: ["admin", "nurse"] }
 ];
 
 function normalizeNavHref(href: string): string {
@@ -290,6 +293,11 @@ export function getRoleRank(role: string | AppRole): number {
 
 export function isRoleAtLeast(role: string | AppRole, minimumRole: string | AppRole): boolean {
   return getRoleRank(role) >= getRoleRank(minimumRole);
+}
+
+export function canAccessIncidentReportsForRole(role: string | AppRole | null | undefined) {
+  const normalizedRole = normalizeRoleKey(role);
+  return INCIDENT_ALLOWED_ROLES.includes(normalizedRole);
 }
 
 export function getDefaultPermissionSet(role: string | AppRole): PermissionSet {

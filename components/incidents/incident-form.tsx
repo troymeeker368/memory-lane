@@ -75,6 +75,8 @@ export function IncidentForm(props: IncidentFormProps) {
   const status = detail?.status ?? "draft";
   const canSubmit = editorEnabled;
   const showAmendmentControls = props.canAmend && (status === "approved" || status === "closed");
+  const submitterSignatureValue = detail?.submitterSignatureName ?? "";
+  const submitterSignedLabel = detail?.submitterSignedAt ? formatDateTime(detail.submitterSignedAt) : null;
 
   function handleEditorResult(result: Awaited<ReturnType<typeof saveIncidentDraftAction>>, successMessage: string) {
     if (!result.ok) {
@@ -438,6 +440,34 @@ export function IncidentForm(props: IncidentFormProps) {
                   placeholder="What needs to happen next, or what the team should monitor."
                 />
               </div>
+
+              <div className="rounded-xl border border-brand/20 bg-brandSoft/40 p-4">
+                <label className="mb-1 block text-xs font-semibold text-muted" htmlFor="submitterSignatureName">
+                  Submitter E-Sign
+                </label>
+                {editorEnabled ? (
+                  <>
+                    <input
+                      id="submitterSignatureName"
+                      name="submitterSignatureName"
+                      defaultValue={submitterSignatureValue}
+                      className="h-11 w-full rounded-lg border border-border px-3 text-sm"
+                      placeholder={props.actorName}
+                      autoComplete="name"
+                    />
+                    <p className="mt-2 text-xs text-muted">
+                      Type your full name exactly as it appears on your account to submit this incident.
+                    </p>
+                  </>
+                ) : (
+                  <div className="rounded-lg border border-border bg-white px-3 py-3 text-sm">
+                    <p className="font-medium">{submitterSignatureValue || "Not signed yet"}</p>
+                    <p className="mt-1 text-xs text-muted">
+                      {submitterSignedLabel ? `Signed on ${submitterSignedLabel}` : "A submitter e-sign is required at submission."}
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
           ) : null}
 
@@ -451,6 +481,12 @@ export function IncidentForm(props: IncidentFormProps) {
                 {detail?.submittedAt ? (
                   <p className="mt-1 text-xs text-muted">
                     Submitted by {detail.submittedByName ?? detail.reporterName} on {formatDateTime(detail.submittedAt)}
+                  </p>
+                ) : null}
+                {detail?.submitterSignatureName ? (
+                  <p className="mt-1 text-xs text-muted">
+                    Submitter e-sign: {detail.submitterSignatureName}
+                    {detail.submitterSignedAt ? ` on ${formatDateTime(detail.submitterSignedAt)}` : ""}
                   </p>
                 ) : null}
                 {detail?.directorReviewedAt ? (
@@ -587,6 +623,11 @@ export function IncidentForm(props: IncidentFormProps) {
             <div>
               <p className="text-xs text-muted">Submitted</p>
               <p className="text-sm">{formatOptionalDateTime(detail?.submittedAt, "Not submitted yet")}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted">Submitter E-Sign</p>
+              <p className="text-sm">{detail?.submitterSignatureName ?? "Pending signature"}</p>
+              <p className="text-xs text-muted">{formatOptionalDateTime(detail?.submitterSignedAt, "Not signed yet")}</p>
             </div>
             <div>
               <p className="text-xs text-muted">Director</p>

@@ -138,7 +138,7 @@ export async function buildIncidentPdfDataUrl(incidentId: string) {
   context = drawWrappedBlock(
     context,
     "Audit Signoff",
-    `Entered By: ${detail.reporterName} | Submitted: ${clean(detail.submittedAt ? formatDateTime(detail.submittedAt) : null)} | Approved By: ${clean(detail.directorSignatureName)} | Approved At: ${clean(detail.directorReviewedAt ? formatDateTime(detail.directorReviewedAt) : null)}`
+    `Entered By: ${detail.reporterName} | Submitted: ${clean(detail.submittedAt ? formatDateTime(detail.submittedAt) : null)} | Submitter E-Sign: ${clean(detail.submitterSignatureName)} | Submitter Signed At: ${clean(detail.submitterSignedAt ? formatDateTime(detail.submitterSignedAt) : null)} | Approved By: ${clean(detail.directorSignatureName)} | Approved At: ${clean(detail.directorReviewedAt ? formatDateTime(detail.directorReviewedAt) : null)}`
   );
   context = drawWrappedBlock(context, "Director Review Notes", clean(detail.directorReviewNotes));
 

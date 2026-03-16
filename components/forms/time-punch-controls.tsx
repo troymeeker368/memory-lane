@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 
-import { timePunchAction } from "@/app/actions";
+import { timePunchAction } from "@/app/time-actions";
 import { Button } from "@/components/ui/button";
 import { CLOCK_IN_BUTTON_CLASS, CLOCK_OUT_BUTTON_CLASS } from "@/components/ui/punch-type-badge";
 
