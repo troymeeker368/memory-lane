@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { getCurrentProfile } from "@/lib/auth";
 import { resolveHomeLandingPath } from "@/lib/services/home-landing";
 
+export const dynamic = "force-dynamic";
+
 function nowMs() {
   return Number(process.hrtime.bigint()) / 1_000_000;
 }
