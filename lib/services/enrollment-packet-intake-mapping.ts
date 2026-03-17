@@ -4,6 +4,12 @@ import { randomUUID } from "node:crypto";
 
 import { normalizeEnrollmentPacketIntakePayload, type EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 import { setBillingPayorContact } from "@/lib/services/billing-payor-contacts";
+import {
+  buildMemberContactsSchemaOutOfDateError,
+  isMemberContactsPayorColumnMissingError,
+  MEMBER_CONTACT_SELECT_LEGACY,
+  MEMBER_CONTACT_SELECT_WITH_PAYOR
+} from "@/lib/services/member-contact-payor-schema";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
@@ -197,6 +203,38 @@ function cleanEmail(value: string | null | undefined) {
 function cleanPhone(value: string | null | undefined) {
   const normalized = clean(value);
   return normalized ? normalized.replace(/\D+/g, "") : null;
+}
+
+function coerceMemberContactSchemaError(error: { code?: string | null; message?: string | null } | null | undefined) {
+  if (isMemberContactsPayorColumnMissingError(error)) {
+    return buildMemberContactsSchemaOutOfDateError();
+  }
+  return new Error(error?.message ?? "Unable to save member contacts from enrollment sync.");
+}
+
+async function selectEnrollmentMemberContacts(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  memberId: string
+) {
+  let lastError: { code?: string | null; message?: string | null } | null = null;
+  for (const selectClause of [MEMBER_CONTACT_SELECT_WITH_PAYOR, MEMBER_CONTACT_SELECT_LEGACY]) {
+    const result = await admin
+      .from("member_contacts")
+      .select(selectClause)
+      .eq("member_id", memberId)
+      .order("updated_at", { ascending: false });
+    if (!result.error) {
+      return ((result.data ?? []) as unknown as Array<Record<string, unknown>>);
+    }
+    lastError = result.error;
+    if (!isMemberContactsPayorColumnMissingError(result.error)) {
+      throw new Error(result.error.message ?? "Unable to query member contacts from enrollment sync.");
+    }
+  }
+  if (isMemberContactsPayorColumnMissingError(lastError)) {
+    return [];
+  }
+  throw new Error(lastError?.message ?? "Unable to query member contacts from enrollment sync.");
 }
 
 function contactMatchesCandidate(
@@ -1281,15 +1319,7 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
     throw new Error("Enrollment packet conversion RPC did not return a mapping run id.");
   }
 
-  const contactInventoryResult = await admin
-    .from("member_contacts")
-    .select("*")
-    .eq("member_id", input.memberId)
-    .order("updated_at", { ascending: false });
-  if (contactInventoryResult.error) {
-    throw new Error(contactInventoryResult.error.message);
-  }
-  let refreshedContacts = (contactInventoryResult.data ?? []) as Array<Record<string, unknown>>;
+  let refreshedContacts = await selectEnrollmentMemberContacts(admin, input.memberId);
 
   for (const preparedContact of preparedContacts) {
     const matchedContact =
@@ -1324,7 +1354,7 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
         .update(contactPatch)
         .eq("id", String(matchedContact.id));
       if (updateContactError) {
-        throw new Error(updateContactError.message);
+        throw coerceMemberContactSchemaError(updateContactError);
       }
     } else {
       const { error: insertContactError } = await admin.from("member_contacts").insert({
@@ -1335,20 +1365,12 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
         created_at: now
       });
       if (insertContactError) {
-        throw new Error(insertContactError.message);
+        throw coerceMemberContactSchemaError(insertContactError);
       }
     }
   }
 
-  const refreshedContactsResult = await admin
-    .from("member_contacts")
-    .select("*")
-    .eq("member_id", input.memberId)
-    .order("updated_at", { ascending: false });
-  if (refreshedContactsResult.error) {
-    throw new Error(refreshedContactsResult.error.message);
-  }
-  refreshedContacts = (refreshedContactsResult.data ?? []) as Array<Record<string, unknown>>;
+  refreshedContacts = await selectEnrollmentMemberContacts(admin, input.memberId);
   const refreshedResponsibleContact = findBestExistingContactMatch(refreshedContacts, {
     name: primaryName,
     email: primaryEmail,
@@ -1378,7 +1400,7 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       .update(contactPatch)
       .eq("id", String(refreshedResponsibleContact.id));
     if (updateResponsibleError) {
-      throw new Error(updateResponsibleError.message);
+      throw coerceMemberContactSchemaError(updateResponsibleError);
     }
   }
 
@@ -1408,7 +1430,7 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
       })
       .eq("id", String(refreshedSecondaryContact.id));
     if (updateSecondaryError) {
-      throw new Error(updateSecondaryError.message);
+      throw coerceMemberContactSchemaError(updateSecondaryError);
     }
   }
 

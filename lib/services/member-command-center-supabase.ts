@@ -6,6 +6,12 @@ import { setBillingPayorContact } from "@/lib/services/billing-payor-contacts";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans-supabase";
 import { getLatestEnrollmentPacketPofStagingSummary } from "@/lib/services/enrollment-packet-intake-staging";
+import {
+  buildMemberContactsSchemaOutOfDateError,
+  isMemberContactsPayorColumnMissingError,
+  MEMBER_CONTACT_SELECT_LEGACY,
+  MEMBER_CONTACT_SELECT_WITH_PAYOR
+} from "@/lib/services/member-contact-payor-schema";
 import { buildPreferredContactByMember } from "@/lib/services/member-contact-priority";
 
 export interface MccMemberRow {
@@ -344,6 +350,57 @@ function isMissingAnyColumnError(error: PostgrestErrorLike | null | undefined, t
   const table = tableName.trim().toLowerCase();
   if (!table) return false;
   return text.includes("column") && text.includes("does not exist") && text.includes(table);
+}
+
+function mapMemberContactRow(row: Record<string, unknown>): MemberContactRow {
+  return {
+    id: String(row.id ?? ""),
+    member_id: String(row.member_id ?? ""),
+    contact_name: String(row.contact_name ?? ""),
+    relationship_to_member: typeof row.relationship_to_member === "string" ? row.relationship_to_member : null,
+    category: String(row.category ?? "Other"),
+    category_other: typeof row.category_other === "string" ? row.category_other : null,
+    email: typeof row.email === "string" ? row.email : null,
+    cellular_number: typeof row.cellular_number === "string" ? row.cellular_number : null,
+    work_number: typeof row.work_number === "string" ? row.work_number : null,
+    home_number: typeof row.home_number === "string" ? row.home_number : null,
+    street_address: typeof row.street_address === "string" ? row.street_address : null,
+    city: typeof row.city === "string" ? row.city : null,
+    state: typeof row.state === "string" ? row.state : null,
+    zip: typeof row.zip === "string" ? row.zip : null,
+    is_payor: row.is_payor === true,
+    created_by_user_id: typeof row.created_by_user_id === "string" ? row.created_by_user_id : null,
+    created_by_name: typeof row.created_by_name === "string" ? row.created_by_name : null,
+    created_at: String(row.created_at ?? ""),
+    updated_at: String(row.updated_at ?? "")
+  };
+}
+
+async function selectMemberContactsRows(
+  runQuery: (selectClause: string) => PromiseLike<{ data: unknown[] | null; error: PostgrestErrorLike | null }>
+) {
+  let lastError: PostgrestErrorLike | null = null;
+  for (const selectClause of [MEMBER_CONTACT_SELECT_WITH_PAYOR, MEMBER_CONTACT_SELECT_LEGACY]) {
+    const result = await runQuery(selectClause);
+    if (!result.error) {
+      return ((result.data ?? []) as Record<string, unknown>[]).map((row) => mapMemberContactRow(row));
+    }
+    lastError = result.error;
+    if (!isMemberContactsPayorColumnMissingError(result.error)) {
+      throw new Error(result.error.message ?? "Unable to query member contacts.");
+    }
+  }
+  if (isMemberContactsPayorColumnMissingError(lastError)) {
+    return [];
+  }
+  throw new Error(lastError?.message ?? "Unable to query member contacts.");
+}
+
+function coerceMemberContactWriteError(error: PostgrestErrorLike | null | undefined) {
+  if (isMemberContactsPayorColumnMissingError(error)) {
+    return buildMemberContactsSchemaOutOfDateError();
+  }
+  return new Error(error?.message ?? "Unable to save member contact.");
 }
 
 function missingMccStorageError(input: {
@@ -1085,13 +1142,13 @@ export async function updateMemberAttendanceScheduleSupabase(id: string, patch: 
 export async function listMemberContactsSupabase(memberId: string) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberContactsSupabase");
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("member_contacts")
-    .select("*")
-    .eq("member_id", canonicalMemberId)
-    .order("updated_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  return (data ?? []) as MemberContactRow[];
+  return selectMemberContactsRows((selectClause) =>
+    supabase
+      .from("member_contacts")
+      .select(selectClause)
+      .eq("member_id", canonicalMemberId)
+      .order("updated_at", { ascending: false })
+  );
 }
 
 export async function upsertMemberContactSupabase(input: {
@@ -1130,11 +1187,11 @@ export async function upsertMemberContactSupabase(input: {
       });
       const { data: refreshed, error: refreshError } = await supabase
         .from("member_contacts")
-        .select("*")
+        .select(MEMBER_CONTACT_SELECT_WITH_PAYOR)
         .eq("id", data.id)
         .maybeSingle();
-      if (refreshError) throw new Error(refreshError.message);
-      return (refreshed as MemberContactRow | null) ?? null;
+      if (refreshError) throw coerceMemberContactWriteError(refreshError);
+      return refreshed ? mapMemberContactRow(refreshed as unknown as Record<string, unknown>) : null;
     }
     return data;
   };
@@ -1160,18 +1217,18 @@ export async function upsertMemberContactSupabase(input: {
         updated_at: input.updated_at
       })
       .eq("id", input.id)
-      .select("*")
+      .select(MEMBER_CONTACT_SELECT_WITH_PAYOR)
       .maybeSingle();
-    if (error) throw new Error(error.message);
-    return persistAndMaybeAssignPayor((data as MemberContactRow | null) ?? null);
+    if (error) throw coerceMemberContactWriteError(error);
+    return persistAndMaybeAssignPayor(data ? mapMemberContactRow(data as unknown as Record<string, unknown>) : null);
   }
   const { data, error } = await supabase
     .from("member_contacts")
     .insert({ ...input, member_id: canonicalMemberId, id: toId("contact"), is_payor: false })
-    .select("*")
+    .select(MEMBER_CONTACT_SELECT_WITH_PAYOR)
     .single();
-  if (error) throw new Error(error.message);
-  return (await persistAndMaybeAssignPayor(data as MemberContactRow)) as MemberContactRow;
+  if (error) throw coerceMemberContactWriteError(error);
+  return (await persistAndMaybeAssignPayor(mapMemberContactRow(data as unknown as Record<string, unknown>))) as MemberContactRow;
 }
 
 export async function deleteMemberContactSupabase(id: string) {
@@ -1480,7 +1537,7 @@ export async function getTransportationAddRiderMemberOptionsSupabase() {
   const memberIds = members.map((row) => row.id);
   const [commandCentersResult, contactsResult] = await Promise.all([
     supabase.from("member_command_centers").select("*").in("member_id", memberIds),
-    supabase.from("member_contacts").select("*").in("member_id", memberIds)
+    selectMemberContactsRows((selectClause) => supabase.from("member_contacts").select(selectClause).in("member_id", memberIds))
   ]);
 
   const commandCenters = (() => {
@@ -1494,16 +1551,7 @@ export async function getTransportationAddRiderMemberOptionsSupabase() {
     throw new Error(commandCentersResult.error.message);
   })();
 
-  const contacts = (() => {
-    if (!contactsResult.error) return (contactsResult.data ?? []) as MemberContactRow[];
-    if (isMissingTableError(contactsResult.error, "member_contacts")) {
-      throw missingMccStorageError({
-        objectName: "member_contacts",
-        migration: "0011_member_command_center_aux_schema.sql"
-      });
-    }
-    throw new Error(contactsResult.error.message);
-  })();
+  const contacts = contactsResult;
 
   const commandCenterByMember = new Map(
     commandCenters.map((row) => [row.member_id, row] as const)

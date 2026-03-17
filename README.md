@@ -172,3 +172,15 @@ Production safety rules:
 - `/dev/auth` is hard-disabled when `NODE_ENV=production` even if `ENABLE_DEV_AUTH_BYPASS=true`.
 - Staff invite/reset/set-password flows always use real Supabase auth sessions and preserve canonical role/permission enforcement.
 
+## Supabase Migration And Type Sync
+
+When runtime code starts referencing a new column or RPC, apply migrations before testing the UI.
+
+- Linked/remote project: `npm run supabase:db:push`
+- Local Supabase stack: `npm run supabase:db:push:local`
+- Generate types from a linked project: `npm run supabase:types:linked`
+- Generate types from local Supabase: `npm run supabase:types:local`
+- If PostgREST still serves stale schema after pushing migrations, restart the local Supabase stack before retrying the UI save flow.
+
+This repo currently uses hand-authored service row interfaces rather than a checked-in generated `Database` type file. If you keep a local generated types file for tooling, regenerate it after schema changes so new columns such as `member_contacts.is_payor` are included.
+

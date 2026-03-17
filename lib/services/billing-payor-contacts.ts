@@ -3,12 +3,18 @@ import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveCanonicalPersonRef } from "@/lib/services/canonical-person-ref";
 import {
+  buildMemberContactsSchemaOutOfDateMessage,
+  buildMemberContactsSchemaOutOfDateError,
+  isAmbiguousColumnReferenceError,
+  isMemberContactsPayorColumnMissingError,
+  MEMBER_CONTACT_PAYOR_MIGRATION
+} from "@/lib/services/member-contact-payor-schema";
+import {
   recordImmediateSystemAlert,
   recordWorkflowEvent
 } from "@/lib/services/workflow-observability";
 
 const SET_MEMBER_CONTACT_PAYOR_RPC = "rpc_set_member_contact_payor";
-const MEMBER_CONTACT_PAYOR_MIGRATION = "0065_member_contact_payor_canonicalization.sql";
 
 type BillingPayorContactRow = {
   id: string;
@@ -189,8 +195,8 @@ export async function listBillingPayorContactsForMembers(memberIds: string[]) {
     .order("updated_at", { ascending: false });
   if (error) {
     throw new Error(
-      error.code === "42703" || error.code === "PGRST204"
-        ? `Billing payor contact schema is unavailable. Apply migration ${MEMBER_CONTACT_PAYOR_MIGRATION} and refresh schema cache.`
+      isMemberContactsPayorColumnMissingError(error)
+        ? buildMemberContactsSchemaOutOfDateError().message
         : error.message
     );
   }
@@ -250,6 +256,12 @@ export async function setBillingPayorContact(input: {
       throw new Error(
         `Billing payor contact RPC is unavailable. Apply migration ${MEMBER_CONTACT_PAYOR_MIGRATION} and refresh schema cache.`
       );
+    }
+    if (isAmbiguousColumnReferenceError(error, "member_id")) {
+      throw new Error(buildMemberContactsSchemaOutOfDateMessage());
+    }
+    if (isMemberContactsPayorColumnMissingError(error)) {
+      throw buildMemberContactsSchemaOutOfDateError();
     }
     if (error.code === "23505") {
       throw new Error("Only one billing payor contact can be selected for a member.");

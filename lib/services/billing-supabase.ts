@@ -5,6 +5,10 @@ import {
   formatBillingPayorDisplayName,
   listBillingPayorContactsForMembers
 } from "@/lib/services/billing-payor-contacts";
+import {
+  buildMemberContactsSchemaOutOfDateError,
+  isMemberContactsPayorColumnMissingError
+} from "@/lib/services/member-contact-payor-schema";
 import { generateClosureDatesFromRules, type ClosureRuleLike } from "@/lib/services/closure-rules";
 import {
   loadExpectedAttendanceSupabaseContext,
@@ -3247,7 +3251,11 @@ export async function getBillingModuleIndex() {
     getBillingBatches()
   ]);
 
-  if (payorResponse.error) throw new Error(payorResponse.error.message);
+  if (payorResponse.error) {
+    throw (isMemberContactsPayorColumnMissingError(payorResponse.error)
+      ? buildMemberContactsSchemaOutOfDateError()
+      : new Error(payorResponse.error.message));
+  }
   if (memberSettingResponse.error) throw new Error(memberSettingResponse.error.message);
   if (scheduleTemplateResponse.error) throw new Error(scheduleTemplateResponse.error.message);
   const payorCount = payorResponse.count ?? 0;
