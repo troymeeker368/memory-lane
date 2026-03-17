@@ -12,6 +12,10 @@ import {
 } from "@/components/forms/member-command-center-shells";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
+import AttendanceTab from "@/app/(portal)/operations/member-command-center/attendance-tab";
+import DemographicsTab from "@/app/(portal)/operations/member-command-center/demographics-tab";
+import DietTab from "@/app/(portal)/operations/member-command-center/diet-tab";
+import TransportationTab from "@/app/(portal)/operations/member-command-center/transportation-tab";
 import {
   MCC_TABS,
   TAB_LABELS,
@@ -92,7 +96,6 @@ async function renderTabSection(input: {
 
   switch (input.tab) {
     case "attendance-enrollment": {
-      const { default: AttendanceTab } = await import("@/app/(portal)/operations/member-command-center/attendance-tab");
       return (
         <AttendanceTab
           canEditAttendanceBilling={input.canEditAttendanceBilling}
@@ -111,7 +114,6 @@ async function renderTabSection(input: {
       );
     }
     case "transportation": {
-      const { default: TransportationTab } = await import("@/app/(portal)/operations/member-command-center/transportation-tab");
       return (
         <TransportationTab
           canEdit={input.canEdit}
@@ -127,7 +129,6 @@ async function renderTabSection(input: {
       );
     }
     case "demographics-contacts": {
-      const { default: DemographicsTab } = await import("@/app/(portal)/operations/member-command-center/demographics-tab");
       return (
         <DemographicsTab
           canEdit={input.canEdit}
@@ -140,7 +141,6 @@ async function renderTabSection(input: {
       );
     }
     case "diet-allergies": {
-      const { default: DietTab } = await import("@/app/(portal)/operations/member-command-center/diet-tab");
       return (
         <DietTab
           canEdit={input.canEdit}
