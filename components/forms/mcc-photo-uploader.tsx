@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 
 import { updateMemberCommandCenterPhotoAction } from "@/app/(portal)/operations/member-command-center/summary-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 
 const MAX_MEMBER_PHOTO_BYTES = 5 * 1024 * 1024;
 
@@ -33,30 +34,37 @@ export function MccPhotoUploader({
   profileImageUrl: string | null;
   displayName: string;
 }) {
-  const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [isPending, startTransition] = useTransition();
+  const [currentPhotoUrl, setCurrentPhotoUrl] = useState<string | null>(profileImageUrl);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const { isSaving, run } = useScopedMutation();
   const initials = getInitials(displayName);
 
+  useEffect(() => {
+    setCurrentPhotoUrl(profileImageUrl);
+  }, [profileImageUrl]);
+
   const handlePhotoUpload = async (formData: FormData) => {
-    const response = await updateMemberCommandCenterPhotoAction(formData);
-    if (!response.ok) {
-      setUploadError(response.error ?? "Unable to upload photo.");
-      return;
-    }
-    setUploadError(null);
-    router.refresh();
+    await run(() => updateMemberCommandCenterPhotoAction(formData), {
+      successMessage: "Photo updated.",
+      errorMessage: "Unable to upload photo.",
+      onSuccess: (result) => {
+        const data = result.data as { profileImageUrl?: string | null };
+        setCurrentPhotoUrl(data.profileImageUrl ?? currentPhotoUrl);
+        setUploadError(null);
+      },
+      onError: (result) => {
+        setUploadError(result.error);
+      }
+    });
   };
 
   return (
     <form
       ref={formRef}
       action={(formData) => {
-        startTransition(() => {
-          void handlePhotoUpload(formData);
-        });
+        void handlePhotoUpload(formData);
       }}
       className="flex flex-col items-center gap-2"
     >
@@ -68,10 +76,11 @@ export function MccPhotoUploader({
         onClick={() => inputRef.current?.click()}
         className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
         title="Click photo to upload"
+        disabled={isSaving}
       >
-        {profileImageUrl ? (
+        {currentPhotoUrl ? (
           <img
-            src={profileImageUrl}
+            src={currentPhotoUrl}
             alt={`${displayName} profile`}
             className="h-28 w-28 rounded-full border border-border object-cover"
           />
@@ -91,7 +100,7 @@ export function MccPhotoUploader({
         onChange={(event) => {
           const file = event.currentTarget.files?.[0];
           if (!file) return;
-          if (isPending) return;
+          if (isSaving) return;
           if (file.size > MAX_MEMBER_PHOTO_BYTES) {
             setUploadError("Photo is too large. Max allowed is 5MB.");
             event.currentTarget.value = "";
@@ -101,7 +110,7 @@ export function MccPhotoUploader({
           formRef.current?.requestSubmit();
         }}
       />
-      {uploadError ? <p className="text-xs text-red-700">{uploadError}</p> : null}
+      <MutationNotice kind="error" message={uploadError} />
     </form>
   );
 }

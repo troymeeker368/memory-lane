@@ -1,10 +1,12 @@
 "use client";
 
-import { FormEvent, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent } from "react";
 
 import { saveMemberCommandCenterTransportationAction } from "@/app/(portal)/operations/member-command-center/summary-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
+import { MutationNotice } from "@/components/ui/mutation-notice";
+import { emitClientMutationEvent } from "@/lib/mutations/client-events";
 import {
   MEMBER_TRANSPORTATION_SERVICE_OPTIONS
 } from "@/lib/canonical";
@@ -127,7 +129,6 @@ export function MccTransportationForm({
   busStopOptions: string[];
   busNumberOptions: string[];
 }) {
-  const router = useRouter();
   const syncDeps = [
     memberId,
     transportationRequired,
@@ -162,7 +163,7 @@ export function MccTransportationForm({
     syncDeps
   );
   const [status, setStatus] = usePropSyncedStatus(syncDeps);
-  const [isPending, startTransition] = useTransition();
+  const { isSaving, run } = useScopedMutation();
 
   const enabled = requiredValue === "true";
   const dayConfig: Array<{ key: DayKey; label: string; enabled: boolean }> = [
@@ -227,21 +228,18 @@ export function MccTransportationForm({
     event.preventDefault();
     setStatus("");
     const payload = new FormData(event.currentTarget);
-    startTransition(async () => {
-      const result = await saveMemberCommandCenterTransportationAction(payload);
-      if (!result?.ok) {
-        setStatus(result?.error ?? "Unable to save transportation.");
-        return;
+    void run(() => saveMemberCommandCenterTransportationAction(payload), {
+      successMessage: "Transportation saved.",
+      errorMessage: "Unable to save transportation.",
+      onSuccess: () => {
+        setStatus("Transportation saved.");
+        emitClientMutationEvent("mcc:header-update", {
+          transportation: summarizeTransportation()
+        });
+      },
+      onError: (result) => {
+        setStatus(`Error: ${result.error}`);
       }
-      setStatus("Transportation saved.");
-      window.dispatchEvent(
-        new CustomEvent("mcc:header-update", {
-          detail: {
-            transportation: summarizeTransportation()
-          }
-        })
-      );
-      router.refresh();
     });
   };
 
@@ -457,10 +455,10 @@ export function MccTransportationForm({
         </div>
       ) : null}
 
-      <button type="submit" disabled={isPending} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
-        {isPending ? "Saving..." : "Save Transportation"}
+      <button type="submit" disabled={isSaving} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
+        {isSaving ? "Saving..." : "Save Transportation"}
       </button>
-      {status ? <p className="text-xs text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
     </form>
   );
 }

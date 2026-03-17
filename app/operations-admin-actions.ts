@@ -52,7 +52,7 @@ export async function updateAncillaryCategoryPriceAction(
   revalidatePath("/reports");
   revalidatePath("/reports/monthly-ancillary");
 
-  return { ok: true };
+  return { ok: true, updated };
 }
 
 const operationalSettingsSchema = z.object({

@@ -181,9 +181,6 @@ export function SendEnrollmentPacketAction({
           if ("redirectTo" in result && result.redirectTo) {
             router.push(result.redirectTo);
           }
-          if ("retryable" in result && result.retryable) {
-            router.refresh();
-          }
           return;
         }
 
@@ -220,7 +217,6 @@ export function SendEnrollmentPacketAction({
                     onClick={() => {
                       setIsOpen(false);
                       setSentResult(false);
-                      router.refresh();
                     }}
                     disabled={isWorking}
                   >

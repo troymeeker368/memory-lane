@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 import { saveEnrollmentPacketSenderSignatureProfileAction } from "@/app/sales-enrollment-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { EsignaturePad } from "@/components/signature/esignature-pad";
 import { Button } from "@/components/ui/button";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 
 export function EnrollmentPacketSignatureSetup({
   initialSignatureName,
@@ -17,8 +18,7 @@ export function EnrollmentPacketSignatureSetup({
   const [signatureName, setSignatureName] = useState(initialSignatureName);
   const [signatureImageDataUrl, setSignatureImageDataUrl] = useState<string | null>(initialSignatureImageDataUrl);
   const [status, setStatus] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
-  const router = useRouter();
+  const { isSaving, run } = useScopedMutation();
 
   const onSave = () => {
     if (!signatureName.trim()) {
@@ -30,17 +30,18 @@ export function EnrollmentPacketSignatureSetup({
       return;
     }
     setStatus(null);
-    startTransition(async () => {
-      const result = await saveEnrollmentPacketSenderSignatureProfileAction({
+    void run(() => saveEnrollmentPacketSenderSignatureProfileAction({
         signatureName: signatureName.trim(),
         signatureImageDataUrl
-      });
-      if (!result.ok) {
-        setStatus(result.error);
-        return;
+      }), {
+      successMessage: "Enrollment packet signature saved.",
+      errorMessage: "Unable to save enrollment packet signature.",
+      onSuccess: () => {
+        setStatus("Enrollment packet signature saved.");
+      },
+      onError: (result) => {
+        setStatus(`Error: ${result.error}`);
       }
-      setStatus("Enrollment packet signature saved.");
-      router.refresh();
     });
   };
 
@@ -52,22 +53,22 @@ export function EnrollmentPacketSignatureSetup({
           className="h-11 w-full rounded-lg border border-border px-3"
           value={signatureName}
           onChange={(event) => setSignatureName(event.target.value)}
-          disabled={isPending}
+          disabled={isSaving}
         />
       </label>
       <EsignaturePad
-        disabled={isPending}
+        disabled={isSaving}
         onSignatureChange={(dataUrl) => {
           setSignatureImageDataUrl(dataUrl);
           if (dataUrl) setStatus(null);
         }}
       />
       <div className="flex justify-end">
-        <Button type="button" onClick={onSave} disabled={isPending}>
-          {isPending ? "Saving..." : "Save Signature Setup"}
+        <Button type="button" onClick={onSave} disabled={isSaving}>
+          {isSaving ? "Saving..." : "Save Signature Setup"}
         </Button>
       </div>
-      {status ? <p className="text-sm text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
     </div>
   );
 }

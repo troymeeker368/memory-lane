@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import { MEMBER_FILE_CATEGORY_OPTIONS } from "@/lib/canonical";
 import {
@@ -9,6 +8,8 @@ import {
   deleteMemberFileAction,
   getMemberFileDownloadUrlAction
 } from "@/app/(portal)/operations/member-command-center/file-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 import { formatDateTime } from "@/lib/utils";
 
 interface FileRow {
@@ -60,15 +61,19 @@ export function MemberCommandCenterFileManager({
   rows: FileRow[];
   canEdit: boolean;
 }) {
-  const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
   const [category, setCategory] = useState<(typeof MEMBER_FILE_CATEGORY_OPTIONS)[number]>("Health Unit");
   const [categoryOther, setCategoryOther] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadToken, setUploadToken] = useState<string | null>(null);
-  const router = useRouter();
+  const [localRows, setLocalRows] = useState<FileRow[]>(rows);
+  const { isSaving, run } = useScopedMutation();
 
   const showCustomCategory = useMemo(() => category === "Other", [category]);
+
+  useEffect(() => {
+    setLocalRows(rows);
+  }, [rows]);
 
   useEffect(() => {
     setStatus(null);
@@ -114,10 +119,10 @@ export function MemberCommandCenterFileManager({
       return;
     }
 
-    startTransition(async () => {
+    void run(async () => {
       try {
         const dataUrl = await fileToDataUrl(selectedFile);
-        const result = await addMemberFileAction({
+        return addMemberFileAction({
           memberId,
           fileName: selectedFile.name,
           fileType: selectedFile.type || "application/octet-stream",
@@ -126,17 +131,22 @@ export function MemberCommandCenterFileManager({
           categoryOther: showCustomCategory ? categoryOther : "",
           uploadToken
         });
-
-        if (result?.error) {
-          setStatus(`Error: ${result.error}`);
-          return;
+      } catch {
+        return { ok: false, error: "Unable to process selected file." };
+      }
+    }, {
+      successMessage: "File uploaded.",
+      errorMessage: "Unable to upload file.",
+      onSuccess: (result) => {
+        const createdRow = ((result.data as { row?: FileRow } | null)?.row ?? null) as FileRow | null;
+        if (createdRow) {
+          setLocalRows((current) => [createdRow, ...current.filter((row) => row.id !== createdRow.id)]);
         }
-
         setStatus("File uploaded.");
         clearSelection();
-        router.refresh();
-      } catch {
-        setStatus("Error: Unable to process selected file.");
+      },
+      onError: (result) => {
+        setStatus(`Error: ${result.error}`);
       }
     });
   }
@@ -144,14 +154,16 @@ export function MemberCommandCenterFileManager({
   async function onDelete(fileId: string) {
     if (!window.confirm("Delete this file?")) return;
 
-    startTransition(async () => {
-      const result = await deleteMemberFileAction({ id: fileId, memberId });
-      if (result?.error) {
+    void run(() => deleteMemberFileAction({ id: fileId, memberId }), {
+      successMessage: "File deleted.",
+      errorMessage: "Unable to delete file.",
+      onSuccess: () => {
+        setLocalRows((current) => current.filter((row) => row.id !== fileId));
+        setStatus("File deleted.");
+      },
+      onError: (result) => {
         setStatus(`Error: ${result.error}`);
-        return;
       }
-      setStatus("File deleted.");
-      router.refresh();
     });
   }
 
@@ -162,27 +174,33 @@ export function MemberCommandCenterFileManager({
 
   function onOpen(row: FileRow) {
     setStatus(null);
-    startTransition(async () => {
-      const result = await getMemberFileDownloadUrlAction({ id: row.id, memberId });
-      if (!result.ok) {
+    void run(() => getMemberFileDownloadUrlAction({ id: row.id, memberId }), {
+      successMessage: "File opened.",
+      errorMessage: "Unable to open file.",
+      onSuccess: (result) => {
+        const data = result.data as { signedUrl: string };
+        window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+        setStatus("File opened.");
+      },
+      onError: (result) => {
         setStatus(`Error: ${result.error}`);
-        return;
       }
-      window.open(result.signedUrl, "_blank", "noopener,noreferrer");
-      setStatus("File opened.");
     });
   }
 
   function onDownload(row: FileRow) {
     setStatus(null);
-    startTransition(async () => {
-      const result = await getMemberFileDownloadUrlAction({ id: row.id, memberId });
-      if (!result.ok) {
+    void run(() => getMemberFileDownloadUrlAction({ id: row.id, memberId }), {
+      successMessage: "File download started.",
+      errorMessage: "Unable to download file.",
+      onSuccess: (result) => {
+        const data = result.data as { signedUrl: string; fileName?: string };
+        triggerDownload(data.signedUrl, data.fileName || row.file_name);
+        setStatus("File download started.");
+      },
+      onError: (result) => {
         setStatus(`Error: ${result.error}`);
-        return;
       }
-      triggerDownload(result.signedUrl, result.fileName || row.file_name);
-      setStatus("File download started.");
     });
   }
 
@@ -228,16 +246,16 @@ export function MemberCommandCenterFileManager({
               type="button"
               className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white"
               onClick={onUpload}
-              disabled={isPending}
+              disabled={isSaving}
             >
-              {isPending ? "Uploading..." : "Upload File"}
+              {isSaving ? "Uploading..." : "Upload File"}
             </button>
             {selectedFile ? (
               <button
                 type="button"
                 className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
                 onClick={clearSelection}
-                disabled={isPending}
+                disabled={isSaving}
               >
                 Clear
               </button>
@@ -260,14 +278,14 @@ export function MemberCommandCenterFileManager({
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
+            {localRows.length === 0 ? (
               <tr>
                 <td colSpan={canEdit ? 7 : 6} className="text-sm text-muted">
                   No files uploaded yet.
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
+              localRows.map((row) => (
                 <tr key={row.id}>
                   <td>{row.file_name}</td>
                   <td>{row.category === "Other" ? row.category_other ?? "Other" : row.category}</td>
@@ -282,7 +300,7 @@ export function MemberCommandCenterFileManager({
                             type="button"
                             className="font-semibold text-brand"
                             onClick={() => onOpen(row)}
-                            disabled={isPending}
+                            disabled={isSaving}
                           >
                             Open
                           </button>
@@ -290,7 +308,7 @@ export function MemberCommandCenterFileManager({
                             type="button"
                             className="font-semibold text-brand"
                             onClick={() => onDownload(row)}
-                            disabled={isPending}
+                            disabled={isSaving}
                           >
                             Download
                           </button>
@@ -306,6 +324,7 @@ export function MemberCommandCenterFileManager({
                         type="button"
                         className="text-xs font-semibold text-red-700"
                         onClick={() => onDelete(row.id)}
+                        disabled={isSaving}
                       >
                         Delete
                       </button>
@@ -318,7 +337,7 @@ export function MemberCommandCenterFileManager({
         </table>
       </div>
 
-      {status ? <p className="text-sm text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
     </div>
   );
 }

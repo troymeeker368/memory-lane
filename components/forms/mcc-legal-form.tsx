@@ -1,10 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, useEffect } from "react";
 
 import { saveMemberCommandCenterLegalAction } from "@/app/(portal)/operations/member-command-center/summary-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
+import { MutationNotice } from "@/components/ui/mutation-notice";
+import { emitClientMutationEvent } from "@/lib/mutations/client-events";
 
 function boolToSelectValue(value: boolean | null | undefined) {
   if (value == null) return "";
@@ -32,20 +34,15 @@ export function MccLegalForm({
   powerOfAttorney: string;
   legalComments: string;
 }) {
-  const router = useRouter();
   const [codeStatusValue, setCodeStatusValue] = usePropSyncedState(codeStatus, [memberId, codeStatus, dnr]);
   const [dnrValue, setDnrValue] = usePropSyncedState(boolToSelectValue(dnr), [memberId, codeStatus, dnr]);
   const [status, setStatus] = usePropSyncedStatus([memberId, codeStatus, dnr]);
-  const [isPending, startTransition] = useTransition();
+  const { isSaving, run } = useScopedMutation();
 
   useEffect(() => {
-    window.dispatchEvent(
-      new CustomEvent("mcc:header-update", {
-        detail: {
-          codeStatus: codeStatusValue
-        }
-      })
-    );
+    emitClientMutationEvent("mcc:header-update", {
+      codeStatus: codeStatusValue
+    });
   }, [codeStatusValue]);
 
   const handleCodeStatusChange = (next: string) => {
@@ -64,14 +61,15 @@ export function MccLegalForm({
     event.preventDefault();
     setStatus("");
     const payload = new FormData(event.currentTarget);
-    startTransition(async () => {
-      const result = await saveMemberCommandCenterLegalAction(payload);
-      if (!result?.ok) {
-        setStatus(result?.error ?? "Unable to save legal information.");
-        return;
+    void run(() => saveMemberCommandCenterLegalAction(payload), {
+      successMessage: "Legal information saved.",
+      errorMessage: "Unable to save legal information.",
+      onSuccess: () => {
+        setStatus("Legal information saved.");
+      },
+      onError: (result) => {
+        setStatus(`Error: ${result.error}`);
       }
-      setStatus("Legal information saved.");
-      router.refresh();
     });
   };
 
@@ -118,11 +116,11 @@ export function MccLegalForm({
       <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Power of Attorney</span><input name="powerOfAttorney" defaultValue={powerOfAttorney} className="h-10 w-full rounded-lg border border-border px-3" /></label>
       <label className="space-y-1 text-sm md:col-span-3"><span className="text-xs font-semibold text-muted">Comments</span><textarea name="legalComments" defaultValue={legalComments} className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" /></label>
       <div className="md:col-span-3">
-        <button type="submit" disabled={isPending} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
-          {isPending ? "Saving..." : "Save Legal Information"}
+        <button type="submit" disabled={isSaving} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
+          {isSaving ? "Saving..." : "Save Legal Information"}
         </button>
       </div>
-      {status ? <p className="md:col-span-3 text-xs text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} className="md:col-span-3" />
     </form>
   );
 }

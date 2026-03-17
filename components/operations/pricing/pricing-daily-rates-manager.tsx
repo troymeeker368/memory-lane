@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   setEnrollmentPricingDailyRateActiveAction,
   upsertEnrollmentPricingDailyRateAction
 } from "@/app/(portal)/operations/pricing/actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { Button } from "@/components/ui/button";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 
 type DailyRateRow = {
   id: string;
@@ -91,21 +92,25 @@ export function PricingDailyRatesManager({
   canEdit: boolean;
   todayDate: string;
 }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [localRows, setLocalRows] = useState<DailyRateRow[]>(rows);
   const [status, setStatus] = useState<string | null>(null);
   const [editing, setEditing] = useState<DailyRateFormState | null>(null);
+  const { isSaving, run } = useScopedMutation();
+
+  useEffect(() => {
+    setLocalRows(rows);
+  }, [rows]);
 
   const orderedRows = useMemo(
     () =>
-      [...rows].sort((left, right) => {
+      [...localRows].sort((left, right) => {
         const activeDiff = Number(right.isActive) - Number(left.isActive);
         if (activeDiff !== 0) return activeDiff;
         const displayDiff = left.displayOrder - right.displayOrder;
         if (displayDiff !== 0) return displayDiff;
         return left.minDaysPerWeek - right.minDaysPerWeek;
       }),
-    [rows]
+    [localRows]
   );
 
   const onSubmit = () => {
@@ -146,8 +151,7 @@ export function PricingDailyRatesManager({
     }
 
     setStatus(null);
-    startTransition(async () => {
-      const result = await upsertEnrollmentPricingDailyRateAction({
+    void run(() => upsertEnrollmentPricingDailyRateAction({
         id: editing.id,
         label: editing.label,
         minDaysPerWeek,
@@ -158,24 +162,34 @@ export function PricingDailyRatesManager({
         isActive: editing.isActive,
         displayOrder,
         notes: editing.notes
-      });
-      if (!result.ok) {
-        setStatus(result.error);
-        return;
+      }), {
+      successMessage: "Daily rate saved.",
+      errorMessage: "Unable to save daily rate pricing.",
+      onSuccess: (result) => {
+        const savedRow = ((result.data as { row?: DailyRateRow } | null)?.row ?? null) as DailyRateRow | null;
+        if (savedRow) {
+          setLocalRows((current) =>
+            editing.id
+              ? current.map((row) => (row.id === savedRow.id ? savedRow : row))
+              : [savedRow, ...current.filter((row) => row.id !== savedRow.id)]
+          );
+        }
+        setEditing(null);
+        setStatus("Daily rate saved.");
+      },
+      onError: (result) => {
+        setStatus(`Error: ${result.error}`);
       }
-      setEditing(null);
-      setStatus("Daily rate saved.");
-      router.refresh();
     });
   };
 
   return (
     <div className="space-y-3">
-      {status ? <p className="text-sm text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
 
       {canEdit ? (
         <div className="flex flex-wrap gap-2">
-          <Button type="button" disabled={isPending} onClick={() => setEditing(emptyForm(todayDate))}>
+          <Button type="button" disabled={isSaving} onClick={() => setEditing(emptyForm(todayDate))}>
             Add Daily Rate
           </Button>
           {editing ? (
@@ -183,7 +197,7 @@ export function PricingDailyRatesManager({
               type="button"
               className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
               onClick={() => setEditing(null)}
-              disabled={isPending}
+              disabled={isSaving}
             >
               Cancel
             </button>
@@ -201,7 +215,7 @@ export function PricingDailyRatesManager({
                 className="h-10 w-full rounded-lg border border-border px-3"
                 value={editing.label}
                 onChange={(event) => setEditing((current) => (current ? { ...current, label: event.target.value } : current))}
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -216,7 +230,7 @@ export function PricingDailyRatesManager({
                 onChange={(event) =>
                   setEditing((current) => (current ? { ...current, minDaysPerWeek: event.target.value } : current))
                 }
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -231,7 +245,7 @@ export function PricingDailyRatesManager({
                 onChange={(event) =>
                   setEditing((current) => (current ? { ...current, maxDaysPerWeek: event.target.value } : current))
                 }
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -243,7 +257,7 @@ export function PricingDailyRatesManager({
                 className="h-10 w-full rounded-lg border border-border px-3"
                 value={editing.dailyRate}
                 onChange={(event) => setEditing((current) => (current ? { ...current, dailyRate: event.target.value } : current))}
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -257,7 +271,7 @@ export function PricingDailyRatesManager({
                 onChange={(event) =>
                   setEditing((current) => (current ? { ...current, displayOrder: event.target.value } : current))
                 }
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -269,7 +283,7 @@ export function PricingDailyRatesManager({
                 onChange={(event) =>
                   setEditing((current) => (current ? { ...current, effectiveStartDate: event.target.value } : current))
                 }
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -281,7 +295,7 @@ export function PricingDailyRatesManager({
                 onChange={(event) =>
                   setEditing((current) => (current ? { ...current, effectiveEndDate: event.target.value } : current))
                 }
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
             <label className="flex items-center gap-2 text-sm md:col-span-4">
@@ -289,7 +303,7 @@ export function PricingDailyRatesManager({
                 type="checkbox"
                 checked={editing.isActive}
                 onChange={(event) => setEditing((current) => (current ? { ...current, isActive: event.target.checked } : current))}
-                disabled={isPending}
+                disabled={isSaving}
               />
               <span className="text-xs font-semibold text-muted">Active</span>
             </label>
@@ -304,8 +318,8 @@ export function PricingDailyRatesManager({
             </label>
           </div>
           <div className="mt-3">
-            <Button type="button" onClick={onSubmit} disabled={isPending}>
-              {isPending ? "Saving..." : "Save Daily Rate"}
+            <Button type="button" onClick={onSubmit} disabled={isSaving}>
+              {isSaving ? "Saving..." : "Save Daily Rate"}
             </Button>
           </div>
         </div>
@@ -347,7 +361,7 @@ export function PricingDailyRatesManager({
                         type="button"
                         className="rounded-lg border border-border px-2 py-1 text-xs font-semibold"
                         onClick={() => setEditing(toFormState(row))}
-                        disabled={isPending}
+                        disabled={isSaving}
                       >
                         Edit
                       </button>
@@ -355,16 +369,25 @@ export function PricingDailyRatesManager({
                         type="button"
                         className="rounded-lg border border-border px-2 py-1 text-xs font-semibold"
                         onClick={() =>
-                          startTransition(async () => {
-                            const result = await setEnrollmentPricingDailyRateActiveAction({
-                              id: row.id,
-                              isActive: !row.isActive
-                            });
-                            setStatus(result.ok ? "Daily rate status updated." : result.error);
-                            if (result.ok) router.refresh();
+                          void run(() => setEnrollmentPricingDailyRateActiveAction({
+                            id: row.id,
+                            isActive: !row.isActive
+                          }), {
+                            successMessage: "Daily rate status updated.",
+                            errorMessage: "Unable to update daily rate status.",
+                            onSuccess: (result) => {
+                              const savedRow = ((result.data as { row?: DailyRateRow } | null)?.row ?? null) as DailyRateRow | null;
+                              if (savedRow) {
+                                setLocalRows((current) => current.map((item) => (item.id === savedRow.id ? savedRow : item)));
+                              }
+                              setStatus("Daily rate status updated.");
+                            },
+                            onError: (result) => {
+                              setStatus(`Error: ${result.error}`);
+                            }
                           })
                         }
-                        disabled={isPending}
+                        disabled={isSaving}
                       >
                         {row.isActive ? "Deactivate" : "Activate"}
                       </button>

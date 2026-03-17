@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import { MEMBER_CONTACT_CATEGORY_OPTIONS } from "@/lib/canonical";
 import { formatPhoneDisplay, formatPhoneInput } from "@/lib/phone";
@@ -9,6 +8,8 @@ import {
   deleteMemberContactAction,
   upsertMemberContactAction
 } from "@/app/(portal)/operations/member-command-center/contact-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 
 interface ContactRow {
   id: string;
@@ -75,12 +76,11 @@ export function MemberCommandCenterContactManager({
   rows: ContactRow[];
   canEdit: boolean;
 }) {
-  const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
   const [form, setForm] = useState(blankForm());
   const [showForm, setShowForm] = useState(false);
   const [localRows, setLocalRows] = useState<ContactRow[]>(rows);
-  const router = useRouter();
+  const { isSaving, run } = useScopedMutation();
 
   const showCustomCategory = useMemo(() => form.category === "Other", [form.category]);
 
@@ -131,8 +131,7 @@ export function MemberCommandCenterContactManager({
       return;
     }
 
-    startTransition(async () => {
-      const result = await upsertMemberContactAction({
+    void run(() => upsertMemberContactAction({
         id: form.id || undefined,
         memberId,
         contactName: form.contactName,
@@ -147,40 +146,41 @@ export function MemberCommandCenterContactManager({
         city: form.city,
         state: form.state,
         zip: form.zip
-      });
-
-      if (result?.error) {
+      }), {
+      successMessage: form.id ? "Contact updated." : "Contact added.",
+      errorMessage: "Unable to save contact.",
+      onSuccess: (result) => {
+        const savedRow = normalizeContactRow((result.data as { row?: unknown } | null)?.row);
+        if (savedRow) {
+          setLocalRows((current) =>
+            form.id
+              ? current.map((row) => (row.id === savedRow.id ? savedRow : row))
+              : [savedRow, ...current.filter((row) => row.id !== savedRow.id)]
+          );
+        }
+        setStatus(form.id ? "Contact updated." : "Contact added.");
+        clearForm();
+      },
+      onError: (result) => {
         setStatus(`Error: ${result.error}`);
-        return;
       }
-
-      const savedRow = normalizeContactRow(result?.row);
-      if (savedRow) {
-        setLocalRows((current) =>
-          form.id
-            ? current.map((row) => (row.id === savedRow.id ? savedRow : row))
-            : [savedRow, ...current.filter((row) => row.id !== savedRow.id)]
-        );
-      }
-
-      setStatus(form.id ? "Contact updated." : "Contact added.");
-      clearForm();
-      router.refresh();
     });
   }
 
   async function handleDelete(id: string) {
     if (!window.confirm("Delete this contact?")) return;
-    startTransition(async () => {
-      const result = await deleteMemberContactAction({ id, memberId });
-      if (result?.error) {
+    void run(() => deleteMemberContactAction({ id, memberId }), {
+      successMessage: "Contact deleted.",
+      errorMessage: "Unable to delete contact.",
+      onSuccess: () => {
+        setLocalRows((current) => current.filter((row) => row.id !== id));
+        setStatus("Contact deleted.");
+        if (form.id === id) {
+          clearForm();
+        }
+      },
+      onError: (result) => {
         setStatus(`Error: ${result.error}`);
-        return;
-      }
-      setLocalRows((current) => current.filter((row) => row.id !== id));
-      setStatus("Contact deleted.");
-      if (form.id === id) {
-        clearForm();
       }
     });
   }
@@ -295,16 +295,16 @@ export function MemberCommandCenterContactManager({
               type="button"
               className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white"
               onClick={submit}
-              disabled={isPending}
+              disabled={isSaving}
             >
-              {isPending ? "Saving..." : form.id ? "Save Contact" : "Add Contact"}
+              {isSaving ? "Saving..." : form.id ? "Save Contact" : "Add Contact"}
             </button>
             {form.id ? (
               <button
                 type="button"
                 className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
                 onClick={clearForm}
-                disabled={isPending}
+                disabled={isSaving}
               >
                 Cancel Edit
               </button>
@@ -376,7 +376,7 @@ export function MemberCommandCenterContactManager({
         </table>
       </div>
 
-      {status ? <p className="text-sm text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
     </div>
   );
 }

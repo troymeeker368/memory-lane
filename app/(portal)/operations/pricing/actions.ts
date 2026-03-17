@@ -127,7 +127,7 @@ export async function upsertEnrollmentPricingCommunityFeeAction(raw: z.infer<typ
     });
 
     revalidatePricingConsumers();
-    return { ok: true as const, id: saved.id };
+    return { ok: true as const, id: saved.id, row: saved };
   } catch (error) {
     return {
       ok: false as const,
@@ -165,7 +165,7 @@ export async function setEnrollmentPricingCommunityFeeActiveAction(raw: z.infer<
     });
 
     revalidatePricingConsumers();
-    return { ok: true as const };
+    return { ok: true as const, row: saved };
   } catch (error) {
     return {
       ok: false as const,
@@ -229,7 +229,7 @@ export async function upsertEnrollmentPricingDailyRateAction(raw: z.infer<typeof
     });
 
     revalidatePricingConsumers();
-    return { ok: true as const, id: saved.id };
+    return { ok: true as const, id: saved.id, row: saved };
   } catch (error) {
     return {
       ok: false as const,
@@ -268,7 +268,7 @@ export async function setEnrollmentPricingDailyRateActiveAction(raw: z.infer<typ
     });
 
     revalidatePricingConsumers();
-    return { ok: true as const };
+    return { ok: true as const, row: saved };
   } catch (error) {
     return {
       ok: false as const,

@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import { setMemberStatusAction } from "@/app/member-status-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { Button } from "@/components/ui/button";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 import { MEMBER_DISCHARGE_REASON_OPTIONS, MEMBER_DISPOSITION_OPTIONS } from "@/lib/canonical";
 
 export function MemberStatusToggle({
@@ -16,22 +17,32 @@ export function MemberStatusToggle({
   memberName?: string;
   status: "active" | "inactive";
 }) {
-  const [isPending, startTransition] = useTransition();
+  const [currentStatus, setCurrentStatus] = useState(status);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [dischargeReason, setDischargeReason] = useState("");
   const [dischargeDisposition, setDischargeDisposition] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
-  const router = useRouter();
-  const label = status === "active" ? "Discharge" : "Reactivate";
+  const { isSaving, run } = useScopedMutation();
+  const label = currentStatus === "active" ? "Discharge" : "Reactivate";
   const displayName = useMemo(() => memberName?.trim() || "this member", [memberName]);
+
+  useEffect(() => {
+    setCurrentStatus(status);
+  }, [status]);
 
   function onReactivate() {
     if (!window.confirm(`Reactivate ${displayName}?`)) return;
     setFeedback(null);
-    startTransition(async () => {
-      const result = await setMemberStatusAction({ memberId, status: "active" });
-      if (result?.error) setFeedback(result.error);
-      else router.refresh();
+    void run(() => setMemberStatusAction({ memberId, status: "active" }), {
+      successMessage: "Member reactivated.",
+      errorMessage: "Unable to update member status.",
+      onSuccess: () => {
+        setCurrentStatus("active");
+        setFeedback("Member reactivated.");
+      },
+      onError: (result) => {
+        setFeedback(`Error: ${result.error}`);
+      }
     });
   }
 
@@ -43,50 +54,53 @@ export function MemberStatusToggle({
     if (!window.confirm(`Discharge ${displayName}?`)) return;
 
     setFeedback(null);
-    startTransition(async () => {
-      const result = await setMemberStatusAction({
+    void run(() => setMemberStatusAction({
         memberId,
         status: "inactive",
         dischargeReason,
         dischargeDisposition
-      });
-      if (result?.error) {
-        setFeedback(result.error);
-        return;
+      }), {
+      successMessage: "Member discharged.",
+      errorMessage: "Unable to update member status.",
+      onSuccess: () => {
+        setCurrentStatus("inactive");
+        setIsDialogOpen(false);
+        setDischargeReason("");
+        setDischargeDisposition("");
+        setFeedback("Member discharged.");
+      },
+      onError: (result) => {
+        setFeedback(`Error: ${result.error}`);
       }
-      setIsDialogOpen(false);
-      setDischargeReason("");
-      setDischargeDisposition("");
-      router.refresh();
     });
   }
 
   return (
     <div className="space-y-1">
-      {status === "active" ? (
+      {currentStatus === "active" ? (
         <Button
           type="button"
           className="h-9 bg-red-700 px-3 text-xs hover:bg-red-800"
-          disabled={isPending}
+          disabled={isSaving}
           onClick={() => {
             setFeedback(null);
             setIsDialogOpen(true);
           }}
         >
-          {isPending ? "Saving..." : label}
+          {isSaving ? "Saving..." : label}
         </Button>
       ) : (
         <Button
           type="button"
           className="h-9 bg-[#99CC33] px-3 text-xs text-[#1B3E93] hover:bg-[#8fbe2d]"
-          disabled={isPending}
+          disabled={isSaving}
           onClick={onReactivate}
         >
-          {isPending ? "Saving..." : label}
+          {isSaving ? "Saving..." : label}
         </Button>
       )}
 
-      {feedback ? <p className="text-xs text-red-700">{feedback}</p> : null}
+      <MutationNotice kind={feedback?.startsWith("Error") ? "error" : "success"} message={feedback} />
 
       {isDialogOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -99,7 +113,7 @@ export function MemberStatusToggle({
               className="mt-1 h-11 w-full rounded-lg border border-border px-3 text-sm"
               value={dischargeReason}
               onChange={(event) => setDischargeReason(event.target.value)}
-              disabled={isPending}
+              disabled={isSaving}
             >
               <option value="">Select reason</option>
               {MEMBER_DISCHARGE_REASON_OPTIONS.map((option) => (
@@ -114,7 +128,7 @@ export function MemberStatusToggle({
               className="mt-1 h-11 w-full rounded-lg border border-border px-3 text-sm"
               value={dischargeDisposition}
               onChange={(event) => setDischargeDisposition(event.target.value)}
-              disabled={isPending}
+              disabled={isSaving}
             >
               <option value="">Select disposition</option>
               {MEMBER_DISPOSITION_OPTIONS.map((option) => (
@@ -134,12 +148,12 @@ export function MemberStatusToggle({
                   setDischargeDisposition("");
                   setFeedback(null);
                 }}
-                disabled={isPending}
+                disabled={isSaving}
               >
                 Cancel
               </button>
-              <Button type="button" className="h-10 bg-red-700 px-3 hover:bg-red-800" onClick={onSaveDischarge} disabled={isPending}>
-                {isPending ? "Saving..." : "Confirm Discharge"}
+              <Button type="button" className="h-10 bg-red-700 px-3 hover:bg-red-800" onClick={onSaveDischarge} disabled={isSaving}>
+                {isSaving ? "Saving..." : "Confirm Discharge"}
               </Button>
             </div>
           </div>

@@ -1,10 +1,9 @@
 "use client";
 
-import { useTransition } from "react";
-import { useRouter } from "next/navigation";
-
 import { updateOperationalSettingsAction } from "@/app/operations-admin-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 
 export function OperationsSettingsManager({
   initialBusNumbers,
@@ -21,8 +20,7 @@ export function OperationsSettingsManager({
     additionalMinutesCap: number;
   };
 }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const { isSaving, run } = useScopedMutation();
   const syncDeps = [
     initialBusNumbers.join(","),
     initialMakeupPolicy,
@@ -132,31 +130,32 @@ export function OperationsSettingsManager({
 
       <button
         type="button"
-        disabled={isPending}
+        disabled={isSaving}
         onClick={() =>
-          startTransition(async () => {
-            const result = await updateOperationalSettingsAction({
-              busNumbersCsv,
-              makeupPolicy,
-              latePickupGraceStartTime: graceStartTime,
-              latePickupFirstWindowMinutes: Number(firstWindowMinutes),
-              latePickupFirstWindowFeeDollars: Number(firstWindowFeeDollars),
-              latePickupAdditionalPerMinuteDollars: Number(additionalPerMinuteDollars),
-              latePickupAdditionalMinutesCap: Number(additionalMinutesCap)
-            });
-            if (result?.error) {
+          void run(() => updateOperationalSettingsAction({
+            busNumbersCsv,
+            makeupPolicy,
+            latePickupGraceStartTime: graceStartTime,
+            latePickupFirstWindowMinutes: Number(firstWindowMinutes),
+            latePickupFirstWindowFeeDollars: Number(firstWindowFeeDollars),
+            latePickupAdditionalPerMinuteDollars: Number(additionalPerMinuteDollars),
+            latePickupAdditionalMinutesCap: Number(additionalMinutesCap)
+          }), {
+            successMessage: "Operations settings saved.",
+            errorMessage: "Unable to save operations settings.",
+            onSuccess: () => {
+              setStatus("Operations settings saved.");
+            },
+            onError: (result) => {
               setStatus(`Error: ${result.error}`);
-              return;
             }
-            setStatus("Operations settings saved.");
-            router.refresh();
           })
         }
         className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70"
       >
-        {isPending ? "Saving..." : "Save Operations Rules"}
+        {isSaving ? "Saving..." : "Save Operations Rules"}
       </button>
-      {status ? <p className="text-xs text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
     </div>
   );
 }

@@ -1,11 +1,12 @@
 "use client";
 
-import { FormEvent, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent } from "react";
 
 import { saveMemberCommandCenterDemographicsAction } from "@/app/(portal)/operations/member-command-center/summary-actions";
 import { SegmentedChoiceGroup } from "@/components/forms/segmented-choice-group";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 import {
   MEMBER_STATE_OPTIONS,
   MEMBER_ETHNICITY_OPTIONS,
@@ -46,26 +47,26 @@ export function MccDemographicsForm({
   isVeteran: boolean | null;
   veteranBranch: string;
 }) {
-  const router = useRouter();
   const [veteranValue, setVeteranValue] = usePropSyncedState(
     isVeteran == null ? "" : isVeteran ? "true" : "false",
     [memberId, isVeteran]
   );
   const [status, setStatus] = usePropSyncedStatus([memberId, isVeteran]);
-  const [isPending, startTransition] = useTransition();
+  const { isSaving, run } = useScopedMutation();
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setStatus("");
     const payload = new FormData(event.currentTarget);
-    startTransition(async () => {
-      const result = await saveMemberCommandCenterDemographicsAction(payload);
-      if (!result?.ok) {
-        setStatus(result?.error ?? "Unable to save demographics.");
-        return;
+    void run(() => saveMemberCommandCenterDemographicsAction(payload), {
+      successMessage: "Demographics saved.",
+      errorMessage: "Unable to save demographics.",
+      onSuccess: () => {
+        setStatus("Demographics saved.");
+      },
+      onError: (result) => {
+        setStatus(`Error: ${result.error}`);
       }
-      setStatus("Demographics saved.");
-      router.refresh();
     });
   };
 
@@ -157,11 +158,11 @@ export function MccDemographicsForm({
         <input type="hidden" name="veteranBranch" value="" />
       )}
       <div className="md:col-span-3">
-        <button type="submit" disabled={isPending} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
-          {isPending ? "Saving..." : "Save Demographics"}
+        <button type="submit" disabled={isSaving} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
+          {isSaving ? "Saving..." : "Save Demographics"}
         </button>
       </div>
-      {status ? <p className="md:col-span-3 text-xs text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} className="md:col-span-3" />
     </form>
   );
 }

@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import { updateAncillaryCategoryPriceAction } from "@/app/operations-admin-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { Button } from "@/components/ui/button";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 
 type PricingCategory = {
   id: string;
@@ -17,16 +18,21 @@ function centsToDollars(cents: number) {
 }
 
 export function AncillaryPricingManager({ categories }: { categories: PricingCategory[] }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [localCategories, setLocalCategories] = useState(categories);
   const [statusByCategoryId, setStatusByCategoryId] = useState<Record<string, string>>({});
   const [priceInputs, setPriceInputs] = useState<Record<string, string>>(() =>
     Object.fromEntries(categories.map((category) => [category.id, centsToDollars(category.price_cents)]))
   );
+  const { isSaving, run } = useScopedMutation();
+
+  useEffect(() => {
+    setLocalCategories(categories);
+    setPriceInputs(Object.fromEntries(categories.map((category) => [category.id, centsToDollars(category.price_cents)])));
+  }, [categories]);
 
   const orderedCategories = useMemo(
-    () => [...categories].sort((a, b) => a.name.localeCompare(b.name)),
-    [categories]
+    () => [...localCategories].sort((a, b) => a.name.localeCompare(b.name)),
+    [localCategories]
   );
 
   return (
@@ -67,9 +73,9 @@ export function AncillaryPricingManager({ categories }: { categories: PricingCat
                 <td>
                   <Button
                     type="button"
-                    disabled={isPending}
+                    disabled={isSaving}
                     onClick={() =>
-                      startTransition(async () => {
+                      void run(() => {
                         const rawValue = priceInputs[category.id] ?? "";
                         const parsedValue = Number(rawValue);
                         if (!Number.isFinite(parsedValue) || parsedValue < 0) {
@@ -77,30 +83,48 @@ export function AncillaryPricingManager({ categories }: { categories: PricingCat
                             ...current,
                             [category.id]: "Enter a valid non-negative price."
                           }));
-                          return;
+                          return Promise.resolve({ ok: false, error: "Enter a valid non-negative price." });
                         }
 
-                        const result = await updateAncillaryCategoryPriceAction({
+                        return updateAncillaryCategoryPriceAction({
                           categoryId: category.id,
                           unitPriceDollars: parsedValue
                         });
-
-                        setStatusByCategoryId((current) => ({
-                          ...current,
-                          [category.id]: result.error ? `Error: ${result.error}` : "Saved."
-                        }));
-
-                        if (!result.error) {
-                          router.refresh();
+                      }, {
+                        successMessage: "Saved.",
+                        errorMessage: "Unable to update ancillary pricing.",
+                        onSuccess: (result) => {
+                          const updatedCategory = ((result.data as { updated?: PricingCategory } | null)?.updated ?? null) as PricingCategory | null;
+                          if (updatedCategory) {
+                            setLocalCategories((current) =>
+                              current.map((item) => (item.id === updatedCategory.id ? updatedCategory : item))
+                            );
+                            setPriceInputs((current) => ({
+                              ...current,
+                              [updatedCategory.id]: centsToDollars(updatedCategory.price_cents)
+                            }));
+                          }
+                          setStatusByCategoryId((current) => ({
+                            ...current,
+                            [category.id]: "Saved."
+                          }));
+                        },
+                        onError: (result) => {
+                          setStatusByCategoryId((current) => ({
+                            ...current,
+                            [category.id]: `Error: ${result.error}`
+                          }));
                         }
                       })
                     }
                   >
                     Save
                   </Button>
-                  {statusByCategoryId[category.id] ? (
-                    <p className="mt-1 text-xs text-muted">{statusByCategoryId[category.id]}</p>
-                  ) : null}
+                  <MutationNotice
+                    kind={statusByCategoryId[category.id]?.startsWith("Error") ? "error" : "success"}
+                    message={statusByCategoryId[category.id]}
+                    className="mt-1 text-xs"
+                  />
                 </td>
               </tr>
             ))}

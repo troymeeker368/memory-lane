@@ -34,8 +34,6 @@ export function EnrollMemberAction({ leadId }: { leadId: string }) {
             setStatus("Lead converted to active member.");
             if (response.memberId) {
               router.push(`/operations/member-command-center/${response.memberId}`);
-            } else {
-              router.refresh();
             }
           })
         }

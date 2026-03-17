@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
+import { subscribeClientMutationEvent } from "@/lib/mutations/client-events";
 
 export function MccHeaderCards({
   memberId,
@@ -43,26 +44,34 @@ export function MccHeaderCards({
     initialPhotoConsent,
     initialTransportation
   ]);
+  const [enrollmentValue, setEnrollmentValue] = usePropSyncedState(enrollment, [
+    memberId,
+    enrollment,
+    initialCodeStatus,
+    initialPhotoConsent,
+    initialTransportation
+  ]);
 
   useEffect(() => {
-    const handler = (event: Event) => {
-      const custom = event as CustomEvent<{
-        codeStatus?: string;
-        photoConsent?: boolean | null;
-        transportation?: string;
-      }>;
-      if (custom.detail?.codeStatus !== undefined) {
-        setCodeStatus(custom.detail.codeStatus || "-");
+    return subscribeClientMutationEvent<{
+      codeStatus?: string;
+      photoConsent?: boolean | null;
+      transportation?: string;
+      enrollment?: string;
+    }>("mcc:header-update", (detail) => {
+      if (detail.codeStatus !== undefined) {
+        setCodeStatus(detail.codeStatus || "-");
       }
-      if (custom.detail?.photoConsent !== undefined) {
-        setPhotoConsent(custom.detail.photoConsent);
+      if (detail.photoConsent !== undefined) {
+        setPhotoConsent(detail.photoConsent);
       }
-      if (custom.detail?.transportation !== undefined) {
-        setTransportation(custom.detail.transportation || "-");
+      if (detail.transportation !== undefined) {
+        setTransportation(detail.transportation || "-");
       }
-    };
-    window.addEventListener("mcc:header-update", handler as EventListener);
-    return () => window.removeEventListener("mcc:header-update", handler as EventListener);
+      if (detail.enrollment !== undefined) {
+        setEnrollmentValue(detail.enrollment || "-");
+      }
+    });
   }, []);
 
   const codeStatusStyle =
@@ -94,7 +103,7 @@ export function MccHeaderCards({
   return (
     <div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-7">
       <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">DOB</p><p className="font-semibold">{dob}</p></div>
-      <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Enrollment</p><p className="font-semibold">{enrollment}</p></div>
+      <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Enrollment</p><p className="font-semibold">{enrollmentValue}</p></div>
       <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Code Status</p><p className="font-semibold" style={codeStatusStyle}>{codeStatus}</p></div>
       <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Photo Consent</p><p className="font-semibold" style={photoConsentStyle}>{photoConsentLabel}</p></div>
       <Link href={lockerHref} className="rounded-lg border border-border p-3 text-center hover:border-brand/50 hover:bg-brand/5">

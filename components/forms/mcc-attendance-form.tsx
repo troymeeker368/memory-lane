@@ -1,10 +1,12 @@
 "use client";
 
-import { FormEvent, useMemo, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, useMemo } from "react";
 
 import { saveMemberCommandCenterAttendanceAction } from "@/app/(portal)/operations/member-command-center/summary-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
+import { MutationNotice } from "@/components/ui/mutation-notice";
+import { emitClientMutationEvent } from "@/lib/mutations/client-events";
 
 export function MccAttendanceForm({
   memberId,
@@ -49,9 +51,8 @@ export function MccAttendanceForm({
   thursday: boolean;
   friday: boolean;
 }) {
-  const router = useRouter();
   const [status, setStatus] = usePropSyncedStatus([memberId, monday, tuesday, wednesday, thursday, friday]);
-  const [isPending, startTransition] = useTransition();
+  const { isSaving, run } = useScopedMutation();
   const [isMonday, setIsMonday] = usePropSyncedState(monday, [memberId, monday, tuesday, wednesday, thursday, friday]);
   const [isTuesday, setIsTuesday] = usePropSyncedState(tuesday, [memberId, monday, tuesday, wednesday, thursday, friday]);
   const [isWednesday, setIsWednesday] = usePropSyncedState(wednesday, [memberId, monday, tuesday, wednesday, thursday, friday]);
@@ -67,19 +68,18 @@ export function MccAttendanceForm({
     event.preventDefault();
     setStatus("");
     const payload = new FormData(event.currentTarget);
-    startTransition(async () => {
-      const result = await saveMemberCommandCenterAttendanceAction(payload);
-      if (!result?.ok) {
-        setStatus(result?.error ?? "Unable to save attendance.");
-        return;
+    void run(() => saveMemberCommandCenterAttendanceAction(payload), {
+      successMessage: "Attendance and billing settings saved.",
+      errorMessage: "Unable to save attendance.",
+      onSuccess: () => {
+        setStatus("Attendance and billing settings saved.");
+        emitClientMutationEvent("mcc:header-update", {
+          enrollment: String(payload.get("enrollmentDate") ?? "")
+        });
+      },
+      onError: (result) => {
+        setStatus(`Error: ${result.error}`);
       }
-      setStatus("Attendance and billing settings saved.");
-      window.dispatchEvent(
-        new CustomEvent("mcc:header-update", {
-          detail: { enrollment: String(payload.get("enrollmentDate") ?? "") }
-        })
-      );
-      router.refresh();
     });
   };
 
@@ -114,19 +114,19 @@ export function MccAttendanceForm({
 
       <div className="grid gap-2 md:grid-cols-5 text-sm">
         <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
-          <input type="checkbox" name="monday" checked={isMonday} onChange={(event) => setIsMonday(event.currentTarget.checked)} /> Monday
+          <input type="checkbox" name="monday" checked={isMonday} onChange={(event) => setIsMonday(event.currentTarget.checked)} disabled={isSaving} /> Monday
         </label>
         <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
-          <input type="checkbox" name="tuesday" checked={isTuesday} onChange={(event) => setIsTuesday(event.currentTarget.checked)} /> Tuesday
+          <input type="checkbox" name="tuesday" checked={isTuesday} onChange={(event) => setIsTuesday(event.currentTarget.checked)} disabled={isSaving} /> Tuesday
         </label>
         <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
-          <input type="checkbox" name="wednesday" checked={isWednesday} onChange={(event) => setIsWednesday(event.currentTarget.checked)} /> Wednesday
+          <input type="checkbox" name="wednesday" checked={isWednesday} onChange={(event) => setIsWednesday(event.currentTarget.checked)} disabled={isSaving} /> Wednesday
         </label>
         <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
-          <input type="checkbox" name="thursday" checked={isThursday} onChange={(event) => setIsThursday(event.currentTarget.checked)} /> Thursday
+          <input type="checkbox" name="thursday" checked={isThursday} onChange={(event) => setIsThursday(event.currentTarget.checked)} disabled={isSaving} /> Thursday
         </label>
         <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
-          <input type="checkbox" name="friday" checked={isFriday} onChange={(event) => setIsFriday(event.currentTarget.checked)} /> Friday
+          <input type="checkbox" name="friday" checked={isFriday} onChange={(event) => setIsFriday(event.currentTarget.checked)} disabled={isSaving} /> Friday
         </label>
       </div>
 
@@ -137,7 +137,7 @@ export function MccAttendanceForm({
         <div className="mt-2 grid gap-2 md:grid-cols-3">
           <label className="space-y-1 text-sm">
             <span className="text-xs font-semibold text-muted">Payor</span>
-            <select name="payorId" defaultValue={payorId ?? ""} className="h-10 w-full rounded-lg border border-border bg-white px-3">
+            <select name="payorId" defaultValue={payorId ?? ""} className="h-10 w-full rounded-lg border border-border bg-white px-3" disabled={isSaving}>
               <option value="">No payor assigned</option>
               {payorOptions.map((option) => (
                 <option key={option.id} value={option.id}>
@@ -152,6 +152,7 @@ export function MccAttendanceForm({
               name="billingMode"
               defaultValue={billingMode ?? "Membership"}
               className="h-10 w-full rounded-lg border border-border bg-white px-3"
+              disabled={isSaving}
             >
               <option value="Membership">Membership (Month Ahead)</option>
               <option value="Monthly">Monthly (Month Behind)</option>
@@ -164,6 +165,7 @@ export function MccAttendanceForm({
               name="monthlyBillingBasis"
               defaultValue={monthlyBillingBasis}
               className="h-10 w-full rounded-lg border border-border bg-white px-3"
+              disabled={isSaving}
             >
               <option value="ScheduledMonthBehind">Scheduled Month Behind</option>
               <option value="ActualAttendanceMonthBehind">Actual Attendance Month Behind</option>
@@ -179,6 +181,7 @@ export function MccAttendanceForm({
               required
               defaultValue={dailyRate != null ? dailyRate.toFixed(2) : ""}
               className="h-10 w-full rounded-lg border border-border bg-white px-3"
+              disabled={isSaving}
             />
           </label>
           <label className="space-y-1 text-sm">
@@ -187,6 +190,7 @@ export function MccAttendanceForm({
               name="transportationBillingStatus"
               defaultValue={transportationBillingStatus}
               className="h-10 w-full rounded-lg border border-border bg-white px-3"
+              disabled={isSaving}
             >
               <option value="BillNormally">Bill Normally</option>
               <option value="Waived">Waived</option>
@@ -198,6 +202,7 @@ export function MccAttendanceForm({
               type="checkbox"
               name="useCenterDefaultBillingMode"
               defaultChecked={useCenterDefaultBillingMode}
+              disabled={isSaving}
             />
             <span className="text-xs font-semibold text-muted">Use Center Default Billing Mode</span>
           </label>
@@ -208,14 +213,15 @@ export function MccAttendanceForm({
               type="date"
               defaultValue={billingRateEffectiveDate?.slice(0, 10) ?? enrollmentDate?.slice(0, 10) ?? ""}
               className="h-10 w-full rounded-lg border border-border bg-white px-3"
+              disabled={isSaving}
             />
           </label>
           <label className="flex items-end gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm">
-            <input type="checkbox" name="billExtraDays" defaultChecked={billExtraDays} />
+            <input type="checkbox" name="billExtraDays" defaultChecked={billExtraDays} disabled={isSaving} />
             <span className="text-xs font-semibold text-muted">Bill Extra Unscheduled Days</span>
           </label>
           <label className="flex items-end gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm">
-            <input type="checkbox" name="billAncillaryArrears" defaultChecked={billAncillaryArrears} />
+            <input type="checkbox" name="billAncillaryArrears" defaultChecked={billAncillaryArrears} disabled={isSaving} />
             <span className="text-xs font-semibold text-muted">Bill Ancillary In Arrears</span>
           </label>
           <label className="space-y-1 text-sm md:col-span-3">
@@ -224,6 +230,7 @@ export function MccAttendanceForm({
               name="billingNotes"
               defaultValue={billingNotes ?? ""}
               className="min-h-16 w-full rounded-lg border border-border bg-white p-3 text-sm"
+              disabled={isSaving}
             />
           </label>
         </div>
@@ -231,13 +238,13 @@ export function MccAttendanceForm({
 
       <label className="space-y-1 text-sm">
         <span className="text-xs font-semibold text-muted">Attendance Notes</span>
-        <textarea name="attendanceNotes" defaultValue={attendanceNotes ?? ""} className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" />
+        <textarea name="attendanceNotes" defaultValue={attendanceNotes ?? ""} className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" disabled={isSaving} />
       </label>
 
-      <button type="submit" disabled={isPending} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
-        {isPending ? "Saving..." : "Save Attendance / Billing"}
+      <button type="submit" disabled={isSaving} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
+        {isSaving ? "Saving..." : "Save Attendance / Billing"}
       </button>
-      {status ? <p className="text-xs text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
     </form>
   );
 }

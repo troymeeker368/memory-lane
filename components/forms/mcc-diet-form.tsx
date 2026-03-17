@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, useEffect, useState } from "react";
 
 import { saveMemberCommandCenterDietAction } from "@/app/(portal)/operations/member-command-center/summary-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { MhpMedicalDietFields } from "@/components/forms/mhp-medical-diet-fields";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 
 export function MccDietForm({
   memberId,
@@ -35,9 +36,8 @@ export function MccDietForm({
   foodsToOmit: string;
   commandCenterNotes: string;
 }) {
-  const router = useRouter();
   const [status, setStatus] = useState("");
-  const [isPending, startTransition] = useTransition();
+  const { isSaving, run } = useScopedMutation();
 
   useEffect(() => {
     setStatus("");
@@ -47,14 +47,15 @@ export function MccDietForm({
     event.preventDefault();
     setStatus("");
     const payload = new FormData(event.currentTarget);
-    startTransition(async () => {
-      const result = await saveMemberCommandCenterDietAction(payload);
-      if (!result?.ok) {
-        setStatus(result?.error ?? "Unable to save diet/allergies.");
-        return;
+    void run(() => saveMemberCommandCenterDietAction(payload), {
+      successMessage: "Diet / allergies saved.",
+      errorMessage: "Unable to save diet/allergies.",
+      onSuccess: () => {
+        setStatus("Diet / allergies saved.");
+      },
+      onError: (result) => {
+        setStatus(`Error: ${result.error}`);
       }
-      setStatus("Diet / allergies saved.");
-      router.refresh();
     });
   };
 
@@ -75,8 +76,8 @@ export function MccDietForm({
       <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Foods to Omit</span><input name="foodsToOmit" defaultValue={foodsToOmit} className="h-10 w-full rounded-lg border border-border px-3" /></label>
       <label className="space-y-1 text-sm md:col-span-2"><span className="text-xs font-semibold text-muted">Notes</span><textarea name="commandCenterNotes" defaultValue={commandCenterNotes} className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" /></label>
       <div className="md:col-span-2 flex flex-wrap items-center gap-2">
-        <button type="submit" disabled={isPending} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
-          {isPending ? "Saving..." : "Save Diet / Allergies"}
+        <button type="submit" disabled={isSaving} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
+          {isSaving ? "Saving..." : "Save Diet / Allergies"}
         </button>
         <a
           href={dietCardHref}
@@ -87,7 +88,7 @@ export function MccDietForm({
           Print Diet Card
         </a>
       </div>
-      {status ? <p className="md:col-span-2 text-xs text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} className="md:col-span-2" />
     </form>
   );
 }

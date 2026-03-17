@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   setEnrollmentPricingCommunityFeeActiveAction,
   upsertEnrollmentPricingCommunityFeeAction
 } from "@/app/(portal)/operations/pricing/actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { Button } from "@/components/ui/button";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 
 type CommunityFeeRow = {
   id: string;
@@ -75,19 +76,23 @@ export function PricingCommunityFeeManager({
   canEdit: boolean;
   todayDate: string;
 }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [localRows, setLocalRows] = useState<CommunityFeeRow[]>(rows);
   const [status, setStatus] = useState<string | null>(null);
   const [editing, setEditing] = useState<CommunityFeeFormState | null>(null);
+  const { isSaving, run } = useScopedMutation();
+
+  useEffect(() => {
+    setLocalRows(rows);
+  }, [rows]);
 
   const orderedRows = useMemo(
     () =>
-      [...rows].sort((left, right) => {
+      [...localRows].sort((left, right) => {
         const activeDiff = Number(right.isActive) - Number(left.isActive);
         if (activeDiff !== 0) return activeDiff;
         return right.effectiveStartDate.localeCompare(left.effectiveStartDate);
       }),
-    [rows]
+    [localRows]
   );
 
   const onSubmit = () => {
@@ -103,32 +108,41 @@ export function PricingCommunityFeeManager({
     }
 
     setStatus(null);
-    startTransition(async () => {
-      const result = await upsertEnrollmentPricingCommunityFeeAction({
+    void run(() => upsertEnrollmentPricingCommunityFeeAction({
         id: editing.id,
         amount,
         effectiveStartDate: editing.effectiveStartDate,
         effectiveEndDate: editing.effectiveEndDate,
         isActive: editing.isActive,
         notes: editing.notes
-      });
-      if (!result.ok) {
-        setStatus(result.error);
-        return;
+      }), {
+      successMessage: "Community fee saved.",
+      errorMessage: "Unable to save community fee pricing.",
+      onSuccess: (result) => {
+        const savedRow = ((result.data as { row?: CommunityFeeRow } | null)?.row ?? null) as CommunityFeeRow | null;
+        if (savedRow) {
+          setLocalRows((current) =>
+            editing.id
+              ? current.map((row) => (row.id === savedRow.id ? savedRow : row))
+              : [savedRow, ...current.filter((row) => row.id !== savedRow.id)]
+          );
+        }
+        setEditing(null);
+        setStatus("Community fee saved.");
+      },
+      onError: (result) => {
+        setStatus(`Error: ${result.error}`);
       }
-      setEditing(null);
-      setStatus("Community fee saved.");
-      router.refresh();
     });
   };
 
   return (
     <div className="space-y-3">
-      {status ? <p className="text-sm text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
 
       {canEdit ? (
         <div className="flex flex-wrap gap-2">
-          <Button type="button" disabled={isPending} onClick={() => setEditing(emptyForm(todayDate))}>
+          <Button type="button" disabled={isSaving} onClick={() => setEditing(emptyForm(todayDate))}>
             Add Community Fee
           </Button>
           {editing ? (
@@ -136,7 +150,7 @@ export function PricingCommunityFeeManager({
               type="button"
               className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
               onClick={() => setEditing(null)}
-              disabled={isPending}
+              disabled={isSaving}
             >
               Cancel
             </button>
@@ -157,7 +171,7 @@ export function PricingCommunityFeeManager({
                 className="h-10 w-full rounded-lg border border-border px-3"
                 value={editing.amount}
                 onChange={(event) => setEditing((current) => (current ? { ...current, amount: event.target.value } : current))}
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -169,7 +183,7 @@ export function PricingCommunityFeeManager({
                 onChange={(event) =>
                   setEditing((current) => (current ? { ...current, effectiveStartDate: event.target.value } : current))
                 }
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -181,7 +195,7 @@ export function PricingCommunityFeeManager({
                 onChange={(event) =>
                   setEditing((current) => (current ? { ...current, effectiveEndDate: event.target.value } : current))
                 }
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
             <label className="flex items-center gap-2 text-sm md:col-span-3">
@@ -189,7 +203,7 @@ export function PricingCommunityFeeManager({
                 type="checkbox"
                 checked={editing.isActive}
                 onChange={(event) => setEditing((current) => (current ? { ...current, isActive: event.target.checked } : current))}
-                disabled={isPending}
+                disabled={isSaving}
               />
               <span className="text-xs font-semibold text-muted">Active</span>
             </label>
@@ -199,13 +213,13 @@ export function PricingCommunityFeeManager({
                 className="min-h-[70px] w-full rounded-lg border border-border px-3 py-2"
                 value={editing.notes}
                 onChange={(event) => setEditing((current) => (current ? { ...current, notes: event.target.value } : current))}
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
           </div>
           <div className="mt-3">
-            <Button type="button" onClick={onSubmit} disabled={isPending}>
-              {isPending ? "Saving..." : "Save Community Fee"}
+            <Button type="button" onClick={onSubmit} disabled={isSaving}>
+              {isSaving ? "Saving..." : "Save Community Fee"}
             </Button>
           </div>
         </div>
@@ -240,7 +254,7 @@ export function PricingCommunityFeeManager({
                         type="button"
                         className="rounded-lg border border-border px-2 py-1 text-xs font-semibold"
                         onClick={() => setEditing(toFormState(row))}
-                        disabled={isPending}
+                        disabled={isSaving}
                       >
                         Edit
                       </button>
@@ -248,16 +262,25 @@ export function PricingCommunityFeeManager({
                         type="button"
                         className="rounded-lg border border-border px-2 py-1 text-xs font-semibold"
                         onClick={() =>
-                          startTransition(async () => {
-                            const result = await setEnrollmentPricingCommunityFeeActiveAction({
-                              id: row.id,
-                              isActive: !row.isActive
-                            });
-                            setStatus(result.ok ? "Community fee status updated." : result.error);
-                            if (result.ok) router.refresh();
+                          void run(() => setEnrollmentPricingCommunityFeeActiveAction({
+                            id: row.id,
+                            isActive: !row.isActive
+                          }), {
+                            successMessage: "Community fee status updated.",
+                            errorMessage: "Unable to update community fee status.",
+                            onSuccess: (result) => {
+                              const savedRow = ((result.data as { row?: CommunityFeeRow } | null)?.row ?? null) as CommunityFeeRow | null;
+                              if (savedRow) {
+                                setLocalRows((current) => current.map((item) => (item.id === savedRow.id ? savedRow : item)));
+                              }
+                              setStatus("Community fee status updated.");
+                            },
+                            onError: (result) => {
+                              setStatus(`Error: ${result.error}`);
+                            }
                           })
                         }
-                        disabled={isPending}
+                        disabled={isSaving}
                       >
                         {row.isActive ? "Deactivate" : "Activate"}
                       </button>

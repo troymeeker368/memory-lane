@@ -94,7 +94,6 @@ export function MemberDocumentationSummaryFilters({
     const href = params.toString().length > 0 ? `${pathname}?${params.toString()}` : pathname;
     startTransition(() => {
       router.replace(href as never, { scroll: false });
-      router.refresh();
     });
   };
 

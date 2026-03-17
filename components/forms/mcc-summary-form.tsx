@@ -1,10 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, useEffect } from "react";
 
 import { saveMemberCommandCenterSummaryAction } from "@/app/(portal)/operations/member-command-center/summary-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
+import { MutationNotice } from "@/components/ui/mutation-notice";
+import { emitClientMutationEvent } from "@/lib/mutations/client-events";
 
 export function MccSummaryForm({
   memberId,
@@ -21,38 +23,34 @@ export function MccSummaryForm({
   originalReferralSource: string;
   photoConsent: boolean | null;
 }) {
-  const router = useRouter();
   const [photoConsentValue, setPhotoConsentValue] = usePropSyncedState(
     photoConsent == null ? "" : photoConsent ? "true" : "false"
     ,
     [memberId, photoConsent]
   );
   const [status, setStatus] = usePropSyncedStatus([memberId, photoConsent]);
-  const [isPending, startTransition] = useTransition();
+  const { isSaving, run } = useScopedMutation();
 
   useEffect(() => {
     const mapped = photoConsentValue === "true" ? true : photoConsentValue === "false" ? false : null;
-    window.dispatchEvent(
-      new CustomEvent("mcc:header-update", {
-        detail: {
-          photoConsent: mapped
-        }
-      })
-    );
+    emitClientMutationEvent("mcc:header-update", {
+      photoConsent: mapped
+    });
   }, [photoConsentValue]);
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setStatus("");
     const payload = new FormData(event.currentTarget);
-    startTransition(async () => {
-      const result = await saveMemberCommandCenterSummaryAction(payload);
-      if (!result?.ok) {
-        setStatus(result?.error ?? "Unable to save member summary.");
-        return;
+    void run(() => saveMemberCommandCenterSummaryAction(payload), {
+      successMessage: "Member summary saved.",
+      errorMessage: "Unable to save member summary.",
+      onSuccess: () => {
+        setStatus("Member summary saved.");
+      },
+      onError: (result) => {
+        setStatus(`Error: ${result.error}`);
       }
-      setStatus("Member summary saved.");
-      router.refresh();
     });
   };
 
@@ -86,11 +84,11 @@ export function MccSummaryForm({
         </select>
       </label>
       <div className="md:col-span-3">
-        <button type="submit" disabled={isPending} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
-          {isPending ? "Saving..." : "Save Member Summary"}
+        <button type="submit" disabled={isSaving} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
+          {isSaving ? "Saving..." : "Save Member Summary"}
         </button>
       </div>
-      {status ? <p className="md:col-span-3 text-xs text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} className="md:col-span-3" />
     </form>
   );
 }
