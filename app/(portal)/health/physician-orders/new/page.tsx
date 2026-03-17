@@ -6,6 +6,7 @@ import {
 } from "@/app/(portal)/health/physician-orders/actions";
 import { PofAllergiesEditor } from "@/components/forms/pof-allergies-editor";
 import { PofDiagnosesEditor } from "@/components/forms/pof-diagnoses-editor";
+import { POF_DNR_FLAG_INPUT_ID, POF_DNR_SELECTED_INPUT_ID, PofDnrSync } from "@/components/forms/pof-dnr-sync";
 import { PofMedicationsEditor } from "@/components/forms/pof-medications-editor";
 import { SegmentedChoiceGroup } from "@/components/forms/segmented-choice-group";
 import { PofEsignWorkflowCard } from "@/components/physician-orders/pof-esign-workflow-card";
@@ -235,6 +236,7 @@ export default async function NewPhysicianOrderPage({
         <input type="hidden" name="memberId" value={draft.memberId} />
         <input type="hidden" name="pofId" value={editing?.id ?? ""} />
         <input type="hidden" name="intakeAssessmentId" value={draft.intakeAssessmentId ?? ""} />
+        <PofDnrSync />
 
         <Card>
           <CardTitle>Identification / Medical Orders</CardTitle>
@@ -268,7 +270,12 @@ export default async function NewPhysicianOrderPage({
               </select>
             </label>
             <label className="inline-flex items-end gap-2 pb-2 text-sm">
-              <input type="checkbox" name="dnrSelected" defaultChecked={draft.dnrSelected} />
+              <input
+                id={POF_DNR_SELECTED_INPUT_ID}
+                type="checkbox"
+                name="dnrSelected"
+                defaultChecked={draft.dnrSelected}
+              />
               <span>Select if DNR</span>
             </label>
           </div>
@@ -618,7 +625,16 @@ export default async function NewPhysicianOrderPage({
             <CheckboxField name="flagFishAllergy" label="Fish allergy" defaultChecked={draft.operationalFlags.fishAllergy} />
             <CheckboxField name="flagDiabeticRestrictedSweets" label="Diabetic / Restricted Sweets" defaultChecked={draft.operationalFlags.diabeticRestrictedSweets} />
             <CheckboxField name="flagOxygenRequirement" label="Oxygen requirement" defaultChecked={draft.operationalFlags.oxygenRequirement} />
-            <CheckboxField name="flagDnr" label="DNR" defaultChecked={draft.operationalFlags.dnr} />
+            <label className="inline-flex items-center gap-2 text-sm">
+              <input
+                id={POF_DNR_FLAG_INPUT_ID}
+                type="checkbox"
+                name="flagDnr"
+                value="true"
+                defaultChecked={draft.dnrSelected}
+              />
+              <span>DNR</span>
+            </label>
             <CheckboxField name="flagNoPhotos" label="No photos" defaultChecked={draft.operationalFlags.noPhotos} />
             <CheckboxField
               name="flagBathroomAssistance"
@@ -626,6 +642,7 @@ export default async function NewPhysicianOrderPage({
               defaultChecked={draft.operationalFlags.bathroomAssistance || shouldDefaultBathroomAssistance}
             />
           </div>
+          <p className="mt-2 text-xs text-muted">The operational DNR flag mirrors the &quot;Select if DNR&quot; checkbox above.</p>
         </Card>
 
         <Card>

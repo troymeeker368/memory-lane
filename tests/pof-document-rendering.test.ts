@@ -197,6 +197,14 @@ test("medications render as a table when structured rows exist", () => {
     meds?.layout === "table" ? String(meds.rows[0].cells.notes).includes("Take with meals") : false,
     true
   );
+  assert.equal(
+    meds?.layout === "table" ? String(meds.rows[0].cells.notes).includes("Start:") : false,
+    false
+  );
+  assert.equal(
+    meds?.layout === "table" ? String(meds.rows[0].cells.notes).includes("End:") : false,
+    false
+  );
 });
 
 test("empty structured sections do not render", () => {

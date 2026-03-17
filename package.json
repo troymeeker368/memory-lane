@@ -29,7 +29,7 @@
     "fix-prompts:generate": "tsx scripts/generate-fix-prompt-report.ts",
     "start": "next start -p 3001",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit --incremental false",
     "quality:gates": "node scripts/quality-gates/run.cjs",
     "seed": "tsx scripts/seed-supabase.ts",
     "reseed": "tsx scripts/seed-supabase.ts --reset",

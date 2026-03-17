@@ -135,8 +135,6 @@ function formatMedicationNotes(row: PhysicianOrderMedication) {
         row.comments ? `Notes: ${row.comments}` : null,
         row.prnInstructions ? `PRN Instructions: ${row.prnInstructions}` : null,
         row.givenAtCenter ? `Administered at center${clean(row.givenAtCenterTime24h) ? ` (${row.givenAtCenterTime24h})` : ""}` : null,
-        row.startDate ? `Start: ${row.startDate}` : null,
-        row.endDate ? `End: ${row.endDate}` : null,
         row.provider ? `Ordering Provider: ${row.provider}` : null
       ],
       "; "

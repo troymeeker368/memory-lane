@@ -331,8 +331,6 @@ export function PofMedicationsEditor({
                     ) : (
                       <input type="hidden" name="medicationPrnInstructions" value="" />
                     )}
-                    <input type="date" name="medicationStartDate" value={medication.startDate} onChange={(event) => updateRow(medication.id, "startDate", event.target.value)} className="h-9 w-[160px] rounded border border-border px-2 text-sm" />
-                    <input type="date" name="medicationEndDate" value={medication.endDate} onChange={(event) => updateRow(medication.id, "endDate", event.target.value)} className="h-9 w-[160px] rounded border border-border px-2 text-sm" />
                     <input type="hidden" name="medicationProvider" value={medication.provider} />
                   </div>
                 </td>
