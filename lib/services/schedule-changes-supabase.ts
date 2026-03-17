@@ -3,44 +3,28 @@ import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { listCanonicalMemberLinksForLeadIds, resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import {
+  SCHEDULE_CHANGE_STATUSES,
+  SCHEDULE_CHANGE_TYPES,
+  SCHEDULE_WEEKDAY_KEYS,
+  type ScheduleChangeRow,
+  type ScheduleChangeStatus,
+  type ScheduleChangeType,
+  type ScheduleWeekdayKey
+} from "@/lib/services/schedule-changes-shared";
 import { toEasternISO } from "@/lib/timezone";
 
-export const SCHEDULE_CHANGE_TYPES = [
-  "Scheduled Absence",
-  "Makeup Day",
-  "Day Swap",
-  "Temporary Schedule Change",
-  "Permanent Schedule Change"
-] as const;
-
-export type ScheduleChangeType = (typeof SCHEDULE_CHANGE_TYPES)[number];
-
-export const SCHEDULE_CHANGE_STATUSES = ["active", "cancelled", "completed"] as const;
-export type ScheduleChangeStatus = (typeof SCHEDULE_CHANGE_STATUSES)[number];
-
-export const SCHEDULE_WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday"] as const;
-export type ScheduleWeekdayKey = (typeof SCHEDULE_WEEKDAY_KEYS)[number];
-
-export interface ScheduleChangeRow {
-  id: string;
-  member_id: string;
-  change_type: ScheduleChangeType;
-  effective_start_date: string;
-  effective_end_date: string | null;
-  original_days: ScheduleWeekdayKey[];
-  new_days: ScheduleWeekdayKey[];
-  suspend_base_schedule: boolean;
-  reason: string;
-  notes: string | null;
-  entered_by: string;
-  entered_by_user_id: string | null;
-  status: ScheduleChangeStatus;
-  created_at: string;
-  updated_at: string;
-  closed_at: string | null;
-  closed_by: string | null;
-  closed_by_user_id: string | null;
-}
+export {
+  SCHEDULE_CHANGE_STATUSES,
+  SCHEDULE_CHANGE_TYPES,
+  SCHEDULE_WEEKDAY_KEYS
+} from "@/lib/services/schedule-changes-shared";
+export type {
+  ScheduleChangeRow,
+  ScheduleChangeStatus,
+  ScheduleChangeType,
+  ScheduleWeekdayKey
+} from "@/lib/services/schedule-changes-shared";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SCHEDULE_CHANGE_SELECT =
@@ -248,6 +232,27 @@ export async function listActiveScheduleChangesForMembersSupabase(input: {
   return (data ?? []).map(toRow);
 }
 
+export async function getScheduleChangeSupabase(id: string) {
+  const normalizedId = id.trim();
+  if (!normalizedId) return null;
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("schedule_changes")
+    .select(SCHEDULE_CHANGE_SELECT)
+    .eq("id", normalizedId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingScheduleChangesTableError(error)) {
+      throw scheduleChangesStorageRequiredError();
+    }
+    throw new Error(error.message);
+  }
+
+  return data ? toRow(data) : null;
+}
+
 export async function createScheduleChangeSupabase(input: {
   memberId: string;
   changeType: ScheduleChangeType;
@@ -293,6 +298,49 @@ export async function createScheduleChangeSupabase(input: {
     throw new Error(error.message);
   }
   return toRow(data);
+}
+
+export async function updateScheduleChangeSupabase(input: {
+  id: string;
+  memberId: string;
+  changeType: ScheduleChangeType;
+  effectiveStartDate: string;
+  effectiveEndDate: string | null;
+  originalDays: Array<string | null | undefined>;
+  newDays: Array<string | null | undefined>;
+  suspendBaseSchedule: boolean;
+  reason: string;
+  notes: string | null;
+}) {
+  const canonicalMemberId = await resolveScheduleMemberId(input.memberId, "updateScheduleChangeSupabase");
+  const supabase = await createClient();
+  const now = toEasternISO();
+  const originalDays = normalizeWeekdays(input.originalDays);
+  const newDays = normalizeWeekdays(input.newDays);
+  const payload = {
+    member_id: canonicalMemberId,
+    change_type: input.changeType,
+    effective_start_date: normalizeOperationalDateOnly(input.effectiveStartDate),
+    effective_end_date: input.effectiveEndDate ? normalizeOperationalDateOnly(input.effectiveEndDate) : null,
+    original_days: originalDays,
+    new_days: newDays,
+    suspend_base_schedule: Boolean(input.suspendBaseSchedule),
+    reason: input.reason.trim(),
+    notes: input.notes?.trim() || null,
+    updated_at: now
+  };
+
+  const { data, error } = await supabase
+    .from("schedule_changes")
+    .update(payload)
+    .eq("id", input.id)
+    .select("*")
+    .maybeSingle();
+  if (error) {
+    if (isMissingScheduleChangesTableError(error)) throw scheduleChangesStorageRequiredError();
+    throw new Error(error.message);
+  }
+  return data ? toRow(data) : null;
 }
 
 export async function updateScheduleChangeStatusSupabase(input: {

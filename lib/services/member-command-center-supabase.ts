@@ -1139,6 +1139,52 @@ export async function updateMemberAttendanceScheduleSupabase(id: string, patch: 
   return (data as MemberAttendanceScheduleRow | null) ?? null;
 }
 
+export async function listMemberAttendanceSchedulesForMemberIdsSupabase(
+  memberIds: Array<string | null | undefined>
+) {
+  const normalizedMemberIds = Array.from(
+    new Set(
+      memberIds
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+  if (normalizedMemberIds.length === 0) return [] as MemberAttendanceScheduleRow[];
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("member_attendance_schedules")
+    .select("*")
+    .in("member_id", normalizedMemberIds);
+
+  const schedules = (() => {
+    if (!error) return (data ?? []) as MemberAttendanceScheduleRow[];
+    if (isMissingTableError(error, "member_attendance_schedules")) {
+      throw missingMccStorageError({
+        objectName: "member_attendance_schedules",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
+    }
+    throw new Error(error.message);
+  })();
+
+  const scheduleByMember = new Map(schedules.map((row) => [row.member_id, row] as const));
+  const missingMemberIds = normalizedMemberIds.filter((memberId) => !scheduleByMember.has(memberId));
+  if (missingMemberIds.length === 0) return schedules;
+
+  const ensuredSchedules = await Promise.all(
+    missingMemberIds.map((memberId) => ensureMemberAttendanceScheduleSupabase(memberId))
+  );
+  ensuredSchedules.forEach((schedule, index) => {
+    if (!schedule) {
+      throw new Error(`Unable to ensure attendance schedule for member ${missingMemberIds[index]}.`);
+    }
+    scheduleByMember.set(schedule.member_id, schedule);
+  });
+
+  return Array.from(scheduleByMember.values());
+}
+
 export async function listMemberContactsSupabase(memberId: string) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberContactsSupabase");
   const supabase = await createClient();

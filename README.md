@@ -176,11 +176,19 @@ Production safety rules:
 
 When runtime code starts referencing a new column or RPC, apply migrations before testing the UI.
 
-- Linked/remote project: `npm run supabase:db:push`
-- Local Supabase stack: `npm run supabase:db:push:local`
-- Generate types from a linked project: `npm run supabase:types:linked`
-- Generate types from local Supabase: `npm run supabase:types:local`
+- Canonical linked sync: `npm run db:sync`
+- Linked/remote project push only: `npm run db:push`
+- Generate canonical types from the linked project: `npm run db:types`
+- Local Supabase stack push only: `npm run db:push:local`
+- Generate canonical types from local Supabase: `npm run db:types:local`
+- Pre-push validation: `npm run prepush`
 - If PostgREST still serves stale schema after pushing migrations, restart the local Supabase stack before retrying the UI save flow.
 
-This repo currently uses hand-authored service row interfaces rather than a checked-in generated `Database` type file. If you keep a local generated types file for tooling, regenerate it after schema changes so new columns such as `member_contacts.is_payor` are included.
+The canonical generated Supabase types file is checked in at `types/supabase.ts`. Pre-push now validates that the linked database is up to date and that this file matches the linked schema.
+
+### Troubleshooting
+
+- Run `npm run db:sync` whenever you pull schema changes, add/edit a migration, switch to a branch with Supabase changes, or see a schema-dependent UI failure in local dev.
+- After any migration change, run `npm run db:sync`, commit the updated `types/supabase.ts`, and rerun `npm run typecheck`.
+- Clear `.next` and restart the dev server when generated types changed but the app still behaves like the old schema, or after branch switches that changed migrations, RPCs, or server actions. Use `npm run clean:next` and then `npm run dev`.
 

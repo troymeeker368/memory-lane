@@ -1,50 +1,62 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { z } from "zod";
 
 import { getCurrentProfile } from "@/lib/auth";
-import {
-  createScheduleChangeSupabase,
-  SCHEDULE_CHANGE_TYPES,
-  SCHEDULE_WEEKDAY_KEYS,
-  type ScheduleChangeType,
-  type ScheduleChangeStatus,
-  updateScheduleChangeStatusSupabase
-} from "@/lib/services/schedule-changes-supabase";
+import { mutationError, mutationOk } from "@/lib/mutations/result";
 import {
   ensureMemberAttendanceScheduleSupabase,
   type MemberAttendanceScheduleRow,
   updateMemberAttendanceScheduleSupabase
 } from "@/lib/services/member-command-center-supabase";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
+import {
+  getScheduleChangeSupabase,
+  createScheduleChangeSupabase,
+  type ScheduleWeekdayKey,
+  updateScheduleChangeStatusSupabase,
+  updateScheduleChangeSupabase
+} from "@/lib/services/schedule-changes-supabase";
+import {
+  SCHEDULE_CHANGE_STATUSES,
+  SCHEDULE_CHANGE_TYPES,
+  SCHEDULE_WEEKDAY_KEYS,
+  type ScheduleChangeStatus,
+  type ScheduleChangeType
+} from "@/lib/services/schedule-changes-shared";
 
-function asString(formData: FormData, key: string) {
-  return String(formData.get(key) ?? "").trim();
-}
+const optionalStringSchema = z.string().optional().or(z.literal(""));
+const scheduleWeekdaySchema = z.enum(SCHEDULE_WEEKDAY_KEYS);
 
-function asNullableString(formData: FormData, key: string) {
-  const value = asString(formData, key);
-  return value.length > 0 ? value : null;
-}
+const upsertScheduleChangeSchema = z.object({
+  id: optionalStringSchema,
+  memberId: optionalStringSchema,
+  changeType: z.enum(SCHEDULE_CHANGE_TYPES),
+  effectiveStartDate: z.string().min(1),
+  effectiveEndDate: optionalStringSchema,
+  originalDays: z.array(scheduleWeekdaySchema).default([]),
+  newDays: z.array(scheduleWeekdaySchema).default([]),
+  suspendBaseSchedule: z.boolean().default(false),
+  reason: z.string().trim().min(1),
+  notes: optionalStringSchema
+});
 
-function asWeekdayArray(formData: FormData, key: string) {
-  return formData
-    .getAll(key)
-    .map((value) => String(value ?? "").trim().toLowerCase())
-    .filter((value): value is (typeof SCHEDULE_WEEKDAY_KEYS)[number] =>
-      SCHEDULE_WEEKDAY_KEYS.includes(value as (typeof SCHEDULE_WEEKDAY_KEYS)[number])
-    );
-}
+const scheduleChangeStatusSchema = z.object({
+  id: z.string().trim().min(1),
+  status: z.enum(SCHEDULE_CHANGE_STATUSES)
+});
 
-function normalizeChangeType(value: string): ScheduleChangeType {
-  if (SCHEDULE_CHANGE_TYPES.includes(value as ScheduleChangeType)) return value as ScheduleChangeType;
-  throw new Error("Invalid schedule change type.");
-}
-
-function normalizeStatus(value: string): ScheduleChangeStatus {
-  if (value === "active" || value === "cancelled" || value === "completed") return value;
-  throw new Error("Invalid schedule change status.");
+function normalizeWeekdays(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value ?? "").trim().toLowerCase())
+        .filter((value): value is ScheduleWeekdayKey =>
+          SCHEDULE_WEEKDAY_KEYS.includes(value as ScheduleWeekdayKey)
+        )
+    )
+  );
 }
 
 async function requireScheduleChangeEditor() {
@@ -58,20 +70,6 @@ async function requireScheduleChangeEditor() {
     throw new Error("Only Coordinator/Manager/Director/Admin can manage schedule changes.");
   }
   return profile;
-}
-
-function buildScheduleChangesHref(input?: {
-  changeType?: string;
-  memberId?: string;
-  success?: string;
-  error?: string;
-}): `/operations/schedule-changes?${string}` {
-  const params = new URLSearchParams();
-  if (input?.changeType) params.set("changeType", input.changeType);
-  if (input?.memberId) params.set("memberId", input.memberId);
-  if (input?.success) params.set("success", input.success);
-  if (input?.error) params.set("error", input.error);
-  return `/operations/schedule-changes?${params.toString()}`;
 }
 
 function revalidateScheduleChangeWorkflows(memberId?: string) {
@@ -91,9 +89,16 @@ function revalidateScheduleChangeWorkflows(memberId?: string) {
   }
 }
 
-async function applyPermanentBaseScheduleChange(input: {
+function getMccScheduleDays(schedule: MemberAttendanceScheduleRow | null | undefined) {
+  if (!schedule) {
+    throw new Error("Unable to load member schedule from MCC.");
+  }
+  return SCHEDULE_WEEKDAY_KEYS.filter((day) => Boolean(schedule[day]));
+}
+
+async function applyAttendanceScheduleDays(input: {
   memberId: string;
-  newDays: string[];
+  days: string[];
   actorUserId: string;
   actorName: string;
 }) {
@@ -102,9 +107,9 @@ async function applyPermanentBaseScheduleChange(input: {
     throw new Error(`Unable to resolve attendance schedule for member ${input.memberId}.`);
   }
 
-  const daySet = new Set(input.newDays);
+  const daySet = new Set(input.days);
   const attendanceDaysPerWeek = SCHEDULE_WEEKDAY_KEYS.filter((day) => daySet.has(day)).length;
-  await updateMemberAttendanceScheduleSupabase(schedule.id, {
+  const updated = await updateMemberAttendanceScheduleSupabase(schedule.id, {
     monday: daySet.has("monday"),
     tuesday: daySet.has("tuesday"),
     wednesday: daySet.has("wednesday"),
@@ -114,159 +119,199 @@ async function applyPermanentBaseScheduleChange(input: {
     updated_by_user_id: input.actorUserId,
     updated_by_name: input.actorName
   });
+  if (!updated) {
+    throw new Error(`Unable to update attendance schedule for member ${input.memberId}.`);
+  }
+  return updated;
 }
 
-function getMccScheduleDays(schedule: MemberAttendanceScheduleRow | null | undefined) {
-  if (!schedule) {
-    throw new Error("Unable to load member schedule from MCC.");
-  }
-  return SCHEDULE_WEEKDAY_KEYS.filter((day) => Boolean(schedule[day]));
+async function getCurrentMemberScheduleDays(memberId: string) {
+  const schedule = await ensureMemberAttendanceScheduleSupabase(memberId);
+  return {
+    memberId,
+    days: getMccScheduleDays(schedule)
+  };
 }
 
-export async function createScheduleChangeAction(formData: FormData) {
-  const actor = await requireScheduleChangeEditor();
-
-  const memberId = asString(formData, "memberId");
-  const changeType = normalizeChangeType(asString(formData, "changeType"));
-  const effectiveStartDate = normalizeOperationalDateOnly(asString(formData, "effectiveStartDate"));
-  const effectiveEndDateRaw = asNullableString(formData, "effectiveEndDate");
-  const submittedOriginalDays = asWeekdayArray(formData, "originalDays");
-  const newDays = asWeekdayArray(formData, "newDays");
-  const suspendBaseSchedule = asString(formData, "suspendBaseSchedule") === "true";
-  const reason = asString(formData, "reason");
-  const notes = asNullableString(formData, "notes");
-
-  const failureHref = (message: string) =>
-    buildScheduleChangesHref({
-      changeType,
-      memberId,
-      error: message
-    });
-
-  if (!memberId) {
-    redirect(failureHref("Member is required."));
-  }
-  if (!reason) {
-    redirect(failureHref("Reason is required."));
+function validateScheduleChangeInput(input: {
+  changeType: ScheduleChangeType;
+  effectiveStartDate: string;
+  effectiveEndDate: string | null;
+  originalDays: ScheduleWeekdayKey[];
+  newDays: ScheduleWeekdayKey[];
+}) {
+  if (input.effectiveEndDate && input.effectiveEndDate < input.effectiveStartDate) {
+    return "Effective end date cannot be earlier than start date.";
   }
 
-  let originalDays = submittedOriginalDays;
-  try {
-    const memberSchedule = await ensureMemberAttendanceScheduleSupabase(memberId);
-    if (!memberSchedule) {
-      redirect(failureHref("Unable to load member schedule from MCC."));
-    }
-    const mccOriginalDays = getMccScheduleDays(memberSchedule);
-    originalDays = mccOriginalDays.length > 0 ? mccOriginalDays : submittedOriginalDays;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to load member schedule from MCC.";
-    redirect(failureHref(message));
+  if (input.changeType === "Scheduled Absence" && input.originalDays.length === 0) {
+    return "Selected member has no MCC attendance days configured.";
   }
-
-  let effectiveEndDate = effectiveEndDateRaw ? normalizeOperationalDateOnly(effectiveEndDateRaw) : null;
-  if (changeType === "Permanent Schedule Change") {
-    effectiveEndDate = null;
-  } else if (!effectiveEndDate) {
-    effectiveEndDate = effectiveStartDate;
+  if (input.changeType === "Makeup Day" && input.newDays.length === 0) {
+    return "Makeup Day requires at least one new day.";
   }
-
-  if (effectiveEndDate && effectiveEndDate < effectiveStartDate) {
-    redirect(failureHref("Effective end date cannot be earlier than start date."));
-  }
-
-  if (changeType === "Scheduled Absence" && originalDays.length === 0) {
-    redirect(failureHref("Selected member has no MCC attendance days configured."));
-  }
-  if (changeType === "Makeup Day" && newDays.length === 0) {
-    redirect(failureHref("Makeup Day requires at least one new day."));
-  }
-  if (changeType === "Day Swap" && (originalDays.length === 0 || newDays.length === 0)) {
-    redirect(failureHref("Day Swap requires MCC original days and at least one replacement day."));
+  if (input.changeType === "Day Swap" && (input.originalDays.length === 0 || input.newDays.length === 0)) {
+    return "Day Swap requires original days and at least one replacement day.";
   }
   if (
-    (changeType === "Temporary Schedule Change" || changeType === "Permanent Schedule Change") &&
-    newDays.length === 0
+    (input.changeType === "Temporary Schedule Change" || input.changeType === "Permanent Schedule Change") &&
+    input.newDays.length === 0
   ) {
-    redirect(failureHref("Schedule changes require at least one new day."));
+    return "Schedule changes require at least one new day.";
   }
 
+  return null;
+}
+
+export async function upsertScheduleChangeAction(raw: z.infer<typeof upsertScheduleChangeSchema>) {
   try {
-    await createScheduleChangeSupabase({
-      memberId,
-      changeType,
+    const actor = await requireScheduleChangeEditor();
+    const payload = upsertScheduleChangeSchema.safeParse(raw);
+    if (!payload.success) {
+      return mutationError("Invalid schedule change input.");
+    }
+
+    const id = (payload.data.id ?? "").trim();
+    const existing = id ? await getScheduleChangeSupabase(id) : null;
+    if (id && !existing) {
+      return mutationError("Schedule change not found.");
+    }
+    if (existing && existing.status !== "active") {
+      return mutationError("Only active schedule changes can be edited. Completed or cancelled items stay locked as history.");
+    }
+
+    const memberId = existing?.member_id ?? (payload.data.memberId ?? "").trim();
+    if (!memberId) {
+      return mutationError("Member is required.", { memberId: "Member is required." });
+    }
+
+    let originalDays = normalizeWeekdays(existing?.original_days ?? payload.data.originalDays);
+    if (!existing) {
+      try {
+        const memberSchedule = await ensureMemberAttendanceScheduleSupabase(memberId);
+        const mccOriginalDays = getMccScheduleDays(memberSchedule);
+        originalDays = mccOriginalDays.length > 0 ? mccOriginalDays : originalDays;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to load member schedule from MCC.";
+        return mutationError(message);
+      }
+    }
+
+    const effectiveStartDate = normalizeOperationalDateOnly(payload.data.effectiveStartDate);
+    let effectiveEndDate = payload.data.effectiveEndDate
+      ? normalizeOperationalDateOnly(payload.data.effectiveEndDate)
+      : null;
+    if (payload.data.changeType === "Permanent Schedule Change") {
+      effectiveEndDate = null;
+    } else if (!effectiveEndDate) {
+      effectiveEndDate = effectiveStartDate;
+    }
+
+    const newDays =
+      payload.data.changeType === "Scheduled Absence" ? [] : normalizeWeekdays(payload.data.newDays);
+    const suspendBaseSchedule =
+      payload.data.changeType === "Permanent Schedule Change" ? false : payload.data.suspendBaseSchedule;
+
+    const validationError = validateScheduleChangeInput({
+      changeType: payload.data.changeType,
       effectiveStartDate,
       effectiveEndDate,
       originalDays,
-      newDays,
-      suspendBaseSchedule,
-      reason,
-      notes,
-      enteredBy: actor.full_name,
-      enteredByUserId: actor.id
+      newDays
     });
+    if (validationError) {
+      return mutationError(validationError);
+    }
 
-    if (changeType === "Permanent Schedule Change") {
-      await applyPermanentBaseScheduleChange({
+    const saved = existing
+      ? await updateScheduleChangeSupabase({
+          id: existing.id,
+          memberId,
+          changeType: payload.data.changeType,
+          effectiveStartDate,
+          effectiveEndDate,
+          originalDays,
+          newDays,
+          suspendBaseSchedule,
+          reason: payload.data.reason,
+          notes: payload.data.notes || null
+        })
+      : await createScheduleChangeSupabase({
+          memberId,
+          changeType: payload.data.changeType,
+          effectiveStartDate,
+          effectiveEndDate,
+          originalDays,
+          newDays,
+          suspendBaseSchedule,
+          reason: payload.data.reason,
+          notes: payload.data.notes || null,
+          enteredBy: actor.full_name,
+          enteredByUserId: actor.id
+        });
+
+    if (!saved) {
+      return mutationError(existing ? "Schedule change not found." : "Unable to save schedule change.");
+    }
+
+    const wasPermanent = existing?.change_type === "Permanent Schedule Change";
+    const isPermanent = saved.change_type === "Permanent Schedule Change";
+    if (isPermanent) {
+      await applyAttendanceScheduleDays({
         memberId,
-        newDays,
+        days: saved.new_days,
+        actorUserId: actor.id,
+        actorName: actor.full_name
+      });
+    } else if (wasPermanent) {
+      await applyAttendanceScheduleDays({
+        memberId,
+        days: existing.original_days,
         actorUserId: actor.id,
         actorName: actor.full_name
       });
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to save schedule change.";
-    redirect(failureHref(message));
-  }
 
-  revalidateScheduleChangeWorkflows(memberId);
-  redirect(
-    buildScheduleChangesHref({
-      success: "Schedule change saved."
-    })
-  );
+    revalidateScheduleChangeWorkflows(memberId);
+    const memberSchedule = await getCurrentMemberScheduleDays(memberId);
+    return mutationOk(
+      {
+        row: saved,
+        memberSchedule
+      },
+      existing ? "Schedule change updated." : "Schedule change saved."
+    );
+  } catch (error) {
+    return mutationError(error instanceof Error ? error.message : "Unable to save schedule change.");
+  }
 }
 
-export async function setScheduleChangeStatusAction(formData: FormData) {
-  const actor = await requireScheduleChangeEditor();
-  const id = asString(formData, "id");
-  const status = normalizeStatus(asString(formData, "status"));
-  if (!id) {
-    redirect(
-      buildScheduleChangesHref({
-        error: "Schedule change id is required."
-      })
-    );
-  }
-
-  let updated: Awaited<ReturnType<typeof updateScheduleChangeStatusSupabase>> = null;
+export async function setScheduleChangeStatusAction(raw: z.infer<typeof scheduleChangeStatusSchema>) {
   try {
-    updated = await updateScheduleChangeStatusSupabase({
-      id,
-      status,
+    const actor = await requireScheduleChangeEditor();
+    const payload = scheduleChangeStatusSchema.safeParse(raw);
+    if (!payload.success) {
+      return mutationError("Invalid schedule change action.");
+    }
+
+    const updated = await updateScheduleChangeStatusSupabase({
+      id: payload.data.id,
+      status: payload.data.status as ScheduleChangeStatus,
       actorName: actor.full_name,
       actorUserId: actor.id
     });
+    if (!updated) {
+      return mutationError("Schedule change not found.");
+    }
+
+    revalidateScheduleChangeWorkflows(updated.member_id);
+    return mutationOk(
+      {
+        row: updated
+      },
+      `Schedule change marked as ${payload.data.status}.`
+    );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to update schedule change.";
-    redirect(
-      buildScheduleChangesHref({
-        error: message
-      })
-    );
+    return mutationError(error instanceof Error ? error.message : "Unable to update schedule change.");
   }
-
-  if (!updated) {
-    redirect(
-      buildScheduleChangesHref({
-        error: "Schedule change not found."
-      })
-    );
-  }
-
-  revalidateScheduleChangeWorkflows(updated.member_id);
-  redirect(
-    buildScheduleChangesHref({
-      success: `Schedule change marked as ${status}.`
-    })
-  );
 }
