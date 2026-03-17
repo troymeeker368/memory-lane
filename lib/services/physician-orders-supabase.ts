@@ -16,8 +16,7 @@ import {
   POF_NUTRITION_OPTIONS,
   POF_STANDING_ORDER_OPTIONS
 } from "@/lib/services/physician-order-config";
-import { generateMarSchedulesForMember } from "@/lib/services/mar-workflow";
-import { type IntakeAssessmentForPofPrefill, mapIntakeAssessmentToPofPrefill } from "@/lib/services/intake-to-pof-mapping";
+import type { IntakeAssessmentForPofPrefill } from "@/lib/services/intake-to-pof-mapping";
 import type { IntakeAssessmentSignatureState } from "@/lib/services/intake-assessment-esign";
 import { logSystemEvent } from "@/lib/services/system-event-service";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
@@ -52,6 +51,14 @@ const CREATE_DRAFT_POF_FROM_INTAKE_MIGRATION = "0055_intake_draft_pof_atomic_cre
 async function loadPofDocumentPdfBuilder() {
   const { buildPofDocumentPdfBytes } = await import("@/lib/services/pof-document-pdf");
   return buildPofDocumentPdfBytes;
+}
+
+async function loadMarWorkflowService() {
+  return import("@/lib/services/mar-workflow");
+}
+
+async function loadIntakeToPofMapping() {
+  return import("@/lib/services/intake-to-pof-mapping");
 }
 
 type CreateDraftPofFromIntakeRpcRow = {
@@ -929,6 +936,7 @@ async function runPostSignSyncCascade(input: {
     step = "mar_schedules";
     const scheduleStartDate = toEasternDate(input.syncTimestamp);
     const scheduleEndDate = addDaysDateOnly(scheduleStartDate, 30);
+    const { generateMarSchedulesForMember } = await loadMarWorkflowService();
     await generateMarSchedulesForMember({
       memberId: input.memberId,
       startDate: scheduleStartDate,
@@ -1346,6 +1354,7 @@ export async function buildNewPhysicianOrderDraft(input: {
     throw new Error(`Unable to load latest intake assessment for POF draft prefill: ${latestIntakeError.message}`);
   }
 
+  const { mapIntakeAssessmentToPofPrefill } = await loadIntakeToPofMapping();
   const mapped = latestIntake ? mapIntakeAssessmentToPofPrefill(latestIntake as IntakeAssessmentForPofPrefill) : null;
   const enrollmentPacketPrefill = await getLatestEnrollmentPacketPofStagingSummary(memberId);
   const shouldApplyEnrollmentPacketPrefill = Boolean(enrollmentPacketPrefill?.reviewRequired);
@@ -1450,6 +1459,7 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
   if (!member) throw new Error("Member not found for intake assessment.");
   const sexPrefill = await resolvePhysicianOrderSexPrefill(input.assessment.member_id);
 
+  const { mapIntakeAssessmentToPofPrefill } = await loadIntakeToPofMapping();
   const mapped = mapIntakeAssessmentToPofPrefill(input.assessment);
   const now = toEasternISO();
   const payload = {

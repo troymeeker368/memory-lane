@@ -1,58 +1,44 @@
 import Link from "next/link";
 import { unstable_noStore as noStore } from "next/cache";
 
-import {
-  addTransportationManifestRiderAction,
-  excludeTransportationManifestRiderAction,
-  reassignTransportationManifestBusAction,
-  undoTransportationManifestAdjustmentAction
-} from "@/app/(portal)/operations/transportation-station/actions";
+import { addTransportationManifestRiderAction } from "@/app/(portal)/operations/transportation-station/actions";
+import { TransportationRunPostingPanel } from "@/components/transportation-station/run-posting-panel";
 import { TransportationStationAddRiderForm } from "@/components/forms/transportation-station-add-rider-form";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { formatPhoneDisplay } from "@/lib/phone";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { getTransportationAddRiderMemberOptionsSupabase } from "@/lib/services/member-command-center-supabase";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
-import {
-  buildTransportationManifestCsv,
-  getTransportationManifestSupabase,
-  type TransportationManifestBusFilter,
-  type TransportationStationShift
-} from "@/lib/services/transportation-station-supabase";
+import { getTransportationRunManifestSupabase } from "@/lib/services/transportation-run-manifest-supabase";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
-const SHIFT_OPTIONS: TransportationStationShift[] = ["AM", "PM", "Both"];
-const WEEKDAY_LABELS: Record<string, string> = {
-  monday: "Monday",
-  tuesday: "Tuesday",
-  wednesday: "Wednesday",
-  thursday: "Thursday",
-  friday: "Friday",
-  saturday: "Saturday",
-  sunday: "Sunday"
-};
+type Shift = "AM" | "PM";
 
 function firstString(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0];
   return value;
 }
 
-function normalizeShift(value: string | undefined): TransportationStationShift {
-  if (value === "AM" || value === "PM" || value === "Both") return value;
-  return "Both";
+function normalizeShift(value: string | undefined): Shift {
+  return value === "PM" ? "PM" : "AM";
 }
 
-function normalizeBusFilter(value: string | undefined, busNumberOptions: string[]): TransportationManifestBusFilter {
-  if (!value) return "all";
-  if (value === "all" || value === "unassigned") return value;
-  if (busNumberOptions.includes(value)) return value;
-  return "all";
+function normalizeBusNumber(value: string | undefined, options: string[]) {
+  if (value && options.includes(value)) return value;
+  return options[0] ?? "";
 }
 
-function formatShiftLabel(value: TransportationStationShift) {
-  return value === "Both" ? "AM + PM" : value;
+function reasonLabel(value: string | null) {
+  if (!value) return "-";
+  if (value === "already-posted") return "Already posted";
+  if (value === "billing-waived") return "Billing waived";
+  if (value === "included-in-program-rate") return "Included in program rate";
+  return value
+    .split("-")
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 export default async function TransportationStationPage({
@@ -62,38 +48,27 @@ export default async function TransportationStationPage({
 }) {
   noStore();
   const profile = await requireModuleAccess("operations");
-  const canEdit = profile.role === "admin" || profile.role === "manager";
+  const role = normalizeRoleKey(profile.role);
+  const canManageManifest =
+    role === "admin" ||
+    role === "manager" ||
+    role === "director" ||
+    role === "coordinator";
   const busNumberOptions = await getConfiguredBusNumbers();
   const query = await searchParams;
   const selectedDate = firstString(query.date) ?? getOperationsTodayDate();
   const selectedShift = normalizeShift(firstString(query.shift));
-  const busFilter = normalizeBusFilter(firstString(query.bus), busNumberOptions);
-  const busFilterOptions: TransportationManifestBusFilter[] = ["all", ...busNumberOptions, "unassigned"];
-  const errorMessage = firstString(query.error) ?? "";
-  const successMessage = firstString(query.success) ?? "";
-  const manifest = await getTransportationManifestSupabase({
-    selectedDate,
-    shift: selectedShift,
-    busFilter
-  });
+  const selectedBusNumber = normalizeBusNumber(firstString(query.bus), busNumberOptions);
 
-  const csv = buildTransportationManifestCsv(manifest);
-  const csvHref = `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
-  const addRiderMemberOptions = canEdit ? await getTransportationAddRiderMemberOptionsSupabase() : [];
-  const shiftDisplayOrder: Array<"AM" | "PM"> = selectedShift === "Both" ? ["AM", "PM"] : [selectedShift];
-  const weekdayLabel = WEEKDAY_LABELS[manifest.weekday] ?? manifest.weekday;
-  const groupedByShiftAndDay = shiftDisplayOrder
-    .map((shift) => ({
-      shift,
-      weekdayLabel,
-      busGroups: manifest.groups
-        .map((group) => ({
-          ...group,
-          riders: group.riders.filter((row) => row.shift === shift)
-        }))
-        .filter((group) => group.riders.length > 0)
-    }))
-    .filter((entry) => entry.busGroups.length > 0);
+  const manifest = selectedBusNumber
+    ? await getTransportationRunManifestSupabase({
+        selectedDate,
+        shift: selectedShift,
+        busNumber: selectedBusNumber
+      })
+    : null;
+
+  const addRiderMemberOptions = canManageManifest ? await getTransportationAddRiderMemberOptionsSupabase() : [];
 
   return (
     <div className="space-y-4">
@@ -103,354 +78,223 @@ export default async function TransportationStationPage({
           <div>
             <CardTitle>Transportation Station</CardTitle>
             <p className="mt-1 text-sm text-muted">
-              Daily transportation manifest grouped by bus number, sourced from MCC transport schedules with one-day add/exclude overrides.
+              Post one AM or PM transportation run at a time from a single bus manifest. Riders stay included by default, and drivers only document exceptions.
             </p>
           </div>
         </div>
       </Card>
 
-      {errorMessage ? (
-        <Card>
-          <p className="text-sm font-semibold text-danger">{errorMessage}</p>
-        </Card>
-      ) : null}
-      {successMessage ? (
-        <Card>
-          <p className="text-sm font-semibold text-emerald-700">{successMessage}</p>
-        </Card>
-      ) : null}
-
       <Card className="table-wrap">
-        <form method="get" className="grid gap-2 md:grid-cols-5">
+        <form method="get" className="grid gap-2 md:grid-cols-4">
           <label className="space-y-1 text-sm">
             <span className="text-xs font-semibold text-muted">Date</span>
-            <input type="date" name="date" defaultValue={manifest.selectedDate} className="h-10 w-full rounded-lg border border-border px-3" />
+            <input
+              type="date"
+              name="date"
+              defaultValue={manifest?.selectedDate ?? selectedDate}
+              className="h-10 w-full rounded-lg border border-border px-3"
+            />
           </label>
 
           <label className="space-y-1 text-sm">
             <span className="text-xs font-semibold text-muted">Shift</span>
-            <select name="shift" defaultValue={selectedShift} className="h-10 w-full rounded-lg border border-border px-3">
-              {SHIFT_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
+            <select
+              name="shift"
+              defaultValue={manifest?.selectedShift ?? selectedShift}
+              className="h-10 w-full rounded-lg border border-border px-3"
+            >
+              <option value="AM">AM</option>
+              <option value="PM">PM</option>
             </select>
           </label>
 
           <label className="space-y-1 text-sm">
-            <span className="text-xs font-semibold text-muted">Bus Filter</span>
-            <select name="bus" defaultValue={busFilter} className="h-10 w-full rounded-lg border border-border px-3">
-              {busFilterOptions.map((option) => (
+            <span className="text-xs font-semibold text-muted">Bus / Route</span>
+            <select
+              name="bus"
+              defaultValue={selectedBusNumber}
+              className="h-10 w-full rounded-lg border border-border px-3"
+            >
+              {busNumberOptions.length === 0 ? <option value="">No buses configured</option> : null}
+              {busNumberOptions.map((option) => (
                 <option key={option} value={option}>
-                  {option === "all" ? "All Buses" : option === "unassigned" ? "Unassigned" : `Bus ${option}`}
+                  Bus {option}
                 </option>
               ))}
             </select>
           </label>
 
-          <button type="submit" className="h-10 self-end rounded-lg bg-brand px-3 text-sm font-semibold text-white">
-            Generate Manifest
-          </button>
-
-          <Link
-            href="/operations/transportation-station"
-            className="h-10 self-end rounded-lg border border-border px-3 text-center text-sm font-semibold leading-10"
-          >
-            Clear
-          </Link>
+          <div className="flex items-end gap-2">
+            <button type="submit" className="h-10 rounded-lg bg-brand px-3 text-sm font-semibold text-white">
+              Load Run
+            </button>
+            <Link
+              href="/operations/transportation-station"
+              className="h-10 rounded-lg border border-border px-3 text-center text-sm font-semibold leading-10"
+            >
+              Today
+            </Link>
+          </div>
         </form>
 
-        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted">
-          <span>
-            Generated: {formatDateTime(manifest.generatedAt)} | Date: {formatDate(manifest.selectedDate)} | Shift: {formatShiftLabel(manifest.selectedShift)}
-          </span>
-          <span>Total Riders: {manifest.totalRiders}</span>
-          <span>Groups: {manifest.groups.length}</span>
-          <span>On-Hold Excluded: {manifest.holdExcludedScheduledRiders.length}</span>
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <a
-            href={`/operations/transportation-station/print?date=${manifest.selectedDate}&shift=${manifest.selectedShift}&bus=${busFilter}`}
-            className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Print / PDF Manifest
-          </a>
-          <a href={csvHref} download={`transport-manifest-${manifest.selectedDate}-${manifest.selectedShift.toLowerCase()}.csv`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
-            Export CSV
-          </a>
-        </div>
+        {selectedBusNumber ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
+            <span>Selected run: {formatDate(selectedDate)} | {selectedShift} | Bus {selectedBusNumber}</span>
+            <a
+              href={`/operations/transportation-station/print?date=${selectedDate}&shift=${selectedShift}&bus=${selectedBusNumber}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-brand"
+            >
+              Print Expected Manifest
+            </a>
+          </div>
+        ) : null}
       </Card>
 
-      {canEdit ? (
+      {canManageManifest ? (
         <Card>
-          <CardTitle>Add On-the-Fly Rider</CardTitle>
+          <CardTitle>Same-Day Rider Add</CardTitle>
           <p className="mt-1 text-xs text-muted">
-            One-day addition only. This does not overwrite the member&apos;s recurring MCC transportation schedule.
+            Use this only for real same-day transportation additions. It adds the rider to the selected run without changing the recurring MCC schedule.
           </p>
           <TransportationStationAddRiderForm
             action={addTransportationManifestRiderAction}
-            selectedDate={manifest.selectedDate}
-            defaultShift={selectedShift === "Both" ? "AM" : selectedShift}
+            selectedDate={manifest?.selectedDate ?? selectedDate}
+            defaultShift={manifest?.selectedShift ?? selectedShift}
             members={addRiderMemberOptions}
             busNumberOptions={busNumberOptions}
           />
         </Card>
       ) : null}
 
-      {groupedByShiftAndDay.length === 0 ? (
+      {!manifest ? (
         <Card>
-          <p className="text-sm text-muted">No riders match this date/shift selection.</p>
+          <p className="text-sm text-muted">Configure at least one bus number in Operations Settings before posting transportation runs.</p>
+        </Card>
+      ) : manifest.rows.length === 0 ? (
+        <Card>
+          <p className="text-sm text-muted">No riders were resolved for this date, shift, and bus.</p>
         </Card>
       ) : (
-        groupedByShiftAndDay.map((shiftGroup) => (
-          <Card key={`${shiftGroup.shift}-${shiftGroup.weekdayLabel}`} className="table-wrap">
-            <CardTitle>
-              {shiftGroup.shift} | {shiftGroup.weekdayLabel} ({formatDate(manifest.selectedDate)})
-            </CardTitle>
-
-            <div className="mt-3 space-y-4">
-              {shiftGroup.busGroups.map((group) => (
-                <div key={`${shiftGroup.shift}-${group.label}`}>
-                  <p className="text-sm font-semibold text-primary-text">{group.label}</p>
-                  <table className="mt-2">
-                    <thead>
-                      <tr>
-                        <th>Member</th>
-                        <th>Shift</th>
-                        <th>Transport Type</th>
-                        <th>Location</th>
-                        <th>Contact</th>
-                        <th>Phone</th>
-                        <th>Address</th>
-                        <th>Source</th>
-                        {canEdit ? <th>Actions</th> : null}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.riders.map((rider) => (
-                        <tr key={rider.key}>
-                          <td>
-                            <a href={`/operations/member-command-center/${rider.memberId}?tab=transportation`} className="font-semibold text-brand">
-                              {rider.memberName}
-                            </a>
-                          </td>
-                          <td>{rider.shift}</td>
-                          <td>{rider.transportType}</td>
-                          <td>{rider.locationLabel}</td>
-                          <td>{rider.caregiverContactName ?? "-"}</td>
-                          <td>{formatPhoneDisplay(rider.caregiverContactPhone)}</td>
-                          <td>{rider.caregiverContactAddress ?? "-"}</td>
-                          <td>{rider.source === "manual-add" ? "Manual Add" : "Schedule"}</td>
-                          {canEdit ? (
-                            <td>
-                              <div className="flex flex-col gap-2">
-                                <form action={reassignTransportationManifestBusAction} className="flex items-center gap-1">
-                                  <input type="hidden" name="selectedDate" value={manifest.selectedDate} />
-                                  <input type="hidden" name="memberId" value={rider.memberId} />
-                                  <input type="hidden" name="shift" value={rider.shift} />
-                                  <input type="hidden" name="busFilter" value={busFilter} />
-                                  <input type="hidden" name="transportType" value={rider.transportType} />
-                                  <input type="hidden" name="busStopName" value={rider.busStopName ?? ""} />
-                                  <input type="hidden" name="doorToDoorAddress" value={rider.doorToDoorAddress ?? ""} />
-                                  <input type="hidden" name="caregiverContactId" value={rider.caregiverContactId ?? ""} />
-                                  <input type="hidden" name="caregiverContactName" value={rider.caregiverContactName ?? ""} />
-                                  <input type="hidden" name="caregiverContactPhone" value={rider.caregiverContactPhone ?? ""} />
-                                  <input type="hidden" name="caregiverContactAddress" value={rider.caregiverContactAddress ?? ""} />
-                                  <input type="hidden" name="notes" value={rider.notes ?? ""} />
-                                  <select
-                                    name="busNumber"
-                                    defaultValue={rider.busNumber ?? ""}
-                                    required
-                                    className="h-7 rounded-md border border-border px-1 text-xs"
-                                  >
-                                    <option value="" disabled>
-                                      Bus
-                                    </option>
-                                    {busNumberOptions.map((option) => (
-                                      <option key={option} value={option}>
-                                        {option}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <button type="submit" className="rounded-md border border-border px-2 py-1 text-xs font-semibold">
-                                    Save Bus
-                                  </button>
-                                </form>
-
-                                {rider.source === "manual-add" && rider.adjustmentId ? (
-                                  <form action={undoTransportationManifestAdjustmentAction}>
-                                    <input type="hidden" name="adjustmentId" value={rider.adjustmentId} />
-                                    <button type="submit" className="rounded-md border border-border px-2 py-1 text-xs font-semibold">
-                                      Remove Added Rider
-                                    </button>
-                                  </form>
-                                ) : (
-                                  <form action={excludeTransportationManifestRiderAction}>
-                                    <input type="hidden" name="selectedDate" value={manifest.selectedDate} />
-                                    <input type="hidden" name="memberId" value={rider.memberId} />
-                                    <input type="hidden" name="shift" value={rider.shift} />
-                                    <input type="hidden" name="busNumber" value={rider.busNumber ?? ""} />
-                                    <input type="hidden" name="transportType" value={rider.transportType} />
-                                    <input type="hidden" name="busStopName" value={rider.busStopName ?? ""} />
-                                    <input type="hidden" name="doorToDoorAddress" value={rider.doorToDoorAddress ?? ""} />
-                                    <input type="hidden" name="caregiverContactId" value={rider.caregiverContactId ?? ""} />
-                                    <input type="hidden" name="caregiverContactName" value={rider.caregiverContactName ?? ""} />
-                                    <input type="hidden" name="caregiverContactPhone" value={rider.caregiverContactPhone ?? ""} />
-                                    <input type="hidden" name="caregiverContactAddress" value={rider.caregiverContactAddress ?? ""} />
-                                    <button type="submit" className="rounded-md border border-danger px-2 py-1 text-xs font-semibold text-danger">
-                                      Exclude
-                                    </button>
-                                  </form>
-                                )}
-                              </div>
-                            </td>
-                          ) : null}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+        <Card>
+          <CardTitle>
+            Run Manifest | {formatDate(manifest.selectedDate)} | {manifest.selectedShift} | Bus {manifest.selectedBusNumber}
+          </CardTitle>
+          <p className="mt-1 text-sm text-muted">
+            The shared resolver combines attendance expectations, MCC transportation assignments, manual same-day additions/exclusions, current member status, and already-posted transport history.
+          </p>
+          {canManageManifest ? (
+            <div className="mt-4">
+              <TransportationRunPostingPanel
+                selectedDate={manifest.selectedDate}
+                shift={manifest.selectedShift}
+                busNumber={manifest.selectedBusNumber}
+                rows={manifest.rows}
+                summary={manifest.summary}
+                existingRunId={manifest.existingRun?.runId ?? null}
+              />
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {manifest.rows.map((row) => (
+                <div key={row.memberId} className="rounded-xl border border-border bg-white p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-semibold text-primary-text">{row.memberName}</p>
+                    <span className="rounded-full border border-border px-2 py-1 text-xs font-semibold">
+                      {row.operationalStatus}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-muted">
+                    {row.transportType} | {row.locationLabel} | Billing {row.billingStatus}
+                  </p>
                 </div>
               ))}
             </div>
-          </Card>
-        ))
+          )}
+        </Card>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      {manifest?.existingRun ? (
         <Card className="table-wrap">
-          <CardTitle>Manual Additions ({manifest.manualAdditions.length})</CardTitle>
-          {manifest.manualAdditions.length === 0 ? (
-            <p className="mt-2 text-sm text-muted">No manual additions for this date/shift.</p>
+          <CardTitle>Posted Run Review</CardTitle>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted">
+            <span>Posted: {formatDateTime(manifest.existingRun.postedAt)}</span>
+            <span>Last Submitted: {formatDateTime(manifest.existingRun.lastSubmittedAt)}</span>
+            <span>By: {manifest.existingRun.submittedByName ?? "-"}</span>
+            <span>Attempts: {manifest.existingRun.submissionCount}</span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted">
+            <span>Expected {manifest.existingRun.totalExpected}</span>
+            <span>Posted {manifest.existingRun.totalPosted}</span>
+            <span>Excluded {manifest.existingRun.totalExcluded}</span>
+            <span>Duplicates {manifest.existingRun.totalDuplicates}</span>
+            <span>Nonbillable {manifest.existingRun.totalNonbillable}</span>
+          </div>
+
+          {manifest.existingRunResults.length === 0 ? (
+            <p className="mt-3 text-sm text-muted">No per-member run results were found for this run yet.</p>
           ) : (
             <table className="mt-3">
               <thead>
                 <tr>
                   <th>Member</th>
-                  <th>Shift</th>
-                  <th>Bus</th>
-                  <th>Created</th>
-                  <th>By</th>
-                  {canEdit ? <th>Actions</th> : null}
+                  <th>Result</th>
+                  <th>Reason</th>
+                  <th>Billing</th>
+                  <th>Transport Log</th>
                 </tr>
               </thead>
               <tbody>
-                {manifest.manualAdditions.map((entry) => (
-                  <tr key={entry.id}>
-                    <td>{entry.memberName}</td>
-                    <td>{entry.shift}</td>
-                    <td>{entry.busNumber ? `Bus ${entry.busNumber}` : "-"}</td>
-                    <td>{formatDateTime(entry.createdAt)}</td>
-                    <td>{entry.createdByName}</td>
-                    {canEdit ? (
-                      <td>
-                        <form action={undoTransportationManifestAdjustmentAction}>
-                          <input type="hidden" name="adjustmentId" value={entry.id} />
-                          <button type="submit" className="rounded-md border border-border px-2 py-1 text-xs font-semibold">
-                            Undo
-                          </button>
-                        </form>
-                      </td>
-                    ) : null}
+                {manifest.existingRunResults.map((row) => (
+                  <tr key={`${row.memberId}-${row.createdAt}`}>
+                    <td>{row.memberName}</td>
+                    <td>{row.resultStatus}</td>
+                    <td>{reasonLabel(row.reasonCode)}</td>
+                    <td>{row.billable ? "Billable" : row.billingStatus === "Waived" ? "Waived" : "Included in rate"}</td>
+                    <td>{row.transportLogId ?? "-"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-        </Card>
-
-        <Card className="table-wrap">
-          <CardTitle>Exclusions ({manifest.exclusions.length})</CardTitle>
-          {manifest.exclusions.length === 0 ? (
-            <p className="mt-2 text-sm text-muted">No exclusions for this date/shift.</p>
-          ) : (
-            <table className="mt-3">
-              <thead>
-                <tr>
-                  <th>Member</th>
-                  <th>Shift</th>
-                  <th>Created</th>
-                  <th>By</th>
-                  {canEdit ? <th>Actions</th> : null}
-                </tr>
-              </thead>
-              <tbody>
-                {manifest.exclusions.map((entry) => (
-                  <tr key={entry.id}>
-                    <td>{entry.memberName}</td>
-                    <td>{entry.shift}</td>
-                    <td>{formatDateTime(entry.createdAt)}</td>
-                    <td>{entry.createdByName}</td>
-                    {canEdit ? (
-                      <td>
-                        <form action={undoTransportationManifestAdjustmentAction}>
-                          <input type="hidden" name="adjustmentId" value={entry.id} />
-                          <button type="submit" className="rounded-md border border-border px-2 py-1 text-xs font-semibold">
-                            Re-include
-                          </button>
-                        </form>
-                      </td>
-                    ) : null}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Card>
-      </div>
-
-      {manifest.excludedScheduledRiders.length > 0 ? (
-        <Card className="table-wrap">
-          <CardTitle>Excluded Scheduled Riders ({manifest.excludedScheduledRiders.length})</CardTitle>
-          <table className="mt-3">
-            <thead>
-              <tr>
-                <th>Member</th>
-                <th>Shift</th>
-                <th>Type</th>
-                <th>Location</th>
-                <th>Contact</th>
-              </tr>
-            </thead>
-            <tbody>
-              {manifest.excludedScheduledRiders.map((row) => (
-                <tr key={`excluded-${row.key}`}>
-                  <td>{row.memberName}</td>
-                  <td>{row.shift}</td>
-                  <td>{row.transportType}</td>
-                  <td>{row.locationLabel}</td>
-                  <td>{row.caregiverContactName ?? "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </Card>
       ) : null}
 
-      {manifest.holdExcludedScheduledRiders.length > 0 ? (
+      {manifest?.recentRunsForDate.length ? (
         <Card className="table-wrap">
-          <CardTitle>On-Hold Riders Excluded ({manifest.holdExcludedScheduledRiders.length})</CardTitle>
+          <CardTitle>Run History For {formatDate(manifest.selectedDate)}</CardTitle>
           <table className="mt-3">
             <thead>
               <tr>
-                <th>Member</th>
+                <th>Bus</th>
                 <th>Shift</th>
-                <th>Type</th>
-                <th>Location</th>
-                <th>Contact</th>
+                <th>Posted</th>
+                <th>By</th>
+                <th>Expected</th>
+                <th>Posted</th>
+                <th>Excluded</th>
+                <th>Duplicates</th>
               </tr>
             </thead>
             <tbody>
-              {manifest.holdExcludedScheduledRiders.map((row) => (
-                <tr key={`hold-excluded-${row.key}`}>
-                  <td>{row.memberName}</td>
+              {manifest.recentRunsForDate.map((row) => (
+                <tr key={row.runId}>
+                  <td>
+                    <Link
+                      href={`/operations/transportation-station?date=${row.serviceDate}&shift=${row.shift}&bus=${row.busNumber}`}
+                      className="font-semibold text-brand"
+                    >
+                      Bus {row.busNumber}
+                    </Link>
+                  </td>
                   <td>{row.shift}</td>
-                  <td>{row.transportType}</td>
-                  <td>{row.locationLabel}</td>
-                  <td>{row.caregiverContactName ?? "-"}</td>
+                  <td>{formatDateTime(row.postedAt)}</td>
+                  <td>{row.submittedByName ?? "-"}</td>
+                  <td>{row.totalExpected}</td>
+                  <td>{row.totalPosted}</td>
+                  <td>{row.totalExcluded}</td>
+                  <td>{row.totalDuplicates}</td>
                 </tr>
               ))}
             </tbody>

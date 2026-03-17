@@ -6,11 +6,6 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternISO } from "@/lib/timezone";
 import { buildCarePlanPdfDataUrl } from "@/lib/services/care-plan-pdf";
 import {
-  DOCUMENT_CENTER_NAME,
-  getDocumentCenterSignatureHtml,
-  getDocumentCenterSignatureText
-} from "@/lib/services/document-branding";
-import {
   canSendCaregiverSignatureByNurseSignatureState,
   resolvePublicCaregiverLinkState
 } from "@/lib/services/care-plan-esign-rules";
@@ -130,6 +125,11 @@ function hashToken(token: string) {
 
 function generateSigningToken() {
   return randomBytes(TOKEN_BYTE_LENGTH).toString("hex");
+}
+
+async function loadCarePlanSignatureRequestTemplateBuilder() {
+  const { buildCarePlanSignatureRequestTemplate } = await import("@/lib/email/templates/care-plan-signature-request");
+  return buildCarePlanSignatureRequestTemplate;
 }
 
 function buildAppBaseUrl() {
@@ -352,37 +352,15 @@ async function sendSignatureEmail(input: {
 }) {
   const apiKey = clean(process.env.RESEND_API_KEY);
   if (!apiKey) throw new Error("Care plan e-sign email delivery is not configured. Set RESEND_API_KEY.");
-
-  const subject = `${DOCUMENT_CENTER_NAME} Care Plan Signature Request for ${input.memberName}`;
-  const expiresOn = input.expiresAt.slice(0, 10);
-  const optionalMessage = clean(input.optionalMessage);
-  const html = `
-    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#1f2937;">
-      <p style="margin:0 0 12px;">Hello ${input.caregiverName},</p>
-      <p style="margin:0 0 12px;">${input.nurseName} sent a care plan for your review and signature.</p>
-      ${optionalMessage ? `<p style="margin:0 0 12px;"><strong>Message from care team:</strong> ${optionalMessage}</p>` : ""}
-      <p style="margin:0 0 16px;">
-        <a href="${input.requestUrl}" style="display:inline-block;background:#005f9f;color:#ffffff;text-decoration:none;font-weight:700;padding:10px 16px;border-radius:8px;">
-          Open Secure Care Plan
-        </a>
-      </p>
-      <p style="margin:0 0 12px;">This secure link expires on ${expiresOn}.</p>
-      <p style="margin:0;">Thank you,</p>
-      <p style="margin:0;">${getDocumentCenterSignatureHtml()}</p>
-    </div>
-  `.trim();
-
-  const text = [
-    `Hello ${input.caregiverName},`,
-    `${input.nurseName} sent a care plan for your review and signature.`,
-    optionalMessage ? `Message: ${optionalMessage}` : null,
-    `Sign securely: ${input.requestUrl}`,
-    `This secure link expires on ${expiresOn}.`,
-    "Thank you,",
-    getDocumentCenterSignatureText()
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const buildCarePlanSignatureRequestTemplate = await loadCarePlanSignatureRequestTemplateBuilder();
+  const { subject, html, text } = buildCarePlanSignatureRequestTemplate({
+    caregiverName: input.caregiverName,
+    nurseName: input.nurseName,
+    memberName: input.memberName,
+    requestUrl: input.requestUrl,
+    expiresAt: input.expiresAt,
+    optionalMessage: input.optionalMessage ?? null
+  });
 
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",

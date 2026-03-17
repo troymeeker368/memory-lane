@@ -6,11 +6,6 @@ import {
   parseCarePlanNurseSignatureStatus,
   type CarePlanNurseSignatureStatus
 } from "@/lib/services/care-plan-nurse-esign-core";
-import {
-  getCarePlanNurseSignatureState,
-  signCarePlanNurseEsign
-} from "@/lib/services/care-plan-nurse-esign";
-import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import { getDefaultCaregiverSignatureExpiresOnDate } from "@/lib/services/care-plan-esign-rules";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import {
@@ -75,6 +70,15 @@ function buildCarePlanWorkflowError(message: string, carePlanId: string) {
   error.carePlanId = carePlanId;
   error.partiallyCommitted = true;
   return error;
+}
+
+async function loadCarePlanNurseEsignService() {
+  return import("@/lib/services/care-plan-nurse-esign");
+}
+
+async function loadWorkflowMilestoneRecorder() {
+  const { recordWorkflowMilestone } = await import("@/lib/services/lifecycle-milestones");
+  return recordWorkflowMilestone;
 }
 
 async function resolveCarePlanMemberId(rawMemberId: string, actionLabel: string) {
@@ -924,6 +928,7 @@ export async function getCarePlanById(id: string, options?: { serviceRole?: bool
   const rows = await listCarePlanRows({ carePlanId: id, serviceRole: Boolean(options?.serviceRole) });
   const baseCarePlan = rows[0] ?? null;
   if (!baseCarePlan) return null;
+  const { getCarePlanNurseSignatureState } = await loadCarePlanNurseEsignService();
   const signature = await getCarePlanNurseSignatureState(id, { serviceRole: Boolean(options?.serviceRole) });
   const carePlan: CarePlan = {
     ...baseCarePlan,
@@ -1145,6 +1150,7 @@ export async function createCarePlan(input: {
   const caregiverName = sanitizeCaregiverName(input.caregiverName);
   const caregiverEmail = sanitizeCaregiverEmail(input.caregiverEmail);
   let createdCarePlanId: string;
+  const { signCarePlanNurseEsign } = await loadCarePlanNurseEsignService();
   try {
     const saved = await upsertCarePlanCore({
       memberId: canonicalMemberId,
@@ -1241,6 +1247,7 @@ export async function createCarePlan(input: {
       next_due_date: nextDueDate
     }
   });
+  const recordWorkflowMilestone = await loadWorkflowMilestoneRecorder();
   await recordWorkflowMilestone({
     event: {
       eventType: "care_plan_created",
@@ -1306,6 +1313,7 @@ export async function reviewCarePlan(input: {
   const nextDueDate = computeNextReviewDueDate(input.reviewDate);
   const caregiverName = sanitizeCaregiverName(input.caregiverName);
   const caregiverEmail = sanitizeCaregiverEmail(input.caregiverEmail);
+  const { signCarePlanNurseEsign } = await loadCarePlanNurseEsignService();
   await upsertCarePlanCore({
     carePlanId: input.carePlanId,
     memberId: String(existing.member_id),
@@ -1390,6 +1398,7 @@ export async function reviewCarePlan(input: {
       next_due_date: nextDueDate
     }
   });
+  const recordWorkflowMilestone = await loadWorkflowMilestoneRecorder();
   await recordWorkflowMilestone({
     event: {
       eventType: "care_plan_reviewed",
@@ -1432,6 +1441,7 @@ export async function signCarePlanAsNurseAdmin(input: {
   attested: boolean;
   signatureImageDataUrl: string;
 }) {
+  const { signCarePlanNurseEsign } = await loadCarePlanNurseEsignService();
   await signCarePlanNurseEsign({
     carePlanId: input.carePlanId,
     actor: {

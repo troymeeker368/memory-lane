@@ -15,6 +15,7 @@ import {
   type BillingSettingRow,
   type CenterBillingSettingRow,
   type ClosureRuleRow,
+  type CustomInvoiceManualLine,
   type CreateCustomInvoiceInput,
   type DateRange,
   type FinalizeBatchInput,
@@ -1303,7 +1304,7 @@ async function getBillingPreviewRows(input: {
           source_record_id: String(row.id)
         };
       });
-    const transportChargeLines = transportBillingStatus === "BillNormally" ? transportLines : [];
+    const transportChargeLines = transportLines;
     const transportationAmount = toAmount(transportChargeLines.reduce((sum, row) => sum + row.amount, 0));
     const ancillaryAmount = toAmount(ancillaryLines.reduce((sum, row) => sum + row.amount, 0));
     const adjustmentAmount = toAmount(adjustmentLines.reduce((sum, row) => sum + row.amount, 0));
@@ -1330,7 +1331,7 @@ async function getBillingPreviewRows(input: {
       totalAmount,
       baseProgramBilledDays: billedDays,
       memberDailyRateSnapshot: resolvedDailyRate,
-      transportationBillingStatusSnapshot: transportBillingStatus,
+      transportationBillingStatusSnapshot: transportChargeLines.length > 0 ? "BillNormally" : transportBillingStatus,
       variableSourceRows: [...transportChargeLines, ...ancillaryLines, ...adjustmentLines]
     });
   }
@@ -1860,7 +1861,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       source_record_id: string;
     }> = [];
 
-    if (input.includeTransportation && transportBillingStatus === "BillNormally") {
+    if (input.includeTransportation) {
       const { data: rows, error } = await supabase
         .from("transportation_logs")
         .select("id, service_date, transport_type, quantity, unit_rate, total_amount, billing_status, billable")
@@ -1996,7 +1997,8 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
         export_status: "NotExported",
         billing_mode_snapshot: "Custom",
         monthly_billing_basis_snapshot: null,
-        transportation_billing_status_snapshot: transportBillingStatus,
+        transportation_billing_status_snapshot:
+          variableRows.some((line) => line.line_type === "Transportation") ? "BillNormally" : transportBillingStatus,
         billing_method_snapshot: "InvoiceEmail",
         base_period_start: period.start,
         base_period_end: period.end,

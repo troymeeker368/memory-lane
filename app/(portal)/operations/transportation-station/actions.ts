@@ -5,9 +5,14 @@ import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
+import { normalizeRoleKey } from "@/lib/permissions";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
+import {
+  postTransportationRunSupabase,
+  type TransportationRunManualExclusionInput
+} from "@/lib/services/transportation-run-posting";
 import {
   findTransportationManifestAdjustmentSupabase,
   getTransportationManifestSupabase,
@@ -74,8 +79,14 @@ function buildStationHref(input: {
 
 async function requireTransportationEditor() {
   const profile = await getCurrentProfile();
-  if (profile.role !== "admin" && profile.role !== "manager") {
-    throw new Error("Only Admin/Manager can edit Transportation Station manifests.");
+  const role = normalizeRoleKey(profile.role);
+  if (
+    role !== "admin" &&
+    role !== "manager" &&
+    role !== "director" &&
+    role !== "coordinator"
+  ) {
+    throw new Error("Transportation Station editing is limited to coordinators, managers, directors, and admins.");
   }
   return profile;
 }
@@ -85,6 +96,7 @@ function revalidateTransportationStation() {
   revalidatePath("/operations/transportation-station/print");
   revalidatePath("/operations/member-command-center");
   revalidatePath("/operations/attendance");
+  revalidatePath("/documentation/transportation");
 }
 
 async function resolvePreferredContact(memberId: string, explicitContactId?: string | null) {
@@ -378,5 +390,35 @@ export async function copyForwardTransportationDetailsAction(formData: FormData)
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to copy transport details.";
     return { ok: false as const, error: message };
+  }
+}
+
+export async function postTransportationRunAction(input: {
+  selectedDate: string;
+  shift: Shift;
+  busNumber: string;
+  manualExclusions?: TransportationRunManualExclusionInput[];
+}) {
+  try {
+    const actor = await requireTransportationEditor();
+    const result = await postTransportationRunSupabase({
+      selectedDate: input.selectedDate,
+      shift: input.shift === "PM" ? "PM" : "AM",
+      busNumber: String(input.busNumber ?? "").trim(),
+      actor: {
+        id: actor.id,
+        fullName: actor.full_name,
+        role: actor.role
+      },
+      manualExclusions: input.manualExclusions ?? []
+    });
+
+    revalidateTransportationStation();
+    return { ok: true as const, result };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : "Unable to post transportation run."
+    };
   }
 }

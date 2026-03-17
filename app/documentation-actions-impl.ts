@@ -23,14 +23,12 @@ import {
   createPhotoUploadSupabase,
   createShowerLogSupabase,
   createToiletLogSupabase,
-  createTransportationLogSupabase,
   deleteWorkflowRecordSupabase,
   setAncillaryReconciliationSupabase,
   updateAncillaryLogNotesSupabase,
   updateBloodSugarLogSupabase,
   updateDailyActivityParticipationSupabase,
-  updateShowerLogSupabase,
-  updateTransportationLogSupabase
+  updateShowerLogSupabase
 } from "@/lib/services/documentation-write-supabase";
 import { toEasternISO } from "@/lib/timezone";
 import type { AuditAction } from "@/types/app";
@@ -329,38 +327,10 @@ export async function createTransportationLogAction(raw: z.infer<typeof transpor
   if (!payload.success) {
     return { error: "Invalid transportation log." };
   }
-
-  let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
-  try {
-    canonicalMember = await resolveActionMemberIdentity("createTransportationLogAction", payload.data.memberId);
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : "createTransportationLogAction expected member.id." };
-  }
-  if (!canonicalMember.memberId) {
-    return {
-      error: "createTransportationLogAction expected member.id but canonical member resolution returned empty memberId."
-    };
-  }
-
-  const profile = await getCurrentProfile();
-  let created;
-  try {
-    created = await createTransportationLogSupabase({
-      memberId: canonicalMember.memberId,
-      period: payload.data.period,
-      transportType: payload.data.transportType,
-      serviceDate: payload.data.serviceDate,
-      staffUserId: profile.id
-    });
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : "Unable to create transportation log." };
-  }
-
-  await insertAudit("create_log", "transportation_log", created.id, payload.data);
-  revalidatePath("/documentation/transportation");
-  revalidatePath("/documentation");
-  revalidatePath("/");
-  return { ok: true };
+  void payload;
+  return {
+    error: "Individual transportation log entry is disabled. Use Transportation Station to post the run manifest in one batch."
+  };
 }
 
 const photoSchema = z.object({
@@ -623,22 +593,10 @@ export async function updateTransportationLogAction(raw: {
     .object({ id: z.string(), period: z.enum(TRANSPORT_PERIOD_OPTIONS), transportType: z.enum(TRANSPORT_TYPE_OPTIONS) })
     .safeParse(raw);
   if (!payload.success) return { error: "Invalid transportation update." };
-  const editor = await requireManagerAdminEditor();
-  if ("error" in editor) return editor;
-
-  try {
-    await updateTransportationLogSupabase({
-      id: payload.data.id,
-      period: payload.data.period,
-      transportType: payload.data.transportType
-    });
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : "Unable to update transportation log." };
-  }
-  await insertAudit("manager_review", "transportation_log", payload.data.id, payload.data);
-  revalidatePath("/documentation/transportation");
-  revalidatePath("/documentation");
-  return { ok: true };
+  void payload;
+  return {
+    error: "Transportation corrections should be handled through Transportation Station so run history and billing stay aligned."
+  };
 }
 
 export async function updateBloodSugarAction(raw: { id: string; readingMgDl: number; notes?: string }) {
