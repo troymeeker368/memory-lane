@@ -258,6 +258,20 @@ export interface PhysicianOrderIndexRow {
   updatedAt: string;
 }
 
+export interface PhysicianOrderMemberHistoryRow {
+  id: string;
+  memberId: string;
+  memberNameSnapshot: string;
+  status: PhysicianOrderStatus;
+  providerName: string | null;
+  completedDate: string | null;
+  nextRenewalDueDate: string | null;
+  signedDate: string | null;
+  clinicalSyncStatus: PhysicianOrderClinicalSyncStatus;
+  updatedByName: string | null;
+  updatedAt: string;
+}
+
 export interface PhysicianOrderSaveInput {
   id?: string | null;
   memberId: string;
@@ -1075,12 +1089,14 @@ export async function getPhysicianOrders(filters?: {
     });
 }
 
-export async function getPhysicianOrdersForMember(memberId: string) {
+export async function getPhysicianOrdersForMember(memberId: string): Promise<PhysicianOrderMemberHistoryRow[]> {
   const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "getPhysicianOrdersForMember");
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("physician_orders")
-    .select("*, members!physician_orders_member_id_fkey(display_name)")
+    .select(
+      "id, member_id, member_name_snapshot, provider_name, status, sent_at, signed_at, next_renewal_due_date, updated_by_name, updated_at"
+    )
     .eq("member_id", canonicalMemberId)
     .order("updated_at", { ascending: false });
   if (error) {
@@ -1094,15 +1110,25 @@ export async function getPhysicianOrdersForMember(memberId: string) {
     rows.map((row: any) => String(row.id)),
     { serviceRole: true }
   );
-  return rows.map((row: any) =>
-    rowToForm(
-      row,
-      resolveClinicalSyncStatus({
-        status: toStatus(row.status),
+  return rows.map((row: any) => {
+    const status = toStatus(row.status);
+    return {
+      id: row.id,
+      memberId: row.member_id,
+      memberNameSnapshot: clean(row.member_name_snapshot) ?? "Unknown Member",
+      status,
+      providerName: clean(row.provider_name),
+      completedDate: row.sent_at ? String(row.sent_at).slice(0, 10) : null,
+      nextRenewalDueDate: row.next_renewal_due_date ?? null,
+      signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
+      clinicalSyncStatus: resolveClinicalSyncStatus({
+        status,
         queueStatus: queueStatuses.get(String(row.id)) ?? null
-      })
-    )
-  );
+      }),
+      updatedByName: clean(row.updated_by_name),
+      updatedAt: row.updated_at
+    };
+  });
 }
 
 export async function getActivePhysicianOrderForMember(memberId: string) {
