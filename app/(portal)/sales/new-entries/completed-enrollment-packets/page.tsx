@@ -12,6 +12,20 @@ function firstValue(value: string | string[] | undefined) {
   return value ?? "";
 }
 
+function syncStatusLabel(status: "not_started" | "pending" | "completed" | "failed") {
+  if (status === "completed") return "Completed";
+  if (status === "failed") return "Failed";
+  if (status === "not_started") return "Not Started";
+  return "Pending";
+}
+
+function syncStatusClassName(status: "not_started" | "pending" | "completed" | "failed") {
+  if (status === "completed") return "bg-emerald-100 text-emerald-800";
+  if (status === "failed") return "bg-rose-100 text-rose-800";
+  if (status === "not_started") return "bg-slate-100 text-slate-700";
+  return "bg-amber-100 text-amber-800";
+}
+
 export default async function CompletedEnrollmentPacketsPage({
   searchParams
 }: {
@@ -36,7 +50,9 @@ export default async function CompletedEnrollmentPacketsPage({
     <div className="space-y-4">
       <Card>
         <CardTitle>Completed Enrollment Packets</CardTitle>
-        <p className="mt-1 text-sm text-muted">Packets that caregivers have signed and moved to completed/filed status.</p>
+        <p className="mt-1 text-sm text-muted">
+          Filed means the caregiver packet artifact is saved. Check Downstream Sync before treating MCC/MHP/POF handoffs as fully complete.
+        </p>
         <form className="mt-3 grid gap-2 md:grid-cols-5" method="get">
           <input
             name="q"
@@ -71,6 +87,7 @@ export default async function CompletedEnrollmentPacketsPage({
               <th>Lead</th>
               <th>Caregiver Email</th>
               <th>Status</th>
+              <th>Downstream Sync</th>
               <th>Sent</th>
               <th>Completed</th>
               <th>Sent By</th>
@@ -80,7 +97,7 @@ export default async function CompletedEnrollmentPacketsPage({
           <tbody>
             {packets.length === 0 ? (
               <tr>
-                <td colSpan={8} className="text-center text-sm text-muted">
+                <td colSpan={9} className="text-center text-sm text-muted">
                   No completed enrollment packets found yet.
                 </td>
               </tr>
@@ -91,6 +108,16 @@ export default async function CompletedEnrollmentPacketsPage({
                   <td>{packet.leadId ? packet.leadMemberName ?? packet.leadId : "-"}</td>
                   <td>{packet.caregiverEmail}</td>
                   <td className="capitalize">{packet.status.replace("_", " ")}</td>
+                  <td>
+                    <div className="space-y-1">
+                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${syncStatusClassName(packet.mappingSyncStatus)}`}>
+                        {syncStatusLabel(packet.mappingSyncStatus)}
+                      </span>
+                      {packet.mappingSyncError ? (
+                        <p className="max-w-xs text-xs text-rose-700">{packet.mappingSyncError}</p>
+                      ) : null}
+                    </div>
+                  </td>
                   <td>{formatOptionalDateTime(packet.sentAt)}</td>
                   <td>{formatOptionalDateTime(packet.completedAt)}</td>
                   <td>{packet.senderName ?? packet.senderUserId}</td>

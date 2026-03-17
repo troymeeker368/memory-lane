@@ -92,7 +92,16 @@ export type CompletedEnrollmentPacketListItem = EnrollmentPacketRequestSummary &
   memberName: string;
   leadMemberName: string | null;
   senderName: string | null;
+  mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
+  mappingSyncError: string | null;
 };
+
+function toMappingSyncStatus(
+  value: string | null | undefined
+): CompletedEnrollmentPacketListItem["mappingSyncStatus"] {
+  if (value === "completed" || value === "failed" || value === "not_started") return value;
+  return "pending";
+}
 
 export type CompletedEnrollmentPacketFilters = {
   limit?: number;
@@ -642,6 +651,43 @@ type EnrollmentPacketDownstreamMappingResult = {
   error?: string | null;
 };
 
+async function recordEnrollmentPacketActionRequired(input: {
+  packetId: string;
+  memberId: string;
+  leadId?: string | null;
+  actorUserId: string;
+  title: string;
+  message: string;
+  actionUrl: string;
+  eventKeySuffix: string;
+}) {
+  try {
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "action_required",
+        entityType: "enrollment_packet_request",
+        entityId: input.packetId,
+        actorType: "user",
+        actorUserId: input.actorUserId,
+        status: "open",
+        severity: "high",
+        eventKeySuffix: input.eventKeySuffix,
+        reopenOnConflict: true,
+        metadata: {
+          member_id: input.memberId,
+          lead_id: input.leadId ?? null,
+          title: input.title,
+          message: input.message,
+          priority: "high",
+          action_url: input.actionUrl
+        }
+      }
+    });
+  } catch (error) {
+    console.error("[enrollment-packets] unable to emit action-required workflow milestone", error);
+  }
+}
+
 async function listEnrollmentPacketMemberFileArtifacts(packetId: string): Promise<EnrollmentPacketMemberFileArtifact[]> {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
@@ -765,6 +811,17 @@ async function runEnrollmentPacketDownstreamMapping(input: {
         error: reason,
         mapping_run_id: failedMappingRunId
       }
+    });
+    await recordEnrollmentPacketActionRequired({
+      packetId: input.request.id,
+      memberId: input.member.id,
+      leadId: input.request.lead_id,
+      actorUserId: input.request.sender_user_id,
+      title: "Enrollment Packet Downstream Sync Failed",
+      message:
+        "The enrollment packet was filed, but downstream sync to MCC/MHP/POF staging failed. Review the member record and retry the sync before treating the handoff as complete.",
+      actionUrl: `/operations/member-command-center/${input.member.id}`,
+      eventKeySuffix: "mapping-failed"
     });
 
     return {
@@ -973,7 +1030,9 @@ export async function listCompletedEnrollmentPacketRequests(
       ...summary,
       memberName: memberNames.get(row.member_id) ?? "Unknown member",
       leadMemberName: row.lead_id ? leadNames.get(row.lead_id) ?? null : null,
-      senderName: senderNames.get(row.sender_user_id) ?? null
+      senderName: senderNames.get(row.sender_user_id) ?? null,
+      mappingSyncStatus: toMappingSyncStatus(row.mapping_sync_status),
+      mappingSyncError: clean(row.mapping_sync_error)
     };
   });
 
@@ -2338,6 +2397,17 @@ export async function submitPublicEnrollmentPacket(input: {
         lead_id: request.lead_id
       }
     });
+    await recordEnrollmentPacketActionRequired({
+      packetId: request.id,
+      memberId: member.id,
+      leadId: request.lead_id,
+      actorUserId: request.sender_user_id,
+      title: "Enrollment Packet Sync Blocked",
+      message:
+        "The enrollment packet was filed, but downstream sync could not start because the packet fields could not be reloaded. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.",
+      actionUrl: `/sales/new-entries/completed-enrollment-packets`,
+      eventKeySuffix: "mapping-missing-fields"
+    });
   }
 
   if (request.lead_id) {
@@ -2366,6 +2436,17 @@ export async function submitPublicEnrollmentPacket(input: {
           lead_id: request.lead_id,
           error: error instanceof Error ? error.message : "Unable to record lead activity after packet filing."
         }
+      });
+      await recordEnrollmentPacketActionRequired({
+        packetId: request.id,
+        memberId: member.id,
+        leadId: request.lead_id,
+        actorUserId: request.sender_user_id,
+        title: "Enrollment Packet Lead Activity Missing",
+        message:
+          "The enrollment packet was filed, but the sales lead activity log did not save. Open the lead and add the missing completion activity so sales follow-up stays aligned.",
+        actionUrl: request.lead_id ? `/sales/leads/${request.lead_id}` : "/sales/new-entries/completed-enrollment-packets",
+        eventKeySuffix: "lead-activity-failed"
       });
     }
   }
