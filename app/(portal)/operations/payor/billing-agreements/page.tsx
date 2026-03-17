@@ -130,6 +130,9 @@ export default async function BillingAgreementsPage() {
 
       <Card className="table-wrap">
         <CardTitle>Payors</CardTitle>
+        <p className="mt-1 text-xs text-muted">
+          Legacy payor directory records remain available for backward compatibility and external metadata, but member billing recipient selection now lives on the member contact marked as payor.
+        </p>
         <form action={savePayorAction} className="mt-3 grid gap-2 md:grid-cols-6">
           <input name="payorName" placeholder="Payor Name" className="h-10 rounded-lg border border-border px-3" />
           <input name="payorType" placeholder="Payor Type" defaultValue="Private" className="h-10 rounded-lg border border-border px-3" />
@@ -186,12 +189,9 @@ export default async function BillingAgreementsPage() {
               <option key={member.id} value={member.id}>{member.display_name}</option>
             ))}
           </select>
-          <select name="payorId" className="h-10 rounded-lg border border-border px-3">
-            <option value="">Payor</option>
-            {payors.map((payor) => (
-              <option key={payor.id} value={payor.id}>{payor.payor_name}</option>
-            ))}
-          </select>
+          <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted">
+            Billing recipient comes from the member contact marked <span className="font-semibold text-fg">Is Payor</span> in Member Command Center.
+          </div>
           <label className="flex items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted">
             <input name="useCenterDefaultBillingMode" type="checkbox" value="true" defaultChecked />
             Use Center Default Billing Mode

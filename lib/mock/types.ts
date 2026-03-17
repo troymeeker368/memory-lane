@@ -238,6 +238,7 @@ export interface MockMemberContact {
   city: string | null;
   state: string | null;
   zip: string | null;
+  is_payor: boolean;
   created_by_user_id: string;
   created_by_name: string;
   created_at: string;

@@ -3,37 +3,35 @@
 import { useMemo, useState } from "react";
 
 import { saveBillingAdjustmentAction } from "@/app/(portal)/operations/payor/actions";
-import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
 
 interface BillingManualAdjustmentFormProps {
   members: Array<{ id: string; displayName: string }>;
-  payors: Array<{ id: string; payorName: string }>;
-  memberPayorIdsByMember: Record<string, string[]>;
+  payorByMember: Record<string, { contactId: string | null; displayName: string; status: "ok" | "missing" | "invalid_multiple" }>;
   defaultAdjustmentDate: string;
+}
+
+function getPayorHelperText(
+  memberId: string,
+  payorByMember: BillingManualAdjustmentFormProps["payorByMember"]
+) {
+  if (!memberId) return "Billing recipient comes from the member's designated MCC contact.";
+  const payor = payorByMember[memberId];
+  if (!payor) return "No payor contact designated.";
+  if (payor.status === "invalid_multiple") return "Multiple payor contacts are flagged. Resolve the conflict in Member Command Center.";
+  return payor.displayName;
 }
 
 export function BillingManualAdjustmentForm({
   members,
-  payors,
-  memberPayorIdsByMember,
+  payorByMember,
   defaultAdjustmentDate
 }: BillingManualAdjustmentFormProps) {
   const [memberId, setMemberId] = useState("");
-  const [payorId, setPayorId] = useState("");
 
-  const filteredPayors = useMemo(() => {
-    if (!memberId) return [];
-    const allowed = new Set(memberPayorIdsByMember[memberId] ?? []);
-    if (allowed.size === 0) return [];
-    return payors.filter((payor) => allowed.has(payor.id));
-  }, [memberId, memberPayorIdsByMember, payors]);
-
-  useConstrainedSelection({
-    selectedId: payorId,
-    setSelectedId: setPayorId,
-    options: filteredPayors,
-    autoSelectSingle: Boolean(memberId)
-  });
+  const payorDisplay = useMemo(
+    () => (memberId ? payorByMember[memberId]?.displayName ?? "No payor contact designated" : "Select member first"),
+    [memberId, payorByMember]
+  );
 
   return (
     <form action={saveBillingAdjustmentAction} className="mt-3 grid gap-2 md:grid-cols-6">
@@ -52,26 +50,7 @@ export function BillingManualAdjustmentForm({
         ))}
       </select>
 
-      <select
-        name="payorId"
-        value={payorId}
-        onChange={(event) => setPayorId(event.target.value)}
-        className="h-10 rounded-lg border border-border px-3"
-        disabled={!memberId}
-      >
-        <option value="">
-          {!memberId
-            ? "Select member first"
-            : filteredPayors.length === 0
-              ? "No linked payor"
-              : "Payor"}
-        </option>
-        {filteredPayors.map((payor) => (
-          <option key={payor.id} value={payor.id}>
-            {payor.payorName}
-          </option>
-        ))}
-      </select>
+      <input value={payorDisplay} readOnly className="h-10 rounded-lg border border-border bg-surface px-3 text-muted" />
 
       <input
         type="date"
@@ -90,6 +69,9 @@ export function BillingManualAdjustmentForm({
       </select>
       <input name="description" placeholder="Description" className="h-10 rounded-lg border border-border px-3" />
       <input name="amount" type="number" step="0.01" placeholder="Amount" className="h-10 rounded-lg border border-border px-3" />
+      <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted md:col-span-5">
+        {getPayorHelperText(memberId, payorByMember)}
+      </div>
       <button type="submit" className="h-10 rounded-lg bg-brand px-4 text-sm font-semibold text-white">
         Add Adjustment
       </button>

@@ -71,6 +71,27 @@ function resolveAttendanceTimestamp(input: {
   return input.fallbackIso;
 }
 
+function toAttendanceStatusLabel(record: AttendanceRecordRow | null) {
+  if (!record) return "Not Checked In Yet" as const;
+  if (record.status === "absent") return "Absent" as const;
+  if (record.check_out_at) return "Checked Out" as const;
+  return "Present" as const;
+}
+
+function toAttendanceMutationPayload(record: AttendanceRecordRow | null, memberId: string, attendanceDate: string) {
+  return {
+    memberId,
+    attendanceDate,
+    attendanceRecordId: record?.id ?? null,
+    attendanceStatus: toAttendanceStatusLabel(record),
+    recordStatus: record?.status ?? null,
+    absentReason: record?.absent_reason ?? null,
+    absentReasonOther: record?.absent_reason_other ?? null,
+    checkInAt: record?.check_in_at ?? null,
+    checkOutAt: record?.check_out_at ?? null
+  };
+}
+
 type AttendanceScheduleRow = {
   id: string;
   member_id: string;
@@ -216,7 +237,7 @@ export async function saveAttendanceStatusAction(formData: FormData) {
       }
 
       revalidateAttendanceViews();
-      return { ok: true as const };
+      return { ok: true as const, record: toAttendanceMutationPayload(null, memberId, attendanceDate) };
     }
 
     const now = toEasternISO();
@@ -238,7 +259,7 @@ export async function saveAttendanceStatusAction(formData: FormData) {
     });
 
     if (requestedStatus === "check-in") {
-      await upsertAttendanceRecord({
+      const updated = await upsertAttendanceRecord({
         existing,
         memberId,
         attendanceDate,
@@ -269,11 +290,11 @@ export async function saveAttendanceStatusAction(formData: FormData) {
       });
 
       revalidateAttendanceViews();
-      return { ok: true as const };
+      return { ok: true as const, record: toAttendanceMutationPayload(updated, memberId, attendanceDate) };
     }
 
     if (requestedStatus === "check-out") {
-      await upsertAttendanceRecord({
+      const updated = await upsertAttendanceRecord({
         existing,
         memberId,
         attendanceDate,
@@ -304,7 +325,7 @@ export async function saveAttendanceStatusAction(formData: FormData) {
       });
 
       revalidateAttendanceViews();
-      return { ok: true as const };
+      return { ok: true as const, record: toAttendanceMutationPayload(updated, memberId, attendanceDate) };
     }
 
     if (requestedStatus === "absent") {
@@ -316,7 +337,7 @@ export async function saveAttendanceStatusAction(formData: FormData) {
       }
     }
 
-    await upsertAttendanceRecord({
+    const updated = await upsertAttendanceRecord({
       existing,
       memberId,
       attendanceDate,
@@ -355,7 +376,7 @@ export async function saveAttendanceStatusAction(formData: FormData) {
     });
 
     revalidateAttendanceViews();
-    return { ok: true as const };
+    return { ok: true as const, record: toAttendanceMutationPayload(updated, memberId, attendanceDate) };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to save attendance.";
     console.error("[Attendance] saveAttendanceStatusAction failed", {
@@ -404,7 +425,7 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
     });
 
     const existing = await getAttendanceRecord(memberId, attendanceDate);
-    await upsertAttendanceRecord({
+    const updated = await upsertAttendanceRecord({
       existing,
       memberId,
       attendanceDate,
@@ -437,7 +458,10 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
       actorName: actor.full_name
     });
     revalidateAttendanceViews();
-    return { ok: true as const };
+    return {
+      ok: true as const,
+      record: toAttendanceMutationPayload(updated, memberId, attendanceDate)
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to save unscheduled attendance.";
     console.error("[Attendance] saveUnscheduledAttendanceAction failed", {

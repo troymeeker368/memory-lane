@@ -1147,7 +1147,7 @@ function buildMemberHealthArtifacts(
       id: uuidFromKey(`mhp:${member.id}`),
       member_id: member.id,
       gender: idx % 2 === 0 ? "Female" : "Male",
-      payor: idx % 3 === 0 ? "Veterans Program" : "Private Pay",
+      payor: null,
       original_referral_source: idx % 2 === 0 ? "Hospital Referral" : "Family Referral",
       photo_consent: true,
       profile_image_url: null,
@@ -1430,7 +1430,6 @@ function buildMemberCommandCenterArtifacts(
   const religionOptions = ["Christian", "Catholic", "Jewish", "None"];
   const ethnicityOptions = ["White", "Black or African American", "Hispanic/Latino", "Asian"];
   const veteranBranchOptions = ["Army", "Navy", "Air Force", "Marine Corps", "Coast Guard"];
-  const payorOptions = ["Private Pay", "VA", "Long-Term Care Insurance", "Family Support"];
   const locationOptions = ["Fort Mill Center", "Rock Hill Center"];
 
   const memberCommandCenters: MockMemberCommandCenter[] = members.map((member, idx) => {
@@ -1444,7 +1443,7 @@ function buildMemberCommandCenterArtifacts(
       id: uuidFromKey(`command-center:${member.id}`),
       member_id: member.id,
       gender: profileGender,
-      payor: pickByIndex(payorOptions, idx),
+      payor: null,
       original_referral_source: latest?.lead_id ? "Referral" : "Community Outreach",
       photo_consent: true,
       profile_image_url: null,
@@ -1681,6 +1680,7 @@ function buildMemberCommandCenterArtifacts(
         city: member.city ?? "Fort Mill",
         state: "SC",
         zip: `297${String((idx % 40) + 10).padStart(2, "0")}`,
+        is_payor: member.status === "active" && contactIdx === 0 && idx % 6 !== 0,
         created_by_user_id: coordinator.id,
         created_by_name: coordinator.full_name,
         created_at: now,
@@ -1704,6 +1704,7 @@ function buildMemberCommandCenterArtifacts(
         city: member.city ?? "Fort Mill",
         state: "SC",
         zip: null,
+        is_payor: false,
         created_by_user_id: coordinator.id,
         created_by_name: coordinator.full_name,
         created_at: now,
@@ -1911,6 +1912,7 @@ function buildBillingFoundation(input: {
   members: MockMember[];
   staff: MockStaff[];
   schedules: MockMemberAttendanceSchedule[];
+  contacts: MockMemberContact[];
   nowIso: string;
 }) {
   const today = toEasternDate();
@@ -1922,6 +1924,9 @@ function buildBillingFoundation(input: {
   const actorId = actor?.id ?? "system";
   const actorName = actor?.full_name ?? "System Seed";
   const scheduleByMemberId = new Map(input.schedules.map((row) => [row.member_id, row] as const));
+  const payorContactByMemberId = new Map(
+    input.contacts.filter((row) => row.is_payor).map((row) => [row.member_id, row] as const)
+  );
 
   const scheduledDaysPerWeek = (memberId: string) => {
     const schedule = scheduleByMemberId.get(memberId);
@@ -2048,15 +2053,17 @@ function buildBillingFoundation(input: {
 
   const payors: MockPayor[] = input.members
     .filter((member) => member.status === "active")
-    .map((member, idx) => {
-      const slug = slugify(member.display_name).replace(/\./g, "");
-      return {
+    .flatMap((member, idx) => {
+      const payorContact = payorContactByMemberId.get(member.id);
+      if (!payorContact) return [];
+      const slug = slugify(payorContact.contact_name).replace(/\./g, "");
+      return [{
         id: uuidFromKey(`payor:${member.id}`),
-        payor_name: `${member.display_name} Family`,
+        payor_name: payorContact.contact_name,
         payor_type: "Private",
-        billing_contact_name: member.display_name,
-        billing_email: `${slug || `member${idx + 1}`}@example.com`,
-        billing_phone: "803-555-0100",
+        billing_contact_name: payorContact.contact_name,
+        billing_email: payorContact.email ?? `${slug || `member${idx + 1}`}@example.com`,
+        billing_phone: payorContact.cellular_number ?? "803-555-0100",
         billing_method: idx % 8 === 0 ? "Manual" : "InvoiceEmail",
         auto_draft_enabled: false,
         quickbooks_customer_name: null,
@@ -2067,10 +2074,8 @@ function buildBillingFoundation(input: {
         updated_at: input.nowIso,
         updated_by_user_id: actorId,
         updated_by_name: actorName
-      } satisfies MockPayor;
+      } satisfies MockPayor];
     });
-
-  const payorByName = new Map(payors.map((row) => [row.payor_name, row.id] as const));
 
   const memberBillingSettings: MockMemberBillingSetting[] = input.members
     .filter((member) => member.status === "active")
@@ -2081,10 +2086,7 @@ function buildBillingFoundation(input: {
       const usesCenterDefaultRate = tierRate === 180;
       const transportMode =
         seed % 10 === 0 ? "Waived" : seed % 10 === 1 ? "IncludedInProgramRate" : "BillNormally";
-      const payorId =
-        payors.find((row) => row.payor_name.startsWith(member.display_name))?.id ??
-        payorByName.get(`${member.display_name} Family`) ??
-        null;
+      const payorId = payors.find((row) => row.id === uuidFromKey(`payor:${member.id}`))?.id ?? null;
 
       return {
         id: uuidFromKey(`member-billing-setting:${member.id}`),
@@ -2198,6 +2200,7 @@ export function buildSeededMockDb(): MockDb {
     members,
     staff,
     schedules: memberCommandCenterArtifacts.memberAttendanceSchedules,
+    contacts: memberCommandCenterArtifacts.memberContacts,
     nowIso
   });
   const busStopDirectory: MockBusStopDirectory[] = Array.from(

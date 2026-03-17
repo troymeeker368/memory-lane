@@ -203,7 +203,6 @@ export async function saveMhpOverviewAction(formData: FormData) {
     memberId,
     mhpPatch: {
       gender: asNullableString(formData, "gender"),
-      payor: asNullableString(formData, "payor"),
       original_referral_source: asNullableString(formData, "originalReferralSource"),
       photo_consent: asNullableBool(formData, "photoConsent"),
       profile_image_url: profileImageUrl,

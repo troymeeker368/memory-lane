@@ -3,8 +3,10 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import { normalizeEnrollmentPacketIntakePayload, type EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
+import { setBillingPayorContact } from "@/lib/services/billing-payor-contacts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
 export type EnrollmentPacketFieldsForMapping = {
@@ -69,6 +71,7 @@ type PreparedContactInsert = {
   city: string | null;
   state: string | null;
   zip: string | null;
+  is_payor: boolean;
 };
 
 type PreparedRecordRow = {
@@ -189,6 +192,57 @@ function joinParts(parts: Array<string | null | undefined>, separator = " | ") {
 function cleanEmail(value: string | null | undefined) {
   const normalized = clean(value);
   return normalized ? normalized.toLowerCase() : null;
+}
+
+function cleanPhone(value: string | null | undefined) {
+  const normalized = clean(value);
+  return normalized ? normalized.replace(/\D+/g, "") : null;
+}
+
+function contactMatchesCandidate(
+  contact: Record<string, unknown>,
+  candidate: {
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    category?: string | null;
+  }
+) {
+  const contactName = clean(String(contact.contact_name ?? ""));
+  const contactEmail = cleanEmail(String(contact.email ?? ""));
+  const contactCategory = clean(String(contact.category ?? ""));
+  const contactPhones = [
+    cleanPhone(String(contact.cellular_number ?? "")),
+    cleanPhone(String(contact.work_number ?? "")),
+    cleanPhone(String(contact.home_number ?? ""))
+  ].filter((value): value is string => Boolean(value));
+
+  if (!candidate.name) return false;
+  if (contactName?.toLowerCase() !== candidate.name.toLowerCase()) return false;
+  if (candidate.category && contactCategory?.toLowerCase() !== candidate.category.toLowerCase()) return false;
+  if (candidate.email && contactEmail && contactEmail !== candidate.email) return false;
+  if (candidate.phone && contactPhones.length > 0 && !contactPhones.includes(candidate.phone)) return false;
+  return true;
+}
+
+function findBestExistingContactMatch(
+  contacts: Array<Record<string, unknown>>,
+  candidate: {
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    category?: string | null;
+  }
+) {
+  if (!candidate.name) return null;
+  return (
+    contacts.find((contact) => contactMatchesCandidate(contact, candidate)) ??
+    contacts.find((contact) => {
+      const contactName = clean(String(contact.contact_name ?? ""));
+      return contactName?.toLowerCase() === candidate.name?.toLowerCase();
+    }) ??
+    null
+  );
 }
 
 function toTextValue(value: unknown): string | null {
@@ -646,6 +700,7 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
     buildDefaultAttendanceScheduleSnapshot(input.memberId, toTextValue(memberRow.enrollment_date));
   const mhpRow = (mhpResult.data as Record<string, unknown> | null) ?? buildDefaultMhpSnapshot();
   const contacts = (contactsResult.data ?? []) as Array<Record<string, unknown>>;
+  const existingBillingPayor = contacts.find((row) => row.is_payor === true) ?? null;
 
   const memberPatch: Record<string, unknown> = { updated_at: now };
   MEMBER_STRING_MAP.forEach((map) => {
@@ -818,13 +873,20 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
   }
   const attendanceWritePatch = stripNoopPatch(attendancePatch, 3);
 
-  const responsibleContact =
-    contacts.find((row) => clean(String(row.category ?? ""))?.toLowerCase() === "responsible party") ??
-    contacts.find((row) => clean(String(row.category ?? ""))?.toLowerCase() === "emergency contact") ??
-    null;
   const primaryName = clean(payload.primaryContactName);
-  if (!responsibleContact && primaryName) {
-    const responsibleContactId = `contact-${randomUUID().replace(/-/g, "")}`;
+  const primaryEmail = cleanEmail(payload.primaryContactEmail);
+  const primaryPhone = cleanPhone(payload.primaryContactPhone);
+  const responsibleContact = findBestExistingContactMatch(contacts, {
+    name: primaryName,
+    email: primaryEmail,
+    phone: primaryPhone,
+    category: "Responsible Party"
+  });
+  const shouldAssignResponsibleAsPayor =
+    Boolean(primaryName) &&
+    (!existingBillingPayor || String(existingBillingPayor.id) === String(responsibleContact?.id ?? ""));
+  if (primaryName) {
+    const responsibleContactId = clean(String(responsibleContact?.id ?? "")) ?? `contact-${randomUUID().replace(/-/g, "")}`;
     preparedContacts.push({
       id: responsibleContactId,
       contact_name: primaryName,
@@ -839,70 +901,75 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
         clean(payload.primaryContactAddressLine1) ?? clean(payload.primaryContactAddress) ?? clean(payload.memberAddressLine1),
       city: clean(payload.primaryContactCity) ?? clean(payload.memberCity),
       state: clean(payload.primaryContactState) ?? clean(payload.memberState),
-      zip: clean(payload.primaryContactZip) ?? clean(payload.memberZip)
+      zip: clean(payload.primaryContactZip) ?? clean(payload.memberZip),
+      is_payor: shouldAssignResponsibleAsPayor
     });
     addRecord(records, {
       targetSystem: "mcc",
       targetTable: "member_contacts",
       targetField: "responsible_party",
       sourceField: "primaryContactName",
-      status: "written",
+      status: responsibleContact ? "written" : "written",
       sourceValue: primaryName,
       destinationValue: responsibleContactId,
-      note: "Created responsible party contact."
+      note: responsibleContact
+        ? shouldAssignResponsibleAsPayor
+          ? "Updated matched responsible party contact and retained canonical payor."
+          : "Updated matched responsible party contact. Existing manual payor was preserved."
+        : shouldAssignResponsibleAsPayor
+          ? "Created responsible party contact and designated as billing payor."
+          : "Created responsible party contact. Existing manual payor was preserved."
     });
+    if (existingBillingPayor && String(existingBillingPayor.id) !== responsibleContactId) {
+      addRecord(records, {
+        targetSystem: "mcc",
+        targetTable: "member_contacts",
+        targetField: "is_payor",
+        sourceField: "primaryContactName",
+        status: "conflict",
+        sourceValue: primaryName,
+        destinationValue: clean(String(existingBillingPayor.contact_name ?? "")),
+        note: "Manual payor selection already exists and was preserved."
+      });
+    }
   }
 
   const secondaryName = clean(payload.secondaryContactName);
   if (secondaryName) {
-    const existingSecondary = contacts.find((row) => {
-      const existingName = clean(String(row.contact_name ?? ""));
-      return Boolean(
-        existingName &&
-          existingName.toLowerCase() === secondaryName.toLowerCase() &&
-          clean(String(row.category ?? ""))?.toLowerCase() === "emergency contact"
-      );
+    const existingSecondary = findBestExistingContactMatch(contacts, {
+      name: secondaryName,
+      email: cleanEmail(payload.secondaryContactEmail),
+      phone: cleanPhone(payload.secondaryContactPhone),
+      category: "Emergency Contact"
     });
 
-    if (!existingSecondary) {
-      const secondaryContactId = `contact-${randomUUID().replace(/-/g, "")}`;
-      preparedContacts.push({
-        id: secondaryContactId,
-        contact_name: secondaryName,
-        relationship_to_member: clean(payload.secondaryContactRelationship),
-        category: "Emergency Contact",
-        category_other: null,
-        email: cleanEmail(payload.secondaryContactEmail),
-        cellular_number: clean(payload.secondaryContactPhone),
-        work_number: null,
-        home_number: null,
-        street_address: clean(payload.secondaryContactAddressLine1) ?? clean(payload.secondaryContactAddress),
-        city: clean(payload.secondaryContactCity),
-        state: clean(payload.secondaryContactState),
-        zip: clean(payload.secondaryContactZip)
-      });
-      addRecord(records, {
-        targetSystem: "mcc",
-        targetTable: "member_contacts",
-        targetField: "secondary_contact",
-        sourceField: "secondaryContactName",
-        status: "written",
-        sourceValue: secondaryName,
-        destinationValue: secondaryContactId,
-        note: "Created emergency contact."
-      });
-    } else {
-      addRecord(records, {
-        targetSystem: "mcc",
-        targetTable: "member_contacts",
-        targetField: "secondary_contact",
-        sourceField: "secondaryContactName",
-        status: "conflict",
-        sourceValue: secondaryName,
-        destinationValue: clean(String(existingSecondary.contact_name ?? "")),
-        note: "Existing emergency contact retained."
-      });
-    }
+    const secondaryContactId = clean(String(existingSecondary?.id ?? "")) ?? `contact-${randomUUID().replace(/-/g, "")}`;
+    preparedContacts.push({
+      id: secondaryContactId,
+      contact_name: secondaryName,
+      relationship_to_member: clean(payload.secondaryContactRelationship),
+      category: "Emergency Contact",
+      category_other: null,
+      email: cleanEmail(payload.secondaryContactEmail),
+      cellular_number: clean(payload.secondaryContactPhone),
+      work_number: null,
+      home_number: null,
+      street_address: clean(payload.secondaryContactAddressLine1) ?? clean(payload.secondaryContactAddress),
+      city: clean(payload.secondaryContactCity),
+      state: clean(payload.secondaryContactState),
+      zip: clean(payload.secondaryContactZip),
+      is_payor: false
+    });
+    addRecord(records, {
+      targetSystem: "mcc",
+      targetTable: "member_contacts",
+      targetField: "secondary_contact",
+      sourceField: "secondaryContactName",
+      status: "written",
+      sourceValue: secondaryName,
+      destinationValue: secondaryContactId,
+      note: existingSecondary ? "Updated matched emergency contact." : "Created emergency contact."
+    });
   }
 
   const mhpPatch: Record<string, unknown> = {
@@ -1202,7 +1269,7 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
     p_member_patch: memberWritePatch,
     p_mcc_patch: mccWritePatch,
     p_attendance_patch: attendanceWritePatch,
-    p_contacts: preparedContacts,
+    p_contacts: [],
     p_mhp_patch: mhpWritePatch,
     p_pof_stage_payload: pofStagePayload,
     p_record_rows: recordRows,
@@ -1212,6 +1279,163 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
   const rpcRow = Array.isArray(rpcData) ? rpcData[0] : null;
   if (!rpcRow?.mapping_run_id) {
     throw new Error("Enrollment packet conversion RPC did not return a mapping run id.");
+  }
+
+  const contactInventoryResult = await admin
+    .from("member_contacts")
+    .select("*")
+    .eq("member_id", input.memberId)
+    .order("updated_at", { ascending: false });
+  if (contactInventoryResult.error) {
+    throw new Error(contactInventoryResult.error.message);
+  }
+  let refreshedContacts = (contactInventoryResult.data ?? []) as Array<Record<string, unknown>>;
+
+  for (const preparedContact of preparedContacts) {
+    const matchedContact =
+      refreshedContacts.find((row) => String(row.id) === preparedContact.id) ??
+      findBestExistingContactMatch(refreshedContacts, {
+        name: preparedContact.contact_name,
+        email: preparedContact.email,
+        phone: cleanPhone(preparedContact.cellular_number),
+        category: preparedContact.category
+      });
+    const contactPatch = {
+      member_id: input.memberId,
+      contact_name: preparedContact.contact_name,
+      relationship_to_member: preparedContact.relationship_to_member,
+      category: preparedContact.category,
+      category_other: preparedContact.category_other,
+      email: preparedContact.email,
+      cellular_number: preparedContact.cellular_number,
+      work_number: preparedContact.work_number,
+      home_number: preparedContact.home_number,
+      street_address: preparedContact.street_address,
+      city: preparedContact.city,
+      state: preparedContact.state,
+      zip: preparedContact.zip,
+      is_payor: false,
+      updated_at: now
+    };
+
+    if (matchedContact) {
+      const { error: updateContactError } = await admin
+        .from("member_contacts")
+        .update(contactPatch)
+        .eq("id", String(matchedContact.id));
+      if (updateContactError) {
+        throw new Error(updateContactError.message);
+      }
+    } else {
+      const { error: insertContactError } = await admin.from("member_contacts").insert({
+        id: preparedContact.id,
+        ...contactPatch,
+        created_by_user_id: input.senderUserId,
+        created_by_name: clean(input.senderName),
+        created_at: now
+      });
+      if (insertContactError) {
+        throw new Error(insertContactError.message);
+      }
+    }
+  }
+
+  const refreshedContactsResult = await admin
+    .from("member_contacts")
+    .select("*")
+    .eq("member_id", input.memberId)
+    .order("updated_at", { ascending: false });
+  if (refreshedContactsResult.error) {
+    throw new Error(refreshedContactsResult.error.message);
+  }
+  refreshedContacts = (refreshedContactsResult.data ?? []) as Array<Record<string, unknown>>;
+  const refreshedResponsibleContact = findBestExistingContactMatch(refreshedContacts, {
+    name: primaryName,
+    email: primaryEmail,
+    phone: primaryPhone,
+    category: "Responsible Party"
+  });
+
+  if (refreshedResponsibleContact) {
+    const contactPatch = {
+      contact_name: primaryName,
+      relationship_to_member: clean(payload.primaryContactRelationship),
+      category: "Responsible Party",
+      category_other: null,
+      email: primaryEmail,
+      cellular_number: clean(payload.primaryContactPhone),
+      work_number: null,
+      home_number: null,
+      street_address:
+        clean(payload.primaryContactAddressLine1) ?? clean(payload.primaryContactAddress) ?? clean(payload.memberAddressLine1),
+      city: clean(payload.primaryContactCity) ?? clean(payload.memberCity),
+      state: clean(payload.primaryContactState) ?? clean(payload.memberState),
+      zip: clean(payload.primaryContactZip) ?? clean(payload.memberZip),
+      updated_at: now
+    };
+    const { error: updateResponsibleError } = await admin
+      .from("member_contacts")
+      .update(contactPatch)
+      .eq("id", String(refreshedResponsibleContact.id));
+    if (updateResponsibleError) {
+      throw new Error(updateResponsibleError.message);
+    }
+  }
+
+  const refreshedSecondaryContact = findBestExistingContactMatch(refreshedContacts, {
+    name: secondaryName,
+    email: cleanEmail(payload.secondaryContactEmail),
+    phone: cleanPhone(payload.secondaryContactPhone),
+    category: "Emergency Contact"
+  });
+  if (refreshedSecondaryContact && secondaryName) {
+    const { error: updateSecondaryError } = await admin
+      .from("member_contacts")
+      .update({
+        contact_name: secondaryName,
+        relationship_to_member: clean(payload.secondaryContactRelationship),
+        category: "Emergency Contact",
+        category_other: null,
+        email: cleanEmail(payload.secondaryContactEmail),
+        cellular_number: clean(payload.secondaryContactPhone),
+        work_number: null,
+        home_number: null,
+        street_address: clean(payload.secondaryContactAddressLine1) ?? clean(payload.secondaryContactAddress),
+        city: clean(payload.secondaryContactCity),
+        state: clean(payload.secondaryContactState),
+        zip: clean(payload.secondaryContactZip),
+        updated_at: now
+      })
+      .eq("id", String(refreshedSecondaryContact.id));
+    if (updateSecondaryError) {
+      throw new Error(updateSecondaryError.message);
+    }
+  }
+
+  if (refreshedResponsibleContact && shouldAssignResponsibleAsPayor) {
+    await setBillingPayorContact({
+      memberId: input.memberId,
+      contactId: String(refreshedResponsibleContact.id),
+      actorUserId: input.senderUserId,
+      actorName: input.senderName,
+      source: "mapEnrollmentPacketToDownstream",
+      reason: "Enrollment packet responsible party matched canonical billing payor."
+    });
+  } else if (refreshedResponsibleContact && existingBillingPayor && String(existingBillingPayor.id) !== String(refreshedResponsibleContact.id)) {
+    await recordWorkflowEvent({
+      eventType: "billing_payor_conflict_preserved_manual",
+      entityType: "member",
+      entityId: input.memberId,
+      actorType: "system",
+      status: "conflict",
+      severity: "medium",
+      metadata: {
+        source: "mapEnrollmentPacketToDownstream",
+        existing_payor_contact_id: String(existingBillingPayor.id),
+        enrollment_contact_id: String(refreshedResponsibleContact.id),
+        enrollment_contact_name: primaryName
+      }
+    });
   }
 
   return {

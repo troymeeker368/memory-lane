@@ -73,7 +73,7 @@ export function MhpOverviewForm(props: {
   memberId: string;
   memberDob: string;
   genderDefault: string;
-  payor: string;
+  billingPayorDisplay: string;
   originalReferralSource: string;
   photoConsent: boolean | null;
   primaryCaregiverName: string;
@@ -189,7 +189,7 @@ export function MhpOverviewForm(props: {
           <option value="false">No</option>
         </select>
       </label>
-      <Field label="Payor" name="payor" defaultValue={props.payor} />
+      <Field label="Billing Payor Contact" name="billingPayorDisplay" value={props.billingPayorDisplay} disabled />
 
       <TextAreaField label="Important Alerts" name="importantAlerts" defaultValue={props.importantAlerts} />
 

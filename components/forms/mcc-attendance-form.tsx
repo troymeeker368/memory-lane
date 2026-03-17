@@ -15,8 +15,8 @@ export function MccAttendanceForm({
   attendanceNotes,
   dailyRate,
   transportationBillingStatus,
-  payorId,
-  payorOptions,
+  billingPayorName,
+  billingPayorStatus,
   useCenterDefaultBillingMode,
   billingMode,
   monthlyBillingBasis,
@@ -36,8 +36,8 @@ export function MccAttendanceForm({
   attendanceNotes: string | null;
   dailyRate: number | null;
   transportationBillingStatus: "BillNormally" | "Waived" | "IncludedInProgramRate";
-  payorId: string | null;
-  payorOptions: Array<{ id: string; name: string }>;
+  billingPayorName: string;
+  billingPayorStatus: string;
   useCenterDefaultBillingMode: boolean;
   billingMode: "Membership" | "Monthly" | "Custom" | null;
   monthlyBillingBasis: "ScheduledMonthBehind" | "ActualAttendanceMonthBehind";
@@ -136,15 +136,9 @@ export function MccAttendanceForm({
         </p>
         <div className="mt-2 grid gap-2 md:grid-cols-3">
           <label className="space-y-1 text-sm">
-            <span className="text-xs font-semibold text-muted">Payor</span>
-            <select name="payorId" defaultValue={payorId ?? ""} className="h-10 w-full rounded-lg border border-border bg-white px-3" disabled={isSaving}>
-              <option value="">No payor assigned</option>
-              {payorOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.name}
-                </option>
-              ))}
-            </select>
+            <span className="text-xs font-semibold text-muted">Billing Payor Contact</span>
+            <input value={billingPayorName} readOnly className="h-10 w-full rounded-lg border border-border bg-white px-3 text-muted" />
+            <p className="text-[11px] text-muted">{billingPayorStatus}</p>
           </label>
           <label className="space-y-1 text-sm">
             <span className="text-xs font-semibold text-muted">Billing Mode</span>

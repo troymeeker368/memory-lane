@@ -1,14 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import { saveAttendanceStatusAction } from "@/app/(portal)/operations/attendance/actions";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 import { ATTENDANCE_ABSENCE_REASON_OPTIONS } from "@/lib/canonical";
 
 type ActionMode = "check-in" | "check-out" | "absent" | null;
+
+export type AttendanceMutationRecord = {
+  memberId: string;
+  attendanceDate: string;
+  attendanceRecordId: string | null;
+  attendanceStatus: "Present" | "Checked Out" | "Absent" | "Not Checked In Yet";
+  recordStatus: "present" | "absent" | null;
+  absentReason: string | null;
+  absentReasonOther: string | null;
+  checkInAt: string | null;
+  checkOutAt: string | null;
+};
 
 function initialsFromName(name: string) {
   return name
@@ -44,7 +57,8 @@ export function AttendanceMemberCell({
   defaultCheckInTime,
   defaultCheckOutTime,
   defaultAbsentReason,
-  defaultAbsentReasonOther
+  defaultAbsentReasonOther,
+  onSaved
 }: {
   memberId: string;
   memberName: string;
@@ -55,8 +69,8 @@ export function AttendanceMemberCell({
   defaultCheckOutTime?: string;
   defaultAbsentReason?: string | null;
   defaultAbsentReasonOther?: string | null;
+  onSaved?: (record: AttendanceMutationRecord) => void;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<ActionMode>(null);
   const syncDeps = [attendanceDate, defaultAbsentReason, defaultAbsentReasonOther, defaultCheckInTime, defaultCheckOutTime, memberId];
@@ -65,12 +79,9 @@ export function AttendanceMemberCell({
   const [absentReason, setAbsentReason] = usePropSyncedState(defaultAbsentReason ?? "", syncDeps);
   const [absentReasonOther, setAbsentReasonOther] = usePropSyncedState(defaultAbsentReasonOther ?? "", syncDeps);
   const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const { isSaving, run } = useScopedMutation();
 
-  const profileHref = useMemo(
-    () => `/operations/member-command-center/${memberId}`,
-    [memberId]
-  );
+  const profileHref = useMemo(() => `/operations/member-command-center/${memberId}`, [memberId]);
 
   useEffect(() => {
     setOpen(false);
@@ -81,8 +92,9 @@ export function AttendanceMemberCell({
   function runAction() {
     if (!mode) return;
     setError(null);
-    startTransition(async () => {
-      try {
+
+    void run(
+      async () => {
         const payload = new FormData();
         payload.set("memberId", memberId);
         payload.set("attendanceDate", attendanceDate);
@@ -94,55 +106,82 @@ export function AttendanceMemberCell({
           payload.set("checkOutTime", checkOutTime || currentTimeString());
         } else if (mode === "absent") {
           if (!absentReason) {
-            setError("Absent reason is required.");
-            return;
+            return { ok: false, error: "Absent reason is required." };
           }
           payload.set("absentReason", absentReason);
           if (absentReason === "Other") {
             if (!absentReasonOther.trim()) {
-              setError("Custom absent reason is required.");
-              return;
+              return { ok: false, error: "Custom absent reason is required." };
             }
             payload.set("absentReasonOther", absentReasonOther.trim());
           }
         }
 
-        const result = await saveAttendanceStatusAction(payload);
-        if (result?.ok === false) {
-          setError(result.error ?? "Unable to save attendance action.");
-          return;
+        return saveAttendanceStatusAction(payload);
+      },
+      {
+        successMessage: "Attendance updated.",
+        fallbackData: {
+          record: {
+            memberId,
+            attendanceDate,
+            attendanceRecordId: null,
+            attendanceStatus: "Not Checked In Yet" as const,
+            recordStatus: null,
+            absentReason: null,
+            absentReasonOther: null,
+            checkInAt: null,
+            checkOutAt: null
+          }
+        },
+        onSuccess: async (result) => {
+          onSaved?.(result.data.record);
+          setOpen(false);
+          setMode(null);
+        },
+        onError: async (result) => {
+          setError(result.error);
         }
-        setOpen(false);
-        setMode(null);
-        router.refresh();
-      } catch (caught) {
-        const message = caught instanceof Error ? caught.message : "Unable to save attendance action.";
-        setError(message);
       }
-    });
+    );
   }
 
   function clearRecord() {
     setError(null);
-    startTransition(async () => {
-      try {
+
+    void run(
+      async () => {
         const payload = new FormData();
         payload.set("memberId", memberId);
         payload.set("attendanceDate", attendanceDate);
         payload.set("status", "clear");
-        const result = await saveAttendanceStatusAction(payload);
-        if (result?.ok === false) {
-          setError(result.error ?? "Unable to clear attendance.");
-          return;
+        return saveAttendanceStatusAction(payload);
+      },
+      {
+        successMessage: "Attendance cleared.",
+        fallbackData: {
+          record: {
+            memberId,
+            attendanceDate,
+            attendanceRecordId: null,
+            attendanceStatus: "Not Checked In Yet" as const,
+            recordStatus: null,
+            absentReason: null,
+            absentReasonOther: null,
+            checkInAt: null,
+            checkOutAt: null
+          }
+        },
+        onSuccess: async (result) => {
+          onSaved?.(result.data.record);
+          setOpen(false);
+          setMode(null);
+        },
+        onError: async (result) => {
+          setError(result.error);
         }
-        setOpen(false);
-        setMode(null);
-        router.refresh();
-      } catch (caught) {
-        const message = caught instanceof Error ? caught.message : "Unable to clear attendance.";
-        setError(message);
       }
-    });
+    );
   }
 
   return (
@@ -177,7 +216,7 @@ export function AttendanceMemberCell({
               type="button"
               className={`rounded-md border px-2 py-1 font-semibold ${mode === "check-in" ? "border-brand bg-brand text-white" : "border-green-600 text-green-700"}`}
               onClick={() => setMode("check-in")}
-              disabled={isPending}
+              disabled={isSaving}
             >
               Check In
             </button>
@@ -185,7 +224,7 @@ export function AttendanceMemberCell({
               type="button"
               className={`rounded-md border px-2 py-1 font-semibold ${mode === "check-out" ? "border-brand bg-brand text-white" : "border-red-500 text-red-600"}`}
               onClick={() => setMode("check-out")}
-              disabled={isPending}
+              disabled={isSaving}
             >
               Check Out
             </button>
@@ -193,7 +232,7 @@ export function AttendanceMemberCell({
               type="button"
               className={`rounded-md border px-2 py-1 font-semibold ${mode === "absent" ? "border-brand bg-brand text-white" : "border-amber-500 text-amber-700"}`}
               onClick={() => setMode("absent")}
-              disabled={isPending}
+              disabled={isSaving}
             >
               Absent
             </button>
@@ -201,7 +240,7 @@ export function AttendanceMemberCell({
               type="button"
               className="rounded-md border border-border px-2 py-1 font-semibold"
               onClick={clearRecord}
-              disabled={isPending}
+              disabled={isSaving}
             >
               Clear
             </button>
@@ -215,7 +254,7 @@ export function AttendanceMemberCell({
                 value={checkInTime}
                 onChange={(event) => setCheckInTime(event.target.value)}
                 className="h-8 rounded-md border border-border px-2"
-                disabled={isPending}
+                disabled={isSaving}
               />
             </div>
           ) : null}
@@ -228,7 +267,7 @@ export function AttendanceMemberCell({
                 value={checkOutTime}
                 onChange={(event) => setCheckOutTime(event.target.value)}
                 className="h-8 rounded-md border border-border px-2"
-                disabled={isPending}
+                disabled={isSaving}
               />
             </div>
           ) : null}
@@ -241,7 +280,7 @@ export function AttendanceMemberCell({
                   value={absentReason}
                   onChange={(event) => setAbsentReason(event.target.value)}
                   className="h-8 rounded-md border border-border px-2"
-                  disabled={isPending}
+                  disabled={isSaving}
                 >
                   <option value="">Select reason</option>
                   {ATTENDANCE_ABSENCE_REASON_OPTIONS.map((option) => (
@@ -258,7 +297,7 @@ export function AttendanceMemberCell({
                     value={absentReasonOther}
                     onChange={(event) => setAbsentReasonOther(event.target.value)}
                     className="h-8 rounded-md border border-border px-2"
-                    disabled={isPending}
+                    disabled={isSaving}
                   />
                 </label>
               ) : null}
@@ -270,15 +309,15 @@ export function AttendanceMemberCell({
               type="button"
               className="rounded-md bg-brand px-2 py-1 font-semibold text-white disabled:opacity-70"
               onClick={runAction}
-              disabled={isPending || mode == null}
+              disabled={isSaving || mode == null}
             >
-              {isPending ? "Saving..." : "Save"}
+              {isSaving ? "Saving..." : "Save"}
             </button>
             <Link href={profileHref} className="font-semibold text-brand">
               Open Member Record
             </Link>
           </div>
-          {error ? <p className="mt-1 text-xs font-semibold text-red-600">{error}</p> : null}
+          <MutationNotice kind="error" message={error} className="mt-1 text-xs font-semibold" />
         </div>
       ) : null}
     </div>

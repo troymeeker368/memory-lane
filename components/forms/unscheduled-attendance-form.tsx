@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 
 import { saveUnscheduledAttendanceAction } from "@/app/(portal)/operations/attendance/actions";
+import type { AttendanceMutationRecord } from "@/components/forms/attendance-member-cell";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 
 function currentTimeString() {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -22,17 +24,21 @@ function currentTimeString() {
 
 export function UnscheduledAttendanceForm({
   selectedDate,
-  members
+  members,
+  onSaved
 }: {
   selectedDate: string;
   members: Array<{ id: string; displayName: string; makeupBalance: number }>;
+  onSaved?: (payload: {
+    record: AttendanceMutationRecord;
+    member: { id: string; displayName: string; makeupBalance: number };
+  }) => void;
 }) {
-  const router = useRouter();
   const [memberId, setMemberId] = useState(members[0]?.id ?? "");
   const [useMakeupDay, setUseMakeupDay] = useState<"yes" | "no">("no");
   const [checkInTime, setCheckInTime] = useState(currentTimeString());
   const [status, setStatus] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const { isSaving, run } = useScopedMutation();
 
   const selectedMember = useMemo(
     () => members.find((member) => member.id === memberId) ?? null,
@@ -89,30 +95,57 @@ export function UnscheduledAttendanceForm({
       <div>
         <button
           type="button"
-          disabled={isPending || !memberId}
+          disabled={isSaving || !memberId}
           onClick={() =>
-            startTransition(async () => {
-              setStatus(null);
-              const payload = new FormData();
-              payload.set("memberId", memberId);
-              payload.set("attendanceDate", selectedDate);
-              payload.set("checkInTime", checkInTime || currentTimeString());
-              payload.set("useMakeupDay", useMakeupDay);
-              const result = await saveUnscheduledAttendanceAction(payload);
-              if (!result?.ok) {
-                setStatus(result?.error ?? "Unable to save unscheduled attendance.");
-                return;
+            void run(
+              async () => {
+                const payload = new FormData();
+                payload.set("memberId", memberId);
+                payload.set("attendanceDate", selectedDate);
+                payload.set("checkInTime", checkInTime || currentTimeString());
+                payload.set("useMakeupDay", useMakeupDay);
+                return saveUnscheduledAttendanceAction(payload);
+              },
+              {
+                successMessage: "Unscheduled attendance saved.",
+                fallbackData: {
+                  record: {
+                    memberId,
+                    attendanceDate: selectedDate,
+                    attendanceRecordId: null,
+                    attendanceStatus: "Present" as const,
+                    recordStatus: "present" as const,
+                    absentReason: null,
+                    absentReasonOther: null,
+                    checkInAt: null,
+                    checkOutAt: null
+                  }
+                },
+                onSuccess: async (result) => {
+                  if (selectedMember) {
+                    onSaved?.({
+                      record: result.data.record,
+                      member: {
+                        id: selectedMember.id,
+                        displayName: selectedMember.displayName,
+                        makeupBalance: projectedBalance
+                      }
+                    });
+                  }
+                  setStatus(result.message);
+                },
+                onError: async (result) => {
+                  setStatus(`Error: ${result.error}`);
+                }
               }
-              setStatus("Unscheduled attendance saved.");
-              router.refresh();
-            })
+            )
           }
           className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70"
         >
-          {isPending ? "Saving..." : "Save Unscheduled Attendance"}
+          {isSaving ? "Saving..." : "Save Unscheduled Attendance"}
         </button>
       </div>
-      {status ? <p className="text-xs text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
     </div>
   );
 }

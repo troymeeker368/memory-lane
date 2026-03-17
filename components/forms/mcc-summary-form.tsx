@@ -12,14 +12,14 @@ export function MccSummaryForm({
   memberId,
   lockerNumber,
   lockerOptions,
-  payor,
+  billingPayorDisplay,
   originalReferralSource,
   photoConsent
 }: {
   memberId: string;
   lockerNumber: string;
   lockerOptions: string[];
-  payor: string;
+  billingPayorDisplay: string;
   originalReferralSource: string;
   photoConsent: boolean | null;
 }) {
@@ -68,7 +68,10 @@ export function MccSummaryForm({
           ))}
         </select>
       </label>
-      <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Payor</span><input name="payor" defaultValue={payor} className="h-10 w-full rounded-lg border border-border px-3" /></label>
+      <label className="space-y-1 text-sm">
+        <span className="text-xs font-semibold text-muted">Billing Payor Contact</span>
+        <input value={billingPayorDisplay} readOnly className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-muted" />
+      </label>
       <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Original Referral Source</span><input name="originalReferralSource" defaultValue={originalReferralSource} className="h-10 w-full rounded-lg border border-border px-3" /></label>
       <label className="space-y-1 text-sm">
         <span className="text-xs font-semibold text-muted">Photo Consent</span>

@@ -6,70 +6,50 @@ import {
   createCustomInvoiceAction,
   createEnrollmentInvoiceAction
 } from "@/app/(portal)/operations/payor/actions";
-import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
 
 interface BillingCustomInvoiceFormsProps {
   members: Array<{ id: string; displayName: string }>;
-  payors: Array<{ id: string; payorName: string }>;
-  memberPayorIdsByMember: Record<string, string[]>;
+  payorByMember: Record<string, { contactId: string | null; displayName: string; status: "ok" | "missing" | "invalid_multiple" }>;
   today: string;
   endOfMonth: string;
 }
 
-function getFilteredPayorsForMember(input: {
-  memberId: string;
-  payors: Array<{ id: string; payorName: string }>;
-  memberPayorIdsByMember: Record<string, string[]>;
-}) {
-  if (!input.memberId) return [];
-  const allowedPayorIds = new Set(input.memberPayorIdsByMember[input.memberId] ?? []);
-  if (allowedPayorIds.size === 0) return [];
-  return input.payors.filter((payor) => allowedPayorIds.has(payor.id));
+function getPayorDisplay(
+  memberId: string,
+  payorByMember: BillingCustomInvoiceFormsProps["payorByMember"]
+) {
+  if (!memberId) return "Select member first";
+  return payorByMember[memberId]?.displayName ?? "No payor contact designated";
+}
+
+function getPayorStatusNote(
+  memberId: string,
+  payorByMember: BillingCustomInvoiceFormsProps["payorByMember"]
+) {
+  if (!memberId) return "Billing recipient comes from the member's designated MCC contact.";
+  const status = payorByMember[memberId]?.status ?? "missing";
+  if (status === "ok") return "Billing recipient comes from the member's designated MCC contact.";
+  if (status === "invalid_multiple") return "Multiple payor contacts are flagged. Resolve the conflict in Member Command Center.";
+  return "No payor contact designated. Update Member Command Center contacts before sending the invoice.";
 }
 
 export function BillingCustomInvoiceForms({
   members,
-  payors,
-  memberPayorIdsByMember,
+  payorByMember,
   today,
   endOfMonth
 }: BillingCustomInvoiceFormsProps) {
   const [customMemberId, setCustomMemberId] = useState("");
-  const [customPayorId, setCustomPayorId] = useState("");
   const [enrollmentMemberId, setEnrollmentMemberId] = useState("");
-  const [enrollmentPayorId, setEnrollmentPayorId] = useState("");
 
-  const customPayors = useMemo(
-    () =>
-      getFilteredPayorsForMember({
-        memberId: customMemberId,
-        payors,
-        memberPayorIdsByMember
-      }),
-    [customMemberId, memberPayorIdsByMember, payors]
+  const customPayorDisplay = useMemo(
+    () => getPayorDisplay(customMemberId, payorByMember),
+    [customMemberId, payorByMember]
   );
-  const enrollmentPayors = useMemo(
-    () =>
-      getFilteredPayorsForMember({
-        memberId: enrollmentMemberId,
-        payors,
-        memberPayorIdsByMember
-      }),
-    [enrollmentMemberId, memberPayorIdsByMember, payors]
+  const enrollmentPayorDisplay = useMemo(
+    () => getPayorDisplay(enrollmentMemberId, payorByMember),
+    [enrollmentMemberId, payorByMember]
   );
-
-  useConstrainedSelection({
-    selectedId: customPayorId,
-    setSelectedId: setCustomPayorId,
-    options: customPayors,
-    autoSelectSingle: Boolean(customMemberId)
-  });
-  useConstrainedSelection({
-    selectedId: enrollmentPayorId,
-    setSelectedId: setEnrollmentPayorId,
-    options: enrollmentPayors,
-    autoSelectSingle: Boolean(enrollmentMemberId)
-  });
 
   return (
     <>
@@ -90,29 +70,13 @@ export function BillingCustomInvoiceForms({
             </option>
           ))}
         </select>
-        <select
-          name="payorId"
-          value={customPayorId}
-          onChange={(event) => setCustomPayorId(event.target.value)}
-          className="h-10 rounded-lg border border-border px-3"
-          disabled={!customMemberId}
-        >
-          <option value="">
-            {!customMemberId
-              ? "Select member first"
-              : customPayors.length === 0
-                ? "No linked payor"
-                : "Use member payor"}
-          </option>
-          {customPayors.map((payor) => (
-            <option key={payor.id} value={payor.id}>
-              {payor.payorName}
-            </option>
-          ))}
-        </select>
+        <input value={customPayorDisplay} readOnly className="h-10 rounded-lg border border-border bg-surface px-3 text-muted" />
         <input value="Custom Invoice" readOnly className="h-10 rounded-lg border border-border bg-surface px-3 text-muted" />
         <input value="Billing Mode: Custom" readOnly className="h-10 rounded-lg border border-border bg-surface px-3 text-muted" />
         <input value="Rate Source: Member override, else center default" readOnly className="h-10 rounded-lg border border-border bg-surface px-3 text-muted md:col-span-2" />
+        <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted md:col-span-6">
+          {getPayorStatusNote(customMemberId, payorByMember)}
+        </div>
         <select name="calculationMethod" defaultValue="DailyRateTimesDates" className="h-10 rounded-lg border border-border px-3">
           <option value="DailyRateTimesDates">Daily Rate x Billable Dates</option>
           <option value="FlatAmount">Flat Custom Amount</option>
@@ -179,26 +143,7 @@ export function BillingCustomInvoiceForms({
             </option>
           ))}
         </select>
-        <select
-          name="payorId"
-          value={enrollmentPayorId}
-          onChange={(event) => setEnrollmentPayorId(event.target.value)}
-          className="h-10 rounded-lg border border-border px-3"
-          disabled={!enrollmentMemberId}
-        >
-          <option value="">
-            {!enrollmentMemberId
-              ? "Select member first"
-              : enrollmentPayors.length === 0
-                ? "No linked payor"
-                : "Use member payor"}
-          </option>
-          {enrollmentPayors.map((payor) => (
-            <option key={payor.id} value={payor.id}>
-              {payor.payorName}
-            </option>
-          ))}
-        </select>
+        <input value={enrollmentPayorDisplay} readOnly className="h-10 rounded-lg border border-border bg-surface px-3 text-muted" />
         <input name="effectiveStartDate" type="date" defaultValue={today} className="h-10 rounded-lg border border-border px-3" required />
         <input name="periodEndDate" type="date" defaultValue={endOfMonth} className="h-10 rounded-lg border border-border px-3" />
         <label className="flex items-center gap-2 rounded-lg border border-border px-3 text-xs font-semibold text-muted">
@@ -213,6 +158,9 @@ export function BillingCustomInvoiceForms({
           <input name="includeAdjustments" type="checkbox" value="true" />
           Include adjustments
         </label>
+        <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted md:col-span-6">
+          {getPayorStatusNote(enrollmentMemberId, payorByMember)}
+        </div>
         <input name="notes" placeholder="Proration notes" className="h-10 rounded-lg border border-border px-3 md:col-span-4" />
         <button type="submit" className="h-10 rounded-lg bg-brand px-4 text-sm font-semibold text-white md:col-span-2">
           Create Enrollment Invoice

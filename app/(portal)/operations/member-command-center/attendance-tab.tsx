@@ -9,7 +9,6 @@ import { formatOptionalDate } from "@/lib/utils";
 type AttendanceFormProps = ComponentProps<typeof MccAttendanceForm>;
 
 type ActiveMemberBillingSetting = {
-  payor_id: string | null;
   use_center_default_billing_mode: boolean;
   billing_mode: AttendanceFormProps["billingMode"];
   monthly_billing_basis: AttendanceFormProps["monthlyBillingBasis"];
@@ -28,7 +27,8 @@ export default function MemberCommandCenterAttendanceTab({
   effectiveScheduleTodayLabel,
   activeOverrideCount,
   activeMemberBillingSetting,
-  activePayorOptions
+  billingPayorName,
+  billingPayorStatus
 }: {
   canEditAttendanceBilling: boolean;
   detail: MemberCommandCenterDetail;
@@ -40,7 +40,8 @@ export default function MemberCommandCenterAttendanceTab({
   effectiveScheduleTodayLabel: string;
   activeOverrideCount: number;
   activeMemberBillingSetting: ActiveMemberBillingSetting;
-  activePayorOptions: Array<{ id: string; name: string }>;
+  billingPayorName: string;
+  billingPayorStatus: string;
 }) {
   return (
     <Card id="attendance-enrollment">
@@ -66,8 +67,8 @@ export default function MemberCommandCenterAttendanceTab({
           attendanceNotes={detail.schedule.attendance_notes}
           dailyRate={detail.schedule.daily_rate}
           transportationBillingStatus={detail.schedule.transportation_billing_status}
-          payorId={activeMemberBillingSetting?.payor_id ?? null}
-          payorOptions={activePayorOptions}
+          billingPayorName={billingPayorName}
+          billingPayorStatus={billingPayorStatus}
           useCenterDefaultBillingMode={activeMemberBillingSetting?.use_center_default_billing_mode ?? true}
           billingMode={activeMemberBillingSetting?.billing_mode ?? null}
           monthlyBillingBasis={activeMemberBillingSetting?.monthly_billing_basis ?? "ScheduledMonthBehind"}

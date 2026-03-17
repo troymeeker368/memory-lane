@@ -628,27 +628,42 @@ export function MarWorkflowBoard({
             <div>
               <button
                 type="button"
-                disabled={isPending || !canDocument || !selectedPrnMedicationId || !prnReason.trim()}
+                disabled={isSaving || !canDocument || !selectedPrnMedicationId || !prnReason.trim()}
                 className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 onClick={() =>
-                  startTransition(async () => {
-                    const parsed = new Date(prnDateTime);
-                    const administeredAtIso = Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
-                    const result = await recordPrnMarAdministrationAction({
-                      pofMedicationId: selectedPrnMedicationId,
-                      prnReason,
-                      notes: prnNotes,
-                      administeredAtIso
-                    });
-                    if (result?.error) {
-                      setStatusMessage(`Error: ${result.error}`);
-                      return;
+                  void run(
+                    async () => {
+                      const parsed = new Date(prnDateTime);
+                      const administeredAtIso = Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+                      return recordPrnMarAdministrationAction({
+                        pofMedicationId: selectedPrnMedicationId,
+                        prnReason,
+                        notes: prnNotes,
+                        administeredAtIso
+                      });
+                    },
+                    {
+                      successMessage: "PRN administration saved. Outcome is now due.",
+                      fallbackData: {
+                        administrationId: "",
+                        administeredAt: "",
+                        administeredBy: "",
+                        prnReason: "",
+                        notes: null as string | null,
+                        pofMedicationId: ""
+                      },
+                      onSuccess: async (result) => {
+                        const option = prnMedicationOptions.find((item) => item.pofMedicationId === result.data.pofMedicationId);
+                        if (option) {
+                          applyPrnAdministration(option, result.data);
+                        }
+                        setStatusMessage(result.message);
+                      },
+                      onError: async (result) => {
+                        setStatusMessage(`Error: ${result.error}`);
+                      }
                     }
-                    setPrnReason("");
-                    setPrnNotes("");
-                    setStatusMessage("PRN administration saved. Outcome is now due.");
-                    router.refresh();
-                  })
+                  )
                 }
               >
                 Save PRN Administration
@@ -663,7 +678,7 @@ export function MarWorkflowBoard({
           <div className="rounded-lg border border-border p-3">
             <p className="text-sm font-semibold">Members Due Today</p>
             <p className="text-xs text-muted">
-              Documented: <span className="font-semibold">{documentedToday}</span> / {todayRows.length}
+              Documented: <span className="font-semibold">{documentedToday}</span> / {todayRowsState.length}
             </p>
             <div className="mt-3 space-y-2">
               {memberSummaries.length === 0 ? (
@@ -751,22 +766,35 @@ export function MarWorkflowBoard({
                                 <div className="flex flex-wrap gap-2">
                                   <button
                                     type="button"
-                                    disabled={!canDocument || isPending}
+                                    disabled={!canDocument || isSaving}
                                     className="rounded-lg bg-emerald-600 px-3 py-1 text-sm font-semibold text-white disabled:opacity-60"
                                     onClick={() =>
                                       withTimingWarning(row, () => {
-                                        startTransition(async () => {
-                                          const result = await recordScheduledMarAdministrationAction({
-                                            marScheduleId: row.marScheduleId,
-                                            status: "Given"
-                                          });
-                                          if (result?.error) {
-                                            setStatusMessage(`Error: ${result.error}`);
-                                            return;
+                                        void run(
+                                          async () =>
+                                            recordScheduledMarAdministrationAction({
+                                              marScheduleId: row.marScheduleId,
+                                              status: "Given"
+                                            }),
+                                          {
+                                            successMessage: "Medication documented as Given.",
+                                            fallbackData: {
+                                              administrationId: "",
+                                              administeredAt: "",
+                                              administeredBy: "",
+                                              status: "Given" as const,
+                                              notGivenReason: null as MarNotGivenReason | null,
+                                              notes: null as string | null
+                                            },
+                                            onSuccess: async (result) => {
+                                              applyScheduledAdministration(row, result.data);
+                                              setStatusMessage(result.message);
+                                            },
+                                            onError: async (result) => {
+                                              setStatusMessage(`Error: ${result.error}`);
+                                            }
                                           }
-                                          setStatusMessage("Medication documented as Given.");
-                                          router.refresh();
-                                        });
+                                        );
                                       })
                                     }
                                   >
@@ -774,7 +802,7 @@ export function MarWorkflowBoard({
                                   </button>
                                   <button
                                     type="button"
-                                    disabled={!canDocument || isPending}
+                                    disabled={!canDocument || isSaving}
                                     className="rounded-lg border border-rose-300 px-3 py-1 text-sm font-semibold text-rose-700 disabled:opacity-60"
                                     onClick={() => {
                                       setNotGivenOpenForScheduleId(row.marScheduleId);
@@ -812,25 +840,37 @@ export function MarWorkflowBoard({
                                   />
                                   <button
                                     type="button"
-                                    disabled={isPending || (notGivenReason === "Other" && !notGivenNote.trim())}
+                                    disabled={isSaving || (notGivenReason === "Other" && !notGivenNote.trim())}
                                     className="rounded-lg bg-rose-700 px-3 py-1 text-sm font-semibold text-white disabled:opacity-60"
                                     onClick={() =>
                                       withTimingWarning(row, () => {
-                                        startTransition(async () => {
-                                          const result = await recordScheduledMarAdministrationAction({
-                                            marScheduleId: row.marScheduleId,
-                                            status: "Not Given",
-                                            notGivenReason,
-                                            notes: notGivenNote
-                                          });
-                                          if (result?.error) {
-                                            setStatusMessage(`Error: ${result.error}`);
-                                            return;
+                                        void run(
+                                          async () =>
+                                            recordScheduledMarAdministrationAction({
+                                              marScheduleId: row.marScheduleId,
+                                              status: "Not Given",
+                                              notGivenReason,
+                                              notes: notGivenNote
+                                            }),
+                                          {
+                                            successMessage: "Medication documented as Not Given.",
+                                            fallbackData: {
+                                              administrationId: "",
+                                              administeredAt: "",
+                                              administeredBy: "",
+                                              status: "Not Given" as const,
+                                              notGivenReason: null as MarNotGivenReason | null,
+                                              notes: null as string | null
+                                            },
+                                            onSuccess: async (result) => {
+                                              applyScheduledAdministration(row, result.data);
+                                              setStatusMessage(result.message);
+                                            },
+                                            onError: async (result) => {
+                                              setStatusMessage(`Error: ${result.error}`);
+                                            }
                                           }
-                                          setNotGivenOpenForScheduleId(null);
-                                          setStatusMessage("Medication documented as Not Given.");
-                                          router.refresh();
-                                        });
+                                        );
                                       })
                                     }
                                   >
@@ -860,10 +900,10 @@ export function MarWorkflowBoard({
 
       {view === "overdue" ? (
         <div className="space-y-2">
-          {overdueRows.length === 0 ? (
+          {overdueRowsState.length === 0 ? (
             <div className="rounded-lg border border-border p-3 text-sm text-muted">No overdue medications right now.</div>
           ) : (
-            overdueRows.map((row) => (
+            overdueRowsState.map((row) => (
               <div key={row.marScheduleId} className="rounded-lg border border-rose-300 bg-rose-50 p-3">
                 <p className="text-sm font-semibold">{row.memberName}</p>
                 <p className="text-sm">{row.medicationName}</p>
@@ -879,20 +919,20 @@ export function MarWorkflowBoard({
 
       {view === "not-given" ? (
         <div className="space-y-2">
-          {notGivenRows.length === 0 ? (
+          {notGivenRowsState.length === 0 ? (
             <div className="rounded-lg border border-border p-3 text-sm text-muted">No Not Given entries documented today.</div>
           ) : (
-            notGivenRows.map((row) => <NotGivenCardRow key={row.id} row={row} />)
+            notGivenRowsState.map((row) => <NotGivenCardRow key={row.id} row={row} />)
           )}
         </div>
       ) : null}
 
       {view === "history" ? (
         <div className="space-y-2">
-          {historyRows.length === 0 ? (
+          {historyRowsState.length === 0 ? (
             <div className="rounded-lg border border-border p-3 text-sm text-muted">No administration history available.</div>
           ) : (
-            historyRows.map((row) => <HistoryCardRow key={row.id} row={row} />)
+            historyRowsState.map((row) => <HistoryCardRow key={row.id} row={row} />)
           )}
         </div>
       ) : null}
@@ -953,28 +993,37 @@ export function MarWorkflowBoard({
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            disabled={isPending || (prnOutcome === "Ineffective" && !prnOutcomeNote.trim())}
+                            disabled={isSaving || (prnOutcome === "Ineffective" && !prnOutcomeNote.trim())}
                             className="rounded-lg bg-brand px-3 py-1 text-sm font-semibold text-white disabled:opacity-60"
                             onClick={() =>
-                              startTransition(async () => {
-                                const parsed = new Date(prnOutcomeAssessedDateTime);
-                                const outcomeAssessedAtIso = Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
-                                const result = await recordPrnOutcomeAction({
-                                  administrationId: row.id,
-                                  prnOutcome,
-                                  prnFollowupNote: prnOutcomeNote,
-                                  outcomeAssessedAtIso
-                                });
-                                if (result?.error) {
-                                  setStatusMessage(`Error: ${result.error}`);
-                                  return;
+                              void run(
+                                async () => {
+                                  const parsed = new Date(prnOutcomeAssessedDateTime);
+                                  const outcomeAssessedAtIso = Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+                                  return recordPrnOutcomeAction({
+                                    administrationId: row.id,
+                                    prnOutcome,
+                                    prnFollowupNote: prnOutcomeNote,
+                                    outcomeAssessedAtIso
+                                  });
+                                },
+                                {
+                                  successMessage: "PRN outcome saved.",
+                                  fallbackData: {
+                                    administrationId: row.id,
+                                    prnOutcome,
+                                    prnFollowupNote: prnOutcomeNote,
+                                    outcomeAssessedAt: new Date().toISOString()
+                                  },
+                                  onSuccess: async (result) => {
+                                    applyPrnOutcome(row.id, result.data);
+                                    setStatusMessage(result.message);
+                                  },
+                                  onError: async (result) => {
+                                    setStatusMessage(`Error: ${result.error}`);
+                                  }
                                 }
-                                setOutcomeOpenForAdministrationId(null);
-                                setPrnOutcome("Effective");
-                                setPrnOutcomeNote("");
-                                setStatusMessage("PRN outcome saved.");
-                                router.refresh();
-                              })
+                              )
                             }
                           >
                             Save Outcome
@@ -991,7 +1040,7 @@ export function MarWorkflowBoard({
                     ) : (
                       <button
                         type="button"
-                        disabled={!canDocument || isPending}
+                        disabled={!canDocument || isSaving}
                         className="mt-2 rounded-lg border border-amber-300 px-3 py-1 text-sm font-semibold text-amber-800 disabled:opacity-60"
                         onClick={() => {
                           setOutcomeOpenForAdministrationId(row.id);
@@ -1011,7 +1060,7 @@ export function MarWorkflowBoard({
         </div>
       ) : null}
 
-      {statusMessage ? <p className="text-sm text-muted">{statusMessage}</p> : null}
+      <MutationNotice kind={statusMessage?.startsWith("Error") ? "error" : "success"} message={statusMessage} />
       {!canDocument ? <p className="text-sm text-rose-700">You can view MAR records but cannot document administrations.</p> : null}
       <p className="text-xs text-muted">POF orders remain canonical. MAR administrations are immutable historical events.</p>
     </div>

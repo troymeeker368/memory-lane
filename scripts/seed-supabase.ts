@@ -546,7 +546,7 @@ function buildIntakeCascade(db: SeededDb, staffMap: Map<string, string>) {
           ? sourceMhpRecord.operational_flags
           : { source: "seed:v3" },
       gender: sourceMhp?.gender ?? (idx % 2 === 0 ? "Female" : "Male"),
-      payor: sourceMhp?.payor ?? null,
+      payor: null,
       original_referral_source: sourceMhp?.original_referral_source ?? null,
       photo_consent: sourceMhp?.photo_consent ?? true,
       profile_image_url: sourceMhp?.profile_image_url ?? null,

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { Card, CardTitle } from "@/components/ui/card";
 import { getBillingMemberPayorLookups, getDraftInvoices } from "@/lib/services/billing-read";
 
@@ -5,7 +7,6 @@ export default async function DraftInvoicesPage() {
   const invoices = await getDraftInvoices();
   const lookups = await getBillingMemberPayorLookups();
   const memberName = new Map(lookups.members.map((row) => [row.id, row.displayName] as const));
-  const payorName = new Map(lookups.payors.map((row) => [row.id, row.payorName] as const));
 
   return (
     <Card className="table-wrap">
@@ -28,12 +29,13 @@ export default async function DraftInvoicesPage() {
             <th>Adjustments</th>
             <th>Total</th>
             <th>Status</th>
+            <th>PDF</th>
           </tr>
         </thead>
         <tbody>
           {invoices.length === 0 ? (
             <tr>
-              <td colSpan={14} className="text-sm text-muted">No draft invoices.</td>
+              <td colSpan={15} className="text-sm text-muted">No draft invoices.</td>
             </tr>
           ) : (
             invoices.map((invoice) => (
@@ -43,7 +45,7 @@ export default async function DraftInvoicesPage() {
                 <td>{invoice.invoice_source}</td>
                 <td>{invoice.billing_mode_snapshot}</td>
                 <td>{memberName.get(invoice.member_id) ?? "Unknown"}</td>
-                <td>{invoice.payor_id ? payorName.get(invoice.payor_id) ?? "Unknown" : "-"}</td>
+                <td>{lookups.payorByMember[invoice.member_id]?.displayName ?? "No payor contact designated"}</td>
                 <td>{invoice.base_period_start} - {invoice.base_period_end}</td>
                 <td>{invoice.variable_charge_period_start} - {invoice.variable_charge_period_end}</td>
                 <td>${invoice.base_program_amount.toFixed(2)}</td>
@@ -52,6 +54,11 @@ export default async function DraftInvoicesPage() {
                 <td>${invoice.adjustment_amount.toFixed(2)}</td>
                 <td>${invoice.total_amount.toFixed(2)}</td>
                 <td>{invoice.invoice_status}</td>
+                <td>
+                  <Link href={`/operations/payor/invoices/${invoice.id}/pdf`} className="text-xs font-semibold text-brand" target="_blank">
+                    PDF
+                  </Link>
+                </td>
               </tr>
             ))
           )}

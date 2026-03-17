@@ -170,7 +170,6 @@ export async function saveMemberCommandCenterSummaryAction(formData: FormData) {
   await saveMemberCommandCenterBundle({
     memberId,
     mccPatch: {
-      payor: asNullableString(formData, "payor"),
       original_referral_source: asNullableString(formData, "originalReferralSource"),
       photo_consent: asNullableBoolSelect(formData, "photoConsent"),
       location: defaultLocation
@@ -248,7 +247,6 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     transportationBillingStatusRaw === "Waived" || transportationBillingStatusRaw === "IncludedInProgramRate"
       ? transportationBillingStatusRaw
       : "BillNormally";
-  const payorId = asNullableString(formData, "payorId");
   const useCenterDefaultBillingMode = asCheckbox(formData, "useCenterDefaultBillingMode");
   const billingModeRaw = asString(formData, "billingMode");
   const billingMode: "Membership" | "Monthly" | "Custom" | null =
@@ -550,6 +548,7 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
       .filter((row) => row.member_id === memberId)
       .map((row) => row.payor_id)
       .find((row): row is string => Boolean(row)) ?? null;
+  const legacyPayorId = existingBillingSetting?.payor_id ?? fallbackPayorId ?? null;
 
   const activeScheduleTemplates = (await listBillingScheduleTemplatesSupabase(memberId))
     .filter((row) => row.member_id === memberId)
@@ -569,7 +568,7 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     billingPayload: existingBillingSetting
       ? {
           id: existingBillingSetting.id,
-          payor_id: payorId ?? existingBillingSetting.payor_id,
+          payor_id: legacyPayorId,
           use_center_default_billing_mode: useCenterDefaultBillingMode,
           billing_mode: useCenterDefaultBillingMode ? null : billingMode ?? existingBillingSetting.billing_mode ?? "Membership",
           monthly_billing_basis: monthlyBillingBasis,
@@ -585,7 +584,7 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
           billing_notes: billingNotes ?? existingBillingSetting.billing_notes
         }
       : {
-          payor_id: payorId ?? fallbackPayorId,
+          payor_id: legacyPayorId,
           use_center_default_billing_mode: useCenterDefaultBillingMode,
           billing_mode: useCenterDefaultBillingMode ? null : billingMode ?? "Membership",
           monthly_billing_basis: monthlyBillingBasis,

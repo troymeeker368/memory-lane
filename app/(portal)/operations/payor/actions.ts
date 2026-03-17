@@ -334,7 +334,7 @@ export async function saveMemberBillingSettingAction(formData: FormData) {
       : ("BillNormally" as const);
   const payload = {
     member_id: asString(formData, "memberId"),
-    payor_id: asNullableString(formData, "payorId"),
+    payor_id: null,
     use_center_default_billing_mode: asBoolean(formData, "useCenterDefaultBillingMode", false),
     billing_mode: BILLING_MODE_OPTIONS.includes(asString(formData, "billingMode") as (typeof BILLING_MODE_OPTIONS)[number])
       ? (asString(formData, "billingMode") as (typeof BILLING_MODE_OPTIONS)[number])
@@ -428,7 +428,7 @@ export async function saveBillingAdjustmentAction(formData: FormData) {
   const billingStatus = asString(formData, "billingStatus") === "Excluded" ? ("Excluded" as const) : ("Unbilled" as const);
   const payload = {
     member_id: asString(formData, "memberId"),
-    payor_id: asNullableString(formData, "payorId"),
+    payor_id: null,
     adjustment_date: asDateOnly(formData, "adjustmentDate"),
     adjustment_type: normalizedType,
     description: asString(formData, "description") || "Manual adjustment",
@@ -653,7 +653,6 @@ export async function createCustomInvoiceAction(formData: FormData) {
 
     const result = await createCustomInvoice({
       memberId: asString(formData, "memberId"),
-      payorId: asNullableString(formData, "payorId"),
       invoiceDate: asDateOnly(formData, "invoiceDate", toEasternDate()),
       dueDate: asDateOnly(formData, "dueDate", toEasternDate()),
       periodStart: asDateOnly(formData, "periodStart"),
@@ -689,7 +688,6 @@ export async function createEnrollmentInvoiceAction(formData: FormData) {
     const profile = await requireBillingProfile();
     const result = await createEnrollmentProratedInvoice({
       memberId: asString(formData, "memberId"),
-      payorId: asNullableString(formData, "payorId"),
       effectiveStartDate: asDateOnly(formData, "effectiveStartDate"),
       periodEndDate: asNullableString(formData, "periodEndDate"),
       includeTransportation: asBoolean(formData, "includeTransportation", false),

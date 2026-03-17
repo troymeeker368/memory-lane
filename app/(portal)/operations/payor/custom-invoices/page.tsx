@@ -1,10 +1,10 @@
+import Link from "next/link";
+
 import { Card, CardTitle } from "@/components/ui/card";
 import { BillingCustomInvoiceForms } from "@/components/forms/billing-custom-invoice-forms";
 import {
   getBillingMemberPayorLookups,
-  getCustomInvoices,
-  listMemberBillingSettings,
-  listPayors
+  getCustomInvoices
 } from "@/lib/services/billing-read";
 import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
 
@@ -27,28 +27,13 @@ export default async function CustomInvoicesPage({
 }) {
   const query = await searchParams;
   const errorMessage = Array.isArray(query.error) ? query.error[0] : query.error;
-  const [lookups, draftInvoices, finalizedInvoices, members, payors, settings] = await Promise.all([
+  const [lookups, draftInvoices, finalizedInvoices, members] = await Promise.all([
     getBillingMemberPayorLookups(),
     getCustomInvoices({ status: "Draft" }),
     getCustomInvoices({ status: "Finalized" }),
-    listMembersSupabase({ status: "active" }),
-    listPayors(),
-    listMemberBillingSettings()
+    listMembersSupabase({ status: "active" })
   ]);
   const memberName = new Map(members.map((row) => [row.id, row.display_name] as const));
-  const payorName = new Map(payors.map((row) => [row.id, row.payor_name] as const));
-  const memberPayorIdsByMember = members.reduce<Record<string, string[]>>((acc, member) => {
-    const activePayorIds = Array.from(
-      new Set(
-        settings
-          .filter((row: any) => row.member_id === member.id && row.active)
-          .map((row: any) => row.payor_id)
-          .filter((row: string | null | undefined): row is string => Boolean(row))
-      )
-    );
-    acc[member.id] = activePayorIds.length > 0 ? activePayorIds : lookups.memberPayorIdsByMember[member.id] ?? [];
-    return acc;
-  }, {});
 
   return (
     <div className="space-y-4">
@@ -66,8 +51,7 @@ export default async function CustomInvoicesPage({
         </p>
         <BillingCustomInvoiceForms
           members={members.map((member) => ({ id: member.id, displayName: member.display_name }))}
-          payors={payors.map((payor) => ({ id: payor.id, payorName: payor.payor_name }))}
-          memberPayorIdsByMember={memberPayorIdsByMember}
+          payorByMember={lookups.payorByMember}
           today={todayDate()}
           endOfMonth={endOfCurrentMonth()}
         />
@@ -85,19 +69,20 @@ export default async function CustomInvoicesPage({
               <th>Total</th>
               <th>Status</th>
               <th>Action</th>
+              <th>PDF</th>
             </tr>
           </thead>
           <tbody>
             {draftInvoices.length === 0 ? (
               <tr>
-                <td colSpan={7} className="text-sm text-muted">No draft custom invoices.</td>
+                <td colSpan={8} className="text-sm text-muted">No draft custom invoices.</td>
               </tr>
             ) : (
               draftInvoices.map((invoice) => (
                 <tr key={invoice.id}>
                   <td>{invoice.invoice_number}</td>
                   <td>{memberName.get(invoice.member_id) ?? "Unknown"}</td>
-                  <td>{invoice.payor_id ? payorName.get(invoice.payor_id) ?? "Unknown" : "-"}</td>
+                  <td>{lookups.payorByMember[invoice.member_id]?.displayName ?? "No payor contact designated"}</td>
                   <td>{invoice.base_period_start} - {invoice.base_period_end}</td>
                   <td>${invoice.total_amount.toFixed(2)}</td>
                   <td>{invoice.invoice_status}</td>
@@ -107,6 +92,11 @@ export default async function CustomInvoicesPage({
                       <input type="hidden" name="returnPath" value="/operations/payor/custom-invoices" />
                       <button type="submit" className="text-xs font-semibold text-brand">Finalize</button>
                     </form>
+                  </td>
+                  <td>
+                    <Link href={`/operations/payor/invoices/${invoice.id}/pdf`} className="text-xs font-semibold text-brand" target="_blank">
+                      PDF
+                    </Link>
                   </td>
                 </tr>
               ))
@@ -126,22 +116,28 @@ export default async function CustomInvoicesPage({
               <th>Period</th>
               <th>Total</th>
               <th>Status</th>
+              <th>PDF</th>
             </tr>
           </thead>
           <tbody>
             {finalizedInvoices.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-sm text-muted">No finalized custom invoices.</td>
+                <td colSpan={7} className="text-sm text-muted">No finalized custom invoices.</td>
               </tr>
             ) : (
               finalizedInvoices.map((invoice) => (
                 <tr key={invoice.id}>
                   <td>{invoice.invoice_number}</td>
                   <td>{memberName.get(invoice.member_id) ?? "Unknown"}</td>
-                  <td>{invoice.payor_id ? payorName.get(invoice.payor_id) ?? "Unknown" : "-"}</td>
+                  <td>{lookups.payorByMember[invoice.member_id]?.displayName ?? "No payor contact designated"}</td>
                   <td>{invoice.base_period_start} - {invoice.base_period_end}</td>
                   <td>${invoice.total_amount.toFixed(2)}</td>
                   <td>{invoice.invoice_status}</td>
+                  <td>
+                    <Link href={`/operations/payor/invoices/${invoice.id}/pdf`} className="text-xs font-semibold text-brand" target="_blank">
+                      PDF
+                    </Link>
+                  </td>
                 </tr>
               ))
             )}

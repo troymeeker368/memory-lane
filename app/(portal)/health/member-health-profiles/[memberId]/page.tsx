@@ -19,6 +19,7 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { requireRoles } from "@/lib/auth";
+import { formatBillingPayorDisplayName, getBillingPayorContact } from "@/lib/services/billing-payor-contacts";
 import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans";
 import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-supabase";
 import {
@@ -209,6 +210,9 @@ export default async function MemberHealthProfileDetailPage({
   const notesUpdatedBy = latestUpdatedBy(detail.notes, (row) => row.updated_at, (row) => row.created_by_name);
   const assessmentsUpdatedBy = latestUpdatedBy(detail.assessments, (row) => row.created_at, (row) => row.completed_by);
   const relatedCarePlans = await getCarePlansForMember(member.id);
+  const billingPayor = await getBillingPayorContact(member.id, {
+    source: "MemberHealthProfileDetailPage"
+  });
   const carePlansUpdatedAt = latestTimestamp(relatedCarePlans.map((row) => row.updatedAt));
   const carePlansUpdatedBy = latestUpdatedBy(relatedCarePlans, (row) => row.updatedAt, (row) => row.completedBy);
   const relatedPhysicianOrders = await getPhysicianOrdersForMember(member.id);
@@ -311,7 +315,7 @@ export default async function MemberHealthProfileDetailPage({
               memberId={member.id}
               memberDob={member.dob ?? ""}
               genderDefault={genderDefault}
-              payor={profile.payor ?? ""}
+              billingPayorDisplay={formatBillingPayorDisplayName(billingPayor)}
               originalReferralSource={profile.original_referral_source ?? ""}
               photoConsent={profile.photo_consent}
               primaryCaregiverName={profile.primary_caregiver_name ?? ""}

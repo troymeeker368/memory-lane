@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
+import {
+  formatBillingPayorDisplayName,
+  listBillingPayorContactsForMembers
+} from "@/lib/services/billing-payor-contacts";
 import { generateClosureDatesFromRules, type ClosureRuleLike } from "@/lib/services/closure-rules";
 import {
   loadExpectedAttendanceSupabaseContext,
@@ -819,20 +823,42 @@ export async function listCenterClosures(input?: { includeInactive?: boolean }) 
 
 export async function listMemberBillingSettings() {
   const supabase = await createClient();
-  const [{ data: settingsData, error: settingsError }, { data: membersData }, { data: payorsData }] = await Promise.all([
+  const [{ data: settingsData, error: settingsError }, { data: membersData }] = await Promise.all([
     supabase.from("member_billing_settings").select("*").order("effective_start_date", { ascending: false }),
-    supabase.from("members").select("id, display_name"),
-    supabase.from("payors").select("id, payor_name")
+    supabase.from("members").select("id, display_name")
   ]);
   if (settingsError) throw new Error(settingsError.message);
 
+  const settingsRows = (settingsData ?? []) as Array<any>;
   const memberNameById = new Map((membersData ?? []).map((row: any) => [String(row.id), String(row.display_name)] as const));
-  const payorNameById = new Map((payorsData ?? []).map((row: any) => [String(row.id), String(row.payor_name)] as const));
+  const payorByMember = await listBillingPayorContactsForMembers(
+    settingsRows.map((row) => String(row.member_id))
+  );
 
-  return (settingsData ?? []).map((row: any) => ({
+  return settingsRows.map((row: any) => ({
     ...row,
     member_name: memberNameById.get(String(row.member_id)) ?? "Unknown Member",
-    payor_name: row.payor_id ? payorNameById.get(String(row.payor_id)) ?? "Unknown Payor" : "-"
+    payor_name: formatBillingPayorDisplayName(
+      payorByMember.get(String(row.member_id)) ?? {
+        status: "missing",
+        contact_id: null,
+        member_id: String(row.member_id),
+        full_name: null,
+        relationship_to_member: null,
+        email: null,
+        cellular_number: null,
+        work_number: null,
+        home_number: null,
+        phone: null,
+        address_line_1: null,
+        address_line_2: null,
+        city: null,
+        state: null,
+        postal_code: null,
+        quickbooks_customer_id: null,
+        multiple_contact_ids: []
+      }
+    )
   }));
 }
 
@@ -853,31 +879,51 @@ export async function listBillingScheduleTemplates() {
 
 async function getMembersAndPayorsForLookup() {
   const supabase = await createClient();
-  const [{ data: members }, { data: payors }, { data: settings }] = await Promise.all([
-    supabase.from("members").select("id, display_name, status").eq("status", "active").order("display_name", { ascending: true }),
-    supabase.from("payors").select("id, payor_name, status").eq("status", "active").order("payor_name", { ascending: true }),
-    supabase.from("member_billing_settings").select("member_id, payor_id, active")
-  ]);
+  const { data: members } = await supabase
+    .from("members")
+    .select("id, display_name, status")
+    .eq("status", "active")
+    .order("display_name", { ascending: true });
 
   const membersList = (members ?? []).map((row: any) => ({ id: String(row.id), displayName: String(row.display_name) }));
-  const payorsList = (payors ?? []).map((row: any) => ({ id: String(row.id), payorName: String(row.payor_name) }));
+  const canonicalPayors = await listBillingPayorContactsForMembers(membersList.map((row) => row.id));
+  const payorsList = membersList.reduce<Array<{ id: string; payorName: string }>>((acc, member) => {
+    const payor = canonicalPayors.get(member.id);
+    if (payor && payor.status === "ok" && payor.contact_id) {
+      acc.push({ id: String(payor.contact_id), payorName: formatBillingPayorDisplayName(payor) });
+    }
+    return acc;
+  }, []);
   const memberPayorIdsByMember = membersList.reduce<Record<string, string[]>>((acc, member) => {
-    acc[member.id] = Array.from(
-      new Set(
-        (settings ?? [])
-          .filter((row: any) => String(row.member_id) === member.id)
-          .filter((row: any) => row.active === true)
-          .map((row: any) => String(row.payor_id ?? ""))
-          .filter(Boolean)
-      )
-    );
+    const payor = canonicalPayors.get(member.id);
+    acc[member.id] = payor?.status === "ok" && payor.contact_id ? [payor.contact_id] : [];
+    return acc;
+  }, {});
+  const payorByMember = membersList.reduce<
+    Record<string, { contactId: string | null; displayName: string; status: "ok" | "missing" | "invalid_multiple" }>
+  >((acc, member) => {
+    const payor = canonicalPayors.get(member.id);
+    if (!payor) {
+      acc[member.id] = {
+        contactId: null,
+        displayName: "No payor contact designated",
+        status: "missing"
+      };
+      return acc;
+    }
+    acc[member.id] = {
+      contactId: payor.contact_id,
+      displayName: formatBillingPayorDisplayName(payor),
+      status: payor.status
+    };
     return acc;
   }, {});
 
   return {
     members: membersList,
     payors: payorsList,
-    memberPayorIdsByMember
+    memberPayorIdsByMember,
+    payorByMember
   };
 }
 
@@ -1589,7 +1635,6 @@ async function getBillingPreviewRows(input: {
   const [
     { data: membersData, error: membersError },
     { data: memberSettingsData, error: memberSettingsError },
-    { data: payorsData, error: payorsError },
     { data: attendanceSettingsData, error: attendanceSettingsError },
     { data: attendanceData, error: attendanceError },
     { data: scheduleData, error: scheduleError },
@@ -1600,7 +1645,6 @@ async function getBillingPreviewRows(input: {
   ] = await Promise.all([
     supabase.from("members").select("id, display_name, status").eq("status", "active").order("display_name", { ascending: true }),
     supabase.from("member_billing_settings").select("*"),
-    supabase.from("payors").select("id, payor_name, billing_method"),
     supabase.from("member_attendance_schedules").select("member_id, daily_rate, custom_daily_rate, default_daily_rate, transportation_billing_status, monday, tuesday, wednesday, thursday, friday"),
     supabase.from("attendance_records").select("member_id, attendance_date, status").gte("attendance_date", minDate).lte("attendance_date", maxDate),
     supabase.from("billing_schedule_templates").select("*"),
@@ -1627,12 +1671,6 @@ async function getBillingPreviewRows(input: {
       throw new Error(buildMissingSchemaMessage({ objectName: "member_billing_settings", migration: "0013_care_plans_and_billing_execution.sql" }));
     }
     throw new Error(memberSettingsError.message);
-  }
-  if (payorsError) {
-    if (isMissingSchemaObjectError(payorsError)) {
-      throw new Error(buildMissingSchemaMessage({ objectName: "payors", migration: "0001_initial_schema.sql" }));
-    }
-    throw new Error(payorsError.message);
   }
   if (attendanceSettingsError) {
     if (isMissingSchemaObjectError(attendanceSettingsError)) {
@@ -1679,7 +1717,6 @@ async function getBillingPreviewRows(input: {
 
   const activeMembers = (membersData ?? []) as Array<{ id: string; display_name: string; status: string }>;
   const memberSettings = (memberSettingsData ?? []) as BillingSettingRow[];
-  const payorsById = new Map((payorsData ?? []).map((row: any) => [String(row.id), row] as const));
   const attendanceSettingByMemberId = new Map(((attendanceSettingsData ?? []) as Array<any>).map((row: any) => [String(row.member_id), row] as const));
   const attendanceRows = (attendanceData ?? []) as Array<any>;
   const scheduleRows = (scheduleData ?? []) as ScheduleTemplateRow[];
@@ -1695,6 +1732,7 @@ async function getBillingPreviewRows(input: {
   });
   const centerSetting = await getActiveCenterSettingForDate(invoiceMonthStart);
   const nonBillableClosureSetsByRange = new Map<string, Set<string>>();
+  const payorByMember = await listBillingPayorContactsForMembers(activeMembers.map((member) => member.id));
 
   const previewRows: BillingPreviewRow[] = [];
   for (const member of activeMembers) {
@@ -1833,12 +1871,12 @@ async function getBillingPreviewRows(input: {
     const adjustmentAmount = toAmount(adjustmentLines.reduce((sum, row) => sum + row.amount, 0));
     const totalAmount = toAmount(baseProgramAmount + transportationAmount + ancillaryAmount + adjustmentAmount);
 
-    const payor = memberSetting.payor_id ? payorsById.get(memberSetting.payor_id) ?? null : null;
+    const payor = payorByMember.get(member.id);
     previewRows.push({
       memberId: member.id,
       memberName: member.display_name,
-      payorName: payor?.payor_name ?? "Self Pay",
-      payorId: memberSetting.payor_id ?? null,
+      payorName: payor ? formatBillingPayorDisplayName(payor) : "No payor contact designated",
+      payorId: null,
       billingMode: mode,
       monthlyBillingBasis: mode === "Monthly" ? getMonthlyBillingBasis(memberSetting) : null,
       invoiceMonth: periods.invoiceMonth,
@@ -1846,7 +1884,7 @@ async function getBillingPreviewRows(input: {
       basePeriodEnd: periods.baseRange.end,
       variableChargePeriodStart: periods.variableRange.start,
       variableChargePeriodEnd: periods.variableRange.end,
-      billingMethod: payor?.billing_method ?? "InvoiceEmail",
+      billingMethod: "InvoiceEmail",
       baseProgramAmount,
       transportationAmount,
       ancillaryAmount,
@@ -1949,7 +1987,7 @@ export async function syncAttendanceBillingForDate(input: { memberId: string; at
         .from("billing_adjustments")
         .insert({
           member_id: input.memberId,
-          payor_id: memberSetting?.payor_id ?? null,
+          payor_id: null,
           adjustment_date: attendanceDate,
           adjustment_type: "ExtraDay",
           description: "Unscheduled attendance extra day charge",
@@ -2294,11 +2332,11 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
     const dailyRate = await resolveDailyRate({
       memberId: input.memberId,
       memberSetting:
-        memberSetting ??
+      memberSetting ??
         ({
           id: "",
           member_id: input.memberId,
-          payor_id: input.payorId ?? null,
+          payor_id: null,
           use_center_default_billing_mode: true,
           billing_mode: null,
           monthly_billing_basis: "ScheduledMonthBehind",
@@ -2512,7 +2550,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       .insert({
         billing_batch_id: null,
         member_id: input.memberId,
-        payor_id: input.payorId ?? memberSetting?.payor_id ?? null,
+        payor_id: null,
         invoice_number: invoiceNumber,
         invoice_month: startOfMonth(period.start),
         invoice_source: "Custom",
@@ -2521,7 +2559,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
         billing_mode_snapshot: "Custom",
         monthly_billing_basis_snapshot: null,
         transportation_billing_status_snapshot: transportBillingStatus,
-        billing_method_snapshot: "Manual",
+        billing_method_snapshot: "InvoiceEmail",
         base_period_start: period.start,
         base_period_end: period.end,
         variable_charge_period_start: period.start,
@@ -2551,7 +2589,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       return {
         invoice_id: invoiceId,
         member_id: input.memberId,
-        payor_id: input.payorId ?? memberSetting?.payor_id ?? null,
+        payor_id: null,
         service_date: null,
         service_period_start: period.start,
         service_period_end: period.end,
@@ -2570,7 +2608,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
     const variableLines = variableRows.map((line) => ({
       invoice_id: invoiceId,
       member_id: input.memberId,
-      payor_id: input.payorId ?? memberSetting?.payor_id ?? null,
+      payor_id: null,
       service_date: line.service_date,
       service_period_start: line.service_period_start,
       service_period_end: line.service_period_end,
@@ -2766,10 +2804,9 @@ export async function getCustomInvoices(input?: { status?: "Draft" | "Finalized"
 
 export async function getBillingBatchReviewRows(billingBatchId: string) {
   const supabase = await createClient();
-  const [{ data: invoices, error: invoiceError }, { data: members }, { data: payors }] = await Promise.all([
+  const [{ data: invoices, error: invoiceError }, { data: members }] = await Promise.all([
     supabase.from("billing_invoices").select("*").eq("billing_batch_id", billingBatchId).order("created_at", { ascending: true }),
-    supabase.from("members").select("id, display_name"),
-    supabase.from("payors").select("id, payor_name, billing_method")
+    supabase.from("members").select("id, display_name")
   ]);
   if (invoiceError) {
     if (isMissingSchemaObjectError(invoiceError)) {
@@ -2783,14 +2820,16 @@ export async function getBillingBatchReviewRows(billingBatchId: string) {
     throw new Error(invoiceError.message);
   }
   const memberNameById = new Map((members ?? []).map((row: any) => [String(row.id), String(row.display_name)] as const));
-  const payorById = new Map((payors ?? []).map((row: any) => [String(row.id), row] as const));
+  const payorByMember = await listBillingPayorContactsForMembers(
+    (invoices ?? []).map((invoice: any) => String(invoice.member_id))
+  );
 
   return (invoices ?? []).map((invoice: any) => {
-    const payor = invoice.payor_id ? payorById.get(String(invoice.payor_id)) ?? null : null;
+    const payor = payorByMember.get(String(invoice.member_id)) ?? null;
     return {
       invoiceId: String(invoice.id),
       memberName: memberNameById.get(String(invoice.member_id)) ?? "Unknown Member",
-      payorName: payor?.payor_name ?? "Self Pay",
+      payorName: payor ? formatBillingPayorDisplayName(payor) : "No payor contact designated",
       invoiceSource: invoice.invoice_source,
       billingMode: invoice.billing_mode_snapshot ?? "-",
       baseProgramAmount: toAmount(asNumber(invoice.base_program_amount)),
@@ -2810,7 +2849,7 @@ export async function getBillingBatchReviewRows(billingBatchId: string) {
       variableChargePeriodStart: normalizeDateOnly(invoice.variable_charge_period_start),
       variableChargePeriodEnd: normalizeDateOnly(invoice.variable_charge_period_end),
       totalAmount: toAmount(asNumber(invoice.total_amount)),
-      billingMethod: payor?.billing_method ?? invoice.billing_method_snapshot ?? "InvoiceEmail",
+      billingMethod: invoice.billing_method_snapshot ?? "InvoiceEmail",
       invoiceStatus: invoice.invoice_status
     };
   });
@@ -2975,6 +3014,9 @@ export async function createBillingExport(input: {
     if (invoiceRows.length === 0) {
       return { ok: false as const, error: "No finalized invoices available for export." };
     }
+    const payorByMember = await listBillingPayorContactsForMembers(
+      invoiceRows.map((row: any) => String(row.member_id))
+    );
 
     const invoiceIds = invoiceRows.map((row: any) => String(row.id));
     const { data: lines, error: linesError } = await supabase
@@ -2990,10 +3032,31 @@ export async function createBillingExport(input: {
 
     let csv = "";
     if (input.exportType === "InvoiceSummaryCSV" || input.quickbooksDetailLevel === "Summary") {
-      const header = ["InvoiceNumber", "InvoiceMonth", "MemberId", "PayorId", "InvoiceStatus", "TotalAmount"];
-      const body = invoiceRows.map((row: any) =>
-        [row.invoice_number, row.invoice_month, row.member_id, row.payor_id ?? "", row.invoice_status, toAmount(row.total_amount)].map(escapeCsv).join(",")
-      );
+      const header = [
+        "InvoiceNumber",
+        "InvoiceMonth",
+        "MemberId",
+        "PayorContactId",
+        "PayorName",
+        "QuickBooksCustomerId",
+        "InvoiceStatus",
+        "TotalAmount"
+      ];
+      const body = invoiceRows.map((row: any) => {
+        const payor = payorByMember.get(String(row.member_id)) ?? null;
+        return [
+          row.invoice_number,
+          row.invoice_month,
+          row.member_id,
+          payor?.contact_id ?? "",
+          payor ? formatBillingPayorDisplayName(payor) : "No payor contact designated",
+          payor?.quickbooks_customer_id ?? "",
+          row.invoice_status,
+          toAmount(row.total_amount)
+        ]
+          .map(escapeCsv)
+          .join(",");
+      });
       csv = [header.join(","), ...body].join("\n");
     } else if (input.exportType === "InternalReviewCSV") {
       const header = ["InvoiceNumber", "LineType", "Description", "ServiceDate", "Quantity", "UnitRate", "Amount"];
@@ -3013,18 +3076,21 @@ export async function createBillingExport(input: {
       );
       csv = [header.join(","), ...body].join("\n");
     } else {
-      const header = ["Customer", "InvoiceNumber", "Date", "DueDate", "Amount"];
-      const body = invoiceRows.map((row: any) =>
-        [
-          row.payor_id ?? row.member_id,
+      const header = ["Customer", "CustomerContactId", "QuickBooksCustomerId", "InvoiceNumber", "Date", "DueDate", "Amount"];
+      const body = invoiceRows.map((row: any) => {
+        const payor = payorByMember.get(String(row.member_id)) ?? null;
+        return [
+          payor ? formatBillingPayorDisplayName(payor) : "No payor contact designated",
+          payor?.contact_id ?? "",
+          payor?.quickbooks_customer_id ?? "",
           row.invoice_number,
           row.invoice_date ?? row.created_at,
           row.due_date ?? "",
           toAmount(row.total_amount)
         ]
           .map(escapeCsv)
-          .join(",")
-      );
+          .join(",");
+      });
       csv = [header.join(","), ...body].join("\n");
     }
 
@@ -3174,7 +3240,7 @@ export async function getBillingDashboardSummary(): Promise<BillingDashboardSumm
 export async function getBillingModuleIndex() {
   const supabase = await createClient();
   const [payorResponse, memberSettingResponse, scheduleTemplateResponse, dashboard, batches] = await Promise.all([
-    supabase.from("payors").select("id", { count: "exact", head: true }).eq("status", "active"),
+    supabase.from("member_contacts").select("id", { count: "exact", head: true }).eq("is_payor", true),
     supabase.from("member_billing_settings").select("id", { count: "exact", head: true }).eq("active", true),
     supabase.from("billing_schedule_templates").select("id", { count: "exact", head: true }).eq("active", true),
     getBillingDashboardSummary(),

@@ -8,7 +8,7 @@ import {
 } from "@/lib/services/workflow-observability";
 
 const SET_MEMBER_CONTACT_PAYOR_RPC = "rpc_set_member_contact_payor";
-const MEMBER_CONTACT_PAYOR_MIGRATION = "0062_member_contact_payor_canonicalization.sql";
+const MEMBER_CONTACT_PAYOR_MIGRATION = "0065_member_contact_payor_canonicalization.sql";
 
 type BillingPayorContactRow = {
   id: string;

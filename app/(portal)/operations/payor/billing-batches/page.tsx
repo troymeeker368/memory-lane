@@ -50,8 +50,6 @@ export default async function BillingBatchesPage({
   const reviewRows = selectedBatch ? await getBillingBatchReviewRows(selectedBatch.id) : [];
   const lookup = await getBillingMemberPayorLookups();
   const activeMembers = lookup.members;
-  const activePayors = lookup.payors;
-  const memberPayorIdsByMember = lookup.memberPayorIdsByMember;
   const profile = await getCurrentProfile();
   const role = normalizeRoleKey(profile.role);
   const canReopenBatch = role === "admin" || role === "manager";
@@ -115,8 +113,7 @@ export default async function BillingBatchesPage({
         <CardTitle>Add Manual Adjustment</CardTitle>
         <BillingManualAdjustmentForm
           members={activeMembers}
-          payors={activePayors}
-          memberPayorIdsByMember={memberPayorIdsByMember}
+          payorByMember={lookup.payorByMember}
           defaultAdjustmentDate={today}
         />
       </Card>

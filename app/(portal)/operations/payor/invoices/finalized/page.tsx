@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { Card, CardTitle } from "@/components/ui/card";
 import { getBillingMemberPayorLookups, getFinalizedInvoices } from "@/lib/services/billing-read";
 
@@ -5,7 +7,6 @@ export default async function FinalizedInvoicesPage() {
   const invoices = await getFinalizedInvoices();
   const lookups = await getBillingMemberPayorLookups();
   const memberName = new Map(lookups.members.map((row) => [row.id, row.displayName] as const));
-  const payorName = new Map(lookups.payors.map((row) => [row.id, row.payorName] as const));
 
   return (
     <Card className="table-wrap">
@@ -29,12 +30,13 @@ export default async function FinalizedInvoicesPage() {
             <th>Total</th>
             <th>Status</th>
             <th>Export Status</th>
+            <th>PDF</th>
           </tr>
         </thead>
         <tbody>
           {invoices.length === 0 ? (
             <tr>
-              <td colSpan={13} className="text-sm text-muted">No finalized invoices.</td>
+              <td colSpan={14} className="text-sm text-muted">No finalized invoices.</td>
             </tr>
           ) : (
             invoices.map((invoice) => (
@@ -44,7 +46,7 @@ export default async function FinalizedInvoicesPage() {
                 <td>{invoice.invoice_source}</td>
                 <td>{invoice.billing_mode_snapshot}</td>
                 <td>{memberName.get(invoice.member_id) ?? "Unknown"}</td>
-                <td>{invoice.payor_id ? payorName.get(invoice.payor_id) ?? "Unknown" : "-"}</td>
+                <td>{lookups.payorByMember[invoice.member_id]?.displayName ?? "No payor contact designated"}</td>
                 <td>{invoice.invoice_date}</td>
                 <td>{invoice.due_date}</td>
                 <td>{invoice.base_period_start} - {invoice.base_period_end}</td>
@@ -52,6 +54,11 @@ export default async function FinalizedInvoicesPage() {
                 <td>${invoice.total_amount.toFixed(2)}</td>
                 <td>{invoice.invoice_status}</td>
                 <td>{invoice.export_status}</td>
+                <td>
+                  <Link href={`/operations/payor/invoices/${invoice.id}/pdf`} className="text-xs font-semibold text-brand" target="_blank">
+                    PDF
+                  </Link>
+                </td>
               </tr>
             ))
           )}

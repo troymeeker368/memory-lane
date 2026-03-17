@@ -114,8 +114,12 @@ export function IncidentForm(props: IncidentFormProps) {
             : saveIncidentDraftAction(formData),
       {
         successMessage: mode === "submit" ? "Incident submitted for director review." : mode === "amend" ? "Incident amended." : "Draft saved.",
-        fallbackData: { incidentId: detail?.id ?? null, status: detail?.status ?? "draft", detail },
+        fallbackData: { incidentId: detail?.id ?? undefined, status: detail?.status ?? "draft", detail: detail ?? undefined },
         onSuccess: async (result) => {
+          if (!result.data.incidentId || !result.data.detail) {
+            setStatusMessage("Error: Incident saved but the updated record was not returned.");
+            return;
+          }
           handleEditorResult(
             { ok: true, incidentId: result.data.incidentId, status: result.data.status, detail: result.data.detail },
             result.message

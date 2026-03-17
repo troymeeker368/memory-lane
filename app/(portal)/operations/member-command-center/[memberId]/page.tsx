@@ -29,7 +29,6 @@ import { resolveActiveEffectiveMemberRowForDate } from "@/lib/services/billing-e
 import {
   getAvailableLockerNumbersForMemberSupabase,
   getMemberCommandCenterDetailSupabase,
-  listActivePayorsSupabase,
   listMemberBillingSettingsSupabase
 } from "@/lib/services/member-command-center-supabase";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
@@ -69,14 +68,14 @@ async function renderTabSection(input: {
   effectiveScheduleTodayLabel: string;
   activeOverrideCount: number;
   activeMemberBillingSetting: {
-    payor_id: string | null;
     use_center_default_billing_mode: boolean;
     billing_mode: "Membership" | "Monthly" | "Custom" | null;
     monthly_billing_basis: "ScheduledMonthBehind" | "ActualAttendanceMonthBehind";
     bill_extra_days: boolean;
     bill_ancillary_arrears: boolean;
   } | null;
-  activePayorOptions: Array<{ id: string; name: string }>;
+  billingPayorName: string;
+  billingPayorStatus: string;
   defaultDoorToDoorAddress: string;
   configuredTransportTrips: number;
   expectedTransportSlots: number;
@@ -106,7 +105,8 @@ async function renderTabSection(input: {
           effectiveScheduleTodayLabel={input.effectiveScheduleTodayLabel}
           activeOverrideCount={input.activeOverrideCount}
           activeMemberBillingSetting={input.activeMemberBillingSetting}
-          activePayorOptions={input.activePayorOptions}
+          billingPayorName={input.billingPayorName}
+          billingPayorStatus={input.billingPayorStatus}
         />
       );
     }
@@ -217,12 +217,13 @@ export default async function MemberCommandCenterDetailPage({
     billingDate,
     memberBillingSettings
   );
-  const activePayorOptions = (await listActivePayorsSupabase())
-    .filter((row) => row.status === "active")
-    .sort((left, right) => left.payor_name.localeCompare(right.payor_name, undefined, { sensitivity: "base" }))
-    .map((row) => ({ id: row.id, name: row.payor_name }));
   const lockerOptions = await getAvailableLockerNumbersForMemberSupabase(memberId);
   const busNumberOptions = await getConfiguredBusNumbers();
+  const currentBillingPayor = detail.contacts.find((row) => row.is_payor) ?? null;
+  const billingPayorName = currentBillingPayor?.contact_name ?? "No payor contact designated";
+  const billingPayorStatus = currentBillingPayor
+    ? "Managed in Contacts. Update the designated payor contact there."
+    : "No payor contact designated. Set one in Contacts before billing.";
 
   const scheduleDays = getScheduledDayAbbreviations(detail.schedule);
 
@@ -294,7 +295,8 @@ export default async function MemberCommandCenterDetailPage({
     effectiveScheduleTodayLabel,
     activeOverrideCount,
     activeMemberBillingSetting,
-    activePayorOptions,
+    billingPayorName,
+    billingPayorStatus,
     defaultDoorToDoorAddress,
     configuredTransportTrips,
     expectedTransportSlots,
@@ -461,7 +463,7 @@ export default async function MemberCommandCenterDetailPage({
               memberId={detail.member.id}
               lockerNumber={detail.member.locker_number ?? ""}
               lockerOptions={lockerOptions}
-              payor={detail.profile.payor ?? ""}
+              billingPayorDisplay={billingPayorName}
               originalReferralSource={detail.profile.original_referral_source ?? ""}
               photoConsent={detail.profile.photo_consent}
             />
