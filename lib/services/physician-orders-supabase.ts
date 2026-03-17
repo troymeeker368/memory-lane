@@ -589,6 +589,10 @@ type PofPostSignSyncQueueRow = {
   status: PofPostSignSyncQueueStatus;
   attempt_count: number;
   next_retry_at: string | null;
+  signature_completed_at: string;
+  queued_at: string | null;
+  last_error: string | null;
+  last_failed_step: PofPostSignSyncStep | null;
 };
 
 export type SignPhysicianOrderResult = {
@@ -620,6 +624,8 @@ type PofPostSignQueueStatusRow = {
 
 const RPC_SIGN_PHYSICIAN_ORDER = "rpc_sign_physician_order";
 const RPC_SYNC_SIGNED_POF_TO_MEMBER_CLINICAL_PROFILE = "rpc_sync_signed_pof_to_member_clinical_profile";
+const DEFAULT_POF_POST_SIGN_SYNC_ALERT_AGE_MINUTES = 30;
+const MAX_POF_POST_SIGN_SYNC_ALERT_ROWS = 50;
 
 function isMissingPofPostSignQueueTableError(error: PostgrestErrorLike | null | undefined) {
   const text = extractErrorText(error);
@@ -644,11 +650,74 @@ function computePostSignRetryAt(attemptCount: number, nowIso: string) {
   return next.toISOString();
 }
 
+function getPofPostSignSyncAlertAgeMinutes() {
+  const parsed = Number(process.env.POF_POST_SIGN_SYNC_ALERT_AGE_MINUTES ?? DEFAULT_POF_POST_SIGN_SYNC_ALERT_AGE_MINUTES);
+  if (!Number.isFinite(parsed)) return DEFAULT_POF_POST_SIGN_SYNC_ALERT_AGE_MINUTES;
+  return Math.max(5, Math.trunc(parsed));
+}
+
 function buildPostSignSyncError(step: PofPostSignSyncStep, error: unknown) {
   const base = error instanceof Error ? error.message : "Unknown post-sign sync error.";
   if (step === "mhp_mcc") return `MHP/MCC sync failed: ${base}`;
   if (step === "mar_medications") return `MAR medication sync failed: ${base}`;
   return `MAR schedule sync failed: ${base}`;
+}
+
+async function emitAgedPostSignSyncQueueAlerts(input: {
+  nowIso: string;
+  serviceRole?: boolean;
+  actorUserId?: string | null;
+}) {
+  const alertAgeMinutes = getPofPostSignSyncAlertAgeMinutes();
+  const thresholdIso = new Date(Date.parse(input.nowIso) - alertAgeMinutes * 60 * 1000).toISOString();
+  const supabase = await createClient({ serviceRole: input.serviceRole ?? true });
+  const { data, error } = await supabase
+    .from("pof_post_sign_sync_queue")
+    .select(
+      "id, physician_order_id, member_id, pof_request_id, status, attempt_count, next_retry_at, signature_completed_at, queued_at, last_error, last_failed_step"
+    )
+    .eq("status", "queued")
+    .lte("signature_completed_at", thresholdIso)
+    .order("signature_completed_at", { ascending: true })
+    .limit(MAX_POF_POST_SIGN_SYNC_ALERT_ROWS);
+  if (error) {
+    if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
+    throw new Error(error.message);
+  }
+
+  const rows = (data ?? []) as PofPostSignSyncQueueRow[];
+  let alertsRaised = 0;
+  for (const row of rows) {
+    const didCreateAlert = await recordImmediateSystemAlert({
+      entityType: "physician_order",
+      entityId: row.physician_order_id,
+      actorUserId: input.actorUserId ?? null,
+      severity: "high",
+      alertKey: "pof_post_sign_sync_aged_queue",
+      metadata: {
+        member_id: row.member_id,
+        queue_id: row.id,
+        pof_request_id: clean(row.pof_request_id),
+        queue_status: row.status,
+        attempt_count: Math.max(0, Number(row.attempt_count ?? 0)),
+        next_retry_at: clean(row.next_retry_at),
+        signature_completed_at: row.signature_completed_at,
+        queued_at: clean(row.queued_at),
+        last_failed_step: clean(row.last_failed_step),
+        last_error: clean(row.last_error),
+        alert_age_minutes: alertAgeMinutes
+      }
+    });
+    if (didCreateAlert) {
+      alertsRaised += 1;
+    }
+  }
+
+  return {
+    alertAgeMinutes,
+    agedQueueRows: rows.length,
+    alertsRaised
+  };
 }
 
 function toRpcSignPhysicianOrderRow(data: unknown): RpcSignPhysicianOrderRow {
@@ -1706,7 +1775,9 @@ export async function retryQueuedPhysicianOrderPostSignSync(input?: {
   const supabase = await createClient({ serviceRole });
   const { data, error } = await supabase
     .from("pof_post_sign_sync_queue")
-    .select("id, physician_order_id, member_id, pof_request_id, status, attempt_count, next_retry_at")
+    .select(
+      "id, physician_order_id, member_id, pof_request_id, status, attempt_count, next_retry_at, signature_completed_at, queued_at, last_error, last_failed_step"
+    )
     .eq("status", "queued")
     .order("next_retry_at", { ascending: true })
     .limit(limit);
@@ -1768,10 +1839,19 @@ export async function retryQueuedPhysicianOrderPostSignSync(input?: {
     queued += 1;
   }
 
+  const agedQueueAlertSummary = await emitAgedPostSignSyncQueueAlerts({
+    nowIso: now,
+    serviceRole,
+    actorUserId: actor.id
+  });
+
   return {
     processed,
     succeeded,
-    queued
+    queued,
+    agedQueueRows: agedQueueAlertSummary.agedQueueRows,
+    agedQueueAlertsRaised: agedQueueAlertSummary.alertsRaised,
+    agedQueueAlertAgeMinutes: agedQueueAlertSummary.alertAgeMinutes
   };
 }
 

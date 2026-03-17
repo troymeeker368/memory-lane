@@ -49,21 +49,46 @@ If any query returns rows, stop and clean the duplicates before running the migr
 
 ## 3. Configure The POF Retry Runner
 
-Set this environment variable in the deployed app:
+This repo now includes a Vercel cron entry in `vercel.json` that calls:
+
+```text
+GET /api/internal/pof-post-sign-sync?limit=25
+```
+
+For Vercel deployments, set:
+
+```text
+CRON_SECRET=<strong-random-secret>
+```
+
+Operational note:
+- Vercel cron jobs call the route with `GET`, which this endpoint now supports.
+- The built-in `*/5 * * * *` schedule assumes a Vercel plan that supports sub-daily cron jobs. If the deployment is on a Hobby plan, use a paid Vercel plan or a separate scheduler calling the same endpoint with `POF_POST_SIGN_SYNC_SECRET`.
+
+If you also want a manual/internal caller, set:
 
 ```text
 POF_POST_SIGN_SYNC_SECRET=<strong-random-secret>
 ```
 
-The runner endpoint is:
+The runner endpoint also still supports manual POST calls:
 
 ```text
 POST /api/internal/pof-post-sign-sync
 ```
 
 It expects:
-- `Authorization: Bearer <POF_POST_SIGN_SYNC_SECRET>`
+- `Authorization: Bearer <POF_POST_SIGN_SYNC_SECRET>` for manual callers
+- `Authorization: Bearer <CRON_SECRET>` for the built-in Vercel cron
 - optional JSON body like `{ "limit": 25 }`
+
+Optional visibility tuning:
+
+```text
+POF_POST_SIGN_SYNC_ALERT_AGE_MINUTES=30
+```
+
+This raises a durable system alert if queued post-sign sync rows stay unresolved past the configured age.
 
 Example:
 

@@ -1,36 +1,39 @@
 "use server";
 
+import {
+  saveMemberCommandCenterAttendanceAction as saveMemberCommandCenterAttendanceActionImpl,
+  saveMemberCommandCenterDemographicsAction as saveMemberCommandCenterDemographicsActionImpl,
+  saveMemberCommandCenterDietAction as saveMemberCommandCenterDietActionImpl,
+  saveMemberCommandCenterLegalAction as saveMemberCommandCenterLegalActionImpl,
+  saveMemberCommandCenterSummaryAction as saveMemberCommandCenterSummaryActionImpl,
+  saveMemberCommandCenterTransportationAction as saveMemberCommandCenterTransportationActionImpl,
+  updateMemberCommandCenterPhotoAction as updateMemberCommandCenterPhotoActionImpl
+} from "./actions-impl";
+
 export async function saveMemberCommandCenterSummaryAction(formData: FormData) {
-  const { saveMemberCommandCenterSummaryAction } = await import("./actions-impl");
-  return saveMemberCommandCenterSummaryAction(formData);
+  return saveMemberCommandCenterSummaryActionImpl(formData);
 }
 
 export async function updateMemberCommandCenterPhotoAction(formData: FormData) {
-  const { updateMemberCommandCenterPhotoAction } = await import("./actions-impl");
-  return updateMemberCommandCenterPhotoAction(formData);
+  return updateMemberCommandCenterPhotoActionImpl(formData);
 }
 
 export async function saveMemberCommandCenterAttendanceAction(formData: FormData) {
-  const { saveMemberCommandCenterAttendanceAction } = await import("./actions-impl");
-  return saveMemberCommandCenterAttendanceAction(formData);
+  return saveMemberCommandCenterAttendanceActionImpl(formData);
 }
 
 export async function saveMemberCommandCenterTransportationAction(formData: FormData) {
-  const { saveMemberCommandCenterTransportationAction } = await import("./actions-impl");
-  return saveMemberCommandCenterTransportationAction(formData);
+  return saveMemberCommandCenterTransportationActionImpl(formData);
 }
 
 export async function saveMemberCommandCenterDemographicsAction(formData: FormData) {
-  const { saveMemberCommandCenterDemographicsAction } = await import("./actions-impl");
-  return saveMemberCommandCenterDemographicsAction(formData);
+  return saveMemberCommandCenterDemographicsActionImpl(formData);
 }
 
 export async function saveMemberCommandCenterLegalAction(formData: FormData) {
-  const { saveMemberCommandCenterLegalAction } = await import("./actions-impl");
-  return saveMemberCommandCenterLegalAction(formData);
+  return saveMemberCommandCenterLegalActionImpl(formData);
 }
 
 export async function saveMemberCommandCenterDietAction(formData: FormData) {
-  const { saveMemberCommandCenterDietAction } = await import("./actions-impl");
-  return saveMemberCommandCenterDietAction(formData);
+  return saveMemberCommandCenterDietActionImpl(formData);
 }

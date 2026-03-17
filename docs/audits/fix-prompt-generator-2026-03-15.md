@@ -1,8 +1,8 @@
 # Fix Prompt Generator Report
 Generated: 2026-03-15
 Source reports reviewed:
-- `docs/audits/workflow-simulation-audit.md`
-- `docs/audits/workflow-simulation-audit-current.md`
+- `docs/audits/workflow-simulation-audit-2026-03-17.md`
+- `docs/audits/workflow-simulation-audit-2026-03-14.md`
 - `docs/audits/referential-integrity-cascade-audit-2026-03-15.md`
 - `docs/audits/supabase-schema-compatibility-audit-2026-03-11.md`
 - `docs/audits/supabase-schema-audit-data.json`
@@ -22,25 +22,25 @@ Missing current in-repo reports for this run:
 
 ### Issue 1. POF post-sign retry queue has no scheduled runner
 - Violated rule: multi-step workflows must be durable; success cannot leave required downstream clinical sync indefinitely pending.
-- Evidence source: `workflow-simulation-audit.md`
+- Evidence source: `workflow-simulation-audit-2026-03-17.md`
 - Why this matters: a physician order can be signed while MHP and MAR remain stale if the first post-sign sync attempt fails.
 - Safest fix approach: add one canonical retry runner that calls the existing retry service, records repeated failures, and does not create a second write path.
 
 ### Issue 2. Enrollment packet completion still has partial-write risk
 - Violated rule: multi-table lifecycle transitions must use RPC or transaction-backed service operations.
-- Evidence source: `workflow-simulation-audit.md`, `referential-integrity-cascade-audit-2026-03-15.md`
+- Evidence source: `workflow-simulation-audit-2026-03-17.md`, `referential-integrity-cascade-audit-2026-03-15.md`
 - Why this matters: completed packet data can reach some downstream tables but not all, leaving MCC, contacts, member files, and POF staging out of sync.
 - Safest fix approach: move the downstream mapping/finalization boundary into one RPC-backed transaction, or make failure explicit and repairable with rollback semantics.
 
 ### Issue 3. Intake signing and draft POF creation are not atomic
 - Violated rule: workflow completion cannot be claimed when required downstream persistence fails.
-- Evidence source: `workflow-simulation-audit.md`
+- Evidence source: `workflow-simulation-audit-2026-03-17.md`
 - Why this matters: intake can finish successfully while the expected draft POF never gets created.
 - Safest fix approach: combine intake signature completion and draft POF creation into one canonical workflow boundary, or persist an explicit follow-up failure state that blocks silent success.
 
 ### Issue 4. Lifecycle notifications are inconsistent and partly tied to manual fallback paths
 - Violated rule: lifecycle milestones should be system-driven, durable, and only marked after persistence succeeds.
-- Evidence source: `workflow-simulation-audit.md`, `workflow-simulation-audit-current.md`
+- Evidence source: `workflow-simulation-audit-2026-03-17.md`, `workflow-simulation-audit-2026-03-14.md`
 - Why this matters: staff can miss send/sign/documentation milestones or rely on success messages that do not correspond to a durable operational event.
 - Safest fix approach: standardize milestone notification creation in the service layer after durable writes, and replace manual fallback success language with explicit failed/prepared states.
 

@@ -1,5 +1,11 @@
 "use server";
 
+import {
+  addMemberFileAction as addMemberFileActionImpl,
+  deleteMemberFileAction as deleteMemberFileActionImpl,
+  getMemberFileDownloadUrlAction as getMemberFileDownloadUrlActionImpl
+} from "./actions-impl";
+
 type AddMemberFileInput = {
   memberId: string;
   fileName: string;
@@ -17,16 +23,13 @@ type MemberFileRefInput = {
 };
 
 export async function addMemberFileAction(raw: AddMemberFileInput) {
-  const { addMemberFileAction } = await import("./actions-impl");
-  return addMemberFileAction(raw);
+  return addMemberFileActionImpl(raw);
 }
 
 export async function deleteMemberFileAction(raw: MemberFileRefInput) {
-  const { deleteMemberFileAction } = await import("./actions-impl");
-  return deleteMemberFileAction(raw);
+  return deleteMemberFileActionImpl(raw);
 }
 
 export async function getMemberFileDownloadUrlAction(raw: MemberFileRefInput) {
-  const { getMemberFileDownloadUrlAction } = await import("./actions-impl");
-  return getMemberFileDownloadUrlAction(raw);
+  return getMemberFileDownloadUrlActionImpl(raw);
 }

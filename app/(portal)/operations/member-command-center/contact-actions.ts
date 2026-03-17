@@ -1,5 +1,10 @@
 "use server";
 
+import {
+  deleteMemberContactAction as deleteMemberContactActionImpl,
+  upsertMemberContactAction as upsertMemberContactActionImpl
+} from "./actions-impl";
+
 type UpsertMemberContactInput = {
   id?: string;
   memberId: string;
@@ -23,11 +28,9 @@ type DeleteMemberContactInput = {
 };
 
 export async function upsertMemberContactAction(raw: UpsertMemberContactInput) {
-  const { upsertMemberContactAction } = await import("./actions-impl");
-  return upsertMemberContactAction(raw);
+  return upsertMemberContactActionImpl(raw);
 }
 
 export async function deleteMemberContactAction(raw: DeleteMemberContactInput) {
-  const { deleteMemberContactAction } = await import("./actions-impl");
-  return deleteMemberContactAction(raw);
+  return deleteMemberContactActionImpl(raw);
 }

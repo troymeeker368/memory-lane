@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/internal/pof-post-sign-sync?limit=25",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

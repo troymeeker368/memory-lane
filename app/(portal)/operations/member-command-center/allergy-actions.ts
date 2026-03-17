@@ -1,16 +1,19 @@
 "use server";
 
+import {
+  addMemberCommandCenterAllergyInlineAction as addMemberCommandCenterAllergyInlineActionImpl,
+  deleteMemberCommandCenterAllergyInlineAction as deleteMemberCommandCenterAllergyInlineActionImpl,
+  updateMemberCommandCenterAllergyInlineAction as updateMemberCommandCenterAllergyInlineActionImpl
+} from "./actions-impl";
+
 export async function addMemberCommandCenterAllergyInlineAction(formData: FormData) {
-  const { addMemberCommandCenterAllergyInlineAction } = await import("./actions-impl");
-  return addMemberCommandCenterAllergyInlineAction(formData);
+  return addMemberCommandCenterAllergyInlineActionImpl(formData);
 }
 
 export async function updateMemberCommandCenterAllergyInlineAction(formData: FormData) {
-  const { updateMemberCommandCenterAllergyInlineAction } = await import("./actions-impl");
-  return updateMemberCommandCenterAllergyInlineAction(formData);
+  return updateMemberCommandCenterAllergyInlineActionImpl(formData);
 }
 
 export async function deleteMemberCommandCenterAllergyInlineAction(formData: FormData) {
-  const { deleteMemberCommandCenterAllergyInlineAction } = await import("./actions-impl");
-  return deleteMemberCommandCenterAllergyInlineAction(formData);
+  return deleteMemberCommandCenterAllergyInlineActionImpl(formData);
 }

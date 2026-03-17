@@ -14,6 +14,7 @@
     "build": "next build",
     "build:turbo": "next build --turbopack",
     "audit:module-sizes": "node scripts/audit-module-sizes.cjs",
+    "fix-prompts:generate": "tsx scripts/generate-fix-prompt-report.ts",
     "start": "next start -p 3001",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
