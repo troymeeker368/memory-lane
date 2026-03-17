@@ -1,12 +1,7 @@
 import { normalizeRoleKey } from "@/lib/permissions";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { createClient } from "@/lib/supabase/server";
-import {
-  getDevAuthBootstrapPassword,
-  getDevAuthBootstrapUsersJson,
-  getPublicAppUrl,
-  isDevAuthBypassEnabled
-} from "@/lib/runtime";
+import { getPublicAppUrl } from "@/lib/runtime";
 import { buildStaffAuthEmailTemplate } from "@/lib/email/templates/staff-auth";
 import { buildDocumentCenterSenderHeader } from "@/lib/services/document-branding";
 import { toEasternISO } from "@/lib/timezone";
@@ -37,24 +32,8 @@ export interface StaffAuthProfile {
   disabledAt: string | null;
 }
 
-export interface DevAuthBootstrapAccount {
-  email: string;
-  role: AppRole;
-  label: string;
-}
-
 type SendInviteMode = "invite_sent" | "invite_resent";
 type StaffAuthEmailMode = "set-password" | "reset-password";
-
-const DEV_AUTH_ROLE_PRIORITY: AppRole[] = [
-  "admin",
-  "nurse",
-  "sales",
-  "manager",
-  "coordinator",
-  "program-assistant",
-  "director"
-];
 
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
@@ -401,40 +380,6 @@ export async function requestStaffPasswordResetByEmail(email: string) {
   });
 }
 
-export async function evaluateStaffLoginEligibility(userId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
-  let staff: StaffAuthProfile;
-  try {
-    staff = await getStaffAuthProfileById(userId);
-  } catch {
-    return { ok: false, reason: "no-linked-profile" };
-  }
-
-  if (!staff.active || !staff.isActive) {
-    return { ok: false, reason: "inactive-profile" };
-  }
-
-  if (staff.status === "disabled") {
-    return { ok: false, reason: "disabled-profile" };
-  }
-
-  if (staff.status === "invited" && !staff.passwordSetAt) {
-    return { ok: false, reason: "password-setup-required" };
-  }
-
-  return { ok: true };
-}
-
-export async function markStaffLoginSuccess(userId: string) {
-  const staff = await getStaffAuthProfileById(userId);
-  const patch: Parameters<typeof patchStaffAuthProfile>[1] = {
-    last_sign_in_at: toEasternISO()
-  };
-  if (staff.status === "invited" && staff.passwordSetAt) {
-    patch.status = "active";
-  }
-  await patchStaffAuthProfile(userId, patch);
-}
-
 export async function completeStaffPasswordUpdateFromSession(input: {
   mode: "set-password" | "reset-password";
   password: string;
@@ -527,102 +472,4 @@ export async function setStaffLoginDisabled(input: {
       email: staff.email
     }
   });
-}
-
-type ParsedConfiguredDevAccount = {
-  email: string;
-  role: AppRole;
-  label: string;
-  password: string;
-};
-
-function parseConfiguredDevAccounts(): ParsedConfiguredDevAccount[] {
-  const raw = getDevAuthBootstrapUsersJson();
-  if (!raw) return [];
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("DEV_AUTH_BOOTSTRAP_USERS_JSON must be valid JSON.");
-  }
-
-  if (!Array.isArray(parsed)) {
-    throw new Error("DEV_AUTH_BOOTSTRAP_USERS_JSON must be a JSON array.");
-  }
-
-  const result: ParsedConfiguredDevAccount[] = [];
-  parsed.forEach((item) => {
-    const row = item as Record<string, unknown>;
-    const email = normalizeEmail(String(row.email ?? ""));
-    const password = clean(String(row.password ?? ""));
-    if (!email || !password || !isEmail(email)) return;
-    const role = normalizeRoleKey(String(row.role ?? "program-assistant") as AppRole);
-    const label = clean(String(row.label ?? "")) ?? `${role}: ${email}`;
-    result.push({ email, role, label, password });
-  });
-  return result;
-}
-
-function dedupeByEmail<T extends { email: string }>(rows: T[]) {
-  const seen = new Set<string>();
-  const result: T[] = [];
-  rows.forEach((row) => {
-    const key = row.email.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    result.push(row);
-  });
-  return result;
-}
-
-export async function listDevAuthBootstrapAccounts(): Promise<DevAuthBootstrapAccount[]> {
-  if (!isDevAuthBypassEnabled()) {
-    return [];
-  }
-
-  const configured = parseConfiguredDevAccounts();
-  if (configured.length > 0) {
-    return dedupeByEmail(
-      configured.map((row) => ({
-        email: row.email,
-        role: row.role,
-        label: row.label
-      }))
-    );
-  }
-
-  const supabase = await getServiceClient();
-  const { data, error } = await supabase.from("profiles").select("*").eq("active", true).order("full_name");
-  if (error) {
-    throw new Error(`Unable to load dev bootstrap staff accounts: ${error.message}`);
-  }
-
-  const rows = (data ?? []).map((row: any) => toStaffAuthProfile(row));
-  const selected: DevAuthBootstrapAccount[] = [];
-  const seenRoles = new Set<AppRole>();
-
-  DEV_AUTH_ROLE_PRIORITY.forEach((role) => {
-    const staff = rows.find((row) => row.role === role && row.status !== "disabled" && isEmail(row.email));
-    if (!staff) return;
-    if (seenRoles.has(role)) return;
-    seenRoles.add(role);
-    selected.push({
-      email: staff.email,
-      role,
-      label: `${role} - ${staff.fullName || staff.email}`
-    });
-  });
-
-  return dedupeByEmail(selected);
-}
-
-export function resolveDevAuthBootstrapPasswordForEmail(email: string) {
-  const normalized = normalizeEmail(email);
-  if (!normalized) {
-    return getDevAuthBootstrapPassword();
-  }
-  const configured = parseConfiguredDevAccounts();
-  const configuredMatch = configured.find((row) => row.email === normalized);
-  return configuredMatch?.password ?? getDevAuthBootstrapPassword();
 }

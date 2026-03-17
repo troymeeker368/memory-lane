@@ -3,8 +3,8 @@
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
 
-import type { DevAuthBootstrapAccount } from "@/lib/services/staff-auth";
-import { devBootstrapSignInAction } from "@/lib/actions/staff-auth";
+import type { DevAuthBootstrapAccount } from "@/lib/services/dev-auth-bootstrap";
+import { devBootstrapSignInAction } from "@/lib/actions/dev-auth-bootstrap";
 import { Button } from "@/components/ui/button";
 
 type DevAuthState = { ok?: boolean; message?: string; error?: string };

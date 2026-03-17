@@ -2,7 +2,7 @@ import { LoginForm } from "@/components/login-form";
 import { DevAuthBootstrapPanel } from "@/components/auth/dev-auth-bootstrap-panel";
 import { Card } from "@/components/ui/card";
 import { isDevAuthBypassEnabled } from "@/lib/runtime";
-import { listDevAuthBootstrapAccounts } from "@/lib/services/staff-auth";
+import { listDevAuthBootstrapAccounts } from "@/lib/services/dev-auth-bootstrap";
 import Link from "next/link";
 
 function getAuthIssueMessage(reason: string | undefined) {

@@ -1,7 +1,4 @@
-"use client";
-
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import {
   Activity,
   AlarmClockCheck,
@@ -167,8 +164,7 @@ function NavRow({ item, pathname }: { item: AppNavItem; pathname: string }) {
   );
 }
 
-export function PortalNav({ role, permissions }: { role: AppRole; permissions?: PermissionSet }) {
-  const pathname = usePathname();
+export function PortalNav({ role, permissions, pathname }: { role: AppRole; permissions?: PermissionSet; pathname: string }) {
   const nav = navForRole(role, permissions);
   const groupOrder = getGroupOrder(role);
   const grouped = nav.reduce<Record<string, typeof nav>>((acc, item) => {

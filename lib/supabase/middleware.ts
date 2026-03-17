@@ -22,9 +22,27 @@ function withAuthCookies(target: NextResponse, source: NextResponse) {
 }
 
 export async function updateSession(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const publicRoute = isPublicRoute(pathname);
+  const shouldResolveSession = !publicRoute || pathname === "/login" || pathname.startsWith("/dev/auth");
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-memory-lane-pathname", pathname);
+
+  if (!shouldResolveSession) {
+    return NextResponse.next({
+      request: {
+        headers: requestHeaders
+      }
+    });
+  }
+
   const { url, anonKey } = getSupabaseEnv();
 
-  const response = NextResponse.next({ request });
+  const response = NextResponse.next({
+    request: {
+      headers: requestHeaders
+    }
+  });
 
   const supabase = createServerClient(url, anonKey, {
     cookies: {
@@ -43,9 +61,6 @@ export async function updateSession(request: NextRequest) {
   const {
     data: { user }
   } = await supabase.auth.getUser();
-
-  const pathname = request.nextUrl.pathname;
-  const publicRoute = isPublicRoute(pathname);
 
   if (!user && !publicRoute) {
     const url = request.nextUrl.clone();

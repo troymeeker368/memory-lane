@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 
 import { Card } from "@/components/ui/card";
 import { DevAuthBootstrapPanel } from "@/components/auth/dev-auth-bootstrap-panel";
-import { listDevAuthBootstrapAccounts } from "@/lib/services/staff-auth";
+import { listDevAuthBootstrapAccounts } from "@/lib/services/dev-auth-bootstrap";
 import { isDevAuthBypassEnabled } from "@/lib/runtime";
 
 export default async function DevAuthPage() {

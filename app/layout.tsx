@@ -1,8 +1,6 @@
 import type React from "react";
 import type { Metadata } from "next";
 
-import { getDevSchemaSyncMessage } from "@/lib/dev/schema-sync-health";
-
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,12 +8,15 @@ export const metadata: Metadata = {
   description: "Town Square Fort Mill"
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const devSchemaSyncMessage = getDevSchemaSyncMessage();
+  const devSchemaSyncMessage =
+    process.env.NODE_ENV === "production"
+      ? null
+      : (await import("@/lib/dev/schema-sync-health")).getDevSchemaSyncMessage();
 
   return (
     <html lang="en">

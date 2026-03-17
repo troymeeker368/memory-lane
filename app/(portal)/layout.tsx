@@ -1,15 +1,16 @@
 import type React from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { headers } from "next/headers";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { isDevAuthBypassEnabled } from "@/lib/runtime";
-import { listDevAuthBootstrapAccounts } from "@/lib/services/staff-auth";
+import { listDevAuthBootstrapAccounts } from "@/lib/services/dev-auth-bootstrap";
 import { DevAuthBootstrapPanel } from "@/components/auth/dev-auth-bootstrap-panel";
 import { PortalNav } from "@/components/portal-nav";
 import { SignOutForm } from "@/components/sign-out-form";
-import { GlobalTablePaginator } from "@/components/ui/global-table-paginator";
-import { countUnreadUserNotificationsForUser } from "@/lib/services/notifications";
+import { GlobalTablePaginatorLazy } from "@/components/ui/global-table-paginator-lazy";
+import { countUnreadUserNotificationsForUser } from "@/lib/services/notification-counts";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export default async function PortalLayout({
   children: React.ReactNode;
 }) {
   const profile = await getCurrentProfile();
+  const pathname = (await headers()).get("x-memory-lane-pathname") ?? "/";
   const showDevRoleSwitcher = isDevAuthBypassEnabled();
   const [unreadNotifications, devAccounts] = await Promise.all([
     countUnreadUserNotificationsForUser(profile.id),
@@ -47,7 +49,7 @@ export default async function PortalLayout({
             </p>
           ) : null}
         </div>
-        <PortalNav role={profile.role} permissions={profile.permissions} />
+        <PortalNav role={profile.role} permissions={profile.permissions} pathname={pathname} />
         <SignOutForm />
       </aside>
       <main className="space-y-4 pb-10">
@@ -60,7 +62,7 @@ export default async function PortalLayout({
             <Link href="/notifications" className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-brand hover:bg-slate-50">
               Notifications{unreadNotifications > 0 ? ` (${unreadNotifications})` : ""}
             </Link>
-            <GlobalTablePaginator />
+            <GlobalTablePaginatorLazy />
           </div>
         </div>
         {showDevRoleSwitcher ? (

@@ -111,12 +111,18 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
   const legacySelect = "id, email, full_name, role, active, staff_id";
 
   const profileLookupStartedAt = timingNow();
-  const { data: enrichedData, error: enrichedError } = await serviceSupabase
-    .from("profiles")
-    .select(baseSelect)
-    .eq("id", user.id)
-    .maybeSingle();
+  const permissionsStartedAt = timingNow();
+  const [profileLookup, permissionsLookup] = await Promise.all([
+    serviceSupabase.from("profiles").select(baseSelect).eq("id", user.id).maybeSingle(),
+    serviceSupabase
+      .from("user_permissions")
+      .select("module_key, can_view, can_create, can_edit, can_admin")
+      .eq("user_id", user.id)
+  ]);
   logTiming(traceLabel, "profile-role-lookup", profileLookupStartedAt);
+  logTiming(traceLabel, "permission-row-lookup", permissionsStartedAt);
+
+  const { data: enrichedData, error: enrichedError } = profileLookup;
 
   let data = enrichedData as
     | {
@@ -186,12 +192,7 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
   let hasCustomPermissions = false;
   let customPermissions = null;
 
-  const permissionsStartedAt = timingNow();
-  const { data: rows, error: permissionsError } = await serviceSupabase
-    .from("user_permissions")
-    .select("module_key, can_view, can_create, can_edit, can_admin")
-    .eq("user_id", user.id);
-  logTiming(traceLabel, "permission-row-lookup", permissionsStartedAt);
+  const { data: rows, error: permissionsError } = permissionsLookup;
   if (permissionsError) {
     if (isMissingSchemaObjectError(permissionsError)) {
       throw new Error(

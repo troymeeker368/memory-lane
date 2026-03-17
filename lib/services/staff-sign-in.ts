@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { evaluateStaffLoginEligibility, markStaffLoginSuccess } from "@/lib/services/staff-auth";
+import { evaluateStaffLoginEligibility, markStaffLoginSuccess } from "@/lib/services/staff-login-state";
 
 export const staffSignInSchema = z.object({
   email: z.string().email(),

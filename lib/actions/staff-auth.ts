@@ -4,13 +4,9 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { createClient } from "@/lib/supabase/server";
-import {
-  completeStaffPasswordUpdateFromSession,
-  evaluateStaffLoginEligibility,
-  markStaffLoginSuccess,
-  requestStaffPasswordResetByEmail,
-  resolveDevAuthBootstrapPasswordForEmail
-} from "@/lib/services/staff-auth";
+import { resolveDevAuthBootstrapPasswordForEmail } from "@/lib/services/dev-auth-bootstrap";
+import { evaluateStaffLoginEligibility, markStaffLoginSuccess } from "@/lib/services/staff-login-state";
+import { completeStaffPasswordUpdateFromSession, requestStaffPasswordResetByEmail } from "@/lib/services/staff-auth";
 import { isDevAuthBypassEnabled } from "@/lib/runtime";
 
 type AuthActionState = {
