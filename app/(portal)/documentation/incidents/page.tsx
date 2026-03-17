@@ -6,17 +6,29 @@ import { requireModuleAccess, requireRoles } from "@/lib/auth";
 import { listIncidentDashboard } from "@/lib/services/incidents";
 import { formatDateTime } from "@/lib/utils";
 
-export default async function IncidentReportsPage() {
+export default async function IncidentReportsPage({
+  searchParams
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await requireModuleAccess("documentation");
   await requireRoles(["nurse", "manager", "director", "admin"]);
+  const resolvedSearchParams = searchParams ? await searchParams : {};
   const dashboard = await listIncidentDashboard({ limit: 50 });
+  const submitted = resolvedSearchParams?.submitted;
+  const showSubmittedMessage = submitted === "1" || (Array.isArray(submitted) && submitted.includes("1"));
 
   return (
     <div className="space-y-4">
+      {showSubmittedMessage ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+          Incident report submitted. It is now in the historical queue for director review.
+        </div>
+      ) : null}
       <Card>
         <CardTitle>Incident Reports</CardTitle>
         <p className="mt-1 text-sm text-muted">
-          Lightweight incident capture with director review and a state-ready audit trail.
+          Start a new incident report here, then review historical incident reports below.
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-5">
           <div className="rounded-lg border border-border p-3">
@@ -42,7 +54,7 @@ export default async function IncidentReportsPage() {
         </div>
         <div className="mt-3">
           <Link href="/documentation/incidents/new" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
-            New Incident
+            New Incident Report
           </Link>
         </div>
       </Card>
@@ -62,7 +74,7 @@ export default async function IncidentReportsPage() {
       />
 
       <Card className="table-wrap hidden md:block">
-        <CardTitle>Incident Queue</CardTitle>
+        <CardTitle>Historical Incident Reports</CardTitle>
         <table className="mt-3">
           <thead>
             <tr>

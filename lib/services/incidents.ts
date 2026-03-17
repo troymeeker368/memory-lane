@@ -1,11 +1,20 @@
 import "server-only";
 
+import { Buffer } from "node:buffer";
+
 import {
   canAccessIncidentReportsForRole,
   canPerformModuleAction,
   normalizeRoleKey,
   type PermissionAction
 } from "@/lib/permissions";
+import {
+  deleteIncidentSubmitterSignatureArtifact,
+  loadIncidentSubmitterSignatureDataUrl,
+  saveFinalizedIncidentPdfToMemberFiles,
+  saveIncidentSubmitterSignatureArtifact
+} from "@/lib/services/incident-artifacts";
+import { buildIncidentPdfBytesFromDetail } from "@/lib/services/incident-pdf";
 import {
   INCIDENT_CATEGORY_OPTIONS,
   INCIDENT_DIRECTOR_DECISION_VALUES,
@@ -22,6 +31,7 @@ import {
   type IncidentStatus,
   type IncidentSummaryRow
 } from "@/lib/services/incident-shared";
+import { deleteMemberDocumentObject, deleteMemberFileRecord } from "@/lib/services/member-files";
 import { logSystemEvent } from "@/lib/services/system-event-service";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternISO } from "@/lib/timezone";
@@ -41,11 +51,11 @@ export type {
   IncidentDraftInput,
   IncidentEditorLookups,
   IncidentHistoryEntry,
-  IncidentLookupOption,
   IncidentReviewInput,
   IncidentStatus,
   IncidentSummaryRow
 } from "@/lib/services/incident-shared";
+export type { IncidentLookupOption } from "@/lib/services/incident-shared";
 
 type ActorContext = {
   id: string;
@@ -82,13 +92,18 @@ type IncidentRow = {
   submitted_at: string | null;
   submitted_by_user_id: string | null;
   submitted_by_name_snapshot: string | null;
+  submitter_signature_attested: boolean;
   submitter_signature_name: string | null;
   submitter_signed_at: string | null;
+  submitter_signature_artifact_storage_path: string | null;
   director_reviewed_by: string | null;
   director_reviewed_at: string | null;
   director_decision: string | null;
   director_signature_name: string | null;
   director_review_notes: string | null;
+  final_pdf_member_file_id: string | null;
+  final_pdf_storage_object_path: string | null;
+  final_pdf_saved_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -199,13 +214,18 @@ function serializeIncidentSnapshot(row: IncidentRow) {
     submitted_at: clean(row.submitted_at),
     submitted_by_user_id: clean(row.submitted_by_user_id),
     submitted_by_name_snapshot: clean(row.submitted_by_name_snapshot),
+    submitter_signature_attested: Boolean(row.submitter_signature_attested),
     submitter_signature_name: clean(row.submitter_signature_name),
     submitter_signed_at: clean(row.submitter_signed_at),
+    submitter_signature_artifact_storage_path: clean(row.submitter_signature_artifact_storage_path),
     director_reviewed_by: clean(row.director_reviewed_by),
     director_reviewed_at: clean(row.director_reviewed_at),
     director_decision: asDirectorDecision(row.director_decision),
     director_signature_name: clean(row.director_signature_name),
     director_review_notes: clean(row.director_review_notes),
+    final_pdf_member_file_id: clean(row.final_pdf_member_file_id),
+    final_pdf_storage_object_path: clean(row.final_pdf_storage_object_path),
+    final_pdf_saved_at: clean(row.final_pdf_saved_at),
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -269,13 +289,18 @@ function mapIncidentDetail(row: IncidentRow, history: IncidentHistoryRow[]): Inc
     submittedAt: clean(row.submitted_at),
     submittedByUserId: clean(row.submitted_by_user_id),
     submittedByName: clean(row.submitted_by_name_snapshot),
+    submitterSignatureAttested: Boolean(row.submitter_signature_attested),
     submitterSignatureName: clean(row.submitter_signature_name),
     submitterSignedAt: clean(row.submitter_signed_at),
+    submitterSignatureArtifactStoragePath: clean(row.submitter_signature_artifact_storage_path),
     directorReviewedBy: clean(row.director_reviewed_by),
     directorReviewedAt: clean(row.director_reviewed_at),
     directorDecision: asDirectorDecision(row.director_decision),
     directorSignatureName: clean(row.director_signature_name),
     directorReviewNotes: clean(row.director_review_notes),
+    finalPdfMemberFileId: clean(row.final_pdf_member_file_id),
+    finalPdfStorageObjectPath: clean(row.final_pdf_storage_object_path),
+    finalPdfSavedAt: clean(row.final_pdf_saved_at),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     history: history.map(mapIncidentHistory)
@@ -388,21 +413,27 @@ function validateSubmissionPayload(input: IncidentDraftInput) {
   if (!clean(input.followUpNote) && !clean(input.generalNotes)) {
     throw new Error("Add either general notes or a follow-up note before submitting.");
   }
-  if (!clean(input.submitterSignatureName)) {
-    throw new Error("Type your full name to e-sign before submitting this incident.");
+  if (!input.submitterSignatureAttested) {
+    throw new Error("Confirm the submitter e-sign attestation before submitting this incident.");
+  }
+  if (!clean(input.submitterSignatureImageDataUrl)) {
+    throw new Error("Draw your signature before submitting this incident.");
   }
   return validated;
 }
 
 function assertSubmitterEsign(input: IncidentDraftInput, actor: ActorContext) {
-  const signatureName = clean(input.submitterSignatureName);
-  if (!signatureName) {
-    throw new Error("Type your full name to e-sign before submitting this incident.");
+  const signatureImageDataUrl = clean(input.submitterSignatureImageDataUrl);
+  if (!input.submitterSignatureAttested) {
+    throw new Error("Confirm the submitter e-sign attestation before submitting this incident.");
   }
-  if (signatureName.toLowerCase() !== actor.fullName.trim().toLowerCase()) {
-    throw new Error("Submitter e-sign must match the signed-in user's full name.");
+  if (!signatureImageDataUrl) {
+    throw new Error("Draw your signature before submitting this incident.");
   }
-  return signatureName;
+  return {
+    signatureName: actor.fullName,
+    signatureImageDataUrl
+  };
 }
 
 async function insertIncidentHistory(input: {
@@ -666,7 +697,7 @@ export async function saveIncidentDraft(input: IncidentDraftInput, actor: ActorC
 export async function submitIncident(input: IncidentDraftInput, actor: ActorContext) {
   assertIncidentReporter(actor);
   validateSubmissionPayload(input);
-  const submitterSignatureName = assertSubmitterEsign(input, actor);
+  const submitterEsign = assertSubmitterEsign(input, actor);
   const existing = clean(input.incidentId) ? await loadIncidentRow(String(input.incidentId)) : null;
   const saved =
     existing ??
@@ -690,6 +721,12 @@ export async function submitIncident(input: IncidentDraftInput, actor: ActorCont
   const current = await loadIncidentRow(saved.id);
   if (!current) throw new Error("Incident disappeared before submission.");
 
+  const artifact = await saveIncidentSubmitterSignatureArtifact({
+    incidentId: current.id,
+    participantId: current.participant_id,
+    signatureImageDataUrl: submitterEsign.signatureImageDataUrl
+  });
+
   const supabase = await getServiceClient();
   const now = toEasternISO();
   const { data, error } = await supabase
@@ -699,18 +736,26 @@ export async function submitIncident(input: IncidentDraftInput, actor: ActorCont
       submitted_at: now,
       submitted_by_user_id: actor.id,
       submitted_by_name_snapshot: actor.fullName,
-      submitter_signature_name: submitterSignatureName,
+      submitter_signature_attested: true,
+      submitter_signature_name: submitterEsign.signatureName,
       submitter_signed_at: now,
+      submitter_signature_artifact_storage_path: artifact.storagePath,
       director_reviewed_by: null,
       director_reviewed_at: null,
       director_decision: null,
       director_signature_name: null,
-      director_review_notes: null
+      director_review_notes: null,
+      final_pdf_member_file_id: null,
+      final_pdf_storage_object_path: null,
+      final_pdf_saved_at: null
     })
     .eq("id", current.id)
     .select("*")
     .maybeSingle();
-  if (error || !data) throw new Error(`Unable to submit incident: ${error?.message ?? "Unknown incident submit error."}`);
+  if (error || !data) {
+    await deleteIncidentSubmitterSignatureArtifact(artifact.storagePath);
+    throw new Error(`Unable to submit incident: ${error?.message ?? "Unknown incident submit error."}`);
+  }
   const submitted = data as IncidentRow;
   await insertIncidentHistory({
     incidentId: submitted.id,
@@ -727,7 +772,7 @@ export async function submitIncident(input: IncidentDraftInput, actor: ActorCont
     metadata: {
       incident_number: submitted.incident_number,
       reportable: submitted.reportable,
-      submitter_signature_name: submitterSignatureName
+      submitter_signature_name: submitterEsign.signatureName
     }
   });
   return getIncidentDetail(submitted.id);
@@ -751,6 +796,40 @@ export async function reviewIncident(input: IncidentReviewInput, actor: ActorCon
 
   const now = toEasternISO();
   const status: IncidentStatus = decision === "approved" ? "approved" : "returned";
+  let finalPdf:
+    | Awaited<ReturnType<typeof saveFinalizedIncidentPdfToMemberFiles>>
+    | null = null;
+
+  if (decision === "approved" && existing.participant_id && existing.participant_name_snapshot) {
+    const currentHistory = await loadIncidentHistoryRows(incidentId);
+    const prospectiveDetail = mapIncidentDetail(
+      {
+        ...existing,
+        status,
+        director_reviewed_by: actor.id,
+        director_reviewed_at: now,
+        director_decision: decision,
+        director_signature_name: actor.fullName,
+        director_review_notes: clean(input.reviewNotes)
+      },
+      currentHistory
+    );
+    const submitterSignatureDataUrl = await loadIncidentSubmitterSignatureDataUrl(existing.submitter_signature_artifact_storage_path);
+    const generated = await buildIncidentPdfBytesFromDetail(prospectiveDetail, {
+      submitterSignatureDataUrl
+    });
+    finalPdf = await saveFinalizedIncidentPdfToMemberFiles({
+      incidentId,
+      memberId: existing.participant_id,
+      memberName: existing.participant_name_snapshot,
+      dataUrl: `data:application/pdf;base64,${Buffer.from(generated.bytes).toString("base64")}`,
+      uploadedBy: {
+        id: actor.id,
+        name: actor.fullName
+      }
+    });
+  }
+
   const supabase = await getServiceClient();
   const { data, error } = await supabase
     .from("incidents")
@@ -761,18 +840,43 @@ export async function reviewIncident(input: IncidentReviewInput, actor: ActorCon
       director_decision: decision,
       director_signature_name: actor.fullName,
       director_review_notes: clean(input.reviewNotes),
+      ...(decision === "approved"
+        ? {
+            final_pdf_member_file_id: finalPdf?.created.id ?? null,
+            final_pdf_storage_object_path: String(finalPdf?.created.storage_object_path ?? "").trim() || null,
+            final_pdf_saved_at: finalPdf?.generatedAtIso ?? now
+          }
+        : {}),
       ...(decision === "returned"
         ? {
+            submitter_signature_attested: false,
             submitter_signature_name: null,
-            submitter_signed_at: null
+            submitter_signed_at: null,
+            submitter_signature_artifact_storage_path: null
           }
         : {})
     })
     .eq("id", incidentId)
     .select("*")
     .maybeSingle();
-  if (error || !data) throw new Error(`Unable to record director review: ${error?.message ?? "Unknown review error."}`);
+  if (error || !data) {
+    if (finalPdf?.created?.id) {
+      const finalPdfStorageObjectPath = String(finalPdf.created.storage_object_path ?? "").trim();
+      if (finalPdfStorageObjectPath) {
+        await deleteMemberDocumentObject(finalPdfStorageObjectPath);
+      }
+      await deleteMemberFileRecord(finalPdf.created.id);
+    }
+    throw new Error(`Unable to record director review: ${error?.message ?? "Unknown review error."}`);
+  }
   const reviewed = data as IncidentRow;
+  if (decision === "returned" && existing.submitter_signature_artifact_storage_path) {
+    try {
+      await deleteIncidentSubmitterSignatureArtifact(existing.submitter_signature_artifact_storage_path);
+    } catch (cleanupError) {
+      console.error("[incident-report] unable to cleanup returned signature artifact", cleanupError);
+    }
+  }
   await insertIncidentHistory({
     incidentId: reviewed.id,
     action: decision,

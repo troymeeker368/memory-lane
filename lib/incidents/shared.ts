@@ -99,13 +99,18 @@ export type IncidentDetail = {
   submittedAt: string | null;
   submittedByUserId: string | null;
   submittedByName: string | null;
+  submitterSignatureAttested: boolean;
   submitterSignatureName: string | null;
   submitterSignedAt: string | null;
+  submitterSignatureArtifactStoragePath: string | null;
   directorReviewedBy: string | null;
   directorReviewedAt: string | null;
   directorDecision: IncidentDirectorDecision | null;
   directorSignatureName: string | null;
   directorReviewNotes: string | null;
+  finalPdfMemberFileId: string | null;
+  finalPdfStorageObjectPath: string | null;
+  finalPdfSavedAt: string | null;
   createdAt: string;
   updatedAt: string;
   history: IncidentHistoryEntry[];
@@ -147,6 +152,8 @@ export type IncidentDraftInput = {
   generalNotes?: string | null;
   followUpNote?: string | null;
   submitterSignatureName?: string | null;
+  submitterSignatureAttested?: boolean;
+  submitterSignatureImageDataUrl?: string | null;
 };
 
 export type IncidentReviewInput = {

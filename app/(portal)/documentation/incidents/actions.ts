@@ -28,9 +28,9 @@ function asBoolean(formData: FormData, key: string) {
   return normalized === "true" || normalized === "yes" || normalized === "on" || normalized === "1";
 }
 
-function asDateTimeIso(formData: FormData, key: string) {
+function asDateTimeIso(formData: FormData, key: string, label: string) {
   const localValue = asString(formData, key);
-  if (!localValue) throw new Error(`${key} is required.`);
+  if (!localValue) throw new Error(`${label} is required.`);
   return easternDateTimeLocalToISO(localValue);
 }
 
@@ -42,8 +42,8 @@ function mapDraftInput(formData: FormData) {
     participantId: asNullableString(formData, "participantId"),
     staffMemberId: asNullableString(formData, "staffMemberId"),
     additionalParties: asNullableString(formData, "additionalParties"),
-    incidentDateTime: asDateTimeIso(formData, "incidentDateTime"),
-    reportedDateTime: asDateTimeIso(formData, "reportedDateTime"),
+    incidentDateTime: asDateTimeIso(formData, "incidentDateTime", "Date / time of incident"),
+    reportedDateTime: asDateTimeIso(formData, "reportedDateTime", "Date / time reported"),
     location: asString(formData, "location"),
     exactLocationDetails: asNullableString(formData, "exactLocationDetails"),
     description: asString(formData, "description"),
@@ -54,15 +54,23 @@ function mapDraftInput(formData: FormData) {
     bodyPart: asNullableString(formData, "bodyPart"),
     generalNotes: asNullableString(formData, "generalNotes"),
     followUpNote: asNullableString(formData, "followUpNote"),
-    submitterSignatureName: asNullableString(formData, "submitterSignatureName")
+    submitterSignatureName: asNullableString(formData, "submitterSignatureName"),
+    submitterSignatureAttested: asBoolean(formData, "submitterSignatureAttested"),
+    submitterSignatureImageDataUrl: asNullableString(formData, "submitterSignatureImageDataUrl")
   };
 }
 
-function revalidateIncidentRoutes(incidentId: string) {
+function revalidateIncidentRoutes(incidentId: string, participantId?: string | null) {
   revalidatePath("/documentation");
   revalidatePath("/documentation/incidents");
+  revalidatePath("/documentation/incidents/new");
   revalidatePath("/health");
   revalidatePath(`/documentation/incidents/${incidentId}`);
+  const memberId = String(participantId ?? "").trim();
+  if (!memberId) return;
+  revalidatePath(`/members/${memberId}`);
+  revalidatePath(`/operations/member-command-center/${memberId}`);
+  revalidatePath(`/health/member-health-profiles/${memberId}`);
 }
 
 async function getActor() {
@@ -83,7 +91,7 @@ export async function saveIncidentDraftAction(formData: FormData) {
     const actor = await getActor();
     const detail = await saveIncidentDraft(mapDraftInput(formData), actor);
     if (!detail) throw new Error("Incident was saved but the record could not be reloaded.");
-    revalidateIncidentRoutes(detail.id);
+    revalidateIncidentRoutes(detail.id, detail.participantId);
     return { ok: true, incidentId: detail.id, status: detail.status, detail } as const;
   } catch (error) {
     return {
@@ -98,7 +106,7 @@ export async function submitIncidentAction(formData: FormData) {
     const actor = await getActor();
     const detail = await submitIncident(mapDraftInput(formData), actor);
     if (!detail) throw new Error("Incident was submitted but the record could not be reloaded.");
-    revalidateIncidentRoutes(detail.id);
+    revalidateIncidentRoutes(detail.id, detail.participantId);
     return { ok: true, incidentId: detail.id, status: detail.status, detail } as const;
   } catch (error) {
     return {
@@ -116,7 +124,7 @@ export async function reviewIncidentAction(formData: FormData) {
     const reviewNotes = asNullableString(formData, "reviewNotes");
     const detail = await reviewIncident({ incidentId, decision, reviewNotes }, actor);
     if (!detail) throw new Error("Incident review saved but the record could not be reloaded.");
-    revalidateIncidentRoutes(detail.id);
+    revalidateIncidentRoutes(detail.id, detail.participantId);
     return { ok: true, incidentId: detail.id, status: detail.status, detail } as const;
   } catch (error) {
     return {
@@ -133,7 +141,7 @@ export async function closeIncidentAction(formData: FormData) {
     const notes = asNullableString(formData, "closeNotes");
     const detail = await closeIncident(incidentId, actor, notes);
     if (!detail) throw new Error("Incident closed but the record could not be reloaded.");
-    revalidateIncidentRoutes(detail.id);
+    revalidateIncidentRoutes(detail.id, detail.participantId);
     return { ok: true, incidentId: detail.id, status: detail.status, detail } as const;
   } catch (error) {
     return {
@@ -155,7 +163,7 @@ export async function amendIncidentAction(formData: FormData) {
       actor
     );
     if (!detail) throw new Error("Incident amended but the record could not be reloaded.");
-    revalidateIncidentRoutes(detail.id);
+    revalidateIncidentRoutes(detail.id, detail.participantId);
     return { ok: true, incidentId: detail.id, status: detail.status, detail } as const;
   } catch (error) {
     return {

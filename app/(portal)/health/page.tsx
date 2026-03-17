@@ -223,7 +223,7 @@ export default async function HealthPage() {
                   </div>
                 )}
                 <Link href="/documentation/incidents" className="mt-3 inline-block text-sm font-semibold text-brand">
-                  Open Incident Workflow
+                  Open Incident Reports
                 </Link>
               </div>
             </div>
