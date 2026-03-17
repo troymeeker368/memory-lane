@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { buildPreferredContactByMember } from "@/lib/services/member-contact-priority";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizeOperationalDateOnly, getWeekdayForDate, type OperationsWeekdayKey } from "@/lib/services/operations-calendar";
 import { getTransportSlotForScheduleDay } from "@/lib/services/member-schedule-selectors";
@@ -119,18 +120,6 @@ function toScheduleWeekday(weekday: OperationsWeekdayKey): ScheduleWeekdayKey | 
   return null;
 }
 
-function contactPriority(category: string | null | undefined): number {
-  const normalized = (category ?? "").trim().toLowerCase();
-  if (normalized === "responsible party") return 1;
-  if (normalized === "care provider") return 2;
-  if (normalized === "emergency contact") return 3;
-  if (normalized === "spouse") return 4;
-  if (normalized === "child") return 5;
-  if (normalized === "payor") return 6;
-  if (normalized === "other") return 7;
-  return 8;
-}
-
 function buildLocationLabel(input: {
   mode: TransportMode;
   busStopName: string | null;
@@ -212,19 +201,7 @@ async function listPreferredContactsByMember(memberIds: string[]) {
     throw new Error(error.message);
   }
   const rows = (data ?? []) as MemberContactRow[];
-  const preferred = new Map<string, MemberContactRow>();
-  [...rows]
-    .sort((left, right) => {
-      const memberCompare = left.member_id.localeCompare(right.member_id);
-      if (memberCompare !== 0) return memberCompare;
-      const categoryCompare = contactPriority(left.category) - contactPriority(right.category);
-      if (categoryCompare !== 0) return categoryCompare;
-      if (left.updated_at === right.updated_at) return 0;
-      return left.updated_at > right.updated_at ? -1 : 1;
-    })
-    .forEach((row) => {
-      if (!preferred.has(row.member_id)) preferred.set(row.member_id, row);
-    });
+  const preferred = buildPreferredContactByMember(rows);
   return { rows, preferred };
 }
 

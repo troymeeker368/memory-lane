@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { canonicalLeadStage, canonicalLeadStatus } from "@/lib/canonical";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { createClient } from "@/lib/supabase/server";
@@ -151,18 +152,15 @@ const SALES_REFERRAL_SOURCE_LOOKUP_SELECT =
   "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, active, last_touched";
 
 function normalizeLeadStage(value: string | null | undefined) {
-  const normalized = clean(value) ?? "Inquiry";
-  if (normalized === "EIP") return "Enrollment in Progress";
-  return normalized;
+  return canonicalLeadStage(clean(value) ?? "Inquiry");
 }
 
 function normalizeLeadStatus(value: string | null | undefined, stage: string) {
-  const normalized = (clean(value) ?? "open").toLowerCase();
-  if (normalized === "won") return "Won";
-  if (normalized === "lost") return "Lost";
-  if (stage === "Closed - Won") return "Won";
-  if (stage === "Closed - Lost") return "Lost";
-  return "Open";
+  return canonicalLeadStatus(clean(value) ?? "Open", stage);
+}
+
+function applyOpenLeadFilter(query: any) {
+  return query.or("status.eq.open,status.eq.nurture");
 }
 
 function toSalesLeadReadRow(row: Record<string, unknown>): SalesLeadReadRow {
@@ -581,7 +579,7 @@ export async function getSalesHomeSnapshotSupabase() {
     referralSourcesResult,
     partnerActivitiesResult
   ] = await Promise.all([
-    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open"),
+    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })),
     supabase.from("lead_activities").select("id", { count: "exact", head: true }),
     supabase.from("community_partner_organizations").select("id", { count: "exact", head: true }),
     supabase.from("referral_sources").select("id", { count: "exact", head: true }),
@@ -620,17 +618,17 @@ export async function getSalesSummarySnapshotSupabase(): Promise<SalesSummarySna
     referralOnlyResult
   ] = await Promise.all([
     supabase.from("leads").select("id", { count: "exact", head: true }),
-    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open"),
-    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open").in("stage", ["Enrollment in Progress", "EIP"]),
+    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })),
+    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })).in("stage", ["Enrollment in Progress", "EIP"]),
     supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "won"),
     supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "lost"),
     supabase.from("leads").select("id", { count: "exact", head: true }).or("status.eq.won,member_start_date.not.is.null"),
     supabase.from("leads").select("id", { count: "exact", head: true }).gte("inquiry_date", thirtyDaysAgo),
     supabase.from("leads").select(SALES_LEAD_READ_SELECT).order("inquiry_date", { ascending: false }).limit(10),
-    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open").eq("stage", "Inquiry"),
-    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open").eq("stage", "Tour"),
-    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open").eq("stage", "Nurture"),
-    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "open").ilike("lead_source", "%referral%")
+    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })).eq("stage", "Inquiry"),
+    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })).eq("stage", "Tour"),
+    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })).eq("stage", "Nurture"),
+    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })).ilike("lead_source", "%referral%")
   ]);
   if (totalResult.error) throw new Error(totalResult.error.message);
   if (openResult.error) throw new Error(openResult.error.message);
@@ -686,7 +684,7 @@ export async function getSalesLeadListSupabase(input?: {
   let query: any = supabase.from("leads").select(SALES_LEAD_READ_SELECT, { count: "exact" });
 
   if (input?.status) {
-    query = query.eq("status", input.status);
+    query = input.status === "open" ? applyOpenLeadFilter(query) : query.eq("status", input.status);
   }
   if (input?.stage === "Enrollment in Progress") {
     query = query.in("stage", ["Enrollment in Progress", "EIP"]);

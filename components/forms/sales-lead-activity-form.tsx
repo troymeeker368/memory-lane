@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { createSalesLeadActivityAction } from "@/app/sales-actions";
+import { createSalesLeadActivityAction } from "@/app/sales-lead-actions";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
 import {

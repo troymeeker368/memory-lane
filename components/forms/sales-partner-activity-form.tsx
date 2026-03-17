@@ -6,7 +6,7 @@ import {
   createCommunityPartnerAction,
   createPartnerActivityAction,
   createReferralSourceAction
-} from "@/app/sales-actions";
+} from "@/app/sales-partner-actions";
 import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
 import { Button } from "@/components/ui/button";
 import { COMMUNITY_PARTNER_CATEGORY_OPTIONS, LEAD_ACTIVITY_TYPES, LEAD_FOLLOW_UP_TYPES } from "@/lib/canonical";

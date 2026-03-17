@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 
-import { createCommunityPartnerAction, createReferralSourceAction } from "@/app/sales-actions";
+import { createCommunityPartnerAction, createReferralSourceAction } from "@/app/sales-partner-actions";
 import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
 import { Button } from "@/components/ui/button";
 import { COMMUNITY_PARTNER_CATEGORY_OPTIONS } from "@/lib/canonical";

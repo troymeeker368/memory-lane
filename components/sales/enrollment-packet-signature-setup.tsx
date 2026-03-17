@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { saveEnrollmentPacketSenderSignatureProfileAction } from "@/app/sales-actions";
+import { saveEnrollmentPacketSenderSignatureProfileAction } from "@/app/sales-enrollment-actions";
 import { EsignaturePad } from "@/components/signature/esignature-pad";
 import { Button } from "@/components/ui/button";
 
@@ -71,4 +71,3 @@ export function EnrollmentPacketSignatureSetup({
     </div>
   );
 }
-

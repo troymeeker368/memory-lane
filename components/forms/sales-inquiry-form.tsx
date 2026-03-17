@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { saveSalesLeadAction } from "@/app/sales-actions";
+import { saveSalesLeadAction } from "@/app/sales-lead-actions";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
 import {

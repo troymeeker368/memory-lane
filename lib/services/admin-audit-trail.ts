@@ -33,11 +33,14 @@ export async function listAdminAuditTrailRows(input?: {
   const limit = Number.isFinite(input?.limit) ? Math.max(1, Number(input?.limit)) : 1000;
 
   const supabase = await createClient();
-  const { data: auditRows, error } = await supabase
+  let query = supabase
     .from("audit_logs")
     .select("id, actor_user_id, actor_role, action, entity_type, entity_id, details, created_at")
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    .order("created_at", { ascending: false });
+  if (actionFilter) {
+    query = query.eq("action", actionFilter);
+  }
+  const { data: auditRows, error } = await query.limit(limit);
   if (error) {
     throw new Error(error.message);
   }
@@ -68,7 +71,5 @@ export async function listAdminAuditTrailRows(input?: {
       ...row,
       actor_name: row.actor_user_id ? profileNameById.get(row.actor_user_id) ?? null : null
     }))
-    .filter((row) => (actionFilter ? row.action === actionFilter : true))
-    .filter((row) => (areaFilter ? resolveAdminAuditArea(row.entity_type).toLowerCase().includes(areaFilter) : true))
-    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    .filter((row) => (areaFilter ? resolveAdminAuditArea(row.entity_type).toLowerCase().includes(areaFilter) : true));
 }

@@ -9,6 +9,7 @@ import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
+import { calculateAttendanceRatePercent } from "@/lib/services/attendance-rate";
 import { getWeekdayForDate } from "@/lib/services/operations-calendar";
 import { buildLeadStageOutcomeSummaryRows } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
@@ -412,10 +413,10 @@ export async function getAdminRevenueSummary(input: AdminRevenueSummaryInput): P
     }
   });
 
-  const attendanceRatePercent =
-    scheduledMemberDays > 0
-      ? Number(((presentMemberDays / scheduledMemberDays) * 100).toFixed(1))
-      : null;
+  const attendanceRatePercent = calculateAttendanceRatePercent({
+    presentMemberDays,
+    scheduledMemberDays
+  });
   const totalBilledRevenueCents = billedProgramRevenueCents + ancillaryTotalCents;
   const varianceToProjectedCents =
     totalBilledRevenueCents - (projectedProgramRevenueCents + ancillaryTotalCents);

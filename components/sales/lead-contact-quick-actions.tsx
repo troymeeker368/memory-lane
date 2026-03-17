@@ -3,7 +3,7 @@
 import { Mail, Phone } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 
-import { createLeadQuickContactActivityAction } from "@/app/sales-actions";
+import { createLeadQuickContactActivityAction } from "@/app/sales-lead-actions";
 import { Button } from "@/components/ui/button";
 
 function toTelHref(phone: string | null | undefined) {

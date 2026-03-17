@@ -1,4 +1,4 @@
-import { getEnrollmentPacketSenderSignatureProfileAction } from "@/app/sales-actions";
+import { getEnrollmentPacketSenderSignatureProfileAction } from "@/app/sales-enrollment-actions";
 import { EnrollmentPacketSignatureSetup } from "@/components/sales/enrollment-packet-signature-setup";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";

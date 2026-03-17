@@ -5,6 +5,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans-supabase";
 import { getLatestEnrollmentPacketPofStagingSummary } from "@/lib/services/enrollment-packet-intake-staging";
+import { buildPreferredContactByMember } from "@/lib/services/member-contact-priority";
 
 export interface MccMemberRow {
   id: string;
@@ -1481,32 +1482,7 @@ export async function getTransportationAddRiderMemberOptionsSupabase() {
   const commandCenterByMember = new Map(
     commandCenters.map((row) => [row.member_id, row] as const)
   );
-  const contactPriority = (category: string | null | undefined): number => {
-    const normalized = (category ?? "").trim().toLowerCase();
-    if (normalized === "responsible party") return 1;
-    if (normalized === "care provider") return 2;
-    if (normalized === "emergency contact") return 3;
-    if (normalized === "spouse") return 4;
-    if (normalized === "child") return 5;
-    if (normalized === "payor") return 6;
-    if (normalized === "other") return 7;
-    return 8;
-  };
-  const preferredContactByMember = new Map<string, MemberContactRow>();
-  [...contacts]
-    .sort((left, right) => {
-      const memberCompare = left.member_id.localeCompare(right.member_id);
-      if (memberCompare !== 0) return memberCompare;
-      const categoryCompare = contactPriority(left.category) - contactPriority(right.category);
-      if (categoryCompare !== 0) return categoryCompare;
-      if (left.updated_at === right.updated_at) return 0;
-      return left.updated_at > right.updated_at ? -1 : 1;
-    })
-    .forEach((contact) => {
-      if (!preferredContactByMember.has(contact.member_id)) {
-        preferredContactByMember.set(contact.member_id, contact);
-      }
-    });
+  const preferredContactByMember = buildPreferredContactByMember(contacts);
 
   const joinAddress = (parts: Array<string | null | undefined>) =>
     parts.map((value) => (value ?? "").trim()).filter(Boolean).join(", ") || null;

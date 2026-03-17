@@ -7,6 +7,7 @@ import {
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
 import {
+  isMemberHoldActiveForDate,
   resolveExpectedAttendanceForDate,
   type MemberHoldLike
 } from "@/lib/services/expected-attendance";
@@ -432,17 +433,6 @@ function attendanceSettingIncludesDate(attendanceSetting: AttendanceSettingWeekd
   return false;
 }
 
-function isHoldActiveForDate(holds: MemberHoldLike[], dateOnly: string) {
-  return holds.some((hold) => {
-    if (String(hold.status).trim().toLowerCase() !== "active") return false;
-    const start = normalizeDateOnly(hold.start_date);
-    const end = hold.end_date ? normalizeDateOnly(hold.end_date) : null;
-    if (dateOnly < start) return false;
-    if (end && dateOnly > end) return false;
-    return true;
-  });
-}
-
 function toWeekdayOnlyBaseSchedule(input: AttendanceSettingWeekdays | ScheduleTemplateRow | null | undefined) {
   if (!input) return null;
   return {
@@ -467,7 +457,7 @@ function isCanonicalScheduledForBillingDate(input: {
 
   const day = weekdayKey(input.dateOnly);
   if (day === "saturday" || day === "sunday") {
-    return !isHoldActiveForDate(input.holds, input.dateOnly);
+    return !input.holds.some((hold) => isMemberHoldActiveForDate(hold, input.dateOnly));
   }
 
   const resolution = resolveExpectedAttendanceForDate({

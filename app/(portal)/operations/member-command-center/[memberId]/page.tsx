@@ -2,22 +2,27 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
-import { MccDemographicsForm } from "@/components/forms/mcc-demographics-form";
-import { MccAttendanceForm } from "@/components/forms/mcc-attendance-form";
 import { MccLegalForm } from "@/components/forms/mcc-legal-form";
 import { MccSummaryForm } from "@/components/forms/mcc-summary-form";
-import { MccDietForm } from "@/components/forms/mcc-diet-form";
-import { MccAllergiesSection } from "@/components/forms/mcc-allergies-section";
 import { MccHeaderCards } from "@/components/forms/mcc-header-cards";
 import { MccPhotoUploader } from "@/components/forms/mcc-photo-uploader";
 import {
-  MemberCommandCenterContactManagerShell,
   MemberCommandCenterFileManagerShell,
-  MemberCommandCenterPofSectionShell,
-  MccTransportationFormShell
+  MemberCommandCenterPofSectionShell
 } from "@/components/forms/member-command-center-shells";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
+import {
+  MCC_TABS,
+  TAB_LABELS,
+  SectionHeading,
+  boolLabel,
+  firstString,
+  latestTimestamp,
+  latestUpdatedBy,
+  resolveTab,
+  type MccTab
+} from "@/app/(portal)/operations/member-command-center/member-command-center-detail-shared";
 import { requireModuleAccess } from "@/lib/auth";
 import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import { resolveActiveEffectiveMemberRowForDate } from "@/lib/services/billing-effective";
@@ -41,28 +46,6 @@ import { toEasternDate } from "@/lib/timezone";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 const DIET_TYPE_OPTIONS = ["Regular", "Diabetic", "Low Sodium", "Pureed", "Renal", "Heart Healthy", "Other"] as const;
-const DIET_TEXTURE_OPTIONS = ["Regular", "Mechanical Soft", "Chopped", "Ground", "Pureed", "Nectar Thick", "Honey Thick"] as const;
-
-const MCC_TABS = [
-  "member-summary",
-  "demographics-contacts",
-  "attendance-enrollment",
-  "transportation",
-  "legal",
-  "diet-allergies"
-] as const;
-
-type MccTab = (typeof MCC_TABS)[number];
-
-const TAB_LABELS: Record<MccTab, string> = {
-  "member-summary": "Member Summary",
-  "attendance-enrollment": "Attendance / Enrollment",
-  transportation: "Transportation",
-  "demographics-contacts": "Demographics & Contacts",
-  legal: "Legal",
-  "diet-allergies": "Diet / Allergies"
-};
-
 const WEEKDAY_LABELS: Record<(typeof SCHEDULE_WEEKDAY_KEYS)[number], string> = {
   monday: "Mon",
   tuesday: "Tue",
@@ -71,73 +54,110 @@ const WEEKDAY_LABELS: Record<(typeof SCHEDULE_WEEKDAY_KEYS)[number], string> = {
   friday: "Fri"
 };
 
-function firstString(value: string | string[] | undefined) {
-  if (Array.isArray(value)) return value[0];
-  return value;
-}
-
-function resolveTab(raw: string | undefined): MccTab {
-  if (raw && MCC_TABS.includes(raw as MccTab)) return raw as MccTab;
-  return "member-summary";
-}
-
-function boolLabel(value: boolean | null | undefined) {
-  if (value == null) return "-";
-  return value ? "Yes" : "No";
-}
-
-function latestTimestamp(values: Array<string | null | undefined>) {
-  const valid = values.filter((value): value is string => Boolean(value));
-  if (valid.length === 0) return null;
-  return valid.reduce((latest, current) => {
-    const latestMs = Number.isNaN(Date.parse(latest)) ? 0 : Date.parse(latest);
-    const currentMs = Number.isNaN(Date.parse(current)) ? 0 : Date.parse(current);
-    return currentMs > latestMs ? current : latest;
-  });
-}
-
-function latestUpdatedBy<T>(
-  rows: T[],
-  getTimestamp: (row: T) => string | null | undefined,
-  getBy: (row: T) => string | null | undefined
-) {
-  let latestAt: string | null = null;
-  let latestBy: string | null = null;
-  rows.forEach((row) => {
-    const currentAt = getTimestamp(row);
-    if (!currentAt) return;
-    if (!latestAt) {
-      latestAt = currentAt;
-      latestBy = getBy(row) ?? null;
-      return;
-    }
-    const latestMs = Number.isNaN(Date.parse(latestAt)) ? 0 : Date.parse(latestAt);
-    const currentMs = Number.isNaN(Date.parse(currentAt)) ? 0 : Date.parse(currentAt);
-    if (currentMs > latestMs) {
-      latestAt = currentAt;
-      latestBy = getBy(row) ?? null;
-    }
-  });
-  return latestBy;
-}
-
-function SectionHeading({
-  title,
-  lastUpdatedAt,
-  lastUpdatedBy
-}: {
-  title: string;
-  lastUpdatedAt: string | null | undefined;
-  lastUpdatedBy: string | null | undefined;
+async function renderTabSection(input: {
+  tab: MccTab;
+  canEdit: boolean;
+  canEditAttendanceBilling: boolean;
+  detail: Awaited<ReturnType<typeof getMemberCommandCenterDetailSupabase>>;
+  profileUpdatedAt: string | null;
+  profileUpdatedBy: string | null;
+  scheduleUpdatedAt: string | null;
+  scheduleUpdatedBy: string | null;
+  monthsEnrolled: number | null;
+  scheduleDays: string;
+  transportationSummary: string;
+  effectiveScheduleTodayLabel: string;
+  activeOverrideCount: number;
+  activeMemberBillingSetting: {
+    payor_id: string | null;
+    use_center_default_billing_mode: boolean;
+    billing_mode: "Membership" | "Monthly" | "Custom" | null;
+    monthly_billing_basis: "ScheduledMonthBehind" | "ActualAttendanceMonthBehind";
+    bill_extra_days: boolean;
+    bill_ancillary_arrears: boolean;
+  } | null;
+  activePayorOptions: Array<{ id: string; name: string }>;
+  defaultDoorToDoorAddress: string;
+  configuredTransportTrips: number;
+  expectedTransportSlots: number;
+  busNumberOptions: string[];
+  contactsUpdatedAt: string | null;
+  contactsUpdatedBy: string | null;
+  dietTypeDefault: string;
+  dietTypeOtherDefault: string;
+  dietTextureDefault: string;
+  allergiesUpdatedAt: string | null;
+  allergiesUpdatedBy: string | null;
 }) {
-  return (
-    <div className="flex w-full flex-wrap items-baseline justify-start gap-x-3 gap-y-1 text-left">
-      <CardTitle className="text-left">{title}</CardTitle>
-      <span className="text-left text-xs font-normal text-muted">
-        Last updated: {lastUpdatedAt ? formatDateTime(lastUpdatedAt) : "-"} | Last updated by: {lastUpdatedBy ?? "-"}
-      </span>
-    </div>
-  );
+  if (!input.detail) return null;
+
+  switch (input.tab) {
+    case "attendance-enrollment": {
+      const { default: AttendanceTab } = await import("@/app/(portal)/operations/member-command-center/attendance-tab");
+      return (
+        <AttendanceTab
+          canEditAttendanceBilling={input.canEditAttendanceBilling}
+          detail={input.detail}
+          scheduleUpdatedAt={input.scheduleUpdatedAt}
+          scheduleUpdatedBy={input.scheduleUpdatedBy}
+          monthsEnrolled={input.monthsEnrolled}
+          scheduleDays={input.scheduleDays}
+          transportationSummary={input.transportationSummary}
+          effectiveScheduleTodayLabel={input.effectiveScheduleTodayLabel}
+          activeOverrideCount={input.activeOverrideCount}
+          activeMemberBillingSetting={input.activeMemberBillingSetting}
+          activePayorOptions={input.activePayorOptions}
+        />
+      );
+    }
+    case "transportation": {
+      const { default: TransportationTab } = await import("@/app/(portal)/operations/member-command-center/transportation-tab");
+      return (
+        <TransportationTab
+          canEdit={input.canEdit}
+          detail={input.detail}
+          scheduleUpdatedAt={input.scheduleUpdatedAt}
+          scheduleUpdatedBy={input.scheduleUpdatedBy}
+          transportationSummary={input.transportationSummary}
+          configuredTransportTrips={input.configuredTransportTrips}
+          expectedTransportSlots={input.expectedTransportSlots}
+          defaultDoorToDoorAddress={input.defaultDoorToDoorAddress}
+          busNumberOptions={input.busNumberOptions}
+        />
+      );
+    }
+    case "demographics-contacts": {
+      const { default: DemographicsTab } = await import("@/app/(portal)/operations/member-command-center/demographics-tab");
+      return (
+        <DemographicsTab
+          canEdit={input.canEdit}
+          detail={input.detail}
+          profileUpdatedAt={input.profileUpdatedAt}
+          profileUpdatedBy={input.profileUpdatedBy}
+          contactsUpdatedAt={input.contactsUpdatedAt}
+          contactsUpdatedBy={input.contactsUpdatedBy}
+        />
+      );
+    }
+    case "diet-allergies": {
+      const { default: DietTab } = await import("@/app/(portal)/operations/member-command-center/diet-tab");
+      return (
+        <DietTab
+          canEdit={input.canEdit}
+          detail={input.detail}
+          profileUpdatedAt={input.profileUpdatedAt}
+          profileUpdatedBy={input.profileUpdatedBy}
+          dietTypeDefault={input.dietTypeDefault}
+          dietTypeOtherDefault={input.dietTypeOtherDefault}
+          dietTextureDefault={input.dietTextureDefault}
+          allergiesUpdatedAt={input.allergiesUpdatedAt}
+          allergiesUpdatedBy={input.allergiesUpdatedBy}
+        />
+      );
+    }
+    default:
+      return null;
+  }
 }
 
 export default async function MemberCommandCenterDetailPage({
@@ -224,19 +244,6 @@ export default async function MemberCommandCenterDetailPage({
   const expectedTransportSlots = slotModes.length;
   const configuredTransportTrips = slotModes.filter(Boolean).length;
   const uniqueConfiguredModes = Array.from(new Set(slotModes.filter(Boolean)));
-  const formatTransportSlot = (
-    mode: "Door to Door" | "Bus Stop" | null | undefined,
-    doorToDoorAddress: string | null | undefined,
-    busNumber: string | null | undefined,
-    busStop: string | null | undefined
-  ) => {
-    if (!mode) return "None";
-    if (mode === "Door to Door") return doorToDoorAddress ? `Door to Door - ${doorToDoorAddress}` : "Door to Door";
-    if (busNumber && busStop) return `Bus #${busNumber} - ${busStop}`;
-    if (busNumber) return `Bus #${busNumber}`;
-    if (busStop) return `Bus Stop - ${busStop}`;
-    return "Bus Stop";
-  };
   const transportationSummary =
     detail.schedule?.transportation_required === true
       ? configuredTransportTrips === 0
@@ -272,6 +279,34 @@ export default async function MemberCommandCenterDetailPage({
   const defaultFromEmail = getConfiguredClinicalSenderEmail();
   const physicianOrdersUpdatedAt = latestTimestamp(physicianOrders.map((row) => row.updatedAt));
   const physicianOrdersUpdatedBy = latestUpdatedBy(physicianOrders, (row) => row.updatedAt, (row) => row.updatedByName);
+  const tabSection = await renderTabSection({
+    tab,
+    canEdit,
+    canEditAttendanceBilling,
+    detail,
+    profileUpdatedAt,
+    profileUpdatedBy,
+    scheduleUpdatedAt,
+    scheduleUpdatedBy,
+    monthsEnrolled,
+    scheduleDays,
+    transportationSummary,
+    effectiveScheduleTodayLabel,
+    activeOverrideCount,
+    activeMemberBillingSetting,
+    activePayorOptions,
+    defaultDoorToDoorAddress,
+    configuredTransportTrips,
+    expectedTransportSlots,
+    busNumberOptions,
+    contactsUpdatedAt,
+    contactsUpdatedBy,
+    dietTypeDefault,
+    dietTypeOtherDefault,
+    dietTextureDefault,
+    allergiesUpdatedAt,
+    allergiesUpdatedBy
+  });
 
   return (
     <div className="space-y-4">
@@ -434,251 +469,7 @@ export default async function MemberCommandCenterDetailPage({
         </Card>
       ) : null}
 
-      {tab === "attendance-enrollment" ? (
-        <Card id="attendance-enrollment">
-          <SectionHeading title="Attendance / Enrollment" lastUpdatedAt={scheduleUpdatedAt} lastUpdatedBy={scheduleUpdatedBy} />
-          <div className="mt-3 grid gap-3 md:grid-cols-5">
-            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Enrollment Date</p><p className="font-semibold">{formatOptionalDate(detail.schedule?.enrollment_date ?? detail.member.enrollment_date)}</p></div>
-            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Months Enrolled</p><p className="font-semibold">{monthsEnrolled ?? "-"}</p></div>
-            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Scheduled Days</p><p className="font-semibold">{scheduleDays}</p></div>
-            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Transportation</p><p className="font-semibold">{transportationSummary}</p></div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted">Effective Days (Today)</p>
-              <p className="font-semibold">{effectiveScheduleTodayLabel}</p>
-              <p className="text-[11px] text-muted">Active schedule changes: {activeOverrideCount}</p>
-            </div>
-          </div>
-
-          {canEditAttendanceBilling && detail.schedule ? (
-            <MccAttendanceForm
-              key={`mcc-attendance-${detail.member.id}-${scheduleUpdatedAt ?? "na"}`}
-              memberId={detail.member.id}
-              enrollmentDate={detail.schedule.enrollment_date ?? ""}
-              makeUpDaysAvailable={detail.schedule.make_up_days_available}
-              attendanceNotes={detail.schedule.attendance_notes}
-              dailyRate={detail.schedule.daily_rate}
-              transportationBillingStatus={detail.schedule.transportation_billing_status}
-              payorId={activeMemberBillingSetting?.payor_id ?? null}
-              payorOptions={activePayorOptions}
-              useCenterDefaultBillingMode={activeMemberBillingSetting?.use_center_default_billing_mode ?? true}
-              billingMode={activeMemberBillingSetting?.billing_mode ?? null}
-              monthlyBillingBasis={activeMemberBillingSetting?.monthly_billing_basis ?? "ScheduledMonthBehind"}
-              billExtraDays={activeMemberBillingSetting?.bill_extra_days ?? true}
-              billAncillaryArrears={activeMemberBillingSetting?.bill_ancillary_arrears ?? true}
-              billingRateEffectiveDate={detail.schedule.billing_rate_effective_date}
-              billingNotes={detail.schedule.billing_notes}
-              monday={detail.schedule.monday}
-              tuesday={detail.schedule.tuesday}
-              wednesday={detail.schedule.wednesday}
-              thursday={detail.schedule.thursday}
-              friday={detail.schedule.friday}
-            />
-          ) : null}
-
-          <div className="mt-4 table-wrap">
-            <p className="text-sm font-semibold text-primary-text">Makeup Day History</p>
-            <table className="mt-2">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Delta</th>
-                  <th>Balance Policy</th>
-                  <th>Reason</th>
-                  <th>By</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detail.makeupLedger.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="text-sm text-muted">
-                      No makeup day activity yet.
-                    </td>
-                  </tr>
-                ) : (
-                  detail.makeupLedger.slice(0, 20).map((entry) => (
-                    <tr key={entry.id}>
-                      <td>{formatOptionalDate(entry.effectiveDate)}</td>
-                      <td>{entry.deltaDays > 0 ? `+${entry.deltaDays}` : entry.deltaDays}</td>
-                      <td>{entry.expiresAt ? `Expires ${formatOptionalDate(entry.expiresAt)}` : "Running total"}</td>
-                      <td>{entry.reason}</td>
-                      <td>{entry.createdByName}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      ) : null}
-
-      {tab === "transportation" ? (
-        <Card id="transportation">
-          <SectionHeading title="Transportation" lastUpdatedAt={scheduleUpdatedAt} lastUpdatedBy={scheduleUpdatedBy} />
-
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted">Transportation</p>
-              <p className="font-semibold">{detail.schedule?.transportation_required == null ? "-" : detail.schedule.transportation_required ? "Yes" : "No"}</p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted">Transport Type</p>
-              <p className="font-semibold">{transportationSummary}</p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted">Configured Trips</p>
-              <p className="font-semibold">{configuredTransportTrips} / {expectedTransportSlots}</p>
-            </div>
-          </div>
-
-          <div className="mt-3 grid gap-3 md:grid-cols-5 text-sm">
-            {detail.schedule?.monday ? (
-              <div className="rounded-lg border border-border p-3">
-                <p className="text-xs text-muted">Monday</p>
-                <p className="font-semibold">AM: {formatTransportSlot(detail.schedule.transport_monday_am_mode, detail.schedule.transport_monday_am_door_to_door_address, detail.schedule.transport_monday_am_bus_number, detail.schedule.transport_monday_am_bus_stop)}</p>
-                <p className="font-semibold">PM: {formatTransportSlot(detail.schedule.transport_monday_pm_mode, detail.schedule.transport_monday_pm_door_to_door_address, detail.schedule.transport_monday_pm_bus_number, detail.schedule.transport_monday_pm_bus_stop)}</p>
-              </div>
-            ) : null}
-            {detail.schedule?.tuesday ? (
-              <div className="rounded-lg border border-border p-3">
-                <p className="text-xs text-muted">Tuesday</p>
-                <p className="font-semibold">AM: {formatTransportSlot(detail.schedule.transport_tuesday_am_mode, detail.schedule.transport_tuesday_am_door_to_door_address, detail.schedule.transport_tuesday_am_bus_number, detail.schedule.transport_tuesday_am_bus_stop)}</p>
-                <p className="font-semibold">PM: {formatTransportSlot(detail.schedule.transport_tuesday_pm_mode, detail.schedule.transport_tuesday_pm_door_to_door_address, detail.schedule.transport_tuesday_pm_bus_number, detail.schedule.transport_tuesday_pm_bus_stop)}</p>
-              </div>
-            ) : null}
-            {detail.schedule?.wednesday ? (
-              <div className="rounded-lg border border-border p-3">
-                <p className="text-xs text-muted">Wednesday</p>
-                <p className="font-semibold">AM: {formatTransportSlot(detail.schedule.transport_wednesday_am_mode, detail.schedule.transport_wednesday_am_door_to_door_address, detail.schedule.transport_wednesday_am_bus_number, detail.schedule.transport_wednesday_am_bus_stop)}</p>
-                <p className="font-semibold">PM: {formatTransportSlot(detail.schedule.transport_wednesday_pm_mode, detail.schedule.transport_wednesday_pm_door_to_door_address, detail.schedule.transport_wednesday_pm_bus_number, detail.schedule.transport_wednesday_pm_bus_stop)}</p>
-              </div>
-            ) : null}
-            {detail.schedule?.thursday ? (
-              <div className="rounded-lg border border-border p-3">
-                <p className="text-xs text-muted">Thursday</p>
-                <p className="font-semibold">AM: {formatTransportSlot(detail.schedule.transport_thursday_am_mode, detail.schedule.transport_thursday_am_door_to_door_address, detail.schedule.transport_thursday_am_bus_number, detail.schedule.transport_thursday_am_bus_stop)}</p>
-                <p className="font-semibold">PM: {formatTransportSlot(detail.schedule.transport_thursday_pm_mode, detail.schedule.transport_thursday_pm_door_to_door_address, detail.schedule.transport_thursday_pm_bus_number, detail.schedule.transport_thursday_pm_bus_stop)}</p>
-              </div>
-            ) : null}
-            {detail.schedule?.friday ? (
-              <div className="rounded-lg border border-border p-3">
-                <p className="text-xs text-muted">Friday</p>
-                <p className="font-semibold">AM: {formatTransportSlot(detail.schedule.transport_friday_am_mode, detail.schedule.transport_friday_am_door_to_door_address, detail.schedule.transport_friday_am_bus_number, detail.schedule.transport_friday_am_bus_stop)}</p>
-                <p className="font-semibold">PM: {formatTransportSlot(detail.schedule.transport_friday_pm_mode, detail.schedule.transport_friday_pm_door_to_door_address, detail.schedule.transport_friday_pm_bus_number, detail.schedule.transport_friday_pm_bus_stop)}</p>
-              </div>
-            ) : null}
-          </div>
-
-          {canEdit && detail.schedule ? (
-            <MccTransportationFormShell
-              key={`mcc-transport-${detail.member.id}-${scheduleUpdatedAt ?? "na"}`}
-              memberId={detail.member.id}
-              transportationRequired={detail.schedule.transportation_required}
-              defaultDoorToDoorAddress={defaultDoorToDoorAddress}
-              monday={detail.schedule.monday}
-              tuesday={detail.schedule.tuesday}
-              wednesday={detail.schedule.wednesday}
-              thursday={detail.schedule.thursday}
-              friday={detail.schedule.friday}
-              transportMondayAmMode={detail.schedule.transport_monday_am_mode}
-              transportMondayAmDoorToDoorAddress={detail.schedule.transport_monday_am_door_to_door_address}
-              transportMondayAmBusNumber={detail.schedule.transport_monday_am_bus_number}
-              transportMondayAmBusStop={detail.schedule.transport_monday_am_bus_stop}
-              transportMondayPmMode={detail.schedule.transport_monday_pm_mode}
-              transportMondayPmDoorToDoorAddress={detail.schedule.transport_monday_pm_door_to_door_address}
-              transportMondayPmBusNumber={detail.schedule.transport_monday_pm_bus_number}
-              transportMondayPmBusStop={detail.schedule.transport_monday_pm_bus_stop}
-              transportTuesdayAmMode={detail.schedule.transport_tuesday_am_mode}
-              transportTuesdayAmDoorToDoorAddress={detail.schedule.transport_tuesday_am_door_to_door_address}
-              transportTuesdayAmBusNumber={detail.schedule.transport_tuesday_am_bus_number}
-              transportTuesdayAmBusStop={detail.schedule.transport_tuesday_am_bus_stop}
-              transportTuesdayPmMode={detail.schedule.transport_tuesday_pm_mode}
-              transportTuesdayPmDoorToDoorAddress={detail.schedule.transport_tuesday_pm_door_to_door_address}
-              transportTuesdayPmBusNumber={detail.schedule.transport_tuesday_pm_bus_number}
-              transportTuesdayPmBusStop={detail.schedule.transport_tuesday_pm_bus_stop}
-              transportWednesdayAmMode={detail.schedule.transport_wednesday_am_mode}
-              transportWednesdayAmDoorToDoorAddress={detail.schedule.transport_wednesday_am_door_to_door_address}
-              transportWednesdayAmBusNumber={detail.schedule.transport_wednesday_am_bus_number}
-              transportWednesdayAmBusStop={detail.schedule.transport_wednesday_am_bus_stop}
-              transportWednesdayPmMode={detail.schedule.transport_wednesday_pm_mode}
-              transportWednesdayPmDoorToDoorAddress={detail.schedule.transport_wednesday_pm_door_to_door_address}
-              transportWednesdayPmBusNumber={detail.schedule.transport_wednesday_pm_bus_number}
-              transportWednesdayPmBusStop={detail.schedule.transport_wednesday_pm_bus_stop}
-              transportThursdayAmMode={detail.schedule.transport_thursday_am_mode}
-              transportThursdayAmDoorToDoorAddress={detail.schedule.transport_thursday_am_door_to_door_address}
-              transportThursdayAmBusNumber={detail.schedule.transport_thursday_am_bus_number}
-              transportThursdayAmBusStop={detail.schedule.transport_thursday_am_bus_stop}
-              transportThursdayPmMode={detail.schedule.transport_thursday_pm_mode}
-              transportThursdayPmDoorToDoorAddress={detail.schedule.transport_thursday_pm_door_to_door_address}
-              transportThursdayPmBusNumber={detail.schedule.transport_thursday_pm_bus_number}
-              transportThursdayPmBusStop={detail.schedule.transport_thursday_pm_bus_stop}
-              transportFridayAmMode={detail.schedule.transport_friday_am_mode}
-              transportFridayAmDoorToDoorAddress={detail.schedule.transport_friday_am_door_to_door_address}
-              transportFridayAmBusNumber={detail.schedule.transport_friday_am_bus_number}
-              transportFridayAmBusStop={detail.schedule.transport_friday_am_bus_stop}
-              transportFridayPmMode={detail.schedule.transport_friday_pm_mode}
-              transportFridayPmDoorToDoorAddress={detail.schedule.transport_friday_pm_door_to_door_address}
-              transportFridayPmBusNumber={detail.schedule.transport_friday_pm_bus_number}
-              transportFridayPmBusStop={detail.schedule.transport_friday_pm_bus_stop}
-              busStopOptions={detail.busStopDirectory.map((entry) => entry.bus_stop_name)}
-              busNumberOptions={busNumberOptions}
-            />
-          ) : null}
-        </Card>
-      ) : null}
-
-      {tab === "demographics-contacts" ? (
-        <div className="space-y-4">
-          <Card id="demographics">
-            <SectionHeading title="Demographics" lastUpdatedAt={profileUpdatedAt} lastUpdatedBy={profileUpdatedBy} />
-            {canEdit ? (
-              <MccDemographicsForm
-                key={`mcc-demographics-${detail.member.id}-${profileUpdatedAt ?? "na"}`}
-                memberId={detail.member.id}
-                memberDisplayName={detail.member.display_name}
-                memberDob={detail.member.dob ?? ""}
-                gender={detail.profile.gender ?? ""}
-                streetAddress={detail.profile.street_address ?? ""}
-                city={detail.profile.city ?? detail.member.city ?? ""}
-                state={detail.profile.state ?? ""}
-                zip={detail.profile.zip ?? ""}
-                maritalStatus={detail.profile.marital_status ?? ""}
-                primaryLanguage={detail.profile.primary_language ?? ""}
-                secondaryLanguage={detail.profile.secondary_language ?? ""}
-                religion={detail.profile.religion ?? ""}
-                ethnicity={detail.profile.ethnicity ?? ""}
-                isVeteran={detail.profile.is_veteran}
-                veteranBranch={detail.profile.veteran_branch ?? ""}
-              />
-            ) : (
-              <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
-                <p>Name: {detail.member.display_name}</p>
-                <p>DOB: {formatOptionalDate(detail.member.dob)}</p>
-                <p>Gender: {detail.profile.gender ?? "-"}</p>
-                <p>Address: {[detail.profile.street_address, detail.profile.city, detail.profile.state, detail.profile.zip].filter(Boolean).join(", ") || "-"}</p>
-                <p>Marital: {detail.profile.marital_status ?? "-"}</p>
-                <p>Primary Language: {detail.profile.primary_language ?? "-"}</p>
-                <p>Secondary Language: {detail.profile.secondary_language ?? "-"}</p>
-                <p>Religion: {detail.profile.religion ?? "-"}</p>
-                <p>Ethnicity: {detail.profile.ethnicity ?? "-"}</p>
-                <p>Veteran: {boolLabel(detail.profile.is_veteran)}</p>
-                <p>Veteran Branch: {detail.profile.veteran_branch ?? "-"}</p>
-              </div>
-            )}
-          </Card>
-
-          <Card id="contacts">
-            <SectionHeading title="Contacts" lastUpdatedAt={contactsUpdatedAt} lastUpdatedBy={contactsUpdatedBy} />
-            <div className="mt-3">
-              <MemberCommandCenterContactManagerShell
-                key={`mcc-contacts-${detail.member.id}-${contactsUpdatedAt ?? "na"}`}
-                memberId={detail.member.id}
-                rows={detail.contacts}
-                canEdit={canEdit}
-              />
-            </div>
-          </Card>
-        </div>
-      ) : null}
+      {tabSection}
 
       {tab === "legal" ? (
         <Card id="legal-info">
@@ -708,69 +499,6 @@ export default async function MemberCommandCenterDetailPage({
               <p className="md:col-span-2">Comments: {detail.profile.legal_comments ?? "-"}</p>
             </div>
           )}
-        </Card>
-      ) : null}
-
-      {tab === "diet-allergies" ? (
-        <Card id="diet-allergies">
-          <SectionHeading title="Diet / Allergies" lastUpdatedAt={profileUpdatedAt} lastUpdatedBy={profileUpdatedBy} />
-          {canEdit ? (
-            <MccDietForm
-              key={`mcc-diet-${detail.member.id}-${profileUpdatedAt ?? "na"}`}
-              memberId={detail.member.id}
-              dietCardHref={`/members/${detail.member.id}/diet-card?from=mcc`}
-              dietTypeDefault={dietTypeDefault}
-              dietTypeOtherDefault={dietTypeOtherDefault}
-              textureDefault={dietTextureDefault}
-              dietTypeOptions={DIET_TYPE_OPTIONS}
-              dietTextureOptions={DIET_TEXTURE_OPTIONS}
-              swallowingDifficulty={detail.profile.swallowing_difficulty ?? ""}
-              supplements={detail.profile.supplements ?? ""}
-              dietaryPreferencesRestrictions={detail.profile.dietary_preferences_restrictions ?? ""}
-              foodDislikes={detail.profile.food_dislikes ?? ""}
-              foodsToOmit={detail.profile.foods_to_omit ?? ""}
-              commandCenterNotes={detail.profile.command_center_notes ?? ""}
-            />
-          ) : (
-            <>
-              <div className="mt-3 flex justify-end">
-                <a
-                  href={`/members/${detail.member.id}/diet-card?from=mcc`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
-                >
-                  Print Diet Card
-                </a>
-              </div>
-              <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
-                <p>Diet: {detail.profile.diet_type ?? "-"}</p>
-                <p>Texture: {detail.profile.diet_texture ?? "-"}</p>
-                <p>Restrictions: {detail.profile.dietary_preferences_restrictions ?? "-"}</p>
-                <p>Swallowing Difficulty: {detail.profile.swallowing_difficulty ?? "-"}</p>
-                <p>Supplements: {detail.profile.supplements ?? "-"}</p>
-                <p>Food Dislikes: {detail.profile.food_dislikes ?? "-"}</p>
-                <p>Foods to Omit: {detail.profile.foods_to_omit ?? "-"}</p>
-                <p className="md:col-span-2">Notes: {detail.profile.command_center_notes ?? "-"}</p>
-              </div>
-            </>
-          )}
-          <div className="mt-4">
-            <SectionHeading title="Allergies" lastUpdatedAt={allergiesUpdatedAt} lastUpdatedBy={allergiesUpdatedBy} />
-          </div>
-          <MccAllergiesSection
-            key={`mcc-allergies-${detail.member.id}-${allergiesUpdatedAt ?? "na"}`}
-            memberId={detail.member.id}
-            canEdit={canEdit}
-            initialRows={detail.mhpAllergies.map((row) => ({
-              id: row.id,
-              allergy_group: row.allergy_group,
-              allergy_name: row.allergy_name,
-              severity: row.severity,
-              comments: row.comments,
-              updated_at: row.updated_at
-            }))}
-          />
         </Card>
       ) : null}
 

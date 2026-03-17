@@ -16,6 +16,7 @@ import {
   resolveExpectedAttendanceFromSupabaseContext,
   type ExpectedAttendanceSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
+import { calculateAttendanceRatePercent } from "@/lib/services/attendance-rate";
 import {
   type ScheduleWeekdayKey
 } from "@/lib/services/schedule-changes-supabase";
@@ -680,8 +681,10 @@ export async function getWeeklyAttendanceView(input?: { anchorDate?: string | nu
     }
   );
 
-  totals.attendanceRatePercent =
-    totals.scheduledMemberDays > 0 ? Math.round((totals.presentMemberDays / totals.scheduledMemberDays) * 100) : null;
+  totals.attendanceRatePercent = calculateAttendanceRatePercent({
+    presentMemberDays: totals.presentMemberDays,
+    scheduledMemberDays: totals.scheduledMemberDays
+  });
 
   return {
     weekStartDate: range.startDate,
@@ -706,10 +709,10 @@ export async function getDailyCensusView(input?: { selectedDate?: string | null 
     pendingMembers: daily.summary.pendingMembers,
     transportMembers: daily.summary.transportMembers,
     onHoldExcludedMembers: daily.summary.onHoldExcludedMembers,
-    attendanceRatePercent:
-      daily.summary.scheduledMembers > 0
-        ? Math.round((daily.summary.presentMembers / daily.summary.scheduledMembers) * 100)
-        : null
+    attendanceRatePercent: calculateAttendanceRatePercent({
+      presentMemberDays: daily.summary.presentMembers,
+      scheduledMemberDays: daily.summary.scheduledMembers
+    })
   };
 }
 

@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 
-import { createSalesLeadActivityAction, saveSalesLeadAction } from "@/app/sales-actions";
+import { createSalesLeadActivityAction, saveSalesLeadAction } from "@/app/sales-lead-actions";
 import {
   LEAD_FOLLOW_UP_TYPES,
   LEAD_LIKELIHOOD_OPTIONS,

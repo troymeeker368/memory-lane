@@ -10,6 +10,7 @@ import {
   getOperationsTodayDate,
   getFirstDayOfNextMonth
 } from "@/lib/services/operations-calendar";
+import { isMemberHoldActiveForDate } from "@/lib/services/expected-attendance";
 import { listMemberHolds } from "@/lib/services/holds-supabase";
 import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
@@ -17,16 +18,6 @@ import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 function firstString(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0];
   return value;
-}
-
-function isHoldActiveForDate(
-  hold: { status: string; start_date: string; end_date: string | null },
-  dateOnly: string
-) {
-  if (hold.status !== "active") return false;
-  if (dateOnly < hold.start_date) return false;
-  if (hold.end_date && dateOnly > hold.end_date) return false;
-  return true;
 }
 
 export default async function OperationsHoldsPage({
@@ -53,7 +44,7 @@ export default async function OperationsHoldsPage({
     return left.start_date < right.start_date ? 1 : -1;
   });
 
-  const activeForDate = sortedHolds.filter((hold) => isHoldActiveForDate(hold, selectedDate));
+  const activeForDate = sortedHolds.filter((hold) => isMemberHoldActiveForDate(hold, selectedDate));
   const upcoming = sortedHolds.filter((hold) => hold.status === "active" && hold.start_date > selectedDate);
   const ended = sortedHolds.filter((hold) => hold.status === "ended" || (hold.end_date && hold.end_date < selectedDate));
 

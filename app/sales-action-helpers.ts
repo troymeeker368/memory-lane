@@ -9,6 +9,8 @@ import { normalizePhoneForStorage } from "@/lib/phone";
 import { resolveCanonicalLeadRef } from "@/lib/services/canonical-person-ref";
 import { applyLeadStageTransitionWithMemberUpsertSupabase } from "@/lib/services/sales-lead-conversion-supabase";
 
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
 export const optionalString = z.string().optional().or(z.literal(""));
 
 export async function requireSalesRoles() {
@@ -100,7 +102,7 @@ export async function applyClosedWonLeadConversion(input: {
   memberDob?: string | null;
   memberEnrollmentDate: string;
   existingMemberId?: string | null;
-  additionalLeadPatch?: Record<string, unknown>;
+  additionalLeadPatch?: Record<string, JsonValue>;
 }) {
   return applyLeadStageTransitionWithMemberUpsertSupabase({
     leadId: input.leadId,

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
-import { enrollMemberFromLeadAction } from "@/app/sales-actions";
+import { enrollMemberFromLeadAction } from "@/app/sales-lead-actions";
 import { Button } from "@/components/ui/button";
 
 type EnrollMemberResponse = {

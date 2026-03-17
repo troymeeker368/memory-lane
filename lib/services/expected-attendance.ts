@@ -45,6 +45,13 @@ export interface ExpectedAttendanceResolution {
   appliedChangeIds: string[];
 }
 
+function normalizeDate(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return normalizeOperationalDateOnly(raw);
+}
+
 function isDateWithinRange(input: {
   date: string;
   startDate: string;
@@ -78,10 +85,12 @@ function weekdayArrayFromSet(set: Set<ScheduleWeekdayKey>) {
   return SCHEDULE_WEEKDAY_KEYS.filter((day) => set.has(day));
 }
 
-function isHoldActiveForDate(hold: MemberHoldLike, dateOnly: string) {
+export function isMemberHoldActiveForDate(hold: MemberHoldLike, dateOnlyInput: string) {
+  const dateOnly = normalizeOperationalDateOnly(dateOnlyInput);
   if (String(hold.status).trim().toLowerCase() !== "active") return false;
-  const start = normalizeOperationalDateOnly(hold.start_date);
-  const end = hold.end_date ? normalizeOperationalDateOnly(hold.end_date) : null;
+  const start = normalizeDate(hold.start_date);
+  const end = normalizeDate(hold.end_date);
+  if (!start) return false;
   return isDateWithinRange({
     date: dateOnly,
     startDate: start,
@@ -191,7 +200,7 @@ export function resolveExpectedAttendanceForDate(input: {
     weekdaySet.has(weekday as ScheduleWeekdayKey);
   const hasUnscheduledAttendanceAddition = Boolean(input.hasUnscheduledAttendanceAddition);
   const scheduledFromSchedule = isScheduledWeekday || hasUnscheduledAttendanceAddition;
-  const onHold = (input.holds ?? []).some((hold) => isHoldActiveForDate(hold, date));
+  const onHold = (input.holds ?? []).some((hold) => isMemberHoldActiveForDate(hold, date));
   const centerClosed = isCenterClosedOnDate(input.centerClosures ?? [], date);
 
   if (centerClosed) {

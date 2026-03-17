@@ -5,27 +5,11 @@ import {
   type MemberHoldRow
 } from "@/lib/services/holds-supabase";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
+import { isMemberHoldActiveForDate } from "@/lib/services/expected-attendance";
 
 export interface HoldCoverageResult {
   isOnHold: boolean;
   hold: MemberHoldRow | null;
-}
-
-function normalizeDate(value: string | null | undefined) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  return normalizeOperationalDateOnly(raw);
-}
-
-function isHoldActiveForDate(hold: MemberHoldRow, dateOnly: string) {
-  if (hold.status !== "active") return false;
-  const start = normalizeDate(hold.start_date);
-  const end = normalizeDate(hold.end_date);
-  if (!start) return false;
-  if (dateOnly < start) return false;
-  if (end && dateOnly > end) return false;
-  return true;
 }
 
 export async function getMemberHoldCoverageForDate(memberId: string, dateOnlyInput: string): Promise<HoldCoverageResult> {
@@ -34,7 +18,7 @@ export async function getMemberHoldCoverageForDate(memberId: string, dateOnlyInp
   const hold =
     holds
       .filter((row) => row.member_id === memberId)
-      .find((row) => isHoldActiveForDate(row, dateOnly)) ?? null;
+      .find((row) => isMemberHoldActiveForDate(row, dateOnly)) ?? null;
 
   return {
     isOnHold: Boolean(hold),
@@ -57,7 +41,7 @@ export async function getMemberHoldsByDate(dateOnlyInput: string) {
   const dateOnly = normalizeOperationalDateOnly(dateOnlyInput);
   const holds = await listMemberHolds();
   return holds
-    .filter((row) => isHoldActiveForDate(row, dateOnly))
+    .filter((row) => isMemberHoldActiveForDate(row, dateOnly))
     .sort((left, right) => left.member_id.localeCompare(right.member_id, undefined, { sensitivity: "base" }));
 }
 

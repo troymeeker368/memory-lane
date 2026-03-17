@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { sendEnrollmentPacketAction } from "@/app/sales-actions";
+import { sendEnrollmentPacketAction } from "@/app/sales-enrollment-actions";
 import { Button } from "@/components/ui/button";
 import {
   calculateInitialEnrollmentAmount,
