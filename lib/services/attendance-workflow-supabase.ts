@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import type { AppRole } from "@/types/app";
 
 export type AttendanceRecordRow = {
@@ -135,7 +136,7 @@ export async function applyMakeupBalanceDeltaWithAuditSupabase(input: {
   failIfInsufficient?: boolean;
 }) {
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("apply_makeup_balance_delta_with_audit", {
+  const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, "apply_makeup_balance_delta_with_audit", {
     p_schedule_id: input.scheduleId,
     p_member_id: input.memberId,
     p_attendance_date: input.attendanceDate,
@@ -147,7 +148,6 @@ export async function applyMakeupBalanceDeltaWithAuditSupabase(input: {
     p_at: input.at,
     p_fail_if_insufficient: Boolean(input.failIfInsufficient)
   });
-  if (error) throw new Error(error.message);
 
   const payload = data as { applied?: unknown; previousBalance?: unknown; nextBalance?: unknown } | null;
   return {

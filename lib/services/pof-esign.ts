@@ -37,6 +37,9 @@ export type PofRequestStatus = (typeof POF_REQUEST_STATUS_VALUES)[number];
 
 const TOKEN_BYTE_LENGTH = 32;
 const RPC_FINALIZE_POF_SIGNATURE = "rpc_finalize_pof_signature";
+const PREPARE_POF_REQUEST_DELIVERY_RPC = "rpc_prepare_pof_request_delivery";
+const TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC = "rpc_transition_pof_request_delivery_state";
+const POF_DELIVERY_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
 
 async function createResendClient() {
   const { Resend } = await import("resend");
@@ -672,17 +675,19 @@ async function createDocumentEvent(input: {
 
 async function markRequestExpired(input: { request: PofRequestRow; actorName: string }) {
   const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin
-    .from("pof_requests")
-    .update({
-      status: "expired",
-      updated_by_user_id: input.request.sent_by_user_id,
-      updated_by_name: input.actorName,
-      updated_at: now
-    })
-    .eq("id", input.request.id);
-  if (error) throw new Error(error.message);
+  await markPofRequestDeliveryState({
+    requestId: input.request.id,
+    actor: {
+      id: input.request.sent_by_user_id,
+      fullName: input.actorName
+    },
+    status: "expired",
+    deliveryStatus: toSendWorkflowDeliveryStatus(input.request.delivery_status, "sent"),
+    sentAt: input.request.sent_at,
+    openedAt: input.request.opened_at,
+    signedAt: input.request.signed_at,
+    attemptAt: now
+  });
   await createDocumentEvent({
     documentId: input.request.id,
     memberId: input.request.member_id,
@@ -707,29 +712,6 @@ async function refreshExpiredRequests(rows: PofRequestRow[]) {
   }
 }
 
-async function setPhysicianOrderSentState(input: {
-  physicianOrderId: string;
-  providerName: string;
-  actorId: string;
-  actorName: string;
-}) {
-  const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin
-    .from("physician_orders")
-    .update({
-      status: "sent",
-      provider_name: input.providerName,
-      sent_at: now,
-      updated_by_user_id: input.actorId,
-      updated_by_name: input.actorName,
-      updated_at: now
-    })
-    .eq("id", input.physicianOrderId)
-    .neq("status", "signed");
-  if (error) throw new Error(error.message);
-}
-
 async function markPofRequestDeliveryState(input: {
   requestId: string;
   actor: { id: string; fullName: string };
@@ -740,26 +722,36 @@ async function markPofRequestDeliveryState(input: {
   openedAt?: string | null;
   signedAt?: string | null;
   deliveryError?: string | null;
+  providerName?: string | null;
+  updatePhysicianOrderSent?: boolean;
 }) {
   const admin = createSupabaseAdminClient();
-  const patch: Record<string, unknown> = {
-    delivery_status: input.deliveryStatus,
-    last_delivery_attempt_at: input.attemptAt,
-    delivery_failed_at: input.deliveryStatus === "send_failed" ? input.attemptAt : null,
-    delivery_error: clean(input.deliveryError),
-    updated_by_user_id: input.actor.id,
-    updated_by_name: input.actor.fullName,
-    updated_at: input.attemptAt
-  };
-  if (input.status) {
-    patch.status = input.status;
-  }
-  if (input.sentAt !== undefined) patch.sent_at = input.sentAt;
-  if (input.openedAt !== undefined) patch.opened_at = input.openedAt;
-  if (input.signedAt !== undefined) patch.signed_at = input.signedAt;
-  const { error } = await admin.from("pof_requests").update(patch).eq("id", input.requestId);
-  if (error) {
-    throw new Error(mapPofRequestWriteError(error, "Unable to update POF request delivery state."));
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(admin, TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC, {
+      p_request_id: input.requestId,
+      p_actor_user_id: input.actor.id,
+      p_actor_name: input.actor.fullName,
+      p_delivery_status: input.deliveryStatus,
+      p_attempt_at: input.attemptAt,
+      p_status: input.status ?? null,
+      p_sent_at: input.sentAt ?? null,
+      p_opened_at: input.openedAt ?? null,
+      p_signed_at: input.signedAt ?? null,
+      p_delivery_error: clean(input.deliveryError),
+      p_provider_name: clean(input.providerName),
+      p_update_physician_order_sent: Boolean(input.updatePhysicianOrderSent)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to update POF request delivery state.";
+    if (message.includes(TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC)) {
+      throw new Error(
+        `POF delivery state RPC is not available. Apply Supabase migration ${POF_DELIVERY_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    if (isPostgresUniqueViolation(error as PostgrestErrorLike | null | undefined)) {
+      throw new Error(mapPofRequestWriteError(error as PostgrestErrorLike, "Unable to update POF request delivery state."));
+    }
+    throw error;
   }
 }
 
@@ -966,36 +958,28 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
   const hashedToken = hashToken(token);
   const signatureRequestUrl = `${buildAppBaseUrl(input.appBaseUrl)}/sign/pof/${token}`;
   const admin = createSupabaseAdminClient();
-  const { error: createError } = await admin.from("pof_requests").insert({
-    id: requestId,
-    physician_order_id: input.physicianOrderId,
-    member_id: input.memberId,
-    provider_name: providerName,
-    provider_email: providerEmail,
-    nurse_name: nurseName,
-    from_email: fromEmail,
-    sent_by_user_id: input.actor.id,
-    status: "draft",
-    delivery_status: "pending_preparation",
-    optional_message: optionalMessage,
-    sent_at: null,
-    opened_at: null,
-    signed_at: null,
-    expires_at: expiresAt,
-    signature_request_token: hashedToken,
-    signature_request_url: signatureRequestUrl,
-    unsigned_pdf_url: unsignedStorageUri,
-    signed_pdf_url: null,
-    pof_payload_json: form,
-    member_file_id: null,
-    created_by_user_id: input.actor.id,
-    created_by_name: input.actor.fullName,
-    created_at: now,
-    updated_by_user_id: input.actor.id,
-    updated_by_name: input.actor.fullName,
-    updated_at: now
-  });
-  if (createError) {
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(admin, PREPARE_POF_REQUEST_DELIVERY_RPC, {
+      p_request_id: requestId,
+      p_physician_order_id: input.physicianOrderId,
+      p_member_id: input.memberId,
+      p_provider_name: providerName,
+      p_provider_email: providerEmail,
+      p_nurse_name: nurseName,
+      p_from_email: fromEmail,
+      p_sent_by_user_id: input.actor.id,
+      p_optional_message: optionalMessage,
+      p_expires_at: expiresAt,
+      p_signature_request_token: hashedToken,
+      p_signature_request_url: signatureRequestUrl,
+      p_unsigned_pdf_url: unsignedStorageUri,
+      p_pof_payload_json: form,
+      p_actor_user_id: input.actor.id,
+      p_actor_name: input.actor.fullName,
+      p_now: now
+    });
+  } catch (error) {
+    const createErrorMessage = error instanceof Error ? error.message : "Unable to create POF signature request.";
     try {
       await deleteMemberDocumentObject(unsignedPath);
     } catch (cleanupError) {
@@ -1009,12 +993,18 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
           member_id: input.memberId,
           physician_order_id: input.physicianOrderId,
           unsigned_object_path: unsignedPath,
-          create_error: createError.message,
+          create_error: createErrorMessage,
           cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
         }
       });
     }
-    throw new Error(mapPofRequestWriteError(createError, "Unable to create POF signature request."));
+    const message = createErrorMessage;
+    if (message.includes(PREPARE_POF_REQUEST_DELIVERY_RPC)) {
+      throw new Error(
+        `POF request preparation RPC is not available. Apply Supabase migration ${POF_DELIVERY_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw new Error(mapPofRequestWriteError(error as PostgrestErrorLike, "Unable to create POF signature request."));
   }
 
   await createDocumentEvent({
@@ -1030,18 +1020,6 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
       providerEmail,
       expiresAt
     }
-  });
-
-  await markPofRequestDeliveryState({
-    requestId,
-    actor: input.actor,
-    status: "draft",
-    deliveryStatus: "ready_to_send",
-    sentAt: null,
-    openedAt: null,
-    signedAt: null,
-    deliveryError: null,
-    attemptAt: toEasternISO()
   });
 
   try {
@@ -1148,7 +1126,9 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
       deliveryStatus: "sent",
       sentAt,
       deliveryError: null,
-      attemptAt: sentAt
+      attemptAt: sentAt,
+      providerName,
+      updatePhysicianOrderSent: true
     });
   } catch (error) {
     await throwDeliveryStateFinalizeFailure({
@@ -1217,13 +1197,6 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     console.error("[pof-esign] unable to emit post-send workflow milestone", error);
   }
 
-  await setPhysicianOrderSentState({
-    physicianOrderId: input.physicianOrderId,
-    providerName: providerName!,
-    actorId: input.actor.id,
-    actorName: input.actor.fullName
-  });
-
   const created = await loadRequestById(requestId);
   if (!created) throw new Error("POF signature request could not be loaded.");
   return toSummary(created);
@@ -1272,46 +1245,35 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
 
   const preSendUpdatedAt = toEasternISO();
   const admin = createSupabaseAdminClient();
-  const { error: preSendError } = await admin
-    .from("pof_requests")
-    .update({
-      provider_name: providerName,
-      provider_email: providerEmail,
-      nurse_name: nurseName,
-      from_email: fromEmail,
-      optional_message: optionalMessage,
-      status: "draft",
-      delivery_status: "retry_pending",
-      sent_at: null,
-      opened_at: null,
-      signed_at: null,
-      delivery_error: null,
-      delivery_failed_at: null,
-      expires_at: expiresAt,
-      signature_request_token: hashedToken,
-      signature_request_url: signatureRequestUrl,
-      unsigned_pdf_url: unsignedStorageUri,
-      pof_payload_json: form,
-      updated_by_user_id: input.actor.id,
-      updated_by_name: input.actor.fullName,
-      updated_at: preSendUpdatedAt
-    })
-    .eq("id", input.requestId);
-  if (preSendError) {
-    throw new Error(mapPofRequestWriteError(preSendError, "Unable to prepare POF resend request."));
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(admin, PREPARE_POF_REQUEST_DELIVERY_RPC, {
+      p_request_id: input.requestId,
+      p_physician_order_id: request.physician_order_id,
+      p_member_id: input.memberId,
+      p_provider_name: providerName,
+      p_provider_email: providerEmail,
+      p_nurse_name: nurseName,
+      p_from_email: fromEmail,
+      p_sent_by_user_id: input.actor.id,
+      p_optional_message: optionalMessage,
+      p_expires_at: expiresAt,
+      p_signature_request_token: hashedToken,
+      p_signature_request_url: signatureRequestUrl,
+      p_unsigned_pdf_url: unsignedStorageUri,
+      p_pof_payload_json: form,
+      p_actor_user_id: input.actor.id,
+      p_actor_name: input.actor.fullName,
+      p_now: preSendUpdatedAt
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to prepare POF resend request.";
+    if (message.includes(PREPARE_POF_REQUEST_DELIVERY_RPC)) {
+      throw new Error(
+        `POF request preparation RPC is not available. Apply Supabase migration ${POF_DELIVERY_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw new Error(mapPofRequestWriteError(error as PostgrestErrorLike, "Unable to prepare POF resend request."));
   }
-
-  await markPofRequestDeliveryState({
-    requestId: input.requestId,
-    actor: input.actor,
-    status: "draft",
-    deliveryStatus: "ready_to_send",
-    sentAt: null,
-    openedAt: null,
-    signedAt: null,
-    deliveryError: null,
-    attemptAt: toEasternISO()
-  });
 
   try {
     await sendSignatureEmail({
@@ -1419,7 +1381,9 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
       openedAt: null,
       signedAt: null,
       deliveryError: null,
-      attemptAt: now
+      attemptAt: now,
+      providerName,
+      updatePhysicianOrderSent: true
     });
   } catch (error) {
     await throwDeliveryStateFinalizeFailure({
@@ -1488,13 +1452,6 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
     console.error("[pof-esign] unable to emit post-resend workflow milestone", error);
   }
 
-  await setPhysicianOrderSentState({
-    physicianOrderId: request.physician_order_id,
-    providerName: providerName!,
-    actorId: input.actor.id,
-    actorName: input.actor.fullName
-  });
-
   const refreshed = await loadRequestById(input.requestId);
   if (!refreshed) throw new Error("POF signature request could not be loaded.");
   return toSummary(refreshed);
@@ -1509,17 +1466,17 @@ export async function voidPofSignatureRequest(input: VoidPofSignatureInput) {
   if (status === "declined") return toSummary(request);
 
   const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin
-    .from("pof_requests")
-    .update({
-      status: "declined",
-      updated_by_user_id: input.actor.id,
-      updated_by_name: input.actor.fullName,
-      updated_at: now
-    })
-    .eq("id", input.requestId);
-  if (error) throw new Error(error.message);
+  await markPofRequestDeliveryState({
+    requestId: input.requestId,
+    actor: input.actor,
+    status: "declined",
+    deliveryStatus: toSendWorkflowDeliveryStatus(request.delivery_status, "sent"),
+    sentAt: request.sent_at,
+    openedAt: request.opened_at,
+    signedAt: request.signed_at,
+    deliveryError: null,
+    attemptAt: now
+  });
 
   await createDocumentEvent({
     documentId: input.requestId,
@@ -1567,18 +1524,20 @@ export async function getPublicPofSigningContext(
 
   if (!request.opened_at) {
     const now = toEasternISO();
-    const admin = createSupabaseAdminClient();
-    const { error } = await admin
-      .from("pof_requests")
-      .update({
-        status: "opened",
-        opened_at: now,
-        updated_by_user_id: request.sent_by_user_id,
-        updated_by_name: request.nurse_name,
-        updated_at: now
-      })
-      .eq("id", request.id);
-    if (error) throw new Error(error.message);
+    await markPofRequestDeliveryState({
+      requestId: request.id,
+      actor: {
+        id: request.sent_by_user_id,
+        fullName: request.nurse_name
+      },
+      status: "opened",
+      deliveryStatus: toSendWorkflowDeliveryStatus(request.delivery_status, "sent"),
+      sentAt: request.sent_at,
+      openedAt: now,
+      signedAt: request.signed_at,
+      deliveryError: null,
+      attemptAt: now
+    });
     await createDocumentEvent({
       documentId: request.id,
       memberId: request.member_id,

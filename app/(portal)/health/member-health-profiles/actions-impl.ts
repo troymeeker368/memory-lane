@@ -18,7 +18,6 @@ import {
 } from "@/lib/services/member-health-profiles";
 import {
   getMemberTrackForMhpSupabase,
-  updateMemberHealthProfileByMemberIdSupabase,
 } from "@/lib/services/member-health-profiles-write-supabase";
 import { ensureMemberHealthProfileSupabase } from "@/lib/services/member-health-profiles-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -299,29 +298,38 @@ export async function saveMhpFunctionalAction(formData: FormData) {
   if (!memberId) return;
   const now = toEasternISO();
 
-  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
-    ambulation: asNullableString(formData, "ambulation"),
-    transferring: asNullableString(formData, "transferring"),
-    bathing: asNullableString(formData, "bathing"),
-    dressing: asNullableString(formData, "dressing"),
-    eating: asNullableString(formData, "eating"),
-    bladder_continence: asNullableString(formData, "bladderContinence"),
-    bowel_continence: asNullableString(formData, "bowelContinence"),
-    toileting: asNullableString(formData, "toileting"),
-    toileting_needs: asNullableString(formData, "toiletingNeeds"),
-    toileting_comments: asNullableString(formData, "toiletingComments"),
-    hearing: asNullableString(formData, "hearing"),
-    vision: asNullableString(formData, "vision"),
-    dental: asNullableString(formData, "dental"),
-    speech_verbal_status: asNullableString(formData, "speechVerbalStatus"),
-    speech_comments: asNullableString(formData, "speechComments"),
-    personal_appearance_hygiene_grooming: asNullableString(formData, "hygieneGrooming"),
-    may_self_medicate: asNullableBool(formData, "maySelfMedicate"),
-    medication_manager_name: asNullableString(formData, "medicationManagerName"),
-    updated_at: now,
-    updated_by_user_id: toNullableUuid(actor.id),
-    updated_by_name: actor.full_name
-  }});
+  await saveMemberHealthProfileBundle({
+    memberId,
+    mhpPatch: {
+      ambulation: asNullableString(formData, "ambulation"),
+      transferring: asNullableString(formData, "transferring"),
+      bathing: asNullableString(formData, "bathing"),
+      dressing: asNullableString(formData, "dressing"),
+      eating: asNullableString(formData, "eating"),
+      bladder_continence: asNullableString(formData, "bladderContinence"),
+      bowel_continence: asNullableString(formData, "bowelContinence"),
+      toileting: asNullableString(formData, "toileting"),
+      toileting_needs: asNullableString(formData, "toiletingNeeds"),
+      toileting_comments: asNullableString(formData, "toiletingComments"),
+      hearing: asNullableString(formData, "hearing"),
+      vision: asNullableString(formData, "vision"),
+      dental: asNullableString(formData, "dental"),
+      speech_verbal_status: asNullableString(formData, "speechVerbalStatus"),
+      speech_comments: asNullableString(formData, "speechComments"),
+      personal_appearance_hygiene_grooming: asNullableString(formData, "hygieneGrooming"),
+      may_self_medicate: asNullableBool(formData, "maySelfMedicate"),
+      medication_manager_name: asNullableString(formData, "medicationManagerName"),
+      updated_at: now,
+      updated_by_user_id: toNullableUuid(actor.id),
+      updated_by_name: actor.full_name
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now,
+    syncToCommandCenter: true
+  });
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=functional`);
@@ -333,29 +341,38 @@ export async function saveMhpCognitiveBehaviorAction(formData: FormData) {
   if (!memberId) return;
   const now = toEasternISO();
 
-  await updateMemberHealthProfileByMemberIdSupabase({ memberId, patch: {
-    orientation_dob: asNullableString(formData, "orientationDob"),
-    orientation_city: asNullableString(formData, "orientationCity"),
-    orientation_current_year: asNullableString(formData, "orientationCurrentYear"),
-    orientation_former_occupation: asNullableString(formData, "orientationFormerOccupation"),
-    memory_impairment: asNullableString(formData, "memoryImpairment"),
-    memory_severity: asNullableString(formData, "memorySeverity"),
-    wandering: asNullableBool(formData, "wandering"),
-    combative_disruptive: asNullableBool(formData, "combativeDisruptive"),
-    sleep_issues: asNullableBool(formData, "sleepIssues"),
-    self_harm_unsafe: asNullableBool(formData, "selfHarmUnsafe"),
-    impaired_judgement: asNullableBool(formData, "impairedJudgement"),
-    delirium: asNullableBool(formData, "delirium"),
-    disorientation: asNullableBool(formData, "disorientation"),
-    agitation_resistive: asNullableBool(formData, "agitationResistive"),
-    screaming_loud_noises: asNullableBool(formData, "screamingLoudNoises"),
-    exhibitionism_disrobing: asNullableBool(formData, "exhibitionismDisrobing"),
-    exit_seeking: asNullableBool(formData, "exitSeeking"),
-    cognitive_behavior_comments: asNullableString(formData, "cognitiveBehaviorComments"),
-    updated_at: now,
-    updated_by_user_id: toNullableUuid(actor.id),
-    updated_by_name: actor.full_name
-  }});
+  await saveMemberHealthProfileBundle({
+    memberId,
+    mhpPatch: {
+      orientation_dob: asNullableString(formData, "orientationDob"),
+      orientation_city: asNullableString(formData, "orientationCity"),
+      orientation_current_year: asNullableString(formData, "orientationCurrentYear"),
+      orientation_former_occupation: asNullableString(formData, "orientationFormerOccupation"),
+      memory_impairment: asNullableString(formData, "memoryImpairment"),
+      memory_severity: asNullableString(formData, "memorySeverity"),
+      wandering: asNullableBool(formData, "wandering"),
+      combative_disruptive: asNullableBool(formData, "combativeDisruptive"),
+      sleep_issues: asNullableBool(formData, "sleepIssues"),
+      self_harm_unsafe: asNullableBool(formData, "selfHarmUnsafe"),
+      impaired_judgement: asNullableBool(formData, "impairedJudgement"),
+      delirium: asNullableBool(formData, "delirium"),
+      disorientation: asNullableBool(formData, "disorientation"),
+      agitation_resistive: asNullableBool(formData, "agitationResistive"),
+      screaming_loud_noises: asNullableBool(formData, "screamingLoudNoises"),
+      exhibitionism_disrobing: asNullableBool(formData, "exhibitionismDisrobing"),
+      exit_seeking: asNullableBool(formData, "exitSeeking"),
+      cognitive_behavior_comments: asNullableString(formData, "cognitiveBehaviorComments"),
+      updated_at: now,
+      updated_by_user_id: toNullableUuid(actor.id),
+      updated_by_name: actor.full_name
+    },
+    actor: {
+      id: actor.id,
+      fullName: actor.full_name
+    },
+    now,
+    syncToCommandCenter: true
+  });
 
   revalidateMhp(memberId);
   redirect(`/health/member-health-profiles/${memberId}?tab=cognitive-behavioral`);

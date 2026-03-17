@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { resolveCanonicalPersonRef } from "@/lib/services/canonical-person-ref";
 import {
   buildMemberContactsSchemaOutOfDateMessage,
@@ -247,26 +248,37 @@ export async function setBillingPayorContact(input: {
   const canonicalMemberId = await resolveBillingMemberId(input.memberId, "setBillingPayorContact");
   const admin = createSupabaseAdminClient();
   const contactId = clean(input.contactId);
-  const { error } = await admin.rpc(SET_MEMBER_CONTACT_PAYOR_RPC, {
-    p_member_id: canonicalMemberId,
-    p_contact_id: contactId
-  });
-  if (error) {
-    if (error.code === "PGRST202" || error.code === "42883") {
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(admin, SET_MEMBER_CONTACT_PAYOR_RPC, {
+      p_member_id: canonicalMemberId,
+      p_contact_id: contactId
+    });
+  } catch (error) {
+    const code = error && typeof error === "object" ? String((error as { code?: string }).code ?? "") : "";
+    if (code === "PGRST202" || code === "42883") {
       throw new Error(
         `Billing payor contact RPC is unavailable. Apply migration ${MEMBER_CONTACT_PAYOR_MIGRATION} and refresh schema cache.`
       );
     }
-    if (isAmbiguousColumnReferenceError(error, "member_id")) {
+    if (
+      isAmbiguousColumnReferenceError(
+        error as { code?: string | null; message?: string | null; details?: string | null } | null | undefined,
+        "member_id"
+      )
+    ) {
       throw new Error(buildMemberContactsSchemaOutOfDateMessage());
     }
-    if (isMemberContactsPayorColumnMissingError(error)) {
+    if (
+      isMemberContactsPayorColumnMissingError(
+        error as { code?: string | null; message?: string | null; details?: string | null } | null | undefined
+      )
+    ) {
       throw buildMemberContactsSchemaOutOfDateError();
     }
-    if (error.code === "23505") {
+    if (code === "23505") {
       throw new Error("Only one billing payor contact can be selected for a member.");
     }
-    throw new Error(error.message);
+    throw error;
   }
 
   await recordWorkflowEvent({

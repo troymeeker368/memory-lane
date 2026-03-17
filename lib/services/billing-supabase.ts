@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import {
   formatBillingPayorDisplayName,
   listBillingPayorContactsForMembers
@@ -1554,18 +1555,19 @@ function buildBillingBatchWritePlan(input: {
 
 async function invokeGenerateBillingBatchRpc(plan: BillingBatchWritePlan) {
   const supabase = await createClient();
-  const { error } = await supabase.rpc(RPC_GENERATE_BILLING_BATCH, {
-    p_batch: plan.batchPayload,
-    p_invoices: plan.invoicePayloads,
-    p_invoice_lines: plan.invoiceLinePayloads,
-    p_coverages: plan.coveragePayloads,
-    p_source_updates: plan.sourceUpdates
-  });
-  if (error) {
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_GENERATE_BILLING_BATCH, {
+      p_batch: plan.batchPayload,
+      p_invoices: plan.invoicePayloads,
+      p_invoice_lines: plan.invoiceLinePayloads,
+      p_coverages: plan.coveragePayloads,
+      p_source_updates: plan.sourceUpdates
+    });
+  } catch (error) {
     if (isMissingRpcFunctionError(error, RPC_GENERATE_BILLING_BATCH)) {
       throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_GENERATE_BILLING_BATCH));
     }
-    throw new Error(error.message);
+    throw error;
   }
 }
 
@@ -1574,15 +1576,16 @@ async function invokeCreateBillingExportRpc(input: {
   invoiceIds: string[];
 }) {
   const supabase = await createClient();
-  const { error } = await supabase.rpc(RPC_CREATE_BILLING_EXPORT, {
-    p_export_job: input.exportJobPayload,
-    p_invoice_ids: input.invoiceIds
-  });
-  if (error) {
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_CREATE_BILLING_EXPORT, {
+      p_export_job: input.exportJobPayload,
+      p_invoice_ids: input.invoiceIds
+    });
+  } catch (error) {
     if (isMissingRpcFunctionError(error, RPC_CREATE_BILLING_EXPORT)) {
       throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_CREATE_BILLING_EXPORT));
     }
-    throw new Error(error.message);
+    throw error;
   }
 }
 

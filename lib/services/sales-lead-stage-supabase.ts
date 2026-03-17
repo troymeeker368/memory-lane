@@ -1,5 +1,6 @@
 import { canonicalLeadStage, canonicalLeadStatus } from "@/lib/canonical";
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -22,6 +23,9 @@ export interface LeadStageTransitionResult {
   toStatus: LeadDbStatus;
   businessStatus: CanonicalLeadBusinessStatus;
 }
+
+const TRANSITION_LEAD_STAGE_RPC = "rpc_transition_lead_stage";
+const TRANSITION_LEAD_STAGE_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
 
 function toDbStatus(status: CanonicalLeadBusinessStatus): LeadDbStatus {
   if (status === "Won") return "won";
@@ -70,17 +74,6 @@ export async function applyLeadStageTransitionSupabase(input: {
   additionalLeadPatch?: Record<string, unknown>;
 }) {
   const supabase = await createClient();
-  const { data: existingLead, error: existingError } = await supabase
-    .from("leads")
-    .select("id, stage, status")
-    .eq("id", input.leadId)
-    .maybeSingle();
-
-  if (existingError) throw new Error(existingError.message);
-  if (!existingLead) throw new Error("Lead not found.");
-
-  const fromStage = String(existingLead.stage ?? "");
-  const fromStatus = String(existingLead.status ?? "").toLowerCase() as LeadDbStatus | "";
   const resolved = resolveCanonicalLeadTransition({
     requestedStage: input.requestedStage,
     requestedStatus: input.requestedStatus
@@ -107,26 +100,47 @@ export async function applyLeadStageTransitionSupabase(input: {
     if (!hasLostReason) patch.lost_reason = null;
   }
 
-  const { error: updateError } = await supabase.from("leads").update(patch).eq("id", input.leadId);
-  if (updateError) throw new Error(updateError.message);
+  type TransitionRow = {
+    lead_id: string;
+    from_stage: string | null;
+    to_stage: string;
+    from_status: LeadDbStatus | null;
+    to_status: LeadDbStatus;
+    business_status: CanonicalLeadBusinessStatus;
+  };
 
-  const changed = fromStage !== resolved.stage || fromStatus !== resolved.dbStatus;
-  if (changed) {
-    const { error: historyError } = await supabase.from("lead_stage_history").insert({
-      lead_id: input.leadId,
-      from_stage: fromStage || null,
-      to_stage: resolved.stage,
-      from_status: fromStatus || null,
-      to_status: resolved.dbStatus,
-      changed_by_user_id: input.actorUserId,
-      changed_by_name: input.actorName,
-      reason: input.reason ?? null,
-      source: input.source,
-      changed_at: now,
-      created_at: now
+  let row: TransitionRow | null = null;
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, TRANSITION_LEAD_STAGE_RPC, {
+      p_lead_id: input.leadId,
+      p_to_stage: resolved.stage,
+      p_to_status: resolved.dbStatus,
+      p_business_status: resolved.businessStatus,
+      p_actor_user_id: input.actorUserId,
+      p_actor_name: input.actorName,
+      p_source: input.source,
+      p_reason: input.reason ?? null,
+      p_additional_lead_patch: patch,
+      p_now: now,
+      p_today: toEasternDate()
     });
-    if (historyError) throw new Error(historyError.message);
+    row = (Array.isArray(data) ? data[0] : null) as TransitionRow | null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to update lead.";
+    if (message.includes(TRANSITION_LEAD_STAGE_RPC)) {
+      throw new Error(
+        `Lead stage transition RPC is not available. Apply Supabase migration ${TRANSITION_LEAD_STAGE_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
 
+  if (!row?.lead_id) {
+    throw new Error("Lead stage transition RPC did not return the lead transition result.");
+  }
+
+  const changed = row.from_stage !== row.to_stage || (row.from_status ?? null) !== row.to_status;
+  if (changed) {
     await recordWorkflowEvent({
       eventType: "lead_stage_transitioned",
       entityType: "lead",
@@ -136,10 +150,10 @@ export async function applyLeadStageTransitionSupabase(input: {
       status: resolved.businessStatus.toLowerCase(),
       severity: "low",
       metadata: {
-        from_stage: fromStage || null,
-        to_stage: resolved.stage,
-        from_status: fromStatus || null,
-        to_status: resolved.dbStatus,
+        from_stage: row.from_stage,
+        to_stage: row.to_stage,
+        from_status: row.from_status,
+        to_status: row.to_status,
         source: input.source,
         reason: input.reason ?? null
       }
@@ -148,10 +162,10 @@ export async function applyLeadStageTransitionSupabase(input: {
 
   return {
     leadId: input.leadId,
-    fromStage: fromStage || null,
-    toStage: resolved.stage,
-    fromStatus: fromStatus || null,
-    toStatus: resolved.dbStatus,
-    businessStatus: resolved.businessStatus
+    fromStage: row.from_stage,
+    toStage: row.to_stage as CanonicalLeadStage,
+    fromStatus: row.from_status,
+    toStatus: row.to_status,
+    businessStatus: row.business_status
   } satisfies LeadStageTransitionResult;
 }

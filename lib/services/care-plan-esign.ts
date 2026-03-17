@@ -34,6 +34,9 @@ import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 const TOKEN_BYTE_LENGTH = 32;
 const CARE_PLAN_CAREGIVER_FINALIZATION_RPC = "rpc_finalize_care_plan_caregiver_signature";
 const CARE_PLAN_CAREGIVER_FINALIZATION_MIGRATION = "0053_artifact_drift_replay_hardening.sql";
+const PREPARE_CARE_PLAN_CAREGIVER_REQUEST_RPC = "rpc_prepare_care_plan_caregiver_request";
+const TRANSITION_CARE_PLAN_CAREGIVER_STATUS_RPC = "rpc_transition_care_plan_caregiver_status";
+const CARE_PLAN_CAREGIVER_DELIVERY_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
 
 type CarePlanTokenMatch = {
   carePlan: {
@@ -247,15 +250,11 @@ async function markExpiredIfNeeded(input: {
   }
 
   const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin
-    .from("care_plans")
-    .update({
-      caregiver_signature_status: "expired",
-      updated_at: now
-    })
-    .eq("id", input.carePlanId);
-  if (error) throw new Error(error.message);
+  await transitionCarePlanCaregiverStatus({
+    carePlanId: input.carePlanId,
+    status: "expired",
+    updatedAt: now
+  });
   await createCarePlanSignatureEvent({
     carePlanId: input.carePlanId,
     memberId: input.memberId,
@@ -263,6 +262,75 @@ async function markExpiredIfNeeded(input: {
     actorType: "system"
   });
   return "expired" as const;
+}
+
+async function prepareCarePlanCaregiverRequest(input: {
+  carePlanId: string;
+  caregiverName: string;
+  caregiverEmail: string;
+  caregiverSentByUserId: string;
+  caregiverSignatureRequestToken: string;
+  caregiverSignatureExpiresAt: string;
+  caregiverSignatureRequestUrl: string;
+  actorUserId: string;
+  actorName: string;
+  updatedAt: string;
+}) {
+  const admin = createSupabaseAdminClient();
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(admin, PREPARE_CARE_PLAN_CAREGIVER_REQUEST_RPC, {
+      p_care_plan_id: input.carePlanId,
+      p_caregiver_name: input.caregiverName,
+      p_caregiver_email: input.caregiverEmail,
+      p_caregiver_sent_by_user_id: input.caregiverSentByUserId,
+      p_caregiver_signature_request_token: input.caregiverSignatureRequestToken,
+      p_caregiver_signature_expires_at: input.caregiverSignatureExpiresAt,
+      p_caregiver_signature_request_url: input.caregiverSignatureRequestUrl,
+      p_actor_user_id: input.actorUserId,
+      p_actor_name: input.actorName,
+      p_updated_at: input.updatedAt
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to prepare care plan caregiver request.";
+    if (message.includes(PREPARE_CARE_PLAN_CAREGIVER_REQUEST_RPC)) {
+      throw new Error(
+        `Care plan caregiver request RPC is not available. Apply Supabase migration ${CARE_PLAN_CAREGIVER_DELIVERY_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
+}
+
+async function transitionCarePlanCaregiverStatus(input: {
+  carePlanId: string;
+  status: CaregiverSignatureStatus;
+  updatedAt: string;
+  actor?: { id: string | null; fullName: string | null } | null;
+  caregiverSentAt?: string | null;
+  caregiverViewedAt?: string | null;
+  caregiverSignatureError?: string | null;
+}) {
+  const admin = createSupabaseAdminClient();
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(admin, TRANSITION_CARE_PLAN_CAREGIVER_STATUS_RPC, {
+      p_care_plan_id: input.carePlanId,
+      p_status: input.status,
+      p_updated_at: input.updatedAt,
+      p_actor_user_id: input.actor?.id ?? null,
+      p_actor_name: input.actor?.fullName ?? null,
+      p_caregiver_sent_at: input.caregiverSentAt ?? null,
+      p_caregiver_viewed_at: input.caregiverViewedAt ?? null,
+      p_caregiver_signature_error: input.caregiverSignatureError ?? null
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to update care plan caregiver status.";
+    if (message.includes(TRANSITION_CARE_PLAN_CAREGIVER_STATUS_RPC)) {
+      throw new Error(
+        `Care plan caregiver status RPC is not available. Apply Supabase migration ${CARE_PLAN_CAREGIVER_DELIVERY_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
 }
 
 export function canSendCaregiverSignature(plan: CarePlan) {
@@ -369,33 +437,18 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
   const token = generateSigningToken();
   const hashedToken = hashToken(token);
   const signatureRequestUrl = `${buildAppBaseUrl()}/sign/care-plan/${token}`;
-  const admin = createSupabaseAdminClient();
-
-  const { error: prepareError } = await admin
-    .from("care_plans")
-    .update({
-      caregiver_name: caregiverName,
-      caregiver_email: caregiverEmail,
-      caregiver_signature_status: "ready_to_send",
-      caregiver_sent_at: null,
-      caregiver_sent_by_user_id: input.actor.id,
-      caregiver_viewed_at: null,
-      caregiver_signed_at: null,
-      caregiver_signature_request_token: hashedToken,
-      caregiver_signature_expires_at: expiresAt,
-      caregiver_signature_request_url: signatureRequestUrl,
-      caregiver_signed_name: null,
-      caregiver_signature_image_url: null,
-      caregiver_signature_ip: null,
-      caregiver_signature_user_agent: null,
-      caregiver_signature_error: null,
-      final_member_file_id: null,
-      updated_by_user_id: input.actor.id,
-      updated_by_name: input.actor.fullName,
-      updated_at: now
-    })
-    .eq("id", input.carePlanId);
-  if (prepareError) throw new Error(prepareError.message);
+  await prepareCarePlanCaregiverRequest({
+    carePlanId: input.carePlanId,
+    caregiverName,
+    caregiverEmail: caregiverEmail!,
+    caregiverSentByUserId: input.actor.id,
+    caregiverSignatureRequestToken: hashedToken,
+    caregiverSignatureExpiresAt: expiresAt,
+    caregiverSignatureRequestUrl: signatureRequestUrl,
+    actorUserId: input.actor.id,
+    actorName: input.actor.fullName,
+    updatedAt: now
+  });
 
   try {
     await sendSignatureEmail({
@@ -410,18 +463,14 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown email failure.";
-    await admin
-      .from("care_plans")
-      .update({
-        caregiver_name: caregiverName,
-        caregiver_email: caregiverEmail,
-        caregiver_signature_status: "send_failed",
-        caregiver_signature_error: message,
-        updated_by_user_id: input.actor.id,
-        updated_by_name: input.actor.fullName,
-        updated_at: now
-      })
-      .eq("id", input.carePlanId);
+    const failedAt = toEasternISO();
+    await transitionCarePlanCaregiverStatus({
+      carePlanId: input.carePlanId,
+      status: "send_failed",
+      updatedAt: failedAt,
+      actor: input.actor,
+      caregiverSignatureError: message
+    });
     await createCarePlanSignatureEvent({
       carePlanId: input.carePlanId,
       memberId: detail.carePlan.memberId,
@@ -461,18 +510,16 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
     throw error;
   }
 
-  const { error: updateError } = await admin
-    .from("care_plans")
-    .update({
-      caregiver_signature_status: "sent",
-      caregiver_sent_at: now,
-      caregiver_signature_error: null,
-      updated_by_user_id: input.actor.id,
-      updated_by_name: input.actor.fullName,
-      updated_at: now
-    })
-    .eq("id", input.carePlanId);
-  if (updateError) {
+  try {
+    await transitionCarePlanCaregiverStatus({
+      carePlanId: input.carePlanId,
+      status: "sent",
+      updatedAt: now,
+      actor: input.actor,
+      caregiverSentAt: now,
+      caregiverSignatureError: null
+    });
+  } catch (error) {
     await throwDeliveryStateFinalizeFailure({
       entityType: "care_plan",
       entityId: input.carePlanId,
@@ -483,7 +530,7 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
         member_id: detail.carePlan.memberId,
         caregiver_email: caregiverEmail,
         email_delivery_state: "email_sent_but_sent_state_not_persisted",
-        error: updateError.message
+        error: error instanceof Error ? error.message : "Unable to finalize care plan delivery state."
       },
       message:
         "Care plan email was delivered, but the sent state could not be finalized. The signature link remains active in Ready to Send state. Review operational alerts before retrying."
@@ -571,16 +618,13 @@ export async function getPublicCarePlanSigningContext(
 
   if (!detail.carePlan.caregiverViewedAt) {
     const now = toEasternISO();
-    const admin = createSupabaseAdminClient();
-    const { error } = await admin
-      .from("care_plans")
-      .update({
-        caregiver_signature_status: "viewed",
-        caregiver_viewed_at: now,
-        updated_at: now
-      })
-      .eq("id", detail.carePlan.id);
-    if (error) throw new Error(error.message);
+    await transitionCarePlanCaregiverStatus({
+      carePlanId: detail.carePlan.id,
+      status: "viewed",
+      updatedAt: now,
+      caregiverSentAt: detail.carePlan.caregiverSentAt,
+      caregiverViewedAt: now
+    });
     await createCarePlanSignatureEvent({
       carePlanId: detail.carePlan.id,
       memberId: detail.carePlan.memberId,
@@ -740,7 +784,6 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     contentType: signature.contentType
   });
 
-  const admin = createSupabaseAdminClient();
   const signedPdfStoragePath = `members/${detail.carePlan.memberId}/care-plans/${detail.carePlan.id}/final-signed.pdf`;
   try {
     const generated = await buildCarePlanPdfDataUrl(detail.carePlan.id, { serviceRole: true });
@@ -836,13 +879,18 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
       signedPdfObjectPath: signedPdfStoragePath,
       reason
     });
-    await admin
-      .from("care_plans")
-      .update({
-        caregiver_signature_error: reason,
-        updated_at: toEasternISO()
-      })
-      .eq("id", detail.carePlan.id);
+    await transitionCarePlanCaregiverStatus({
+      carePlanId: detail.carePlan.id,
+      status: detail.carePlan.caregiverSignatureStatus,
+      updatedAt: toEasternISO(),
+      actor: {
+        id: detail.carePlan.caregiverSentByUserId,
+        fullName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName ?? null
+      },
+      caregiverSentAt: detail.carePlan.caregiverSentAt,
+      caregiverViewedAt: detail.carePlan.caregiverViewedAt,
+      caregiverSignatureError: reason
+    });
     await recordWorkflowEvent({
       eventType: "care_plan_failed",
       entityType: "care_plan",

@@ -34,6 +34,7 @@ import {
   toSendWorkflowDeliveryStatus,
   type SendWorkflowDeliveryStatus
 } from "@/lib/services/send-workflow-state";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -41,6 +42,10 @@ import { toEasternDate, toEasternISO } from "@/lib/timezone";
 const TOKEN_BYTE_LENGTH = 32;
 const STAFF_TRANSPORTATION_OPTIONS = ["None", "Door to Door", "Bus Stop", "Mixed"] as const;
 const ENROLLMENT_PACKET_COMPLETION_RPC = "rpc_finalize_enrollment_packet_submission";
+const PREPARE_ENROLLMENT_PACKET_REQUEST_RPC = "rpc_prepare_enrollment_packet_request";
+const TRANSITION_ENROLLMENT_PACKET_DELIVERY_STATE_RPC = "rpc_transition_enrollment_packet_delivery_state";
+const SAVE_ENROLLMENT_PACKET_PROGRESS_RPC = "rpc_save_enrollment_packet_progress";
+const ENROLLMENT_PACKET_DELIVERY_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
 const ENROLLMENT_PACKET_COMPLETION_MIGRATION = "0053_artifact_drift_replay_hardening.sql";
 
 async function loadEnrollmentPacketTemplateBuilder() {
@@ -852,7 +857,7 @@ async function invokeFinalizeEnrollmentPacketCompletionRpc(input: {
 }) {
   const admin = createSupabaseAdminClient();
   try {
-    const data = await admin.rpc(ENROLLMENT_PACKET_COMPLETION_RPC, {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(admin, ENROLLMENT_PACKET_COMPLETION_RPC, {
       p_packet_id: input.packetId,
       p_rotated_token: input.rotatedToken,
       p_consumed_submission_token_hash: input.consumedSubmissionTokenHash,
@@ -867,9 +872,8 @@ async function invokeFinalizeEnrollmentPacketCompletionRpc(input: {
       p_upload_batch_id: input.uploadBatchId,
       p_completed_metadata: input.completedMetadata,
       p_filed_metadata: input.filedMetadata
-    }) as { data: unknown; error: { message?: string } | null };
-    if (data.error) throw new Error(data.error.message ?? "Unable to finalize enrollment packet submission.");
-    const row = (Array.isArray(data.data) ? data.data[0] : null) as FinalizedEnrollmentPacketSubmissionRpcRow | null;
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as FinalizedEnrollmentPacketSubmissionRpcRow | null;
     if (!row?.packet_id || !row?.status) {
       throw new Error("Enrollment packet finalization RPC did not return expected identifiers.");
     }
@@ -1150,81 +1154,41 @@ async function markEnrollmentPacketDeliveryState(input: {
   deliveryError?: string | null;
   sentAt?: string | null;
   attemptAt: string;
+  expectedCurrentStatus?: EnrollmentPacketStatus | null;
 }) {
   const admin = createSupabaseAdminClient();
-  const patch: Record<string, unknown> = {
-    delivery_status: input.deliveryStatus,
-    last_delivery_attempt_at: input.attemptAt,
-    delivery_failed_at: input.deliveryStatus === "send_failed" ? input.attemptAt : null,
-    delivery_error: clean(input.deliveryError),
-    updated_at: input.attemptAt
-  };
-  if (input.status) {
-    patch.status = input.status;
+  try {
+    type TransitionResultRow = {
+      packet_id: string;
+      status: string;
+      delivery_status: string;
+      did_transition: boolean;
+    };
+    const data = await invokeSupabaseRpcOrThrow<unknown>(admin, TRANSITION_ENROLLMENT_PACKET_DELIVERY_STATE_RPC, {
+      p_packet_id: input.packetId,
+      p_delivery_status: input.deliveryStatus,
+      p_attempt_at: input.attemptAt,
+      p_status: input.status ?? null,
+      p_sent_at: input.sentAt ?? null,
+      p_delivery_error: clean(input.deliveryError),
+      p_expected_current_status: input.expectedCurrentStatus ?? null
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as TransitionResultRow | null;
+    return {
+      packetId: row?.packet_id ?? input.packetId,
+      status: row?.status ?? input.status ?? null,
+      deliveryStatus: row?.delivery_status ?? input.deliveryStatus,
+      didTransition: Boolean(row?.did_transition)
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to update enrollment packet delivery state.";
+    if (message.includes(TRANSITION_ENROLLMENT_PACKET_DELIVERY_STATE_RPC)) {
+      throw new Error(
+        `Enrollment packet delivery state RPC is not available yet. Apply Supabase migration ${ENROLLMENT_PACKET_DELIVERY_RPC_MIGRATION} first.`
+      );
+    }
+    throw error;
   }
-  if (input.sentAt !== undefined) {
-    patch.sent_at = input.sentAt;
-  }
-  const { error } = await admin.from("enrollment_packet_requests").update(patch).eq("id", input.packetId);
-  if (error) throw new Error(error.message);
-}
-
-async function prepareEnrollmentPacketFields(input: {
-  packetId: string;
-  requestedDays: string[];
-  transportation: StaffTransportationOption;
-  communityFee: number;
-  dailyRate: number;
-  pricingCommunityFeeId: string | null;
-  pricingDailyRateId: string | null;
-  pricingSnapshot: Record<string, unknown>;
-  caregiverName: string | null;
-  caregiverPhone: string | null;
-  caregiverEmail: string;
-  intakePayload: EnrollmentPacketIntakePayload;
-  updatedAt: string;
-}) {
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin.from("enrollment_packet_fields").upsert(
-    {
-      packet_id: input.packetId,
-      requested_days: input.requestedDays,
-      transportation: input.transportation,
-      community_fee: input.communityFee,
-      daily_rate: input.dailyRate,
-      pricing_community_fee_id: input.pricingCommunityFeeId,
-      pricing_daily_rate_id: input.pricingDailyRateId,
-      pricing_snapshot: input.pricingSnapshot,
-      caregiver_name: input.caregiverName,
-      caregiver_phone: input.caregiverPhone,
-      caregiver_email: input.caregiverEmail,
-      intake_payload: input.intakePayload,
-      updated_at: input.updatedAt
-    },
-    { onConflict: "packet_id" }
-  );
-  if (error) throwEnrollmentPacketSchemaError(error, "enrollment_packet_fields");
-}
-
-async function insertEnrollmentPacketSenderSignature(input: {
-  packetId: string;
-  senderEmail: string;
-  signatureProfile: SenderProfileRow;
-  signedAt: string;
-}) {
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin.from("enrollment_packet_signatures").insert({
-    packet_id: input.packetId,
-    signer_name: input.signatureProfile.signature_name,
-    signer_email: input.senderEmail,
-    signer_role: "sender_staff",
-    signature_blob: input.signatureProfile.signature_blob,
-    ip_address: null,
-    signed_at: input.signedAt,
-    created_at: input.signedAt,
-    updated_at: input.signedAt
-  });
-  if (error) throw new Error(error.message);
 }
 
 async function prepareEnrollmentPacketRequestForDelivery(input: {
@@ -1253,86 +1217,46 @@ async function prepareEnrollmentPacketRequestForDelivery(input: {
   const admin = createSupabaseAdminClient();
   const packetId = input.existingRequest?.id ?? randomUUID();
 
-  if (input.existingRequest) {
-    const { error } = await admin
-      .from("enrollment_packet_requests")
-      .update({
-        member_id: input.memberId,
-        lead_id: input.leadId,
-        sender_user_id: input.senderUserId,
-        caregiver_email: input.caregiverEmail,
-        status: "prepared",
-        delivery_status: "retry_pending",
-        token: input.hashedToken,
-        token_expires_at: input.expiresAt,
-        sent_at: null,
-        completed_at: null,
-        delivery_error: null,
-        delivery_failed_at: null,
-        updated_at: input.preparedAt
-      })
-      .eq("id", packetId);
-    if (error) {
-      if (isActiveEnrollmentPacketUniqueViolation(error)) {
-        throw new Error("An active enrollment packet already exists for this member.");
-      }
-      throw new Error(error.message);
-    }
-  } else {
-    const { error } = await admin.from("enrollment_packet_requests").insert({
-      id: packetId,
-      member_id: input.memberId,
-      lead_id: input.leadId,
-      sender_user_id: input.senderUserId,
-      caregiver_email: input.caregiverEmail,
-      status: "draft",
-      delivery_status: "pending_preparation",
-      token: input.hashedToken,
-      token_expires_at: input.expiresAt,
-      created_at: input.preparedAt,
-      sent_at: null,
-      completed_at: null,
-      updated_at: input.preparedAt
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(admin, PREPARE_ENROLLMENT_PACKET_REQUEST_RPC, {
+      p_packet_id: input.existingRequest?.id ?? null,
+      p_member_id: input.memberId,
+      p_lead_id: input.leadId,
+      p_sender_user_id: input.senderUserId,
+      p_caregiver_email: input.caregiverEmail,
+      p_token: input.hashedToken,
+      p_token_expires_at: input.expiresAt,
+      p_requested_days: input.requestedDays,
+      p_transportation: input.transportation,
+      p_community_fee: input.communityFee,
+      p_daily_rate: input.dailyRate,
+      p_pricing_community_fee_id: input.pricingCommunityFeeId,
+      p_pricing_daily_rate_id: input.pricingDailyRateId,
+      p_pricing_snapshot: input.pricingSnapshot,
+      p_caregiver_name: input.caregiverName,
+      p_caregiver_phone: input.caregiverPhone,
+      p_intake_payload: input.intakePayload,
+      p_signature_name: input.signatureProfile.signature_name,
+      p_signature_blob: input.signatureProfile.signature_blob,
+      p_sender_email: input.senderEmail,
+      p_prepared_at: input.preparedAt
     });
-    if (error) {
-      if (isActiveEnrollmentPacketUniqueViolation(error)) {
-        throw new Error("An active enrollment packet already exists for this member.");
-      }
-      throw new Error(error.message);
+  } catch (error) {
+    if (
+      isActiveEnrollmentPacketUniqueViolation(
+        error as { code?: string | null; message?: string | null; details?: string | null } | null | undefined
+      )
+    ) {
+      throw new Error("An active enrollment packet already exists for this member.");
     }
+    const message = error instanceof Error ? error.message : "Unable to prepare enrollment packet request.";
+    if (message.includes(PREPARE_ENROLLMENT_PACKET_REQUEST_RPC)) {
+      throw new Error(
+        `Enrollment packet request preparation RPC is not available yet. Apply Supabase migration ${ENROLLMENT_PACKET_DELIVERY_RPC_MIGRATION} first.`
+      );
+    }
+    throw error;
   }
-
-  await prepareEnrollmentPacketFields({
-    packetId,
-    requestedDays: input.requestedDays,
-    transportation: input.transportation,
-    communityFee: input.communityFee,
-    dailyRate: input.dailyRate,
-    pricingCommunityFeeId: input.pricingCommunityFeeId,
-    pricingDailyRateId: input.pricingDailyRateId,
-    pricingSnapshot: input.pricingSnapshot,
-    caregiverName: input.caregiverName,
-    caregiverPhone: input.caregiverPhone,
-    caregiverEmail: input.caregiverEmail,
-    intakePayload: input.intakePayload,
-    updatedAt: input.preparedAt
-  });
-
-  await insertEnrollmentPacketSenderSignature({
-    packetId,
-    senderEmail: input.senderEmail,
-    signatureProfile: input.signatureProfile,
-    signedAt: input.preparedAt
-  });
-
-  await markEnrollmentPacketDeliveryState({
-    packetId,
-    status: "prepared",
-    deliveryStatus: "ready_to_send",
-    deliveryError: null,
-    sentAt: null,
-    attemptAt: input.preparedAt
-  });
 
   await insertPacketEvent({
     packetId,
@@ -1817,19 +1741,14 @@ export async function getPublicEnrollmentPacketContext(
 
   if (toStatus(request.status) === "sent") {
     const now = toEasternISO();
-    const admin = createSupabaseAdminClient();
-    const { data: openedRow, error } = await admin
-      .from("enrollment_packet_requests")
-      .update({
-        status: "opened",
-        updated_at: now
-      })
-      .eq("id", request.id)
-      .eq("status", "sent")
-      .select("id")
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (openedRow) {
+    const transition = await markEnrollmentPacketDeliveryState({
+      packetId: request.id,
+      status: "opened",
+      deliveryStatus: "sent",
+      attemptAt: now,
+      expectedCurrentStatus: "sent"
+    });
+    if (transition.didTransition) {
       await insertPacketEvent({
         packetId: request.id,
         eventType: "opened",
@@ -1957,42 +1876,42 @@ export async function savePublicEnrollmentPacketProgress(input: {
   });
   const now = toEasternISO();
   const admin = createSupabaseAdminClient();
-  const { error: fieldsError } = await admin
-    .from("enrollment_packet_fields")
-    .update({
-      caregiver_name: mergedPayload.primaryContactName,
-      caregiver_phone: mergedPayload.primaryContactPhone,
-      caregiver_email: cleanEmail(mergedPayload.primaryContactEmail),
-      caregiver_address_line1: mergedPayload.primaryContactAddressLine1 ?? mergedPayload.primaryContactAddress ?? mergedPayload.memberAddressLine1,
-      caregiver_address_line2: mergedPayload.memberAddressLine2,
-      caregiver_city: mergedPayload.primaryContactCity ?? mergedPayload.memberCity,
-      caregiver_state: mergedPayload.primaryContactState ?? mergedPayload.memberState,
-      caregiver_zip: mergedPayload.primaryContactZip ?? mergedPayload.memberZip,
-      secondary_contact_name: mergedPayload.secondaryContactName,
-      secondary_contact_phone: mergedPayload.secondaryContactPhone,
-      secondary_contact_email: cleanEmail(mergedPayload.secondaryContactEmail),
-      secondary_contact_relationship: mergedPayload.secondaryContactRelationship,
-      notes: mergedPayload.additionalNotes,
-      intake_payload: mergedPayload,
-      updated_at: now
-    })
-    .eq("packet_id", context.request.id);
-  if (fieldsError) throwEnrollmentPacketSchemaError(fieldsError, "enrollment_packet_fields");
-
-  const adminReq = createSupabaseAdminClient();
-  const { data: progressRow, error: progressError } = await adminReq
-    .from("enrollment_packet_requests")
-    .update({
-      status: "partially_completed",
-      updated_at: now
-    })
-    .eq("id", context.request.id)
-    .in("status", ["prepared", "sent", "opened", "partially_completed"])
-    .select("id")
-    .maybeSingle();
-  if (progressError) throw new Error(progressError.message);
-  if (!progressRow) {
-    throw new Error("Unable to save enrollment packet progress because the packet is no longer in an editable state.");
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(admin, SAVE_ENROLLMENT_PACKET_PROGRESS_RPC, {
+      p_packet_id: context.request.id,
+      p_caregiver_name: mergedPayload.primaryContactName,
+      p_caregiver_phone: mergedPayload.primaryContactPhone,
+      p_caregiver_email: cleanEmail(mergedPayload.primaryContactEmail),
+      p_caregiver_address_line1:
+        mergedPayload.primaryContactAddressLine1 ?? mergedPayload.primaryContactAddress ?? mergedPayload.memberAddressLine1,
+      p_caregiver_address_line2: mergedPayload.memberAddressLine2,
+      p_caregiver_city: mergedPayload.primaryContactCity ?? mergedPayload.memberCity,
+      p_caregiver_state: mergedPayload.primaryContactState ?? mergedPayload.memberState,
+      p_caregiver_zip: mergedPayload.primaryContactZip ?? mergedPayload.memberZip,
+      p_secondary_contact_name: mergedPayload.secondaryContactName,
+      p_secondary_contact_phone: mergedPayload.secondaryContactPhone,
+      p_secondary_contact_email: cleanEmail(mergedPayload.secondaryContactEmail),
+      p_secondary_contact_relationship: mergedPayload.secondaryContactRelationship,
+      p_notes: mergedPayload.additionalNotes,
+      p_intake_payload: mergedPayload,
+      p_updated_at: now
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save enrollment packet progress.";
+    if (message.includes(SAVE_ENROLLMENT_PACKET_PROGRESS_RPC)) {
+      throw new Error(
+        `Enrollment packet progress RPC is not available yet. Apply Supabase migration ${ENROLLMENT_PACKET_DELIVERY_RPC_MIGRATION} first.`
+      );
+    }
+    if (isMissingSchemaObjectError(error)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "enrollment_packet_fields",
+          migration: "0027_enrollment_packet_intake_mapping.sql"
+        })
+      );
+    }
+    throw error;
   }
 
   await insertPacketEvent({

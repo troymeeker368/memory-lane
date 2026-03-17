@@ -5,9 +5,13 @@ import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export const MEMBER_DOCUMENTS_BUCKET = "member-documents";
+const UPSERT_MEMBER_FILE_BY_SOURCE_RPC = "rpc_upsert_member_file_by_source";
+const DELETE_MEMBER_FILE_RECORD_RPC = "rpc_delete_member_file_record";
+const MEMBER_FILE_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
 
 export type MemberFileCategory =
   | "Health Unit"
@@ -180,15 +184,27 @@ export async function backfillLegacyMemberFileStorage(row: LegacyMemberFileBackf
   }
 
   const admin = createSupabaseAdminClient();
-  const { error: updateError } = await admin
-    .from("member_files")
-    .update({
-      storage_object_path: objectPath,
-      file_data_url: null,
-      updated_at: toEasternISO()
-    })
-    .eq("id", row.id);
-  if (updateError) {
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(admin, UPSERT_MEMBER_FILE_BY_SOURCE_RPC, {
+      p_member_id: row.member_id,
+      p_document_source: null,
+      p_member_file_id: row.id,
+      p_file_name: null,
+      p_file_type: null,
+      p_file_data_url: null,
+      p_storage_object_path: objectPath,
+      p_category: null,
+      p_category_other: null,
+      p_uploaded_by_user_id: null,
+      p_uploaded_by_name: null,
+      p_uploaded_at: null,
+      p_updated_at: toEasternISO(),
+      p_care_plan_id: null,
+      p_pof_request_id: null,
+      p_enrollment_packet_request_id: null
+    });
+  } catch (error) {
+    const updateErrorMessage = error instanceof Error ? error.message : "Unable to update legacy member file storage.";
     if (isDataUrl(legacyValue)) {
       try {
         await deleteMemberDocumentObject(objectPath);
@@ -201,13 +217,13 @@ export async function backfillLegacyMemberFileStorage(row: LegacyMemberFileBackf
           metadata: {
             member_id: row.member_id,
             storage_object_path: objectPath,
-            backfill_error: updateError.message,
+            backfill_error: updateErrorMessage,
             cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
           }
         });
       }
     }
-    throw new Error(updateError.message);
+    throw error;
   }
 
   return objectPath;
@@ -289,13 +305,25 @@ export async function deleteMemberFileRecord(memberFileId: string) {
   if (!normalized) return;
 
   const admin = createSupabaseAdminClient();
-  const { error } = await admin.from("member_files").delete().eq("id", normalized);
-  if (error) throw new Error(error.message);
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(admin, DELETE_MEMBER_FILE_RECORD_RPC, {
+      p_member_file_id: normalized
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to delete member file record.";
+    if (message.includes(DELETE_MEMBER_FILE_RECORD_RPC)) {
+      throw new Error(
+        `Member file delete RPC is not available. Apply Supabase migration ${MEMBER_FILE_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
 }
 
 export async function upsertMemberFileByDocumentSource(input: {
   memberId: string;
   documentSource: string;
+  memberFileId?: string | null;
   fileName: string;
   fileType: string;
   dataUrl?: string | null;
@@ -311,43 +339,46 @@ export async function upsertMemberFileByDocumentSource(input: {
 }) {
   const now = input.updatedAtIso ?? input.uploadedAtIso ?? toEasternISO();
   const admin = input.supabase ?? createSupabaseAdminClient();
-  const { data: existing, error: existingError } = await admin
-    .from("member_files")
-    .select("id")
-    .eq("member_id", input.memberId)
-    .eq("document_source", input.documentSource)
-    .maybeSingle();
-  if (existingError) throw new Error(existingError.message);
-
-  const patch = {
-    file_name: input.fileName,
-    file_type: input.fileType,
-    file_data_url: input.dataUrl ?? null,
-    storage_object_path: input.storageObjectPath ?? null,
-    category: input.category,
-    category_other: input.categoryOther ?? null,
-    document_source: input.documentSource,
-    uploaded_by_user_id: input.uploadedByUserId ?? null,
-    uploaded_by_name: input.uploadedByName ?? null,
-    uploaded_at: input.uploadedAtIso ?? now,
-    updated_at: now,
-    ...(input.additionalColumns ?? {})
+  type UpsertResultRow = {
+    member_file_id: string;
+    was_created: boolean;
   };
 
-  if (existing?.id) {
-    const { error: updateError } = await admin.from("member_files").update(patch).eq("id", String(existing.id));
-    if (updateError) throw new Error(updateError.message);
-    return { id: String(existing.id), created: false as const };
-  }
-
-  const memberFileId = nextMemberFileId();
-  const { error: insertError } = await admin.from("member_files").insert({
-    id: memberFileId,
-    member_id: input.memberId,
-    ...patch
-  });
-  if (insertError) {
-    if (isUniqueViolation(insertError)) {
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(admin, UPSERT_MEMBER_FILE_BY_SOURCE_RPC, {
+      p_member_id: input.memberId,
+      p_document_source: input.documentSource,
+      p_member_file_id: input.memberFileId ?? null,
+      p_file_name: input.fileName,
+      p_file_type: input.fileType,
+      p_file_data_url: input.dataUrl ?? null,
+      p_storage_object_path: input.storageObjectPath ?? null,
+      p_category: input.category,
+      p_category_other: input.categoryOther ?? null,
+      p_uploaded_by_user_id: input.uploadedByUserId ?? null,
+      p_uploaded_by_name: input.uploadedByName ?? null,
+      p_uploaded_at: input.uploadedAtIso ?? now,
+      p_updated_at: now,
+      p_care_plan_id: input.additionalColumns?.care_plan_id ?? null,
+      p_pof_request_id: input.additionalColumns?.pof_request_id ?? null,
+      p_enrollment_packet_request_id: input.additionalColumns?.enrollment_packet_request_id ?? null
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as UpsertResultRow | null;
+    if (!row?.member_file_id) {
+      throw new Error("Member file upsert RPC did not return a member file id.");
+    }
+    return {
+      id: row.member_file_id,
+      created: row.was_created
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to upsert member file.";
+    if (message.includes(UPSERT_MEMBER_FILE_BY_SOURCE_RPC)) {
+      throw new Error(
+        `Member file upsert RPC is not available. Apply Supabase migration ${MEMBER_FILE_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    if (isUniqueViolation(error)) {
       const { data: conflicted, error: conflictedError } = await admin
         .from("member_files")
         .select("id")
@@ -359,9 +390,8 @@ export async function upsertMemberFileByDocumentSource(input: {
         return { id: String(conflicted.id), created: false as const };
       }
     }
-    throw new Error(insertError.message);
+    throw error;
   }
-  return { id: memberFileId, created: true as const };
 }
 
 export async function saveCommandCenterMemberFileUpload(input: {
@@ -586,27 +616,31 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     if (existing) {
       const existingId = String(existing.id);
       const storageObjectPath = await uploadGeneratedPdfObject(existingId, defaultName);
-      const { data: updated, error: updateError } = await admin
-        .from("member_files")
-        .update({
-          file_name: defaultName,
-          file_type: "application/pdf",
-          file_data_url: null,
-          storage_object_path: storageObjectPath,
-          care_plan_id: input.carePlanId ?? null,
+      let updated;
+      try {
+        await upsertMemberFileByDocumentSource({
+          memberId,
+          memberFileId: existingId,
+          documentSource: input.documentSource,
+          fileName: defaultName,
+          fileType: "application/pdf",
+          dataUrl: null,
+          storageObjectPath,
           category: input.category,
-          category_other: categoryOther,
-          document_source: input.documentSource,
-          uploaded_by_user_id: input.uploadedBy.id,
-          uploaded_by_name: input.uploadedBy.name,
-          uploaded_at: now,
-          updated_at: now
-        })
-        .eq("id", existingId)
-        .select("*")
-        .maybeSingle();
-
-      if (updateError) {
+          categoryOther,
+          uploadedByUserId: input.uploadedBy.id,
+          uploadedByName: input.uploadedBy.name,
+          uploadedAtIso: now,
+          updatedAtIso: now,
+          additionalColumns: {
+            care_plan_id: input.carePlanId ?? null
+          },
+          supabase: admin
+        });
+        const { data, error } = await admin.from("member_files").select("*").eq("id", existingId).maybeSingle();
+        if (error) throw new Error(error.message);
+        updated = data;
+      } catch (error) {
         try {
           await deleteMemberDocumentObject(storageObjectPath);
         } catch (cleanupError) {
@@ -619,12 +653,12 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
               member_id: memberId,
               document_source: input.documentSource,
               storage_object_path: storageObjectPath,
-              save_error: updateError.message,
+              save_error: error instanceof Error ? error.message : "Unknown save error.",
               cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
             }
           });
         }
-        throw new Error(updateError.message);
+        throw error;
       }
 
       if (updated) {
@@ -652,28 +686,31 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
   const memberFileId = nextMemberFileId();
   const storageObjectPath = await uploadGeneratedPdfObject(memberFileId, fileName);
 
-  const { data: created, error: createError } = await admin
-    .from("member_files")
-    .insert({
-      id: memberFileId,
-      member_id: memberId,
-      file_name: fileName,
-      file_type: "application/pdf",
-      file_data_url: null,
-      storage_object_path: storageObjectPath,
-      care_plan_id: input.carePlanId ?? null,
+  let created;
+  try {
+    await upsertMemberFileByDocumentSource({
+      memberId,
+      memberFileId,
+      documentSource: input.documentSource,
+      fileName,
+      fileType: "application/pdf",
+      dataUrl: null,
+      storageObjectPath,
       category: input.category,
-      category_other: categoryOther,
-      document_source: input.documentSource,
-      uploaded_by_user_id: input.uploadedBy.id,
-      uploaded_by_name: input.uploadedBy.name,
-      uploaded_at: now,
-      updated_at: now
-    })
-    .select("*")
-    .single();
-
-  if (createError) {
+      categoryOther,
+      uploadedByUserId: input.uploadedBy.id,
+      uploadedByName: input.uploadedBy.name,
+      uploadedAtIso: now,
+      updatedAtIso: now,
+      additionalColumns: {
+        care_plan_id: input.carePlanId ?? null
+      },
+      supabase: admin
+    });
+    const { data, error } = await admin.from("member_files").select("*").eq("id", memberFileId).single();
+    if (error) throw new Error(error.message);
+    created = data;
+  } catch (error) {
     try {
       await deleteMemberDocumentObject(storageObjectPath);
     } catch (cleanupError) {
@@ -686,12 +723,12 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
           member_id: memberId,
           document_source: input.documentSource,
           storage_object_path: storageObjectPath,
-          save_error: createError.message,
+          save_error: error instanceof Error ? error.message : "Unknown save error.",
           cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
         }
       });
     }
-    throw new Error(createError.message);
+    throw error;
   }
 
   return {
