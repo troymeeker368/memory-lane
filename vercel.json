@@ -3,6 +3,10 @@
     {
       "path": "/api/internal/pof-post-sign-sync?limit=25",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/internal/enrollment-packet-mapping-sync?limit=10",
+      "schedule": "*/10 * * * *"
     }
   ]
 }

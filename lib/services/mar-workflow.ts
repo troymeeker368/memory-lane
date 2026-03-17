@@ -738,6 +738,33 @@ export async function documentScheduledMarAdministration(input: {
   } catch (error) {
     console.error("[mar-workflow] unable to emit scheduled MAR workflow milestone", error);
   }
+  if (input.status === "Not Given") {
+    try {
+      await recordWorkflowMilestone({
+        event: {
+          eventType: "action_required",
+          entityType: "mar_administration",
+          entityId: inserted.id as string,
+          actorType: "user",
+          actorUserId: input.actor.userId,
+          status: "open",
+          severity: "high",
+          metadata: {
+            member_id: scheduleRow.member_id,
+            mar_schedule_id: scheduleRow.id,
+            pof_medication_id: scheduleRow.pof_medication_id,
+            title: "MAR Dose Not Given",
+            message: `${scheduleRow.medication_name} was documented as Not Given. Review the MAR entry and follow up on the reason.`,
+            priority: "high",
+            action_url: `/health/mar?memberId=${scheduleRow.member_id}`,
+            not_given_reason: reason
+          }
+        }
+      });
+    } catch (error) {
+      console.error("[mar-workflow] unable to emit MAR not-given notification", error);
+    }
+  }
 
   return {
     administrationId: inserted.id as string,
@@ -925,6 +952,32 @@ export async function documentPrnOutcomeAssessment(input: {
       prn_followup_note: followupNote
     }
   });
+  if (input.prnOutcome === "Ineffective") {
+    try {
+      await recordWorkflowMilestone({
+        event: {
+          eventType: "action_required",
+          entityType: "mar_administration",
+          entityId: updated.id as string,
+          actorType: "user",
+          actorUserId: input.actor.userId,
+          status: "open",
+          severity: "high",
+          metadata: {
+            member_id: existing.member_id,
+            title: "PRN Follow-up Needed",
+            message: "A PRN medication was documented as ineffective. Review the member and complete follow-up now.",
+            priority: "high",
+            action_url: `/health/mar?memberId=${existing.member_id}`,
+            prn_outcome: input.prnOutcome,
+            prn_followup_note: followupNote
+          }
+        }
+      });
+    } catch (error) {
+      console.error("[mar-workflow] unable to emit PRN ineffective notification", error);
+    }
+  }
 
   return {
     administrationId: updated.id as string,

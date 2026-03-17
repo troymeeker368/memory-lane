@@ -71,7 +71,7 @@ const monthlyMarReportSchema = z.object({
   memberId: z.string().uuid(),
   month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
   reportType: z.enum(MAR_MONTHLY_REPORT_TYPES),
-  saveToMemberFiles: z.boolean().optional().default(false)
+  saveToMemberFiles: z.boolean().optional().default(true)
 });
 
 async function insertAudit(action: string, entityType: string, entityId: string | null, details: Record<string, unknown>) {
@@ -245,32 +245,30 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
       }
     });
 
-    if (payload.data.saveToMemberFiles) {
-      try {
-        await saveGeneratedMemberPdfToFiles({
-          memberId: generated.report.member.id,
-          memberName: generated.report.member.fullName,
-          documentLabel: `MAR ${marReportTypeLabel(payload.data.reportType)} ${payload.data.month}`,
-          fileNameOverride: generated.fileName,
-          documentSource: `MAR Monthly Report:${generated.report.member.id}:${payload.data.month}:${payload.data.reportType}`,
-          category: "Health Unit",
-          dataUrl: generated.dataUrl,
-          uploadedBy: {
-            id: profile.id,
-            name: profile.full_name
-          },
-          generatedAtIso,
-          replaceExistingByDocumentSource: true
-        });
-      } catch (error) {
-        return {
-          ok: false,
-          error:
-            error instanceof Error
-              ? `MAR report generation succeeded, but saving to member files failed: ${error.message}`
-              : "MAR report generation succeeded, but saving to member files failed."
-        } as const;
-      }
+    try {
+      await saveGeneratedMemberPdfToFiles({
+        memberId: generated.report.member.id,
+        memberName: generated.report.member.fullName,
+        documentLabel: `MAR ${marReportTypeLabel(payload.data.reportType)} ${payload.data.month}`,
+        fileNameOverride: generated.fileName,
+        documentSource: `MAR Monthly Report:${generated.report.member.id}:${payload.data.month}:${payload.data.reportType}`,
+        category: "Health Unit",
+        dataUrl: generated.dataUrl,
+        uploadedBy: {
+          id: profile.id,
+          name: profile.full_name
+        },
+        generatedAtIso,
+        replaceExistingByDocumentSource: true
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? `MAR report generation succeeded, but saving to member files failed: ${error.message}`
+            : "MAR report generation succeeded, but saving to member files failed."
+      } as const;
     }
 
     await insertAudit("create_log", "mar_monthly_report", generated.report.member.id, {
@@ -278,7 +276,7 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
       month: payload.data.month,
       reportType: payload.data.reportType,
       generatedAtIso,
-      savedToMemberFiles: payload.data.saveToMemberFiles,
+      savedToMemberFiles: true,
       partialRecordsDetected: generated.report.dataQuality.partialRecordsDetected
     });
 

@@ -66,7 +66,10 @@ export default async function HealthAssessmentDetailPage({
           ]}
         />
         <div className="mt-3">
-          <AssessmentPdfActions assessmentId={assessment.id} />
+          <AssessmentPdfActions
+            assessmentId={assessment.id}
+            canRetryDraftPof={assessment.signature_status === "signed" && assessment.draft_pof_status === "failed"}
+          />
         </div>
       </div>
 

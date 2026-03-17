@@ -51,7 +51,6 @@ export function MarMonthlyReportPanel({
   const [memberId, setMemberId] = useState(memberOptions[0]?.memberId ?? "");
   const [month, setMonth] = useState(defaultMonthValue());
   const [reportType, setReportType] = useState<MarMonthlyReportType>("summary");
-  const [saveToMemberFiles, setSaveToMemberFiles] = useState(true);
   const [status, setStatus] = useState<string>("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -80,7 +79,7 @@ export function MarMonthlyReportPanel({
       memberId,
       month,
       reportType,
-      saveToMemberFiles
+      saveToMemberFiles: true
     });
 
     if (!result.ok) {
@@ -97,14 +96,14 @@ export function MarMonthlyReportPanel({
       setPreviewOpen(true);
       setStatus(
         nextWarnings.length > 0
-          ? `Preview ready${saveToMemberFiles ? " and saved to member files" : ""} with ${nextWarnings.length} data-quality warning${nextWarnings.length === 1 ? "" : "s"}.`
-          : `Preview ready${saveToMemberFiles ? " and saved to member files." : "."}`
+          ? `Preview ready and saved to member files with ${nextWarnings.length} data-quality warning${nextWarnings.length === 1 ? "" : "s"}.`
+          : "Preview ready and saved to member files."
       );
       return;
     }
 
     triggerDownload(result.dataUrl, result.fileName);
-    setStatus(saveToMemberFiles ? "Report downloaded and saved to member files." : "Report downloaded successfully.");
+    setStatus("Report downloaded and saved to member files.");
   }
 
   return (
@@ -162,14 +161,9 @@ export function MarMonthlyReportPanel({
             </select>
           </label>
 
-          <label className="flex items-center gap-2 rounded border border-border px-3 text-sm">
-            <input
-              type="checkbox"
-              checked={saveToMemberFiles}
-              onChange={(event) => setSaveToMemberFiles(event.target.checked)}
-            />
-            Save report to member files
-          </label>
+          <div className="flex items-center rounded border border-border px-3 text-sm text-muted">
+            Reports are always saved to member files
+          </div>
         </div>
       )}
 

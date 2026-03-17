@@ -629,6 +629,154 @@ async function addLeadActivity(input: {
   if (error) throw new Error(error.message);
 }
 
+type EnrollmentPacketMemberFileArtifact = {
+  uploadCategory: EnrollmentPacketUploadCategory;
+  memberFileId: string | null;
+};
+
+type EnrollmentPacketDownstreamMappingResult = {
+  mappingRunId: string | null;
+  downstreamSystemsUpdated: string[];
+  conflictsRequiringReview: number;
+  status: "completed" | "failed";
+  error?: string | null;
+};
+
+async function listEnrollmentPacketMemberFileArtifacts(packetId: string): Promise<EnrollmentPacketMemberFileArtifact[]> {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("enrollment_packet_uploads")
+    .select("upload_category, member_file_id")
+    .eq("packet_id", packetId)
+    .order("uploaded_at", { ascending: true });
+  if (error) throwEnrollmentPacketSchemaError(error, "enrollment_packet_uploads");
+  return ((data ?? []) as Array<{ upload_category: EnrollmentPacketUploadCategory; member_file_id: string | null }>).map((row) => ({
+    uploadCategory: row.upload_category,
+    memberFileId: row.member_file_id
+  }));
+}
+
+async function runEnrollmentPacketDownstreamMapping(input: {
+  request: EnrollmentPacketRequestRow;
+  member: MemberRow;
+  fields: EnrollmentPacketFieldsRow;
+  senderSignatureName: string;
+  caregiverEmail: string | null;
+  memberFileArtifacts: EnrollmentPacketMemberFileArtifact[];
+  actorType: "user" | "system";
+}) {
+  const artifactOps = await loadEnrollmentPacketArtifactOps();
+  let failedMappingRunId: string | null = null;
+
+  try {
+    const downstreamMapping = await mapEnrollmentPacketToDownstream({
+      packetId: input.request.id,
+      memberId: input.member.id,
+      senderUserId: input.request.sender_user_id,
+      senderName: input.senderSignatureName,
+      senderEmail: null,
+      caregiverEmail: input.caregiverEmail,
+      fields: input.fields,
+      memberFileArtifacts: input.memberFileArtifacts
+    });
+
+    await recordWorkflowEvent({
+      eventType: "enrollment_packet_mapping_completed",
+      entityType: "enrollment_packet_request",
+      entityId: input.request.id,
+      actorType: input.actorType,
+      actorUserId: input.request.sender_user_id,
+      status: "completed",
+      severity: "low",
+      metadata: {
+        member_id: input.member.id,
+        lead_id: input.request.lead_id,
+        mapping_run_id: downstreamMapping.mappingRunId,
+        downstream_systems_updated: downstreamMapping.downstreamSystemsUpdated,
+        conflicts_requiring_review: downstreamMapping.conflictsRequiringReview
+      }
+    });
+
+    return {
+      mappingRunId: downstreamMapping.mappingRunId,
+      downstreamSystemsUpdated: downstreamMapping.downstreamSystemsUpdated,
+      conflictsRequiringReview: downstreamMapping.conflictsRequiringReview,
+      status: "completed"
+    } satisfies EnrollmentPacketDownstreamMappingResult;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Enrollment packet mapping failed.";
+    const attemptedAt = toEasternISO();
+    const packetAfterFailure = await loadRequestById(input.request.id);
+    failedMappingRunId = packetAfterFailure?.latest_mapping_run_id ?? failedMappingRunId;
+
+    try {
+      await artifactOps.updateEnrollmentPacketMappingSyncState({
+        packetId: input.request.id,
+        status: "failed",
+        attemptedAt,
+        error: reason,
+        mappingRunId: failedMappingRunId
+      });
+    } catch (syncStateError) {
+      console.error("[enrollment-packets] unable to persist mapping failure state", syncStateError);
+    }
+
+    await recordWorkflowEvent({
+      eventType: "enrollment_packet_mapping_failed",
+      entityType: "enrollment_packet_request",
+      entityId: input.request.id,
+      actorType: input.actorType,
+      actorUserId: input.request.sender_user_id,
+      status: "failed",
+      severity: "high",
+      metadata: {
+        member_id: input.member.id,
+        lead_id: input.request.lead_id,
+        error: reason,
+        mapping_run_id: failedMappingRunId
+      }
+    });
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "enrollment_packet_failed",
+        entityType: "enrollment_packet_request",
+        entityId: input.request.id,
+        actorType: input.actorType,
+        actorUserId: input.request.sender_user_id,
+        status: "failed",
+        severity: "high",
+        metadata: {
+          member_id: input.member.id,
+          lead_id: input.request.lead_id,
+          phase: "mapping",
+          error: reason
+        }
+      }
+    });
+    await recordImmediateSystemAlert({
+      entityType: "enrollment_packet_request",
+      entityId: input.request.id,
+      actorUserId: input.request.sender_user_id,
+      severity: "high",
+      alertKey: "enrollment_packet_mapping_failed",
+      metadata: {
+        member_id: input.member.id,
+        lead_id: input.request.lead_id,
+        error: reason,
+        mapping_run_id: failedMappingRunId
+      }
+    });
+
+    return {
+      mappingRunId: failedMappingRunId,
+      downstreamSystemsUpdated: [],
+      conflictsRequiringReview: 0,
+      status: "failed",
+      error: reason
+    } satisfies EnrollmentPacketDownstreamMappingResult;
+  }
+}
+
 async function invokeFinalizeEnrollmentPacketCompletionRpc(input: {
   packetId: string;
   rotatedToken: string;
@@ -2145,96 +2293,49 @@ export async function submitPublicEnrollmentPacket(input: {
 
   const refreshedFields = await loadPacketFields(request.id);
 
-  try {
-    if (!refreshedFields) {
-      throw new Error("Enrollment packet fields are missing after filing.");
-    }
-    const downstreamMapping = await mapEnrollmentPacketToDownstream({
-      packetId: request.id,
-      memberId: member.id,
-      senderUserId: request.sender_user_id,
-      senderName: senderSignatureName,
-      senderEmail: null,
-      caregiverEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
+  if (refreshedFields) {
+    mappingSummary = await runEnrollmentPacketDownstreamMapping({
+      request,
+      member,
       fields: refreshedFields,
+      senderSignatureName,
+      caregiverEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
       memberFileArtifacts: uploadedArtifacts.map((artifact) => ({
         uploadCategory: artifact.uploadCategory,
         memberFileId: artifact.memberFileId
-      }))
+      })),
+      actorType: "user"
     });
-    failedMappingRunId = downstreamMapping.mappingRunId;
+    failedMappingRunId = mappingSummary.mappingRunId;
+  } else {
     mappingSummary = {
-      mappingRunId: downstreamMapping.mappingRunId,
-      downstreamSystemsUpdated: downstreamMapping.downstreamSystemsUpdated,
-      conflictsRequiringReview: downstreamMapping.conflictsRequiringReview,
-      status: "completed"
-    };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "Enrollment packet mapping failed.";
-    const attemptedAt = toEasternISO();
-    const packetAfterFailure = await loadRequestById(request.id);
-    failedMappingRunId = packetAfterFailure?.latest_mapping_run_id ?? failedMappingRunId;
-    mappingSummary = {
-      mappingRunId: failedMappingRunId,
+      mappingRunId: null,
       downstreamSystemsUpdated: [],
       conflictsRequiringReview: 0,
       status: "failed",
-      error: reason
+      error: "Enrollment packet fields are missing after filing."
     };
+    failedMappingRunId = null;
     try {
       await artifactOps.updateEnrollmentPacketMappingSyncState({
         packetId: request.id,
         status: "failed",
-        attemptedAt,
-        error: reason,
-        mappingRunId: failedMappingRunId
+        attemptedAt: toEasternISO(),
+        error: mappingSummary.error,
+        mappingRunId: null
       });
     } catch (syncStateError) {
-      console.error("[enrollment-packets] unable to persist mapping failure state", syncStateError);
+      console.error("[enrollment-packets] unable to persist missing-fields mapping failure state", syncStateError);
     }
-    await recordWorkflowEvent({
-      eventType: "enrollment_packet_mapping_failed",
-      entityType: "enrollment_packet_request",
-      entityId: request.id,
-      actorType: "user",
-      actorUserId: request.sender_user_id,
-      status: "failed",
-      severity: "high",
-      metadata: {
-        member_id: member.id,
-        lead_id: request.lead_id,
-        error: reason,
-        mapping_run_id: failedMappingRunId
-      }
-    });
-    await recordWorkflowMilestone({
-      event: {
-        eventType: "enrollment_packet_failed",
-        entityType: "enrollment_packet_request",
-        entityId: request.id,
-        actorType: "user",
-        actorUserId: request.sender_user_id,
-        status: "failed",
-        severity: "high",
-        metadata: {
-          member_id: member.id,
-          lead_id: request.lead_id,
-          phase: "mapping",
-          error: reason
-        }
-      }
-    });
     await recordImmediateSystemAlert({
       entityType: "enrollment_packet_request",
       entityId: request.id,
       actorUserId: request.sender_user_id,
       severity: "high",
-      alertKey: "enrollment_packet_mapping_failed",
+      alertKey: "enrollment_packet_mapping_missing_fields",
       metadata: {
         member_id: member.id,
-        lead_id: request.lead_id,
-        error: reason,
-        mapping_run_id: failedMappingRunId
+        lead_id: request.lead_id
       }
     });
   }
@@ -2254,6 +2355,18 @@ export async function submitPublicEnrollmentPacket(input: {
       });
     } catch (error) {
       console.error("[enrollment-packets] unable to record lead activity after packet filing", error);
+      await recordImmediateSystemAlert({
+        entityType: "enrollment_packet_request",
+        entityId: request.id,
+        actorUserId: request.sender_user_id,
+        severity: "medium",
+        alertKey: "enrollment_packet_lead_activity_failed",
+        metadata: {
+          member_id: member.id,
+          lead_id: request.lead_id,
+          error: error instanceof Error ? error.message : "Unable to record lead activity after packet filing."
+        }
+      });
     }
   }
 
@@ -2359,5 +2472,102 @@ export async function submitPublicEnrollmentPacket(input: {
     status: "filed" as const,
     mappingSyncStatus: mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending",
     wasAlreadyFiled: false as const
+  };
+}
+
+export async function retryFailedEnrollmentPacketMappings(input?: { limit?: number }) {
+  const limit = Math.min(100, Math.max(1, input?.limit ?? 25));
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("enrollment_packet_requests")
+    .select("*")
+    .eq("mapping_sync_status", "failed")
+    .in("status", ["completed", "filed"])
+    .order("mapping_sync_attempted_at", { ascending: true, nullsFirst: true })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+
+  const artifactOps = await loadEnrollmentPacketArtifactOps();
+  let processed = 0;
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const row of (data ?? []) as EnrollmentPacketRequestRow[]) {
+    processed += 1;
+    const request = row;
+    const attemptedAt = toEasternISO();
+
+    try {
+      const [member, fields, senderSignatureName, memberFileArtifacts] = await Promise.all([
+        getMemberById(request.member_id),
+        loadPacketFields(request.id),
+        getEnrollmentPacketSenderSignatureProfile(request.sender_user_id).then((profile) => profile?.signature_name ?? "Staff"),
+        listEnrollmentPacketMemberFileArtifacts(request.id)
+      ]);
+
+      if (!member) {
+        throw new Error("Member record was not found for enrollment packet mapping retry.");
+      }
+      if (!fields) {
+        throw new Error("Enrollment packet fields are missing for mapping retry.");
+      }
+
+      await artifactOps.updateEnrollmentPacketMappingSyncState({
+        packetId: request.id,
+        status: "pending",
+        attemptedAt,
+        error: null,
+        mappingRunId: request.latest_mapping_run_id
+      });
+
+      const mappingSummary = await runEnrollmentPacketDownstreamMapping({
+        request,
+        member,
+        fields,
+        senderSignatureName,
+        caregiverEmail: request.caregiver_email,
+        memberFileArtifacts,
+        actorType: "system"
+      });
+
+      if (mappingSummary.status === "completed") {
+        succeeded += 1;
+      } else {
+        failed += 1;
+      }
+    } catch (retryError) {
+      failed += 1;
+      const reason = retryError instanceof Error ? retryError.message : "Enrollment packet mapping retry failed.";
+      try {
+        await artifactOps.updateEnrollmentPacketMappingSyncState({
+          packetId: request.id,
+          status: "failed",
+          attemptedAt,
+          error: reason,
+          mappingRunId: request.latest_mapping_run_id
+        });
+      } catch (stateError) {
+        console.error("[enrollment-packets] unable to persist mapping retry failure state", stateError);
+      }
+      await recordImmediateSystemAlert({
+        entityType: "enrollment_packet_request",
+        entityId: request.id,
+        actorUserId: request.sender_user_id,
+        severity: "high",
+        alertKey: "enrollment_packet_mapping_retry_failed",
+        metadata: {
+          member_id: request.member_id,
+          lead_id: request.lead_id,
+          error: reason,
+          mapping_run_id: request.latest_mapping_run_id
+        }
+      });
+    }
+  }
+
+  return {
+    processed,
+    succeeded,
+    failed
   };
 }

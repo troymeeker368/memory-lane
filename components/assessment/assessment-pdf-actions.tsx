@@ -2,7 +2,10 @@
 
 import { useState, useTransition } from "react";
 
-import { generateAssessmentPdfAction } from "@/app/(portal)/health/assessment/[assessmentId]/actions";
+import {
+  generateAssessmentPdfAction,
+  retryAssessmentDraftPofAction
+} from "@/app/(portal)/health/assessment/[assessmentId]/actions";
 
 function triggerDownload(dataUrl: string, fileName: string) {
   const anchor = document.createElement("a");
@@ -13,7 +16,13 @@ function triggerDownload(dataUrl: string, fileName: string) {
   anchor.remove();
 }
 
-export function AssessmentPdfActions({ assessmentId }: { assessmentId: string }) {
+export function AssessmentPdfActions({
+  assessmentId,
+  canRetryDraftPof
+}: {
+  assessmentId: string;
+  canRetryDraftPof: boolean;
+}) {
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState("");
 
@@ -45,6 +54,26 @@ export function AssessmentPdfActions({ assessmentId }: { assessmentId: string })
       >
         Print
       </button>
+      {canRetryDraftPof ? (
+        <button
+          type="button"
+          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 disabled:opacity-70"
+          onClick={() =>
+            startTransition(async () => {
+              setStatus("");
+              const result = await retryAssessmentDraftPofAction({ assessmentId });
+              if (!result.ok) {
+                setStatus(`Error: ${result.error}`);
+                return;
+              }
+              setStatus("Draft POF retry succeeded.");
+            })
+          }
+          disabled={isPending}
+        >
+          Retry Draft POF
+        </button>
+      ) : null}
       {status ? <p className="text-xs text-muted">{status}</p> : null}
     </div>
   );

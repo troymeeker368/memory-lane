@@ -3,9 +3,11 @@
 import { revalidatePath } from "next/cache";
 
 import { requireRoles } from "@/lib/auth";
+import { autoCreateDraftPhysicianOrderFromIntake } from "@/lib/services/intake-pof-mhp-cascade";
 import { getAssessmentDetail } from "@/lib/services/relations";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { buildIntakeAssessmentPdfDataUrl } from "@/lib/services/intake-assessment-pdf";
+import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { toEasternISO } from "@/lib/timezone";
 
 export async function generateAssessmentPdfAction(input: { assessmentId: string }) {
@@ -51,6 +53,52 @@ export async function generateAssessmentPdfAction(input: { assessmentId: string 
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to generate assessment PDF."
+    } as const;
+  }
+}
+
+export async function retryAssessmentDraftPofAction(input: { assessmentId: string }) {
+  const profile = await requireRoles(["admin", "manager", "nurse"]);
+  const assessmentId = String(input.assessmentId ?? "").trim();
+  if (!assessmentId) {
+    return { ok: false, error: "Assessment is required." } as const;
+  }
+
+  const detail = await getAssessmentDetail(assessmentId);
+  if (!detail) {
+    return { ok: false, error: "Assessment not found." } as const;
+  }
+  if (detail.signature.status !== "signed") {
+    return { ok: false, error: "Draft POF retry is only available after intake signature is completed." } as const;
+  }
+
+  try {
+    const signatureName = await getManagedUserSignatureName(profile.id, profile.full_name);
+    const created = await autoCreateDraftPhysicianOrderFromIntake({
+      assessment: detail.assessment,
+      actor: {
+        id: profile.id,
+        fullName: profile.full_name,
+        signoffName: signatureName
+      }
+    });
+
+    revalidatePath(`/health/assessment/${assessmentId}`);
+    revalidatePath("/health/assessment");
+    revalidatePath("/health/physician-orders");
+    revalidatePath(`/health/physician-orders/${created.id}`);
+    revalidatePath(`/health/physician-orders?memberId=${detail.assessment.member_id}`);
+    revalidatePath(`/health/member-health-profiles/${detail.assessment.member_id}`);
+    revalidatePath(`/operations/member-command-center/${detail.assessment.member_id}`);
+
+    return {
+      ok: true,
+      physicianOrderId: created.id
+    } as const;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to retry draft POF creation."
     } as const;
   }
 }
