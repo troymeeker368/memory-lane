@@ -182,7 +182,6 @@ async function upsertRows(
     intake_assessment_signatures: "assessment_id",
     pof_signatures: "pof_request_id",
     pof_medications: "physician_order_id,source_medication_id",
-    mar_schedules: "member_id,pof_medication_id,scheduled_time",
     member_health_profiles: "member_id"
   };
   const conflictTarget = conflictTargetByTable[table] ?? "id";
@@ -4021,6 +4020,16 @@ async function main() {
     tableCounts.set(item.table, inserted);
     const moduleKey = item.module;
     moduleCounts.set(moduleKey, (moduleCounts.get(moduleKey) ?? 0) + inserted);
+  }
+
+  if (!parsed.legacyOnly && parsed.modules.includes("intake")) {
+    const intakeSeedMemberLinks = await ensureIntakeReadySeedMembers(supabase, {
+      existingTables,
+      leads: rows.leads
+    });
+    console.log(
+      `intake_seed_member_links: intake_leads=${intakeSeedMemberLinks.intakeLeadCount} already_linked=${intakeSeedMemberLinks.alreadyLinkedCount} upserted=${intakeSeedMemberLinks.upsertedCount}`
+    );
   }
 
   console.log("Supabase seed complete.");
