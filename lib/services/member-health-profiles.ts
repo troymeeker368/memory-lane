@@ -38,9 +38,24 @@ export async function getMemberHealthProfileDetail(memberId: string) {
   return getMemberHealthProfileDetailSupabase(memberId);
 }
 
+function isMissingRpcFunctionError(error: unknown, rpcName: string) {
+  if (!error || typeof error !== "object") return false;
+  const code = String((error as { code?: string }).code ?? "").toUpperCase();
+  const text = String((error as { message?: string }).message ?? "").toLowerCase();
+  return (code === "PGRST202" || code === "42883") && text.includes(rpcName.toLowerCase());
+}
+
 function clean(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeBinaryGender(value: unknown) {
+  const normalized = clean(typeof value === "string" ? value : null)?.toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "m" || normalized === "male") return "M";
+  if (normalized === "f" || normalized === "female") return "F";
+  return null;
 }
 
 function toNullableUuid(value: string | null | undefined) {
@@ -131,10 +146,17 @@ export async function saveMemberHealthProfileBundle(input: {
   hospitalName?: string | null;
 }) {
   const supabase = await createClient();
+  const normalizedMhpPatch =
+    Object.prototype.hasOwnProperty.call(input.mhpPatch, "gender")
+      ? {
+          ...input.mhpPatch,
+          gender: normalizeBinaryGender(input.mhpPatch.gender)
+        }
+      : input.mhpPatch;
   try {
     await invokeSupabaseRpcOrThrow<unknown>(supabase, UPDATE_MEMBER_HEALTH_PROFILE_BUNDLE_RPC, {
       p_member_id: input.memberId,
-      p_mhp_patch: input.mhpPatch,
+      p_mhp_patch: normalizedMhpPatch,
       p_member_patch: input.memberPatch ?? {},
       p_actor_user_id: toNullableUuid(input.actor.id),
       p_actor_name: clean(input.actor.fullName),
@@ -143,8 +165,7 @@ export async function saveMemberHealthProfileBundle(input: {
       p_hospital_name: clean(input.hospitalName)
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to save Member Health Profile workflow.";
-    if (message.includes(UPDATE_MEMBER_HEALTH_PROFILE_BUNDLE_RPC)) {
+    if (isMissingRpcFunctionError(error, UPDATE_MEMBER_HEALTH_PROFILE_BUNDLE_RPC)) {
       throw new Error(
         `Member Health Profile workflow RPC is not available. Apply Supabase migration ${MEMBER_HEALTH_PROFILE_WORKFLOW_RPC_MIGRATION} and refresh PostgREST schema cache.`
       );
@@ -174,8 +195,7 @@ export async function updateMemberTrackWithCarePlanNote(input: {
     );
     return result ?? { changed: false, member_note_id: null };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to update member track.";
-    if (message.includes(UPDATE_MEMBER_TRACK_WITH_NOTE_RPC)) {
+    if (isMissingRpcFunctionError(error, UPDATE_MEMBER_TRACK_WITH_NOTE_RPC)) {
       throw new Error(
         `Member Health Profile track workflow RPC is not available. Apply Supabase migration ${MEMBER_HEALTH_PROFILE_WORKFLOW_RPC_MIGRATION} and refresh PostgREST schema cache.`
       );
@@ -219,8 +239,7 @@ export async function mutateMemberDiagnosisWorkflow(input: {
     });
     return result ?? { entity_row: null, changed: false };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to mutate member diagnosis workflow.";
-    if (message.includes(MUTATE_MEMBER_DIAGNOSIS_WORKFLOW_RPC)) {
+    if (isMissingRpcFunctionError(error, MUTATE_MEMBER_DIAGNOSIS_WORKFLOW_RPC)) {
       throw new Error(
         `Member Health Profile child workflow RPCs are not available. Apply Supabase migration 0058_mhp_child_workflow_rpc_hardening.sql and refresh PostgREST schema cache.`
       );
@@ -269,8 +288,7 @@ export async function mutateMemberMedicationWorkflow(input: {
       }
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to mutate member medication workflow.";
-    if (message.includes(MUTATE_MEMBER_MEDICATION_WORKFLOW_RPC)) {
+    if (isMissingRpcFunctionError(error, MUTATE_MEMBER_MEDICATION_WORKFLOW_RPC)) {
       throw new Error(
         `Member Health Profile child workflow RPCs are not available. Apply Supabase migration 0058_mhp_child_workflow_rpc_hardening.sql and refresh PostgREST schema cache.`
       );
@@ -300,8 +318,7 @@ export async function mutateMemberAllergyWorkflow(input: {
     });
     return result ?? { entity_row: null, changed: false };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to mutate member allergy workflow.";
-    if (message.includes(MUTATE_MEMBER_ALLERGY_WORKFLOW_RPC)) {
+    if (isMissingRpcFunctionError(error, MUTATE_MEMBER_ALLERGY_WORKFLOW_RPC)) {
       throw new Error(
         `Member Health Profile child workflow RPCs are not available. Apply Supabase migration 0058_mhp_child_workflow_rpc_hardening.sql and refresh PostgREST schema cache.`
       );
@@ -331,8 +348,7 @@ export async function mutateMemberProviderWorkflow(input: {
     });
     return result ?? { entity_row: null, changed: false };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to mutate member provider workflow.";
-    if (message.includes(MUTATE_MEMBER_PROVIDER_WORKFLOW_RPC)) {
+    if (isMissingRpcFunctionError(error, MUTATE_MEMBER_PROVIDER_WORKFLOW_RPC)) {
       throw new Error(
         `Member Health Profile child workflow RPCs are not available. Apply Supabase migration 0058_mhp_child_workflow_rpc_hardening.sql and refresh PostgREST schema cache.`
       );
@@ -366,8 +382,7 @@ export async function mutateMemberEquipmentWorkflow(input: {
     );
     return result ?? { entity_row: null, changed: false };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to mutate member equipment workflow.";
-    if (message.includes(MUTATE_MEMBER_EQUIPMENT_WORKFLOW_RPC)) {
+    if (isMissingRpcFunctionError(error, MUTATE_MEMBER_EQUIPMENT_WORKFLOW_RPC)) {
       throw new Error(
         `Member Health Profile equipment/note workflow RPCs are not available. Apply Supabase migration 0059_mhp_equipment_notes_rpc_hardening.sql and refresh PostgREST schema cache.`
       );
@@ -397,8 +412,7 @@ export async function mutateMemberNoteWorkflow(input: {
     });
     return result ?? { entity_row: null, changed: false };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to mutate member note workflow.";
-    if (message.includes(MUTATE_MEMBER_NOTE_WORKFLOW_RPC)) {
+    if (isMissingRpcFunctionError(error, MUTATE_MEMBER_NOTE_WORKFLOW_RPC)) {
       throw new Error(
         `Member Health Profile equipment/note workflow RPCs are not available. Apply Supabase migration 0059_mhp_equipment_notes_rpc_hardening.sql and refresh PostgREST schema cache.`
       );
