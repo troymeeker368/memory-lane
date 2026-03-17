@@ -1,7 +1,51 @@
 import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
-import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import {
+  BILLING_ADJUSTMENT_TYPE_OPTIONS,
+  BILLING_BATCH_TYPE_OPTIONS,
+  BILLING_EXPORT_TYPES,
+  CENTER_CLOSURE_TYPE_OPTIONS,
+  type ActiveEffectiveDatedRow,
+  type AttendanceSettingWeekdays,
+  type BatchGenerationInput,
+  type BillingExpectedAttendanceCollectionInput,
+  type BillingExpectedAttendanceInput,
+  type BillingPreviewRow,
+  type BillingSettingRow,
+  type CenterBillingSettingRow,
+  type ClosureRuleRow,
+  type CreateCustomInvoiceInput,
+  type DateRange,
+  type FinalizeBatchInput,
+  type MemberScopedActiveEffectiveDatedRow,
+  type ReopenBatchInput,
+  type ScheduleTemplateRow
+} from "@/lib/services/billing-types";
+import {
+  addDays,
+  addMonths,
+  asNumber,
+  attendanceSettingIncludesDate,
+  buildCustomInvoiceNumber,
+  endOfMonth,
+  escapeCsv,
+  isWithin,
+  normalizeDateOnly,
+  previousMonth,
+  randomTextId,
+  scheduleIncludesDate,
+  startOfMonth,
+  toAmount,
+  toDateRange,
+  toMonthRange,
+  weekdayKey
+} from "@/lib/services/billing-utils";
+import {
+  buildBillingBatchWritePlan,
+  invokeCreateBillingExportRpc,
+  invokeGenerateBillingBatchRpc
+} from "@/lib/services/billing-rpc";
 import {
   formatBillingPayorDisplayName,
   listBillingPayorContactsForMembers
@@ -10,437 +54,30 @@ import {
   buildMemberContactsSchemaOutOfDateError,
   isMemberContactsPayorColumnMissingError
 } from "@/lib/services/member-contact-payor-schema";
-import { generateClosureDatesFromRules, type ClosureRuleLike } from "@/lib/services/closure-rules";
+import { generateClosureDatesFromRules } from "@/lib/services/closure-rules";
 import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
 import {
   isMemberHoldActiveForDate,
-  resolveExpectedAttendanceForDate,
-  type MemberHoldLike
+  resolveExpectedAttendanceForDate
 } from "@/lib/services/expected-attendance";
-import type { ScheduleChangeRow } from "@/lib/services/schedule-changes-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import {
   recordImmediateSystemAlert,
   recordWorkflowEvent
 } from "@/lib/services/workflow-observability";
 
-export type BillingModuleRole = "admin" | "manager" | "director" | "coordinator";
-
-export const BILLING_STATUS_OPTIONS = ["Unbilled", "Billed", "Excluded"] as const;
-export const TRANSPORTATION_BILLING_STATUS_OPTIONS = ["BillNormally", "Waived", "IncludedInProgramRate"] as const;
-export const BILLING_ADJUSTMENT_TYPE_OPTIONS = [
-  "ExtraDay",
-  "Credit",
-  "Discount",
-  "Refund",
-  "ManualCharge",
-  "ManualCredit",
-  "PriorBalance",
-  "Other"
-] as const;
-export const BILLING_BATCH_STATUS_OPTIONS = ["Draft", "Reviewed", "Finalized", "Exported", "Closed"] as const;
-export const BILLING_INVOICE_STATUS_OPTIONS = ["Draft", "Finalized", "Sent", "Paid", "PartiallyPaid", "Void"] as const;
-export const BILLING_EXPORT_TYPES = ["QuickBooksCSV", "InternalReviewCSV", "InvoiceSummaryCSV"] as const;
-export const CENTER_CLOSURE_TYPE_OPTIONS = ["Holiday", "Weather", "Planned", "Emergency", "Other"] as const;
-export const BILLING_MODE_OPTIONS = ["Membership", "Monthly", "Custom"] as const;
-export const MONTHLY_BILLING_BASIS_OPTIONS = ["ScheduledMonthBehind", "ActualAttendanceMonthBehind"] as const;
-export const BILLING_BATCH_TYPE_OPTIONS = ["Membership", "Monthly", "Mixed", "Custom"] as const;
-export const BILLING_INVOICE_SOURCE_OPTIONS = ["BatchGenerated", "Custom"] as const;
-
-type DateRange = { start: string; end: string };
-
-type ActiveEffectiveDatedRow = {
-  active: boolean;
-  effective_start_date: string;
-  effective_end_date: string | null;
-};
-
-type MemberScopedActiveEffectiveDatedRow = ActiveEffectiveDatedRow & {
-  member_id: string;
-};
-
-type BillingSettingRow = {
-  id: string;
-  member_id: string;
-  payor_id: string | null;
-  use_center_default_billing_mode: boolean;
-  billing_mode: "Membership" | "Monthly" | "Custom" | null;
-  monthly_billing_basis: "ScheduledMonthBehind" | "ActualAttendanceMonthBehind";
-  use_center_default_rate: boolean;
-  custom_daily_rate: number | null;
-  flat_monthly_rate: number | null;
-  bill_extra_days: boolean;
-  transportation_billing_status: "BillNormally" | "Waived" | "IncludedInProgramRate";
-  bill_ancillary_arrears: boolean;
-  active: boolean;
-  effective_start_date: string;
-  effective_end_date: string | null;
-  billing_notes: string | null;
-  created_at: string;
-  updated_at: string;
-  updated_by_user_id: string | null;
-  updated_by_name: string | null;
-};
-
-type CenterBillingSettingRow = {
-  id: string;
-  default_daily_rate: number;
-  default_extra_day_rate: number | null;
-  default_transport_one_way_rate: number;
-  default_transport_round_trip_rate: number;
-  billing_cutoff_day: number;
-  default_billing_mode: "Membership" | "Monthly";
-  effective_start_date: string;
-  effective_end_date: string | null;
-  active: boolean;
-  created_at: string;
-  updated_at: string;
-  updated_by_user_id: string | null;
-  updated_by_name: string | null;
-};
-
-type ScheduleTemplateRow = {
-  id: string;
-  member_id: string;
-  effective_start_date: string;
-  effective_end_date: string | null;
-  monday: boolean;
-  tuesday: boolean;
-  wednesday: boolean;
-  thursday: boolean;
-  friday: boolean;
-  saturday: boolean;
-  sunday: boolean;
-  active: boolean;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-  updated_by_user_id: string | null;
-  updated_by_name: string | null;
-};
-
-type AttendanceSettingWeekdays = {
-  monday: boolean;
-  tuesday: boolean;
-  wednesday: boolean;
-  thursday: boolean;
-  friday: boolean;
-};
-
-type BillingPreviewRow = {
-  memberId: string;
-  memberName: string;
-  payorName: string;
-  payorId: string | null;
-  billingMode: (typeof BILLING_MODE_OPTIONS)[number];
-  monthlyBillingBasis: (typeof MONTHLY_BILLING_BASIS_OPTIONS)[number] | null;
-  invoiceMonth: string;
-  basePeriodStart: string;
-  basePeriodEnd: string;
-  variableChargePeriodStart: string;
-  variableChargePeriodEnd: string;
-  billingMethod: string;
-  baseProgramAmount: number;
-  transportationAmount: number;
-  ancillaryAmount: number;
-  adjustmentAmount: number;
-  totalAmount: number;
-  baseProgramBilledDays: number;
-  memberDailyRateSnapshot: number;
-  transportationBillingStatusSnapshot: "BillNormally" | "Waived" | "IncludedInProgramRate";
-  variableSourceRows: Array<{
-    line_type: "Transportation" | "Ancillary" | "Adjustment" | "Credit";
-    service_date: string | null;
-    service_period_start: string;
-    service_period_end: string;
-    description: string;
-    quantity: number;
-    unit_rate: number;
-    amount: number;
-    source_table: "transportation_logs" | "ancillary_charge_logs" | "billing_adjustments";
-    source_record_id: string;
-  }>;
-};
-
-type BillingBatchInvoiceRpcPayload = {
-  id: string;
-  member_id: string;
-  payor_id: string | null;
-  invoice_number: string;
-  invoice_month: string;
-  invoice_source: "BatchGenerated" | "Custom";
-  invoice_status: "Draft" | "Finalized" | "Sent" | "Paid" | "PartiallyPaid" | "Void";
-  export_status: string;
-  billing_mode_snapshot: string;
-  monthly_billing_basis_snapshot: string | null;
-  transportation_billing_status_snapshot: string;
-  billing_method_snapshot: string;
-  base_period_start: string;
-  base_period_end: string;
-  variable_charge_period_start: string;
-  variable_charge_period_end: string;
-  invoice_date: string | null;
-  due_date: string | null;
-  base_program_billed_days: number;
-  member_daily_rate_snapshot: number;
-  base_program_amount: number;
-  transportation_amount: number;
-  ancillary_amount: number;
-  adjustment_amount: number;
-  total_amount: number;
-  notes: string | null;
-  created_by_user_id: string;
-  created_by_name: string;
-  created_at: string;
-  updated_at: string;
-};
-
-type BillingBatchInvoiceLineRpcPayload = {
-  id: string;
-  invoice_id: string;
-  member_id: string;
-  payor_id: string | null;
-  service_date: string | null;
-  service_period_start: string;
-  service_period_end: string;
-  line_type: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment" | "Credit" | "PriorBalance";
-  description: string;
-  quantity: number;
-  unit_rate: number;
-  amount: number;
-  source_table: "attendance_records" | "transportation_logs" | "ancillary_charge_logs" | "billing_adjustments" | null;
-  source_record_id: string | null;
-  billing_status: "Billed";
-  created_at: string;
-  updated_at: string;
-};
-
-type BillingBatchCoverageRpcPayload = {
-  member_id: string;
-  coverage_type: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment";
-  coverage_start_date: string;
-  coverage_end_date: string;
-  source_invoice_id: string;
-  source_invoice_line_id: string;
-  source_table: string | null;
-  source_record_id: string | null;
-  created_at: string;
-};
-
-type BillingBatchSourceUpdateRpcPayload = {
-  source_table: "transportation_logs" | "ancillary_charge_logs" | "billing_adjustments";
-  source_record_id: string;
-  invoice_id: string;
-  updated_at: string;
-};
-
-type BillingBatchWritePlan = {
-  batchId: string;
-  batchPayload: {
-    id: string;
-    batch_type: (typeof BILLING_BATCH_TYPE_OPTIONS)[number];
-    billing_month: string;
-    run_date: string;
-    batch_status: "Draft";
-    invoice_count: number;
-    total_amount: number;
-    completion_date: null;
-    next_due_date: string;
-    generated_by_user_id: string;
-    generated_by_name: string;
-    created_at: string;
-    updated_at: string;
-  };
-  invoicePayloads: BillingBatchInvoiceRpcPayload[];
-  invoiceLinePayloads: BillingBatchInvoiceLineRpcPayload[];
-  coveragePayloads: BillingBatchCoverageRpcPayload[];
-  sourceUpdates: BillingBatchSourceUpdateRpcPayload[];
-};
-
-type BillingExportRpcPayload = {
-  id: string;
-  billing_batch_id: string;
-  export_type: (typeof BILLING_EXPORT_TYPES)[number];
-  quickbooks_detail_level: "Summary" | "Detailed";
-  file_name: string;
-  file_data_url: string;
-  generated_at: string;
-  generated_by: string;
-  status: "Generated";
-  notes: null;
-  created_at: string;
-  updated_at: string;
-};
-
-interface BatchGenerationInput {
-  billingMonth: string;
-  batchType?: (typeof BILLING_BATCH_TYPE_OPTIONS)[number];
-  runDate?: string;
-  runByUser: string;
-  runByName: string;
-}
-
-interface FinalizeBatchInput {
-  billingBatchId: string;
-  finalizedBy: string;
-}
-
-interface ReopenBatchInput {
-  billingBatchId: string;
-  reopenedBy: string;
-}
-
-interface CustomInvoiceManualLine {
-  description: string;
-  quantity: number;
-  unitRate: number;
-  amount?: number;
-  lineType?: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment" | "Credit" | "PriorBalance";
-}
-
-interface CreateCustomInvoiceInput {
-  memberId: string;
-  payorId?: string | null;
-  invoiceDate?: string | null;
-  dueDate?: string | null;
-  periodStart: string;
-  periodEnd: string;
-  calculationMethod: "DailyRateTimesDates" | "FlatAmount" | "ManualLineItems";
-  flatAmount?: number | null;
-  useScheduleTemplate?: boolean;
-  includeTransportation?: boolean;
-  includeAncillary?: boolean;
-  includeAdjustments?: boolean;
-  manualIncludeDates?: string[];
-  manualExcludeDates?: string[];
-  manualLineItems?: CustomInvoiceManualLine[];
-  notes?: string | null;
-  runByUser: string;
-  runByName: string;
-}
-
-const BILLING_ATOMIC_WORKFLOW_MIGRATION = "0044_atomic_billing_and_completion_finalization.sql";
-const RPC_GENERATE_BILLING_BATCH = "rpc_generate_billing_batch";
-const RPC_CREATE_BILLING_EXPORT = "rpc_create_billing_export";
-
-function normalizeDateOnly(value: string | null | undefined, fallback = toEasternDate()) {
-  const dateOnly = String(value ?? "").trim().slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(dateOnly) ? dateOnly : fallback;
-}
-
-function startOfMonth(value: string | null | undefined) {
-  const dateOnly = normalizeDateOnly(value);
-  return `${dateOnly.slice(0, 7)}-01`;
-}
-
-function addDays(dateOnly: string, days: number) {
-  const parsed = new Date(`${normalizeDateOnly(dateOnly)}T00:00:00.000Z`);
-  parsed.setUTCDate(parsed.getUTCDate() + days);
-  return parsed.toISOString().slice(0, 10);
-}
-
-function addMonths(dateOnly: string, months: number) {
-  const parsed = new Date(`${normalizeDateOnly(dateOnly)}T00:00:00.000Z`);
-  parsed.setUTCMonth(parsed.getUTCMonth() + months, 1);
-  return parsed.toISOString().slice(0, 10);
-}
-
-function endOfMonth(value: string | null | undefined) {
-  const parsed = new Date(`${startOfMonth(value)}T00:00:00.000Z`);
-  parsed.setUTCMonth(parsed.getUTCMonth() + 1, 0);
-  return parsed.toISOString().slice(0, 10);
-}
-
-function previousMonth(monthStart: string) {
-  return addMonths(startOfMonth(monthStart), -1);
-}
-
-function toMonthRange(monthStartValue: string): DateRange {
-  const start = startOfMonth(monthStartValue);
-  return { start, end: endOfMonth(start) };
-}
-
-function toDateRange(start: string, end: string): DateRange {
-  const normalizedStart = normalizeDateOnly(start);
-  const normalizedEnd = normalizeDateOnly(end, normalizedStart);
-  return normalizedStart <= normalizedEnd
-    ? { start: normalizedStart, end: normalizedEnd }
-    : { start: normalizedEnd, end: normalizedStart };
-}
-
-function isWithin(dateOnly: string | null | undefined, range: DateRange) {
-  const normalized = normalizeDateOnly(dateOnly, "");
-  if (!normalized) return false;
-  return normalized >= range.start && normalized <= range.end;
-}
-
-function toAmount(value: number | null | undefined) {
-  if (!Number.isFinite(value)) return 0;
-  return Number(Number(value).toFixed(2));
-}
-
-function asNumber(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function randomTextId(prefix: string) {
-  return `${prefix}-${randomUUID()}`;
-}
-
-function buildInvoiceNumber(invoiceMonth: string, sequence: number) {
-  const yyyymm = startOfMonth(invoiceMonth).slice(0, 7).replace("-", "");
-  return `INV-${yyyymm}-${String(sequence + 1).padStart(4, "0")}`;
-}
-
-function buildCustomInvoiceNumber(periodStart: string, sequence: number) {
-  const yyyymm = startOfMonth(periodStart).slice(0, 7).replace("-", "");
-  return `CINV-${yyyymm}-${String(sequence + 1).padStart(4, "0")}`;
-}
-
-function escapeCsv(value: string | number | null | undefined) {
-  const stringValue = String(value ?? "");
-  if (/[",\n]/.test(stringValue)) {
-    return `"${stringValue.replace(/"/g, '""')}"`;
-  }
-  return stringValue;
-}
-function weekdayKey(dateOnly: string) {
-  const day = new Date(`${dateOnly}T00:00:00.000Z`).getUTCDay();
-  if (day === 0) return "sunday" as const;
-  if (day === 1) return "monday" as const;
-  if (day === 2) return "tuesday" as const;
-  if (day === 3) return "wednesday" as const;
-  if (day === 4) return "thursday" as const;
-  if (day === 5) return "friday" as const;
-  return "saturday" as const;
-}
-
-function scheduleIncludesDate(schedule: ScheduleTemplateRow | null | undefined, dateOnly: string) {
-  if (!schedule) return false;
-  const day = weekdayKey(dateOnly);
-  if (day === "monday") return schedule.monday;
-  if (day === "tuesday") return schedule.tuesday;
-  if (day === "wednesday") return schedule.wednesday;
-  if (day === "thursday") return schedule.thursday;
-  if (day === "friday") return schedule.friday;
-  if (day === "saturday") return schedule.saturday;
-  return schedule.sunday;
-}
-
-function attendanceSettingIncludesDate(attendanceSetting: AttendanceSettingWeekdays | null | undefined, dateOnly: string) {
-  if (!attendanceSetting) return false;
-  const day = weekdayKey(dateOnly);
-  if (day === "monday") return Boolean(attendanceSetting.monday);
-  if (day === "tuesday") return Boolean(attendanceSetting.tuesday);
-  if (day === "wednesday") return Boolean(attendanceSetting.wednesday);
-  if (day === "thursday") return Boolean(attendanceSetting.thursday);
-  if (day === "friday") return Boolean(attendanceSetting.friday);
-  return false;
-}
+export {
+  BILLING_ADJUSTMENT_TYPE_OPTIONS,
+  BILLING_BATCH_TYPE_OPTIONS,
+  BILLING_EXPORT_TYPES,
+  CENTER_CLOSURE_TYPE_OPTIONS,
+  MONTHLY_BILLING_BASIS_OPTIONS,
+  BILLING_MODE_OPTIONS
+} from "@/lib/services/billing-types";
+export type { BillingModuleRole } from "@/lib/services/billing-types";
 
 function toWeekdayOnlyBaseSchedule(input: AttendanceSettingWeekdays | ScheduleTemplateRow | null | undefined) {
   if (!input) return null;
@@ -453,14 +90,16 @@ function toWeekdayOnlyBaseSchedule(input: AttendanceSettingWeekdays | ScheduleTe
   };
 }
 
-function isCanonicalScheduledForBillingDate(input: {
-  dateOnly: string;
-  includeBySchedule: boolean;
-  baseSchedule: AttendanceSettingWeekdays | ScheduleTemplateRow | null | undefined;
-  holds: MemberHoldLike[];
-  scheduleChanges: ScheduleChangeRow[];
-  nonBillableClosures: Set<string>;
-}) {
+function isCanonicalScheduledForBillingDate(
+  input: {
+    dateOnly: string;
+    includeBySchedule: boolean;
+    baseSchedule: AttendanceSettingWeekdays | ScheduleTemplateRow | null | undefined;
+    holds: BillingExpectedAttendanceInput["holds"];
+    scheduleChanges: BillingExpectedAttendanceInput["scheduleChanges"];
+    nonBillableClosures: Set<string>;
+  }
+) {
   if (!input.includeBySchedule) return false;
   if (input.nonBillableClosures.has(input.dateOnly)) return false;
 
@@ -479,15 +118,17 @@ function isCanonicalScheduledForBillingDate(input: {
   return resolution.isScheduled;
 }
 
-function collectBillingEligibleBaseDates(input: {
-  range: DateRange;
-  schedule: ScheduleTemplateRow | null;
-  attendanceSetting: AttendanceSettingWeekdays | null;
-  includeAllWhenNoSchedule: boolean;
-  holds: MemberHoldLike[];
-  scheduleChanges: ScheduleChangeRow[];
-  nonBillableClosures: Set<string>;
-}) {
+function collectBillingEligibleBaseDates(
+  input: {
+    range: DateRange;
+    schedule: ScheduleTemplateRow | null;
+    attendanceSetting: AttendanceSettingWeekdays | null;
+    includeAllWhenNoSchedule: boolean;
+    holds: BillingExpectedAttendanceCollectionInput["holds"];
+    scheduleChanges: BillingExpectedAttendanceCollectionInput["scheduleChanges"];
+    nonBillableClosures: Set<string>;
+  }
+) {
   const dates = new Set<string>();
   let cursor = input.range.start;
   while (cursor <= input.range.end) {
@@ -635,7 +276,7 @@ export async function generateClosuresForYear(year: number, input?: { generatedB
     });
     throw new Error(ruleError.message);
   }
-  const rules = (rulesData ?? []) as Array<ClosureRuleLike & { id: string }>;
+  const rules = (rulesData ?? []) as ClosureRuleRow[];
   const generated = generateClosureDatesFromRules({ year: targetYear, rules });
 
   const { data: existingRows, error: existingError } = await supabase
@@ -1377,216 +1018,6 @@ function normalizeInvoiceRow(row: any) {
     adjustment_amount: asNumber(row.adjustment_amount),
     total_amount: asNumber(row.total_amount)
   };
-}
-
-function buildMissingBillingAtomicWorkflowMessage(functionName: string) {
-  return `Billing atomic workflow RPC ${functionName} is not available yet. Apply Supabase migration ${BILLING_ATOMIC_WORKFLOW_MIGRATION} first.`;
-}
-
-function isMissingRpcFunctionError(error: any, functionName: string) {
-  const code = String(error?.code ?? error?.cause?.code ?? "").toUpperCase();
-  const message = [
-    error?.message,
-    error?.details,
-    error?.hint,
-    error?.cause?.message,
-    error?.cause?.details,
-    error?.cause?.hint
-  ]
-    .filter((value) => typeof value === "string" && value.trim().length > 0)
-    .join(" ")
-    .toLowerCase();
-  const normalizedName = functionName.toLowerCase();
-
-  return (
-    code === "PGRST202" ||
-    message.includes(`function ${normalizedName}`) ||
-    (message.includes(normalizedName) && message.includes("could not find")) ||
-    (message.includes(normalizedName) && message.includes("does not exist"))
-  );
-}
-
-function buildBillingBatchWritePlan(input: {
-  batchType: (typeof BILLING_BATCH_TYPE_OPTIONS)[number];
-  billingMonthStart: string;
-  runDate: string;
-  runByUser: string;
-  runByName: string;
-  now: string;
-  previewRows: BillingPreviewRow[];
-  totalAmount: number;
-  existingCountByMonth: Map<string, number>;
-}): BillingBatchWritePlan {
-  const batchId = randomUUID();
-  const invoicePayloads: BillingBatchInvoiceRpcPayload[] = [];
-  const invoiceLinePayloads: BillingBatchInvoiceLineRpcPayload[] = [];
-  const coveragePayloads: BillingBatchCoverageRpcPayload[] = [];
-  const sourceUpdates: BillingBatchSourceUpdateRpcPayload[] = [];
-
-  for (const row of input.previewRows) {
-    const monthKey = startOfMonth(row.invoiceMonth);
-    const sequence = input.existingCountByMonth.get(monthKey) ?? 0;
-    input.existingCountByMonth.set(monthKey, sequence + 1);
-
-    const invoiceId = randomUUID();
-    const invoiceNumber = buildInvoiceNumber(monthKey, sequence);
-    invoicePayloads.push({
-      id: invoiceId,
-      member_id: row.memberId,
-      payor_id: row.payorId,
-      invoice_number: invoiceNumber,
-      invoice_month: monthKey,
-      invoice_source: "BatchGenerated",
-      invoice_status: "Draft",
-      export_status: "NotExported",
-      billing_mode_snapshot: row.billingMode,
-      monthly_billing_basis_snapshot: row.monthlyBillingBasis,
-      transportation_billing_status_snapshot: row.transportationBillingStatusSnapshot,
-      billing_method_snapshot: row.billingMethod,
-      base_period_start: row.basePeriodStart,
-      base_period_end: row.basePeriodEnd,
-      variable_charge_period_start: row.variableChargePeriodStart,
-      variable_charge_period_end: row.variableChargePeriodEnd,
-      invoice_date: null,
-      due_date: null,
-      base_program_billed_days: row.baseProgramBilledDays,
-      member_daily_rate_snapshot: row.memberDailyRateSnapshot,
-      base_program_amount: row.baseProgramAmount,
-      transportation_amount: row.transportationAmount,
-      ancillary_amount: row.ancillaryAmount,
-      adjustment_amount: row.adjustmentAmount,
-      total_amount: row.totalAmount,
-      notes: null,
-      created_by_user_id: input.runByUser,
-      created_by_name: input.runByName,
-      created_at: input.now,
-      updated_at: input.now
-    });
-
-    const invoiceLines: BillingBatchInvoiceLineRpcPayload[] = [
-      {
-        id: randomUUID(),
-        invoice_id: invoiceId,
-        member_id: row.memberId,
-        payor_id: row.payorId,
-        service_date: null,
-        service_period_start: row.basePeriodStart,
-        service_period_end: row.basePeriodEnd,
-        line_type: "BaseProgram",
-        description: `Base program charges (${row.baseProgramBilledDays} day(s))`,
-        quantity: row.baseProgramBilledDays,
-        unit_rate: row.memberDailyRateSnapshot,
-        amount: row.baseProgramAmount,
-        source_table: "attendance_records",
-        source_record_id: null,
-        billing_status: "Billed",
-        created_at: input.now,
-        updated_at: input.now
-      },
-      ...row.variableSourceRows.map((sourceLine) => ({
-        id: randomUUID(),
-        invoice_id: invoiceId,
-        member_id: row.memberId,
-        payor_id: row.payorId,
-        service_date: sourceLine.service_date,
-        service_period_start: sourceLine.service_period_start,
-        service_period_end: sourceLine.service_period_end,
-        line_type: sourceLine.line_type,
-        description: sourceLine.description,
-        quantity: sourceLine.quantity,
-        unit_rate: sourceLine.unit_rate,
-        amount: sourceLine.amount,
-        source_table: sourceLine.source_table,
-        source_record_id: sourceLine.source_record_id,
-        billing_status: "Billed" as const,
-        created_at: input.now,
-        updated_at: input.now
-      }))
-    ];
-    invoiceLinePayloads.push(...invoiceLines);
-
-    coveragePayloads.push(
-      ...invoiceLines.map((line) => ({
-        member_id: row.memberId,
-        coverage_type: mapCoverageTypeForLineType(line.line_type),
-        coverage_start_date: normalizeDateOnly(line.service_period_start, row.basePeriodStart),
-        coverage_end_date: normalizeDateOnly(line.service_period_end, row.basePeriodEnd),
-        source_invoice_id: invoiceId,
-        source_invoice_line_id: line.id,
-        source_table: line.source_table,
-        source_record_id: line.source_record_id,
-        created_at: input.now
-      }))
-    );
-
-    sourceUpdates.push(
-      ...row.variableSourceRows.map((sourceLine) => ({
-        source_table: sourceLine.source_table,
-        source_record_id: sourceLine.source_record_id,
-        invoice_id: invoiceId,
-        updated_at: input.now
-      }))
-    );
-  }
-
-  return {
-    batchId,
-    batchPayload: {
-      id: batchId,
-      batch_type: input.batchType,
-      billing_month: input.billingMonthStart,
-      run_date: input.runDate,
-      batch_status: "Draft",
-      invoice_count: input.previewRows.length,
-      total_amount: input.totalAmount,
-      completion_date: null,
-      next_due_date: addMonths(input.billingMonthStart, 1),
-      generated_by_user_id: input.runByUser,
-      generated_by_name: input.runByName,
-      created_at: input.now,
-      updated_at: input.now
-    },
-    invoicePayloads,
-    invoiceLinePayloads,
-    coveragePayloads,
-    sourceUpdates
-  };
-}
-
-async function invokeGenerateBillingBatchRpc(plan: BillingBatchWritePlan) {
-  const supabase = await createClient();
-  try {
-    await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_GENERATE_BILLING_BATCH, {
-      p_batch: plan.batchPayload,
-      p_invoices: plan.invoicePayloads,
-      p_invoice_lines: plan.invoiceLinePayloads,
-      p_coverages: plan.coveragePayloads,
-      p_source_updates: plan.sourceUpdates
-    });
-  } catch (error) {
-    if (isMissingRpcFunctionError(error, RPC_GENERATE_BILLING_BATCH)) {
-      throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_GENERATE_BILLING_BATCH));
-    }
-    throw error;
-  }
-}
-
-async function invokeCreateBillingExportRpc(input: {
-  exportJobPayload: BillingExportRpcPayload;
-  invoiceIds: string[];
-}) {
-  const supabase = await createClient();
-  try {
-    await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_CREATE_BILLING_EXPORT, {
-      p_export_job: input.exportJobPayload,
-      p_invoice_ids: input.invoiceIds
-    });
-  } catch (error) {
-    if (isMissingRpcFunctionError(error, RPC_CREATE_BILLING_EXPORT)) {
-      throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_CREATE_BILLING_EXPORT));
-    }
-    throw error;
-  }
 }
 
 function isMissingSchemaObjectError(error: any) {

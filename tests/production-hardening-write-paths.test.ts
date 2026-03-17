@@ -214,6 +214,46 @@ test("intake draft POF creation is RPC-backed so intake status and physician ord
   assert.equal(migrationSource.includes("status in ('draft', 'sent')"), true);
 });
 
+test("pof draft creation resolves sex from canonical MCC then MHP gender", () => {
+  const pofServiceSource = readWorkspaceFile("lib/services/physician-orders-supabase.ts");
+
+  assert.equal(
+    pofServiceSource.includes('async function resolvePhysicianOrderSexPrefill(memberId: string): Promise<"M" | "F" | null>'),
+    true
+  );
+  assert.equal(
+    pofServiceSource.includes('supabase.from("member_command_centers").select("gender").eq("member_id", canonicalMemberId).maybeSingle()'),
+    true
+  );
+  assert.equal(
+    pofServiceSource.includes('supabase.from("member_health_profiles").select("gender").eq("member_id", canonicalMemberId).maybeSingle()'),
+    true
+  );
+  assert.equal(pofServiceSource.includes("sex: sexPrefill,"), true);
+});
+
+test("pof request delivery stays on the canonical RPC contract for both new sends and resends", () => {
+  const pofEsignSource = readWorkspaceFile("lib/services/pof-esign.ts");
+  const migrationSource = readWorkspaceFile("supabase/migrations/0080_pof_request_delivery_rpc_insert_alignment.sql");
+
+  assert.equal(pofEsignSource.includes("type RpcPreparePofRequestDeliveryRow = {"), true);
+  assert.equal(pofEsignSource.includes("function toRpcPreparePofRequestDeliveryRow(data: unknown): RpcPreparePofRequestDeliveryRow"), true);
+  assert.equal(pofEsignSource.includes("const provisionalRequestId = randomUUID();"), true);
+  assert.equal(pofEsignSource.includes("p_request_id: provisionalRequestId,"), true);
+  assert.equal(pofEsignSource.includes("requestId = prepared.request_id;"), true);
+  assert.equal(pofEsignSource.includes("if (isMissingRpcFunctionError(error, PREPARE_POF_REQUEST_DELIVERY_RPC)) {"), true);
+  assert.equal(pofEsignSource.includes("if (message.includes(PREPARE_POF_REQUEST_DELIVERY_RPC)) {"), false);
+
+  assert.equal(
+    migrationSource.includes("create or replace function public.rpc_prepare_pof_request_delivery("),
+    true
+  );
+  assert.equal(migrationSource.includes("if p_request_id is null then"), true);
+  assert.equal(migrationSource.includes("insert into public.pof_requests ("), true);
+  assert.equal(migrationSource.includes("was_created := true;"), true);
+  assert.equal(migrationSource.includes("was_created := false;"), true);
+});
+
 test("care plan core save, MAR reconciliation, and shared profile sync now use canonical RPC boundaries", () => {
   const carePlanSource = readWorkspaceFile("lib/services/care-plans-supabase.ts");
   const marSource = readWorkspaceFile("lib/services/mar-workflow.ts");

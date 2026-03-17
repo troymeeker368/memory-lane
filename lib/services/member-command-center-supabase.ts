@@ -2,17 +2,18 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { setBillingPayorContact } from "@/lib/services/billing-payor-contacts";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
-import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans-supabase";
-import { getLatestEnrollmentPacketPofStagingSummary } from "@/lib/services/enrollment-packet-intake-staging";
 import {
   buildMemberContactsSchemaOutOfDateError,
   isMemberContactsPayorColumnMissingError,
   MEMBER_CONTACT_SELECT_LEGACY,
   MEMBER_CONTACT_SELECT_WITH_PAYOR
 } from "@/lib/services/member-contact-payor-schema";
-import { buildPreferredContactByMember } from "@/lib/services/member-contact-priority";
+import {
+  selectMemberWithFallback,
+  selectMembersPageWithFallback,
+  selectMembersWithFallback
+} from "@/lib/services/member-command-center-member-queries";
 
 export interface MccMemberRow {
   id: string;
@@ -764,56 +765,17 @@ export async function upsertBillingScheduleTemplateSupabase(
 
 export async function listMembersSupabase(filters?: { q?: string; status?: "all" | "active" | "inactive" }) {
   const supabase = await createClient();
-  const selectVariants = [
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, code_status, latest_assessment_track",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status",
-    "id, display_name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, status, enrollment_date, dob, code_status, latest_assessment_track",
-    "id, display_name, status, enrollment_date, dob",
-    "id, display_name, status"
-  ];
-  const mapRow = (row: Record<string, unknown>): MccMemberRow => ({
-    id: String(row.id ?? ""),
-    display_name: String(row.display_name ?? ""),
-    preferred_name: typeof row.preferred_name === "string" ? row.preferred_name : null,
-    first_name: typeof row.first_name === "string" ? row.first_name : null,
-    last_name: typeof row.last_name === "string" ? row.last_name : null,
-    full_name: typeof row.full_name === "string" ? row.full_name : null,
-    name: typeof row.name === "string" ? row.name : null,
-    status: row.status === "inactive" ? "inactive" : "active",
-    locker_number: typeof row.locker_number === "string" ? row.locker_number : null,
-    enrollment_date: typeof row.enrollment_date === "string" ? row.enrollment_date : null,
-    dob: typeof row.dob === "string" ? row.dob : null,
-    city: typeof row.city === "string" ? row.city : null,
-    code_status: typeof row.code_status === "string" ? row.code_status : null,
-    latest_assessment_track: typeof row.latest_assessment_track === "string" ? row.latest_assessment_track : null
-  });
-
-  let rows: MccMemberRow[] | null = null;
-  let lastError: PostgrestErrorLike | null = null;
-  for (const selectClause of selectVariants) {
-    let query = supabase.from("members").select(selectClause);
-    if (filters?.status && filters.status !== "all") {
-      query = query.eq("status", filters.status);
-    }
-    const { data, error } = await query.order("display_name", { ascending: true });
-    if (!error) {
-      const rawRows = Array.isArray(data) ? (data as unknown[]) : [];
-      rows = rawRows.map((row) => mapRow((row ?? {}) as Record<string, unknown>));
-      break;
-    }
-    lastError = error;
-    if (!isMissingAnyColumnError(error, "members")) {
-      throw new Error(error.message ?? "Unable to query members.");
-    }
-  }
-  if (!rows) {
-    throw new Error(lastError?.message ?? "Unable to query members.");
-  }
+  const rows = await selectMembersWithFallback(
+    async (selectClause) => {
+      let query = supabase.from("members").select(selectClause);
+      if (filters?.status && filters.status !== "all") {
+        query = query.eq("status", filters.status);
+      }
+      return query.order("display_name", { ascending: true });
+    },
+    isMissingAnyColumnError,
+    "Unable to query members."
+  );
 
   const q = (filters?.q ?? "").trim().toLowerCase();
   if (!q) return rows;
@@ -835,64 +797,25 @@ async function listMembersPageSupabase(filters?: {
   const pageSize =
     Number.isFinite(filters?.pageSize) && Number(filters?.pageSize) > 0 ? Math.floor(Number(filters?.pageSize)) : 25;
   const q = (filters?.q ?? "").trim();
-  const selectVariants = [
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, code_status, latest_assessment_track",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status",
-    "id, display_name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, status, enrollment_date, dob, code_status, latest_assessment_track",
-    "id, display_name, status, enrollment_date, dob",
-    "id, display_name, status"
-  ];
-  const mapRow = (row: Record<string, unknown>): MccMemberRow => ({
-    id: String(row.id ?? ""),
-    display_name: String(row.display_name ?? ""),
-    preferred_name: typeof row.preferred_name === "string" ? row.preferred_name : null,
-    first_name: typeof row.first_name === "string" ? row.first_name : null,
-    last_name: typeof row.last_name === "string" ? row.last_name : null,
-    full_name: typeof row.full_name === "string" ? row.full_name : null,
-    name: typeof row.name === "string" ? row.name : null,
-    status: row.status === "inactive" ? "inactive" : "active",
-    locker_number: typeof row.locker_number === "string" ? row.locker_number : null,
-    enrollment_date: typeof row.enrollment_date === "string" ? row.enrollment_date : null,
-    dob: typeof row.dob === "string" ? row.dob : null,
-    city: typeof row.city === "string" ? row.city : null,
-    code_status: typeof row.code_status === "string" ? row.code_status : null,
-    latest_assessment_track: typeof row.latest_assessment_track === "string" ? row.latest_assessment_track : null
-  });
+  const { rows, totalRows } = await selectMembersPageWithFallback(
+    async (selectClause) => {
+      let query: any = supabase
+        .from("members")
+        .select(selectClause, { count: "exact" })
+        .order("display_name", { ascending: true })
+        .range((page - 1) * pageSize, page * pageSize - 1);
+      if (filters?.status && filters.status !== "all") {
+        query = query.eq("status", filters.status);
+      }
+      if (q) {
+        query = query.ilike("display_name", `%${q.replace(/[%,_]/g, (match) => `\\${match}`)}%`);
+      }
+      return query;
+    },
+    isMissingAnyColumnError,
+    "Unable to query members."
+  );
 
-  let rows: MccMemberRow[] | null = null;
-  let totalRows = 0;
-  let lastError: PostgrestErrorLike | null = null;
-  for (const selectClause of selectVariants) {
-    let query: any = supabase
-      .from("members")
-      .select(selectClause, { count: "exact" })
-      .order("display_name", { ascending: true })
-      .range((page - 1) * pageSize, page * pageSize - 1);
-    if (filters?.status && filters.status !== "all") {
-      query = query.eq("status", filters.status);
-    }
-    if (q) {
-      query = query.ilike("display_name", `%${q.replace(/[%,_]/g, (match) => `\\${match}`)}%`);
-    }
-    const { data, error, count } = await query;
-    if (!error) {
-      rows = ((data ?? []) as Record<string, unknown>[]).map((row) => mapRow(row));
-      totalRows = count ?? rows.length;
-      break;
-    }
-    lastError = error;
-    if (!isMissingAnyColumnError(error, "members")) {
-      throw new Error(error.message ?? "Unable to query members.");
-    }
-  }
-  if (!rows) {
-    throw new Error(lastError?.message ?? "Unable to query members.");
-  }
   return {
     rows,
     page,
@@ -905,48 +828,11 @@ async function listMembersPageSupabase(filters?: {
 export async function getMemberSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberSupabase");
   const supabase = await getMccClient(options);
-  const selectVariants = [
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob, code_status, latest_assessment_track",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status, enrollment_date, dob",
-    "id, display_name, preferred_name, first_name, last_name, full_name, name, status",
-    "id, display_name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, status, enrollment_date, dob, city, code_status, latest_assessment_track",
-    "id, display_name, status, enrollment_date, dob, code_status, latest_assessment_track",
-    "id, display_name, status, enrollment_date, dob",
-    "id, display_name, status"
-  ];
-  const mapRow = (row: Record<string, unknown>): MccMemberRow => ({
-    id: String(row.id ?? ""),
-    display_name: String(row.display_name ?? ""),
-    preferred_name: typeof row.preferred_name === "string" ? row.preferred_name : null,
-    first_name: typeof row.first_name === "string" ? row.first_name : null,
-    last_name: typeof row.last_name === "string" ? row.last_name : null,
-    full_name: typeof row.full_name === "string" ? row.full_name : null,
-    name: typeof row.name === "string" ? row.name : null,
-    status: row.status === "inactive" ? "inactive" : "active",
-    locker_number: typeof row.locker_number === "string" ? row.locker_number : null,
-    enrollment_date: typeof row.enrollment_date === "string" ? row.enrollment_date : null,
-    dob: typeof row.dob === "string" ? row.dob : null,
-    city: typeof row.city === "string" ? row.city : null,
-    code_status: typeof row.code_status === "string" ? row.code_status : null,
-    latest_assessment_track: typeof row.latest_assessment_track === "string" ? row.latest_assessment_track : null
-  });
-
-  let lastError: PostgrestErrorLike | null = null;
-  for (const selectClause of selectVariants) {
-    const { data, error } = await supabase.from("members").select(selectClause).eq("id", canonicalMemberId).maybeSingle();
-    if (!error) {
-      if (!data) return null;
-      return mapRow((data as unknown as Record<string, unknown>) ?? {});
-    }
-    lastError = error;
-    if (!isMissingAnyColumnError(error, "members")) {
-      throw new Error(error.message ?? "Unable to fetch member.");
-    }
-  }
-  throw new Error(lastError?.message ?? "Unable to fetch member.");
+  return selectMemberWithFallback(
+    (selectClause) => supabase.from("members").select(selectClause).eq("id", canonicalMemberId).maybeSingle(),
+    isMissingAnyColumnError,
+    "Unable to fetch member."
+  );
 }
 
 export async function updateMemberSupabase(memberId: string, patch: Record<string, unknown>) {
@@ -1223,6 +1109,7 @@ export async function upsertMemberContactSupabase(input: {
   const persistAndMaybeAssignPayor = async (data: MemberContactRow | null) => {
     if (!data) return null;
     if (input.is_payor) {
+      const { setBillingPayorContact } = await import("@/lib/services/billing-payor-contacts");
       await setBillingPayorContact({
         memberId: canonicalMemberId,
         contactId: data.id,
@@ -1519,6 +1406,13 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterDetailSupabase");
   const member = await getMemberSupabase(canonicalMemberId);
   if (!member) return null;
+  const [
+    { getMemberCarePlanSummary, getCarePlansForMember },
+    { getLatestEnrollmentPacketPofStagingSummary }
+  ] = await Promise.all([
+    import("@/lib/services/care-plans-supabase"),
+    import("@/lib/services/enrollment-packet-intake-staging")
+  ]);
   const [profile, schedule, contacts, files, busStopDirectory, mhpAllergies, carePlanSummary, carePlans, enrollmentPacketIntakeAlert] = await Promise.all([
     ensureMemberCommandCenterProfileSupabase(canonicalMemberId),
     ensureMemberAttendanceScheduleSupabase(canonicalMemberId),
@@ -1602,6 +1496,7 @@ export async function getTransportationAddRiderMemberOptionsSupabase() {
   const commandCenterByMember = new Map(
     commandCenters.map((row) => [row.member_id, row] as const)
   );
+  const { buildPreferredContactByMember } = await import("@/lib/services/member-contact-priority");
   const preferredContactByMember = buildPreferredContactByMember(contacts);
 
   const joinAddress = (parts: Array<string | null | undefined>) =>

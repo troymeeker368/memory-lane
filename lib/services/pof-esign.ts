@@ -181,6 +181,11 @@ type RpcFinalizePofSignatureRow = {
   was_already_signed: boolean;
 };
 
+type RpcPreparePofRequestDeliveryRow = {
+  request_id: string;
+  was_created: boolean;
+};
+
 type PofTokenMatch = {
   request: PofRequestRow;
   tokenMatch: "active" | "consumed";
@@ -228,6 +233,17 @@ function isMissingRpcFunctionError(error: unknown, rpcName: string) {
   const code = String((error as { code?: string }).code ?? "").toUpperCase();
   const text = String((error as { message?: string }).message ?? "").toLowerCase();
   return (code === "PGRST202" || code === "42883") && text.includes(rpcName.toLowerCase());
+}
+
+function toRpcPreparePofRequestDeliveryRow(data: unknown): RpcPreparePofRequestDeliveryRow {
+  const row = (Array.isArray(data) ? data[0] : null) as RpcPreparePofRequestDeliveryRow | null;
+  if (!row?.request_id) {
+    throw new Error("POF request preparation RPC did not return a request id.");
+  }
+  return {
+    request_id: row.request_id,
+    was_created: Boolean(row.was_created)
+  };
 }
 
 function toRpcFinalizePofSignatureRow(data: unknown): RpcFinalizePofSignatureRow {
@@ -940,14 +956,14 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
 
   const now = toEasternISO();
   const expiresAt = toIsoAtEndOfDate(input.expiresOnDate);
-  const requestId = randomUUID();
+  const provisionalRequestId = randomUUID();
   const buildPofDocumentPdfBytes = await loadPofDocumentPdfBuilder();
   const unsignedPdfBytes = await buildPofDocumentPdfBytes({
     form,
     title: "Physician Order Form",
-    metaLines: [`Request ID: ${requestId}`, "Status: Pending Provider Signature"]
+    metaLines: [`Request ID: ${provisionalRequestId}`, "Status: Pending Provider Signature"]
   });
-  const unsignedPath = `members/${input.memberId}/pof/${input.physicianOrderId}/requests/${requestId}/unsigned.pdf`;
+  const unsignedPath = `members/${input.memberId}/pof/${input.physicianOrderId}/requests/${provisionalRequestId}/unsigned.pdf`;
   const unsignedStorageUri = await uploadMemberDocumentObject({
     objectPath: unsignedPath,
     bytes: unsignedPdfBytes,
@@ -958,26 +974,30 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
   const hashedToken = hashToken(token);
   const signatureRequestUrl = `${buildAppBaseUrl(input.appBaseUrl)}/sign/pof/${token}`;
   const admin = createSupabaseAdminClient();
+  let requestId: string = provisionalRequestId;
   try {
-    await invokeSupabaseRpcOrThrow<unknown>(admin, PREPARE_POF_REQUEST_DELIVERY_RPC, {
-      p_request_id: requestId,
-      p_physician_order_id: input.physicianOrderId,
-      p_member_id: input.memberId,
-      p_provider_name: providerName,
-      p_provider_email: providerEmail,
-      p_nurse_name: nurseName,
-      p_from_email: fromEmail,
-      p_sent_by_user_id: input.actor.id,
-      p_optional_message: optionalMessage,
-      p_expires_at: expiresAt,
-      p_signature_request_token: hashedToken,
-      p_signature_request_url: signatureRequestUrl,
-      p_unsigned_pdf_url: unsignedStorageUri,
-      p_pof_payload_json: form,
-      p_actor_user_id: input.actor.id,
-      p_actor_name: input.actor.fullName,
-      p_now: now
-    });
+    const prepared = toRpcPreparePofRequestDeliveryRow(
+      await invokeSupabaseRpcOrThrow<unknown>(admin, PREPARE_POF_REQUEST_DELIVERY_RPC, {
+        p_request_id: provisionalRequestId,
+        p_physician_order_id: input.physicianOrderId,
+        p_member_id: input.memberId,
+        p_provider_name: providerName,
+        p_provider_email: providerEmail,
+        p_nurse_name: nurseName,
+        p_from_email: fromEmail,
+        p_sent_by_user_id: input.actor.id,
+        p_optional_message: optionalMessage,
+        p_expires_at: expiresAt,
+        p_signature_request_token: hashedToken,
+        p_signature_request_url: signatureRequestUrl,
+        p_unsigned_pdf_url: unsignedStorageUri,
+        p_pof_payload_json: form,
+        p_actor_user_id: input.actor.id,
+        p_actor_name: input.actor.fullName,
+        p_now: now
+      })
+    );
+    requestId = prepared.request_id;
   } catch (error) {
     const createErrorMessage = error instanceof Error ? error.message : "Unable to create POF signature request.";
     try {
@@ -985,7 +1005,7 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     } catch (cleanupError) {
       await recordImmediateSystemAlert({
         entityType: "pof_request",
-        entityId: requestId,
+        entityId: provisionalRequestId,
         actorUserId: input.actor.id,
         severity: "high",
         alertKey: "pof_request_unsigned_pdf_cleanup_failed",
@@ -998,8 +1018,7 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
         }
       });
     }
-    const message = createErrorMessage;
-    if (message.includes(PREPARE_POF_REQUEST_DELIVERY_RPC)) {
+    if (isMissingRpcFunctionError(error, PREPARE_POF_REQUEST_DELIVERY_RPC)) {
       throw new Error(
         `POF request preparation RPC is not available. Apply Supabase migration ${POF_DELIVERY_RPC_MIGRATION} and refresh PostgREST schema cache.`
       );
@@ -1266,8 +1285,7 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
       p_now: preSendUpdatedAt
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to prepare POF resend request.";
-    if (message.includes(PREPARE_POF_REQUEST_DELIVERY_RPC)) {
+    if (isMissingRpcFunctionError(error, PREPARE_POF_REQUEST_DELIVERY_RPC)) {
       throw new Error(
         `POF request preparation RPC is not available. Apply Supabase migration ${POF_DELIVERY_RPC_MIGRATION} and refresh PostgREST schema cache.`
       );

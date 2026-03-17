@@ -13,7 +13,11 @@ function readSupabaseUrlEnv() {
 }
 
 function readSupabaseAnonKeyEnv() {
-  return clean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) ?? clean(process.env.SUPABASE_ANON_KEY);
+  return (
+    clean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) ??
+    clean(process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY) ??
+    clean(process.env.SUPABASE_ANON_KEY)
+  );
 }
 
 export function getSupabaseServiceRoleKey() {
@@ -26,7 +30,7 @@ export function getSupabaseEnv() {
 
   if (!url || !anonKey) {
     throw new Error(
-      "Missing Supabase environment variables. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY (preferred), or legacy SUPABASE_URL and SUPABASE_ANON_KEY for server/runtime contexts."
+      "Missing Supabase environment variables. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY (preferred), or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY, or legacy SUPABASE_URL and SUPABASE_ANON_KEY for server/runtime contexts."
     );
   }
 

@@ -1025,6 +1025,27 @@ async function getMember(memberId: string) {
   return data;
 }
 
+function normalizePhysicianOrderSex(value: unknown): "M" | "F" | null {
+  const normalized = clean(typeof value === "string" ? value : null)?.toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "m" || normalized === "male") return "M";
+  if (normalized === "f" || normalized === "female") return "F";
+  return null;
+}
+
+async function resolvePhysicianOrderSexPrefill(memberId: string): Promise<"M" | "F" | null> {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "resolvePhysicianOrderSexPrefill");
+  const supabase = await createClient();
+  const [mccResult, mhpResult] = await Promise.all([
+    supabase.from("member_command_centers").select("gender").eq("member_id", canonicalMemberId).maybeSingle(),
+    supabase.from("member_health_profiles").select("gender").eq("member_id", canonicalMemberId).maybeSingle()
+  ]);
+  if (mccResult.error) throw new Error(`Unable to load member command center gender for POF prefill: ${mccResult.error.message}`);
+  if (mhpResult.error) throw new Error(`Unable to load member health profile gender for POF prefill: ${mhpResult.error.message}`);
+
+  return normalizePhysicianOrderSex(mccResult.data?.gender) ?? normalizePhysicianOrderSex(mhpResult.data?.gender);
+}
+
 export async function getPhysicianOrders(filters?: {
   memberId?: string | null;
   status?: PhysicianOrderStatus | "all";
@@ -1311,6 +1332,7 @@ export async function buildNewPhysicianOrderDraft(input: {
   const memberId = await resolvePhysicianOrderMemberId(input.memberId, "buildNewPhysicianOrderDraft");
   const member = await getMember(memberId);
   if (!member) return null;
+  const sexPrefill = await resolvePhysicianOrderSexPrefill(memberId);
 
   const supabase = await createClient();
   const { data: latestIntake, error: latestIntakeError } = await supabase
@@ -1351,7 +1373,7 @@ export async function buildNewPhysicianOrderDraft(input: {
     intakeAssessmentId: latestIntake?.id ?? null,
     memberNameSnapshot: member.display_name,
     memberDobSnapshot: clean(member.dob),
-    sex: null,
+    sex: sexPrefill,
     levelOfCare: "Home",
     dnrSelected: mapped?.dnrSelected ?? false,
     vitalsBloodPressure: mapped?.vitalsBloodPressure ?? null,
@@ -1426,6 +1448,7 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
   const supabase = await createClient();
   const member = await getMember(input.assessment.member_id);
   if (!member) throw new Error("Member not found for intake assessment.");
+  const sexPrefill = await resolvePhysicianOrderSexPrefill(input.assessment.member_id);
 
   const mapped = mapIntakeAssessmentToPofPrefill(input.assessment);
   const now = toEasternISO();
@@ -1436,6 +1459,7 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
     is_active_signed: false,
     member_name_snapshot: member.display_name,
     member_dob_snapshot: clean(member.dob),
+    sex: sexPrefill,
     dnr_selected: mapped.dnrSelected,
     vitals_blood_pressure: mapped.vitalsBloodPressure,
     vitals_pulse: mapped.vitalsPulse,
