@@ -17,7 +17,6 @@ export function DevAuthBootstrapPanel({ accounts }: { accounts: DevAuthBootstrap
     const result = await devBootstrapSignInAction(formData);
     if (result.ok) {
       router.replace("/");
-      router.refresh();
     }
     return result;
   }, initialState);

@@ -1067,6 +1067,7 @@ export async function upsertMemberContactAction(raw: {
   city?: string;
   state?: string;
   zip?: string;
+  isPayor?: boolean;
 }) {
   try {
     const actor = await requireCommandCenterEditor();
@@ -1104,6 +1105,7 @@ export async function upsertMemberContactAction(raw: {
         city: raw.city?.trim() || null,
         state: raw.state?.trim() || null,
         zip: raw.zip?.trim() || null,
+        is_payor: raw.isPayor === true,
         created_by_user_id: actor.id,
         created_by_name: actor.full_name,
         created_at: now,
@@ -1127,6 +1129,7 @@ export async function upsertMemberContactAction(raw: {
         city: raw.city?.trim() || null,
         state: raw.state?.trim() || null,
         zip: raw.zip?.trim() || null,
+        is_payor: raw.isPayor === true,
         created_by_user_id: actor.id,
         created_by_name: actor.full_name,
         created_at: now,

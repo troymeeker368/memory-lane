@@ -20,6 +20,7 @@ type UpsertMemberContactInput = {
   city?: string;
   state?: string;
   zip?: string;
+  isPayor?: boolean;
 };
 
 type DeleteMemberContactInput = {

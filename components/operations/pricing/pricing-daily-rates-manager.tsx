@@ -313,7 +313,7 @@ export function PricingDailyRatesManager({
                 className="min-h-[70px] w-full rounded-lg border border-border px-3 py-2"
                 value={editing.notes}
                 onChange={(event) => setEditing((current) => (current ? { ...current, notes: event.target.value } : current))}
-                disabled={isPending}
+                disabled={isSaving}
               />
             </label>
           </div>

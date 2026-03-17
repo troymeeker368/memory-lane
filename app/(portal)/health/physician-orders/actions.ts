@@ -7,7 +7,12 @@ import { redirect } from "next/navigation";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
-import { resendPofSignatureRequest, sendNewPofSignatureRequest } from "@/lib/services/pof-esign";
+import {
+  getPofRequestSummaryById,
+  listPofRequestsByPhysicianOrderIds,
+  resendPofSignatureRequest,
+  sendNewPofSignatureRequest
+} from "@/lib/services/pof-esign";
 import { WorkflowDeliveryError } from "@/lib/services/send-workflow-state";
 import {
   OTIC_LATERALITY_OPTIONS,
@@ -526,6 +531,12 @@ export async function saveAndDispatchPofSignatureRequestFromEditorAction(formDat
           fullName: actorDisplayName
         }
       });
+      revalidatePofRoutes(saved.memberId, saved.id);
+      return {
+        ok: true,
+        pofId: saved.id,
+        request: await getPofRequestSummaryById(requestId, saved.memberId)
+      } as const;
     } else {
       await sendNewPofSignatureRequest({
         memberId: saved.memberId,
@@ -542,10 +553,14 @@ export async function saveAndDispatchPofSignatureRequestFromEditorAction(formDat
           fullName: actorDisplayName
         }
       });
+      revalidatePofRoutes(saved.memberId, saved.id);
+      const requests = await listPofRequestsByPhysicianOrderIds(saved.memberId, [saved.id]);
+      return {
+        ok: true,
+        pofId: saved.id,
+        request: requests[0] ?? null
+      } as const;
     }
-
-    revalidatePofRoutes(saved.memberId, saved.id);
-    return { ok: true, pofId: saved.id } as const;
   } catch (error) {
     if (error instanceof WorkflowDeliveryError) {
       return {
@@ -555,7 +570,8 @@ export async function saveAndDispatchPofSignatureRequestFromEditorAction(formDat
         retryable: error.retryable,
         requestId: error.requestId,
         requestUrl: error.requestUrl,
-        deliveryStatus: error.deliveryStatus
+        deliveryStatus: error.deliveryStatus,
+        request: error.requestId ? await getPofRequestSummaryById(error.requestId) : null
       } as const;
     }
     return {

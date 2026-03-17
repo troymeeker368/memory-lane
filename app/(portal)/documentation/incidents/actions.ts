@@ -84,7 +84,7 @@ export async function saveIncidentDraftAction(formData: FormData) {
     const detail = await saveIncidentDraft(mapDraftInput(formData), actor);
     if (!detail) throw new Error("Incident was saved but the record could not be reloaded.");
     revalidateIncidentRoutes(detail.id);
-    return { ok: true, incidentId: detail.id, status: detail.status } as const;
+    return { ok: true, incidentId: detail.id, status: detail.status, detail } as const;
   } catch (error) {
     return {
       ok: false,
@@ -99,7 +99,7 @@ export async function submitIncidentAction(formData: FormData) {
     const detail = await submitIncident(mapDraftInput(formData), actor);
     if (!detail) throw new Error("Incident was submitted but the record could not be reloaded.");
     revalidateIncidentRoutes(detail.id);
-    return { ok: true, incidentId: detail.id, status: detail.status } as const;
+    return { ok: true, incidentId: detail.id, status: detail.status, detail } as const;
   } catch (error) {
     return {
       ok: false,
@@ -117,7 +117,7 @@ export async function reviewIncidentAction(formData: FormData) {
     const detail = await reviewIncident({ incidentId, decision, reviewNotes }, actor);
     if (!detail) throw new Error("Incident review saved but the record could not be reloaded.");
     revalidateIncidentRoutes(detail.id);
-    return { ok: true, incidentId: detail.id, status: detail.status } as const;
+    return { ok: true, incidentId: detail.id, status: detail.status, detail } as const;
   } catch (error) {
     return {
       ok: false,
@@ -134,7 +134,7 @@ export async function closeIncidentAction(formData: FormData) {
     const detail = await closeIncident(incidentId, actor, notes);
     if (!detail) throw new Error("Incident closed but the record could not be reloaded.");
     revalidateIncidentRoutes(detail.id);
-    return { ok: true, incidentId: detail.id, status: detail.status } as const;
+    return { ok: true, incidentId: detail.id, status: detail.status, detail } as const;
   } catch (error) {
     return {
       ok: false,
@@ -156,7 +156,7 @@ export async function amendIncidentAction(formData: FormData) {
     );
     if (!detail) throw new Error("Incident amended but the record could not be reloaded.");
     revalidateIncidentRoutes(detail.id);
-    return { ok: true, incidentId: detail.id, status: detail.status } as const;
+    return { ok: true, incidentId: detail.id, status: detail.status, detail } as const;
   } catch (error) {
     return {
       ok: false,

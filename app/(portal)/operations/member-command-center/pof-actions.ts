@@ -5,7 +5,9 @@ import { headers } from "next/headers";
 
 import { requireRoles } from "@/lib/auth";
 import {
+  getPofRequestSummaryById,
   getSignedPofPdfUrlForMember,
+  listPofRequestsByPhysicianOrderIds,
   resendPofSignatureRequest,
   sendNewPofSignatureRequest,
   voidPofSignatureRequest
@@ -71,12 +73,17 @@ function logPofActionDiagnostics(
   });
 }
 
+async function getLatestPofRequestForOrder(memberId: string, physicianOrderId: string) {
+  const requests = await listPofRequestsByPhysicianOrderIds(memberId, [physicianOrderId]);
+  return requests[0] ?? null;
+}
+
 export async function sendPofSignatureRequestAction(formData: FormData) {
+  const memberId = asString(formData, "memberId");
+  const physicianOrderId = asString(formData, "physicianOrderId");
   try {
     const profile = await requireRoles(["admin", "nurse", "manager"]);
     const actorName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
-    const memberId = asString(formData, "memberId");
-    const physicianOrderId = asString(formData, "physicianOrderId");
     logPofActionDiagnostics("send", {
       memberId,
       physicianOrderId,
@@ -103,7 +110,10 @@ export async function sendPofSignatureRequestAction(formData: FormData) {
       }
     });
     revalidatePofRoutes(memberId, physicianOrderId);
-    return { ok: true } as const;
+    return {
+      ok: true,
+      request: await getLatestPofRequestForOrder(memberId, physicianOrderId)
+    } as const;
   } catch (error) {
     if (error instanceof WorkflowDeliveryError) {
       return {
@@ -113,7 +123,8 @@ export async function sendPofSignatureRequestAction(formData: FormData) {
         retryable: error.retryable,
         requestId: error.requestId,
         requestUrl: error.requestUrl,
-        deliveryStatus: error.deliveryStatus
+        deliveryStatus: error.deliveryStatus,
+        request: error.requestId ? await getPofRequestSummaryById(error.requestId, memberId) : null
       } as const;
     }
     return {
@@ -124,12 +135,12 @@ export async function sendPofSignatureRequestAction(formData: FormData) {
 }
 
 export async function resendPofSignatureRequestAction(formData: FormData) {
+  const requestId = asString(formData, "requestId");
+  const memberId = asString(formData, "memberId");
+  const physicianOrderId = asString(formData, "physicianOrderId");
   try {
     const profile = await requireRoles(["admin", "nurse", "manager"]);
     const actorName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
-    const requestId = asString(formData, "requestId");
-    const memberId = asString(formData, "memberId");
-    const physicianOrderId = asString(formData, "physicianOrderId");
     logPofActionDiagnostics("resend", {
       requestId,
       memberId,
@@ -157,7 +168,10 @@ export async function resendPofSignatureRequestAction(formData: FormData) {
       }
     });
     revalidatePofRoutes(memberId, physicianOrderId);
-    return { ok: true } as const;
+    return {
+      ok: true,
+      request: await getPofRequestSummaryById(requestId, memberId)
+    } as const;
   } catch (error) {
     if (error instanceof WorkflowDeliveryError) {
       return {
@@ -167,7 +181,8 @@ export async function resendPofSignatureRequestAction(formData: FormData) {
         retryable: error.retryable,
         requestId: error.requestId,
         requestUrl: error.requestUrl,
-        deliveryStatus: error.deliveryStatus
+        deliveryStatus: error.deliveryStatus,
+        request: error.requestId ? await getPofRequestSummaryById(error.requestId, memberId) : null
       } as const;
     }
     return {
@@ -203,7 +218,10 @@ export async function voidPofSignatureRequestAction(input: {
       reason: input.reason ?? null
     });
     revalidatePofRoutes(memberId, physicianOrderId);
-    return { ok: true } as const;
+    return {
+      ok: true,
+      request: await getPofRequestSummaryById(requestId, memberId)
+    } as const;
   } catch (error) {
     return {
       ok: false,

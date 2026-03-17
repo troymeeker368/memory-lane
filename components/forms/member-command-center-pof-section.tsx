@@ -1,8 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 import {
   getSignedPofDownloadUrlAction,
@@ -10,6 +9,8 @@ import {
   sendPofSignatureRequestAction,
   voidPofSignatureRequestAction
 } from "@/app/(portal)/operations/member-command-center/pof-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 import type { PofRequestSummary } from "@/lib/services/pof-esign";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
@@ -83,6 +84,11 @@ function isEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
+function mergeRequestList(current: PofRequestSummary[], nextRequest: PofRequestSummary | null | undefined) {
+  if (!nextRequest) return current;
+  return [nextRequest, ...current.filter((request) => request.id !== nextRequest.id)];
+}
+
 export function MemberCommandCenterPofSection({
   memberId,
   physicianOrders,
@@ -99,21 +105,25 @@ export function MemberCommandCenterPofSection({
   canCreatePhysicianOrders: boolean;
 }) {
   const [modalState, setModalState] = useState<ModalState>(null);
+  const [localRequests, setLocalRequests] = useState(requests);
   const [fieldErrors, setFieldErrors] = useState<ModalFieldErrors>({});
   const [toast, setToast] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
-  const router = useRouter();
+  const { isSaving, run } = useScopedMutation();
+
+  useEffect(() => {
+    setLocalRequests(requests);
+  }, [requests]);
 
   const latestRequestByPofId = useMemo(() => {
     const map = new Map<string, PofRequestSummary>();
-    requests.forEach((request) => {
+    localRequests.forEach((request) => {
       if (!map.has(request.physicianOrderId)) {
         map.set(request.physicianOrderId, request);
       }
     });
     return map;
-  }, [requests]);
+  }, [localRequests]);
 
   function openSendModal(row: PhysicianOrderListRow) {
     setStatus(null);
@@ -181,78 +191,91 @@ export function MemberCommandCenterPofSection({
       setToast({ kind: "error", message: "Please fix required fields before sending." });
       return;
     }
-    startTransition(async () => {
-      const formData = new FormData();
-      formData.set("memberId", memberId);
-      formData.set("physicianOrderId", modalState.physicianOrderId);
-      formData.set("providerName", modalState.providerName);
-      formData.set("providerEmail", modalState.providerEmail);
-      formData.set("nurseName", modalState.nurseName);
-      formData.set("fromEmail", modalState.fromEmail);
-      formData.set("optionalMessage", modalState.optionalMessage);
-      formData.set("expiresOnDate", modalState.expiresOnDate);
-      if (modalState.requestId) {
-        formData.set("requestId", modalState.requestId);
-      }
 
-      const result =
-        modalState.mode === "send"
-          ? await sendPofSignatureRequestAction(formData)
-          : await resendPofSignatureRequestAction(formData);
-
-      if (!result.ok) {
-        setStatus(`Error: ${result.error}`);
-        setToast({ kind: "error", message: result.error });
-        if ("retryable" in result && result.retryable) {
-          setModalState(null);
-          router.refresh();
+    const successMessage = modalState.mode === "send" ? "POF signature request sent." : "POF signature request resent.";
+    void run(
+      async () => {
+        const formData = new FormData();
+        formData.set("memberId", memberId);
+        formData.set("physicianOrderId", modalState.physicianOrderId);
+        formData.set("providerName", modalState.providerName);
+        formData.set("providerEmail", modalState.providerEmail);
+        formData.set("nurseName", modalState.nurseName);
+        formData.set("fromEmail", modalState.fromEmail);
+        formData.set("optionalMessage", modalState.optionalMessage);
+        formData.set("expiresOnDate", modalState.expiresOnDate);
+        if (modalState.requestId) {
+          formData.set("requestId", modalState.requestId);
         }
-        return;
+
+        return modalState.mode === "send"
+          ? sendPofSignatureRequestAction(formData)
+          : resendPofSignatureRequestAction(formData);
+      },
+      {
+        successMessage,
+        errorMessage: "Unable to update the POF signature request.",
+        fallbackData: { request: null as PofRequestSummary | null },
+        onSuccess: async (result) => {
+          setLocalRequests((current) => mergeRequestList(current, result.data.request));
+          setStatus(result.message);
+          setToast({ kind: "success", message: result.message });
+          setModalState(null);
+        },
+        onError: async (result) => {
+          setStatus(`Error: ${result.error}`);
+          setToast({ kind: "error", message: result.error });
+        }
       }
-      setStatus(modalState.mode === "send" ? "POF signature request sent." : "POF signature request resent.");
-      setToast({
-        kind: "success",
-        message: modalState.mode === "send" ? "POF signature request sent." : "POF signature request resent."
-      });
-      setModalState(null);
-      router.refresh();
-    });
+    );
   }
 
   function onVoid(requestId: string, physicianOrderId: string) {
     if (!window.confirm("Void this POF signature request?")) return;
     setStatus(null);
-    startTransition(async () => {
-      const result = await voidPofSignatureRequestAction({
-        requestId,
-        memberId,
-        physicianOrderId,
-        reason: "voided_by_staff"
-      });
-      if (!result.ok) {
-        setStatus(`Error: ${result.error}`);
-        setToast({ kind: "error", message: result.error });
-        return;
+    void run(
+      async () =>
+        voidPofSignatureRequestAction({
+          requestId,
+          memberId,
+          physicianOrderId,
+          reason: "voided_by_staff"
+        }),
+      {
+        successMessage: "POF signature request voided.",
+        errorMessage: "Unable to void the POF signature request.",
+        fallbackData: { request: null as PofRequestSummary | null },
+        onSuccess: async (result) => {
+          setLocalRequests((current) => mergeRequestList(current, result.data.request));
+          setStatus(result.message);
+          setToast({ kind: "success", message: result.message });
+        },
+        onError: async (result) => {
+          setStatus(`Error: ${result.error}`);
+          setToast({ kind: "error", message: result.error });
+        }
       }
-      setStatus("POF signature request voided.");
-      setToast({ kind: "success", message: "POF signature request voided." });
-      router.refresh();
-    });
+    );
   }
 
   function onDownloadSigned(requestId: string) {
     setStatus(null);
-    startTransition(async () => {
-      const result = await getSignedPofDownloadUrlAction({ requestId, memberId });
-      if (!result.ok) {
-        setStatus(`Error: ${result.error}`);
-        setToast({ kind: "error", message: result.error });
-        return;
+    void run(
+      async () => getSignedPofDownloadUrlAction({ requestId, memberId }),
+      {
+        successMessage: "Signed PDF opened.",
+        fallbackData: { signedUrl: "" },
+        onSuccess: async (result) => {
+          triggerDownload(result.data.signedUrl);
+          setStatus(result.message);
+          setToast({ kind: "success", message: result.message });
+        },
+        onError: async (result) => {
+          setStatus(`Error: ${result.error}`);
+          setToast({ kind: "error", message: result.error });
+        }
       }
-      triggerDownload(result.signedUrl);
-      setStatus("Signed PDF opened.");
-      setToast({ kind: "success", message: "Signed PDF opened." });
-    });
+    );
   }
 
   async function onCopySignLink(url: string) {
@@ -348,7 +371,7 @@ export function MemberCommandCenterPofSection({
                               }
                               openSendModal(row);
                             }}
-                            disabled={isPending}
+                            disabled={isSaving}
                           >
                             Send POF for Signature
                           </button>
@@ -358,7 +381,7 @@ export function MemberCommandCenterPofSection({
                             type="button"
                             className="font-semibold text-brand"
                             onClick={() => openResendModal(row, request)}
-                            disabled={isPending}
+                            disabled={isSaving}
                           >
                             Resend
                           </button>
@@ -368,7 +391,7 @@ export function MemberCommandCenterPofSection({
                             type="button"
                             className="font-semibold text-red-700"
                             onClick={() => onVoid(request!.id, row.id)}
-                            disabled={isPending}
+                            disabled={isSaving}
                           >
                             Void
                           </button>
@@ -378,7 +401,7 @@ export function MemberCommandCenterPofSection({
                             type="button"
                             className="font-semibold text-brand"
                             onClick={() => onDownloadSigned(request!.id)}
-                            disabled={isPending}
+                            disabled={isSaving}
                           >
                             Download Signed PDF
                           </button>
@@ -388,7 +411,7 @@ export function MemberCommandCenterPofSection({
                             type="button"
                             className="font-semibold text-brand"
                             onClick={() => onCopySignLink(request!.signatureRequestUrl)}
-                            disabled={isPending}
+                            disabled={isSaving}
                           >
                             Copy Sign Link
                           </button>
@@ -408,7 +431,7 @@ export function MemberCommandCenterPofSection({
         </table>
       </div>
 
-      {status ? <p className="text-sm text-muted">{status}</p> : null}
+      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
 
       {toast ? (
         <div
@@ -439,7 +462,9 @@ export function MemberCommandCenterPofSection({
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
           role="dialog"
           aria-modal="true"
-          onClick={() => setModalState(null)}
+          onClick={() => {
+            if (!isSaving) setModalState(null);
+          }}
         >
           <div className="w-full max-w-3xl rounded-xl border border-border bg-white p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between gap-3">
@@ -450,6 +475,7 @@ export function MemberCommandCenterPofSection({
                 type="button"
                 className="rounded border border-border px-2 py-1 text-xs font-semibold"
                 onClick={() => setModalState(null)}
+                disabled={isSaving}
               >
                 Close
               </button>
@@ -550,7 +576,7 @@ export function MemberCommandCenterPofSection({
                 type="button"
                 className="h-10 rounded-lg border border-border px-3 text-sm font-semibold"
                 onClick={() => setModalState(null)}
-                disabled={isPending}
+                disabled={isSaving}
               >
                 Cancel
               </button>
@@ -558,9 +584,9 @@ export function MemberCommandCenterPofSection({
                 type="button"
                 className="h-10 rounded-lg bg-brand px-3 text-sm font-semibold text-white"
                 onClick={submitModal}
-                disabled={isPending}
+                disabled={isSaving}
               >
-                {isPending ? "Saving..." : modalState.mode === "send" ? "Send for Signature" : "Resend"}
+                {isSaving ? "Saving..." : modalState.mode === "send" ? "Send for Signature" : "Resend"}
               </button>
             </div>
           </div>

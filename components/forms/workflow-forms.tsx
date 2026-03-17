@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   createLeadActivityAction,
@@ -359,6 +360,7 @@ export function AssessmentForm({
   initialMemberId?: string;
   initialStaffName?: string;
 }) {
+  const router = useRouter();
   const today = useToday();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
@@ -1080,7 +1082,7 @@ export function AssessmentForm({
             if (res.error) {
               setStatus(`Error: ${res.error}`);
               if (res.assessmentId) {
-                window.location.href = `/health/assessment/${res.assessmentId}?pdfSave=failed`;
+                router.push(`/health/assessment/${res.assessmentId}?pdfSave=failed`);
               }
               return;
             }
@@ -1088,7 +1090,7 @@ export function AssessmentForm({
             setValidationErrors([]);
             setStatus("Assessment saved. Intake Assessment PDF saved to member files.");
             if (res.assessmentId) {
-              window.location.href = `/health/assessment/${res.assessmentId}`;
+              router.push(`/health/assessment/${res.assessmentId}`);
             }
           })
         }

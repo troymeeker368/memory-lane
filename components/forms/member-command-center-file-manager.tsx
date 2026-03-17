@@ -178,7 +178,7 @@ export function MemberCommandCenterFileManager({
       successMessage: "File opened.",
       errorMessage: "Unable to open file.",
       onSuccess: (result) => {
-        const data = result.data as { signedUrl: string };
+        const data = ((result.data ?? {}) as unknown) as { signedUrl: string };
         window.open(data.signedUrl, "_blank", "noopener,noreferrer");
         setStatus("File opened.");
       },
@@ -194,7 +194,7 @@ export function MemberCommandCenterFileManager({
       successMessage: "File download started.",
       errorMessage: "Unable to download file.",
       onSuccess: (result) => {
-        const data = result.data as { signedUrl: string; fileName?: string };
+        const data = ((result.data ?? {}) as unknown) as { signedUrl: string; fileName?: string };
         triggerDownload(data.signedUrl, data.fileName || row.file_name);
         setStatus("File download started.");
       },

@@ -741,7 +741,8 @@ export async function documentScheduledMarAdministration(input: {
 
   return {
     administrationId: inserted.id as string,
-    memberId: scheduleRow.member_id
+    memberId: scheduleRow.member_id,
+    administeredAt: now
   };
 }
 
@@ -855,7 +856,9 @@ export async function documentPrnMarAdministration(input: {
 
   return {
     administrationId: inserted.id as string,
-    memberId: medication.member_id
+    memberId: medication.member_id,
+    administeredAt,
+    pofMedicationId: medication.id
   };
 }
 
@@ -925,6 +928,7 @@ export async function documentPrnOutcomeAssessment(input: {
 
   return {
     administrationId: updated.id as string,
-    memberId: existing.member_id
+    memberId: existing.member_id,
+    outcomeAssessedAt
   };
 }

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 
-import { normalizeMutationResult, type MutationResult } from "@/lib/mutations/result";
+import { mutationError, normalizeMutationResult, type MutationResult } from "@/lib/mutations/result";
 
 export function useScopedMutation() {
   const inFlightRef = useRef(false);
@@ -19,10 +19,7 @@ export function useScopedMutation() {
     }
   ) {
     if (inFlightRef.current) {
-      const duplicateResult = normalizeMutationResult<TData>(
-        { ok: false, error: "A save is already in progress. Please wait." },
-        options
-      );
+      const duplicateResult = mutationError("A save is already in progress. Please wait.");
       await options?.onError?.(duplicateResult);
       return duplicateResult;
     }
@@ -40,13 +37,7 @@ export function useScopedMutation() {
       }
       return result;
     } catch (error) {
-      const result = normalizeMutationResult<TData>(
-        {
-          ok: false,
-          error: error instanceof Error ? error.message : options?.errorMessage ?? "Unable to save changes."
-        },
-        options
-      );
+      const result = mutationError(error instanceof Error ? error.message : options?.errorMessage ?? "Unable to save changes.");
       await options?.onError?.(result);
       return result;
     } finally {

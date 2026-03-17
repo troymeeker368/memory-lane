@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import { deleteWorkflowRecordAction, setAncillaryReconciliationAction } from "@/app/documentation-update-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/utils";
@@ -269,22 +270,26 @@ export function MonthlyAncillaryReport({
   selectedMonth: string;
   logs: AncillaryLog[];
 }) {
-  const router = useRouter();
+  const [entries, setEntries] = useState(logs);
   const [month, setMonth] = useState(selectedMonth);
   const [reconciliationFilter, setReconciliationFilter] = useState<"all" | "open" | "reconciled" | "void">("all");
   const [status, setStatus] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const { isSaving, run } = useScopedMutation();
 
-  const memberRows = useMemo(() => buildMemberRows(logs, month, reconciliationFilter), [logs, month, reconciliationFilter]);
+  useEffect(() => {
+    setEntries(logs);
+  }, [logs]);
+
+  const memberRows = useMemo(() => buildMemberRows(entries, month, reconciliationFilter), [entries, month, reconciliationFilter]);
   const grandTotal = useMemo(() => memberRows.reduce((sum, row) => sum + row.subtotal_cents, 0), [memberRows]);
   const monthEntryIdsToReconcile = useMemo(
     () =>
-      logs
+      entries
         .filter((log) => monthKeyFromDate(log.service_date) === month)
         .filter((log) => (log.reconciliation_status ?? "open") !== "reconciled")
         .filter((log) => (log.reconciliation_status ?? "open") !== "void")
         .map((log) => log.id),
-    [logs, month]
+    [entries, month]
   );
 
   function handleDelete(entryId: string) {
@@ -292,16 +297,19 @@ export function MonthlyAncillaryReport({
       return;
     }
 
-    startTransition(async () => {
-      const result = await deleteWorkflowRecordAction({ entity: "ancillaryLogs", id: entryId });
-      if (result.error) {
-        setStatus(`Error: ${result.error}`);
-        return;
+    void run(
+      async () => deleteWorkflowRecordAction({ entity: "ancillaryLogs", id: entryId }),
+      {
+        successMessage: "Ancillary charge entry deleted.",
+        onSuccess: async (result) => {
+          setEntries((current) => current.filter((entry) => entry.id !== entryId));
+          setStatus(result.message);
+        },
+        onError: async (result) => {
+          setStatus(`Error: ${result.error}`);
+        }
       }
-
-      setStatus("Ancillary charge entry deleted.");
-      router.refresh();
-    });
+    );
   }
 
   function handleReconciliation(entryId: string, nextStatus: "open" | "reconciled" | "void") {
@@ -310,16 +318,28 @@ export function MonthlyAncillaryReport({
       return;
     }
 
-    startTransition(async () => {
-      const result = await setAncillaryReconciliationAction({ id: entryId, status: nextStatus });
-      if (result.error) {
-        setStatus(`Error: ${result.error}`);
-        return;
+    void run(
+      async () => setAncillaryReconciliationAction({ id: entryId, status: nextStatus }),
+      {
+        successMessage: `Entry updated to ${nextStatus}.`,
+        onSuccess: async (result) => {
+          setEntries((current) =>
+            current.map((entry) =>
+              entry.id === entryId
+                ? {
+                    ...entry,
+                    reconciliation_status: nextStatus
+                  }
+                : entry
+            )
+          );
+          setStatus(result.message);
+        },
+        onError: async (result) => {
+          setStatus(`Error: ${result.error}`);
+        }
       }
-
-      setStatus(`Entry updated to ${nextStatus}.`);
-      router.refresh();
-    });
+    );
   }
 
   function handleMarkAllReconciled() {
@@ -332,9 +352,10 @@ export function MonthlyAncillaryReport({
       return;
     }
 
-    startTransition(async () => {
+    void run(async () => {
       let successCount = 0;
       let failureCount = 0;
+      const updatedIds: string[] = [];
 
       for (const entryId of monthEntryIdsToReconcile) {
         const result = await setAncillaryReconciliationAction({ id: entryId, status: "reconciled" });
@@ -342,16 +363,36 @@ export function MonthlyAncillaryReport({
           failureCount += 1;
         } else {
           successCount += 1;
+          updatedIds.push(entryId);
         }
       }
 
+      setEntries((current) =>
+        current.map((entry) =>
+          updatedIds.includes(entry.id)
+            ? {
+                ...entry,
+                reconciliation_status: "reconciled"
+              }
+            : entry
+        )
+      );
+
       if (failureCount === 0) {
-        setStatus(`Marked ${successCount} entries as reconciled for ${month}.`);
-      } else {
-        setStatus(`Marked ${successCount} reconciled; ${failureCount} failed. Refresh and retry remaining entries.`);
+        return { ok: true, message: `Marked ${successCount} entries as reconciled for ${month}.` };
       }
 
-      router.refresh();
+      return {
+        ok: false,
+        error: `Marked ${successCount} reconciled; ${failureCount} failed. Retry the remaining entries.`
+      };
+    }, {
+      onSuccess: async (result) => {
+        setStatus(result.message);
+      },
+      onError: async (result) => {
+        setStatus(`Error: ${result.error}`);
+      }
     });
   }
 
@@ -390,7 +431,7 @@ export function MonthlyAncillaryReport({
           <Button
             type="button"
             onClick={handleMarkAllReconciled}
-            disabled={isPending || monthEntryIdsToReconcile.length === 0}
+            disabled={isSaving || monthEntryIdsToReconcile.length === 0}
           >
             Mark All as Reconciled ({monthEntryIdsToReconcile.length})
           </Button>
@@ -402,7 +443,7 @@ export function MonthlyAncillaryReport({
           <Button type="button" onClick={() => downloadMonthlyExcelXml(month, memberRows, grandTotal)}>
             Export Excel (.xls)
           </Button>
-          {status ? <p className="self-center text-sm text-muted">{status}</p> : null}
+          <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} className="self-center" />
         </div>
       </Card>
 
@@ -423,7 +464,7 @@ export function MonthlyAncillaryReport({
                         type="button"
                         className="rounded border border-green-300 px-2 py-1 font-semibold text-green-700"
                         onClick={() => handleReconciliation(item.id, "reconciled")}
-                        disabled={isPending}
+                        disabled={isSaving}
                       >
                         Reconcile
                       </button>
@@ -432,7 +473,7 @@ export function MonthlyAncillaryReport({
                         type="button"
                         className="rounded border border-slate-300 px-2 py-1 font-semibold text-slate-700"
                         onClick={() => handleReconciliation(item.id, "open")}
-                        disabled={isPending}
+                        disabled={isSaving}
                       >
                         Mark Open
                       </button>
@@ -442,7 +483,7 @@ export function MonthlyAncillaryReport({
                         type="button"
                         className="rounded border border-amber-300 px-2 py-1 font-semibold text-amber-700"
                         onClick={() => handleReconciliation(item.id, "void")}
-                        disabled={isPending}
+                        disabled={isSaving}
                       >
                         Void
                       </button>
@@ -452,7 +493,7 @@ export function MonthlyAncillaryReport({
                     type="button"
                     className="mt-2 rounded border border-red-300 px-2 py-1 font-semibold text-red-700"
                     onClick={() => handleDelete(item.id)}
-                    disabled={isPending}
+                    disabled={isSaving}
                   >
                     Delete Entry
                   </button>
@@ -501,7 +542,7 @@ export function MonthlyAncillaryReport({
                           type="button"
                           className="rounded border border-green-300 px-2 py-1 text-xs font-semibold text-green-700"
                           onClick={() => handleReconciliation(item.id, "reconciled")}
-                          disabled={isPending}
+                          disabled={isSaving}
                         >
                           Reconcile
                         </button>
@@ -510,7 +551,7 @@ export function MonthlyAncillaryReport({
                           type="button"
                           className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700"
                           onClick={() => handleReconciliation(item.id, "open")}
-                          disabled={isPending}
+                          disabled={isSaving}
                         >
                           Mark Open
                         </button>
@@ -520,7 +561,7 @@ export function MonthlyAncillaryReport({
                           type="button"
                           className="rounded border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-700"
                           onClick={() => handleReconciliation(item.id, "void")}
-                          disabled={isPending}
+                          disabled={isSaving}
                         >
                           Void
                         </button>
@@ -529,7 +570,7 @@ export function MonthlyAncillaryReport({
                         type="button"
                         className="rounded border border-red-300 px-2 py-1 text-xs font-semibold text-red-700"
                         onClick={() => handleDelete(item.id)}
-                        disabled={isPending}
+                        disabled={isSaving}
                       >
                         Delete
                       </button>

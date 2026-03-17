@@ -50,7 +50,7 @@ export function MccPhotoUploader({
       successMessage: "Photo updated.",
       errorMessage: "Unable to upload photo.",
       onSuccess: (result) => {
-        const data = result.data as { profileImageUrl?: string | null };
+        const data = ((result.data ?? {}) as unknown) as { profileImageUrl?: string | null };
         setCurrentPhotoUrl(data.profileImageUrl ?? currentPhotoUrl);
         setUploadError(null);
       },

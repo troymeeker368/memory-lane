@@ -122,7 +122,16 @@ export async function recordScheduledMarAdministrationAction(raw: z.infer<typeof
     });
 
     revalidateMarRoutes(result.memberId);
-    return { ok: true };
+    return {
+      ok: true,
+      administrationId: result.administrationId,
+      memberId: result.memberId,
+      administeredAt: result.administeredAt,
+      administeredBy: profile.full_name,
+      status: payload.data.status,
+      notGivenReason: payload.data.notGivenReason ?? null,
+      notes: payload.data.notes ?? null
+    };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save scheduled MAR administration." };
   }
@@ -155,7 +164,16 @@ export async function recordPrnMarAdministrationAction(raw: z.infer<typeof prnAd
     });
 
     revalidateMarRoutes(result.memberId);
-    return { ok: true };
+    return {
+      ok: true,
+      administrationId: result.administrationId,
+      memberId: result.memberId,
+      pofMedicationId: result.pofMedicationId,
+      administeredAt: result.administeredAt,
+      administeredBy: profile.full_name,
+      prnReason: payload.data.prnReason,
+      notes: payload.data.notes ?? null
+    };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save PRN MAR administration." };
   }
@@ -188,7 +206,14 @@ export async function recordPrnOutcomeAction(raw: z.infer<typeof prnOutcomeSchem
     });
 
     revalidateMarRoutes(result.memberId);
-    return { ok: true };
+    return {
+      ok: true,
+      administrationId: result.administrationId,
+      memberId: result.memberId,
+      prnOutcome: payload.data.prnOutcome,
+      prnFollowupNote: payload.data.prnFollowupNote ?? null,
+      outcomeAssessedAt: result.outcomeAssessedAt
+    };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save PRN outcome." };
   }

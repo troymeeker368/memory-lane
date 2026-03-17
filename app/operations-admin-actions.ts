@@ -20,7 +20,7 @@ const ancillaryPricingSchema = z.object({
 
 export async function updateAncillaryCategoryPriceAction(
   raw: z.infer<typeof ancillaryPricingSchema>
-): Promise<ActionErrorResult | ActionSuccessResult> {
+): Promise<ActionErrorResult | ActionSuccessResult<{ updated: Awaited<ReturnType<typeof updateAncillaryCategoryPriceSupabase>> }>> {
   const payload = ancillaryPricingSchema.safeParse(raw);
   if (!payload.success) {
     return { error: "Invalid ancillary pricing update." };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -9,22 +9,12 @@ import {
   sendPofSignatureRequestAction,
   voidPofSignatureRequestAction
 } from "@/app/(portal)/operations/member-command-center/pof-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
+import { MutationNotice } from "@/components/ui/mutation-notice";
+import type { PofRequestSummary } from "@/lib/services/pof-esign";
 import { formatDateTime } from "@/lib/utils";
 
 export type PofWorkflowStatus = "draft" | "sent" | "opened" | "signed" | "expired" | "declined";
-type PofRequestStatus = PofWorkflowStatus;
-type PofRequestSummary = {
-  id: string;
-  status: PofRequestStatus;
-  providerName: string;
-  providerEmail: string;
-  nurseName: string;
-  fromEmail: string;
-  optionalMessage: string | null;
-  expiresAt: string;
-  signedAt: string | null;
-  memberFileId: string | null;
-};
 
 function normalizeWorkflowStatus(status: string | null | undefined): PofWorkflowStatus {
   const normalized = (status ?? "").trim().toLowerCase();
@@ -68,15 +58,15 @@ function isEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
-function canResendStatus(status: PofRequestStatus) {
+function canResendStatus(status: PofWorkflowStatus) {
   return status === "draft" || status === "sent" || status === "opened" || status === "expired";
 }
 
-function canVoidStatus(status: PofRequestStatus) {
+function canVoidStatus(status: PofWorkflowStatus) {
   return status === "draft" || status === "sent" || status === "opened";
 }
 
-function canSendNewStatus(status: PofRequestStatus) {
+function canSendNewStatus(status: PofWorkflowStatus) {
   return status === "declined" || status === "signed";
 }
 
@@ -105,8 +95,12 @@ export function PofEsignWorkflowCard({
   signedProviderName?: string | null;
   signedAt?: string | null;
   showProviderNameInput?: boolean;
-  saveAndDispatchAction?: (formData: FormData) => Promise<{ ok: boolean; error?: string }>;
+  saveAndDispatchAction?: (formData: FormData) => Promise<{ ok: boolean; error?: string; pofId?: string; request?: PofRequestSummary | null }>;
 }) {
+  const router = useRouter();
+  const { isSaving, run } = useScopedMutation();
+
+  const [currentRequest, setCurrentRequest] = useState<PofRequestSummary | null>(latestRequest);
   const [providerName, setProviderName] = useState(defaultProviderName);
   const [providerEmail, setProviderEmail] = useState(defaultProviderEmail);
   const [nurseName, setNurseName] = useState(defaultNurseName);
@@ -114,15 +108,41 @@ export function PofEsignWorkflowCard({
   const [optionalMessage, setOptionalMessage] = useState(defaultOptionalMessage ?? latestRequest?.optionalMessage ?? "");
   const [expiresOnDate, setExpiresOnDate] = useState(latestRequest?.expiresAt?.slice(0, 10) ?? defaultExpiryDate());
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
-  const workflowStatus = useMemo<PofWorkflowStatus>(() => normalizeWorkflowStatus(latestRequest?.status), [latestRequest?.status]);
-  const canSend = !latestRequest || canSendNewStatus(latestRequest.status);
-  const canResend = Boolean(physicianOrderId) && Boolean(latestRequest && canResendStatus(latestRequest.status));
-  const canVoid = Boolean(physicianOrderId) && Boolean(latestRequest && canVoidStatus(latestRequest.status));
-  const canDownloadSigned = Boolean(latestRequest && latestRequest.status === "signed");
-  const viewInFilesHref = latestRequest?.memberFileId
+  useEffect(() => {
+    setCurrentRequest(latestRequest);
+  }, [latestRequest]);
+
+  useEffect(() => {
+    setProviderName(defaultProviderName);
+  }, [defaultProviderName]);
+
+  useEffect(() => {
+    setProviderEmail(currentRequest?.providerEmail ?? defaultProviderEmail);
+  }, [currentRequest?.providerEmail, defaultProviderEmail]);
+
+  useEffect(() => {
+    setNurseName(currentRequest?.nurseName || defaultNurseName);
+  }, [currentRequest?.nurseName, defaultNurseName]);
+
+  useEffect(() => {
+    setFromEmail(currentRequest?.fromEmail || defaultFromEmail);
+  }, [currentRequest?.fromEmail, defaultFromEmail]);
+
+  useEffect(() => {
+    setOptionalMessage(defaultOptionalMessage ?? currentRequest?.optionalMessage ?? "");
+  }, [currentRequest?.optionalMessage, defaultOptionalMessage]);
+
+  useEffect(() => {
+    setExpiresOnDate(currentRequest?.expiresAt?.slice(0, 10) ?? defaultExpiryDate());
+  }, [currentRequest?.expiresAt]);
+
+  const workflowStatus = useMemo<PofWorkflowStatus>(() => normalizeWorkflowStatus(currentRequest?.status), [currentRequest?.status]);
+  const canSend = !currentRequest || canSendNewStatus(currentRequest.status);
+  const canResend = Boolean(physicianOrderId) && Boolean(currentRequest && canResendStatus(currentRequest.status));
+  const canVoid = Boolean(physicianOrderId) && Boolean(currentRequest && canVoidStatus(currentRequest.status));
+  const canDownloadSigned = Boolean(currentRequest && currentRequest.status === "signed");
+  const viewInFilesHref = currentRequest?.memberFileId
     ? `/operations/member-command-center/${memberId}?tab=member-summary#files-documents`
     : null;
 
@@ -140,116 +160,125 @@ export function PofEsignWorkflowCard({
   function submitRequest(mode: "send" | "resend") {
     const validationError = validateSendFields();
     if (validationError) {
-      setStatusMessage(validationError);
+      setStatusMessage(`Error: ${validationError}`);
       return;
     }
 
-    startTransition(async () => {
-      const activeElement = typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
-      const editorForm = activeElement?.closest("form");
+    const successMessage = mode === "send" ? "POF signature request sent." : "POF signature request resent.";
+    void run(
+      async () => {
+        const activeElement = typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
+        const editorForm = activeElement?.closest("form");
 
-      if (editorForm && saveAndDispatchAction) {
-        const draftAndSendData = new FormData(editorForm);
-        draftAndSendData.set("esignDispatchMode", mode);
-        draftAndSendData.set("esignProviderEmail", providerEmail.trim());
-        draftAndSendData.set("esignNurseName", nurseName.trim());
-        draftAndSendData.set("esignFromEmail", fromEmail.trim());
-        draftAndSendData.set("esignOptionalMessage", optionalMessage.trim());
-        draftAndSendData.set("esignExpiresOnDate", expiresOnDate.trim());
-        if (mode === "resend" && latestRequest) {
-          draftAndSendData.set("esignRequestId", latestRequest.id);
+        if (editorForm && saveAndDispatchAction) {
+          const draftAndSendData = new FormData(editorForm);
+          draftAndSendData.set("esignDispatchMode", mode);
+          draftAndSendData.set("esignProviderEmail", providerEmail.trim());
+          draftAndSendData.set("esignNurseName", nurseName.trim());
+          draftAndSendData.set("esignFromEmail", fromEmail.trim());
+          draftAndSendData.set("esignOptionalMessage", optionalMessage.trim());
+          draftAndSendData.set("esignExpiresOnDate", expiresOnDate.trim());
+          if (mode === "resend" && currentRequest) {
+            draftAndSendData.set("esignRequestId", currentRequest.id);
+          }
+          return saveAndDispatchAction(draftAndSendData);
         }
 
-        const persistedSend = await saveAndDispatchAction(draftAndSendData);
-        if (!persistedSend.ok) {
-          setStatusMessage(persistedSend.error ? persistedSend.error : "Unable to save and send POF signature request.");
-          return;
+        if (!physicianOrderId) {
+          return { ok: false, error: "Save draft first before sending for provider signature." };
         }
-        setStatusMessage(mode === "send" ? "POF signature request sent." : "POF signature request resent.");
-        if (mode === "send") {
-          router.push("/health");
-          return;
+
+        const formData = new FormData();
+        formData.set("memberId", memberId);
+        formData.set("physicianOrderId", physicianOrderId);
+        formData.set("providerName", providerName.trim());
+        formData.set("providerEmail", providerEmail.trim());
+        formData.set("nurseName", nurseName.trim());
+        formData.set("fromEmail", fromEmail.trim());
+        formData.set("optionalMessage", optionalMessage.trim());
+        formData.set("expiresOnDate", expiresOnDate.trim());
+        if (mode === "resend" && currentRequest) {
+          formData.set("requestId", currentRequest.id);
         }
-        router.refresh();
-        return;
-      }
 
-      if (!physicianOrderId) {
-        setStatusMessage("Save draft first before sending for provider signature.");
-        return;
-      }
-
-      const formData = new FormData();
-      formData.set("memberId", memberId);
-      formData.set("physicianOrderId", physicianOrderId!);
-      formData.set("providerName", providerName.trim());
-      formData.set("providerEmail", providerEmail.trim());
-      formData.set("nurseName", nurseName.trim());
-      formData.set("fromEmail", fromEmail.trim());
-      formData.set("optionalMessage", optionalMessage.trim());
-      formData.set("expiresOnDate", expiresOnDate.trim());
-      if (mode === "resend" && latestRequest) {
-        formData.set("requestId", latestRequest.id);
-      }
-
-      const result = mode === "send" ? await sendPofSignatureRequestAction(formData) : await resendPofSignatureRequestAction(formData);
-      if (!result.ok) {
-        setStatusMessage(result.error);
-        if ("retryable" in result && result.retryable) {
-          router.refresh();
+        return mode === "send" ? sendPofSignatureRequestAction(formData) : resendPofSignatureRequestAction(formData);
+      },
+      {
+        successMessage,
+        fallbackData: { request: null as PofRequestSummary | null, pofId: physicianOrderId ?? null },
+        onSuccess: async (result) => {
+          if (result.data.request) {
+            setCurrentRequest(result.data.request);
+          }
+          setStatusMessage(result.message);
+          if (result.data.pofId && result.data.pofId !== physicianOrderId) {
+            router.replace(`/health/physician-orders/${result.data.pofId}`);
+          }
+        },
+        onError: async (result) => {
+          setStatusMessage(`Error: ${result.error}`);
         }
-        return;
       }
-      setStatusMessage(mode === "send" ? "POF signature request sent." : "POF signature request resent.");
-      if (mode === "send") {
-        router.push("/health");
-        return;
-      }
-      router.refresh();
-    });
+    );
   }
 
   function voidRequest() {
-    if (!latestRequest || !physicianOrderId) return;
+    if (!currentRequest || !physicianOrderId) return;
     if (!window.confirm("Void this POF signature request?")) return;
-    startTransition(async () => {
-      const result = await voidPofSignatureRequestAction({
-        requestId: latestRequest.id,
-        memberId,
-        physicianOrderId,
-        reason: "voided_by_staff"
-      });
-      if (!result.ok) {
-        setStatusMessage(result.error);
-        return;
+
+    void run(
+      async () =>
+        voidPofSignatureRequestAction({
+          requestId: currentRequest.id,
+          memberId,
+          physicianOrderId,
+          reason: "voided_by_staff"
+        }),
+      {
+        successMessage: "POF signature request voided.",
+        fallbackData: { request: null as PofRequestSummary | null },
+        onSuccess: async (result) => {
+          if (result.data.request) {
+            setCurrentRequest(result.data.request);
+          }
+          setStatusMessage(result.message);
+        },
+        onError: async (result) => {
+          setStatusMessage(`Error: ${result.error}`);
+        }
       }
-      setStatusMessage("POF signature request voided.");
-      router.refresh();
-    });
+    );
   }
 
   function downloadSignedPdf() {
-    if (!latestRequest) return;
-    startTransition(async () => {
-      const result = await getSignedPofDownloadUrlAction({
-        requestId: latestRequest.id,
-        memberId
-      });
-      if (!result.ok) {
-        setStatusMessage(result.error);
-        return;
+    if (!currentRequest) return;
+
+    void run(
+      async () =>
+        getSignedPofDownloadUrlAction({
+          requestId: currentRequest.id,
+          memberId
+        }),
+      {
+        successMessage: "Signed PDF opened.",
+        fallbackData: { signedUrl: "" },
+        onSuccess: async (result) => {
+          triggerDownload(result.data.signedUrl);
+          setStatusMessage(result.message);
+        },
+        onError: async (result) => {
+          setStatusMessage(`Error: ${result.error}`);
+        }
       }
-      triggerDownload(result.signedUrl);
-      setStatusMessage("Signed PDF opened.");
-    });
+    );
   }
 
-  const signedSummaryName = (signedProviderName ?? "").trim() || (latestRequest?.providerName ?? "").trim() || "-";
-  const signedSummaryDate = signedAt ?? latestRequest?.signedAt ?? null;
-  const sendDisabledReason = latestRequest && !canSend
-      ? latestRequest.status === "draft" || latestRequest.status === "sent" || latestRequest.status === "opened"
+  const signedSummaryName = (signedProviderName ?? "").trim() || (currentRequest?.providerName ?? "").trim() || "-";
+  const signedSummaryDate = signedAt ?? currentRequest?.signedAt ?? null;
+  const sendDisabledReason = currentRequest && !canSend
+      ? currentRequest.status === "draft" || currentRequest.status === "sent" || currentRequest.status === "opened"
         ? "A signature request is already active. Use Resend to deliver it again."
-        : latestRequest.status === "expired"
+        : currentRequest.status === "expired"
           ? "This request has expired. Use Resend to send a refreshed link."
           : "A new send is unavailable for the current workflow state."
       : null;
@@ -355,7 +384,7 @@ export function PofEsignWorkflowCard({
           type="button"
           className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
           onClick={() => submitRequest("send")}
-          disabled={isPending || !canSend}
+          disabled={isSaving || !canSend}
           title={sendDisabledReason ?? undefined}
         >
           Send POF for Signature
@@ -365,7 +394,7 @@ export function PofEsignWorkflowCard({
             type="button"
             className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
             onClick={() => submitRequest("resend")}
-            disabled={isPending}
+            disabled={isSaving}
           >
             Resend
           </button>
@@ -375,7 +404,7 @@ export function PofEsignWorkflowCard({
             type="button"
             className="rounded-lg border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700"
             onClick={voidRequest}
-            disabled={isPending}
+            disabled={isSaving}
           >
             Void
           </button>
@@ -385,7 +414,7 @@ export function PofEsignWorkflowCard({
             type="button"
             className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
             onClick={downloadSignedPdf}
-            disabled={isPending}
+            disabled={isSaving}
           >
             Download Signed PDF
           </button>
@@ -397,8 +426,8 @@ export function PofEsignWorkflowCard({
         ) : null}
       </div>
 
-      {!isPending && sendDisabledReason ? <p className="text-xs text-muted">{sendDisabledReason}</p> : null}
-      {statusMessage ? <p className="text-sm text-muted">{statusMessage}</p> : null}
+      {!isSaving && sendDisabledReason ? <p className="text-xs text-muted">{sendDisabledReason}</p> : null}
+      <MutationNotice kind={statusMessage?.startsWith("Error") ? "error" : "success"} message={statusMessage} />
     </div>
   );
 }

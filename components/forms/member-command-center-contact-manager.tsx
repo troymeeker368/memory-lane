@@ -25,6 +25,7 @@ interface ContactRow {
   city: string | null;
   state: string | null;
   zip: string | null;
+  is_payor: boolean;
 }
 
 function blankForm() {
@@ -41,7 +42,8 @@ function blankForm() {
     streetAddress: "",
     city: "",
     state: "",
-    zip: ""
+    zip: "",
+    isPayor: false
   };
 }
 
@@ -63,7 +65,8 @@ function normalizeContactRow(input: unknown): ContactRow | null {
     street_address: (source.street_address ?? source.streetAddress ?? null) as string | null,
     city: (source.city ?? null) as string | null,
     state: (source.state ?? null) as string | null,
-    zip: (source.zip ?? null) as string | null
+    zip: (source.zip ?? null) as string | null,
+    is_payor: source.is_payor === true || source.isPayor === true
   };
 }
 
@@ -83,6 +86,7 @@ export function MemberCommandCenterContactManager({
   const { isSaving, run } = useScopedMutation();
 
   const showCustomCategory = useMemo(() => form.category === "Other", [form.category]);
+  const currentPayor = useMemo(() => localRows.find((row) => row.is_payor) ?? null, [localRows]);
 
   useEffect(() => {
     setLocalRows(rows);
@@ -112,7 +116,8 @@ export function MemberCommandCenterContactManager({
       streetAddress: row.street_address ?? "",
       city: row.city ?? "",
       state: row.state ?? "",
-      zip: row.zip ?? ""
+      zip: row.zip ?? "",
+      isPayor: row.is_payor
     });
   }
 
@@ -145,18 +150,24 @@ export function MemberCommandCenterContactManager({
         streetAddress: form.streetAddress,
         city: form.city,
         state: form.state,
-        zip: form.zip
+        zip: form.zip,
+        isPayor: form.isPayor
       }), {
       successMessage: form.id ? "Contact updated." : "Contact added.",
       errorMessage: "Unable to save contact.",
       onSuccess: (result) => {
         const savedRow = normalizeContactRow((result.data as { row?: unknown } | null)?.row);
         if (savedRow) {
-          setLocalRows((current) =>
-            form.id
-              ? current.map((row) => (row.id === savedRow.id ? savedRow : row))
-              : [savedRow, ...current.filter((row) => row.id !== savedRow.id)]
-          );
+          setLocalRows((current) => {
+            const next =
+              form.id
+                ? current.map((row) => (row.id === savedRow.id ? savedRow : row))
+                : [savedRow, ...current.filter((row) => row.id !== savedRow.id)];
+            if (savedRow.is_payor) {
+              return next.map((row) => ({ ...row, is_payor: row.id === savedRow.id }));
+            }
+            return next;
+          });
         }
         setStatus(form.id ? "Contact updated." : "Contact added.");
         clearForm();
@@ -187,6 +198,16 @@ export function MemberCommandCenterContactManager({
 
   return (
     <div className="space-y-3">
+      <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">Billing Payor</p>
+        <p className="mt-1 font-semibold text-primary-text">
+          {currentPayor ? currentPayor.contact_name : "No payor contact designated"}
+        </p>
+        <p className="mt-1 text-xs text-muted">
+          Set the billing recipient here. Only one contact per member can be marked as payor.
+        </p>
+      </div>
+
       {canEdit ? (
         <div className="rounded-lg border border-border p-3">
           <div className="flex items-center justify-between gap-2">
@@ -289,6 +310,19 @@ export function MemberCommandCenterContactManager({
               value={form.zip}
               onChange={(event) => setForm((current) => ({ ...current, zip: event.target.value }))}
             />
+            <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm md:col-span-2">
+              <input
+                type="checkbox"
+                checked={form.isPayor}
+                onChange={(event) => setForm((current) => ({ ...current, isPayor: event.target.checked }))}
+              />
+              <span>
+                <span className="font-semibold text-primary-text">Is Payor</span>
+                <span className="block text-xs text-muted">
+                  Choosing this contact automatically clears any other payor for the member.
+                </span>
+              </span>
+            </label>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
@@ -321,6 +355,7 @@ export function MemberCommandCenterContactManager({
             <tr>
               <th>Name</th>
               <th>Category</th>
+              <th>Billing</th>
               <th>Relationship</th>
               <th>Contact</th>
               <th>Address</th>
@@ -330,7 +365,7 @@ export function MemberCommandCenterContactManager({
           <tbody>
             {localRows.length === 0 ? (
               <tr>
-                <td colSpan={canEdit ? 6 : 5} className="text-sm text-muted">
+                <td colSpan={canEdit ? 7 : 6} className="text-sm text-muted">
                   No contacts yet.
                 </td>
               </tr>
@@ -339,6 +374,15 @@ export function MemberCommandCenterContactManager({
                 <tr key={row.id}>
                   <td>{row.contact_name}</td>
                   <td>{row.category === "Other" ? row.category_other ?? "Other" : row.category}</td>
+                  <td>
+                    {row.is_payor ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-800">
+                        Bill To
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted">-</span>
+                    )}
+                  </td>
                   <td>{row.relationship_to_member ?? "-"}</td>
                   <td>
                     <div className="text-xs leading-relaxed">

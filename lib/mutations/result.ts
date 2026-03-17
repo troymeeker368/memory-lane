@@ -14,13 +14,6 @@ export type MutationFailure = {
 
 export type MutationResult<TData = null> = MutationSuccess<TData> | MutationFailure;
 
-type LegacyMutationObject<TData> =
-  | MutationResult<TData>
-  | ({ ok?: true; message?: string; error?: undefined; fieldErrors?: undefined } & Partial<Record<string, unknown>>)
-  | { ok?: false; error?: string | null; fieldErrors?: MutationFieldErrors }
-  | null
-  | undefined;
-
 function extractLegacyData<TData>(value: Record<string, unknown>, fallbackData: TData) {
   const entries = Object.entries(value).filter(([key]) => key !== "ok" && key !== "error" && key !== "message" && key !== "fieldErrors");
   if (entries.length === 0) {
@@ -46,7 +39,7 @@ export function mutationError(error: string, fieldErrors?: MutationFieldErrors):
 }
 
 export function normalizeMutationResult<TData = null>(
-  value: LegacyMutationObject<TData>,
+  value: unknown,
   options?: {
     successMessage?: string;
     errorMessage?: string;

@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   recordPrnOutcomeAction,
   recordPrnMarAdministrationAction,
   recordScheduledMarAdministrationAction
 } from "@/app/(portal)/health/mar/administration-actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 import type {
   MarAdministrationHistoryRow,
   MarNotGivenReason,
@@ -179,12 +180,19 @@ export function MarWorkflowBoard({
   prnIneffectiveRows: MarAdministrationHistoryRow[];
   prnMedicationOptions: MarPrnOption[];
 }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const { isSaving, run } = useScopedMutation();
   const [view, setView] = useState<MarBoardView>("today");
   const [prnFilter, setPrnFilter] = useState<PrnFilterView>("awaiting");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [todayRowsState, setTodayRowsState] = useState(todayRows);
+  const [overdueRowsState, setOverdueRowsState] = useState(overdueRows);
+  const [notGivenRowsState, setNotGivenRowsState] = useState(notGivenRows);
+  const [historyRowsState, setHistoryRowsState] = useState(historyRows);
+  const [prnRowsState, setPrnRowsState] = useState(prnRows);
+  const [prnAwaitingOutcomeRowsState, setPrnAwaitingOutcomeRowsState] = useState(prnAwaitingOutcomeRows);
+  const [prnEffectiveRowsState, setPrnEffectiveRowsState] = useState(prnEffectiveRows);
+  const [prnIneffectiveRowsState, setPrnIneffectiveRowsState] = useState(prnIneffectiveRows);
 
   const [notGivenOpenForScheduleId, setNotGivenOpenForScheduleId] = useState<string | null>(null);
   const [notGivenReason, setNotGivenReason] = useState<MarNotGivenReason>("Refused");
@@ -202,6 +210,38 @@ export function MarWorkflowBoard({
   const [prnOutcomeAssessedDateTime, setPrnOutcomeAssessedDateTime] = useState(() => toEasternDateTimeLocal());
 
   useEffect(() => {
+    setTodayRowsState(todayRows);
+  }, [todayRows]);
+
+  useEffect(() => {
+    setOverdueRowsState(overdueRows);
+  }, [overdueRows]);
+
+  useEffect(() => {
+    setNotGivenRowsState(notGivenRows);
+  }, [notGivenRows]);
+
+  useEffect(() => {
+    setHistoryRowsState(historyRows);
+  }, [historyRows]);
+
+  useEffect(() => {
+    setPrnRowsState(prnRows);
+  }, [prnRows]);
+
+  useEffect(() => {
+    setPrnAwaitingOutcomeRowsState(prnAwaitingOutcomeRows);
+  }, [prnAwaitingOutcomeRows]);
+
+  useEffect(() => {
+    setPrnEffectiveRowsState(prnEffectiveRows);
+  }, [prnEffectiveRows]);
+
+  useEffect(() => {
+    setPrnIneffectiveRowsState(prnIneffectiveRows);
+  }, [prnIneffectiveRows]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 30000);
     return () => window.clearInterval(timer);
   }, []);
@@ -214,7 +254,7 @@ export function MarWorkflowBoard({
 
   const memberSummaries = useMemo(() => {
     const summaryByMember = new Map<string, MemberMedPassSummary>();
-    for (const row of todayRows) {
+    for (const row of todayRowsState) {
       const timingState = getTimingState(row.scheduledTime, nowMs);
       const current = summaryByMember.get(row.memberId) ?? {
         memberId: row.memberId,
@@ -248,7 +288,7 @@ export function MarWorkflowBoard({
       if (right.dueCount !== left.dueCount) return right.dueCount - left.dueCount;
       return left.memberName.localeCompare(right.memberName, undefined, { sensitivity: "base" });
     });
-  }, [nowMs, todayRows]);
+  }, [nowMs, todayRowsState]);
 
   const [selectedMemberId, setSelectedMemberId] = useState<string>(memberSummaries[0]?.memberId ?? "");
 
@@ -264,10 +304,10 @@ export function MarWorkflowBoard({
 
   const selectedMemberRows = useMemo(
     () =>
-      todayRows
+      todayRowsState
         .filter((row) => row.memberId === selectedMemberId)
         .sort((a, b) => new Date(a.scheduledTime).getTime() - new Date(b.scheduledTime).getTime()),
-    [selectedMemberId, todayRows]
+    [selectedMemberId, todayRowsState]
   );
 
   const selectedMember = useMemo(
@@ -292,41 +332,215 @@ export function MarWorkflowBoard({
 
   const groupedCounts = useMemo(
     () => ({
-      today: todayRows.length,
-      overdue: overdueRows.length,
-      notGiven: notGivenRows.length,
-      history: historyRows.length,
-      prn: prnRows.length,
-      prnAwaiting: prnAwaitingOutcomeRows.length,
-      prnEffective: prnEffectiveRows.length,
-      prnIneffective: prnIneffectiveRows.length
+      today: todayRowsState.length,
+      overdue: overdueRowsState.length,
+      notGiven: notGivenRowsState.length,
+      history: historyRowsState.length,
+      prn: prnRowsState.length,
+      prnAwaiting: prnAwaitingOutcomeRowsState.length,
+      prnEffective: prnEffectiveRowsState.length,
+      prnIneffective: prnIneffectiveRowsState.length
     }),
     [
-      historyRows.length,
-      notGivenRows.length,
-      overdueRows.length,
-      prnAwaitingOutcomeRows.length,
-      prnEffectiveRows.length,
-      prnIneffectiveRows.length,
-      prnRows.length,
-      todayRows.length
+      historyRowsState.length,
+      notGivenRowsState.length,
+      overdueRowsState.length,
+      prnAwaitingOutcomeRowsState.length,
+      prnEffectiveRowsState.length,
+      prnIneffectiveRowsState.length,
+      prnRowsState.length,
+      todayRowsState.length
     ]
   );
 
-  const documentedToday = todayRows.filter((row) => row.completed).length;
+  const documentedToday = todayRowsState.filter((row) => row.completed).length;
   const prnRowsForFilter =
     prnFilter === "awaiting"
-      ? prnAwaitingOutcomeRows
+      ? prnAwaitingOutcomeRowsState
       : prnFilter === "effective"
-        ? prnEffectiveRows
+        ? prnEffectiveRowsState
         : prnFilter === "ineffective"
-          ? prnIneffectiveRows
-          : prnRows;
+          ? prnIneffectiveRowsState
+          : prnRowsState;
 
   function withTimingWarning(row: MarTodayRow, onProceed: () => void) {
     const warning = buildTimingWarning(row.scheduledTime, nowMs);
     if (warning && !window.confirm(warning)) return;
     onProceed();
+  }
+
+  function prependUniqueHistory(current: MarAdministrationHistoryRow[], nextRow: MarAdministrationHistoryRow) {
+    return [nextRow, ...current.filter((row) => row.id !== nextRow.id)];
+  }
+
+  function buildScheduledHistoryRow(
+    row: MarTodayRow,
+    data: {
+      administrationId: string;
+      administeredAt: string;
+      administeredBy: string;
+      status: "Given" | "Not Given";
+      notGivenReason: MarNotGivenReason | null;
+      notes: string | null;
+    }
+  ): MarAdministrationHistoryRow {
+    return {
+      id: data.administrationId,
+      memberId: row.memberId,
+      memberName: row.memberName,
+      pofMedicationId: row.pofMedicationId,
+      marScheduleId: row.marScheduleId,
+      administrationDate: data.administeredAt.slice(0, 10),
+      scheduledTime: row.scheduledTime,
+      medicationName: row.medicationName,
+      dose: row.dose,
+      route: row.route,
+      status: data.status,
+      notGivenReason: data.notGivenReason,
+      prnReason: null,
+      prnOutcome: null,
+      prnOutcomeAssessedAt: null,
+      prnFollowupNote: null,
+      notes: data.notes,
+      administeredBy: data.administeredBy,
+      administeredByUserId: null,
+      administeredAt: data.administeredAt,
+      source: "scheduled",
+      createdAt: data.administeredAt,
+      updatedAt: data.administeredAt
+    };
+  }
+
+  function buildPrnHistoryRow(
+    option: MarPrnOption,
+    data: {
+      administrationId: string;
+      administeredAt: string;
+      administeredBy: string;
+      prnReason: string;
+      notes: string | null;
+    }
+  ): MarAdministrationHistoryRow {
+    return {
+      id: data.administrationId,
+      memberId: option.memberId,
+      memberName: option.memberName,
+      pofMedicationId: option.pofMedicationId,
+      marScheduleId: null,
+      administrationDate: data.administeredAt.slice(0, 10),
+      scheduledTime: null,
+      medicationName: option.medicationName,
+      dose: option.dose,
+      route: option.route,
+      status: "Given",
+      notGivenReason: null,
+      prnReason: data.prnReason,
+      prnOutcome: null,
+      prnOutcomeAssessedAt: null,
+      prnFollowupNote: null,
+      notes: data.notes,
+      administeredBy: data.administeredBy,
+      administeredByUserId: null,
+      administeredAt: data.administeredAt,
+      source: "prn",
+      createdAt: data.administeredAt,
+      updatedAt: data.administeredAt
+    };
+  }
+
+  function applyScheduledAdministration(
+    row: MarTodayRow,
+    data: {
+      administrationId: string;
+      administeredAt: string;
+      administeredBy: string;
+      status: "Given" | "Not Given";
+      notGivenReason: MarNotGivenReason | null;
+      notes: string | null;
+    }
+  ) {
+    const historyRow = buildScheduledHistoryRow(row, data);
+    setTodayRowsState((current) =>
+      current.map((item) =>
+        item.marScheduleId === row.marScheduleId
+          ? {
+              ...item,
+              administrationId: data.administrationId,
+              status: data.status,
+              notGivenReason: data.notGivenReason,
+              notes: data.notes,
+              administeredBy: data.administeredBy,
+              administeredAt: data.administeredAt,
+              source: "scheduled",
+              completed: true
+            }
+          : item
+      )
+    );
+    setOverdueRowsState((current) => current.filter((item) => item.marScheduleId !== row.marScheduleId));
+    setHistoryRowsState((current) => prependUniqueHistory(current, historyRow));
+    if (data.status === "Not Given") {
+      setNotGivenRowsState((current) => prependUniqueHistory(current, historyRow));
+    }
+    setNotGivenOpenForScheduleId(null);
+  }
+
+  function applyPrnAdministration(
+    option: MarPrnOption,
+    data: {
+      administrationId: string;
+      administeredAt: string;
+      administeredBy: string;
+      prnReason: string;
+      notes: string | null;
+    }
+  ) {
+    const historyRow = buildPrnHistoryRow(option, data);
+    setHistoryRowsState((current) => prependUniqueHistory(current, historyRow));
+    setPrnRowsState((current) => prependUniqueHistory(current, historyRow));
+    setPrnAwaitingOutcomeRowsState((current) => prependUniqueHistory(current, historyRow));
+    setPrnReason("");
+    setPrnNotes("");
+  }
+
+  function applyPrnOutcome(
+    administrationId: string,
+    data: {
+      prnOutcome: MarPrnOutcome;
+      prnFollowupNote: string | null;
+      outcomeAssessedAt: string;
+    }
+  ) {
+    const updateRow = (row: MarAdministrationHistoryRow) =>
+      row.id === administrationId
+        ? {
+            ...row,
+            prnOutcome: data.prnOutcome,
+            prnOutcomeAssessedAt: data.outcomeAssessedAt,
+            prnFollowupNote: data.prnFollowupNote,
+            updatedAt: data.outcomeAssessedAt
+          }
+        : row;
+
+    setHistoryRowsState((current) => current.map(updateRow));
+    setPrnRowsState((current) => current.map(updateRow));
+    setPrnAwaitingOutcomeRowsState((current) => current.filter((row) => row.id !== administrationId));
+
+    const sourceRow = prnRowsState.find((row) => row.id === administrationId);
+    if (!sourceRow) return;
+
+    const updatedRow = updateRow(sourceRow);
+    if (data.prnOutcome === "Effective") {
+      setPrnEffectiveRowsState((current) => prependUniqueHistory(current, updatedRow));
+      setPrnIneffectiveRowsState((current) => current.filter((row) => row.id !== administrationId));
+    } else {
+      setPrnIneffectiveRowsState((current) => prependUniqueHistory(current, updatedRow));
+      setPrnEffectiveRowsState((current) => current.filter((row) => row.id !== administrationId));
+    }
+
+    setOutcomeOpenForAdministrationId(null);
+    setPrnOutcome("Effective");
+    setPrnOutcomeNote("");
   }
 
   function cardStateClass(row: MarTodayRow) {

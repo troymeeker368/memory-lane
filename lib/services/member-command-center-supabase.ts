@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { setBillingPayorContact } from "@/lib/services/billing-payor-contacts";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans-supabase";
 import { getLatestEnrollmentPacketPofStagingSummary } from "@/lib/services/enrollment-packet-intake-staging";
@@ -178,6 +179,7 @@ export interface MemberContactRow {
   city: string | null;
   state: string | null;
   zip: string | null;
+  is_payor: boolean;
   created_by_user_id: string | null;
   created_by_name: string | null;
   created_at: string;
@@ -1107,6 +1109,7 @@ export async function upsertMemberContactSupabase(input: {
   city: string | null;
   state: string | null;
   zip: string | null;
+  is_payor: boolean;
   created_by_user_id: string;
   created_by_name: string;
   created_at: string;
@@ -1114,6 +1117,28 @@ export async function upsertMemberContactSupabase(input: {
 }) {
   const canonicalMemberId = await resolveMccMemberId(input.member_id, "upsertMemberContactSupabase");
   const supabase = await createClient();
+  const persistAndMaybeAssignPayor = async (data: MemberContactRow | null) => {
+    if (!data) return null;
+    if (input.is_payor) {
+      await setBillingPayorContact({
+        memberId: canonicalMemberId,
+        contactId: data.id,
+        actorUserId: input.created_by_user_id,
+        actorName: input.created_by_name,
+        source: "upsertMemberContactSupabase",
+        reason: "Member contact saved with Is Payor selected."
+      });
+      const { data: refreshed, error: refreshError } = await supabase
+        .from("member_contacts")
+        .select("*")
+        .eq("id", data.id)
+        .maybeSingle();
+      if (refreshError) throw new Error(refreshError.message);
+      return (refreshed as MemberContactRow | null) ?? null;
+    }
+    return data;
+  };
+
   if (input.id) {
     const { data, error } = await supabase
       .from("member_contacts")
@@ -1131,21 +1156,22 @@ export async function upsertMemberContactSupabase(input: {
         city: input.city,
         state: input.state,
         zip: input.zip,
+        is_payor: false,
         updated_at: input.updated_at
       })
       .eq("id", input.id)
       .select("*")
       .maybeSingle();
     if (error) throw new Error(error.message);
-    return (data as MemberContactRow | null) ?? null;
+    return persistAndMaybeAssignPayor((data as MemberContactRow | null) ?? null);
   }
   const { data, error } = await supabase
     .from("member_contacts")
-    .insert({ ...input, member_id: canonicalMemberId, id: toId("contact") })
+    .insert({ ...input, member_id: canonicalMemberId, id: toId("contact"), is_payor: false })
     .select("*")
     .single();
   if (error) throw new Error(error.message);
-  return data as MemberContactRow;
+  return (await persistAndMaybeAssignPayor(data as MemberContactRow)) as MemberContactRow;
 }
 
 export async function deleteMemberContactSupabase(id: string) {

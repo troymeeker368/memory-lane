@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -10,6 +10,8 @@ import {
   saveIncidentDraftAction,
   submitIncidentAction
 } from "@/app/(portal)/documentation/incidents/actions";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 import { IncidentPdfActions } from "@/components/incidents/incident-pdf-actions";
 import {
   INCIDENT_CATEGORY_OPTIONS,
@@ -65,13 +67,19 @@ export function IncidentForm(props: IncidentFormProps) {
   const formRef = useRef<HTMLFormElement | null>(null);
   const reviewFormRef = useRef<HTMLFormElement | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("details");
-  const [isPending, startTransition] = useTransition();
-  const [isReviewPending, startReviewTransition] = useTransition();
+  const { isSaving: isPending, run: runEditorMutation } = useScopedMutation();
+  const { isSaving: isReviewPending, run: runReviewMutation } = useScopedMutation();
   const [statusMessage, setStatusMessage] = useState("");
+  const [currentDetail, setCurrentDetail] = useState<IncidentDetail | null>(props.detail);
   const [unsafeConditionsPresent, setUnsafeConditionsPresent] = useState(props.detail?.unsafeConditionsPresent ?? false);
   const [editorEnabled, setEditorEnabled] = useState(props.canEditInitial);
 
-  const detail = props.detail;
+  useEffect(() => {
+    setCurrentDetail(props.detail);
+    setUnsafeConditionsPresent(props.detail?.unsafeConditionsPresent ?? false);
+  }, [props.detail]);
+
+  const detail = currentDetail;
   const status = detail?.status ?? "draft";
   const canSubmit = editorEnabled;
   const showAmendmentControls = props.canAmend && (status === "approved" || status === "closed");
@@ -84,50 +92,68 @@ export function IncidentForm(props: IncidentFormProps) {
       return;
     }
     setStatusMessage(successMessage);
+    if (result.detail) {
+      setCurrentDetail(result.detail);
+      setUnsafeConditionsPresent(result.detail.unsafeConditionsPresent);
+    }
     if (!detail || detail.id !== result.incidentId) {
       router.replace(`/documentation/incidents/${result.incidentId}`);
     }
-    router.refresh();
   }
 
   function runEditorAction(mode: "draft" | "submit" | "amend") {
     if (!formRef.current) return;
     const formData = new FormData(formRef.current);
-    startTransition(async () => {
-      setStatusMessage("");
-      const result =
+    setStatusMessage("");
+    void runEditorMutation(
+      async () =>
         mode === "submit"
-          ? await submitIncidentAction(formData)
+          ? submitIncidentAction(formData)
           : mode === "amend"
-            ? await amendIncidentAction(formData)
-            : await saveIncidentDraftAction(formData);
-      handleEditorResult(
-        result,
-        mode === "submit" ? "Incident submitted for director review." : mode === "amend" ? "Incident amended." : "Draft saved."
-      );
-      if (mode === "amend" && result.ok) {
-        setEditorEnabled(false);
+            ? amendIncidentAction(formData)
+            : saveIncidentDraftAction(formData),
+      {
+        successMessage: mode === "submit" ? "Incident submitted for director review." : mode === "amend" ? "Incident amended." : "Draft saved.",
+        fallbackData: { incidentId: detail?.id ?? null, status: detail?.status ?? "draft", detail },
+        onSuccess: async (result) => {
+          handleEditorResult(
+            { ok: true, incidentId: result.data.incidentId, status: result.data.status, detail: result.data.detail },
+            result.message
+          );
+          if (mode === "amend") {
+            setEditorEnabled(false);
+          }
+        },
+        onError: async (result) => {
+          setStatusMessage(`Error: ${result.error}`);
+        }
       }
-    });
+    );
   }
 
   function runReviewAction(decision: "approved" | "returned" | "closed") {
     if (!detail?.id || !reviewFormRef.current) return;
     const formData = new FormData(reviewFormRef.current);
     formData.set("incidentId", detail.id);
-    startReviewTransition(async () => {
-      setStatusMessage("");
-      const result =
-        decision === "closed" ? await closeIncidentAction(formData) : await reviewIncidentAction(formData);
-      if (!result.ok) {
-        setStatusMessage(`Error: ${result.error}`);
-        return;
+    setStatusMessage("");
+    void runReviewMutation(
+      async () => (decision === "closed" ? closeIncidentAction(formData) : reviewIncidentAction(formData)),
+      {
+        successMessage:
+          decision === "approved" ? "Incident approved." : decision === "returned" ? "Incident returned for correction." : "Incident closed.",
+        fallbackData: { incidentId: detail.id, status: detail.status, detail },
+        onSuccess: async (result) => {
+          if (result.data.detail) {
+            setCurrentDetail(result.data.detail);
+            setUnsafeConditionsPresent(result.data.detail.unsafeConditionsPresent);
+          }
+          setStatusMessage(result.message);
+        },
+        onError: async (result) => {
+          setStatusMessage(`Error: ${result.error}`);
+        }
       }
-      setStatusMessage(
-        decision === "approved" ? "Incident approved." : decision === "returned" ? "Incident returned for correction." : "Incident closed."
-      );
-      router.refresh();
-    });
+    );
   }
 
   return (
@@ -533,7 +559,7 @@ export function IncidentForm(props: IncidentFormProps) {
           >
             {isPending ? "Working..." : "Submit Incident"}
           </button>
-          {statusMessage ? <p className="self-center text-sm text-muted">{statusMessage}</p> : null}
+          <MutationNotice kind={statusMessage.startsWith("Error") ? "error" : "success"} message={statusMessage || null} className="self-center" />
         </div>
 
         {detail && props.canReview ? (
