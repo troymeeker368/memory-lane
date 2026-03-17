@@ -205,10 +205,17 @@ test("billing payor UI and canonical setter wiring remain present in contact man
   const contactManagerSource = readWorkspaceFile("components/forms/member-command-center-contact-manager.tsx");
   const contactServiceSource = readWorkspaceFile("lib/services/member-command-center-supabase.ts");
   const rpcCleanupMigration = readWorkspaceFile("supabase/migrations/0066_billing_payor_sync_cleanup.sql");
+  const securityHardeningMigration = readWorkspaceFile("supabase/migrations/0067_billing_payor_security_hardening.sql");
 
   assert.equal(contactManagerSource.includes("Is Payor"), true);
   assert.equal(contactManagerSource.includes("Bill To"), true);
   assert.equal(contactServiceSource.includes("setBillingPayorContact"), true);
   assert.equal(rpcCleanupMigration.includes("payor = mhp.payor"), false);
   assert.equal(rpcCleanupMigration.includes("payor = mcc.payor"), false);
+  assert.equal(securityHardeningMigration.includes("public.current_role() in ('admin', 'manager', 'director', 'nurse', 'coordinator')"), true);
+  assert.equal(securityHardeningMigration.includes("create trigger trg_member_contacts_auto_seed_payor"), true);
+  assert.equal(
+    securityHardeningMigration.includes('create policy "member_contacts_select"\non public.member_contacts\nfor select\nto authenticated\nusing (true);'),
+    false
+  );
 });
