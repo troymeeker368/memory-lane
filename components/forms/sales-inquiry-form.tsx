@@ -14,8 +14,7 @@ import {
   LEAD_SOURCE_OPTIONS,
   LEAD_STAGE_OPTIONS,
   LEAD_STATUS_OPTIONS,
-  canonicalLeadStage,
-  canonicalLeadStatus
+  resolveCanonicalLeadState
 } from "@/lib/canonical";
 import { formatPhoneDisplay, formatPhoneInput } from "@/lib/phone";
 import { toEasternDate } from "@/lib/timezone";
@@ -256,8 +255,10 @@ export function SalesInquiryForm({
     }
   }
 
-  const canonicalStage = canonicalLeadStage(form.stage);
-  const effectiveStatus = canonicalStage === "Closed - Lost" ? "Lost" : canonicalLeadStatus(form.status, canonicalStage);
+  const { stage: canonicalStage, status: effectiveStatus } = resolveCanonicalLeadState({
+    requestedStage: form.stage,
+    requestedStatus: form.status
+  });
   const isEipStage = canonicalStage === "Enrollment in Progress";
   const showLostFields = effectiveStatus === "Lost";
   const showTourCompleted = Boolean(form.tourDate);
@@ -315,8 +316,10 @@ export function SalesInquiryForm({
             onChange={(event) =>
               updateForm((current) => {
                 const nextStage = event.target.value as (typeof LEAD_STAGE_OPTIONS)[number];
-                const normalizedStage = canonicalLeadStage(nextStage);
-                const stageDrivenStatus = normalizedStage === "Closed - Lost" ? "Lost" : canonicalLeadStatus("Open", normalizedStage);
+                const { stage: normalizedStage, status: stageDrivenStatus } = resolveCanonicalLeadState({
+                  requestedStage: nextStage,
+                  requestedStatus: "Open"
+                });
                 const isNowLost = stageDrivenStatus === "Lost";
                 const isNowEip = normalizedStage === "Enrollment in Progress";
 
@@ -357,15 +360,20 @@ export function SalesInquiryForm({
                       : current.stage === "Closed - Lost" || current.stage === "Closed - Won"
                         ? "Inquiry"
                         : current.stage;
+                const resolved = resolveCanonicalLeadState({
+                  requestedStage: nextStage,
+                  requestedStatus: nextStatus
+                });
                 return {
                   ...current,
-                  status: nextStatus,
-                  stage: nextStage,
-                  nextFollowUpDate: markLost ? "" : current.nextFollowUpDate,
-                  nextFollowUpType: markLost ? "" : current.nextFollowUpType,
-                  lostReason: markLost ? current.lostReason : "",
-                  lostReasonOther: markLost ? current.lostReasonOther : "",
-                  closedDate: markLost ? current.closedDate || today : markWon ? current.closedDate || today : ""
+                  status: resolved.status,
+                  stage: resolved.stage,
+                  nextFollowUpDate: resolved.status === "Lost" ? "" : current.nextFollowUpDate,
+                  nextFollowUpType: resolved.status === "Lost" ? "" : current.nextFollowUpType,
+                  lostReason: resolved.status === "Lost" ? current.lostReason : "",
+                  lostReasonOther: resolved.status === "Lost" ? current.lostReasonOther : "",
+                  closedDate:
+                    resolved.status === "Lost" ? current.closedDate || today : resolved.status === "Won" ? current.closedDate || today : ""
                 };
               })
             }

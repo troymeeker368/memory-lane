@@ -50,10 +50,11 @@ async function requireAttendanceEditor() {
   return profile;
 }
 
-function revalidateAttendanceViews() {
+function revalidateAttendanceViews(memberId: string) {
   revalidatePath("/");
   revalidatePath("/operations/attendance");
   revalidatePath("/operations/member-command-center");
+  revalidatePath(`/operations/member-command-center/${memberId}`);
 }
 
 function resolveAttendanceTimestamp(input: {
@@ -236,7 +237,7 @@ export async function saveAttendanceStatusAction(formData: FormData) {
         await deleteAttendanceRecordSupabase(existing.id);
       }
 
-      revalidateAttendanceViews();
+      revalidateAttendanceViews(memberId);
       return { ok: true as const, record: toAttendanceMutationPayload(null, memberId, attendanceDate) };
     }
 
@@ -289,7 +290,7 @@ export async function saveAttendanceStatusAction(formData: FormData) {
         actorName: actor.full_name
       });
 
-      revalidateAttendanceViews();
+      revalidateAttendanceViews(memberId);
       return { ok: true as const, record: toAttendanceMutationPayload(updated, memberId, attendanceDate) };
     }
 
@@ -324,7 +325,7 @@ export async function saveAttendanceStatusAction(formData: FormData) {
         actorName: actor.full_name
       });
 
-      revalidateAttendanceViews();
+      revalidateAttendanceViews(memberId);
       return { ok: true as const, record: toAttendanceMutationPayload(updated, memberId, attendanceDate) };
     }
 
@@ -375,7 +376,7 @@ export async function saveAttendanceStatusAction(formData: FormData) {
       actorName: actor.full_name
     });
 
-    revalidateAttendanceViews();
+    revalidateAttendanceViews(memberId);
     return { ok: true as const, record: toAttendanceMutationPayload(updated, memberId, attendanceDate) };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to save attendance.";
@@ -457,7 +458,7 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
       attendanceDate,
       actorName: actor.full_name
     });
-    revalidateAttendanceViews();
+    revalidateAttendanceViews(memberId);
     return {
       ok: true as const,
       record: toAttendanceMutationPayload(updated, memberId, attendanceDate)

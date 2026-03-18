@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { canonicalLeadStage, canonicalLeadStatus } from "@/lib/canonical";
+import { resolveCanonicalLeadState } from "@/lib/canonical";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { createClient } from "@/lib/supabase/server";
@@ -151,26 +151,21 @@ const SALES_PARTNER_LOOKUP_SELECT = "id, partner_id, organization_name, category
 const SALES_REFERRAL_SOURCE_LOOKUP_SELECT =
   "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, active, last_touched";
 
-function normalizeLeadStage(value: string | null | undefined) {
-  return canonicalLeadStage(clean(value) ?? "Inquiry");
-}
-
-function normalizeLeadStatus(value: string | null | undefined, stage: string) {
-  return canonicalLeadStatus(clean(value) ?? "Open", stage);
-}
-
 function applyOpenLeadFilter(query: any) {
   return query.or("status.eq.open,status.eq.nurture");
 }
 
 function toSalesLeadReadRow(row: Record<string, unknown>): SalesLeadReadRow {
-  const stage = normalizeLeadStage(typeof row.stage === "string" ? row.stage : null);
+  const resolved = resolveCanonicalLeadState({
+    requestedStage: typeof row.stage === "string" ? row.stage : "Inquiry",
+    requestedStatus: typeof row.status === "string" ? row.status : "Open"
+  });
   return {
     id: String(row.id ?? ""),
     member_name: clean(row.member_name),
     caregiver_name: clean(row.caregiver_name),
-    stage,
-    status: normalizeLeadStatus(typeof row.status === "string" ? row.status : null, stage),
+    stage: resolved.stage,
+    status: resolved.status,
     created_at: String(row.created_at ?? ""),
     partner_id: clean(row.partner_id),
     referral_source_id: clean(row.referral_source_id),

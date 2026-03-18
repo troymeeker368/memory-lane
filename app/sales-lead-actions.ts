@@ -11,8 +11,7 @@ import {
   LEAD_SOURCE_OPTIONS,
   LEAD_STAGE_OPTIONS,
   LEAD_STATUS_OPTIONS,
-  canonicalLeadStage,
-  canonicalLeadStatus
+  resolveCanonicalLeadState
 } from "@/lib/canonical";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { createSalesLeadActivity, salesLeadActivityInputSchema } from "@/lib/services/sales-lead-activities";
@@ -70,8 +69,10 @@ const salesLeadSchema = z
     skipDuplicateReview: z.boolean().optional()
   })
   .superRefine((val, ctx) => {
-    const stage = canonicalLeadStage(val.stage);
-    const status = stage === "Closed - Lost" ? "Lost" : canonicalLeadStatus(val.status, stage);
+    const { status } = resolveCanonicalLeadState({
+      requestedStage: val.stage,
+      requestedStatus: val.status
+    });
     const requireLinkedReferral = val.leadSource === "Referral" && !val.allowUnlinkedReferral;
 
     if (val.leadSource === "Referral" && !val.referralName?.trim()) {
@@ -177,14 +178,10 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
   }
 
   const profile = await getCurrentProfile();
-  let stage = canonicalLeadStage(payload.data.stage);
-  let status = canonicalLeadStatus(payload.data.status, stage);
-  if (stage === "Closed - Lost") status = "Lost";
-  if (status === "Lost") stage = "Closed - Lost";
-  if (status === "Won") stage = "Closed - Won";
-  if (status === "Nurture" && stage !== "Nurture") stage = "Nurture";
-  status = canonicalLeadStatus(status, stage);
-  const dbStatus: "open" | "won" | "lost" = status === "Won" ? "won" : status === "Lost" ? "lost" : "open";
+  const { stage, status, dbStatus } = resolveCanonicalLeadState({
+    requestedStage: payload.data.stage,
+    requestedStatus: payload.data.status
+  });
   const isLostStatus = status === "Lost";
   const isEipStage = stage === "Enrollment in Progress";
   const resolvedLostReason = isLostStatus ? resolveLostReason(payload.data.lostReason, payload.data.lostReasonOther) : null;
@@ -392,7 +389,12 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
     return { error: error instanceof Error ? error.message : "Unable to load lead for enrollment." };
   }
   if (!lead) return { error: "Lead not found." };
-  if (canonicalLeadStage(lead.stage) !== "Enrollment in Progress") {
+  if (
+    resolveCanonicalLeadState({
+      requestedStage: lead.stage,
+      requestedStatus: lead.status
+    }).stage !== "Enrollment in Progress"
+  ) {
     return { error: "Enroll Member is only available for leads in Enrollment in Progress." };
   }
 

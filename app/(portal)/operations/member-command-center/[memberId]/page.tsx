@@ -28,7 +28,14 @@ import {
   type MccTab
 } from "@/app/(portal)/operations/member-command-center/member-command-center-detail-shared";
 import { requireModuleAccess } from "@/lib/auth";
-import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
+import {
+  canManagePofSignatureWorkflowForRole,
+  canCreatePhysicianOrdersModuleForRole,
+  canGenerateMemberDocumentForRole,
+  canPerformModuleAction,
+  canViewPhysicianOrdersModuleForRole,
+  normalizeRoleKey
+} from "@/lib/permissions";
 import { resolveActiveEffectiveMemberRowForDate } from "@/lib/services/billing-effective";
 import {
   getAvailableLockerNumbersForMemberSupabase,
@@ -176,10 +183,11 @@ export default async function MemberCommandCenterDetailPage({
     role === "coordinator" ||
     canPerformModuleAction(role, "operations", "canEdit", profile.permissions);
   const canViewMhpFromMcc = role === "admin" || role === "nurse";
-  const canViewFaceSheet = role === "admin" || role === "manager" || role === "nurse";
-  const canViewNameBadge = role === "admin" || role === "manager" || role === "nurse";
-  const canViewPhysicianOrders = role === "admin" || role === "nurse" || role === "manager";
-  const canCreatePhysicianOrders = role === "admin" || role === "nurse";
+  const canViewFaceSheet = canGenerateMemberDocumentForRole(role);
+  const canViewNameBadge = canGenerateMemberDocumentForRole(role);
+  const canAccessPofWorkflow = canManagePofSignatureWorkflowForRole(role);
+  const canViewPhysicianOrders = canViewPhysicianOrdersModuleForRole(role);
+  const canCreatePhysicianOrders = canCreatePhysicianOrdersModuleForRole(role);
   const { memberId } = await params;
   const query = await searchParams;
   const tab = resolveTab(firstString(query.tab));
@@ -516,7 +524,7 @@ export default async function MemberCommandCenterDetailPage({
         </div>
       </Card>
 
-      {canViewPhysicianOrders ? (
+      {canAccessPofWorkflow ? (
         <Card id="physician-orders" className="table-wrap">
           <SectionHeading
             title="Physician Orders / POF"
@@ -530,6 +538,7 @@ export default async function MemberCommandCenterDetailPage({
               requests={pofRequests}
               defaultNurseName={defaultNurseName}
               defaultFromEmail={defaultFromEmail}
+              canViewPhysicianOrdersModule={canViewPhysicianOrders}
               canCreatePhysicianOrders={canCreatePhysicianOrders}
             />
           </div>

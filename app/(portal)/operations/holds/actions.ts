@@ -24,9 +24,14 @@ async function requireHoldEditor() {
   return profile;
 }
 
-function revalidateHoldsWorkflows() {
+function revalidateHoldsWorkflows(memberId?: string | null) {
+  revalidatePath("/");
   revalidatePath("/operations/holds");
   revalidatePath("/operations/attendance");
+  revalidatePath("/operations/member-command-center");
+  if (memberId) {
+    revalidatePath(`/operations/member-command-center/${memberId}`);
+  }
   revalidatePath("/operations/transportation-station");
   revalidatePath("/operations/transportation-station/print");
 }
@@ -54,7 +59,7 @@ export async function createMemberHoldAction(formData: FormData) {
     throw new Error("End date cannot be earlier than start date.");
   }
 
-  await createMemberHoldSupabase({
+  const created = await createMemberHoldSupabase({
     memberId,
     startDate,
     endDate,
@@ -65,7 +70,7 @@ export async function createMemberHoldAction(formData: FormData) {
     actorName: actor.full_name
   });
 
-  revalidateHoldsWorkflows();
+  revalidateHoldsWorkflows(created.member_id);
 }
 
 export async function endMemberHoldAction(formData: FormData) {
@@ -84,5 +89,5 @@ export async function endMemberHoldAction(formData: FormData) {
     throw new Error("Hold not found.");
   }
 
-  revalidateHoldsWorkflows();
+  revalidateHoldsWorkflows(ended.member_id);
 }

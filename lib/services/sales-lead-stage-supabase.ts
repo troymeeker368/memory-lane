@@ -1,4 +1,4 @@
-import { canonicalLeadStage, canonicalLeadStatus } from "@/lib/canonical";
+import { resolveCanonicalLeadState } from "@/lib/canonical";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
@@ -27,39 +27,15 @@ export interface LeadStageTransitionResult {
 const TRANSITION_LEAD_STAGE_RPC = "rpc_transition_lead_stage";
 const TRANSITION_LEAD_STAGE_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
 
-function toDbStatus(status: CanonicalLeadBusinessStatus): LeadDbStatus {
-  if (status === "Won") return "won";
-  if (status === "Lost") return "lost";
-  return "open";
-}
-
-function normalizeCanonicalStage(stage: string): CanonicalLeadStage {
-  const normalized = canonicalLeadStage(stage);
-  if (normalized === "Tour") return "Tour";
-  if (normalized === "Enrollment in Progress") return "Enrollment in Progress";
-  if (normalized === "Nurture") return "Nurture";
-  if (normalized === "Closed - Won") return "Closed - Won";
-  if (normalized === "Closed - Lost") return "Closed - Lost";
-  return "Inquiry";
-}
-
 export function resolveCanonicalLeadTransition(input: {
   requestedStage: string;
   requestedStatus: string;
 }) {
-  let stage = normalizeCanonicalStage(input.requestedStage);
-  let businessStatus = canonicalLeadStatus(input.requestedStatus, stage) as CanonicalLeadBusinessStatus;
-
-  if (stage === "Closed - Lost") businessStatus = "Lost";
-  if (businessStatus === "Lost") stage = "Closed - Lost";
-  if (businessStatus === "Won") stage = "Closed - Won";
-  if (businessStatus === "Nurture" && stage !== "Nurture") stage = "Nurture";
-
-  businessStatus = canonicalLeadStatus(businessStatus, stage) as CanonicalLeadBusinessStatus;
+  const resolved = resolveCanonicalLeadState(input);
   return {
-    stage,
-    businessStatus,
-    dbStatus: toDbStatus(businessStatus)
+    stage: resolved.stage as CanonicalLeadStage,
+    businessStatus: resolved.status as CanonicalLeadBusinessStatus,
+    dbStatus: resolved.dbStatus
   };
 }
 

@@ -5,6 +5,7 @@ import { PofDocumentRender } from "@/components/physician-orders/pof-document-re
 import { PhysicianOrderPdfActions } from "@/components/physician-orders/pof-pdf-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireRoles } from "@/lib/auth";
+import { PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
 import { getPhysicianOrderById } from "@/lib/services/physician-orders-supabase";
 import { toEasternISO } from "@/lib/timezone";
 import { formatDateTime } from "@/lib/utils";
@@ -14,7 +15,7 @@ export default async function PhysicianOrderPrintPage({
 }: {
   params: Promise<{ pofId: string }>;
 }) {
-  await requireRoles(["admin", "nurse"]);
+  await requireRoles(PHYSICIAN_ORDER_MODULE_ROLES);
   const { pofId } = await params;
   const form = await getPhysicianOrderById(pofId);
   if (!form) notFound();

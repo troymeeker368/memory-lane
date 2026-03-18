@@ -5,13 +5,10 @@ import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { canGenerateMemberDocumentForRole } from "@/lib/permissions";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { getMemberDietCard } from "@/lib/services/member-diet-card";
 import { toEasternISO } from "@/lib/timezone";
-
-function canGenerate(role: string) {
-  return role === "admin" || role === "manager" || role === "nurse";
-}
 
 function lineOrDash(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
@@ -58,7 +55,7 @@ async function buildDietCardPdf(memberId: string) {
 
 export async function generateMemberDietCardPdfAction(input: { memberId: string }) {
   const profile = await getCurrentProfile();
-  if (!canGenerate(profile.role)) {
+  if (!canGenerateMemberDocumentForRole(profile.role)) {
     return { ok: false, error: "You do not have access to generate diet cards." } as const;
   }
 

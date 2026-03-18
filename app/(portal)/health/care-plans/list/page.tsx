@@ -1,22 +1,11 @@
 ﻿import Link from "next/link";
 
+import { CarePlanStatusLink } from "@/components/care-plans/care-plan-status-link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { getCarePlanTracks, getCarePlans } from "@/lib/services/care-plans";
 import { getMembers } from "@/lib/services/documentation";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
-
-function StatusLink({ status, href }: { status: string; href: string }) {
-  if (status === "Due Soon" || status === "Overdue") {
-    return (
-      <Link className="font-semibold text-brand underline" href={href}>
-        {status}
-      </Link>
-    );
-  }
-
-  return <span>{status}</span>;
-}
 
 function parsePage(value: string | string[] | undefined) {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -105,7 +94,7 @@ export default async function CarePlansListPage({
                 <td>{formatDate(plan.enrollmentDate)}</td>
                 <td>{formatOptionalDate(plan.lastCompletedDate)}</td>
                 <td>{formatDate(plan.nextDueDate)}</td>
-                <td><StatusLink status={plan.status} href={plan.actionHref} /></td>
+                <td><CarePlanStatusLink status={plan.status} href={plan.actionHref} /></td>
                 <td>{plan.completedBy ?? "-"}</td>
                 <td>
                   <Link

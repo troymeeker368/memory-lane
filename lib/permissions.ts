@@ -50,6 +50,8 @@ export const ROLE_RANKS: Record<CanonicalAppRole, number> = {
 };
 
 export const INCIDENT_ALLOWED_ROLES: CanonicalAppRole[] = ["nurse", "manager", "director", "admin"];
+export const PHYSICIAN_ORDER_MODULE_ROLES: AppRole[] = ["admin", "nurse"];
+export const PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES: AppRole[] = ["admin", "nurse", "manager"];
 
 export const PERMISSION_MODULES: PermissionModuleKey[] = [
   "documentation",
@@ -216,7 +218,7 @@ export const NAV_ITEMS: AppNavItem[] = [
   { label: "Incident Reports", href: "/documentation/incidents", group: "Health Unit", module: "health", icon: "TriangleAlert", roles: INCIDENT_ALLOWED_ROLES },
   { label: "Blood Sugar", href: "/documentation/blood-sugar", group: "Health Unit", module: "health", icon: "Activity" },
   { label: "New Intake Assessment", href: "/health/assessment", group: "Health Unit", module: "health", icon: "ClipboardCheck" },
-  { label: "Physician Orders", href: "/health/physician-orders", group: "Health Unit", module: "health", icon: "FilePenLine", roles: ["admin", "nurse"] },
+  { label: "Physician Orders", href: "/health/physician-orders", group: "Health Unit", module: "health", icon: "FilePenLine", roles: PHYSICIAN_ORDER_MODULE_ROLES },
   { label: "Care Plans", href: "/health/care-plans", group: "Health Unit", module: "health", icon: "FileHeart", roles: ["admin", "nurse"] }
 ];
 
@@ -298,6 +300,28 @@ export function isRoleAtLeast(role: string | AppRole, minimumRole: string | AppR
 export function canAccessIncidentReportsForRole(role: string | AppRole | null | undefined) {
   const normalizedRole = normalizeRoleKey(role);
   return INCIDENT_ALLOWED_ROLES.includes(normalizedRole);
+}
+
+function roleMatchesAny(role: string | AppRole | null | undefined, allowedRoles: AppRole[]) {
+  const normalizedRole = normalizeRoleKey(role);
+  return allowedRoles.map((allowedRole) => normalizeRoleKey(allowedRole)).includes(normalizedRole);
+}
+
+export function canGenerateMemberDocumentForRole(role: string | AppRole | null | undefined) {
+  const normalizedRole = normalizeRoleKey(role);
+  return normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "nurse";
+}
+
+export function canViewPhysicianOrdersModuleForRole(role: string | AppRole | null | undefined) {
+  return roleMatchesAny(role, PHYSICIAN_ORDER_MODULE_ROLES);
+}
+
+export function canCreatePhysicianOrdersModuleForRole(role: string | AppRole | null | undefined) {
+  return roleMatchesAny(role, PHYSICIAN_ORDER_MODULE_ROLES);
+}
+
+export function canManagePofSignatureWorkflowForRole(role: string | AppRole | null | undefined) {
+  return roleMatchesAny(role, PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES);
 }
 
 export function getDefaultPermissionSet(role: string | AppRole): PermissionSet {

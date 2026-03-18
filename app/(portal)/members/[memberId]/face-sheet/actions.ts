@@ -6,6 +6,7 @@ import path from "node:path";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { canGenerateMemberDocumentForRole } from "@/lib/permissions";
 import {
   DOCUMENT_CENTER_ADDRESS,
   DOCUMENT_CENTER_LOGO_PUBLIC_PATH,
@@ -16,10 +17,6 @@ import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { getMemberFaceSheet } from "@/lib/services/member-face-sheet";
 import { toEasternISO } from "@/lib/timezone";
 import type { PDFDocument as PDFDocumentType } from "pdf-lib";
-
-function canGenerate(role: string) {
-  return role === "admin" || role === "manager" || role === "nurse";
-}
 
 function lineOrDash(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
@@ -189,7 +186,7 @@ async function buildFaceSheetPdf(memberId: string) {
 
 export async function generateMemberFaceSheetPdfAction(input: { memberId: string }) {
   const profile = await getCurrentProfile();
-  if (!canGenerate(profile.role)) {
+  if (!canGenerateMemberDocumentForRole(profile.role)) {
     return { ok: false, error: "You do not have access to generate face sheets." } as const;
   }
 

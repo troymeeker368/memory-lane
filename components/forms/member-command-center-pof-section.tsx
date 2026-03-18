@@ -95,6 +95,7 @@ export function MemberCommandCenterPofSection({
   requests,
   defaultNurseName,
   defaultFromEmail,
+  canViewPhysicianOrdersModule,
   canCreatePhysicianOrders
 }: {
   memberId: string;
@@ -102,6 +103,7 @@ export function MemberCommandCenterPofSection({
   requests: PofRequestSummary[];
   defaultNurseName: string;
   defaultFromEmail: string;
+  canViewPhysicianOrdersModule: boolean;
   canCreatePhysicianOrders: boolean;
 }) {
   const [modalState, setModalState] = useState<ModalState>(null);
@@ -297,9 +299,11 @@ export function MemberCommandCenterPofSection({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
-        <Link href={`/health/physician-orders?memberId=${memberId}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
-          Open Full POF List
-        </Link>
+        {canViewPhysicianOrdersModule ? (
+          <Link href={`/health/physician-orders?memberId=${memberId}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
+            Open Full POF List
+          </Link>
+        ) : null}
         {canCreatePhysicianOrders ? (
           <Link href={`/health/physician-orders/new?memberId=${memberId}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
             New POF
@@ -343,9 +347,13 @@ export function MemberCommandCenterPofSection({
                 return (
                   <tr key={row.id}>
                     <td>
-                      <Link href={`/health/physician-orders/${row.id}?from=mcc`} className="font-semibold text-brand">
-                        Open POF
-                      </Link>
+                      {canViewPhysicianOrdersModule ? (
+                        <Link href={`/health/physician-orders/${row.id}?from=mcc`} className="font-semibold text-brand">
+                          Open POF
+                        </Link>
+                      ) : (
+                        <span className="font-semibold">Saved POF</span>
+                      )}
                     </td>
                     <td>{row.status}</td>
                     <td>{row.clinicalSyncStatus === "synced" ? "Synced" : row.clinicalSyncStatus === "pending" ? "Pending" : "-"}</td>

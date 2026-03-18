@@ -7,6 +7,7 @@ import { PhysicianOrderPdfActions } from "@/components/physician-orders/pof-pdf-
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
+import { canCreatePhysicianOrdersModuleForRole, PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
 import { getConfiguredClinicalSenderEmail, listPofTimelineForPhysicianOrder } from "@/lib/services/pof-read";
 import {
   getPhysicianOrderById,
@@ -45,8 +46,8 @@ export default async function PhysicianOrderDetailPage({
   params: Promise<{ pofId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const profile = await requireRoles(["admin", "nurse"]);
-  const canEdit = profile.role === "admin" || profile.role === "nurse";
+  const profile = await requireRoles(PHYSICIAN_ORDER_MODULE_ROLES);
+  const canEdit = canCreatePhysicianOrdersModuleForRole(profile.role);
   const { pofId } = await params;
   const query = await searchParams;
   const source = firstString(query.from);

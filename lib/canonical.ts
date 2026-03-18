@@ -233,6 +233,7 @@ export const LEAD_LOST_REASON_OPTIONS = [
 
 export type LeadStatus = (typeof LEAD_STATUS_OPTIONS)[number];
 export type LeadStage = (typeof LEAD_STAGE_OPTIONS)[number];
+export type LeadDbStatus = "open" | "won" | "lost";
 export type TransportType = (typeof TRANSPORT_TYPE_OPTIONS)[number];
 export type ToiletUseType = (typeof TOILET_USE_TYPE_OPTIONS)[number];
 
@@ -255,6 +256,38 @@ export function canonicalLeadStatus(status: string, stage?: string): LeadStatus 
   if (statusNorm === "lost") return "Lost";
   if (statusNorm === "nurture") return "Nurture";
   return "Open";
+}
+
+function toLeadDbStatus(status: LeadStatus): LeadDbStatus {
+  if (status === "Won") return "won";
+  if (status === "Lost") return "lost";
+  return "open";
+}
+
+export function resolveCanonicalLeadState(input: {
+  requestedStage: string;
+  requestedStatus: string;
+}) {
+  let stage = canonicalLeadStage(input.requestedStage);
+  if (!LEAD_STAGE_OPTIONS.includes(stage as LeadStage)) {
+    stage = "Inquiry";
+  }
+
+  let status = canonicalLeadStatus(input.requestedStatus, stage);
+
+  if (stage === "Closed - Lost") status = "Lost";
+  if (status === "Lost") stage = "Closed - Lost";
+  if (status === "Won") stage = "Closed - Won";
+  if (status === "Nurture" && stage !== "Nurture") stage = "Nurture";
+
+  const canonicalStage = stage as LeadStage;
+  const canonicalStatus = canonicalLeadStatus(status, canonicalStage);
+
+  return {
+    stage: canonicalStage,
+    status: canonicalStatus,
+    dbStatus: toLeadDbStatus(canonicalStatus)
+  };
 }
 
 export function isOpenLeadStatus(status: string): boolean {

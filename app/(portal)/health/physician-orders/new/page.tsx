@@ -13,6 +13,7 @@ import { PofEsignWorkflowCard } from "@/components/physician-orders/pof-esign-wo
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
+import { PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import {
   MHP_AMBULATION_OPTIONS,
@@ -97,7 +98,7 @@ export default async function NewPhysicianOrderPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireRoles(["admin", "nurse"]);
+  await requireRoles(PHYSICIAN_ORDER_MODULE_ROLES);
   const profile = await getCurrentProfile();
   const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
   const query = await searchParams;

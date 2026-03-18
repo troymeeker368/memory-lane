@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
+import { canCreatePhysicianOrdersModuleForRole } from "@/lib/permissions";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import {
@@ -584,7 +585,7 @@ export async function saveAndDispatchPofSignatureRequestFromEditorAction(formDat
 export async function generatePhysicianOrderPdfAction(input: { pofId: string }) {
   const profile = await getCurrentProfile();
   const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
-  if (profile.role !== "admin" && profile.role !== "nurse") {
+  if (!canCreatePhysicianOrdersModuleForRole(profile.role)) {
     return { ok: false, error: "You do not have access to generate POF PDFs." } as const;
   }
 

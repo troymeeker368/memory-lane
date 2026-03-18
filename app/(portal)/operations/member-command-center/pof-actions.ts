@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 
 import { requireRoles } from "@/lib/auth";
+import { PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES } from "@/lib/permissions";
 import {
   getPofRequestSummaryById,
   getSignedPofPdfUrlForMember,
@@ -82,7 +83,7 @@ export async function sendPofSignatureRequestAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   const physicianOrderId = asString(formData, "physicianOrderId");
   try {
-    const profile = await requireRoles(["admin", "nurse", "manager"]);
+    const profile = await requireRoles(PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES);
     const actorName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
     logPofActionDiagnostics("send", {
       memberId,
@@ -139,7 +140,7 @@ export async function resendPofSignatureRequestAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   const physicianOrderId = asString(formData, "physicianOrderId");
   try {
-    const profile = await requireRoles(["admin", "nurse", "manager"]);
+    const profile = await requireRoles(PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES);
     const actorName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
     logPofActionDiagnostics("resend", {
       requestId,
@@ -199,7 +200,7 @@ export async function voidPofSignatureRequestAction(input: {
   reason?: string | null;
 }) {
   try {
-    const profile = await requireRoles(["admin", "nurse", "manager"]);
+    const profile = await requireRoles(PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES);
     const actorName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
     const requestId = String(input.requestId ?? "").trim();
     const memberId = String(input.memberId ?? "").trim();
@@ -232,7 +233,7 @@ export async function voidPofSignatureRequestAction(input: {
 
 export async function getSignedPofDownloadUrlAction(input: { requestId: string; memberId: string }) {
   try {
-    await requireRoles(["admin", "nurse", "manager"]);
+    await requireRoles(PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES);
     const requestId = String(input.requestId ?? "").trim();
     const memberId = String(input.memberId ?? "").trim();
     if (!requestId || !memberId) {

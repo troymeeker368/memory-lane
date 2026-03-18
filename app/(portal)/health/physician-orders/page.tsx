@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
+import { canCreatePhysicianOrdersModuleForRole, PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { getPhysicianOrders } from "@/lib/services/physician-orders-supabase";
 import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
@@ -17,8 +18,8 @@ export default async function PhysicianOrdersIndexPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const profile = await requireRoles(["admin", "nurse"]);
-  const canCreate = profile.role === "admin" || profile.role === "nurse";
+  const profile = await requireRoles(PHYSICIAN_ORDER_MODULE_ROLES);
+  const canCreate = canCreatePhysicianOrdersModuleForRole(profile.role);
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";
   const status = firstString(query.status) ?? "all";

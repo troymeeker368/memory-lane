@@ -1,4 +1,4 @@
-import { canonicalLeadStage, canonicalLeadStatus, isOpenLeadStatus } from "@/lib/canonical";
+import { isOpenLeadStatus, resolveCanonicalLeadState } from "@/lib/canonical";
 import { createClient } from "@/lib/supabase/server";
 
 type LeadSummaryLike = {
@@ -21,9 +21,10 @@ export interface LeadStageOutcomeSummaryRow {
 }
 
 function resolveCanonicalLeadStageStatus(lead: Pick<LeadSummaryLike, "stage" | "status">) {
-  const stage = canonicalLeadStage(String(lead.stage ?? "Inquiry"));
-  const status = canonicalLeadStatus(String(lead.status ?? "Open"), stage);
-  return { stage, status };
+  return resolveCanonicalLeadState({
+    requestedStage: String(lead.stage ?? "Inquiry"),
+    requestedStatus: String(lead.status ?? "Open")
+  });
 }
 
 export function summarizeLeadPipeline(leads: LeadSummaryLike[]): LeadPipelineSummary {

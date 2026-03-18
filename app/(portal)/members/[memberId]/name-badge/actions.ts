@@ -7,6 +7,7 @@ import path from "node:path";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { canGenerateMemberDocumentForRole } from "@/lib/permissions";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { getMemberNameBadgeDetail } from "@/lib/services/member-name-badge";
 import { toEasternISO } from "@/lib/timezone";
@@ -118,10 +119,6 @@ function wrapTextByWords(
   }
 
   return { lines, truncated };
-}
-
-function roleCanGenerate(role: string) {
-  return role === "admin" || role === "manager" || role === "nurse";
 }
 
 function normalizeBadgeErrorMessage(error: unknown) {
@@ -374,7 +371,7 @@ export async function generateMemberNameBadgePdfAction(input: {
   selectedIndicatorKeys?: string[];
 }) {
   const profile = await getCurrentProfile();
-  if (!roleCanGenerate(profile.role)) {
+  if (!canGenerateMemberDocumentForRole(profile.role)) {
     return { ok: false, error: "You do not have access to generate member badges." } as const;
   }
 

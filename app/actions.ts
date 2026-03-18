@@ -10,8 +10,7 @@ import {
   LEAD_SOURCE_OPTIONS,
   LEAD_STAGE_OPTIONS,
   LEAD_STATUS_OPTIONS,
-  canonicalLeadStage,
-  canonicalLeadStatus
+  resolveCanonicalLeadState
 } from "@/lib/canonical";
 import { getSalesLeadByIdSupabase } from "@/lib/services/sales-crm-supabase";
 import { legacyLeadActivityInputSchema, normalizeLegacyLeadActivityInput } from "@/lib/services/sales-lead-activities";
@@ -19,16 +18,12 @@ import { toEasternDate } from "@/lib/timezone";
 
 import { requireManagerAdminEditor } from "@/app/action-helpers";
 
-function normalizeLegacyLeadStageOption(stage: string): (typeof LEAD_STAGE_OPTIONS)[number] {
-  const normalized = canonicalLeadStage(stage);
-  return LEAD_STAGE_OPTIONS.includes(normalized as (typeof LEAD_STAGE_OPTIONS)[number])
-    ? (normalized as (typeof LEAD_STAGE_OPTIONS)[number])
-    : "Inquiry";
-}
-
-function normalizeLegacyLeadStatusOption(status: string, stage: string): (typeof LEAD_STATUS_OPTIONS)[number] {
-  const normalized = canonicalLeadStatus(status, stage);
-  return LEAD_STATUS_OPTIONS.includes(normalized) ? normalized : "Open";
+function resolveLegacyLeadStateOptions(requestedStage: string, requestedStatus: string) {
+  const resolved = resolveCanonicalLeadState({ requestedStage, requestedStatus });
+  return {
+    stage: resolved.stage,
+    status: resolved.status
+  };
 }
 
 function normalizeLegacyLeadSourceOption(leadSource: string | null | undefined): (typeof LEAD_SOURCE_OPTIONS)[number] {
@@ -168,10 +163,9 @@ async function getLegacyLeadRecordById(leadId: string): Promise<{ lead: LegacyLe
 }
 
 function buildLegacyLeadSavePayload(input: LegacyLeadSaveInput): Parameters<typeof saveSalesLeadAction>[0] {
-  const stage = normalizeLegacyLeadStageOption(input.stage);
-  const status = normalizeLegacyLeadStatusOption(input.status, stage);
+  const { stage, status } = resolveLegacyLeadStateOptions(input.stage, input.status);
   const leadSource = normalizeLegacyLeadSourceOption(input.leadSource);
-  const isLost = canonicalLeadStatus(status, stage) === "Lost";
+  const isLost = status === "Lost";
   const lostReasonParts = splitLegacyLostReasonParts(input.lostReason);
   const referralLookup = resolveLegacyReferralLookup({
     partnerId: input.partnerId,
@@ -242,8 +236,10 @@ const leadSchema = z
     notes: z.string().max(1000).optional()
   })
   .superRefine((val, ctx) => {
-    const stage = canonicalLeadStage(val.stage);
-    const status = canonicalLeadStatus(val.status, stage);
+    const { stage, status } = resolveCanonicalLeadState({
+      requestedStage: val.stage,
+      requestedStatus: val.status
+    });
     if ((stage === "Closed - Lost" || status === "Lost") && !val.lostReason) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -308,9 +304,8 @@ export async function updateLeadStatusAction(raw: z.infer<typeof leadStatusSchem
   const { lead, error } = await getLegacyLeadRecordById(payload.data.leadId);
   if (error) return { error };
   if (!lead) return { error: "Lead not found." };
-  const nextStage = normalizeLegacyLeadStageOption(payload.data.stage);
-  const nextStatus = normalizeLegacyLeadStatusOption(payload.data.status, nextStage);
-  const isLost = canonicalLeadStatus(nextStatus, nextStage) === "Lost";
+  const { stage: nextStage, status: nextStatus } = resolveLegacyLeadStateOptions(payload.data.stage, payload.data.status);
+  const isLost = nextStatus === "Lost";
   return saveSalesLeadAction(
     buildLegacyLeadSavePayload({
       leadId: lead.id,
@@ -351,9 +346,8 @@ export async function updateLeadDetailsAction(raw: { id: string; stage: string; 
   const { lead: existingLead, error } = await getLegacyLeadRecordById(payload.data.id);
   if (error) return { error };
   if (!existingLead) return { error: "Lead not found." };
-  const nextStage = normalizeLegacyLeadStageOption(payload.data.stage);
-  const nextStatus = normalizeLegacyLeadStatusOption(payload.data.status, nextStage);
-  const isLost = canonicalLeadStatus(nextStatus, nextStage) === "Lost";
+  const { stage: nextStage, status: nextStatus } = resolveLegacyLeadStateOptions(payload.data.stage, payload.data.status);
+  const isLost = nextStatus === "Lost";
 
   return saveSalesLeadAction(
     buildLegacyLeadSavePayload({
