@@ -1,6 +1,6 @@
+import dynamic from "next/dynamic";
 import Link from "next/link";
 
-import { ScheduleChangesManager } from "@/components/operations/schedule-changes-manager";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
@@ -10,6 +10,13 @@ import {
 } from "@/lib/services/member-command-center-supabase";
 import { listScheduleChangesSupabase } from "@/lib/services/schedule-changes-supabase";
 import { SCHEDULE_WEEKDAY_KEYS } from "@/lib/services/schedule-changes-shared";
+
+const ScheduleChangesManager = dynamic(
+  () => import("@/components/operations/schedule-changes-manager").then((mod) => mod.ScheduleChangesManager),
+  {
+    loading: () => <p className="text-sm text-muted">Loading schedule change manager...</p>
+  }
+);
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);

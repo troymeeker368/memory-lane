@@ -1,16 +1,15 @@
 import type React from "react";
+import { Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { headers } from "next/headers";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { isDevAuthBypassEnabled } from "@/lib/runtime";
-import { listDevAuthBootstrapAccounts } from "@/lib/services/dev-auth-bootstrap";
-import { DevAuthBootstrapPanel } from "@/components/auth/dev-auth-bootstrap-panel";
+import { PortalNotificationLink } from "@/components/portal/portal-notification-link";
 import { PortalNav } from "@/components/portal-nav";
 import { SignOutForm } from "@/components/sign-out-form";
 import { GlobalTablePaginatorLazy } from "@/components/ui/global-table-paginator-lazy";
-import { countUnreadUserNotificationsForUser } from "@/lib/services/notification-counts";
 
 export const dynamic = "force-dynamic";
 
@@ -22,10 +21,12 @@ export default async function PortalLayout({
   const profile = await getCurrentProfile();
   const pathname = (await headers()).get("x-memory-lane-pathname") ?? "/";
   const showDevRoleSwitcher = isDevAuthBypassEnabled();
-  const [unreadNotifications, devAccounts] = await Promise.all([
-    countUnreadUserNotificationsForUser(profile.id),
-    showDevRoleSwitcher ? listDevAuthBootstrapAccounts() : Promise.resolve([])
-  ]);
+  const devAuthSection = showDevRoleSwitcher
+    ? await (async () => {
+        const { DevAuthBootstrapSection } = await import("@/components/auth/dev-auth-bootstrap-section");
+        return <DevAuthBootstrapSection />;
+      })()
+    : null;
 
   return (
     <div className="portal-shell mx-auto grid min-h-screen w-full max-w-7xl gap-4 p-3 md:grid-cols-[320px_minmax(0,1fr)] md:p-4">
@@ -59,18 +60,22 @@ export default async function PortalLayout({
             <p className="text-xs text-muted">Operations Portal</p>
           </div>
           <div className="flex items-center gap-3">
-            <Link href="/notifications" className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-brand hover:bg-slate-50">
-              Notifications{unreadNotifications > 0 ? ` (${unreadNotifications})` : ""}
-            </Link>
+            <Suspense
+              fallback={
+                <Link
+                  href="/notifications"
+                  className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-brand hover:bg-slate-50"
+                >
+                  Notifications
+                </Link>
+              }
+            >
+              <PortalNotificationLink userId={profile.id} />
+            </Suspense>
             <GlobalTablePaginatorLazy />
           </div>
         </div>
-        {showDevRoleSwitcher ? (
-          <section className="space-y-2 rounded-lg border border-border bg-white px-3 py-3">
-            <p className="text-xs font-semibold text-muted">Dev Role Switcher</p>
-            <DevAuthBootstrapPanel accounts={devAccounts} />
-          </section>
-        ) : null}
+        {devAuthSection}
         {children}
       </main>
     </div>

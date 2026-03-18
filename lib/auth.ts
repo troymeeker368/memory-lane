@@ -2,17 +2,15 @@ import { redirect } from "next/navigation";
 import { cache } from "react";
 
 import type { AppRole, ModuleKey, PermissionModuleKey, UserProfile } from "@/types/app";
-import type { PermissionAction } from "@/lib/permissions";
+import type { PermissionAction } from "@/lib/permissions/core";
 import {
   canAccessModule,
-  canAccessNavItem,
   canPerformModuleAction,
-  getNavItemByHref,
   getPermissionSource,
   normalizeRoleKey,
   PERMISSION_MODULES,
   resolveEffectivePermissionSet
-} from "@/lib/permissions";
+} from "@/lib/permissions/core";
 import { createClient } from "@/lib/supabase/server";
 import { isDevAuthBypassEnabled } from "@/lib/runtime";
 
@@ -269,6 +267,8 @@ export async function requireNavItemAccess(
   action: PermissionAction = "canView"
 ): Promise<UserProfile> {
   const profile = await getCurrentProfile();
+  const { canAccessNavItem, getNavItemByHref } = await import("@/lib/permissions/nav");
+
   if (!canAccessNavItem(profile.role as AppRole, href, profile.permissions, action)) {
     const navItem = getNavItemByHref(href);
     if (navItem) {

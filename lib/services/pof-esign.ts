@@ -17,8 +17,8 @@ import {
   uploadMemberDocumentObject
 } from "@/lib/services/member-files";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import type { PofRequestStatus, PofRequestSummary } from "@/lib/services/pof-types";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/timezone";
 import {
   maybeRecordRepeatedFailureAlert,
@@ -32,8 +32,15 @@ import {
   type SendWorkflowDeliveryStatus
 } from "@/lib/services/send-workflow-state";
 
-export const POF_REQUEST_STATUS_VALUES = ["draft", "sent", "opened", "signed", "declined", "expired"] as const;
-export type PofRequestStatus = (typeof POF_REQUEST_STATUS_VALUES)[number];
+export { POF_REQUEST_STATUS_VALUES } from "@/lib/services/pof-types";
+export type { PofDocumentEvent, PofRequestStatus, PofRequestSummary } from "@/lib/services/pof-types";
+export {
+  getPofRequestSummaryById,
+  getPofRequestTimeline,
+  listPofRequestsByPhysicianOrderIds,
+  listPofRequestsForMember,
+  listPofTimelineForPhysicianOrder
+} from "@/lib/services/pof-read";
 
 const TOKEN_BYTE_LENGTH = 32;
 const RPC_FINALIZE_POF_SIGNATURE = "rpc_finalize_pof_signature";
@@ -83,49 +90,6 @@ type PofRequestRow = {
   updated_by_user_id: string | null;
   updated_by_name: string | null;
   updated_at: string;
-};
-
-export type PofRequestSummary = {
-  id: string;
-  physicianOrderId: string;
-  memberId: string;
-  providerName: string;
-  providerEmail: string;
-  nurseName: string;
-  fromEmail: string;
-  sentByUserId: string;
-  status: PofRequestStatus;
-  deliveryStatus: SendWorkflowDeliveryStatus;
-  deliveryError: string | null;
-  lastDeliveryAttemptAt: string | null;
-  deliveryFailedAt: string | null;
-  optionalMessage: string | null;
-  sentAt: string | null;
-  openedAt: string | null;
-  signedAt: string | null;
-  expiresAt: string;
-  signatureRequestUrl: string;
-  unsignedPdfUrl: string | null;
-  signedPdfUrl: string | null;
-  memberFileId: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type PofDocumentEvent = {
-  id: string;
-  documentId: string;
-  memberId: string;
-  physicianOrderId: string | null;
-  eventType: "created" | "sent" | "send_failed" | "opened" | "signed" | "declined" | "expired" | "resent";
-  actorType: "user" | "provider" | "system";
-  actorUserId: string | null;
-  actorName: string | null;
-  actorEmail: string | null;
-  actorIp: string | null;
-  actorUserAgent: string | null;
-  metadata: Record<string, unknown>;
-  createdAt: string;
 };
 
 type SendPofSignatureInput = {
@@ -803,135 +767,6 @@ export function getConfiguredClinicalSenderEmail() {
     parseEmailAddress(process.env.DEFAULT_CLINICAL_SENDER_EMAIL) ??
     parseEmailAddress(process.env.RESEND_FROM_EMAIL);
   return preferred ?? "";
-}
-
-export async function listPofRequestsForMember(memberId: string) {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("pof_requests")
-    .select("*")
-    .eq("member_id", memberId)
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as PofRequestRow[];
-  await refreshExpiredRequests(rows);
-  return rows.map(toSummary);
-}
-
-export async function listPofRequestsByPhysicianOrderIds(memberId: string, physicianOrderIds: string[]) {
-  if (physicianOrderIds.length === 0) return [] as PofRequestSummary[];
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("pof_requests")
-    .select("*")
-    .eq("member_id", memberId)
-    .in("physician_order_id", physicianOrderIds)
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as PofRequestRow[];
-  await refreshExpiredRequests(rows);
-  return rows.map(toSummary);
-}
-
-export async function getPofRequestSummaryById(requestId: string, memberId?: string | null) {
-  const normalizedRequestId = clean(requestId);
-  if (!normalizedRequestId) return null;
-
-  const supabase = await createClient();
-  let query = supabase.from("pof_requests").select("*").eq("id", normalizedRequestId);
-  if (clean(memberId)) {
-    query = query.eq("member_id", clean(memberId)!);
-  }
-
-  const { data, error } = await query.maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!data) return null;
-
-  const row = data as PofRequestRow;
-  await refreshExpiredRequests([row]);
-  return toSummary(row);
-}
-
-export async function getPofRequestTimeline(requestId: string, memberId?: string) {
-  const supabase = await createClient();
-  let requestQuery = supabase.from("pof_requests").select("*").eq("id", requestId);
-  if (memberId) requestQuery = requestQuery.eq("member_id", memberId);
-  const { data: requestData, error: requestError } = await requestQuery.maybeSingle();
-  if (requestError) throw new Error(requestError.message);
-  if (!requestData) return null;
-  await refreshExpiredRequests([requestData as PofRequestRow]);
-
-  const { data: eventsData, error: eventsError } = await supabase
-    .from("document_events")
-    .select("*")
-    .eq("document_id", requestId)
-    .order("created_at", { ascending: true });
-  if (eventsError) throw new Error(eventsError.message);
-
-  const events = ((eventsData ?? []) as any[]).map(
-    (row): PofDocumentEvent => ({
-      id: row.id,
-      documentId: row.document_id,
-      memberId: row.member_id,
-      physicianOrderId: row.physician_order_id,
-      eventType: row.event_type,
-      actorType: row.actor_type,
-      actorUserId: row.actor_user_id,
-      actorName: row.actor_name,
-      actorEmail: row.actor_email,
-      actorIp: row.actor_ip,
-      actorUserAgent: row.actor_user_agent,
-      metadata: row.metadata ?? {},
-      createdAt: row.created_at
-    })
-  );
-
-  return {
-    request: toSummary(requestData as PofRequestRow),
-    events
-  };
-}
-
-export async function listPofTimelineForPhysicianOrder(physicianOrderId: string) {
-  const supabase = await createClient();
-  const { data: requestsData, error: requestsError } = await supabase
-    .from("pof_requests")
-    .select("*")
-    .eq("physician_order_id", physicianOrderId)
-    .order("created_at", { ascending: false });
-  if (requestsError) throw new Error(requestsError.message);
-  const requestRows = (requestsData ?? []) as PofRequestRow[];
-  await refreshExpiredRequests(requestRows);
-  const requests = requestRows.map(toSummary);
-  if (requests.length === 0) return { requests, events: [] as PofDocumentEvent[] };
-
-  const requestIds = requests.map((row) => row.id);
-  const { data: eventsData, error: eventsError } = await supabase
-    .from("document_events")
-    .select("*")
-    .in("document_id", requestIds)
-    .order("created_at", { ascending: true });
-  if (eventsError) throw new Error(eventsError.message);
-
-  const events = ((eventsData ?? []) as any[]).map(
-    (row): PofDocumentEvent => ({
-      id: row.id,
-      documentId: row.document_id,
-      memberId: row.member_id,
-      physicianOrderId: row.physician_order_id,
-      eventType: row.event_type,
-      actorType: row.actor_type,
-      actorUserId: row.actor_user_id,
-      actorName: row.actor_name,
-      actorEmail: row.actor_email,
-      actorIp: row.actor_ip,
-      actorUserAgent: row.actor_user_agent,
-      metadata: row.metadata ?? {},
-      createdAt: row.created_at
-    })
-  );
-
-  return { requests, events };
 }
 
 export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {

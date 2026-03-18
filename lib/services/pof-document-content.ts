@@ -73,7 +73,7 @@ function selectedList(entries: Array<{ label: string; value: boolean }>) {
 }
 
 function normalizeNutritionDiets(values: string[] | null | undefined) {
-  const normalized = (values ?? []).map((value) => value.trim()).filter(Boolean);
+  const normalized = (values ?? []).map((value) => String(value ?? "").trim()).filter(Boolean);
   const hasNonRegular = normalized.some((value) => value.toLowerCase() !== "regular");
   if (!hasNonRegular) return normalized;
   return normalized.filter((value) => value.toLowerCase() !== "regular");
@@ -226,7 +226,7 @@ export function buildPofDocumentSections(form: PhysicianOrderForm, config?: PofD
   }));
 
   const serviceOrderRows: PofDocumentTableRow[] = Array.from(
-    new Set((form.standingOrders ?? []).map((value) => value.trim()).filter(Boolean))
+    new Set((form.standingOrders ?? []).map((value) => String(value ?? "").trim()).filter(Boolean))
   ).map((order, index) => ({
     id: `service-order-${index + 1}`,
     cells: {

@@ -44,7 +44,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 
-import { navForRole } from "@/lib/permissions";
+import { navForRole } from "@/lib/permissions/nav";
 import type { AppNavItem, AppRole, NavGroup, PermissionSet } from "@/types/app";
 
 const DEFAULT_GROUP_ORDER: NavGroup[] = ["Documentation", "Operations", "Reports", "Time & HR", "Sales Activities", "Health Unit"];

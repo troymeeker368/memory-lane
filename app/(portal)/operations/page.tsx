@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { normalizeRoleKey } from "@/lib/permissions";
+import { normalizeRoleKey } from "@/lib/permissions/core";
 import type { AppRole } from "@/types/app";
 
 const SECTIONS = [

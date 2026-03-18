@@ -76,6 +76,7 @@ export const ENROLLMENT_PACKET_STATUS_VALUES = [
   "sent",
   "opened",
   "partially_completed",
+  "expired",
   "completed",
   "filed"
 ] as const;
@@ -430,6 +431,7 @@ function toStatus(value: string | null | undefined): EnrollmentPacketStatus {
   if (normalized === "sent") return "sent";
   if (normalized === "opened") return "opened";
   if (normalized === "partially_completed") return "partially_completed";
+  if (normalized === "expired") return "expired";
   if (normalized === "completed") return "completed";
   if (normalized === "filed") return "filed";
   return "draft";
@@ -908,6 +910,12 @@ async function listActivePacketRows(memberId: string) {
     const status = toStatus(row.status);
     return status === "draft" || status === "prepared" || status === "sent" || status === "opened" || status === "partially_completed";
   });
+}
+
+function isReusablePreparedEnrollmentPacket(row: EnrollmentPacketRequestRow) {
+  const status = toStatus(row.status);
+  const deliveryStatus = toDeliveryStatus(row);
+  return status === "prepared" && (deliveryStatus === "ready_to_send" || deliveryStatus === "send_failed");
 }
 
 export async function listEnrollmentPacketRequestsForMember(memberId: string) {
@@ -1431,19 +1439,19 @@ export async function sendEnrollmentPacketRequest(input: {
   const memberNameParts = splitMemberName(lead?.member_name ?? member.display_name);
 
   const active = await listActivePacketRows(member.id);
+  const reusablePreparedActive = active.find((row) => isReusablePreparedEnrollmentPacket(row)) ?? null;
   const blockingActive = active.find((row) => {
+    if (reusablePreparedActive && row.id === reusablePreparedActive.id) return false;
     const status = toStatus(row.status);
-    if (status === "sent" || status === "opened" || status === "partially_completed") {
-      return true;
-    }
-    const deliveryStatus = toDeliveryStatus(row);
-    return (status === "draft" || status === "prepared") && deliveryStatus !== "send_failed";
+    return (
+      status === "draft" ||
+      status === "prepared" ||
+      status === "sent" ||
+      status === "opened" ||
+      status === "partially_completed"
+    );
   });
-  const retryableActive = active.find((row) => {
-    const status = toStatus(row.status);
-    return (status === "draft" || status === "prepared") && toDeliveryStatus(row) === "send_failed";
-  });
-  if (blockingActive && (!retryableActive || retryableActive.id !== blockingActive.id)) {
+  if (blockingActive) {
     throw new Error("An active enrollment packet already exists for this member.");
   }
 
@@ -1477,7 +1485,7 @@ export async function sendEnrollmentPacketRequest(input: {
   });
 
   const requestId = await prepareEnrollmentPacketRequestForDelivery({
-    existingRequest: retryableActive ?? null,
+    existingRequest: reusablePreparedActive,
     memberId: member.id,
     leadId: lead?.id ?? null,
     senderUserId,
@@ -1510,7 +1518,8 @@ export async function sendEnrollmentPacketRequest(input: {
       communityFeeOverride,
       dailyRateOverride,
       totalInitialEnrollmentAmountOverride,
-      retryAttempt: Boolean(retryableActive)
+      retryAttempt: Boolean(reusablePreparedActive),
+      reusedPreparedRequest: Boolean(reusablePreparedActive)
     }
   });
 
@@ -1737,15 +1746,15 @@ export async function getPublicEnrollmentPacketContext(
   if (!matched) return { state: "invalid" };
   const request = matched.request;
 
-  if (isExpired(request.token_expires_at)) {
-    await recordEnrollmentPacketExpiredIfNeeded(request);
-    return { state: "expired" };
-  }
   if (toStatus(request.status) === "completed" || toStatus(request.status) === "filed") {
     return {
       state: "completed",
       request: toSummary(request)
     };
+  }
+  if (isExpired(request.token_expires_at)) {
+    await recordEnrollmentPacketExpiredIfNeeded(request);
+    return { state: "expired" };
   }
 
   if (toStatus(request.status) === "sent") {
@@ -1780,6 +1789,28 @@ export async function getPublicEnrollmentPacketContext(
 }
 
 async function recordEnrollmentPacketExpiredIfNeeded(request: EnrollmentPacketRequestRow) {
+  const requestStatus = toStatus(request.status);
+  const shouldExpireStatus =
+    requestStatus === "draft" ||
+    requestStatus === "prepared" ||
+    requestStatus === "sent" ||
+    requestStatus === "opened" ||
+    requestStatus === "partially_completed";
+
+  if (shouldExpireStatus) {
+    try {
+      await markEnrollmentPacketDeliveryState({
+        packetId: request.id,
+        status: "expired",
+        deliveryStatus: toDeliveryStatus(request),
+        attemptAt: toEasternISO(),
+        expectedCurrentStatus: requestStatus
+      });
+    } catch (error) {
+      console.error("[enrollment-packets] unable to persist expired packet status", error);
+    }
+  }
+
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("system_events")
@@ -1906,8 +1937,7 @@ export async function savePublicEnrollmentPacketProgress(input: {
       p_updated_at: now
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to save enrollment packet progress.";
-    if (message.includes(SAVE_ENROLLMENT_PACKET_PROGRESS_RPC)) {
+    if (isMissingRpcFunctionError(error, SAVE_ENROLLMENT_PACKET_PROGRESS_RPC)) {
       throw new Error(
         `Enrollment packet progress RPC is not available yet. Apply Supabase migration ${ENROLLMENT_PACKET_DELIVERY_RPC_MIGRATION} first.`
       );

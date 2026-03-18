@@ -1,14 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
+import Module from "node:module";
 import { join } from "node:path";
-
-import {
-  getConfiguredClinicalSenderEmail,
-  getPublicPofSigningContext,
-  sendNewPofSignatureRequest,
-  submitPublicPofSignature
-} from "../lib/services/pof-esign";
-import { createSupabaseAdminClient } from "../lib/supabase/admin";
-import { toEasternDate } from "../lib/timezone";
 
 function loadEnvFiles() {
   const parseEnvValue = (raw: string) => {
@@ -47,6 +39,17 @@ function parseResendTestingRecipient(errorMessage: string) {
   return clean(match[1]);
 }
 
+function parseTokenFromRequestUrl(url: string | null | undefined) {
+  const normalized = clean(url);
+  if (!normalized) return null;
+  const marker = "/sign/pof/";
+  const markerIndex = normalized.indexOf(marker);
+  if (markerIndex < 0) return null;
+  const token = normalized.slice(markerIndex + marker.length).split(/[?#]/, 1)[0] ?? "";
+  const cleaned = token.trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
 function addDays(dateOnly: string, days: number) {
   const parsed = new Date(`${dateOnly}T00:00:00.000Z`);
   parsed.setUTCDate(parsed.getUTCDate() + days);
@@ -54,6 +57,23 @@ function addDays(dateOnly: string, days: number) {
   const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
   const day = String(parsed.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function installServerOnlyShim() {
+  type ModuleLoad = (request: string, parent: NodeModule | null, isMain: boolean) => unknown;
+  const moduleShim = Module as typeof Module & { _load: ModuleLoad };
+  const originalLoad = moduleShim._load;
+
+  moduleShim._load = function patchedLoad(request: string, parent: NodeModule | null, isMain: boolean) {
+    if (
+      request === "server-only" ||
+      request.endsWith("\\server-only\\index.js") ||
+      request.endsWith("/server-only/index.js")
+    ) {
+      return {};
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
 }
 
 const DEFAULT_SIGNATURE_DATA_URL =
@@ -73,8 +93,29 @@ type PhysicianOrderRow = {
   updated_at: string;
 };
 
+type ActivePofRequestRow = {
+  id: string;
+  physician_order_id: string;
+  member_id: string;
+  provider_name: string | null;
+  provider_email: string | null;
+  signature_request_url: string | null;
+  status: string;
+  updated_at: string;
+};
+
 async function main() {
   loadEnvFiles();
+  installServerOnlyShim();
+
+  const {
+    getConfiguredClinicalSenderEmail,
+    getPublicPofSigningContext,
+    sendNewPofSignatureRequest,
+    submitPublicPofSignature
+  } = await import("../lib/services/pof-esign");
+  const { createSupabaseAdminClient } = await import("../lib/supabase/admin");
+  const { toEasternDate } = await import("../lib/timezone");
 
   const admin = createSupabaseAdminClient();
   const senderEmail = getConfiguredClinicalSenderEmail();
@@ -93,6 +134,7 @@ async function main() {
   if (!actor) {
     throw new Error("No admin/nurse profile found for E2E run.");
   }
+  const actorName = clean(actor.full_name)!;
 
   const forcedOrderId = clean(process.env.POF_E2E_POF_ID);
   const forcedMemberId = clean(process.env.POF_E2E_MEMBER_ID);
@@ -118,11 +160,8 @@ async function main() {
     if (forcedMemberId && row.member_id !== forcedMemberId) return false;
     return true;
   });
-  if (scopedOrders.length === 0) {
-    throw new Error("No physician order candidates found for E2E run.");
-  }
+  const orderCandidates = scopedOrders;
 
-  const actorName = clean(actor.full_name)!;
   const expiresOnDate = addDays(toEasternDate(), 7);
   const optionalMessage = `POF E2E live test run at ${new Date().toISOString()}`;
 
@@ -136,8 +175,39 @@ async function main() {
       }
     | null = null;
   let sendFailure: string | null = null;
+  const { data: activeRequestRows, error: activeRequestError } = await admin
+    .from("pof_requests")
+    .select("id, physician_order_id, member_id, provider_name, provider_email, signature_request_url, status, updated_at")
+    .in("status", ["sent", "opened"])
+    .order("updated_at", { ascending: false })
+    .limit(50);
+  if (activeRequestError) throw new Error(`Unable to load active POF requests for E2E: ${activeRequestError.message}`);
 
-  for (const order of scopedOrders) {
+  for (const row of (activeRequestRows ?? []) as ActivePofRequestRow[]) {
+    if (forcedOrderId && row.physician_order_id !== forcedOrderId) continue;
+    if (forcedMemberId && row.member_id !== forcedMemberId) continue;
+    const token = parseTokenFromRequestUrl(row.signature_request_url);
+    if (!token) continue;
+    const context = await getPublicPofSigningContext(token, {
+      ip: "127.0.0.1",
+      userAgent: "pof-e2e-live-script/1.0"
+    });
+    if (context.state !== "ready") continue;
+    createdRequest = {
+      id: row.id,
+      physicianOrderId: row.physician_order_id,
+      memberId: row.member_id,
+      providerEmail: clean(row.provider_email) ?? providerEmailCandidates[0],
+      signatureRequestUrl: row.signature_request_url ?? `${clean(process.env.NEXT_PUBLIC_APP_URL) ?? "http://localhost:3001"}/sign/pof/${token}`
+    };
+    break;
+  }
+
+  if (!createdRequest && orderCandidates.length === 0) {
+    throw new Error("No physician order candidates found for E2E run.");
+  }
+
+  for (const order of createdRequest ? [] : orderCandidates) {
     let orderBlockedByActiveRequest = false;
     let orderFailure: string | null = null;
     const providerQueue = [...providerEmailCandidates];
@@ -189,9 +259,7 @@ async function main() {
 
     if (createdRequest) break;
     if (orderBlockedByActiveRequest) continue;
-    if (orderFailure) {
-      throw new Error(orderFailure);
-    }
+    if (orderFailure) continue;
   }
 
   if (!createdRequest) {

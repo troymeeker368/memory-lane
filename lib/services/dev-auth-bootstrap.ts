@@ -1,4 +1,4 @@
-import { normalizeRoleKey } from "@/lib/permissions";
+import { normalizeRoleKey } from "@/lib/permissions/core";
 import { getDevAuthBootstrapPassword, getDevAuthBootstrapUsersJson, isDevAuthBypassEnabled } from "@/lib/runtime";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";

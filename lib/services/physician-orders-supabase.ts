@@ -26,6 +26,12 @@ import {
   markEnrollmentPacketPofStagingReviewed
 } from "@/lib/services/enrollment-packet-intake-staging";
 import {
+  PHYSICIAN_ORDER_INDEX_SELECT,
+  PHYSICIAN_ORDER_MEMBER_HISTORY_SELECT,
+  PHYSICIAN_ORDER_WITH_MEMBER_SELECT,
+  POF_POST_SIGN_QUEUE_SELECT
+} from "@/lib/services/physician-orders-selects";
+import {
   resolvePhysicianOrderClinicalSyncStatus,
   type PhysicianOrderClinicalSyncStatus,
   type PhysicianOrderPostSignQueueStatus
@@ -702,9 +708,7 @@ async function emitAgedPostSignSyncQueueAlerts(input: {
   const supabase = await createClient({ serviceRole: input.serviceRole ?? true });
   const { data, error } = await supabase
     .from("pof_post_sign_sync_queue")
-    .select(
-      "id, physician_order_id, member_id, pof_request_id, status, attempt_count, next_retry_at, signature_completed_at, queued_at, last_error, last_failed_step"
-    )
+    .select(POF_POST_SIGN_QUEUE_SELECT)
     .eq("status", "queued")
     .lte("signature_completed_at", thresholdIso)
     .order("signature_completed_at", { ascending: true })
@@ -1082,9 +1086,7 @@ export async function getPhysicianOrders(filters?: {
   const supabase = await createClient();
   let query = supabase
     .from("physician_orders")
-    .select(
-      "id, member_id, status, level_of_care, provider_name, sent_at, next_renewal_due_date, signed_at, updated_at, members!physician_orders_member_id_fkey(display_name)"
-    )
+    .select(PHYSICIAN_ORDER_INDEX_SELECT)
     .order("updated_at", { ascending: false });
 
   if (filters?.memberId) {
@@ -1145,9 +1147,7 @@ export async function getPhysicianOrdersForMember(memberId: string): Promise<Phy
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("physician_orders")
-    .select(
-      "id, member_id, member_name_snapshot, provider_name, status, sent_at, signed_at, next_renewal_due_date, updated_by_name, updated_at"
-    )
+    .select(PHYSICIAN_ORDER_MEMBER_HISTORY_SELECT)
     .eq("member_id", canonicalMemberId)
     .order("updated_at", { ascending: false });
   if (error) {
@@ -1189,7 +1189,7 @@ export async function getActivePhysicianOrderForMember(memberId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("physician_orders")
-    .select("*, members!physician_orders_member_id_fkey(display_name)")
+    .select(PHYSICIAN_ORDER_WITH_MEMBER_SELECT)
     .eq("member_id", canonicalMemberId)
     .eq("is_active_signed", true)
     .maybeSingle();
@@ -1221,7 +1221,7 @@ export async function getPhysicianOrderById(
   const supabase = await createClient({ serviceRole: options?.serviceRole });
   const { data, error } = await supabase
     .from("physician_orders")
-    .select("*, members!physician_orders_member_id_fkey(display_name)")
+    .select(PHYSICIAN_ORDER_WITH_MEMBER_SELECT)
     .eq("id", pofId)
     .maybeSingle();
   if (error) {
@@ -1863,9 +1863,7 @@ export async function retryQueuedPhysicianOrderPostSignSync(input?: {
   const supabase = await createClient({ serviceRole });
   const { data, error } = await supabase
     .from("pof_post_sign_sync_queue")
-    .select(
-      "id, physician_order_id, member_id, pof_request_id, status, attempt_count, next_retry_at, signature_completed_at, queued_at, last_error, last_failed_step"
-    )
+    .select(POF_POST_SIGN_QUEUE_SELECT)
     .eq("status", "queued")
     .order("next_retry_at", { ascending: true })
     .limit(limit);

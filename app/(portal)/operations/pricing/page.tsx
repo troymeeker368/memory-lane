@@ -1,17 +1,30 @@
+import nextDynamic from "next/dynamic";
 import Link from "next/link";
 
-import { PricingCommunityFeeManager } from "@/components/operations/pricing/pricing-community-fee-manager";
-import { PricingDailyRatesManager } from "@/components/operations/pricing/pricing-daily-rates-manager";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireNavItemAccess } from "@/lib/auth";
-import { normalizeRoleKey } from "@/lib/permissions";
+import { normalizeRoleKey } from "@/lib/permissions/core";
 import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate } from "@/lib/timezone";
 
 type PricingTab = "overview" | "community-fee" | "daily-rates" | "history";
 export const dynamic = "force-dynamic";
+
+const PricingCommunityFeeManager = nextDynamic(
+  () => import("@/components/operations/pricing/pricing-community-fee-manager").then((mod) => mod.PricingCommunityFeeManager),
+  {
+    loading: () => <p className="text-sm text-muted">Loading community fee manager...</p>
+  }
+);
+
+const PricingDailyRatesManager = nextDynamic(
+  () => import("@/components/operations/pricing/pricing-daily-rates-manager").then((mod) => mod.PricingDailyRatesManager),
+  {
+    loading: () => <p className="text-sm text-muted">Loading daily rates manager...</p>
+  }
+);
 
 const TAB_ITEMS: Array<{ key: PricingTab; label: string }> = [
   { key: "overview", label: "Pricing Overview" },

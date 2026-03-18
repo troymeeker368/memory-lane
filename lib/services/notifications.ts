@@ -1,6 +1,13 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import {
+  CARE_PLAN_CONTEXT_SELECT,
+  ENROLLMENT_PACKET_RECIPIENT_SELECT,
+  INTAKE_CONTEXT_SELECT,
+  MEMBER_FILE_CONTEXT_SELECT,
+  POF_REQUEST_CONTEXT_SELECT
+} from "@/lib/services/notifications-selects";
 import { toEasternISO } from "@/lib/timezone";
 
 type JsonPrimitive = string | number | boolean | null;
@@ -364,9 +371,7 @@ async function loadEnrollmentContext(entityId: string, metadata: Record<string, 
   const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase
     .from("enrollment_packet_requests")
-    .select(
-      "id, member_id, lead_id, sender_user_id, member:members!enrollment_packet_requests_member_id_fkey(display_name), lead:leads(id, created_by_user_id, member_name)"
-    )
+    .select(ENROLLMENT_PACKET_RECIPIENT_SELECT)
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -410,9 +415,7 @@ async function loadPofContext(entityType: string, entityId: string, metadata: Re
   if (entityType === "pof_request") {
     const { data, error } = await supabase
       .from("pof_requests")
-      .select(
-        "id, member_id, physician_order_id, sent_by_user_id, created_by_user_id, updated_by_user_id, member:members!pof_requests_member_id_fkey(display_name), physician_order:physician_orders!pof_requests_physician_order_id_fkey(id, created_by_user_id, updated_by_user_id, member_name_snapshot)"
-      )
+      .select(POF_REQUEST_CONTEXT_SELECT)
       .eq("id", entityId)
       .maybeSingle();
     if (error) throw new Error(error.message);
@@ -504,9 +507,7 @@ async function loadCarePlanContext(entityId: string, metadata: Record<string, Js
   const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase
     .from("care_plans")
-    .select(
-      "id, member_id, created_by_user_id, updated_by_user_id, caregiver_sent_by_user_id, nurse_designee_user_id, nurse_signed_by_user_id, member:members!care_plans_member_id_fkey(display_name)"
-    )
+    .select(CARE_PLAN_CONTEXT_SELECT)
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -546,9 +547,7 @@ async function loadIntakeContext(entityId: string, metadata: Record<string, Json
   const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase
     .from("intake_assessments")
-    .select(
-      "id, member_id, lead_id, completed_by_user_id, signed_by_user_id, member:members!intake_assessments_member_id_fkey(display_name), lead:leads(id, created_by_user_id, member_name)"
-    )
+    .select(INTAKE_CONTEXT_SELECT)
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -590,9 +589,7 @@ async function loadMemberFileContext(entityId: string, metadata: Record<string, 
   const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase
     .from("member_files")
-    .select(
-      "id, member_id, uploaded_by_user_id, care_plan_id, pof_request_id, enrollment_packet_request_id, document_source, file_name, member:members!member_files_member_id_fkey(display_name)"
-    )
+    .select(MEMBER_FILE_CONTEXT_SELECT)
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);

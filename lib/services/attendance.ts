@@ -17,6 +17,7 @@ import {
   type ExpectedAttendanceSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
 import { calculateAttendanceRatePercent } from "@/lib/services/attendance-rate";
+import { ATTENDANCE_SCHEDULE_SELECT } from "@/lib/services/attendance-selects";
 import {
   type ScheduleWeekdayKey
 } from "@/lib/services/schedule-changes-supabase";
@@ -103,9 +104,6 @@ type AttendanceRecordRow = {
   check_out_at: string | null;
   updated_at: string;
 };
-
-const ATTENDANCE_SCHEDULE_SELECT =
-  "member_id, monday, tuesday, wednesday, thursday, friday, transportation_required, transportation_mode, transport_bus_number, transportation_bus_stop, transport_monday_period, transport_tuesday_period, transport_wednesday_period, transport_thursday_period, transport_friday_period, transport_monday_am_mode, transport_monday_am_door_to_door_address, transport_monday_am_bus_number, transport_monday_am_bus_stop, transport_monday_pm_mode, transport_monday_pm_door_to_door_address, transport_monday_pm_bus_number, transport_monday_pm_bus_stop, transport_tuesday_am_mode, transport_tuesday_am_door_to_door_address, transport_tuesday_am_bus_number, transport_tuesday_am_bus_stop, transport_tuesday_pm_mode, transport_tuesday_pm_door_to_door_address, transport_tuesday_pm_bus_number, transport_tuesday_pm_bus_stop, transport_wednesday_am_mode, transport_wednesday_am_door_to_door_address, transport_wednesday_am_bus_number, transport_wednesday_am_bus_stop, transport_wednesday_pm_mode, transport_wednesday_pm_door_to_door_address, transport_wednesday_pm_bus_number, transport_wednesday_pm_bus_stop, transport_thursday_am_mode, transport_thursday_am_door_to_door_address, transport_thursday_am_bus_number, transport_thursday_am_bus_stop, transport_thursday_pm_mode, transport_thursday_pm_door_to_door_address, transport_thursday_pm_bus_number, transport_thursday_pm_bus_stop, transport_friday_am_mode, transport_friday_am_door_to_door_address, transport_friday_am_bus_number, transport_friday_am_bus_stop, transport_friday_pm_mode, transport_friday_pm_door_to_door_address, transport_friday_pm_bus_number, transport_friday_pm_bus_stop, make_up_days_available";
 
 const WEEKDAY_ABBREVIATIONS: Record<ScheduleWeekdayKey, string> = {
   monday: "M",

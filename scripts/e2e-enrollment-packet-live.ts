@@ -1,13 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
+import Module from "node:module";
 import { join } from "node:path";
-
-import {
-  getPublicEnrollmentPacketContext,
-  sendEnrollmentPacketRequest,
-  submitPublicEnrollmentPacket,
-  upsertEnrollmentPacketSenderSignatureProfile
-} from "../lib/services/enrollment-packets";
-import { createSupabaseAdminClient } from "../lib/supabase/admin";
 
 function loadEnvFiles() {
   const parseEnvValue = (raw: string) => {
@@ -40,6 +33,14 @@ function clean(value: string | null | undefined) {
   return normalized.length > 0 ? normalized : null;
 }
 
+function isExpiredTimestamp(value: string | null | undefined) {
+  const normalized = clean(value);
+  if (!normalized) return true;
+  const expiresAtMs = Date.parse(normalized);
+  if (Number.isNaN(expiresAtMs)) return true;
+  return Date.now() > expiresAtMs;
+}
+
 function parseResendTestingRecipient(errorMessage: string) {
   const match = /own email address \(([^)]+)\)/i.exec(errorMessage);
   if (!match) return null;
@@ -61,6 +62,27 @@ function parseManualUrlFromError(errorMessage: string) {
   const match = /(https?:\/\/\S+\/sign\/enrollment-packet\/[a-z0-9]+)/i.exec(errorMessage);
   if (!match) return null;
   return clean(match[1]);
+}
+
+function todayDateString() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function installServerOnlyShim() {
+  type ModuleLoad = (request: string, parent: NodeModule | null, isMain: boolean) => unknown;
+  const moduleShim = Module as typeof Module & { _load: ModuleLoad };
+  const originalLoad = moduleShim._load;
+
+  moduleShim._load = function patchedLoad(request: string, parent: NodeModule | null, isMain: boolean) {
+    if (
+      request === "server-only" ||
+      request.endsWith("\\server-only\\index.js") ||
+      request.endsWith("/server-only/index.js")
+    ) {
+      return {};
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
 }
 
 const DEFAULT_SIGNATURE_DATA_URL =
@@ -87,8 +109,38 @@ type LeadRow = {
   caregiver_email: string | null;
 };
 
+type ActiveEnrollmentPacketRequestRow = {
+  id: string;
+  member_id: string;
+  lead_id: string | null;
+  caregiver_email: string | null;
+  status: string | null;
+  delivery_status: string | null;
+  token: string | null;
+  token_expires_at: string | null;
+  updated_at: string | null;
+};
+
+const ACTIVE_ENROLLMENT_PACKET_STATUSES = ["draft", "prepared", "sent", "opened", "partially_completed", "completed"] as const;
+
+function isReusablePreparedRequest(row: ActiveEnrollmentPacketRequestRow) {
+  const status = clean(row.status)?.toLowerCase();
+  const deliveryStatus = clean(row.delivery_status)?.toLowerCase();
+  return status === "prepared" && (deliveryStatus === "ready_to_send" || deliveryStatus === "send_failed");
+}
+
 async function main() {
   loadEnvFiles();
+  installServerOnlyShim();
+
+  const {
+    getPublicEnrollmentPacketContext,
+    sendEnrollmentPacketRequest,
+    submitPublicEnrollmentPacket,
+    upsertEnrollmentPacketSenderSignatureProfile
+  } = await import("../lib/services/enrollment-packets");
+  const { createSupabaseAdminClient } = await import("../lib/supabase/admin");
+
   const admin = createSupabaseAdminClient();
 
   const { data: actorRows, error: actorError } = await admin
@@ -125,21 +177,41 @@ async function main() {
     .limit(150);
   if (candidateError) throw new Error(`Unable to load member candidates for E2E: ${candidateError.message}`);
   const memberCandidates = (candidateRows ?? []) as MemberCandidateRow[];
+  const { data: activePacketRows, error: activePacketError } = await admin
+    .from("enrollment_packet_requests")
+    .select("id, member_id, lead_id, caregiver_email, status, delivery_status, token, token_expires_at, updated_at")
+    .in("status", [...ACTIVE_ENROLLMENT_PACKET_STATUSES]);
+  if (activePacketError) throw new Error(`Unable to load active enrollment packet state: ${activePacketError.message}`);
+  const activeRequests = (activePacketRows ?? []) as ActiveEnrollmentPacketRequestRow[];
+  const blockedMemberIds = new Set(
+    activeRequests
+      .filter((row) => !isExpiredTimestamp(row.token_expires_at))
+      .filter((row) => !isReusablePreparedRequest(row))
+      .map((row) => clean(row.member_id))
+      .filter((value): value is string => Boolean(value))
+  );
   const leadIds = Array.from(
     new Set(
-      memberCandidates.map((row) => clean(row.source_lead_id)).filter((value): value is string => Boolean(value))
+      memberCandidates
+        .filter((row) => !blockedMemberIds.has(row.id))
+        .map((row) => clean(row.source_lead_id))
+        .filter((value): value is string => Boolean(value))
     )
   );
-  if (leadIds.length === 0) throw new Error("No member candidates with source_lead_id were found.");
-
-  const { data: leadRows, error: leadError } = await admin
-    .from("leads")
-    .select("id, member_name, caregiver_email")
-    .in("id", leadIds);
-  if (leadError) throw new Error(`Unable to load lead candidates for E2E: ${leadError.message}`);
-  const leadById = new Map(((leadRows ?? []) as LeadRow[]).map((row) => [row.id, row] as const));
+  const leadById = new Map<string, LeadRow>();
+  if (leadIds.length > 0) {
+    const { data: leadRows, error: leadError } = await admin
+      .from("leads")
+      .select("id, member_name, caregiver_email")
+      .in("id", leadIds);
+    if (leadError) throw new Error(`Unable to load lead candidates for E2E: ${leadError.message}`);
+    for (const row of (leadRows ?? []) as LeadRow[]) {
+      leadById.set(row.id, row);
+    }
+  }
 
   const candidates = memberCandidates
+    .filter((member) => !blockedMemberIds.has(member.id))
     .map((member) => {
       const leadId = clean(member.source_lead_id);
       if (!leadId) return null;
@@ -153,8 +225,6 @@ async function main() {
       };
     })
     .filter((row): row is { memberId: string; memberName: string; leadId: string; lead: LeadRow } => Boolean(row));
-  if (candidates.length === 0) throw new Error("No canonical member+lead candidates were found for E2E.");
-
   let created:
     | {
         requestId: string;
@@ -167,6 +237,9 @@ async function main() {
       }
     | null = null;
   let lastFailure: string | null = null;
+  if (candidates.length === 0) {
+    throw new Error("No canonical member+lead candidates were found for E2E.");
+  }
 
   for (const candidate of candidates) {
     if (forcedMemberId && candidate.memberId !== forcedMemberId) continue;
@@ -185,8 +258,6 @@ async function main() {
     if (caregiverQueue.length === 0) continue;
 
     const attemptedRecipients = new Set<string>();
-    let candidateBlockedByActivePacket = false;
-
     while (caregiverQueue.length > 0) {
       const caregiverEmail = caregiverQueue.shift();
       if (!caregiverEmail || attemptedRecipients.has(caregiverEmail)) continue;
@@ -220,7 +291,6 @@ async function main() {
         const message = error instanceof Error ? error.message : "Unknown enrollment send error";
         lastFailure = message;
         if (message.includes("An active enrollment packet already exists")) {
-          candidateBlockedByActivePacket = true;
           break;
         }
 
@@ -251,7 +321,6 @@ async function main() {
     }
 
     if (created) break;
-    if (candidateBlockedByActivePacket) continue;
   }
 
   if (!created) {
@@ -269,6 +338,59 @@ async function main() {
   const caregiverTypedName = clean(process.env.ENROLLMENT_E2E_CAREGIVER_NAME) ?? "Enrollment E2E Caregiver";
   const caregiverSignatureDataUrl =
     clean(process.env.ENROLLMENT_E2E_CAREGIVER_SIGNATURE_DATA_URL) ?? DEFAULT_SIGNATURE_DATA_URL;
+  const signatureDate = todayDateString();
+  const primaryContactAddressLine1 = "123 Main St";
+  const primaryContactCity = "Tampa";
+  const primaryContactState = "FL";
+  const primaryContactZip = "33601";
+  const secondaryContactAddressLine1 = "456 Oak Ave";
+  const secondaryContactCity = "Tampa";
+  const secondaryContactState = "FL";
+  const secondaryContactZip = "33602";
+  const intakePayload = {
+    memberGender: "Female",
+    primaryContactAddress: primaryContactAddressLine1,
+    primaryContactAddressLine1,
+    primaryContactCity,
+    primaryContactState,
+    primaryContactZip,
+    secondaryContactAddress: secondaryContactAddressLine1,
+    secondaryContactAddressLine1,
+    secondaryContactCity,
+    secondaryContactState,
+    secondaryContactZip,
+    pcpName: "E2E Primary Care",
+    pcpAddress: "789 Clinic Dr, Tampa, FL 33603",
+    pcpPhone: "8135550103",
+    pharmacy: "E2E Pharmacy",
+    pharmacyAddress: "101 Pharmacy Ln, Tampa, FL 33604",
+    pharmacyPhone: "8135550104",
+    paymentMethodSelection: "ACH",
+    bankName: "Enrollment E2E Credit Union",
+    bankAba: "021000021",
+    bankAccountNumber: "1234567890",
+    fallsHistory: "No",
+    membershipMemberSignatureName: created.memberName,
+    membershipMemberSignatureDate: signatureDate,
+    membershipGuarantorSignatureName: caregiverTypedName,
+    membershipGuarantorSignatureDate: signatureDate,
+    exhibitAGuarantorSignatureName: caregiverTypedName,
+    exhibitAGuarantorSignatureDate: signatureDate,
+    guarantorSignatureName: caregiverTypedName,
+    guarantorSignatureDate: signatureDate,
+    privacyAcknowledgmentSignatureName: caregiverTypedName,
+    privacyAcknowledgmentSignatureDate: signatureDate,
+    rightsAcknowledgmentSignatureName: caregiverTypedName,
+    rightsAcknowledgmentSignatureDate: signatureDate,
+    ancillaryChargesAcknowledgmentSignatureName: caregiverTypedName,
+    ancillaryChargesAcknowledgmentSignatureDate: signatureDate,
+    photoConsentAcknowledgmentName: caregiverTypedName,
+    privacyPracticesAcknowledged: "Acknowledged",
+    statementOfRightsAcknowledged: "Acknowledged",
+    photoConsentAcknowledged: "Acknowledged",
+    ancillaryChargesAcknowledged: "Acknowledged",
+    photoConsentChoice: "I do permit"
+  };
 
   await submitPublicEnrollmentPacket({
     token: created.token,
@@ -280,16 +402,27 @@ async function main() {
     caregiverName: caregiverTypedName,
     caregiverPhone: "555-0101",
     caregiverEmail: created.caregiverEmail,
-    caregiverAddressLine1: "123 Main St",
+    primaryContactAddress: primaryContactAddressLine1,
+    primaryContactAddressLine1,
+    primaryContactCity,
+    primaryContactState,
+    primaryContactZip,
+    caregiverAddressLine1: primaryContactAddressLine1,
     caregiverAddressLine2: "Apt 4",
-    caregiverCity: "Tampa",
-    caregiverState: "FL",
-    caregiverZip: "33601",
+    caregiverCity: primaryContactCity,
+    caregiverState: primaryContactState,
+    caregiverZip: primaryContactZip,
     secondaryContactName: "Secondary Contact",
     secondaryContactPhone: "555-0102",
     secondaryContactEmail: "secondary.contact@example.com",
     secondaryContactRelationship: "Family",
+    secondaryContactAddress: secondaryContactAddressLine1,
+    secondaryContactAddressLine1,
+    secondaryContactCity,
+    secondaryContactState,
+    secondaryContactZip,
     notes: "Enrollment E2E completion",
+    intakePayload,
     uploads: [
       {
         fileName: "insurance-e2e.txt",

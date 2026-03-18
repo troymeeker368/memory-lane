@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { getCurrentProfile } from "@/lib/auth";
-import { resolveHomeLandingPath } from "@/lib/services/home-landing";
+import { resolveCurrentHomeLanding } from "@/lib/home-landing-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -24,15 +23,10 @@ export default async function RootPage() {
   const totalStartedAt = nowMs();
 
   try {
-    const profileStartedAt = nowMs();
-    const profile = await getCurrentProfile({ traceLabel: "route:/" });
-    logRouteTiming("profile-resolution-complete", profileStartedAt, {
-      role: profile.role
-    });
-
-    const permissionsStartedAt = nowMs();
-    const landing = resolveHomeLandingPath(profile);
-    logRouteTiming("permission-checks", permissionsStartedAt, {
+    const landingStartedAt = nowMs();
+    const landing = await resolveCurrentHomeLanding({ traceLabel: "route:/" });
+    logRouteTiming("landing-resolution-complete", landingStartedAt, {
+      role: landing.role,
       destination: landing.path,
       reason: landing.reason
     });

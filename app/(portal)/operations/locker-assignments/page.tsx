@@ -1,3 +1,4 @@
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { unstable_noStore as noStore } from "next/cache";
 
@@ -7,7 +8,13 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatOptionalDate } from "@/lib/utils";
-import { LockerAssignModalTrigger } from "@/app/(portal)/operations/locker-assignments/locker-assign-modal-trigger";
+
+const LockerAssignModalTrigger = dynamic(
+  () => import("@/app/(portal)/operations/locker-assignments/locker-assign-modal-trigger").then((mod) => mod.LockerAssignModalTrigger),
+  {
+    loading: () => <span className="text-sm font-semibold text-brand">Manage</span>
+  }
+);
 
 const PAGE_SIZE = 25;
 const PDF_REFERENCE_ROWS: Array<{ locker: string; current?: string; previous?: string }> = [

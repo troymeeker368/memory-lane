@@ -1,48 +1,59 @@
-import type { UserProfile } from "@/types/app";
-import { canView, normalizeRoleKey } from "@/lib/permissions";
+import type { AppRole, PermissionModuleKey, UserProfile } from "@/types/app";
+
+import { canView, getDefaultPermissionSet, normalizeRoleKey } from "@/lib/permissions/core";
 
 export type HomeLandingResolution = {
   path: string;
   reason: string;
 };
 
-export function resolveHomeLandingPath(profile: Pick<UserProfile, "role" | "permissions">): HomeLandingResolution {
-  const role = normalizeRoleKey(profile.role);
+const HOME_LANDING_CANDIDATES: Array<{
+  module: PermissionModuleKey;
+  path: string;
+  reason: string;
+}> = [
+  { module: "operations", path: "/operations", reason: "operations-permission" },
+  { module: "sales-activities", path: "/sales/pipeline", reason: "sales-permission" },
+  { module: "health-unit", path: "/health", reason: "health-permission" },
+  { module: "documentation", path: "/documentation", reason: "documentation-permission" },
+  { module: "reports", path: "/reports", reason: "reports-permission" },
+  { module: "time-hr", path: "/time-card", reason: "time-hr-permission" },
+  { module: "admin-reports", path: "/admin-reports", reason: "admin-reports-permission" },
+  { module: "user-management", path: "/time-hr/user-management", reason: "user-management-permission" }
+];
 
-  if (canView(profile.permissions, "operations")) {
-    return { path: "/operations", reason: "operations-permission" };
-  }
+function resolveHomeLandingPathWithAccess(
+  roleInput: AppRole | string,
+  hasModuleViewAccess: (module: PermissionModuleKey) => boolean
+): HomeLandingResolution {
+  const role = normalizeRoleKey(roleInput);
 
-  if (canView(profile.permissions, "sales-activities")) {
-    return {
-      path: "/sales/pipeline",
-      reason: role === "sales" ? "sales-role-default" : "sales-permission"
-    };
-  }
-
-  if (canView(profile.permissions, "health-unit")) {
-    return { path: "/health", reason: "health-permission" };
-  }
-
-  if (canView(profile.permissions, "documentation")) {
-    return { path: "/documentation", reason: "documentation-permission" };
-  }
-
-  if (canView(profile.permissions, "reports")) {
-    return { path: "/reports", reason: "reports-permission" };
-  }
-
-  if (canView(profile.permissions, "time-hr")) {
-    return { path: "/time-card", reason: "time-hr-permission" };
-  }
-
-  if (canView(profile.permissions, "admin-reports")) {
-    return { path: "/admin-reports", reason: "admin-reports-permission" };
-  }
-
-  if (canView(profile.permissions, "user-management")) {
-    return { path: "/time-hr/user-management", reason: "user-management-permission" };
+  for (const candidate of HOME_LANDING_CANDIDATES) {
+    if (!hasModuleViewAccess(candidate.module)) {
+      continue;
+    }
+    if (candidate.module === "sales-activities" && role === "sales") {
+      return { path: candidate.path, reason: "sales-role-default" };
+    }
+    return { path: candidate.path, reason: candidate.reason };
   }
 
   return { path: "/unauthorized", reason: "no-module-permissions" };
+}
+
+export function resolveHomeLandingPath(profile: Pick<UserProfile, "role" | "permissions">): HomeLandingResolution {
+  return resolveHomeLandingPathWithAccess(profile.role, (module) => canView(profile.permissions, module));
+}
+
+export function resolveHomeLandingPathFromModuleKeys(input: {
+  role: AppRole | string;
+  modules: Iterable<PermissionModuleKey>;
+}): HomeLandingResolution {
+  const allowedModules = new Set(input.modules);
+  return resolveHomeLandingPathWithAccess(input.role, (module) => allowedModules.has(module));
+}
+
+export function resolveHomeLandingPathForRole(role: AppRole | string): HomeLandingResolution {
+  const permissions = getDefaultPermissionSet(role);
+  return resolveHomeLandingPathWithAccess(role, (module) => canView(permissions, module));
 }

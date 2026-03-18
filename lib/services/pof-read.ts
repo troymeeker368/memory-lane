@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { toSendWorkflowDeliveryStatus } from "@/lib/services/send-workflow-state";
 import { toEasternISO } from "@/lib/timezone";
 
-import type { PofDocumentEvent, PofRequestStatus, PofRequestSummary } from "@/lib/services/pof-esign";
+import type { PofDocumentEvent, PofRequestStatus, PofRequestSummary } from "@/lib/services/pof-types";
 
 type PofRequestRow = {
   id: string;
@@ -201,6 +201,25 @@ export async function listPofRequestsByPhysicianOrderIds(memberId: string, physi
   const rows = (data ?? []) as PofRequestRow[];
   await refreshExpiredRequests(rows);
   return rows.map(toSummary);
+}
+
+export async function getPofRequestSummaryById(requestId: string, memberId?: string | null) {
+  const normalizedRequestId = clean(requestId);
+  if (!normalizedRequestId) return null;
+
+  const supabase = await createClient();
+  let query = supabase.from("pof_requests").select("*").eq("id", normalizedRequestId);
+  if (clean(memberId)) {
+    query = query.eq("member_id", clean(memberId)!);
+  }
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+
+  const row = data as PofRequestRow;
+  await refreshExpiredRequests([row]);
+  return toSummary(row);
 }
 
 export async function getPofRequestTimeline(requestId: string, memberId?: string) {

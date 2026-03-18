@@ -2,7 +2,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
-import { getActiveCenterBillingSetting } from "@/lib/services/billing-supabase";
+import { getActiveCenterBillingSetting } from "@/lib/services/billing-configuration";
 import {
   getTransportationRunManifestSupabase,
   type TransportationRunManifestRow

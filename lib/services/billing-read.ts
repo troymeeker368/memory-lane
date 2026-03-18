@@ -28,32 +28,32 @@ type GetBillingBatchReviewRowsInput = Parameters<typeof getBillingBatchReviewRow
 type GetBillingGenerationPreviewInput = Parameters<typeof getBillingGenerationPreviewImpl>[0];
 
 export async function listPayors(): ReturnType<typeof listPayorsImpl> {
-  const { listPayors } = await import("@/lib/services/billing-supabase");
+  const { listPayors } = await import("@/lib/services/billing-configuration");
   return listPayors();
 }
 
 export async function listClosureRules(): ReturnType<typeof listClosureRulesImpl> {
-  const { listClosureRules } = await import("@/lib/services/billing-supabase");
+  const { listClosureRules } = await import("@/lib/services/billing-configuration");
   return listClosureRules();
 }
 
 export async function listCenterClosures(input?: ListCenterClosuresInput): ReturnType<typeof listCenterClosuresImpl> {
-  const { listCenterClosures } = await import("@/lib/services/billing-supabase");
+  const { listCenterClosures } = await import("@/lib/services/billing-configuration");
   return listCenterClosures(input);
 }
 
 export async function listMemberBillingSettings(): ReturnType<typeof listMemberBillingSettingsImpl> {
-  const { listMemberBillingSettings } = await import("@/lib/services/billing-supabase");
+  const { listMemberBillingSettings } = await import("@/lib/services/billing-configuration");
   return listMemberBillingSettings();
 }
 
 export async function listBillingScheduleTemplates(): ReturnType<typeof listBillingScheduleTemplatesImpl> {
-  const { listBillingScheduleTemplates } = await import("@/lib/services/billing-supabase");
+  const { listBillingScheduleTemplates } = await import("@/lib/services/billing-configuration");
   return listBillingScheduleTemplates();
 }
 
 export async function getBillingMemberPayorLookups(): ReturnType<typeof getBillingMemberPayorLookupsImpl> {
-  const { getBillingMemberPayorLookups } = await import("@/lib/services/billing-supabase");
+  const { getBillingMemberPayorLookups } = await import("@/lib/services/billing-configuration");
   return getBillingMemberPayorLookups();
 }
 
