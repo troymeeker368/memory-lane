@@ -921,10 +921,12 @@ async function resolveDailyRate(input: {
   if (attendanceSetting?.dailyRate != null && attendanceSetting.dailyRate > 0) {
     return toAmount(attendanceSetting.dailyRate);
   }
-  if (!input.memberSetting.use_center_default_rate && input.memberSetting.custom_daily_rate != null) {
-    return toAmount(input.memberSetting.custom_daily_rate);
-  }
-  return toAmount(input.centerSetting?.default_daily_rate ?? 0);
+  return toAmount(
+    resolveConfiguredDailyRate({
+      memberSetting: input.memberSetting,
+      centerSetting: input.centerSetting
+    })
+  );
 }
 
 async function resolveExtraDayRate(input: {
