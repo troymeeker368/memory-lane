@@ -254,6 +254,47 @@ test("pof request delivery stays on the canonical RPC contract for both new send
   assert.equal(migrationSource.includes("was_created := false;"), true);
 });
 
+test("pof delivery-state rpc ambiguity fix qualifies physician order status references", () => {
+  const migrationSource = readWorkspaceFile("supabase/migrations/0082_fix_pof_delivery_state_rpc_ambiguity.sql");
+
+  assert.equal(
+    migrationSource.includes("create or replace function public.rpc_transition_pof_request_delivery_state("),
+    true
+  );
+  assert.equal(migrationSource.includes("update public.physician_orders as physician_orders"), true);
+  assert.equal(migrationSource.includes("and physician_orders.status <> 'signed';"), true);
+});
+
+test("signed pof clinical sync rpc ambiguity fix qualifies member_id references", () => {
+  const migrationSource = readWorkspaceFile("supabase/migrations/0083_fix_signed_pof_clinical_sync_rpc_ambiguity.sql");
+
+  assert.equal(
+    migrationSource.includes("create or replace function public.rpc_sync_signed_pof_to_member_clinical_profile("),
+    true
+  );
+  assert.equal(
+    migrationSource.includes("delete from public.member_diagnoses as member_diagnoses where member_diagnoses.member_id = v_order.member_id;"),
+    true
+  );
+  assert.equal(
+    migrationSource.includes("update public.member_command_centers as member_command_centers"),
+    true
+  );
+});
+
+test("signed pof clinical sync rpc uses named conflict targets to avoid output-column ambiguity", () => {
+  const migrationSource = readWorkspaceFile("supabase/migrations/0084_fix_signed_pof_clinical_sync_rpc_conflict_targets.sql");
+
+  assert.equal(
+    migrationSource.includes("on conflict on constraint member_health_profiles_member_id_key"),
+    true
+  );
+  assert.equal(
+    migrationSource.includes("on conflict on constraint member_command_centers_member_id_key"),
+    true
+  );
+});
+
 test("care plan core save, MAR reconciliation, and shared profile sync now use canonical RPC boundaries", () => {
   const carePlanSource = readWorkspaceFile("lib/services/care-plans-supabase.ts");
   const marSource = readWorkspaceFile("lib/services/mar-workflow.ts");

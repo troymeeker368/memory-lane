@@ -14,8 +14,7 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 
 const RPC_CONVERT_LEAD_TO_MEMBER = "rpc_convert_lead_to_member";
 const RPC_CREATE_LEAD_WITH_MEMBER_CONVERSION = "rpc_create_lead_with_member_conversion";
-const LEGACY_RPC_CONVERT_LEAD_TO_MEMBER = "apply_lead_stage_transition_with_member_upsert";
-const LEGACY_RPC_CREATE_LEAD_WITH_MEMBER_CONVERSION = "create_lead_with_member_conversion";
+const LEAD_CONVERSION_RPC_MIGRATION = "0037_shared_rpc_standardization_lead_pof.sql";
 
 type LeadConversionRpcRow = {
   lead_id: string;
@@ -34,11 +33,14 @@ function isMissingRpcFunctionError(error: unknown, rpcName: string) {
   return (code === "PGRST202" || code === "42883") && text.includes(rpcName.toLowerCase());
 }
 
-async function invokeLeadConversionRpcWithFallback(
+function buildLeadConversionRpcUnavailableMessage(functionName: string) {
+  return `Lead conversion RPC ${functionName} is not available. Apply Supabase migration ${LEAD_CONVERSION_RPC_MIGRATION} (and any earlier unapplied migrations), then refresh Supabase schema cache.`;
+}
+
+async function invokeLeadConversionRpc(
   supabase: Awaited<ReturnType<typeof createClient>>,
   input: {
     rpcName: string;
-    fallbackRpcName: string;
     args: Record<string, unknown>;
   }
 ) {
@@ -48,7 +50,7 @@ async function invokeLeadConversionRpcWithFallback(
     if (!isMissingRpcFunctionError(error, input.rpcName)) {
       throw error;
     }
-    return invokeSupabaseRpcOrThrow<unknown>(supabase, input.fallbackRpcName, input.args);
+    throw new Error(buildLeadConversionRpcUnavailableMessage(input.rpcName));
   }
 }
 
@@ -116,9 +118,8 @@ export async function applyLeadStageTransitionWithMemberUpsertSupabase(input: {
     p_now: toEasternISO(),
     p_today: toEasternDate()
   };
-  const data = await invokeLeadConversionRpcWithFallback(supabase, {
+  const data = await invokeLeadConversionRpc(supabase, {
     rpcName: RPC_CONVERT_LEAD_TO_MEMBER,
-    fallbackRpcName: LEGACY_RPC_CONVERT_LEAD_TO_MEMBER,
     args
   });
 
@@ -175,9 +176,8 @@ export async function createLeadWithMemberConversionSupabase(input: {
     p_now: toEasternISO(),
     p_today: toEasternDate()
   };
-  const data = await invokeLeadConversionRpcWithFallback(supabase, {
+  const data = await invokeLeadConversionRpc(supabase, {
     rpcName: RPC_CREATE_LEAD_WITH_MEMBER_CONVERSION,
-    fallbackRpcName: LEGACY_RPC_CREATE_LEAD_WITH_MEMBER_CONVERSION,
     args
   });
 

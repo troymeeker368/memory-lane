@@ -4,7 +4,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { getPhysicianOrders } from "@/lib/services/physician-orders-supabase";
-import { createClient } from "@/lib/supabase/server";
+import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
@@ -45,14 +45,7 @@ export default async function PhysicianOrdersIndexPage({
         : "all",
     q
   });
-  const supabase = await createClient();
-  const { data: memberRows, error: memberRowsError } = await supabase
-    .from("members")
-    .select("id, display_name, status")
-    .eq("status", "active")
-    .order("display_name", { ascending: true });
-  if (memberRowsError) throw new Error(`Unable to load active members for physician orders filters: ${memberRowsError.message}`);
-  const members = memberRows ?? [];
+  const members = await listActiveMemberLookupSupabase();
 
   return (
     <div className="space-y-4">

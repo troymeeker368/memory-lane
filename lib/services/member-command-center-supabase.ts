@@ -6,7 +6,6 @@ import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import {
   buildMemberContactsSchemaOutOfDateError,
   isMemberContactsPayorColumnMissingError,
-  MEMBER_CONTACT_SELECT_LEGACY,
   MEMBER_CONTACT_SELECT_WITH_PAYOR
 } from "@/lib/services/member-contact-payor-schema";
 import {
@@ -380,21 +379,14 @@ function mapMemberContactRow(row: Record<string, unknown>): MemberContactRow {
 async function selectMemberContactsRows(
   runQuery: (selectClause: string) => PromiseLike<{ data: unknown[] | null; error: PostgrestErrorLike | null }>
 ) {
-  let lastError: PostgrestErrorLike | null = null;
-  for (const selectClause of [MEMBER_CONTACT_SELECT_WITH_PAYOR, MEMBER_CONTACT_SELECT_LEGACY]) {
-    const result = await runQuery(selectClause);
-    if (!result.error) {
-      return ((result.data ?? []) as Record<string, unknown>[]).map((row) => mapMemberContactRow(row));
+  const result = await runQuery(MEMBER_CONTACT_SELECT_WITH_PAYOR);
+  if (result.error) {
+    if (isMemberContactsPayorColumnMissingError(result.error)) {
+      throw buildMemberContactsSchemaOutOfDateError();
     }
-    lastError = result.error;
-    if (!isMemberContactsPayorColumnMissingError(result.error)) {
-      throw new Error(result.error.message ?? "Unable to query member contacts.");
-    }
+    throw new Error(result.error.message ?? "Unable to query member contacts.");
   }
-  if (isMemberContactsPayorColumnMissingError(lastError)) {
-    return [];
-  }
-  throw new Error(lastError?.message ?? "Unable to query member contacts.");
+  return ((result.data ?? []) as Record<string, unknown>[]).map((row) => mapMemberContactRow(row));
 }
 
 function coerceMemberContactWriteError(error: PostgrestErrorLike | null | undefined) {

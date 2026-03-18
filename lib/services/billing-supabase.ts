@@ -6,7 +6,6 @@ import {
   BILLING_BATCH_TYPE_OPTIONS,
   BILLING_EXPORT_TYPES,
   CENTER_CLOSURE_TYPE_OPTIONS,
-  type ActiveEffectiveDatedRow,
   type AttendanceSettingWeekdays,
   type BatchGenerationInput,
   type BillingExpectedAttendanceCollectionInput,
@@ -19,7 +18,6 @@ import {
   type CreateCustomInvoiceInput,
   type DateRange,
   type FinalizeBatchInput,
-  type MemberScopedActiveEffectiveDatedRow,
   type ReopenBatchInput,
   type ScheduleTemplateRow
 } from "@/lib/services/billing-types";
@@ -52,6 +50,12 @@ import {
   listBillingPayorContactsForMembers
 } from "@/lib/services/billing-payor-contacts";
 import {
+  resolveActiveEffectiveMemberRowForDate,
+  resolveActiveEffectiveRowForDate,
+  resolveConfiguredDailyRate,
+  resolveEffectiveBillingMode
+} from "@/lib/services/billing-effective";
+import {
   buildMemberContactsSchemaOutOfDateError,
   isMemberContactsPayorColumnMissingError
 } from "@/lib/services/member-contact-payor-schema";
@@ -79,6 +83,12 @@ export {
   BILLING_MODE_OPTIONS
 } from "@/lib/services/billing-types";
 export type { BillingModuleRole } from "@/lib/services/billing-types";
+export {
+  resolveActiveEffectiveMemberRowForDate,
+  resolveActiveEffectiveRowForDate,
+  resolveConfiguredDailyRate,
+  resolveEffectiveBillingMode
+} from "@/lib/services/billing-effective";
 
 function toWeekdayOnlyBaseSchedule(input: AttendanceSettingWeekdays | ScheduleTemplateRow | null | undefined) {
   if (!input) return null;
@@ -192,28 +202,6 @@ async function getScheduleTemplatesRows() {
   const { data, error } = await supabase.from("billing_schedule_templates").select("*");
   if (error) throw new Error(error.message);
   return (data ?? []) as ScheduleTemplateRow[];
-}
-
-export function resolveActiveEffectiveRowForDate<T extends ActiveEffectiveDatedRow>(dateOnly: string, rows: readonly T[]) {
-  const target = normalizeDateOnly(dateOnly);
-  return (
-    [...rows]
-      .filter((row) => row.active)
-      .filter((row) => normalizeDateOnly(row.effective_start_date) <= target)
-      .filter((row) => !row.effective_end_date || normalizeDateOnly(row.effective_end_date) >= target)
-      .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1))[0] ?? null
-  );
-}
-
-export function resolveActiveEffectiveMemberRowForDate<T extends MemberScopedActiveEffectiveDatedRow>(
-  memberId: string,
-  dateOnly: string,
-  rows: readonly T[]
-) {
-  return resolveActiveEffectiveRowForDate(
-    dateOnly,
-    rows.filter((row) => row.member_id === memberId)
-  );
 }
 
 async function getActiveCenterSettingForDate(dateOnly: string) {
@@ -866,30 +854,6 @@ export async function upsertBillingAdjustment(input: {
     .single();
   if (error) throw new Error(error.message);
   return data;
-}
-
-export function resolveEffectiveBillingMode(input: {
-  memberSetting:
-    | Pick<BillingSettingRow, "use_center_default_billing_mode" | "billing_mode">
-    | null;
-  centerSetting: Pick<CenterBillingSettingRow, "default_billing_mode"> | null;
-}) {
-  if (input.memberSetting && !input.memberSetting.use_center_default_billing_mode && input.memberSetting.billing_mode) {
-    return input.memberSetting.billing_mode;
-  }
-  return input.centerSetting?.default_billing_mode ?? "Membership";
-}
-
-export function resolveConfiguredDailyRate(input: {
-  memberSetting:
-    | Pick<BillingSettingRow, "use_center_default_rate" | "custom_daily_rate">
-    | null;
-  centerSetting: Pick<CenterBillingSettingRow, "default_daily_rate"> | null;
-}) {
-  if (input.memberSetting && !input.memberSetting.use_center_default_rate && Number(input.memberSetting.custom_daily_rate ?? 0) > 0) {
-    return Number(input.memberSetting.custom_daily_rate ?? 0);
-  }
-  return Number(input.centerSetting?.default_daily_rate ?? 0);
 }
 
 function getMonthlyBillingBasis(setting: BillingSettingRow) {

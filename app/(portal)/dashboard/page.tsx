@@ -7,6 +7,7 @@ import { canView, normalizeRoleKey } from "@/lib/permissions";
 import { getDailyAttendanceView } from "@/lib/services/attendance";
 import { getDashboardAlerts, getDashboardStats } from "@/lib/services/dashboard";
 import { listMemberHolds } from "@/lib/services/holds-supabase";
+import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { getSalesOpenLeadSummary } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
@@ -90,8 +91,8 @@ export default async function DashboardPage() {
       isAdminOrCoordinator
         ? withDashboardTiming("query:adminSnapshot", async () => {
             const supabase = await createClient();
-            const [{ data: membersData }, holds, { data: ancillaryData }] = await Promise.all([
-              supabase.from("members").select("id, display_name"),
+            const [membersData, holds, { data: ancillaryData }] = await Promise.all([
+              listMembersSupabase({ status: "all" }),
               listMemberHolds(),
               supabase
                 .from("ancillary_charge_logs")
@@ -100,7 +101,10 @@ export default async function DashboardPage() {
                 .lte("service_date", `${today.slice(0, 7)}-31`)
             ]);
             return {
-              membersData: membersData ?? [],
+              membersData: membersData.map((member) => ({
+                id: member.id,
+                display_name: member.display_name
+              })),
               holds,
               ancillaryData: ancillaryData ?? []
             };

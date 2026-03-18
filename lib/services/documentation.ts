@@ -1,4 +1,5 @@
 import { listCanonicalMemberLinksForLeadIds } from "@/lib/services/canonical-person-ref";
+import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import { createClient } from "@/lib/supabase/server";
 import type { CanonicalPersonRef } from "@/types/identity";
 
@@ -104,14 +105,7 @@ function normalizeTimelyRows(rows: unknown[]) {
 }
 
 export async function getMembers() {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("members")
-    .select("id, display_name, status, enrollment_date")
-    .eq("status", "active")
-    .order("display_name");
-  if (error) throw new Error(`Unable to load active members: ${error.message}`);
-  return data ?? [];
+  return listActiveMemberLookupSupabase();
 }
 export async function getAssessmentMembers() {
   const supabase = await createClient();

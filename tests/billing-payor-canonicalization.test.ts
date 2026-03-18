@@ -218,7 +218,7 @@ test("billing payor UI and canonical setter wiring remain present in contact man
   assert.equal(contactManagerSource.includes("Bill To"), true);
   assert.equal(contactServiceSource.includes("setBillingPayorContact"), true);
   assert.equal(contactServiceSource.includes("MEMBER_CONTACT_SELECT_WITH_PAYOR"), true);
-  assert.equal(contactServiceSource.includes("MEMBER_CONTACT_SELECT_LEGACY"), true);
+  assert.equal(contactServiceSource.includes("MEMBER_CONTACT_SELECT_LEGACY"), false);
   assert.equal(contactServiceSource.includes("buildMemberContactsSchemaOutOfDateError"), true);
   assert.equal(rpcCleanupMigration.includes("payor = mhp.payor"), false);
   assert.equal(rpcCleanupMigration.includes("payor = mcc.payor"), false);

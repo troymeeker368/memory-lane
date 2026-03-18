@@ -5,16 +5,27 @@ import { join } from "node:path";
 import { getCanonicalTrackSections } from "../lib/services/care-plan-track-definitions";
 import { buildSeededMockDb } from "../lib/mock/seed";
 import { createSupabaseAdminClient } from "../lib/supabase/admin";
+import { invokeSupabaseRpcOrThrow } from "../lib/supabase/rpc";
 
 type SeedModule = "sales" | "intake" | "attendance";
 
 const VALID_MODULES: SeedModule[] = ["sales", "intake", "attendance"];
 const SITE_ID = "11111111-1111-4111-8111-111111111111";
 const BATCH_SIZE = 250;
-const TARGET_MEMBER_COUNT = 15;
-const TARGET_LEAD_COUNT = 15;
+const TARGET_MEMBER_COUNT = 30;
+const TARGET_LEAD_COUNT = 20;
 const WEEKDAY_OPTIONS = ["monday", "tuesday", "wednesday", "thursday", "friday"] as const;
 const LEGACY_DEPENDENCY_TABLES = new Set(["pay_periods", "time_punches"]);
+const FINALIZE_INTAKE_SIGNATURE_RPC = "rpc_finalize_intake_assessment_signature";
+const PREPARE_ENROLLMENT_PACKET_REQUEST_RPC = "rpc_prepare_enrollment_packet_request";
+const TRANSITION_ENROLLMENT_PACKET_DELIVERY_STATE_RPC = "rpc_transition_enrollment_packet_delivery_state";
+const PREPARE_POF_REQUEST_DELIVERY_RPC = "rpc_prepare_pof_request_delivery";
+const TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC = "rpc_transition_pof_request_delivery_state";
+const SYNC_SIGNED_POF_TO_MEMBER_CLINICAL_PROFILE_RPC = "rpc_sync_signed_pof_to_member_clinical_profile";
+const SYNC_MHP_TO_COMMAND_CENTER_RPC = "rpc_sync_member_health_profile_to_command_center";
+const SYNC_COMMAND_CENTER_TO_MHP_RPC = "rpc_sync_command_center_to_member_health_profile";
+const MAR_MEDICATION_SYNC_RPC = "rpc_sync_mar_medications_from_member_profile";
+const MAR_RECONCILE_RPC = "rpc_reconcile_member_mar_state";
 
 type SeededDb = ReturnType<typeof buildSeededMockDb>;
 
@@ -47,10 +58,12 @@ function loadEnvFiles() {
 function parseArgs(argv: string[]) {
   let reset = false;
   let legacyOnly = false;
+  let skipRpcPass = false;
   const modules = new Set<SeedModule>();
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--reset") reset = true;
     if (argv[i] === "--legacy-only") legacyOnly = true;
+    if (argv[i] === "--skip-rpc-pass") skipRpcPass = true;
     if (argv[i] === "--module" && argv[i + 1]) {
       const mod = argv[i + 1] as SeedModule;
       if (!VALID_MODULES.includes(mod)) throw new Error(`Invalid module: ${argv[i + 1]}`);
@@ -63,7 +76,7 @@ function parseArgs(argv: string[]) {
       modules.add(mod);
     }
   }
-  return { reset, legacyOnly, modules: modules.size > 0 ? [...modules] : [...VALID_MODULES] };
+  return { reset, legacyOnly, skipRpcPass, modules: modules.size > 0 ? [...modules] : [...VALID_MODULES] };
 }
 
 function assertSafeEnvironment(resetRequested = false) {
@@ -212,6 +225,433 @@ async function upsertRows(
     inserted += Math.min(BATCH_SIZE, normalizedRows.length - i);
   }
   return inserted;
+}
+
+function isMissingRpcFunctionError(error: unknown, rpcName: string) {
+  if (!error || typeof error !== "object") return false;
+  const code = String((error as { code?: string }).code ?? "").toUpperCase();
+  const text = [
+    (error as { message?: string }).message,
+    (error as { details?: string }).details,
+    (error as { hint?: string }).hint
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+  return (code === "PGRST202" || code === "42883") && text.includes(rpcName.toLowerCase());
+}
+
+function normalizeEnrollmentPacketTransportation(value: unknown) {
+  const normalized = cleanText(value)?.toLowerCase();
+  if (!normalized || normalized === "none" || normalized === "family transport") return "None";
+  if (normalized === "door to door" || normalized === "door-to-door") return "Door to Door";
+  if (normalized === "bus stop") return "Bus Stop";
+  if (normalized === "mixed") return "Mixed";
+  return "None";
+}
+
+function toStringArray(value: unknown) {
+  if (!Array.isArray(value)) return [] as string[];
+  return value.map((entry) => cleanText(entry)).filter((entry): entry is string => Boolean(entry));
+}
+
+function toObject(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function resolveEnrollmentPacketSeedDeliveryState(status: string | null | undefined) {
+  const normalized = cleanText(status)?.toLowerCase() ?? "draft";
+  if (normalized === "prepared") {
+    return { status: "prepared", deliveryStatus: "ready_to_send", sentAt: null };
+  }
+  if (
+    normalized === "sent" ||
+    normalized === "opened" ||
+    normalized === "partially_completed" ||
+    normalized === "completed" ||
+    normalized === "filed"
+  ) {
+    return { status: normalized, deliveryStatus: "sent", sentAt: true };
+  }
+  return { status: "draft", deliveryStatus: "pending_preparation", sentAt: null };
+}
+
+function resolvePofSeedDeliveryState(status: string | null | undefined) {
+  const normalized = cleanText(status)?.toLowerCase() ?? "draft";
+  if (normalized === "sent" || normalized === "opened" || normalized === "signed") {
+    return { status: normalized, deliveryStatus: "sent", sentAt: true, updatePhysicianOrderSent: true };
+  }
+  if (normalized === "declined" || normalized === "expired") {
+    return { status: normalized, deliveryStatus: "sent", sentAt: true, updatePhysicianOrderSent: false };
+  }
+  return { status: "draft", deliveryStatus: "pending_preparation", sentAt: null, updatePhysicianOrderSent: false };
+}
+
+async function applySeedRpcPass(
+  supabase: ReturnType<typeof createSupabaseAdminClient>,
+  rows: ReturnType<typeof buildRows>,
+  staffMap: Map<string, string>,
+  options: {
+    modules: SeedModule[];
+    legacyOnly: boolean;
+  }
+) {
+  if (options.legacyOnly) {
+    console.log("rpc_seed_pass: skipped=legacy_only");
+    return;
+  }
+
+  const actorUserId = [...staffMap.values()][0] ?? null;
+  if (!actorUserId) {
+    throw new Error("Seed RPC pass is missing mapped profile ids.");
+  }
+  const actorName = "Seed RPC";
+  const counts = new Map<string, number>();
+  const increment = (label: string) => counts.set(label, (counts.get(label) ?? 0) + 1);
+  const now = new Date().toISOString();
+  const today = asDateOnly(now, "2026-03-01") as string;
+  const marEndDate = addDays(today, 45);
+
+  if (options.modules.includes("sales")) {
+    const enrollmentFieldsByPacketId = new Map(
+      rows.enrollmentPacketFields
+        .map((row) => [cleanText((row as { packet_id?: unknown }).packet_id), row] as const)
+        .filter((entry): entry is [string, (typeof rows.enrollmentPacketFields)[number]] => Boolean(entry[0]))
+    );
+    const enrollmentSenderSignatureByUserId = new Map(
+      rows.enrollmentPacketSenderSignatures
+        .map((row) => [cleanText((row as { user_id?: unknown }).user_id), row] as const)
+        .filter((entry): entry is [string, (typeof rows.enrollmentPacketSenderSignatures)[number]] => Boolean(entry[0]))
+    );
+
+    for (const request of rows.enrollmentPacketRequests) {
+      const packetId = cleanText((request as { id?: unknown }).id);
+      const senderUserId = cleanText((request as { sender_user_id?: unknown }).sender_user_id);
+      const caregiverEmail = cleanText((request as { caregiver_email?: unknown }).caregiver_email);
+      if (!packetId || !senderUserId || !caregiverEmail) continue;
+      const fields = enrollmentFieldsByPacketId.get(packetId);
+      const senderSignature = enrollmentSenderSignatureByUserId.get(senderUserId);
+      if (!fields || !senderSignature) continue;
+
+      try {
+        await invokeSupabaseRpcOrThrow<unknown>(supabase, PREPARE_ENROLLMENT_PACKET_REQUEST_RPC, {
+          p_packet_id: packetId,
+          p_member_id: cleanText((request as { member_id?: unknown }).member_id),
+          p_lead_id: cleanText((request as { lead_id?: unknown }).lead_id),
+          p_sender_user_id: senderUserId,
+          p_caregiver_email: caregiverEmail,
+          p_token: cleanText((request as { token?: unknown }).token),
+          p_token_expires_at: cleanText((request as { token_expires_at?: unknown }).token_expires_at),
+          p_requested_days: toStringArray((fields as { requested_days?: unknown }).requested_days),
+          p_transportation: normalizeEnrollmentPacketTransportation((fields as { transportation?: unknown }).transportation),
+          p_community_fee: Number((fields as { community_fee?: unknown }).community_fee ?? 0),
+          p_daily_rate: Number((fields as { daily_rate?: unknown }).daily_rate ?? 0),
+          p_pricing_community_fee_id: cleanText((fields as { pricing_community_fee_id?: unknown }).pricing_community_fee_id),
+          p_pricing_daily_rate_id: cleanText((fields as { pricing_daily_rate_id?: unknown }).pricing_daily_rate_id),
+          p_pricing_snapshot: toObject((fields as { pricing_snapshot?: unknown }).pricing_snapshot),
+          p_caregiver_name: cleanText((fields as { caregiver_name?: unknown }).caregiver_name),
+          p_caregiver_phone: cleanText((fields as { caregiver_phone?: unknown }).caregiver_phone),
+          p_intake_payload: toObject((fields as { intake_payload?: unknown }).intake_payload),
+          p_signature_name: cleanText((senderSignature as { signature_name?: unknown }).signature_name),
+          p_signature_blob: cleanText((senderSignature as { signature_blob?: unknown }).signature_blob),
+          p_sender_email: "sales@memorylane.local",
+          p_prepared_at: cleanText((request as { created_at?: unknown }).created_at) ?? now
+        });
+      } catch (error) {
+        if (isMissingRpcFunctionError(error, PREPARE_ENROLLMENT_PACKET_REQUEST_RPC)) {
+          throw new Error(
+            "Enrollment packet request preparation RPC is not available. Apply Supabase migrations 0073_delivery_and_member_file_rpc_hardening.sql and 0076_rpc_returns_table_ambiguity_hardening.sql, then rerun seed."
+          );
+        }
+        throw error;
+      }
+      increment("rpc_prepare_enrollment_packet_request");
+
+      const delivery = resolveEnrollmentPacketSeedDeliveryState(cleanText((request as { status?: unknown }).status));
+      try {
+        await invokeSupabaseRpcOrThrow<unknown>(supabase, TRANSITION_ENROLLMENT_PACKET_DELIVERY_STATE_RPC, {
+          p_packet_id: packetId,
+          p_delivery_status: delivery.deliveryStatus,
+          p_attempt_at:
+            cleanText((request as { updated_at?: unknown }).updated_at) ??
+            cleanText((request as { created_at?: unknown }).created_at) ??
+            now,
+          p_status: delivery.status,
+          p_sent_at:
+            delivery.sentAt === true
+              ? cleanText((request as { sent_at?: unknown }).sent_at) ??
+                cleanText((request as { updated_at?: unknown }).updated_at) ??
+                cleanText((request as { created_at?: unknown }).created_at) ??
+                now
+              : null,
+          p_delivery_error: null,
+          p_expected_current_status: null
+        });
+      } catch (error) {
+        if (isMissingRpcFunctionError(error, TRANSITION_ENROLLMENT_PACKET_DELIVERY_STATE_RPC)) {
+          throw new Error(
+            "Enrollment packet delivery-state RPC is not available. Apply Supabase migrations 0073_delivery_and_member_file_rpc_hardening.sql and 0076_rpc_returns_table_ambiguity_hardening.sql, then rerun seed."
+          );
+        }
+        throw error;
+      }
+      increment("rpc_transition_enrollment_packet_delivery_state");
+    }
+
+    for (const request of rows.pofRequests) {
+      const requestId = cleanText((request as { id?: unknown }).id);
+      const physicianOrderId = cleanText((request as { physician_order_id?: unknown }).physician_order_id);
+      const memberId = cleanText((request as { member_id?: unknown }).member_id);
+      const providerEmail = cleanText((request as { provider_email?: unknown }).provider_email);
+      const nurseName = cleanText((request as { nurse_name?: unknown }).nurse_name) ?? actorName;
+      const actorId = cleanText((request as { sent_by_user_id?: unknown }).sent_by_user_id) ?? actorUserId;
+      if (!requestId || !physicianOrderId || !memberId || !providerEmail) continue;
+
+      try {
+        await invokeSupabaseRpcOrThrow<unknown>(supabase, PREPARE_POF_REQUEST_DELIVERY_RPC, {
+          p_request_id: requestId,
+          p_physician_order_id: physicianOrderId,
+          p_member_id: memberId,
+          p_provider_name: cleanText((request as { provider_name?: unknown }).provider_name),
+          p_provider_email: providerEmail,
+          p_nurse_name: nurseName,
+          p_from_email: cleanText((request as { from_email?: unknown }).from_email) ?? "clinical@memorylane.local",
+          p_sent_by_user_id: actorId,
+          p_optional_message: cleanText((request as { optional_message?: unknown }).optional_message),
+          p_expires_at: cleanText((request as { expires_at?: unknown }).expires_at),
+          p_signature_request_token: cleanText((request as { signature_request_token?: unknown }).signature_request_token),
+          p_signature_request_url: cleanText((request as { signature_request_url?: unknown }).signature_request_url),
+          p_unsigned_pdf_url: cleanText((request as { unsigned_pdf_url?: unknown }).unsigned_pdf_url),
+          p_pof_payload_json: toObject((request as { pof_payload_json?: unknown }).pof_payload_json),
+          p_actor_user_id: actorId,
+          p_actor_name: nurseName,
+          p_now:
+            cleanText((request as { updated_at?: unknown }).updated_at) ??
+            cleanText((request as { created_at?: unknown }).created_at) ??
+            now
+        });
+      } catch (error) {
+        if (isMissingRpcFunctionError(error, PREPARE_POF_REQUEST_DELIVERY_RPC)) {
+          throw new Error(
+            "POF request preparation RPC is not available. Apply Supabase migrations 0073_delivery_and_member_file_rpc_hardening.sql and 0080_pof_request_delivery_rpc_insert_alignment.sql, then rerun seed."
+          );
+        }
+        throw error;
+      }
+      increment("rpc_prepare_pof_request_delivery");
+
+      const delivery = resolvePofSeedDeliveryState(cleanText((request as { status?: unknown }).status));
+      try {
+        await invokeSupabaseRpcOrThrow<unknown>(supabase, TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC, {
+          p_request_id: requestId,
+          p_actor_user_id: actorId,
+          p_actor_name: nurseName,
+          p_delivery_status: delivery.deliveryStatus,
+          p_attempt_at:
+            cleanText((request as { updated_at?: unknown }).updated_at) ??
+            cleanText((request as { created_at?: unknown }).created_at) ??
+            now,
+          p_status: delivery.status,
+          p_sent_at:
+            delivery.sentAt === true
+              ? cleanText((request as { sent_at?: unknown }).sent_at) ??
+                cleanText((request as { updated_at?: unknown }).updated_at) ??
+                cleanText((request as { created_at?: unknown }).created_at) ??
+                now
+              : null,
+          p_opened_at: cleanText((request as { opened_at?: unknown }).opened_at),
+          p_signed_at: cleanText((request as { signed_at?: unknown }).signed_at),
+          p_delivery_error: null,
+          p_provider_name: cleanText((request as { provider_name?: unknown }).provider_name),
+          p_update_physician_order_sent: delivery.updatePhysicianOrderSent
+        });
+      } catch (error) {
+        if (isMissingRpcFunctionError(error, TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC)) {
+          throw new Error(
+            "POF delivery-state RPC is not available. Apply Supabase migration 0073_delivery_and_member_file_rpc_hardening.sql, then rerun seed."
+          );
+        }
+        throw error;
+      }
+      increment("rpc_transition_pof_request_delivery_state");
+    }
+  }
+
+  if (options.modules.includes("intake")) {
+    for (const signature of rows.intakeAssessmentSignatures) {
+      const assessmentId = cleanText((signature as { assessment_id?: unknown }).assessment_id);
+      const memberId = cleanText((signature as { member_id?: unknown }).member_id);
+      if (!assessmentId || !memberId) continue;
+      try {
+        await invokeSupabaseRpcOrThrow<unknown>(supabase, FINALIZE_INTAKE_SIGNATURE_RPC, {
+          p_assessment_id: assessmentId,
+          p_member_id: memberId,
+          p_signed_by_user_id: cleanText((signature as { signed_by_user_id?: unknown }).signed_by_user_id),
+          p_signed_by_name: cleanText((signature as { signed_by_name?: unknown }).signed_by_name),
+          p_signed_at: cleanText((signature as { signed_at?: unknown }).signed_at) ?? now,
+          p_signature_artifact_storage_path: cleanText(
+            (signature as { signature_artifact_storage_path?: unknown }).signature_artifact_storage_path
+          ),
+          p_signature_artifact_member_file_id: cleanText(
+            (signature as { signature_artifact_member_file_id?: unknown }).signature_artifact_member_file_id
+          ),
+          p_signature_metadata: toObject((signature as { signature_metadata?: unknown }).signature_metadata)
+        });
+      } catch (error) {
+        if (isMissingRpcFunctionError(error, FINALIZE_INTAKE_SIGNATURE_RPC)) {
+          throw new Error(
+            "Intake assessment signature finalization RPC is not available. Apply Supabase migrations 0052_intake_assessment_signature_finalize_rpc.sql, 0074_fix_intake_signature_finalize_rpc_ambiguity.sql, and 0075_fix_intake_signature_finalize_rpc_conflict_ambiguity.sql, then rerun seed."
+          );
+        }
+        throw error;
+      }
+      increment("rpc_finalize_intake_assessment_signature");
+    }
+
+    const signedOrderIds = rows.physicianOrders
+      .filter((row) => cleanText((row as { status?: unknown }).status) === "signed")
+      .map((row) => cleanText((row as { id?: unknown }).id))
+      .filter((value): value is string => Boolean(value));
+
+    for (const pofId of signedOrderIds) {
+      try {
+        await invokeSupabaseRpcOrThrow<unknown>(supabase, SYNC_SIGNED_POF_TO_MEMBER_CLINICAL_PROFILE_RPC, {
+          p_pof_id: pofId,
+          p_synced_at: now
+        });
+      } catch (error) {
+        if (isMissingRpcFunctionError(error, SYNC_SIGNED_POF_TO_MEMBER_CLINICAL_PROFILE_RPC)) {
+          throw new Error(
+            "Signed POF clinical sync RPC is not available. Apply Supabase migrations 0043_delivery_state_and_pof_post_sign_sync_rpc.sql and 0078_signed_pof_dnr_sync_alignment.sql, then rerun seed."
+          );
+        }
+        throw error;
+      }
+      increment("rpc_sync_signed_pof_to_member_clinical_profile");
+    }
+  }
+
+  if (options.modules.includes("intake") || options.modules.includes("attendance")) {
+    const mhpMemberIds = new Set(
+      rows.memberHealthProfiles
+        .map((row) => cleanText((row as { member_id?: unknown }).member_id))
+        .filter((value): value is string => Boolean(value))
+    );
+    const mccMemberIds = new Set(
+      rows.memberCommandCenters
+        .map((row) => cleanText((row as { member_id?: unknown }).member_id))
+        .filter((value): value is string => Boolean(value))
+    );
+    const syncMemberIds = Array.from(new Set([...mhpMemberIds, ...mccMemberIds]));
+
+    for (const memberId of syncMemberIds) {
+      if (mhpMemberIds.has(memberId)) {
+        try {
+          await invokeSupabaseRpcOrThrow<unknown>(supabase, SYNC_MHP_TO_COMMAND_CENTER_RPC, {
+            p_member_id: memberId,
+            p_actor_user_id: actorUserId,
+            p_actor_name: actorName,
+            p_now: now
+          });
+        } catch (error) {
+          if (isMissingRpcFunctionError(error, SYNC_MHP_TO_COMMAND_CENTER_RPC)) {
+            throw new Error(
+              "MHP to Command Center sync RPC is not available. Apply Supabase migrations 0056_shared_rpc_orchestration_hardening.sql, 0071_mhp_mcc_sync_rpc_member_id_ambiguity_fix.sql, 0072_mhp_gender_normalization_for_mcc_sync.sql, and 0066_billing_payor_sync_cleanup.sql, then rerun seed."
+            );
+          }
+          throw error;
+        }
+        increment("rpc_sync_member_health_profile_to_command_center");
+      }
+
+      if (mccMemberIds.has(memberId)) {
+        try {
+          await invokeSupabaseRpcOrThrow<unknown>(supabase, SYNC_COMMAND_CENTER_TO_MHP_RPC, {
+            p_member_id: memberId,
+            p_actor_user_id: actorUserId,
+            p_actor_name: actorName,
+            p_now: now
+          });
+        } catch (error) {
+          if (isMissingRpcFunctionError(error, SYNC_COMMAND_CENTER_TO_MHP_RPC)) {
+            throw new Error(
+              "Command Center to MHP sync RPC is not available. Apply Supabase migrations 0056_shared_rpc_orchestration_hardening.sql, 0071_mhp_mcc_sync_rpc_member_id_ambiguity_fix.sql, 0072_mhp_gender_normalization_for_mcc_sync.sql, and 0066_billing_payor_sync_cleanup.sql, then rerun seed."
+            );
+          }
+          throw error;
+        }
+        increment("rpc_sync_command_center_to_member_health_profile");
+      }
+    }
+
+    const signedOrderByMemberId = new Map<string, string>();
+    rows.physicianOrders.forEach((row) => {
+      const status = cleanText((row as { status?: unknown }).status);
+      const memberId = cleanText((row as { member_id?: unknown }).member_id);
+      const pofId = cleanText((row as { id?: unknown }).id);
+      const activeSigned = Boolean((row as { is_active_signed?: unknown }).is_active_signed);
+      if (!memberId || !pofId || status !== "signed") return;
+      if (activeSigned || !signedOrderByMemberId.has(memberId)) {
+        signedOrderByMemberId.set(memberId, pofId);
+      }
+    });
+
+    const marMemberIds = Array.from(
+      new Set(
+        [
+          ...rows.memberHealthProfiles.map((row) => cleanText((row as { member_id?: unknown }).member_id)),
+          ...rows.memberMedications.map((row) => cleanText((row as { member_id?: unknown }).member_id)),
+          ...rows.memberCommandCenters.map((row) => cleanText((row as { member_id?: unknown }).member_id))
+        ].filter((value): value is string => Boolean(value))
+      )
+    );
+
+    for (const memberId of marMemberIds) {
+      const preferredPofId = signedOrderByMemberId.get(memberId) ?? null;
+      try {
+        await invokeSupabaseRpcOrThrow<unknown>(supabase, MAR_MEDICATION_SYNC_RPC, {
+          p_member_id: memberId,
+          p_preferred_physician_order_id: preferredPofId,
+          p_now: now
+        });
+      } catch (error) {
+        if (isMissingRpcFunctionError(error, MAR_MEDICATION_SYNC_RPC)) {
+          throw new Error(
+            "MAR medication sync RPC is not available. Apply Supabase migration 0056_shared_rpc_orchestration_hardening.sql, then rerun seed."
+          );
+        }
+        throw error;
+      }
+      increment("rpc_sync_mar_medications_from_member_profile");
+
+      try {
+        await invokeSupabaseRpcOrThrow<unknown>(supabase, MAR_RECONCILE_RPC, {
+          p_member_id: memberId,
+          p_start_date: today,
+          p_end_date: marEndDate,
+          p_preferred_physician_order_id: preferredPofId,
+          p_now: now
+        });
+      } catch (error) {
+        if (isMissingRpcFunctionError(error, MAR_RECONCILE_RPC)) {
+          throw new Error(
+            "MAR reconcile RPC is not available. Apply Supabase migration 0056_shared_rpc_orchestration_hardening.sql, then rerun seed."
+          );
+        }
+        throw error;
+      }
+      increment("rpc_reconcile_member_mar_state");
+    }
+  }
+
+  if (counts.size === 0) {
+    console.log("rpc_seed_pass: no_applicable_rpcs");
+    return;
+  }
+  for (const [label, count] of counts.entries()) {
+    console.log(`rpc:${label}=${count}`);
+  }
 }
 
 async function deleteRows(
@@ -957,6 +1397,72 @@ const SEED_LEAD_SCENARIOS: SeedLeadScenario[] = [
     payerInterest: "Private pay with billing autopay.",
     summary: "Converted after final enrollment packet signatures.",
     convertedMemberOffset: 4
+  },
+  {
+    key: "lead-16-follow-up-pending-2",
+    flow: "follow-up-pending",
+    stage: "Inquiry",
+    status: "Open",
+    leadSource: "Google",
+    likelihood: "Warm",
+    caregiverRelationship: "Granddaughter",
+    preferredSchedule: "Mon/Thu afternoons",
+    transportationInterest: "Family transport during trial period.",
+    payerInterest: "Reviewing LTC policy and VA attendance benefits.",
+    summary: "Follow-up delayed until family completes neurology consultation."
+  },
+  {
+    key: "lead-17-tour-scheduled-2",
+    flow: "tour-scheduled",
+    stage: "Tour",
+    status: "Open",
+    leadSource: "Hospital/Provider",
+    likelihood: "Hot",
+    caregiverRelationship: "Spouse",
+    preferredSchedule: "Tue/Thu/Fri full day",
+    transportationInterest: "Needs wheelchair-accessible pickup review.",
+    payerInterest: "Private pay approved pending transportation pricing.",
+    summary: "Discharge planner requested expedited tour for likely near-term start."
+  },
+  {
+    key: "lead-18-packet-sent-2",
+    flow: "packet-sent",
+    stage: "Enrollment in Progress",
+    status: "Open",
+    leadSource: "Referral",
+    likelihood: "Hot",
+    caregiverRelationship: "Daughter",
+    preferredSchedule: "Mon/Wed/Thu",
+    transportationInterest: "AM pickup requested; family can handle PM return.",
+    payerInterest: "Private pay with possible respite support through church grant.",
+    summary: "Packet sent after caregiver confirmed interest in starting next month."
+  },
+  {
+    key: "lead-19-nurture-3",
+    flow: "nurture",
+    stage: "Nurture",
+    status: "Nurture",
+    leadSource: "Website",
+    likelihood: "Warm",
+    caregiverRelationship: "Son",
+    preferredSchedule: "Considering 1 to 2 days/week after home repairs finish.",
+    transportationInterest: "Unsure until move back into primary home.",
+    payerInterest: "Budget review underway with siblings.",
+    summary: "Family requested nurture cadence until housing transition is complete."
+  },
+  {
+    key: "lead-20-closed-lost-3",
+    flow: "lost",
+    stage: "Closed - Lost",
+    status: "Lost",
+    leadSource: "Walk-in",
+    likelihood: "Warm",
+    caregiverRelationship: "Daughter",
+    preferredSchedule: "Mon-Fri mornings",
+    transportationInterest: "Needed immediately but outside service footprint.",
+    payerInterest: "Would have needed partial subsidy to begin.",
+    summary: "Family could not move forward because transportation coverage was not workable.",
+    lostReason: "Schedule/Availability"
   }
 ];
 
@@ -970,7 +1476,12 @@ const SEED_LEAD_PROSPECTS = [
   { memberName: "Gloria Hines", memberDob: "1940-08-15", caregiverName: "Devin Hines" },
   { memberName: "Harold Ingram", memberDob: "1938-12-09", caregiverName: "Tasha Ingram" },
   { memberName: "Clara Jordan", memberDob: "1946-10-30", caregiverName: "Monique Jordan" },
-  { memberName: "Samuel Knox", memberDob: "1943-04-11", caregiverName: "Elijah Knox" }
+  { memberName: "Samuel Knox", memberDob: "1943-04-11", caregiverName: "Elijah Knox" },
+  { memberName: "Theresa Lane", memberDob: "1944-07-08", caregiverName: "Camille Lane" },
+  { memberName: "Walter Mason", memberDob: "1937-05-19", caregiverName: "Jordan Mason" },
+  { memberName: "Irene Neal", memberDob: "1949-02-26", caregiverName: "Brenda Neal" },
+  { memberName: "Otis Parker", memberDob: "1941-09-14", caregiverName: "Melissa Parker" },
+  { memberName: "Ruth Quinn", memberDob: "1946-12-01", caregiverName: "Darius Quinn" }
 ];
 
 function seedLeadActivitySteps(flow: LeadFlow, lostReason: string | null): SeedLeadActivityStep[] {
@@ -4032,9 +4543,19 @@ async function main() {
     );
   }
 
+  if (!parsed.skipRpcPass) {
+    await applySeedRpcPass(supabase, rows, staffMap, {
+      modules: parsed.modules,
+      legacyOnly: parsed.legacyOnly
+    });
+  } else {
+    console.log("rpc_seed_pass: skipped=flag");
+  }
+
   console.log("Supabase seed complete.");
   console.log(`Modules: ${parsed.modules.join(", ")}`);
   console.log(`Legacy only: ${parsed.legacyOnly ? "yes" : "no"}`);
+  console.log(`RPC pass: ${parsed.skipRpcPass ? "skipped" : "applied"}`);
   console.log(`Reset: ${parsed.reset ? "yes" : "no"}`);
   selected.forEach((item) => console.log(`${item.table}: ${tableCounts.get(item.table) ?? 0}`));
   for (const [module, count] of moduleCounts.entries()) {

@@ -13,6 +13,7 @@
   TRANSPORT_TYPE_OPTIONS,
   canonicalLeadStatus
 } from "@/lib/canonical";
+import { createHash } from "node:crypto";
 import { calculateAssessmentTotal, getAssessmentTrack } from "@/lib/assessment";
 import { getStandardDailyRateForAttendanceDays } from "@/lib/services/billing-rate-tiers";
 import { getWeekdayForDate } from "@/lib/services/operations-calendar";
@@ -156,11 +157,12 @@ function boolFrom(seed: string, threshold: number) {
 }
 
 function uuidFromKey(key: string) {
-  const bytes = new Array(16).fill(0).map((_, idx) => hashString(`${key}:${idx}`) & 0xff);
+  const hash = createHash("sha256").update(key).digest("hex");
+  const bytes = Array.from({ length: 16 }, (_, idx) => Number.parseInt(hash.slice(idx * 2, idx * 2 + 2), 16));
   bytes[6] = (bytes[6] & 0x0f) | 0x40;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  const uuidHex = bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${uuidHex.slice(0, 8)}-${uuidHex.slice(8, 12)}-${uuidHex.slice(12, 16)}-${uuidHex.slice(16, 20)}-${uuidHex.slice(20)}`;
 }
 
 function toRole(rawRole: string): AppRole {
