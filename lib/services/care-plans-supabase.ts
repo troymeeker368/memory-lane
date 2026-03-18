@@ -46,7 +46,7 @@ export type { CarePlanSectionType, CarePlanTrack };
 export type CarePlanStatus = "Due Soon" | "Due Now" | "Overdue" | "Completed";
 
 const CARE_PLAN_CORE_RPC = "rpc_upsert_care_plan_core";
-const CARE_PLAN_CORE_RPC_MIGRATION = "0056_shared_rpc_orchestration_hardening.sql";
+const CARE_PLAN_CORE_RPC_MIGRATION = "0085_care_plan_diagnosis_relation.sql";
 const CARE_PLAN_SNAPSHOT_RPC = "rpc_record_care_plan_snapshot";
 const CARE_PLAN_SNAPSHOT_RPC_MIGRATION = "0054_care_plan_snapshot_atomicity.sql";
 
@@ -341,6 +341,18 @@ function daysUntil(date: string) {
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeDiagnosisIds(values: string[] | null | undefined) {
+  return [
+    ...new Set(
+      (values ?? [])
+        .map((value) => clean(value))
+        .filter((value): value is string => value !== null && UUID_PATTERN.test(value))
+    )
+  ];
 }
 
 function isPostgresUniqueViolation(error: { code?: string | null; message?: string | null; details?: string | null } | null | undefined) {
@@ -679,6 +691,7 @@ async function upsertCarePlanCore(input: {
   caregiverEmail?: string | null;
   actor: { id: string; fullName: string };
   now: string;
+  diagnosisIds?: string[];
   sections: Array<{
     sectionType: CarePlanSectionType;
     shortTermGoals: string;
@@ -706,6 +719,7 @@ async function upsertCarePlanCore(input: {
       p_actor_user_id: input.actor.id,
       p_actor_name: input.actor.fullName,
       p_now: input.now,
+      p_diagnosis_ids: normalizeDiagnosisIds(input.diagnosisIds),
       p_sections: serializeSectionsSnapshot(input.sections)
     });
     const row = (Array.isArray(data) ? data[0] : null) as CarePlanCoreRpcRow | null;
@@ -1125,6 +1139,7 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
 export async function createCarePlan(input: {
   memberId: string;
   track: CarePlanTrack;
+  diagnosisIds?: string[];
   sections: CarePlanSectionInput[];
   enrollmentDate: string;
   reviewDate: string;
@@ -1171,6 +1186,7 @@ export async function createCarePlan(input: {
         fullName: input.actor.fullName
       },
       now,
+      diagnosisIds: input.diagnosisIds,
       sections: normalizedSections
     });
     createdCarePlanId = saved.carePlanId;
@@ -1287,6 +1303,7 @@ export async function createCarePlan(input: {
 export async function reviewCarePlan(input: {
   carePlanId: string;
   reviewDate: string;
+  diagnosisIds?: string[];
   sections: CarePlanSectionInput[];
   noChangesNeeded: boolean;
   modificationsRequired: boolean;
@@ -1334,6 +1351,7 @@ export async function reviewCarePlan(input: {
       fullName: input.actor.fullName
     },
     now,
+    diagnosisIds: input.diagnosisIds,
     sections: normalizedSections
   });
 

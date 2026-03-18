@@ -25,6 +25,12 @@ import {
   getLatestEnrollmentPacketPofStagingSummary,
   markEnrollmentPacketPofStagingReviewed
 } from "@/lib/services/enrollment-packet-intake-staging";
+import {
+  resolvePhysicianOrderClinicalSyncStatus,
+  type PhysicianOrderClinicalSyncStatus,
+  type PhysicianOrderPostSignQueueStatus
+} from "@/lib/services/physician-order-clinical-sync";
+import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export {
@@ -43,7 +49,7 @@ export {
 export type PhysicianOrderStatus = "Draft" | "Sent" | "Signed" | "Expired" | "Superseded";
 export type ProviderSignatureStatus = "Pending" | "Signed";
 export type PhysicianOrderRenewalStatus = "Current" | "Due Soon" | "Overdue" | "Missing Completion";
-export type PhysicianOrderClinicalSyncStatus = "not_signed" | "pending" | "synced";
+export type { PhysicianOrderClinicalSyncStatus };
 
 const CREATE_DRAFT_POF_FROM_INTAKE_RPC = "rpc_create_draft_physician_order_from_intake";
 const CREATE_DRAFT_POF_FROM_INTAKE_MIGRATION = "0055_intake_draft_pof_atomic_creation.sql";
@@ -640,7 +646,9 @@ type RpcSyncSignedPofToMemberClinicalProfileRow = {
 
 type PofPostSignQueueStatusRow = {
   physician_order_id: string;
-  status: "queued" | "completed";
+  status: PhysicianOrderPostSignQueueStatus;
+  last_error: string | null;
+  last_failed_step: string | null;
 };
 
 const RPC_SIGN_PHYSICIAN_ORDER = "rpc_sign_physician_order";
@@ -767,14 +775,6 @@ function toRpcSyncSignedPofToMemberClinicalProfileRow(data: unknown): RpcSyncSig
   };
 }
 
-function resolveClinicalSyncStatus(input: {
-  status: PhysicianOrderStatus;
-  queueStatus?: "queued" | "completed" | null;
-}): PhysicianOrderClinicalSyncStatus {
-  if (input.status !== "Signed") return "not_signed";
-  return input.queueStatus === "completed" ? "synced" : "pending";
-}
-
 async function loadPostSignQueueStatusByPofIds(
   pofIds: string[],
   options?: {
@@ -782,13 +782,20 @@ async function loadPostSignQueueStatusByPofIds(
   }
 ) {
   const normalizedIds = [...new Set(pofIds.map((value) => clean(value)).filter((value): value is string => Boolean(value)))];
-  const statuses = new Map<string, "queued" | "completed">();
+  const statuses = new Map<
+    string,
+    {
+      status: PhysicianOrderPostSignQueueStatus;
+      lastError: string | null;
+      lastFailedStep: string | null;
+    }
+  >();
   if (normalizedIds.length === 0) return statuses;
 
   const supabase = await createClient({ serviceRole: options?.serviceRole ?? true });
   const { data, error } = await supabase
     .from("pof_post_sign_sync_queue")
-    .select("physician_order_id, status")
+    .select("physician_order_id, status, last_error, last_failed_step")
     .in("physician_order_id", normalizedIds);
   if (error) {
     if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
@@ -798,7 +805,11 @@ async function loadPostSignQueueStatusByPofIds(
   for (const row of (data ?? []) as PofPostSignQueueStatusRow[]) {
     const pofId = clean(row.physician_order_id);
     if (!pofId) continue;
-    statuses.set(pofId, row.status === "completed" ? "completed" : "queued");
+    statuses.set(pofId, {
+      status: row.status === "completed" ? "completed" : "queued",
+      lastError: clean(row.last_error),
+      lastFailedStep: clean(row.last_failed_step)
+    });
   }
   return statuses;
 }
@@ -978,7 +989,12 @@ function rowToForm(row: any, clinicalSyncStatus?: PhysicianOrderClinicalSyncStat
   const operationalFlags = parseJsonObject<PhysicianOrderOperationalFlags>(row.operational_flags, defaultOperationalFlags());
   const status = toStatus(row.status);
   const providerSignatureStatus: ProviderSignatureStatus = row.signed_at ? "Signed" : "Pending";
-  const resolvedClinicalSyncStatus = clinicalSyncStatus ?? resolveClinicalSyncStatus({ status, queueStatus: null });
+  const resolvedClinicalSyncStatus =
+    clinicalSyncStatus ??
+    resolvePhysicianOrderClinicalSyncStatus({
+      status,
+      queueStatus: null
+    });
 
   return {
     id: row.id,
@@ -1031,6 +1047,10 @@ async function getMember(memberId: string) {
   const supabase = await createClient();
   const { data } = await supabase.from("members").select("id, display_name, dob").eq("id", canonicalMemberId).single();
   return data;
+}
+
+export async function listPhysicianOrderMemberLookup() {
+  return listActiveMemberLookupSupabase();
 }
 
 function normalizePhysicianOrderSex(value: unknown): "M" | "F" | null {
@@ -1100,9 +1120,11 @@ export async function getPhysicianOrders(filters?: {
       nextRenewalDueDate: row.next_renewal_due_date,
       renewalStatus: resolveRenewalStatus(row.next_renewal_due_date),
       signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
-      clinicalSyncStatus: resolveClinicalSyncStatus({
+      clinicalSyncStatus: resolvePhysicianOrderClinicalSyncStatus({
         status,
-        queueStatus: queueStatuses.get(String(row.id)) ?? null
+        queueStatus: queueStatuses.get(String(row.id))?.status ?? null,
+        lastError: queueStatuses.get(String(row.id))?.lastError ?? null,
+        lastFailedStep: queueStatuses.get(String(row.id))?.lastFailedStep ?? null
       }),
       updatedAt: row.updated_at
     };
@@ -1150,9 +1172,11 @@ export async function getPhysicianOrdersForMember(memberId: string): Promise<Phy
       completedDate: row.sent_at ? String(row.sent_at).slice(0, 10) : null,
       nextRenewalDueDate: row.next_renewal_due_date ?? null,
       signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
-      clinicalSyncStatus: resolveClinicalSyncStatus({
+      clinicalSyncStatus: resolvePhysicianOrderClinicalSyncStatus({
         status,
-        queueStatus: queueStatuses.get(String(row.id)) ?? null
+        queueStatus: queueStatuses.get(String(row.id))?.status ?? null,
+        lastError: queueStatuses.get(String(row.id))?.lastError ?? null,
+        lastFailedStep: queueStatuses.get(String(row.id))?.lastFailedStep ?? null
       }),
       updatedByName: clean(row.updated_by_name),
       updatedAt: row.updated_at
@@ -1179,9 +1203,11 @@ export async function getActivePhysicianOrderForMember(memberId: string) {
   });
   return rowToForm(
     data,
-    resolveClinicalSyncStatus({
+    resolvePhysicianOrderClinicalSyncStatus({
       status: toStatus((data as { status: string }).status),
-      queueStatus: queueStatuses.get(String((data as { id: string }).id)) ?? null
+      queueStatus: queueStatuses.get(String((data as { id: string }).id))?.status ?? null,
+      lastError: queueStatuses.get(String((data as { id: string }).id))?.lastError ?? null,
+      lastFailedStep: queueStatuses.get(String((data as { id: string }).id))?.lastFailedStep ?? null
     })
   );
 }
@@ -1208,9 +1234,11 @@ export async function getPhysicianOrderById(
   });
   return rowToForm(
     data,
-    resolveClinicalSyncStatus({
+    resolvePhysicianOrderClinicalSyncStatus({
       status: toStatus((data as { status: string }).status),
-      queueStatus: queueStatuses.get(String((data as { id: string }).id)) ?? null
+      queueStatus: queueStatuses.get(String((data as { id: string }).id))?.status ?? null,
+      lastError: queueStatuses.get(String((data as { id: string }).id))?.lastError ?? null,
+      lastFailedStep: queueStatuses.get(String((data as { id: string }).id))?.lastFailedStep ?? null
     })
   );
 }

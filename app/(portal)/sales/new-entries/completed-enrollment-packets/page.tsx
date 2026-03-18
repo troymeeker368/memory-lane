@@ -19,11 +19,18 @@ function syncStatusLabel(status: "not_started" | "pending" | "completed" | "fail
   return "Pending";
 }
 
-function syncStatusClassName(status: "not_started" | "pending" | "completed" | "failed") {
-  if (status === "completed") return "bg-emerald-100 text-emerald-800";
-  if (status === "failed") return "bg-rose-100 text-rose-800";
-  if (status === "not_started") return "bg-slate-100 text-slate-700";
-  return "bg-amber-100 text-amber-800";
+function readinessLabel(status: "not_filed" | "filed_pending_mapping" | "mapping_failed" | "operationally_ready") {
+  if (status === "operationally_ready") return "Operationally Ready";
+  if (status === "mapping_failed") return "Mapping Failed";
+  if (status === "filed_pending_mapping") return "Filed, Mapping Pending";
+  return "Not Filed";
+}
+
+function readinessClassName(status: "not_filed" | "filed_pending_mapping" | "mapping_failed" | "operationally_ready") {
+  if (status === "operationally_ready") return "bg-emerald-100 text-emerald-800";
+  if (status === "mapping_failed") return "bg-rose-100 text-rose-800";
+  if (status === "filed_pending_mapping") return "bg-amber-100 text-amber-800";
+  return "bg-slate-100 text-slate-700";
 }
 
 export default async function CompletedEnrollmentPacketsPage({
@@ -51,7 +58,7 @@ export default async function CompletedEnrollmentPacketsPage({
       <Card>
         <CardTitle>Completed Enrollment Packets</CardTitle>
         <p className="mt-1 text-sm text-muted">
-          Filed means the caregiver packet artifact is saved. Check Downstream Sync before treating MCC/MHP/POF handoffs as fully complete.
+          Filed means the caregiver packet artifact is saved. Use Operational Readiness as the canonical handoff truth for MCC, MHP, and POF downstream readiness.
         </p>
         <form className="mt-3 grid gap-2 md:grid-cols-5" method="get">
           <input
@@ -87,7 +94,7 @@ export default async function CompletedEnrollmentPacketsPage({
               <th>Lead</th>
               <th>Caregiver Email</th>
               <th>Status</th>
-              <th>Downstream Sync</th>
+              <th>Operational Readiness</th>
               <th>Sent</th>
               <th>Completed</th>
               <th>Sent By</th>
@@ -110,9 +117,10 @@ export default async function CompletedEnrollmentPacketsPage({
                   <td className="capitalize">{packet.status.replace("_", " ")}</td>
                   <td>
                     <div className="space-y-1">
-                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${syncStatusClassName(packet.mappingSyncStatus)}`}>
-                        {syncStatusLabel(packet.mappingSyncStatus)}
+                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${readinessClassName(packet.operationalReadinessStatus)}`}>
+                        {readinessLabel(packet.operationalReadinessStatus)}
                       </span>
+                      <p className="text-xs text-muted">Mapping sync: {syncStatusLabel(packet.mappingSyncStatus)}</p>
                       {packet.mappingSyncError ? (
                         <p className="max-w-xs text-xs text-rose-700">{packet.mappingSyncError}</p>
                       ) : null}

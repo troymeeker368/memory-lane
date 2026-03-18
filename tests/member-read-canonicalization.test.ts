@@ -9,6 +9,7 @@ function readWorkspaceFile(relativePath: string) {
 test("documentation and physician-order member lookups use shared canonical helpers", () => {
   const documentationSource = readWorkspaceFile("lib/services/documentation.ts");
   const physicianOrdersPageSource = readWorkspaceFile("app/(portal)/health/physician-orders/page.tsx");
+  const newPhysicianOrderPageSource = readWorkspaceFile("app/(portal)/health/physician-orders/new/page.tsx");
 
   assert.equal(
     documentationSource.includes('import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";'),
@@ -23,6 +24,12 @@ test("documentation and physician-order member lookups use shared canonical help
   );
   assert.equal(physicianOrdersPageSource.includes("const members = await listActiveMemberLookupSupabase();"), true);
   assert.equal(physicianOrdersPageSource.includes('from("members")'), false);
+
+  assert.equal(
+    newPhysicianOrderPageSource.includes("listPhysicianOrderMemberLookup"),
+    true
+  );
+  assert.equal(newPhysicianOrderPageSource.includes('from("members")'), false);
 });
 
 test("dashboard member-name lookups use the shared MCC member list service", () => {

@@ -110,6 +110,7 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
   revalidatePath("/health/care-plans");
   revalidatePath("/health/care-plans/list");
   revalidatePath(`/health/care-plans/${created.id}`);
+  revalidatePath(`/health/member-health-profiles/${created.memberId}`);
   revalidatePath(`/members/${created.memberId}`);
   return { ok: true as const, error: null, id: created.id };
 }
@@ -203,6 +204,7 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
   revalidatePath("/health/care-plans/list");
   revalidatePath("/health/care-plans/due-report");
   revalidatePath(`/health/care-plans/${updated.id}`);
+  revalidatePath(`/health/member-health-profiles/${updated.memberId}`);
   revalidatePath(`/members/${updated.memberId}`);
   return { ok: true as const, error: null };
 }
@@ -260,6 +262,7 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
     } as const;
   }
   revalidatePath(`/health/care-plans/${updated.id}`);
+  revalidatePath(`/health/member-health-profiles/${updated.memberId}`);
   revalidatePath(`/members/${updated.memberId}`);
   return { ok: true as const, error: null, status: updated.caregiverSignatureStatus };
 }
@@ -294,6 +297,7 @@ export async function sendCarePlanToCaregiverAction(raw: z.infer<typeof sendCare
     });
 
     revalidatePath(`/health/care-plans/${updated.id}`);
+    revalidatePath(`/health/member-health-profiles/${updated.memberId}`);
     revalidatePath(`/members/${updated.memberId}`);
     return { ok: true, status: updated.caregiverSignatureStatus } as const;
   } catch (error) {

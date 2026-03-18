@@ -189,6 +189,7 @@ export function SalesEnrollmentPacketStandaloneAction({
           return;
         }
 
+        router.refresh();
         setSentResult(true);
         setStatus(null);
       } catch (error) {

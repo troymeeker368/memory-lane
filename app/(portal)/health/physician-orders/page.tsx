@@ -13,6 +13,14 @@ function firstString(value: string | string[] | undefined) {
   return value;
 }
 
+function clinicalSyncLabel(status: "not_signed" | "pending" | "queued" | "failed" | "synced") {
+  if (status === "synced") return "Synced";
+  if (status === "failed") return "Failed";
+  if (status === "queued") return "Queued";
+  if (status === "pending") return "Pending";
+  return "-";
+}
+
 export default async function PhysicianOrdersIndexPage({
   searchParams
 }: {
@@ -150,7 +158,7 @@ export default async function PhysicianOrdersIndexPage({
                   <td>{row.nextRenewalDueDate ? formatDate(row.nextRenewalDueDate) : "-"}</td>
                   <td>{row.renewalStatus}</td>
                   <td>{row.signedDate ? formatDate(row.signedDate) : "-"}</td>
-                  <td>{row.clinicalSyncStatus === "synced" ? "Synced" : row.clinicalSyncStatus === "pending" ? "Pending" : "-"}</td>
+                  <td>{clinicalSyncLabel(row.clinicalSyncStatus)}</td>
                   <td>{formatDateTime(row.updatedAt)}</td>
                   <td>
                     <Link href={`/health/physician-orders/${row.id}?from=list`} className="font-semibold text-brand">

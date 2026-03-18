@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   generateAssessmentPdfAction,
@@ -23,6 +24,7 @@ export function AssessmentPdfActions({
   assessmentId: string;
   canRetryDraftPof: boolean;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState("");
 
@@ -66,6 +68,7 @@ export function AssessmentPdfActions({
                 setStatus(`Error: ${result.error}`);
                 return;
               }
+              router.refresh();
               setStatus("Draft POF retry succeeded.");
             })
           }

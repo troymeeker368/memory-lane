@@ -210,6 +210,7 @@ export function PofEsignWorkflowCard({
           if (result.data.request) {
             setCurrentRequest(result.data.request);
           }
+          router.refresh();
           setStatusMessage(result.message);
           if (result.data.pofId && result.data.pofId !== physicianOrderId) {
             router.replace(`/health/physician-orders/${result.data.pofId}`);
@@ -241,6 +242,7 @@ export function PofEsignWorkflowCard({
           if (result.data.request) {
             setCurrentRequest(result.data.request);
           }
+          router.refresh();
           setStatusMessage(result.message);
         },
         onError: async (result) => {

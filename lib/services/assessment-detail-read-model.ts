@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { resolveIntakeDraftPofReadiness, toIntakeDraftPofStatus } from "@/lib/services/intake-draft-pof-readiness";
 
 export async function getAssessmentDetail(assessmentId: string) {
   const supabase = await createClient();
@@ -12,6 +13,11 @@ export async function getAssessmentDetail(assessmentId: string) {
 
   const { getIntakeAssessmentSignatureState } = await import("@/lib/services/intake-assessment-esign");
   const signature = await getIntakeAssessmentSignatureState(assessmentId);
+  const draftPofStatus = toIntakeDraftPofStatus(assessment.draft_pof_status);
+  const draftPofReadinessStatus = resolveIntakeDraftPofReadiness({
+    signatureStatus: signature.status,
+    draftPofStatus
+  });
   const { data: responses, error: responsesError } = await supabase
     .from("assessment_responses")
     .select("*")
@@ -27,7 +33,9 @@ export async function getAssessmentDetail(assessmentId: string) {
       signed_by_user_id: signature.signedByUserId,
       signed_at: signature.signedAt,
       signature_status: signature.status,
-      draft_pof_status: assessment.draft_pof_status ?? "pending",
+      draft_pof_status: draftPofStatus,
+      draft_pof_readiness_status: draftPofReadinessStatus,
+      draft_pof_ready: draftPofReadinessStatus === "draft_pof_ready",
       draft_pof_attempted_at: assessment.draft_pof_attempted_at ?? null,
       draft_pof_error: assessment.draft_pof_error ?? null,
       signature_metadata: signature.signatureMetadata,

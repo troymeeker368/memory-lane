@@ -13,6 +13,12 @@ import {
   normalizeEnrollmentPacketIntakePayload,
   type EnrollmentPacketIntakePayload
 } from "@/lib/services/enrollment-packet-intake-payload";
+import {
+  isEnrollmentPacketOperationallyReady,
+  resolveEnrollmentPacketOperationalReadiness,
+  toEnrollmentPacketMappingSyncStatus,
+  type EnrollmentPacketOperationalReadinessStatus
+} from "@/lib/services/enrollment-packet-readiness";
 import { mapEnrollmentPacketToDownstream } from "@/lib/services/enrollment-packet-intake-mapping";
 import {
   calculateInitialEnrollmentAmount,
@@ -98,15 +104,10 @@ export type CompletedEnrollmentPacketListItem = EnrollmentPacketRequestSummary &
   leadMemberName: string | null;
   senderName: string | null;
   mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
+  operationalReadinessStatus: EnrollmentPacketOperationalReadinessStatus;
+  operationallyReady: boolean;
   mappingSyncError: string | null;
 };
-
-function toMappingSyncStatus(
-  value: string | null | undefined
-): CompletedEnrollmentPacketListItem["mappingSyncStatus"] {
-  if (value === "completed" || value === "failed" || value === "not_started") return value;
-  return "pending";
-}
 
 export type CompletedEnrollmentPacketFilters = {
   limit?: number;
@@ -1035,7 +1036,15 @@ export async function listCompletedEnrollmentPacketRequests(
       memberName: memberNames.get(row.member_id) ?? "Unknown member",
       leadMemberName: row.lead_id ? leadNames.get(row.lead_id) ?? null : null,
       senderName: senderNames.get(row.sender_user_id) ?? null,
-      mappingSyncStatus: toMappingSyncStatus(row.mapping_sync_status),
+      mappingSyncStatus: toEnrollmentPacketMappingSyncStatus(row.mapping_sync_status),
+      operationalReadinessStatus: resolveEnrollmentPacketOperationalReadiness({
+        status: row.status,
+        mappingSyncStatus: row.mapping_sync_status
+      }),
+      operationallyReady: isEnrollmentPacketOperationallyReady({
+        status: row.status,
+        mappingSyncStatus: row.mapping_sync_status
+      }),
       mappingSyncError: clean(row.mapping_sync_error)
     };
   });

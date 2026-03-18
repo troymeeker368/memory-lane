@@ -8,6 +8,13 @@ import { getDocumentationWorkflows } from "@/lib/services/documentation-workflow
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { formatDate } from "@/lib/utils";
 
+function draftPofReadinessLabel(status: "not_signed" | "signed_pending_draft_pof" | "draft_pof_failed" | "draft_pof_ready") {
+  if (status === "draft_pof_ready") return "Ready";
+  if (status === "draft_pof_failed") return "Failed";
+  if (status === "signed_pending_draft_pof") return "Pending";
+  return "Not signed";
+}
+
 export default async function HealthAssessmentPage({
   searchParams
 }: {
@@ -50,7 +57,7 @@ export default async function HealthAssessmentPage({
               <th>Transport Appropriate</th>
               <th>Completed By</th>
               <th>E-Sign Status</th>
-              <th>Draft POF</th>
+              <th>Draft POF Readiness</th>
               <th>Signed By</th>
               <th>Complete</th>
               <th>Open</th>
@@ -67,7 +74,7 @@ export default async function HealthAssessmentPage({
                 <td>{row.transport_appropriate == null ? "-" : row.transport_appropriate ? "Yes" : "No"}</td>
                 <td>{row.completed_by ?? row.reviewer_name ?? row.created_by_name ?? "-"}</td>
                 <td>{row.signature_status ?? "unsigned"}</td>
-                <td>{row.signature_status === "signed" ? row.draft_pof_status ?? "pending" : "-"}</td>
+                <td>{draftPofReadinessLabel(row.draft_pof_readiness_status)}</td>
                 <td>{row.signed_by ?? "-"}</td>
                 <td>{row.complete ? "Yes" : "No"}</td>
                 <td>

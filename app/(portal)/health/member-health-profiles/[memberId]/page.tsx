@@ -81,6 +81,14 @@ const TAB_LABELS: Record<MhpTab, string> = {
 const DIET_TYPE_OPTIONS = ["Regular", "Diabetic", "Low Sodium", "Pureed", "Renal", "Heart Healthy", "Other"] as const;
 const DIET_TEXTURE_OPTIONS = ["Regular", "Mechanical Soft", "Chopped", "Ground", "Pureed", "Nectar Thick", "Honey Thick"] as const;
 const NOTE_TYPE_OPTIONS = ["Clinical", "Behavioral", "Caregiver Communication", "Incident Follow-up", "Care Plan", "General"] as const;
+
+function clinicalSyncLabel(status: "not_signed" | "pending" | "queued" | "failed" | "synced") {
+  if (status === "synced") return "Synced";
+  if (status === "failed") return "Failed";
+  if (status === "queued") return "Queued";
+  if (status === "pending") return "Pending";
+  return "-";
+}
 const EQUIPMENT_STATUS_OPTIONS = ["Active", "Inactive"] as const;
 const MEDICATION_ROUTE_OPTIONS = ["PO", "SQ", "IM", "TD", "INH", "Topical", "Ophthalmic", "Otic"] as const;
 
@@ -396,7 +404,7 @@ export default async function MemberHealthProfileDetailPage({
                   relatedPhysicianOrders.slice(0, 25).map((row) => (
                     <tr key={row.id}>
                       <td>{row.status}</td>
-                      <td>{row.clinicalSyncStatus === "synced" ? "Synced" : row.clinicalSyncStatus === "pending" ? "Pending" : "-"}</td>
+                      <td>{clinicalSyncLabel(row.clinicalSyncStatus)}</td>
                       <td>{row.providerName ?? "-"}</td>
                       <td>{row.completedDate ? formatDate(row.completedDate) : "-"}</td>
                       <td>{row.signedDate ? formatDate(row.signedDate) : "-"}</td>

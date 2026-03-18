@@ -1,5 +1,6 @@
 import { normalizeRoleKey } from "@/lib/permissions";
 import { listIntakeAssessmentSignatureStatesByAssessmentIds } from "@/lib/services/intake-assessment-esign";
+import { resolveIntakeDraftPofReadiness, toIntakeDraftPofStatus } from "@/lib/services/intake-draft-pof-readiness";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";
 
@@ -181,22 +182,30 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
 
       return rows.map((row: any) => {
         const signature = signatureByAssessmentId[String(row.id)] ?? null;
+        const signatureStatus = signature?.status ?? "unsigned";
+        const draftPofStatus = toIntakeDraftPofStatus(row.draft_pof_status);
+        const draftPofReadinessStatus = resolveIntakeDraftPofReadiness({
+          signatureStatus,
+          draftPofStatus
+        });
         return {
-        id: row.id,
-        assessment_date: row.assessment_date,
-        total_score: row.total_score,
-        recommended_track: row.recommended_track,
-        admission_review_required: Boolean(row.admission_review_required),
-        transport_appropriate: row.transport_appropriate,
-        complete: Boolean(row.complete),
-        completed_by: row.completed_by,
-        signature_status: signature?.status ?? "unsigned",
-        signed_by: signature?.signedByName ?? null,
-        signed_at: signature?.signedAt ?? null,
-        draft_pof_status: row.draft_pof_status ?? "pending",
-        member_name: relationDisplayName(row.member, "Unknown Member"),
-        created_at: row.created_at
-      };
+          id: row.id,
+          assessment_date: row.assessment_date,
+          total_score: row.total_score,
+          recommended_track: row.recommended_track,
+          admission_review_required: Boolean(row.admission_review_required),
+          transport_appropriate: row.transport_appropriate,
+          complete: Boolean(row.complete),
+          completed_by: row.completed_by,
+          signature_status: signatureStatus,
+          signed_by: signature?.signedByName ?? null,
+          signed_at: signature?.signedAt ?? null,
+          draft_pof_status: draftPofStatus,
+          draft_pof_readiness_status: draftPofReadinessStatus,
+          draft_pof_ready: draftPofReadinessStatus === "draft_pof_ready",
+          member_name: relationDisplayName(row.member, "Unknown Member"),
+          created_at: row.created_at
+        };
       });
     })()
   };

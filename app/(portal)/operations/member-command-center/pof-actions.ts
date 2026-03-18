@@ -47,11 +47,13 @@ async function resolveRequestAppBaseUrl() {
 
 function revalidatePofRoutes(memberId: string, physicianOrderId?: string | null) {
   revalidatePath("/health");
+  revalidatePath("/health/mar");
   revalidatePath("/health/physician-orders");
   if (physicianOrderId) {
     revalidatePath(`/health/physician-orders/${physicianOrderId}`);
   }
   revalidatePath(`/operations/member-command-center/${memberId}`);
+  revalidatePath(`/health/member-health-profiles/${memberId}`);
   revalidatePath(`/members/${memberId}`);
 }
 

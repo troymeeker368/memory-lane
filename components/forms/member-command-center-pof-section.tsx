@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import {
   getSignedPofDownloadUrlAction,
@@ -17,7 +18,7 @@ import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 type PhysicianOrderListRow = {
   id: string;
   status: string;
-  clinicalSyncStatus: "not_signed" | "pending" | "synced";
+  clinicalSyncStatus: "not_signed" | "pending" | "queued" | "failed" | "synced";
   providerName: string | null;
   completedDate: string | null;
   signedDate: string | null;
@@ -106,6 +107,7 @@ export function MemberCommandCenterPofSection({
   canViewPhysicianOrdersModule: boolean;
   canCreatePhysicianOrders: boolean;
 }) {
+  const router = useRouter();
   const [modalState, setModalState] = useState<ModalState>(null);
   const [localRequests, setLocalRequests] = useState(requests);
   const [fieldErrors, setFieldErrors] = useState<ModalFieldErrors>({});
@@ -220,6 +222,7 @@ export function MemberCommandCenterPofSection({
         fallbackData: { request: null as PofRequestSummary | null },
         onSuccess: async (result) => {
           setLocalRequests((current) => mergeRequestList(current, result.data.request));
+          router.refresh();
           setStatus(result.message);
           setToast({ kind: "success", message: result.message });
           setModalState(null);
@@ -249,6 +252,7 @@ export function MemberCommandCenterPofSection({
         fallbackData: { request: null as PofRequestSummary | null },
         onSuccess: async (result) => {
           setLocalRequests((current) => mergeRequestList(current, result.data.request));
+          router.refresh();
           setStatus(result.message);
           setToast({ kind: "success", message: result.message });
         },
@@ -356,7 +360,17 @@ export function MemberCommandCenterPofSection({
                       )}
                     </td>
                     <td>{row.status}</td>
-                    <td>{row.clinicalSyncStatus === "synced" ? "Synced" : row.clinicalSyncStatus === "pending" ? "Pending" : "-"}</td>
+                    <td>
+                      {row.clinicalSyncStatus === "synced"
+                        ? "Synced"
+                        : row.clinicalSyncStatus === "failed"
+                          ? "Failed"
+                          : row.clinicalSyncStatus === "queued"
+                            ? "Queued"
+                            : row.clinicalSyncStatus === "pending"
+                              ? "Pending"
+                              : "-"}
+                    </td>
                     <td>
                       <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${statusBadgeClass(eSignStatus)}`}>
                         {eSignStatus}

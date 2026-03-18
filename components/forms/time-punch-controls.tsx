@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import { timePunchAction } from "@/app/time-actions";
 import { Button } from "@/components/ui/button";
 import { CLOCK_IN_BUTTON_CLASS, CLOCK_OUT_BUTTON_CLASS } from "@/components/ui/punch-type-badge";
 
 export function TimePunchControls() {
+  const router = useRouter();
   const [note, setNote] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -24,12 +26,14 @@ export function TimePunchControls() {
           lng = position.coords.longitude;
           startTransition(async () => {
             const res = await timePunchAction({ punchType, lat, lng, note });
+            if (!res.error) router.refresh();
             setMessage(res.error ? `Error: ${res.error}` : `Clock ${punchType} recorded.`);
           });
         },
         () => {
           startTransition(async () => {
             const res = await timePunchAction({ punchType, note });
+            if (!res.error) router.refresh();
             setMessage(res.error ? `Error: ${res.error}` : `Clock ${punchType} recorded (no location).`);
           });
         }
@@ -39,6 +43,7 @@ export function TimePunchControls() {
 
     startTransition(async () => {
       const res = await timePunchAction({ punchType, note });
+      if (!res.error) router.refresh();
       setMessage(res.error ? `Error: ${res.error}` : `Clock ${punchType} recorded.`);
     });
   }

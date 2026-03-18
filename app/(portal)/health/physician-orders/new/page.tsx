@@ -28,7 +28,6 @@ import {
   MHP_TRANSFER_SUPPORT_OPTIONS,
   MHP_VISION_OPTIONS
 } from "@/lib/services/mhp-functional-options";
-import { createClient } from "@/lib/supabase/server";
 import { getConfiguredClinicalSenderEmail, listPofTimelineForPhysicianOrder } from "@/lib/services/pof-read";
 import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
 import {
@@ -36,7 +35,8 @@ import {
   POF_NUTRITION_OPTIONS,
   POF_STANDING_ORDER_OPTIONS,
   buildNewPhysicianOrderDraft,
-  getPhysicianOrderById
+  getPhysicianOrderById,
+  listPhysicianOrderMemberLookup
 } from "@/lib/services/physician-orders-supabase";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
@@ -125,14 +125,7 @@ export default async function NewPhysicianOrderPage({
   }
   const effectiveSaveError = identityError ?? saveError;
 
-  const supabase = await createClient();
-  const { data: memberRows, error: memberRowsError } = await supabase
-    .from("members")
-    .select("id, display_name, status")
-    .eq("status", "active")
-    .order("display_name", { ascending: true });
-  if (memberRowsError) throw new Error(`Unable to load active members for physician order creation: ${memberRowsError.message}`);
-  const members = memberRows ?? [];
+  const members = await listPhysicianOrderMemberLookup();
 
   if (!canonicalMemberId && !pofId) {
     return (

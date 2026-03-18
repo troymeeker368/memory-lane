@@ -184,6 +184,7 @@ export function SendEnrollmentPacketAction({
           return;
         }
 
+        router.refresh();
         setSentResult(true);
         setStatus(null);
       } catch (error) {

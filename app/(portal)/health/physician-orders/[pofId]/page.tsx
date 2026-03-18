@@ -39,6 +39,14 @@ function resolveNurseDefaultName(fullName: string | null | undefined, email: str
   return normalizedFullName || "Nurse";
 }
 
+function clinicalSyncLabel(status: "not_signed" | "pending" | "queued" | "failed" | "synced") {
+  if (status === "synced") return "Synced";
+  if (status === "failed") return "Failed";
+  if (status === "queued") return "Queued";
+  if (status === "pending") return "Pending Clinical Sync";
+  return "-";
+}
+
 export default async function PhysicianOrderDetailPage({
   params,
   searchParams
@@ -88,7 +96,7 @@ export default async function PhysicianOrderDetailPage({
         <div className="mt-2 grid gap-2 text-xs text-muted sm:grid-cols-2 lg:grid-cols-4">
           <p>Status: <span className="font-semibold text-primary-text">{form.status}</span></p>
           <p>Workflow Status: <span className="font-semibold text-primary-text">{latestRequest?.status ?? "draft"}</span></p>
-          <p>Clinical Sync: <span className="font-semibold text-primary-text">{form.clinicalSyncStatus === "synced" ? "Synced" : form.clinicalSyncStatus === "pending" ? "Pending Clinical Sync" : "-"}</span></p>
+          <p>Clinical Sync: <span className="font-semibold text-primary-text">{clinicalSyncLabel(form.clinicalSyncStatus)}</span></p>
           <p>Sent: <span className="font-semibold text-primary-text">{form.completedDate ? formatDate(form.completedDate) : "-"}</span></p>
           <p>Next Renewal Due: <span className="font-semibold text-primary-text">{form.nextRenewalDueDate ? formatDate(form.nextRenewalDueDate) : "-"}</span></p>
           <p>Signed: <span className="font-semibold text-primary-text">{form.signedDate ? formatDate(form.signedDate) : "-"}</span></p>
