@@ -5,7 +5,7 @@ import { buildCompletedEnrollmentPacketDocxData } from "@/lib/services/enrollmen
 import { type EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 import {
   deleteMemberDocumentObject,
-  deleteMemberFileRecord,
+  deleteMemberFileRecordAndStorage,
   parseMemberDocumentStorageUri,
   safeFileName,
   uploadMemberDocumentObject,
@@ -201,7 +201,18 @@ export async function insertUploadAndFile(input: {
   if (error) {
     if (memberFile.created) {
       try {
-        await Promise.all([deleteMemberFileRecord(memberFile.id), deleteMemberDocumentObject(objectPath)]);
+        await deleteMemberFileRecordAndStorage({
+          memberFileId: memberFile.id,
+          storageObjectPath: objectPath,
+          actorUserId: input.uploadedByUserId,
+          entityType: "enrollment_packet_request",
+          entityId: input.packetId,
+          alertKey: "enrollment_packet_upload_storage_cleanup_failed",
+          metadata: {
+            member_id: input.memberId,
+            upload_category: input.uploadCategory
+          }
+        });
       } catch (cleanupError) {
         console.error("[enrollment-packets] unable to cleanup upload artifacts after enrollment_packet_uploads failure", cleanupError);
       }
@@ -253,12 +264,14 @@ export async function cleanupEnrollmentPacketUploadArtifacts(input: {
   memberId: string;
   actorUserId: string | null;
   reason: string;
+  batchId?: string | null;
   uploads: Array<{
     objectPath: string;
     memberFileId: string | null;
     memberFileCreated: boolean;
   }>;
 }) {
+  const batchId = String(input.batchId ?? "").trim() || null;
   const reusableArtifacts = input.uploads.filter((upload) => !upload.memberFileCreated && upload.memberFileId);
   if (reusableArtifacts.length > 0) {
     await recordImmediateSystemAlert({
@@ -275,13 +288,50 @@ export async function cleanupEnrollmentPacketUploadArtifacts(input: {
     });
   }
 
+  if (batchId) {
+    const admin = createSupabaseAdminClient();
+    const { error } = await admin
+      .from("enrollment_packet_uploads")
+      .delete()
+      .eq("packet_id", input.packetId)
+      .eq("finalization_status", "staged")
+      .eq("finalization_batch_id", batchId);
+    if (error) {
+      await recordImmediateSystemAlert({
+        entityType: "enrollment_packet_request",
+        entityId: input.packetId,
+        actorUserId: input.actorUserId,
+        severity: "high",
+        alertKey: "enrollment_packet_upload_row_cleanup_failed",
+        metadata: {
+          member_id: input.memberId,
+          batch_id: batchId,
+          reason: input.reason,
+          error: error.message
+        }
+      });
+    }
+  }
+
   const cleanupTargets = input.uploads.filter((upload) => upload.memberFileCreated);
   for (const upload of cleanupTargets) {
     try {
       if (upload.memberFileId) {
-        await deleteMemberFileRecord(upload.memberFileId);
+        await deleteMemberFileRecordAndStorage({
+          memberFileId: upload.memberFileId,
+          storageObjectPath: upload.objectPath,
+          actorUserId: input.actorUserId,
+          entityType: "enrollment_packet_request",
+          entityId: input.packetId,
+          alertKey: "enrollment_packet_finalize_storage_cleanup_failed",
+          metadata: {
+            member_id: input.memberId,
+            reason: input.reason
+          }
+        });
+      } else {
+        await deleteMemberDocumentObject(upload.objectPath);
       }
-      await deleteMemberDocumentObject(upload.objectPath);
     } catch (cleanupError) {
       await recordImmediateSystemAlert({
         entityType: "enrollment_packet_request",

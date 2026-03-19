@@ -136,7 +136,7 @@ export async function applyLeadStageTransitionWithMemberUpsertSupabase(input: {
       to_stage: result.toStage,
       to_status: result.toStatus
     }
-  });
+  }, { required: false });
 
   return result;
 }
@@ -194,7 +194,7 @@ export async function createLeadWithMemberConversionSupabase(input: {
       to_stage: result.toStage,
       to_status: result.toStatus
     }
-  });
+  }, { required: false });
 
   return result;
 }

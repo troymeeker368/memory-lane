@@ -79,6 +79,7 @@ const RPC_FINALIZE_POF_SIGNATURE = "rpc_finalize_pof_signature";
 const PREPARE_POF_REQUEST_DELIVERY_RPC = "rpc_prepare_pof_request_delivery";
 const TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC = "rpc_transition_pof_request_delivery_state";
 const POF_DELIVERY_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
+const POF_DELIVERY_TRANSITION_COMPARE_AND_SET_MIGRATION = "0083_pof_public_open_compare_and_set.sql";
 
 async function createResendClient() {
   const { Resend } = await import("resend");
@@ -292,7 +293,27 @@ async function createDocumentEvent(input: {
     actor_user_agent: input.actorUserAgent ?? null,
     metadata: input.metadata ?? {}
   });
-  if (error) throw new Error(error.message);
+  if (!error) return true;
+
+  console.error("[pof-esign] document event insert failed after committed workflow write", {
+    documentId: input.documentId,
+    eventType: input.eventType,
+    message: error.message
+  });
+  await recordImmediateSystemAlert({
+    entityType: "pof_request",
+    entityId: input.documentId,
+    actorUserId: input.actorUserId ?? null,
+    severity: "medium",
+    alertKey: "pof_document_event_insert_failed",
+    metadata: {
+      member_id: input.memberId,
+      physician_order_id: input.physicianOrderId,
+      event_type: input.eventType,
+      error: error.message
+    }
+  });
+  return false;
 }
 
 async function markRequestExpired(input: { request: PofRequestRow; actorName: string }) {
@@ -346,10 +367,18 @@ async function markPofRequestDeliveryState(input: {
   deliveryError?: string | null;
   providerName?: string | null;
   updatePhysicianOrderSent?: boolean;
+  expectedCurrentStatus?: PofRequestStatus | null;
 }) {
   const admin = createSupabaseAdminClient();
   try {
-    await invokeSupabaseRpcOrThrow<unknown>(admin, TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC, {
+    type TransitionResultRow = {
+      request_id: string;
+      status: string;
+      delivery_status: string;
+      physician_order_id: string | null;
+      did_transition: boolean;
+    };
+    const data = await invokeSupabaseRpcOrThrow<unknown>(admin, TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC, {
       p_request_id: input.requestId,
       p_actor_user_id: input.actor.id,
       p_actor_name: input.actor.fullName,
@@ -361,13 +390,22 @@ async function markPofRequestDeliveryState(input: {
       p_signed_at: input.signedAt ?? null,
       p_delivery_error: clean(input.deliveryError),
       p_provider_name: clean(input.providerName),
-      p_update_physician_order_sent: Boolean(input.updatePhysicianOrderSent)
+      p_update_physician_order_sent: Boolean(input.updatePhysicianOrderSent),
+      p_expected_current_status: input.expectedCurrentStatus ?? null
     });
+    const row = (Array.isArray(data) ? data[0] : null) as TransitionResultRow | null;
+    return {
+      requestId: row?.request_id ?? input.requestId,
+      status: toStatus(row?.status ?? input.status ?? null),
+      deliveryStatus: toSendWorkflowDeliveryStatus(row?.delivery_status ?? input.deliveryStatus, input.deliveryStatus),
+      physicianOrderId: row?.physician_order_id ?? null,
+      didTransition: Boolean(row?.did_transition)
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to update POF request delivery state.";
     if (message.includes(TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC)) {
       throw new Error(
-        `POF delivery state RPC is not available. Apply Supabase migration ${POF_DELIVERY_RPC_MIGRATION} and refresh PostgREST schema cache.`
+        `POF delivery state RPC is not available. Apply Supabase migration ${POF_DELIVERY_TRANSITION_COMPARE_AND_SET_MIGRATION} and refresh PostgREST schema cache.`
       );
     }
     if (isPostgresUniqueViolation(error as PostgrestErrorLike | null | undefined)) {
@@ -994,57 +1032,72 @@ export async function getPublicPofSigningContext(
   if (!normalizedToken) return { state: "invalid" };
   const matched = await loadRequestByToken(normalizedToken);
   if (!matched) return { state: "invalid" };
-  const request = matched.request;
+  let currentRequest = matched.request;
 
-  const summary = toSummary(request);
-  if (isExpired(request.expires_at) && toStatus(request.status) !== "expired" && toStatus(request.status) !== "signed") {
-    await markRequestExpired({ request, actorName: request.nurse_name });
-    const expired = await loadRequestById(request.id);
+  const summary = toSummary(currentRequest);
+  if (
+    isExpired(currentRequest.expires_at) &&
+    toStatus(currentRequest.status) !== "expired" &&
+    toStatus(currentRequest.status) !== "signed"
+  ) {
+    await markRequestExpired({ request: currentRequest, actorName: currentRequest.nurse_name });
+    const expired = await loadRequestById(currentRequest.id);
     if (!expired) return { state: "expired", request: summary };
     return { state: "expired", request: toSummary(expired) };
   }
 
-  const status = toStatus(request.status);
+  let status = toStatus(currentRequest.status);
   if (status === "expired") return { state: "expired", request: summary };
   if (status === "declined") return { state: "declined", request: summary };
   if (status === "signed") return { state: "signed", request: summary };
 
-  if (!request.opened_at) {
+  if (!currentRequest.opened_at) {
     const now = toEasternISO();
-    await markPofRequestDeliveryState({
-      requestId: request.id,
+    const transition = await markPofRequestDeliveryState({
+      requestId: currentRequest.id,
       actor: {
-        id: request.sent_by_user_id,
-        fullName: request.nurse_name
+        id: currentRequest.sent_by_user_id,
+        fullName: currentRequest.nurse_name
       },
       status: "opened",
-      deliveryStatus: toSendWorkflowDeliveryStatus(request.delivery_status, "sent"),
-      sentAt: request.sent_at,
+      deliveryStatus: toSendWorkflowDeliveryStatus(currentRequest.delivery_status, "sent"),
+      sentAt: currentRequest.sent_at,
       openedAt: now,
-      signedAt: request.signed_at,
+      signedAt: currentRequest.signed_at,
       deliveryError: null,
-      attemptAt: now
+      attemptAt: now,
+      expectedCurrentStatus: "sent"
     });
-    await createDocumentEvent({
-      documentId: request.id,
-      memberId: request.member_id,
-      physicianOrderId: request.physician_order_id,
-      eventType: "opened",
-      actorType: "provider",
-      actorEmail: request.provider_email,
-      actorName: request.provider_name,
-      actorIp: metadata?.ip ?? null,
-      actorUserAgent: metadata?.userAgent ?? null
-    });
+    if (transition.didTransition) {
+      await createDocumentEvent({
+        documentId: currentRequest.id,
+        memberId: currentRequest.member_id,
+        physicianOrderId: currentRequest.physician_order_id,
+        eventType: "opened",
+        actorType: "provider",
+        actorEmail: currentRequest.provider_email,
+        actorName: currentRequest.provider_name,
+        actorIp: metadata?.ip ?? null,
+        actorUserAgent: metadata?.userAgent ?? null
+      });
+    }
+
+    const refreshedAfterOpenAttempt = await loadRequestById(currentRequest.id);
+    if (!refreshedAfterOpenAttempt) return { state: "invalid" };
+    currentRequest = refreshedAfterOpenAttempt;
+    status = toStatus(currentRequest.status);
+    if (status === "expired") return { state: "expired", request: toSummary(currentRequest) };
+    if (status === "declined") return { state: "declined", request: toSummary(currentRequest) };
+    if (status === "signed") return { state: "signed", request: toSummary(currentRequest) };
   }
 
   let pofPayload: PhysicianOrderForm;
   try {
-    pofPayload = getRequestPayloadSnapshotOrThrow(request);
+    pofPayload = getRequestPayloadSnapshotOrThrow(currentRequest);
   } catch {
     return { state: "invalid" };
   }
-  const refreshed = await loadRequestById(request.id);
+  const refreshed = await loadRequestById(currentRequest.id);
   if (!refreshed) return { state: "invalid" };
   return { state: "ready", request: toSummary(refreshed), pofPayload };
 }

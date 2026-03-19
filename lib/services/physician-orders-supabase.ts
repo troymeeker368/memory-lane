@@ -1011,7 +1011,7 @@ export async function processSignedPhysicianOrderPostSignSync(input: {
         attempt_count: attemptCount,
         pof_request_id: clean(input.pofRequestId)
       }
-    });
+    }, { required: false });
     return {
       postSignStatus: "synced",
       queueId: input.queueId,
@@ -1051,7 +1051,7 @@ export async function processSignedPhysicianOrderPostSignSync(input: {
       last_error: postSign.errorMessage,
       pof_request_id: clean(input.pofRequestId)
     }
-  });
+  }, { required: false });
   if (attemptCount >= 3) {
     await recordImmediateSystemAlert({
       entityType: "physician_order",

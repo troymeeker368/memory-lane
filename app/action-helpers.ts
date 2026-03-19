@@ -1,6 +1,7 @@
 import { getCurrentProfile, getCurrentProfileForRolesOrError } from "@/lib/auth";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
+import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import type { AuditAction } from "@/types/app";
 import type { CanonicalPersonSourceType } from "@/types/identity";
 
@@ -21,14 +22,36 @@ export async function insertAudit(
   details: Record<string, unknown>
 ) {
   const profile = await getCurrentProfile();
-  await insertAuditLogEntry({
-    actorUserId: profile.id,
-    actorRole: profile.role,
-    action,
-    entityType,
-    entityId,
-    details
-  });
+  try {
+    await insertAuditLogEntry({
+      actorUserId: profile.id,
+      actorRole: profile.role,
+      action,
+      entityType,
+      entityId,
+      details
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown audit log error.";
+    console.error("[action-helpers] audit log insert failed after committed write", {
+      action,
+      entityType,
+      entityId,
+      message
+    });
+    await recordImmediateSystemAlert({
+      entityType,
+      entityId,
+      actorUserId: profile.id,
+      severity: "medium",
+      alertKey: "audit_log_insert_failed",
+      metadata: {
+        audit_action: action,
+        actor_role: profile.role,
+        error: message
+      }
+    });
+  }
 }
 
 export async function requireManagerAdminEditor() {

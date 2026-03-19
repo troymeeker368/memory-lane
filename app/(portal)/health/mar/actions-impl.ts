@@ -172,7 +172,8 @@ export async function recordPrnMarAdministrationAction(raw: z.infer<typeof prnAd
       administeredAt: result.administeredAt,
       administeredBy: profile.full_name,
       prnReason: payload.data.prnReason,
-      notes: payload.data.notes ?? null
+      notes: payload.data.notes ?? null,
+      duplicateSafe: result.duplicateSafe
     };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save PRN MAR administration." };

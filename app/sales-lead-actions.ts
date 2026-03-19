@@ -34,6 +34,7 @@ import {
   resolveSalesLeadId,
   revalidateSalesLeadViews
 } from "@/app/sales-action-helpers";
+import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 
 const salesLeadSchema = z
   .object({
@@ -353,7 +354,23 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
       }
     });
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Unable to write lead audit log." };
+    const message = error instanceof Error ? error.message : "Unable to write lead audit log.";
+    console.error("[sales-lead-actions] lead audit log insert failed after lead write", {
+      leadId,
+      message
+    });
+    await recordImmediateSystemAlert({
+      entityType: "lead",
+      entityId: leadId,
+      actorUserId: profile.id,
+      severity: "medium",
+      alertKey: "sales_lead_audit_log_failed",
+      metadata: {
+        operation: "saveSalesLeadAction",
+        audit_action: "upsert_lead",
+        error: message
+      }
+    });
   }
 
   revalidateSalesLeadViews(leadId);
@@ -434,7 +451,25 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
       }
     });
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Unable to write lead conversion audit log." };
+    const message = error instanceof Error ? error.message : "Unable to write lead conversion audit log.";
+    console.error("[sales-lead-actions] lead conversion audit log insert failed after conversion", {
+      leadId: lead.id,
+      memberId,
+      message
+    });
+    await recordImmediateSystemAlert({
+      entityType: "lead",
+      entityId: lead.id,
+      actorUserId: profile.id,
+      severity: "medium",
+      alertKey: "sales_lead_audit_log_failed",
+      metadata: {
+        operation: "enrollMemberFromLeadAction",
+        audit_action: "manager_review",
+        member_id: memberId,
+        error: message
+      }
+    });
   }
 
   revalidateSalesLeadViews(lead.id);

@@ -320,6 +320,56 @@ export async function deleteMemberFileRecord(memberFileId: string) {
   }
 }
 
+export async function deleteMemberFileRecordAndStorage(input: {
+  memberFileId: string;
+  storageObjectPath?: string | null;
+  actorUserId?: string | null;
+  entityType: string;
+  entityId?: string | null;
+  alertKey: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const memberFileId = String(input.memberFileId ?? "").trim();
+  if (!memberFileId) return { recordDeleted: false, storageDeleted: false };
+
+  const storageObjectPath = String(input.storageObjectPath ?? "").trim() || null;
+  await deleteMemberFileRecord(memberFileId);
+
+  if (!storageObjectPath) {
+    return {
+      recordDeleted: true,
+      storageDeleted: false
+    };
+  }
+
+  try {
+    await deleteMemberDocumentObject(storageObjectPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to delete member file storage object.";
+    await recordImmediateSystemAlert({
+      entityType: input.entityType,
+      entityId: input.entityId ?? memberFileId,
+      actorUserId: input.actorUserId ?? null,
+      severity: "high",
+      alertKey: input.alertKey,
+      metadata: {
+        member_file_id: memberFileId,
+        storage_object_path: storageObjectPath,
+        error: message,
+        ...(input.metadata ?? {})
+      }
+    });
+    throw new Error(
+      "Member file row was deleted, but storage cleanup failed. Review operational alerts before considering the delete complete."
+    );
+  }
+
+  return {
+    recordDeleted: true,
+    storageDeleted: true
+  };
+}
+
 export async function upsertMemberFileByDocumentSource(input: {
   memberId: string;
   documentSource: string;
@@ -500,29 +550,17 @@ export async function deleteCommandCenterMemberFile(input: {
   }
 
   const storageObjectPath = String(existing.storage_object_path ?? "").trim() || null;
-  if (storageObjectPath) {
-    await deleteMemberDocumentObject(storageObjectPath);
-  }
-
-  try {
-    await deleteMemberFileRecord(String(existing.id));
-  } catch (error) {
-    if (storageObjectPath) {
-      await recordImmediateSystemAlert({
-        entityType: "member_file",
-        entityId: String(existing.id),
-        actorUserId: input.actor.id,
-        severity: "high",
-        alertKey: "member_file_delete_split_brain",
-        metadata: {
-          member_id: String(existing.member_id ?? ""),
-          storage_object_path: storageObjectPath,
-          error: error instanceof Error ? error.message : "Unable to delete member file row after storage cleanup."
-        }
-      });
+  await deleteMemberFileRecordAndStorage({
+    memberFileId: String(existing.id),
+    storageObjectPath,
+    actorUserId: input.actor.id,
+    entityType: "member_file",
+    entityId: String(existing.id),
+    alertKey: "member_file_storage_cleanup_failed",
+    metadata: {
+      member_id: String(existing.member_id ?? "")
     }
-    throw error;
-  }
+  });
 
   return true;
 }

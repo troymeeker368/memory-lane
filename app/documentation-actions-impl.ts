@@ -30,6 +30,7 @@ import {
   updateDailyActivityParticipationSupabase,
   updateShowerLogSupabase
 } from "@/lib/services/documentation-write-supabase";
+import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 import type { AuditAction } from "@/types/app";
 
@@ -45,14 +46,36 @@ type ActionSuccessResult<T extends object = object> = {
 
 async function insertAudit(action: AuditAction, entityType: string, entityId: string | null, details: Record<string, unknown>) {
   const profile = await getCurrentProfile();
-  await insertAuditLogEntry({
-    actorUserId: profile.id,
-    actorRole: profile.role,
-    action,
-    entityType,
-    entityId,
-    details
-  });
+  try {
+    await insertAuditLogEntry({
+      actorUserId: profile.id,
+      actorRole: profile.role,
+      action,
+      entityType,
+      entityId,
+      details
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown audit log error.";
+    console.error("[documentation-actions] audit log insert failed after committed write", {
+      action,
+      entityType,
+      entityId,
+      message
+    });
+    await recordImmediateSystemAlert({
+      entityType,
+      entityId,
+      actorUserId: profile.id,
+      severity: "medium",
+      alertKey: "audit_log_insert_failed",
+      metadata: {
+        audit_action: action,
+        actor_role: profile.role,
+        error: message
+      }
+    });
+  }
 }
 
 async function requireManagerAdminEditor() {

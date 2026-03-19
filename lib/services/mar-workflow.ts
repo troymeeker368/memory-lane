@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import {
   MAR_NOT_GIVEN_REASON_OPTIONS,
@@ -59,6 +61,22 @@ type MarReconcileRpcRow = {
   reactivated_schedules: number;
   deactivated_schedules: number;
 };
+
+function buildPrnAdministrationIdempotencyKey(input: {
+  pofMedicationId: string;
+  administeredAt: string;
+  prnReason: string;
+}) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        pofMedicationId: input.pofMedicationId,
+        administeredAt: input.administeredAt,
+        prnReason: input.prnReason.trim().toLowerCase()
+      })
+    )
+    .digest("hex");
+}
 
 async function resolveMarMemberId(memberId: string, actionLabel: string, serviceRole?: boolean) {
   const canonical = await resolveCanonicalMemberRef(
@@ -538,6 +556,11 @@ export async function documentPrnMarAdministration(input: {
   const administeredAt = input.administeredAtIso ? input.administeredAtIso : toEasternISO();
   const reason = clean(input.prnReason);
   if (!reason) throw new Error("PRN reason is required.");
+  const idempotencyKey = buildPrnAdministrationIdempotencyKey({
+    pofMedicationId: input.pofMedicationId,
+    administeredAt,
+    prnReason: reason
+  });
 
   const supabase = await createClient({ serviceRole: input.serviceRole });
   const { data: medicationData, error: medicationError } = await supabase
@@ -567,6 +590,23 @@ export async function documentPrnMarAdministration(input: {
     throw new Error("Selected medication is not linked to the canonical MHP medication list.");
   }
 
+  const { data: existingData, error: existingError } = await supabase
+    .from("mar_administrations")
+    .select("id")
+    .eq("source", "prn")
+    .eq("idempotency_key", idempotencyKey)
+    .maybeSingle();
+  if (existingError) throwMarSupabaseError(existingError, "mar_administrations");
+  if (existingData?.id) {
+    return {
+      administrationId: existingData.id as string,
+      memberId: medication.member_id,
+      administeredAt,
+      pofMedicationId: medication.id,
+      duplicateSafe: true
+    };
+  }
+
   const { data: inserted, error: insertError } = await supabase
     .from("mar_administrations")
     .insert({
@@ -588,11 +628,37 @@ export async function documentPrnMarAdministration(input: {
       administered_by: input.actor.fullName,
       administered_by_user_id: input.actor.userId,
       administered_at: administeredAt,
-      source: "prn"
+      source: "prn",
+      idempotency_key: idempotencyKey
     })
     .select("id")
     .single();
-  if (insertError) throwMarSupabaseError(insertError, "mar_administrations");
+  if (insertError) {
+    const message = String(insertError.message ?? "").toLowerCase();
+    if (
+      insertError.code === "23505" ||
+      message.includes("duplicate key") ||
+      message.includes("idx_mar_administrations_prn_idempotency")
+    ) {
+      const { data: duplicateData, error: duplicateError } = await supabase
+        .from("mar_administrations")
+        .select("id")
+        .eq("source", "prn")
+        .eq("idempotency_key", idempotencyKey)
+        .maybeSingle();
+      if (duplicateError) throwMarSupabaseError(duplicateError, "mar_administrations");
+      if (duplicateData?.id) {
+        return {
+          administrationId: duplicateData.id as string,
+          memberId: medication.member_id,
+          administeredAt,
+          pofMedicationId: medication.id,
+          duplicateSafe: true
+        };
+      }
+    }
+    throwMarSupabaseError(insertError, "mar_administrations");
+  }
   if (!inserted?.id) throw new Error("Unable to save PRN MAR administration.");
   await recordWorkflowEvent({
     eventType: "mar_administration_documented",
@@ -636,7 +702,8 @@ export async function documentPrnMarAdministration(input: {
     administrationId: inserted.id as string,
     memberId: medication.member_id,
     administeredAt,
-    pofMedicationId: medication.id
+    pofMedicationId: medication.id,
+    duplicateSafe: false
   };
 }
 

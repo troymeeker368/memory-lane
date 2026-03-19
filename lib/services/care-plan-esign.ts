@@ -196,7 +196,26 @@ async function createCarePlanSignatureEvent(input: {
     actor_user_agent: input.actorUserAgent ?? null,
     metadata: input.metadata ?? {}
   });
-  if (error) throw new Error(error.message);
+  if (!error) return true;
+
+  console.error("[care-plan-esign] signature event insert failed after committed workflow write", {
+    carePlanId: input.carePlanId,
+    eventType: input.eventType,
+    message: error.message
+  });
+  await recordImmediateSystemAlert({
+    entityType: "care_plan",
+    entityId: input.carePlanId,
+    actorUserId: input.actorUserId ?? null,
+    severity: "medium",
+    alertKey: "care_plan_signature_event_insert_failed",
+    metadata: {
+      member_id: input.memberId,
+      event_type: input.eventType,
+      error: error.message
+    }
+  });
+  return false;
 }
 
 async function loadCarePlanRowByToken(token: string): Promise<CarePlanTokenMatch | null> {

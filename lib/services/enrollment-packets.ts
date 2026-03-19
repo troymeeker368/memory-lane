@@ -203,7 +203,26 @@ async function insertPacketEvent(input: {
     timestamp: toEasternISO(),
     metadata: input.metadata ?? {}
   });
-  if (error) throw new Error(error.message);
+  if (!error) return true;
+
+  console.error("[enrollment-packets] packet event insert failed after committed workflow write", {
+    packetId: input.packetId,
+    eventType: input.eventType,
+    message: error.message
+  });
+  await recordImmediateSystemAlert({
+    entityType: "enrollment_packet_request",
+    entityId: input.packetId,
+    actorUserId: input.actorUserId ?? null,
+    severity: "medium",
+    alertKey: "enrollment_packet_event_insert_failed",
+    metadata: {
+      actor_email: cleanEmail(input.actorEmail),
+      event_type: input.eventType,
+      error: error.message
+    }
+  });
+  return false;
 }
 
 async function addLeadActivity(input: {
@@ -227,7 +246,26 @@ async function addLeadActivity(input: {
     completed_by_user_id: input.completedByUserId,
     completed_by_name: input.completedByName
   });
-  if (error) throw new Error(error.message);
+  if (!error) return true;
+
+  console.error("[enrollment-packets] lead activity insert failed after committed workflow write", {
+    leadId: input.leadId,
+    activityType: input.activityType,
+    message: error.message
+  });
+  await recordImmediateSystemAlert({
+    entityType: "lead",
+    entityId: input.leadId,
+    actorUserId: input.completedByUserId,
+    severity: "medium",
+    alertKey: "lead_activity_insert_failed",
+    metadata: {
+      activity_type: input.activityType,
+      outcome: input.outcome,
+      error: error.message
+    }
+  });
+  return false;
 }
 
 type EnrollmentPacketMemberFileArtifact = {
@@ -1818,6 +1856,7 @@ export async function submitPublicEnrollmentPacket(input: {
         memberId: member.id,
         actorUserId: request.sender_user_id,
         reason: "Replay-safe enrollment packet finalization reused committed filed state.",
+        batchId: uploadBatchId,
         uploads: stagedUploads
       });
       const replayedRequest = await loadRequestById(request.id);
@@ -1838,6 +1877,7 @@ export async function submitPublicEnrollmentPacket(input: {
         memberId: member.id,
         actorUserId: request.sender_user_id,
         reason,
+        batchId: uploadBatchId,
         uploads: stagedUploads
       });
     }
