@@ -340,6 +340,8 @@ export function MemberCommandCenterPofSection({
             ) : (
               physicianOrders.map((row) => {
                 const request = latestRequestByPofId.get(row.id) ?? null;
+                const requestId = request?.id ?? null;
+                const signatureRequestUrl = request?.signatureRequestUrl ?? null;
                 const eSignStatus = request ? statusLabel(request.status) : "Not Sent";
                 const canSendNew = !request || request.status === "declined" || request.status === "signed";
                 const canResend =
@@ -412,7 +414,7 @@ export function MemberCommandCenterPofSection({
                           <button
                             type="button"
                             className="font-semibold text-red-700"
-                            onClick={() => onVoid(request!.id, row.id)}
+                            onClick={() => requestId && onVoid(requestId, row.id)}
                             disabled={isSaving}
                           >
                             Void
@@ -422,7 +424,7 @@ export function MemberCommandCenterPofSection({
                           <button
                             type="button"
                             className="font-semibold text-brand"
-                            onClick={() => onDownloadSigned(request!.id)}
+                            onClick={() => requestId && onDownloadSigned(requestId)}
                             disabled={isSaving}
                           >
                             Download Signed PDF
@@ -432,7 +434,7 @@ export function MemberCommandCenterPofSection({
                           <button
                             type="button"
                             className="font-semibold text-brand"
-                            onClick={() => onCopySignLink(request!.signatureRequestUrl)}
+                            onClick={() => signatureRequestUrl && onCopySignLink(signatureRequestUrl)}
                             disabled={isSaving}
                           >
                             Copy Sign Link

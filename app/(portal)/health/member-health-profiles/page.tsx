@@ -2,18 +2,8 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
+import { firstSearchParam, parseEnumSearchParam, parsePositivePageParam } from "@/lib/search-params";
 import { getMemberHealthProfileIndexSupabase } from "@/lib/services/member-health-profiles-supabase";
-
-function firstString(value: string | string[] | undefined) {
-  if (Array.isArray(value)) return value[0];
-  return value;
-}
-
-function parsePage(value: string | undefined) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 1) return 1;
-  return Math.floor(parsed);
-}
 
 function getInitials(displayName: string) {
   const parts = displayName
@@ -33,9 +23,9 @@ export default async function MemberHealthProfilesPage({
 }) {
   await requireRoles(["admin", "nurse"]);
   const params = await searchParams;
-  const q = firstString(params.q) ?? "";
-  const status = (firstString(params.status) as "all" | "active" | "inactive" | undefined) ?? "active";
-  const page = parsePage(firstString(params.page));
+  const q = firstSearchParam(params.q) ?? "";
+  const status = parseEnumSearchParam(firstSearchParam(params.status), ["all", "active", "inactive"] as const, "active");
+  const page = parsePositivePageParam(firstSearchParam(params.page));
 
   const result = await getMemberHealthProfileIndexSupabase({ q, status, page, pageSize: 25 });
   const pageHref = (targetPage: number) => {

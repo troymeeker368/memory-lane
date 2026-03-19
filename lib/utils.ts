@@ -6,6 +6,10 @@ export function cn(...parts: Array<string | false | null | undefined>): string {
 
 const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+function isValidDate(date: Date): boolean {
+  return Number.isFinite(date.getTime());
+}
+
 function formatDateOnlyString(value: string): string | null {
   const trimmed = value.trim();
   const match = DATE_ONLY_PATTERN.exec(trimmed);
@@ -26,6 +30,7 @@ export function formatDate(value: string | number | Date): string {
   }
 
   const date = typeof value === "number" ? excelSerialToDate(value) : new Date(value);
+  if (!isValidDate(date)) return "-";
   return new Intl.DateTimeFormat("en-US", {
     month: "2-digit",
     day: "2-digit",
@@ -36,6 +41,7 @@ export function formatDate(value: string | number | Date): string {
 
 export function formatDateTime(value: string | number | Date): string {
   const date = typeof value === "number" ? excelSerialToDate(value) : new Date(value);
+  if (!isValidDate(date)) return "-";
   return new Intl.DateTimeFormat("en-US", {
     month: "2-digit",
     day: "2-digit",

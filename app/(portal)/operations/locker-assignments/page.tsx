@@ -6,6 +6,7 @@ import { assignLockerAction, clearLockerAction } from "@/app/(portal)/operations
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { firstSearchParam, parseEnumSearchParam, parsePositivePageParam } from "@/lib/search-params";
 import { createClient } from "@/lib/supabase/server";
 import { formatOptionalDate } from "@/lib/utils";
 
@@ -24,18 +25,6 @@ const PDF_REFERENCE_ROWS: Array<{ locker: string; current?: string; previous?: s
   { locker: "33", current: "Liliia Velushchak" },
   { locker: "34", current: "Doris Joyce Hollingsworth" }
 ];
-
-function parsePage(raw: string | string[] | undefined) {
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 1) return 1;
-  return Math.floor(parsed);
-}
-
-function firstString(value: string | string[] | undefined) {
-  if (Array.isArray(value)) return value[0];
-  return value;
-}
 
 function normalizeLocker(value: string | null | undefined) {
   const cleaned = (value ?? "").trim();
@@ -79,14 +68,14 @@ export default async function LockerAssignmentsPage({
   const profile = await requireModuleAccess("operations");
   const canEdit = profile.role === "admin" || profile.role === "manager";
   const params = await searchParams;
-  const rawQuery = (firstString(params.q) ?? "").trim();
+  const rawQuery = (firstSearchParam(params.q) ?? "").trim();
   const normalizedQuery = rawQuery.toLowerCase();
-  const status = (firstString(params.status) as "all" | "assigned" | "open" | undefined) ?? "all";
-  const requestedPage = parsePage(params.page);
-  const selectedLocker = normalizeLocker(firstString(params.locker)) ?? "";
-  const selectedMemberId = (firstString(params.memberId) ?? "").trim();
-  const errorMessage = firstString(params.error) ?? "";
-  const successMessage = firstString(params.success) ?? "";
+  const status = parseEnumSearchParam(firstSearchParam(params.status), ["all", "assigned", "open"] as const, "all");
+  const requestedPage = parsePositivePageParam(firstSearchParam(params.page));
+  const selectedLocker = normalizeLocker(firstSearchParam(params.locker)) ?? "";
+  const selectedMemberId = (firstSearchParam(params.memberId) ?? "").trim();
+  const errorMessage = firstSearchParam(params.error) ?? "";
+  const successMessage = firstSearchParam(params.success) ?? "";
 
   const supabase = await createClient();
   const { data: membersData, error } = await supabase

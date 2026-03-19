@@ -2,20 +2,10 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { firstSearchParam, parseEnumSearchParam, parsePositivePageParam } from "@/lib/search-params";
 import { getScheduledDayAbbreviations } from "@/lib/services/member-schedule-selectors";
 import { getMemberCommandCenterIndexSupabase } from "@/lib/services/member-command-center-supabase";
 import { formatOptionalDate } from "@/lib/utils";
-
-function firstString(value: string | string[] | undefined) {
-  if (Array.isArray(value)) return value[0];
-  return value;
-}
-
-function parsePage(value: string | undefined) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 1) return 1;
-  return Math.floor(parsed);
-}
 
 function initials(name: string) {
   const parts = name.split(/\s+/).filter(Boolean);
@@ -31,9 +21,9 @@ export default async function MemberCommandCenterIndexPage({
 }) {
   await requireModuleAccess("operations");
   const params = await searchParams;
-  const q = firstString(params.q) ?? "";
-  const status = (firstString(params.status) as "all" | "active" | "inactive" | undefined) ?? "active";
-  const page = parsePage(firstString(params.page));
+  const q = firstSearchParam(params.q) ?? "";
+  const status = parseEnumSearchParam(firstSearchParam(params.status), ["all", "active", "inactive"] as const, "active");
+  const page = parsePositivePageParam(firstSearchParam(params.page));
 
   const result = await getMemberCommandCenterIndexSupabase({ q, status, page, pageSize: 25 });
   const pageHref = (targetPage: number) => {

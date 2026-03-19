@@ -1056,8 +1056,8 @@ export async function sendEnrollmentPacketRequest(input: {
     }
   };
   const caregiverEmail = cleanEmail(input.caregiverEmail) ?? cleanEmail(lead?.caregiver_email);
-  if (!isEmail(caregiverEmail)) throw new Error("Caregiver email is required.");
-  const requiredCaregiverEmail = caregiverEmail!;
+  if (!caregiverEmail || !isEmail(caregiverEmail)) throw new Error("Caregiver email is required.");
+  const requiredCaregiverEmail = caregiverEmail;
   const memberNameParts = splitMemberName(lead?.member_name ?? member.display_name);
 
   const active = await listActivePacketRows(member.id);
@@ -1096,7 +1096,7 @@ export async function sendEnrollmentPacketRequest(input: {
     primaryContactName: clean(lead?.caregiver_name),
     primaryContactRelationship: clean(lead?.caregiver_relationship),
     primaryContactPhone: clean(lead?.caregiver_phone),
-    primaryContactEmail: caregiverEmail,
+    primaryContactEmail: requiredCaregiverEmail,
     responsiblePartyGuarantorFirstName: clean(lead?.caregiver_name)?.split(" ")[0] ?? null,
     responsiblePartyGuarantorLastName: clean(lead?.caregiver_name)?.split(" ").slice(1).join(" ") || null,
     membershipNumberOfDays: String(resolvedPricing.requestedDays.length),

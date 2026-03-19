@@ -229,9 +229,10 @@ export function ScheduleChangesManager({
           );
         }
         if (data?.memberSchedule) {
+          const memberSchedule = data.memberSchedule;
           setLocalSchedulesById((current) => ({
             ...current,
-            [data.memberSchedule!.memberId]: data.memberSchedule!.days
+            [memberSchedule.memberId]: memberSchedule.days
           }));
         }
         setFeedback(result.message);

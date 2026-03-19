@@ -653,17 +653,18 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
   const signedRows = await listCarePlanRows({ carePlanId: input.carePlanId });
   const signedCarePlan = signedRows[0];
   if (!signedCarePlan) throw new Error("Care plan could not be loaded after nurse/admin signature.");
+  const caregiverName = clean(signedCarePlan.caregiverName);
+  const caregiverEmail = clean(signedCarePlan.caregiverEmail);
 
-  const hasCaregiverContact =
-    Boolean(clean(signedCarePlan.caregiverName)) && Boolean(clean(signedCarePlan.caregiverEmail));
+  const hasCaregiverContact = Boolean(caregiverName) && Boolean(caregiverEmail);
   const shouldAutoSend = hasCaregiverContact && signedCarePlan.caregiverSignatureStatus !== "signed";
 
-  if (shouldAutoSend) {
+  if (shouldAutoSend && caregiverName && caregiverEmail) {
     const { sendCarePlanToCaregiverForSignature } = await import("@/lib/services/care-plan-esign");
     return sendCarePlanToCaregiverForSignature({
       carePlanId: signedCarePlan.id,
-      caregiverName: signedCarePlan.caregiverName!,
-      caregiverEmail: signedCarePlan.caregiverEmail!,
+      caregiverName,
+      caregiverEmail,
       optionalMessage: null,
       expiresOnDate: getDefaultCaregiverSignatureExpiresOnDate(),
       actor: {

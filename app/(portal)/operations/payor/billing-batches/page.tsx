@@ -17,11 +17,7 @@ import {
   generateBillingBatchAction,
   reopenBillingBatchAction
 } from "@/app/(portal)/operations/payor/actions";
-
-function firstString(value: string | string[] | undefined) {
-  if (Array.isArray(value)) return value[0];
-  return value;
-}
+import { firstSearchParam, parseDateOnlySearchParam, parseEnumSearchParam } from "@/lib/search-params";
 
 function nextMonthStart() {
   const now = new Date();
@@ -36,14 +32,18 @@ export default async function BillingBatchesPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const billingMonth = firstString(params.billingMonth) ?? nextMonthStart();
-  const batchType = firstString(params.batchType) ?? "Mixed";
-  const selectedBatchId = firstString(params.batchId) ?? "";
-  const errorMessage = firstString(params.error);
-  const status = firstString(params.status);
+  const billingMonth = parseDateOnlySearchParam(firstSearchParam(params.billingMonth), nextMonthStart());
+  const batchType = parseEnumSearchParam(
+    firstSearchParam(params.batchType),
+    ["Membership", "Monthly", "Mixed", "Custom"] as const,
+    "Mixed"
+  );
+  const selectedBatchId = (firstSearchParam(params.batchId) ?? "").trim();
+  const errorMessage = firstSearchParam(params.error);
+  const status = parseEnumSearchParam(firstSearchParam(params.status), ["generated"] as const, "" as "" | "generated");
   const preview = await getBillingGenerationPreview({
     billingMonth,
-    batchType: batchType === "Membership" || batchType === "Monthly" || batchType === "Custom" ? batchType : "Mixed"
+    batchType
   });
   const batches = await getBillingBatches();
   const selectedBatch = selectedBatchId ? batches.find((row) => row.id === selectedBatchId) ?? null : batches[0] ?? null;

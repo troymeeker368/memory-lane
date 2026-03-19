@@ -642,7 +642,8 @@ export async function buildNewPhysicianOrderDraft(input: {
   const { mapIntakeAssessmentToPofPrefill } = await loadIntakeToPofMapping();
   const mapped = latestIntake ? mapIntakeAssessmentToPofPrefill(latestIntake as IntakeAssessmentForPofPrefill) : null;
   const enrollmentPacketPrefill = await getLatestEnrollmentPacketPofStagingSummary(memberId);
-  const shouldApplyEnrollmentPacketPrefill = Boolean(enrollmentPacketPrefill?.reviewRequired);
+  const activeEnrollmentPacketPrefill = enrollmentPacketPrefill?.reviewRequired ? enrollmentPacketPrefill : null;
+  const shouldApplyEnrollmentPacketPrefill = activeEnrollmentPacketPrefill !== null;
   const baseCareInformation = mapped
     ? ({ ...defaultCareInformation(), ...mapped.careInformation } as PhysicianOrderCareInformation)
     : defaultCareInformation();
@@ -653,7 +654,7 @@ export async function buildNewPhysicianOrderDraft(input: {
     ? applyEnrollmentPacketPrefillToDraft({
         careInformation: baseCareInformation,
         operationalFlags: baseOperationalFlags,
-        prefillPayload: enrollmentPacketPrefill!.prefillPayload
+        prefillPayload: activeEnrollmentPacketPrefill.prefillPayload
       })
     : {
         careInformation: baseCareInformation,
@@ -705,13 +706,13 @@ export async function buildNewPhysicianOrderDraft(input: {
     updatedAt: now,
     enrollmentPacketPrefill: shouldApplyEnrollmentPacketPrefill
       ? {
-          stagingId: enrollmentPacketPrefill!.stagingId,
-          packetId: enrollmentPacketPrefill!.packetId,
-          sourceLabel: enrollmentPacketPrefill!.sourceLabel,
-          importedAt: enrollmentPacketPrefill!.importedAt,
-          caregiverName: enrollmentPacketPrefill!.caregiverName,
-          initiatedByName: enrollmentPacketPrefill!.initiatedByName,
-          riskSignals: enrollmentPacketPrefill!.riskSignals
+          stagingId: activeEnrollmentPacketPrefill.stagingId,
+          packetId: activeEnrollmentPacketPrefill.packetId,
+          sourceLabel: activeEnrollmentPacketPrefill.sourceLabel,
+          importedAt: activeEnrollmentPacketPrefill.importedAt,
+          caregiverName: activeEnrollmentPacketPrefill.caregiverName,
+          initiatedByName: activeEnrollmentPacketPrefill.initiatedByName,
+          riskSignals: activeEnrollmentPacketPrefill.riskSignals
         }
       : null
   };

@@ -1,12 +1,8 @@
 import { Card, CardTitle } from "@/components/ui/card";
+import { firstSearchParam, parseDateOnlySearchParam } from "@/lib/search-params";
 import { getVariableChargesQueue } from "@/lib/services/billing-read";
 
 import { setVariableChargeStatusAction } from "@/app/(portal)/operations/payor/actions";
-
-function firstString(value: string | string[] | undefined) {
-  if (Array.isArray(value)) return value[0];
-  return value;
-}
 
 function previousMonthStart() {
   const now = new Date();
@@ -21,7 +17,7 @@ export default async function VariableChargesQueuePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const month = firstString(params.month) ?? previousMonthStart();
+  const month = parseDateOnlySearchParam(firstSearchParam(params.month), previousMonthStart());
   const queue = await getVariableChargesQueue({ month });
 
   return (

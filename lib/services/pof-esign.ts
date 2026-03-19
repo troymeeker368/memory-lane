@@ -452,9 +452,12 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
   const fromEmail = clean(input.fromEmail);
   const optionalMessage = clean(input.optionalMessage);
   if (!providerName) throw new Error("Provider name is required.");
-  if (!isEmail(providerEmail)) throw new Error("Provider email is invalid.");
+  if (!providerEmail || !isEmail(providerEmail)) throw new Error("Provider email is invalid.");
   if (!nurseName) throw new Error("Nurse name is required.");
-  if (!isEmail(fromEmail)) throw new Error("From email is invalid.");
+  if (!fromEmail || !isEmail(fromEmail)) throw new Error("From email is invalid.");
+  const validatedProviderEmail = providerEmail;
+  const validatedNurseName = nurseName;
+  const validatedFromEmail = fromEmail;
 
   const form = clonePofPayloadSnapshot(await assertPhysicianOrderMember(input.physicianOrderId, input.memberId));
   const existing = await listPofRequestsByPhysicianOrderIdsWithAdmin(input.memberId, [input.physicianOrderId]);
@@ -550,10 +553,10 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
 
   try {
     await sendSignatureEmail({
-      toEmail: providerEmail!,
-      providerName: providerName!,
-      nurseName: nurseName!,
-      fromEmail: fromEmail!,
+      toEmail: validatedProviderEmail,
+      providerName,
+      nurseName: validatedNurseName,
+      fromEmail: validatedFromEmail,
       requestUrl: signatureRequestUrl,
       expiresAt,
       memberName: form.memberNameSnapshot,
@@ -746,9 +749,9 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
   const fromEmail = clean(input.fromEmail);
   const optionalMessage = clean(input.optionalMessage);
   if (!providerName) throw new Error("Provider name is required.");
-  if (!isEmail(providerEmail)) throw new Error("Provider email is invalid.");
+  if (!providerEmail || !isEmail(providerEmail)) throw new Error("Provider email is invalid.");
   if (!nurseName) throw new Error("Nurse name is required.");
-  if (!isEmail(fromEmail)) throw new Error("From email is invalid.");
+  if (!fromEmail || !isEmail(fromEmail)) throw new Error("From email is invalid.");
 
   const form = clonePofPayloadSnapshot(await assertPhysicianOrderMember(request.physician_order_id, input.memberId));
   const expiresAt = toIsoAtEndOfDate(input.expiresOnDate);
@@ -802,10 +805,10 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
 
   try {
     await sendSignatureEmail({
-      toEmail: providerEmail!,
-      providerName: providerName!,
-      nurseName: nurseName!,
-      fromEmail: fromEmail!,
+      toEmail: providerEmail,
+      providerName,
+      nurseName,
+      fromEmail,
       requestUrl: signatureRequestUrl,
       expiresAt,
       memberName: form.memberNameSnapshot,
@@ -1160,7 +1163,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
 
     const signedPdfBytes = await buildSignedPdfBytes({
       pofPayload: snapshot,
-      providerTypedName: providerTypedName!,
+      providerTypedName,
       providerCredentials: parseProviderCredentials(snapshot.providerName) ?? parseProviderCredentials(providerTypedName),
       signatureImageBytes: signatureArtifact.bytes,
       signatureContentType: signatureArtifact.contentType,

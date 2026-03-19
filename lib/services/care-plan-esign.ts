@@ -419,7 +419,8 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
   const caregiverName = clean(input.caregiverName);
   const caregiverEmail = clean(input.caregiverEmail)?.toLowerCase() ?? null;
   if (!caregiverName) throw new Error("Caregiver name is required.");
-  if (!isEmail(caregiverEmail)) throw new Error("Caregiver email is invalid.");
+  if (!caregiverEmail || !isEmail(caregiverEmail)) throw new Error("Caregiver email is invalid.");
+  const validatedCaregiverEmail = caregiverEmail;
 
   const senderEmail =
     clean(process.env.CLINICAL_SENDER_EMAIL) ??
@@ -437,7 +438,7 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
   await prepareCarePlanCaregiverRequest({
     carePlanId: input.carePlanId,
     caregiverName,
-    caregiverEmail: caregiverEmail!,
+    caregiverEmail: validatedCaregiverEmail,
     caregiverSentByUserId: input.actor.id,
     caregiverSignatureRequestToken: hashedToken,
     caregiverSignatureExpiresAt: expiresAt,
@@ -449,8 +450,8 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
 
   try {
     await sendSignatureEmail({
-      toEmail: caregiverEmail!,
-      caregiverName: caregiverName,
+      toEmail: validatedCaregiverEmail,
+      caregiverName,
       nurseName: input.actor.signatureName,
       fromEmail: senderEmail,
       requestUrl: signatureRequestUrl,

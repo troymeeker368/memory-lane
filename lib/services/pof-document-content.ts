@@ -112,7 +112,7 @@ function formatMedicationRoute(row: PhysicianOrderMedication) {
   const route = clean(row.route);
   const laterality = clean(row.routeLaterality);
   if (!route && !laterality) return "-";
-  if (!laterality) return route!;
+  if (!laterality) return route ?? "-";
   if (!route) return laterality;
   return `${route} (${laterality})`;
 }
