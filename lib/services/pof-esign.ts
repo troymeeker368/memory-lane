@@ -79,7 +79,7 @@ const RPC_FINALIZE_POF_SIGNATURE = "rpc_finalize_pof_signature";
 const PREPARE_POF_REQUEST_DELIVERY_RPC = "rpc_prepare_pof_request_delivery";
 const TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC = "rpc_transition_pof_request_delivery_state";
 const POF_DELIVERY_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
-const POF_DELIVERY_TRANSITION_COMPARE_AND_SET_MIGRATION = "0083_pof_public_open_compare_and_set.sql";
+const POF_DELIVERY_TRANSITION_COMPARE_AND_SET_MIGRATION = "0089_pof_public_open_compare_and_set.sql";
 
 async function createResendClient() {
   const { Resend } = await import("resend");
