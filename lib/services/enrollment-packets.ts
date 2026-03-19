@@ -1,6 +1,5 @@
 import "server-only";
 
-import { Buffer } from "node:buffer";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import {
@@ -17,13 +16,35 @@ import {
   isEnrollmentPacketOperationallyReady,
   resolveEnrollmentPacketOperationalReadiness,
   toEnrollmentPacketMappingSyncStatus,
-  type EnrollmentPacketOperationalReadinessStatus
 } from "@/lib/services/enrollment-packet-readiness";
 import { mapEnrollmentPacketToDownstream } from "@/lib/services/enrollment-packet-intake-mapping";
+import {
+  ENROLLMENT_PACKET_LEAD_LOOKUP_SELECT,
+  ENROLLMENT_PACKET_MEMBER_LOOKUP_SELECT
+} from "@/lib/services/enrollment-packet-selects";
 import {
   calculateInitialEnrollmentAmount,
   normalizeEnrollmentDateOnly
 } from "@/lib/services/enrollment-packet-proration";
+import {
+  STAFF_TRANSPORTATION_OPTIONS,
+  ENROLLMENT_PACKET_STATUS_VALUES,
+  type CompletedEnrollmentPacketFilters,
+  type CompletedEnrollmentPacketListItem,
+  type EnrollmentPacketFieldsRow,
+  type EnrollmentPacketRequestRow,
+  type EnrollmentPacketRequestSummary,
+  type EnrollmentPacketStatus,
+  type EnrollmentPacketTokenMatch,
+  type EnrollmentPacketUploadCategory,
+  type FinalizedEnrollmentPacketSubmissionRpcRow,
+  type LeadRow,
+  type MemberRow,
+  type PacketFileUpload,
+  type PublicEnrollmentPacketContext,
+  type SenderProfileRow,
+  type StaffTransportationOption
+} from "@/lib/services/enrollment-packet-types";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import { resolveEnrollmentPricingForRequestedDays } from "@/lib/services/enrollment-pricing";
 import {
@@ -46,13 +67,21 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 const TOKEN_BYTE_LENGTH = 32;
-const STAFF_TRANSPORTATION_OPTIONS = ["None", "Door to Door", "Bus Stop", "Mixed"] as const;
 const ENROLLMENT_PACKET_COMPLETION_RPC = "rpc_finalize_enrollment_packet_submission";
 const PREPARE_ENROLLMENT_PACKET_REQUEST_RPC = "rpc_prepare_enrollment_packet_request";
 const TRANSITION_ENROLLMENT_PACKET_DELIVERY_STATE_RPC = "rpc_transition_enrollment_packet_delivery_state";
 const SAVE_ENROLLMENT_PACKET_PROGRESS_RPC = "rpc_save_enrollment_packet_progress";
 const ENROLLMENT_PACKET_DELIVERY_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
 const ENROLLMENT_PACKET_COMPLETION_MIGRATION = "0053_artifact_drift_replay_hardening.sql";
+
+export { ENROLLMENT_PACKET_STATUS_VALUES };
+export type {
+  CompletedEnrollmentPacketFilters,
+  CompletedEnrollmentPacketListItem,
+  EnrollmentPacketRequestSummary,
+  EnrollmentPacketStatus,
+  PublicEnrollmentPacketContext
+} from "@/lib/services/enrollment-packet-types";
 
 async function loadEnrollmentPacketTemplateBuilder() {
   const { buildEnrollmentPacketTemplate } = await import("@/lib/email/templates/enrollment-packet");
@@ -68,191 +97,6 @@ async function loadEnrollmentPacketArtifactOps() {
   return import("@/lib/services/enrollment-packet-artifacts");
 }
 
-type StaffTransportationOption = (typeof STAFF_TRANSPORTATION_OPTIONS)[number];
-
-export const ENROLLMENT_PACKET_STATUS_VALUES = [
-  "draft",
-  "prepared",
-  "sent",
-  "opened",
-  "partially_completed",
-  "expired",
-  "completed",
-  "filed"
-] as const;
-
-export type EnrollmentPacketStatus = (typeof ENROLLMENT_PACKET_STATUS_VALUES)[number];
-
-export type EnrollmentPacketRequestSummary = {
-  id: string;
-  memberId: string;
-  leadId: string | null;
-  senderUserId: string;
-  caregiverEmail: string;
-  status: EnrollmentPacketStatus;
-  deliveryStatus: SendWorkflowDeliveryStatus;
-  deliveryError: string | null;
-  lastDeliveryAttemptAt: string | null;
-  deliveryFailedAt: string | null;
-  tokenExpiresAt: string;
-  createdAt: string;
-  sentAt: string | null;
-  completedAt: string | null;
-};
-
-export type CompletedEnrollmentPacketListItem = EnrollmentPacketRequestSummary & {
-  memberName: string;
-  leadMemberName: string | null;
-  senderName: string | null;
-  mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
-  operationalReadinessStatus: EnrollmentPacketOperationalReadinessStatus;
-  operationallyReady: boolean;
-  mappingSyncError: string | null;
-};
-
-export type CompletedEnrollmentPacketFilters = {
-  limit?: number;
-  status?: "completed" | "filed" | "all";
-  fromDate?: string | null;
-  toDate?: string | null;
-  search?: string | null;
-};
-
-type EnrollmentPacketRequestRow = {
-  id: string;
-  member_id: string;
-  lead_id: string | null;
-  sender_user_id: string;
-  caregiver_email: string;
-  status: string;
-  delivery_status: string | null;
-  last_delivery_attempt_at: string | null;
-  delivery_failed_at: string | null;
-  delivery_error: string | null;
-  token: string;
-  last_consumed_submission_token_hash: string | null;
-  token_expires_at: string;
-  created_at: string;
-  sent_at: string | null;
-  completed_at: string | null;
-  mapping_sync_status: string | null;
-  mapping_sync_error: string | null;
-  mapping_sync_attempted_at: string | null;
-  latest_mapping_run_id: string | null;
-};
-
-type EnrollmentPacketFieldsRow = {
-  id: string;
-  packet_id: string;
-  requested_days: string[] | null;
-  transportation: string | null;
-  community_fee: number | null;
-  daily_rate: number | null;
-  pricing_community_fee_id: string | null;
-  pricing_daily_rate_id: string | null;
-  pricing_snapshot: Record<string, unknown> | null;
-  caregiver_name: string | null;
-  caregiver_phone: string | null;
-  caregiver_email: string | null;
-  caregiver_address_line1: string | null;
-  caregiver_address_line2: string | null;
-  caregiver_city: string | null;
-  caregiver_state: string | null;
-  caregiver_zip: string | null;
-  secondary_contact_name: string | null;
-  secondary_contact_phone: string | null;
-  secondary_contact_email: string | null;
-  secondary_contact_relationship: string | null;
-  notes: string | null;
-  intake_payload: Record<string, unknown> | null;
-};
-
-type MemberRow = {
-  id: string;
-  display_name: string;
-  enrollment_date: string | null;
-};
-
-type LeadRow = {
-  id: string;
-  member_name: string | null;
-  member_dob: string | null;
-  member_start_date: string | null;
-  referral_name: string | null;
-  caregiver_email: string | null;
-  caregiver_name: string | null;
-  caregiver_relationship: string | null;
-  caregiver_phone: string | null;
-};
-
-type SenderProfileRow = {
-  user_id: string;
-  signature_name: string;
-  signature_blob: string;
-  created_at: string;
-  updated_at: string;
-};
-
-type PacketFileUpload = {
-  fileName: string;
-  contentType: string;
-  bytes: Buffer;
-  category:
-    | "insurance"
-    | "poa"
-    | "supporting"
-    | "medicare_card"
-    | "private_insurance"
-    | "supplemental_insurance"
-    | "poa_guardianship"
-    | "dnr_dni_advance_directive"
-    | "signed_membership_agreement"
-    | "signed_exhibit_a_payment_authorization";
-};
-
-type EnrollmentPacketUploadCategory = PacketFileUpload["category"] | "completed_packet" | "signature_artifact";
-
-type EnrollmentPacketTokenMatch = {
-  request: EnrollmentPacketRequestRow;
-  tokenMatch: "active" | "consumed";
-};
-
-type FinalizedEnrollmentPacketSubmissionRpcRow = {
-  packet_id: string;
-  status: string;
-  mapping_sync_status: string;
-  was_already_filed: boolean;
-};
-
-export type PublicEnrollmentPacketContext =
-  | { state: "invalid" }
-  | { state: "expired" }
-  | { state: "completed"; request: EnrollmentPacketRequestSummary }
-  | {
-      state: "ready";
-      request: EnrollmentPacketRequestSummary;
-      fields: {
-        requestedDays: string[];
-        transportation: string | null;
-        communityFee: number;
-        dailyRate: number;
-        caregiverName: string | null;
-        caregiverPhone: string | null;
-        caregiverEmail: string | null;
-        caregiverAddressLine1: string | null;
-        caregiverAddressLine2: string | null;
-        caregiverCity: string | null;
-        caregiverState: string | null;
-        caregiverZip: string | null;
-        secondaryContactName: string | null;
-        secondaryContactPhone: string | null;
-        secondaryContactEmail: string | null;
-        secondaryContactRelationship: string | null;
-        notes: string | null;
-        intakePayload: EnrollmentPacketIntakePayload;
-      };
-      memberName: string;
-    };
 
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
@@ -532,7 +376,7 @@ async function getMemberById(memberId: string) {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("members")
-    .select("id, display_name, enrollment_date")
+    .select(ENROLLMENT_PACKET_MEMBER_LOOKUP_SELECT)
     .eq("id", memberId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -543,9 +387,7 @@ async function getLeadById(leadId: string) {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("leads")
-    .select(
-      "id, member_name, member_dob, member_start_date, referral_name, caregiver_email, caregiver_name, caregiver_relationship, caregiver_phone"
-    )
+    .select(ENROLLMENT_PACKET_LEAD_LOOKUP_SELECT)
     .eq("id", leadId)
     .maybeSingle();
   if (error) throw new Error(error.message);

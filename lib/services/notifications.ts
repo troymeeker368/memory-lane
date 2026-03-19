@@ -2,6 +2,22 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import {
+  buildNotificationContent,
+  normalizeNotificationPriority,
+  normalizeText
+} from "@/lib/services/notification-content";
+import {
+  NOTIFICATION_EVENT_TYPES,
+  type CreateNotificationInput,
+  type CreateUserNotificationInput,
+  type DispatchNotificationEventInput,
+  type JsonValue,
+  type NotificationEventType,
+  type NotificationStatus,
+  type UserNotification,
+  type WorkflowRecipientContext
+} from "@/lib/services/notification-types";
+import {
   CARE_PLAN_CONTEXT_SELECT,
   ENROLLMENT_PACKET_RECIPIENT_SELECT,
   INTAKE_CONTEXT_SELECT,
@@ -10,147 +26,19 @@ import {
 } from "@/lib/services/notifications-selects";
 import { toEasternISO } from "@/lib/timezone";
 
-type JsonPrimitive = string | number | boolean | null;
-type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
-
-export const NOTIFICATION_EVENT_TYPES = [
-  "action_required",
-  "care_plan_created",
-  "care_plan_reviewed",
-  "care_plan_sent",
-  "care_plan_signed",
-  "document_uploaded",
-  "enrollment_packet_expired",
-  "enrollment_packet_failed",
-  "enrollment_packet_sent",
-  "enrollment_packet_submitted",
-  "intake_completed",
-  "legacy_notification",
-  "missing_required_document",
-  "pof_expiring",
-  "pof_failed",
-  "pof_sent",
-  "pof_signed",
-  "workflow_error"
-] as const;
-
-export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
-export type NotificationStatus = "unread" | "read" | "dismissed";
-export type NotificationPriority = "low" | "medium" | "high" | "critical";
-
-export type UserNotification = {
-  id: string;
-  recipientUserId: string;
-  actorUserId: string | null;
-  eventType: string;
-  title: string;
-  message: string;
-  entityType: string | null;
-  entityId: string | null;
-  status: NotificationStatus;
-  priority: NotificationPriority;
-  readAt: string | null;
-  actionUrl: string | null;
-  metadata: Record<string, unknown>;
-  createdAt: string;
-};
-
-export type CreateNotificationInput = {
-  recipientUserId: string;
-  actorUserId?: string | null;
-  eventType: NotificationEventType | string;
-  title: string;
-  message: string;
-  entityType?: string | null;
-  entityId?: string | null;
-  status?: NotificationStatus;
-  priority?: NotificationPriority;
-  actionUrl?: string | null;
-  metadata?: Record<string, JsonValue>;
-  eventKey?: string | null;
-  reopenOnConflict?: boolean;
-  serviceRole?: boolean;
-};
-
-export type CreateUserNotificationInput = {
-  recipientUserId: string;
-  title: string;
-  message: string;
-  entityType?: string | null;
-  entityId?: string | null;
-  priority?: NotificationPriority;
-  actionUrl?: string | null;
-  metadata?: Record<string, JsonValue>;
-  serviceRole?: boolean;
-};
-
-export type DispatchNotificationEventInput = {
-  eventType?: string;
-  event_type?: string;
-  entityType?: string;
-  entity_type?: string;
-  entityId?: string | null;
-  entity_id?: string | null;
-  actorType?: string | null;
-  actor_type?: string | null;
-  actorId?: string | null;
-  actor_id?: string | null;
-  actorUserId?: string | null;
-  actor_user_id?: string | null;
-  status?: string | null;
-  severity?: string | null;
-  metadata?: Record<string, JsonValue> | null;
-  recipientUserIds?: string[];
-  eventKeySuffix?: string | null;
-  reopenOnConflict?: boolean;
-};
-
-type WorkflowRecipientContext = {
-  entityType: string;
-  entityId: string | null;
-  memberId: string | null;
-  memberName: string | null;
-  leadId: string | null;
-  leadOwnerUserId: string | null;
-  enrollmentSenderUserId: string | null;
-  physicianOrderId: string | null;
-  pofRequestId: string | null;
-  pofSenderUserId: string | null;
-  pofOwnerUserId: string | null;
-  carePlanId: string | null;
-  carePlanCreatedByUserId: string | null;
-  carePlanUpdatedByUserId: string | null;
-  carePlanNurseDesigneeUserId: string | null;
-  carePlanNurseSignedByUserId: string | null;
-  caregiverSentByUserId: string | null;
-  intakeAssessmentId: string | null;
-  intakeCompletedByUserId: string | null;
-  intakeSignedByUserId: string | null;
-  memberFileId: string | null;
-  memberFileUploadedByUserId: string | null;
-  documentationAssignedStaffUserId: string | null;
-  metadata: Record<string, JsonValue>;
-};
-
-type NotificationContent = {
-  actionUrl: string | null;
-  message: string;
-  priority: NotificationPriority;
-  title: string;
-};
-
-function normalizeText(value: string | null | undefined) {
-  const cleaned = (value ?? "").trim();
-  return cleaned.length > 0 ? cleaned : null;
-}
+export { NOTIFICATION_EVENT_TYPES };
+export type {
+  CreateNotificationInput,
+  CreateUserNotificationInput,
+  DispatchNotificationEventInput,
+  NotificationEventType,
+  NotificationPriority,
+  NotificationStatus,
+  UserNotification
+} from "@/lib/services/notification-types";
 
 function normalizeNotificationStatus(value: string | null | undefined): NotificationStatus {
   return value === "read" || value === "dismissed" ? value : "unread";
-}
-
-function normalizeNotificationPriority(value: string | null | undefined): NotificationPriority {
-  if (value === "low" || value === "high" || value === "critical") return value;
-  return "medium";
 }
 
 function normalizeMetadata(value: unknown) {
@@ -159,10 +47,6 @@ function normalizeMetadata(value: unknown) {
 
 function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((value) => normalizeText(value)).filter(Boolean))) as string[];
-}
-
-function notificationLabel(value: string | null | undefined, fallback = "this workflow") {
-  return normalizeText(value) ?? fallback;
 }
 
 function pickJoinedRow<T>(value: T | T[] | null | undefined) {
@@ -713,182 +597,6 @@ async function loadWorkflowRecipientContext(input: {
     entityId: null,
     metadata
   });
-}
-
-function buildDefaultActionUrl(context: WorkflowRecipientContext) {
-  if (context.entityType === "care_plan" || context.carePlanId) {
-    return context.carePlanId
-      ? `/health/care-plans/${context.carePlanId}`
-      : context.memberId
-        ? `/health/care-plans/member/${context.memberId}/latest`
-        : "/notifications";
-  }
-  if (context.entityType === "pof_request" || context.entityType === "physician_order" || context.physicianOrderId) {
-    return context.physicianOrderId
-      ? `/health/physician-orders/${context.physicianOrderId}`
-      : context.memberId
-        ? `/operations/member-command-center/${context.memberId}`
-        : "/notifications";
-  }
-  if (context.entityType === "enrollment_packet_request" || context.enrollmentSenderUserId || context.leadId) {
-    return context.leadId
-      ? `/sales/leads/${context.leadId}`
-      : context.memberId
-        ? `/operations/member-command-center/${context.memberId}`
-        : "/notifications";
-  }
-  if (context.entityType === "intake_assessment" || context.intakeAssessmentId) {
-    return context.memberId ? `/operations/member-command-center/${context.memberId}` : "/documentation/assessment";
-  }
-  if (context.entityType === "member_file" || context.memberFileId) {
-    return context.memberId ? `/operations/member-command-center/${context.memberId}` : "/documentation";
-  }
-  return context.memberId ? `/operations/member-command-center/${context.memberId}` : "/notifications";
-}
-
-function buildNotificationContent(eventType: NotificationEventType, context: WorkflowRecipientContext): NotificationContent {
-  const memberLabel = notificationLabel(context.memberName, "this member");
-  const actionUrl = buildDefaultActionUrl(context);
-  const metadata = context.metadata;
-  const documentLabel =
-    normalizeText(String(metadata.file_name ?? metadata.document_label ?? metadata.document_source ?? "")) ?? "Document";
-
-  switch (eventType) {
-    case "enrollment_packet_sent":
-      return {
-        title: "Enrollment Packet Sent",
-        message: `Enrollment packet sent for ${memberLabel}.`,
-        priority: "medium",
-        actionUrl
-      };
-    case "enrollment_packet_submitted":
-      return {
-        title: "Enrollment Packet Submitted",
-        message: `Enrollment packet submitted for ${memberLabel}. Review intake details and begin enrollment.`,
-        priority: "high",
-        actionUrl
-      };
-    case "enrollment_packet_expired":
-      return {
-        title: "Enrollment Packet Expired",
-        message: `Enrollment packet link expired for ${memberLabel}. Re-send packet to continue intake.`,
-        priority: "high",
-        actionUrl
-      };
-    case "enrollment_packet_failed":
-      return {
-        title: "Enrollment Packet Needs Attention",
-        message: `Enrollment packet workflow failed for ${memberLabel}. Review the request and intervene.`,
-        priority: "high",
-        actionUrl
-      };
-    case "pof_sent":
-      return {
-        title: "POF Sent",
-        message: `POF sent for ${memberLabel}. Await provider signature.`,
-        priority: "medium",
-        actionUrl
-      };
-    case "pof_signed":
-      return {
-        title: "POF Signed",
-        message: `POF signed for ${memberLabel}. Clinical documents are ready for review.`,
-        priority: "high",
-        actionUrl
-      };
-    case "pof_expiring":
-      return {
-        title: "POF Signature Expiring",
-        message: `POF signature link is expiring for ${memberLabel}. Follow up or re-send before the request lapses.`,
-        priority: "high",
-        actionUrl
-      };
-    case "pof_failed":
-      return {
-        title: "POF Needs Attention",
-        message: `POF workflow failed for ${memberLabel}. Review the request and intervene.`,
-        priority: "high",
-        actionUrl
-      };
-    case "intake_completed":
-      return {
-        title: "Intake Completed",
-        message: `Intake completed for ${memberLabel}. Review assessment details and continue clinical onboarding.`,
-        priority: "high",
-        actionUrl
-      };
-    case "care_plan_created":
-      return {
-        title: "Care Plan Created",
-        message: `Care plan created for ${memberLabel}. Review details and confirm next steps.`,
-        priority: "medium",
-        actionUrl
-      };
-    case "care_plan_reviewed":
-      return {
-        title: "Care Plan Reviewed",
-        message: `Care plan reviewed for ${memberLabel}. Confirm updates and next review timing.`,
-        priority: "medium",
-        actionUrl
-      };
-    case "care_plan_sent":
-      return {
-        title: "Care Plan Sent",
-        message: `Care plan signature request sent for ${memberLabel}. Track caregiver completion.`,
-        priority: "medium",
-        actionUrl
-      };
-    case "care_plan_signed":
-      return {
-        title: "Care Plan Signed",
-        message: `Care plan signed for ${memberLabel}. Final clinical document is ready.`,
-        priority: "high",
-        actionUrl
-      };
-    case "document_uploaded":
-      return {
-        title: "Document Uploaded",
-        message: `${documentLabel} uploaded for ${memberLabel}. Review the file and continue the workflow.`,
-        priority: "medium",
-        actionUrl
-      };
-    case "missing_required_document":
-      return {
-        title: "Missing Required Document",
-        message: `Required documents are still missing for ${memberLabel}. Review the record and follow up.`,
-        priority: "high",
-        actionUrl
-      };
-    case "action_required":
-      return {
-        title: normalizeText(String(metadata.title ?? "")) ?? "Action Required",
-        message:
-          normalizeText(String(metadata.message ?? "")) ??
-          `Action required for ${memberLabel}. Open the workflow and complete the next step.`,
-        priority: normalizeNotificationPriority(String(metadata.priority ?? "")),
-        actionUrl: toRelativeActionUrl(String(metadata.action_url ?? metadata.actionUrl ?? "")) ?? actionUrl
-      };
-    case "workflow_error":
-      return {
-        title: normalizeText(String(metadata.title ?? "")) ?? "Workflow Error",
-        message:
-          normalizeText(String(metadata.message ?? "")) ??
-          `${notificationLabel(String(metadata.workflow_label ?? metadata.workflowLabel ?? ""), "Workflow")} requires intervention for ${memberLabel}.`,
-        priority:
-          normalizeNotificationPriority(String(metadata.priority ?? "")) === "medium"
-            ? "high"
-            : normalizeNotificationPriority(String(metadata.priority ?? "")),
-        actionUrl: toRelativeActionUrl(String(metadata.action_url ?? metadata.actionUrl ?? "")) ?? actionUrl
-      };
-    case "legacy_notification":
-    default:
-      return {
-        title: "Notification",
-        message: `Operational update recorded for ${memberLabel}.`,
-        priority: "medium",
-        actionUrl
-      };
-  }
 }
 
 export async function resolveWorkflowRecipients(input: {
