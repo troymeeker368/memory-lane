@@ -26,7 +26,7 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
-import { toEasternDate, toEasternISO } from "@/lib/timezone";
+import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export { MAR_NOT_GIVEN_REASON_OPTIONS, MAR_PRN_OUTCOME_OPTIONS };
 export type {
@@ -47,6 +47,10 @@ const MAR_MHP_SOURCE_PREFIX = "mhp-";
 const MAR_MEDICATION_SYNC_RPC = "rpc_sync_mar_medications_from_member_profile";
 const MAR_RECONCILE_RPC = "rpc_reconcile_member_mar_state";
 const MAR_RPC_MIGRATION = "0056_shared_rpc_orchestration_hardening.sql";
+const MAR_TODAY_SELECT =
+  "mar_schedule_id, member_id, member_name, pof_medication_id, medication_name, dose, route, frequency, instructions, prn, scheduled_time, administration_id, status, not_given_reason, prn_reason, notes, administered_by, administered_by_user_id, administered_at, source";
+const MAR_HISTORY_SELECT =
+  "id, member_id, member_name, pof_medication_id, mar_schedule_id, administration_date, scheduled_time, medication_name, dose, route, status, not_given_reason, prn_reason, prn_outcome, prn_outcome_assessed_at, prn_followup_note, notes, administered_by, administered_by_user_id, administered_at, source, created_at, updated_at";
 
 type MarMedicationSyncRpcRow = {
   anchor_physician_order_id: string;
@@ -61,6 +65,25 @@ type MarReconcileRpcRow = {
   reactivated_schedules: number;
   deactivated_schedules: number;
 };
+
+type MarSyncMedicationRow = {
+  member_id: string | null;
+  updated_at: string | null;
+  scheduled_times: unknown;
+  start_date: string | null;
+  end_date: string | null;
+};
+
+type MarScheduleFreshnessRow = {
+  member_id: string | null;
+  updated_at: string | null;
+};
+
+function addDaysDateOnly(dateValue: string, days: number) {
+  const date = new Date(`${dateValue}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
 
 function buildPrnAdministrationIdempotencyKey(input: {
   pofMedicationId: string;
@@ -185,16 +208,70 @@ export async function syncTodayMarSchedules(options?: { serviceRole?: boolean })
   const serviceRole = options?.serviceRole ?? true;
   const today = toEasternDate();
   const supabase = await createClient({ serviceRole });
-  const { data: memberRows, error: memberError } = await supabase
-    .from("member_medications")
-    .select("member_id")
-    .eq("medication_status", "active")
-    .eq("given_at_center", true);
-  if (memberError) throwMarSupabaseError(memberError, "member_medications");
+  const todayStart = easternDateTimeLocalToISO(`${today}T00:00`);
+  const tomorrow = addDaysDateOnly(today, 1);
+  const todayEndExclusive = easternDateTimeLocalToISO(`${tomorrow}T00:00`);
+  const [{ data: medicationRowsRaw, error: medicationError }, { data: scheduleRowsRaw, error: scheduleError }] = await Promise.all([
+    supabase
+      .from("pof_medications")
+      .select("member_id, updated_at, scheduled_times, start_date, end_date")
+      .eq("active", true)
+      .eq("given_at_center", true)
+      .eq("prn", false)
+      .like("source_medication_id", `${MAR_MHP_SOURCE_PREFIX}%`),
+    supabase
+      .from("mar_schedules")
+      .select("member_id, updated_at")
+      .eq("active", true)
+      .gte("scheduled_time", todayStart)
+      .lt("scheduled_time", todayEndExclusive)
+  ]);
+  if (medicationError) throwMarSupabaseError(medicationError, "pof_medications");
+  if (scheduleError) throwMarSupabaseError(scheduleError, "mar_schedules");
 
-  const memberIds = Array.from(
-    new Set((memberRows ?? []).map((row: { member_id: string | null }) => clean(row.member_id)).filter((row): row is string => Boolean(row)))
+  const medicationRows = ((medicationRowsRaw ?? []) as MarSyncMedicationRow[]).filter((row) =>
+    row.member_id && isDateWithinMedicationWindow(today, row.start_date, row.end_date)
   );
+  const scheduleRows = (scheduleRowsRaw ?? []) as MarScheduleFreshnessRow[];
+
+  const expectedScheduleCountByMember = new Map<string, number>();
+  const latestMedicationUpdateByMember = new Map<string, number>();
+  medicationRows.forEach((row) => {
+    const memberId = clean(row.member_id);
+    if (!memberId) return;
+    const currentCount = expectedScheduleCountByMember.get(memberId) ?? 0;
+    expectedScheduleCountByMember.set(memberId, currentCount + normalizeScheduledTimes(row.scheduled_times).length);
+    const updatedAtMs = Date.parse(String(row.updated_at ?? ""));
+    if (Number.isFinite(updatedAtMs)) {
+      latestMedicationUpdateByMember.set(memberId, Math.max(latestMedicationUpdateByMember.get(memberId) ?? 0, updatedAtMs));
+    }
+  });
+
+  const activeScheduleCountByMember = new Map<string, number>();
+  const latestScheduleUpdateByMember = new Map<string, number>();
+  scheduleRows.forEach((row) => {
+    const memberId = clean(row.member_id);
+    if (!memberId) return;
+    activeScheduleCountByMember.set(memberId, (activeScheduleCountByMember.get(memberId) ?? 0) + 1);
+    const updatedAtMs = Date.parse(String(row.updated_at ?? ""));
+    if (Number.isFinite(updatedAtMs)) {
+      latestScheduleUpdateByMember.set(memberId, Math.max(latestScheduleUpdateByMember.get(memberId) ?? 0, updatedAtMs));
+    }
+  });
+
+  const candidateMemberIds = Array.from(new Set([...expectedScheduleCountByMember.keys(), ...activeScheduleCountByMember.keys()]));
+  const memberIds = candidateMemberIds.filter((memberId) => {
+    const expectedCount = expectedScheduleCountByMember.get(memberId) ?? 0;
+    const activeCount = activeScheduleCountByMember.get(memberId) ?? 0;
+    if (expectedCount !== activeCount) return true;
+    if (expectedCount === 0) return false;
+    return (latestMedicationUpdateByMember.get(memberId) ?? 0) > (latestScheduleUpdateByMember.get(memberId) ?? 0);
+  });
+
+  if (memberIds.length === 0) {
+    return;
+  }
+
   await Promise.all(
     memberIds.map((memberId) =>
       generateMarSchedulesForMember({
@@ -230,14 +307,14 @@ export async function getMarWorkflowSnapshot(options?: {
     { data: prnEffectiveRaw, error: prnEffectiveError },
     { data: prnIneffectiveRaw, error: prnIneffectiveError }
   ] = await Promise.all([
-    supabase.from("v_mar_today").select("*").order("scheduled_time", { ascending: true }),
-    supabase.from("v_mar_overdue_today").select("*").order("scheduled_time", { ascending: true }),
-    supabase.from("v_mar_not_given_today").select("*").order("administered_at", { ascending: false }),
-    supabase.from("v_mar_administration_history").select("*").order("administered_at", { ascending: false }).limit(historyLimit),
-    supabase.from("v_mar_prn_log").select("*").order("administered_at", { ascending: false }).limit(prnLimit),
-    supabase.from("v_mar_prn_given_awaiting_outcome").select("*").order("administered_at", { ascending: false }).limit(prnLimit),
-    supabase.from("v_mar_prn_effective").select("*").order("administered_at", { ascending: false }).limit(prnLimit),
-    supabase.from("v_mar_prn_ineffective").select("*").order("administered_at", { ascending: false }).limit(prnLimit)
+    supabase.from("v_mar_today").select(MAR_TODAY_SELECT).order("scheduled_time", { ascending: true }),
+    supabase.from("v_mar_overdue_today").select(MAR_TODAY_SELECT).order("scheduled_time", { ascending: true }),
+    supabase.from("v_mar_not_given_today").select(MAR_HISTORY_SELECT).order("administered_at", { ascending: false }),
+    supabase.from("v_mar_administration_history").select(MAR_HISTORY_SELECT).order("administered_at", { ascending: false }).limit(historyLimit),
+    supabase.from("v_mar_prn_log").select(MAR_HISTORY_SELECT).order("administered_at", { ascending: false }).limit(prnLimit),
+    supabase.from("v_mar_prn_given_awaiting_outcome").select(MAR_HISTORY_SELECT).order("administered_at", { ascending: false }).limit(prnLimit),
+    supabase.from("v_mar_prn_effective").select(MAR_HISTORY_SELECT).order("administered_at", { ascending: false }).limit(prnLimit),
+    supabase.from("v_mar_prn_ineffective").select(MAR_HISTORY_SELECT).order("administered_at", { ascending: false }).limit(prnLimit)
   ]);
 
   if (todayError) throwMarSupabaseError(todayError, "v_mar_today");

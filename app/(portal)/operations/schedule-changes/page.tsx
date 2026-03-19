@@ -6,7 +6,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import {
   listMemberAttendanceSchedulesForMemberIdsSupabase,
-  listMembersSupabase
+  listMemberNameLookupSupabase
 } from "@/lib/services/member-command-center-supabase";
 import { listScheduleChangesSupabase } from "@/lib/services/schedule-changes-supabase";
 import { SCHEDULE_WEEKDAY_KEYS } from "@/lib/services/schedule-changes-shared";
@@ -30,7 +30,7 @@ export default async function OperationsScheduleChangesPage() {
     profile.role === "director" ||
     profile.role === "coordinator";
 
-  const allMembers = await listMembersSupabase({ status: "all" });
+  const allMembers = await listMemberNameLookupSupabase({ status: "all" });
   const activeMembers = allMembers.filter((member) => member.status === "active");
   const [memberSchedules, scheduleChanges] = await Promise.all([
     listMemberAttendanceSchedulesForMemberIdsSupabase(allMembers.map((member) => member.id)),

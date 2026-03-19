@@ -359,18 +359,26 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
       leadId,
       message
     });
-    await recordImmediateSystemAlert({
-      entityType: "lead",
-      entityId: leadId,
-      actorUserId: profile.id,
-      severity: "medium",
-      alertKey: "sales_lead_audit_log_failed",
-      metadata: {
-        operation: "saveSalesLeadAction",
-        audit_action: "upsert_lead",
-        error: message
-      }
-    });
+    try {
+      await recordImmediateSystemAlert({
+        entityType: "lead",
+        entityId: leadId,
+        actorUserId: profile.id,
+        severity: "medium",
+        alertKey: "sales_lead_audit_log_failed",
+        metadata: {
+          operation: "saveSalesLeadAction",
+          audit_action: "upsert_lead",
+          error: message
+        }
+      });
+    } catch (alertError) {
+      const alertMessage = alertError instanceof Error ? alertError.message : "Unknown system alert error.";
+      console.error("[sales-lead-actions] lead alert insert failed after lead audit log failure", {
+        leadId,
+        message: alertMessage
+      });
+    }
   }
 
   revalidateSalesLeadViews(leadId);
@@ -457,19 +465,28 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
       memberId,
       message
     });
-    await recordImmediateSystemAlert({
-      entityType: "lead",
-      entityId: lead.id,
-      actorUserId: profile.id,
-      severity: "medium",
-      alertKey: "sales_lead_audit_log_failed",
-      metadata: {
-        operation: "enrollMemberFromLeadAction",
-        audit_action: "manager_review",
-        member_id: memberId,
-        error: message
-      }
-    });
+    try {
+      await recordImmediateSystemAlert({
+        entityType: "lead",
+        entityId: lead.id,
+        actorUserId: profile.id,
+        severity: "medium",
+        alertKey: "sales_lead_audit_log_failed",
+        metadata: {
+          operation: "enrollMemberFromLeadAction",
+          audit_action: "manager_review",
+          member_id: memberId,
+          error: message
+        }
+      });
+    } catch (alertError) {
+      const alertMessage = alertError instanceof Error ? alertError.message : "Unknown system alert error.";
+      console.error("[sales-lead-actions] lead alert insert failed after conversion audit log failure", {
+        leadId: lead.id,
+        memberId,
+        message: alertMessage
+      });
+    }
   }
 
   revalidateSalesLeadViews(lead.id);

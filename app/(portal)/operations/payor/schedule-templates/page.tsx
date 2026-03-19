@@ -1,6 +1,6 @@
 import { Card, CardTitle } from "@/components/ui/card";
 import { listBillingScheduleTemplates } from "@/lib/services/billing-read";
-import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";
 
 import { saveBillingScheduleTemplateAction } from "@/app/(portal)/operations/payor/actions";
 
@@ -10,7 +10,7 @@ function todayDate() {
 
 export default async function BillingScheduleTemplatesPage() {
   const [members, rows] = await Promise.all([
-    listMembersSupabase({ status: "active" }),
+    listMemberNameLookupSupabase({ status: "active" }),
     listBillingScheduleTemplates()
   ]);
 

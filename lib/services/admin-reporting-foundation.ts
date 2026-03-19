@@ -54,6 +54,17 @@ export type {
   OnDemandValue
 } from "@/lib/services/admin-reporting-core";
 
+const MEMBER_DOCUMENTATION_REPORT_RPC = "rpc_get_member_documentation_summary";
+
+type MemberDocumentationSummaryRow = {
+  member_id: string;
+  member_name: string | null;
+  participation_count: number | null;
+  toileting_count: number | null;
+  shower_count: number | null;
+  transportation_count: number | null;
+};
+
 async function loadAttendanceDataset(input: {
   range: ReportDateRange;
   memberStatus: "active" | "inactive" | "all";
@@ -170,6 +181,60 @@ async function loadBillingSettingsForMembers(memberIds: string[]) {
     memberSettingsByMember,
     centerSettings: (centerSettingsResult.data ?? []) as ReportingCenterBillingSettingRow[]
   };
+}
+
+async function loadMemberDocumentationSummary(range: ReportDateRange) {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc(MEMBER_DOCUMENTATION_REPORT_RPC, {
+    p_start_date: range.from,
+    p_end_date: range.to
+  });
+  if (error) {
+    if (error.message.includes(MEMBER_DOCUMENTATION_REPORT_RPC)) {
+      throw new Error(
+        "Member documentation summary RPC is not available. Apply Supabase migration 0094_admin_reporting_and_mar_read_hardening.sql and refresh the PostgREST schema cache."
+      );
+    }
+    throw new Error(error.message);
+  }
+  return (data ?? []) as MemberDocumentationSummaryRow[];
+}
+
+async function loadFinalizedRevenueByMember(input: {
+  memberIds: string[];
+  range: ReportDateRange;
+  includeCustomInvoices: boolean;
+}) {
+  const revenueByMember = new Map<string, number>();
+  if (input.memberIds.length === 0) {
+    return revenueByMember;
+  }
+
+  const supabase = await createClient();
+  let query = supabase
+    .from("billing_invoices")
+    .select("member_id, total_amount, invoice_status, invoice_source")
+    .in("member_id", input.memberIds)
+    .gte("invoice_date", input.range.from)
+    .lte("invoice_date", input.range.to);
+
+  if (!input.includeCustomInvoices) {
+    query = query.neq("invoice_source", "Custom");
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  (data ?? []).forEach((row: any) => {
+    const memberId = String(row.member_id ?? "");
+    if (!memberId) return;
+    const invoiceStatus = String(row.invoice_status ?? "");
+    if (invoiceStatus === "Draft" || invoiceStatus === "Void") return;
+    const amount = Number(row.total_amount ?? 0);
+    revenueByMember.set(memberId, toAmount((revenueByMember.get(memberId) ?? 0) + amount));
+  });
+
+  return revenueByMember;
 }
 
 export async function getAdminRevenueSummary(input: AdminRevenueSummaryInput): Promise<AdminRevenueSummaryResult> {
@@ -401,63 +466,7 @@ export async function getOnDemandReportData(input: {
     };
   }
 
-  const [dailyLogs, toiletLogs, showerLogs, transportLogs] = await Promise.all([
-    supabase
-      .from("daily_activity_logs")
-      .select("member_id, members!daily_activity_logs_member_id_fkey(display_name), activity_date")
-      .gte("activity_date", normalizedRange.from)
-      .lte("activity_date", normalizedRange.to),
-    supabase
-      .from("toilet_logs")
-      .select("member_id, members!toilet_logs_member_id_fkey(display_name), event_at")
-      .gte("event_at", `${normalizedRange.from}T00:00:00.000Z`)
-      .lte("event_at", `${normalizedRange.to}T23:59:59.999Z`),
-    supabase
-      .from("shower_logs")
-      .select("member_id, members!shower_logs_member_id_fkey(display_name), event_at")
-      .gte("event_at", `${normalizedRange.from}T00:00:00.000Z`)
-      .lte("event_at", `${normalizedRange.to}T23:59:59.999Z`),
-    supabase
-      .from("transportation_logs")
-      .select("member_id, members!transportation_logs_member_id_fkey(display_name), service_date")
-      .gte("service_date", normalizedRange.from)
-      .lte("service_date", normalizedRange.to)
-  ]);
-  if (dailyLogs.error) throw new Error(dailyLogs.error.message);
-  if (toiletLogs.error) throw new Error(toiletLogs.error.message);
-  if (showerLogs.error) throw new Error(showerLogs.error.message);
-  if (transportLogs.error) throw new Error(transportLogs.error.message);
-
-  const byMember = new Map<string, {
-    memberName: string;
-    participation: number;
-    toileting: number;
-    showers: number;
-    transportation: number;
-  }>();
-  const seedMember = (memberId: string, memberName: string) => {
-    const existing = byMember.get(memberId) ?? {
-      memberName,
-      participation: 0,
-      toileting: 0,
-      showers: 0,
-      transportation: 0
-    };
-    byMember.set(memberId, existing);
-    return existing;
-  };
-  (dailyLogs.data ?? []).forEach((row: any) => {
-    seedMember(String(row.member_id), String(row.members?.display_name ?? "Unknown Member")).participation += 1;
-  });
-  (toiletLogs.data ?? []).forEach((row: any) => {
-    seedMember(String(row.member_id), String(row.members?.display_name ?? "Unknown Member")).toileting += 1;
-  });
-  (showerLogs.data ?? []).forEach((row: any) => {
-    seedMember(String(row.member_id), String(row.members?.display_name ?? "Unknown Member")).showers += 1;
-  });
-  (transportLogs.data ?? []).forEach((row: any) => {
-    seedMember(String(row.member_id), String(row.members?.display_name ?? "Unknown Member")).transportation += 1;
-  });
+  const rows = await loadMemberDocumentationSummary(normalizedRange);
 
   return {
     category: input.category,
@@ -470,14 +479,12 @@ export async function getOnDemandReportData(input: {
       { key: "showers", label: "Shower Logs", kind: "integer" },
       { key: "transportation", label: "Transportation Logs", kind: "integer" }
     ],
-    rows: Array.from(byMember.values())
-      .sort((left, right) => left.memberName.localeCompare(right.memberName))
-      .map((row) => ({
-        memberName: row.memberName,
-        participation: row.participation,
-        toileting: row.toileting,
-        showers: row.showers,
-        transportation: row.transportation
+    rows: rows.map((row) => ({
+      memberName: row.member_name ?? "Unknown Member",
+      participation: Number(row.participation_count ?? 0),
+      toileting: Number(row.toileting_count ?? 0),
+      showers: Number(row.shower_count ?? 0),
+      transportation: Number(row.transportation_count ?? 0)
       }))
   };
 }
@@ -515,12 +522,19 @@ export async function getAttendanceSummaryReport(input: AttendanceSummaryInput):
     });
   }
 
-  const selectedMemberIds = new Set(eligibleMembers.map((member) => member.id));
   const availableLocations = Array.from(
     new Set(
       eligibleMembers.map((member) => attendanceDataset.memberLocationById.get(member.id) ?? "Unassigned")
     )
   ).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+
+  if (input.location) {
+    eligibleMembers = eligibleMembers.filter(
+      (member) => (attendanceDataset.memberLocationById.get(member.id) ?? "Unassigned") === input.location
+    );
+  }
+
+  const selectedMemberIds = new Set(eligibleMembers.map((member) => member.id));
 
   const attendanceFacts = buildAttendanceFacts({
     range: normalizedRange,
@@ -528,7 +542,7 @@ export async function getAttendanceSummaryReport(input: AttendanceSummaryInput):
     memberLocationById: attendanceDataset.memberLocationById,
     attendanceRecordByMemberDate: attendanceDataset.attendanceRecordByMemberDate,
     expectedContext: attendanceDataset.expectedContext
-  }).filter((row) => (input.location ? row.location === input.location : true));
+  });
 
   const projectedRevenueByMember = new Map<string, number>();
   attendanceFacts.forEach((fact) => {
@@ -546,28 +560,14 @@ export async function getAttendanceSummaryReport(input: AttendanceSummaryInput):
   });
 
   const revenueModeApplied: AttendanceSummaryRevenueBasis = input.revenueBasis;
-  const finalizedRevenueByMember = new Map<string, number>();
-  if (input.revenueBasis === "FinalizedRevenue") {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("billing_invoices")
-      .select("member_id, total_amount, invoice_status, invoice_source, invoice_date")
-      .gte("invoice_date", normalizedRange.from)
-      .lte("invoice_date", normalizedRange.to);
-    if (error) throw new Error(error.message);
-    (data ?? []).forEach((row: any) => {
-      const memberId = String(row.member_id ?? "");
-      if (!selectedMemberIds.has(memberId)) return;
-      const invoiceStatus = String(row.invoice_status ?? "");
-      if (invoiceStatus === "Draft" || invoiceStatus === "Void") return;
-      if (!input.includeCustomInvoices && String(row.invoice_source ?? "") === "Custom") return;
-      const amount = Number(row.total_amount ?? 0);
-      finalizedRevenueByMember.set(
-        memberId,
-        toAmount((finalizedRevenueByMember.get(memberId) ?? 0) + amount)
-      );
-    });
-  }
+  const finalizedRevenueByMember =
+    input.revenueBasis === "FinalizedRevenue"
+      ? await loadFinalizedRevenueByMember({
+          memberIds: Array.from(selectedMemberIds),
+          range: normalizedRange,
+          includeCustomInvoices: input.includeCustomInvoices
+        })
+      : new Map<string, number>();
 
   const revenueByMember =
     revenueModeApplied === "FinalizedRevenue"
@@ -583,16 +583,20 @@ export async function getAttendanceSummaryReport(input: AttendanceSummaryInput):
   const memberIdsByLocation = new Map<string, Set<string>>();
   eligibleMembers.forEach((member) => {
     const location = attendanceDataset.memberLocationById.get(member.id) ?? "Unassigned";
-    if (input.location && location !== input.location) return;
     const existing = memberIdsByLocation.get(location) ?? new Set<string>();
     existing.add(member.id);
     memberIdsByLocation.set(location, existing);
   });
 
+  const presentMemberDaysByLocation = new Map<string, number>();
+  attendanceFacts.forEach((row) => {
+    if (!row.present) return;
+    presentMemberDaysByLocation.set(row.location, (presentMemberDaysByLocation.get(row.location) ?? 0) + 1);
+  });
+
   const rows: AttendanceSummaryRow[] = Array.from(memberIdsByLocation.entries())
     .map(([location, memberIds]) => {
-      const locationFacts = attendanceFacts.filter((row) => row.location === location);
-      const totalMemberDays = locationFacts.filter((row) => row.present).length;
+      const totalMemberDays = presentMemberDaysByLocation.get(location) ?? 0;
       const totalEnrolled = memberIds.size;
       const totalRevenue = toAmount(
         Array.from(memberIds).reduce((sum, memberId) => sum + (revenueByMember.get(memberId) ?? 0), 0)

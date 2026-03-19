@@ -1,6 +1,6 @@
 import { Card, CardTitle } from "@/components/ui/card";
 import { listCenterBillingSettingsSupabase } from "@/lib/services/member-command-center-supabase";
-import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";
 import { listMemberBillingSettings, listPayors } from "@/lib/services/billing-read";
 
 import {
@@ -18,7 +18,7 @@ export default async function BillingAgreementsPage() {
   const [payors, memberBilling, members] = await Promise.all([
     listPayors(),
     listMemberBillingSettings(),
-    listMembersSupabase({ status: "active" })
+    listMemberNameLookupSupabase({ status: "active" })
   ]);
   const centerSetting = centerBillingSettings.find((row) => row.active) ?? centerBillingSettings[0] ?? null;
 

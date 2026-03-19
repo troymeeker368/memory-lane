@@ -45,11 +45,15 @@ type ActionSuccessResult<T extends object = object> = {
 } & T;
 
 async function insertAudit(action: AuditAction, entityType: string, entityId: string | null, details: Record<string, unknown>) {
-  const profile = await getCurrentProfile();
+  let actorUserId: string | null = null;
+  let actorRole: string | null = null;
   try {
+    const profile = await getCurrentProfile();
+    actorUserId = profile.id;
+    actorRole = profile.role;
     await insertAuditLogEntry({
-      actorUserId: profile.id,
-      actorRole: profile.role,
+      actorUserId,
+      actorRole,
       action,
       entityType,
       entityId,
@@ -63,18 +67,28 @@ async function insertAudit(action: AuditAction, entityType: string, entityId: st
       entityId,
       message
     });
-    await recordImmediateSystemAlert({
-      entityType,
-      entityId,
-      actorUserId: profile.id,
-      severity: "medium",
-      alertKey: "audit_log_insert_failed",
-      metadata: {
-        audit_action: action,
-        actor_role: profile.role,
-        error: message
-      }
-    });
+    try {
+      await recordImmediateSystemAlert({
+        entityType,
+        entityId,
+        actorUserId,
+        severity: "medium",
+        alertKey: "audit_log_insert_failed",
+        metadata: {
+          audit_action: action,
+          actor_role: actorRole,
+          error: message
+        }
+      });
+    } catch (alertError) {
+      const alertMessage = alertError instanceof Error ? alertError.message : "Unknown system alert error.";
+      console.error("[documentation-actions] system alert insert failed after audit log failure", {
+        action,
+        entityType,
+        entityId,
+        message: alertMessage
+      });
+    }
   }
 }
 

@@ -61,6 +61,10 @@ export type {
   PayorRow
 } from "@/lib/services/member-command-center-types";
 
+function escapeIlikeSearchTerm(value: string) {
+  return value.replace(/[%,_]/g, (match) => `\\${match}`);
+}
+
 export async function listActivePayorsSupabase() {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -175,25 +179,23 @@ export async function upsertBillingScheduleTemplateSupabase(
 
 export async function listMembersSupabase(filters?: { q?: string; status?: "all" | "active" | "inactive" }) {
   const supabase = await createClient();
+  const q = (filters?.q ?? "").trim();
   const rows = await selectMembersWithFallback(
     async (selectClause) => {
       let query = supabase.from("members").select(selectClause);
       if (filters?.status && filters.status !== "all") {
         query = query.eq("status", filters.status);
       }
+      if (q) {
+        const escaped = escapeIlikeSearchTerm(q);
+        query = query.or(`display_name.ilike.%${escaped}%,locker_number.ilike.%${escaped}%`);
+      }
       return query.order("display_name", { ascending: true });
     },
     isMissingAnyColumnError,
     "Unable to query members."
   );
-
-  const q = (filters?.q ?? "").trim().toLowerCase();
-  if (!q) return rows;
-  return rows.filter(
-    (row) =>
-      row.display_name.toLowerCase().includes(q) ||
-      String(row.locker_number ?? "").toLowerCase().includes(q)
-  );
+  return rows;
 }
 
 export async function listMemberNameLookupSupabase(filters?: { status?: "all" | "active" | "inactive" }) {

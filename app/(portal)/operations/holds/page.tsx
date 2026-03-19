@@ -12,7 +12,7 @@ import {
 } from "@/lib/services/operations-calendar";
 import { isMemberHoldActiveForDate } from "@/lib/services/expected-attendance";
 import { listMemberHolds } from "@/lib/services/holds-supabase";
-import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
@@ -32,7 +32,7 @@ export default async function OperationsHoldsPage({
   const defaultHoldStartDate = getOperationsTodayDate();
   const defaultHoldEndDate = getFirstDayOfNextMonth(defaultHoldStartDate);
 
-  const members = await listMembersSupabase({ status: "all" });
+  const members = await listMemberNameLookupSupabase({ status: "all" });
   const holds = await listMemberHolds();
 
   const memberById = new Map(members.map((member) => [member.id, member] as const));

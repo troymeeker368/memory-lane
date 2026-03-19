@@ -13,30 +13,35 @@ export interface AdminAuditTrailRow {
 }
 
 const ADMIN_AUDIT_AREA_SQL_TERMS = [
-  { label: "Time & Attendance", entityTypeTerms: ["time"] },
-  { label: "Sales", entityTypeTerms: ["lead"] },
-  { label: "Documentation", entityTypeTerms: ["photo"] },
+  { label: "Time & Attendance", entityTypeTerms: ["time", "attendance", "punch"] },
+  { label: "Sales", entityTypeTerms: ["lead", "partner", "referral"] },
+  { label: "Documentation", entityTypeTerms: ["documentation", "photo", "daily_activity", "toilet", "shower", "blood_sugar", "incident"] },
   { label: "Transportation", entityTypeTerms: ["transport"] },
-  { label: "Member", entityTypeTerms: ["member"] },
-  { label: "Charges", entityTypeTerms: ["charge", "ancillary"] }
+  { label: "Member", entityTypeTerms: ["member", "care_plan", "physician_order", "pof", "intake"] },
+  { label: "Charges", entityTypeTerms: ["charge", "ancillary", "pricing"] }
 ] as const;
 
 export function resolveAdminAuditArea(entityType: string) {
   const normalized = String(entityType ?? "").toLowerCase();
-  if (normalized.includes("time")) return "Time & Attendance";
-  if (normalized.includes("lead")) return "Sales";
-  if (normalized.includes("photo")) return "Documentation";
-  if (normalized.includes("transport")) return "Transportation";
-  if (normalized.includes("member")) return "Member";
-  if (normalized.includes("charge") || normalized.includes("ancillary")) return "Charges";
+  const matchedArea = ADMIN_AUDIT_AREA_SQL_TERMS.find(({ entityTypeTerms }) =>
+    entityTypeTerms.some((term) => normalized.includes(term))
+  );
+  if (matchedArea) {
+    return matchedArea.label;
+  }
   return "General";
 }
 
 function resolveAdminAuditAreaSqlFilter(areaFilter: string) {
   if (!areaFilter) return null;
-  const terms = ADMIN_AUDIT_AREA_SQL_TERMS.filter(({ label }) => label.toLowerCase().includes(areaFilter)).flatMap(
-    ({ entityTypeTerms }) => entityTypeTerms
-  );
+  const matchingAreas = ADMIN_AUDIT_AREA_SQL_TERMS.filter(({ label, entityTypeTerms }) => {
+    const normalizedLabel = label.toLowerCase();
+    return normalizedLabel.includes(areaFilter) || entityTypeTerms.some((term) => term.includes(areaFilter));
+  });
+  const terms: string[] = matchingAreas.flatMap(({ entityTypeTerms }) => entityTypeTerms);
+  if (terms.length === 0) {
+    terms.push(areaFilter);
+  }
   if (terms.length === 0) return null;
   return Array.from(new Set(terms)).map((term) => `entity_type.ilike.%${term}%`).join(",");
 }
@@ -92,6 +97,5 @@ export async function listAdminAuditTrailRows(input?: {
     .map((row) => ({
       ...row,
       actor_name: row.actor_user_id ? profileNameById.get(row.actor_user_id) ?? null : null
-    }))
-    .filter((row) => (areaFilter ? resolveAdminAuditArea(row.entity_type).toLowerCase().includes(areaFilter) : true));
+    }));
 }

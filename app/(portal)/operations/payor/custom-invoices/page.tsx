@@ -6,7 +6,7 @@ import {
   getBillingMemberPayorLookups,
   getCustomInvoices
 } from "@/lib/services/billing-read";
-import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";
 
 import { finalizeInvoiceAction } from "@/app/(portal)/operations/payor/actions";
 
@@ -31,7 +31,7 @@ export default async function CustomInvoicesPage({
     getBillingMemberPayorLookups(),
     getCustomInvoices({ status: "Draft" }),
     getCustomInvoices({ status: "Finalized" }),
-    listMembersSupabase({ status: "active" })
+    listMemberNameLookupSupabase({ status: "active" })
   ]);
   const memberName = new Map(members.map((row) => [row.id, row.display_name] as const));
 
