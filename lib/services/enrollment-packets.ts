@@ -210,18 +210,27 @@ async function insertPacketEvent(input: {
     eventType: input.eventType,
     message: error.message
   });
-  await recordImmediateSystemAlert({
-    entityType: "enrollment_packet_request",
-    entityId: input.packetId,
-    actorUserId: input.actorUserId ?? null,
-    severity: "medium",
-    alertKey: "enrollment_packet_event_insert_failed",
-    metadata: {
-      actor_email: cleanEmail(input.actorEmail),
-      event_type: input.eventType,
-      error: error.message
-    }
-  });
+  try {
+    await recordImmediateSystemAlert({
+      entityType: "enrollment_packet_request",
+      entityId: input.packetId,
+      actorUserId: input.actorUserId ?? null,
+      severity: "medium",
+      alertKey: "enrollment_packet_event_insert_failed",
+      metadata: {
+        actor_email: cleanEmail(input.actorEmail),
+        event_type: input.eventType,
+        error: error.message
+      }
+    });
+  } catch (alertError) {
+    const alertMessage = alertError instanceof Error ? alertError.message : "Unknown system alert error.";
+    console.error("[enrollment-packets] system alert insert failed after packet event insert failure", {
+      packetId: input.packetId,
+      eventType: input.eventType,
+      message: alertMessage
+    });
+  }
   return false;
 }
 
@@ -253,18 +262,27 @@ async function addLeadActivity(input: {
     activityType: input.activityType,
     message: error.message
   });
-  await recordImmediateSystemAlert({
-    entityType: "lead",
-    entityId: input.leadId,
-    actorUserId: input.completedByUserId,
-    severity: "medium",
-    alertKey: "lead_activity_insert_failed",
-    metadata: {
-      activity_type: input.activityType,
-      outcome: input.outcome,
-      error: error.message
-    }
-  });
+  try {
+    await recordImmediateSystemAlert({
+      entityType: "lead",
+      entityId: input.leadId,
+      actorUserId: input.completedByUserId,
+      severity: "medium",
+      alertKey: "lead_activity_insert_failed",
+      metadata: {
+        activity_type: input.activityType,
+        outcome: input.outcome,
+        error: error.message
+      }
+    });
+  } catch (alertError) {
+    const alertMessage = alertError instanceof Error ? alertError.message : "Unknown system alert error.";
+    console.error("[enrollment-packets] system alert insert failed after lead activity insert failure", {
+      leadId: input.leadId,
+      activityType: input.activityType,
+      message: alertMessage
+    });
+  }
   return false;
 }
 
@@ -854,11 +872,16 @@ async function prepareEnrollmentPacketRequestForDelivery(input: {
   preparedAt: string;
 }) {
   const admin = createSupabaseAdminClient();
-  const packetId = input.existingRequest?.id ?? randomUUID();
+  const packetId = input.existingRequest?.id ?? null;
+  let preparedPacketId = packetId;
 
   try {
-    await invokeSupabaseRpcOrThrow<unknown>(admin, PREPARE_ENROLLMENT_PACKET_REQUEST_RPC, {
-      p_packet_id: input.existingRequest?.id ?? null,
+    type PrepareEnrollmentPacketResultRow = {
+      packet_id: string;
+      was_created: boolean;
+    };
+    const data = await invokeSupabaseRpcOrThrow<unknown>(admin, PREPARE_ENROLLMENT_PACKET_REQUEST_RPC, {
+      p_packet_id: packetId,
       p_member_id: input.memberId,
       p_lead_id: input.leadId,
       p_sender_user_id: input.senderUserId,
@@ -880,6 +903,11 @@ async function prepareEnrollmentPacketRequestForDelivery(input: {
       p_sender_email: input.senderEmail,
       p_prepared_at: input.preparedAt
     });
+    const row = (Array.isArray(data) ? data[0] : null) as PrepareEnrollmentPacketResultRow | null;
+    preparedPacketId = clean(row?.packet_id) ?? packetId;
+    if (!preparedPacketId) {
+      throw new Error("Enrollment packet request preparation RPC did not return a packet id.");
+    }
   } catch (error) {
     if (
       isActiveEnrollmentPacketUniqueViolation(
@@ -898,14 +926,14 @@ async function prepareEnrollmentPacketRequestForDelivery(input: {
   }
 
   await insertPacketEvent({
-    packetId,
+    packetId: preparedPacketId,
     eventType: "prepared",
     actorUserId: input.senderUserId,
     actorEmail: input.senderEmail,
     metadata: input.eventMetadata
   });
 
-  return packetId;
+  return preparedPacketId;
 }
 
 function resolveClinicalSenderEmail() {
