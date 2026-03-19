@@ -41,6 +41,7 @@ import {
 } from "@/lib/services/member-command-center-core";
 import {
   selectMemberWithFallback,
+  selectMemberLookupRowsWithFallback,
   selectMembersPageWithFallback,
   selectMembersWithFallback
 } from "@/lib/services/member-command-center-member-queries";
@@ -192,6 +193,21 @@ export async function listMembersSupabase(filters?: { q?: string; status?: "all"
     (row) =>
       row.display_name.toLowerCase().includes(q) ||
       String(row.locker_number ?? "").toLowerCase().includes(q)
+  );
+}
+
+export async function listMemberNameLookupSupabase(filters?: { status?: "all" | "active" | "inactive" }) {
+  const supabase = await createClient();
+  return selectMemberLookupRowsWithFallback(
+    async (selectClause) => {
+      let query = supabase.from("members").select(selectClause);
+      if (filters?.status && filters.status !== "all") {
+        query = query.eq("status", filters.status);
+      }
+      return query.order("display_name", { ascending: true });
+    },
+    isMissingAnyColumnError,
+    "Unable to query member lookup rows."
   );
 }
 
@@ -585,7 +601,9 @@ export async function listMemberFilesSupabase(memberId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_files")
-    .select("*")
+    .select(
+      "id, member_id, file_name, file_type, file_data_url, storage_object_path, category, category_other, document_source, pof_request_id, uploaded_by_user_id, uploaded_by_name, uploaded_at, updated_at"
+    )
     .eq("member_id", canonicalMemberId)
     .order("uploaded_at", { ascending: false });
   if (error) throw new Error(error.message);

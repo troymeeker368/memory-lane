@@ -15,16 +15,12 @@ import {
 import {
   BILLING_BATCH_TYPE_OPTIONS,
   BILLING_EXPORT_TYPES,
-  type AttendanceSettingWeekdays,
   type BatchGenerationInput,
-  type BillingExpectedAttendanceCollectionInput,
-  type BillingExpectedAttendanceInput,
   type BillingPreviewRow,
   type BillingSettingRow,
   type CenterBillingSettingRow,
   type CustomInvoiceManualLine,
   type CreateCustomInvoiceInput,
-  type DateRange,
   type FinalizeBatchInput,
   type ReopenBatchInput,
   type ScheduleTemplateRow
@@ -33,20 +29,27 @@ import {
   addDays,
   addMonths,
   asNumber,
-  attendanceSettingIncludesDate,
   buildCustomInvoiceNumber,
   endOfMonth,
-  escapeCsv,
   isWithin,
   normalizeDateOnly,
   previousMonth,
-  scheduleIncludesDate,
   startOfMonth,
   toAmount,
   toDateRange,
-  toMonthRange,
-  weekdayKey
+  toMonthRange
 } from "@/lib/services/billing-utils";
+import {
+  buildCsvRows,
+  collectBillingEligibleBaseDates,
+  computeDueState,
+  getMonthlyBillingBasis,
+  mapCoverageTypeForLineType,
+  normalizeInvoiceRow,
+  resolveMemberInvoicePeriods,
+  shouldProcessModeInBatch,
+  toDataUrl
+} from "@/lib/services/billing-core";
 import {
   buildBillingBatchWritePlan,
   invokeCreateBillingExportRpc,
@@ -81,10 +84,6 @@ import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
-import {
-  isMemberHoldActiveForDate,
-  resolveExpectedAttendanceForDate
-} from "@/lib/services/expected-attendance";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import {
   recordImmediateSystemAlert,
@@ -130,137 +129,6 @@ export {
   resolveEffectiveBillingMode
 } from "@/lib/services/billing-effective";
 
-function toWeekdayOnlyBaseSchedule(input: AttendanceSettingWeekdays | ScheduleTemplateRow | null | undefined) {
-  if (!input) return null;
-  return {
-    monday: Boolean(input.monday),
-    tuesday: Boolean(input.tuesday),
-    wednesday: Boolean(input.wednesday),
-    thursday: Boolean(input.thursday),
-    friday: Boolean(input.friday)
-  };
-}
-
-function isCanonicalScheduledForBillingDate(
-  input: {
-    dateOnly: string;
-    includeBySchedule: boolean;
-    baseSchedule: AttendanceSettingWeekdays | ScheduleTemplateRow | null | undefined;
-    holds: BillingExpectedAttendanceInput["holds"];
-    scheduleChanges: BillingExpectedAttendanceInput["scheduleChanges"];
-    nonBillableClosures: Set<string>;
-  }
-) {
-  if (!input.includeBySchedule) return false;
-  if (input.nonBillableClosures.has(input.dateOnly)) return false;
-
-  const day = weekdayKey(input.dateOnly);
-  if (day === "saturday" || day === "sunday") {
-    return !input.holds.some((hold) => isMemberHoldActiveForDate(hold, input.dateOnly));
-  }
-
-  const resolution = resolveExpectedAttendanceForDate({
-    date: input.dateOnly,
-    baseSchedule: toWeekdayOnlyBaseSchedule(input.baseSchedule),
-    scheduleChanges: input.scheduleChanges,
-    holds: input.holds,
-    centerClosures: input.nonBillableClosures.has(input.dateOnly) ? [{ closure_date: input.dateOnly }] : []
-  });
-  return resolution.isScheduled;
-}
-
-function collectBillingEligibleBaseDates(
-  input: {
-    range: DateRange;
-    schedule: ScheduleTemplateRow | null;
-    attendanceSetting: AttendanceSettingWeekdays | null;
-    includeAllWhenNoSchedule: boolean;
-    holds: BillingExpectedAttendanceCollectionInput["holds"];
-    scheduleChanges: BillingExpectedAttendanceCollectionInput["scheduleChanges"];
-    nonBillableClosures: Set<string>;
-  }
-) {
-  const dates = new Set<string>();
-  let cursor = input.range.start;
-  while (cursor <= input.range.end) {
-    const includeBySchedule = input.includeAllWhenNoSchedule
-      ? true
-      : input.schedule
-        ? scheduleIncludesDate(input.schedule, cursor)
-        : attendanceSettingIncludesDate(input.attendanceSetting, cursor);
-    if (
-      isCanonicalScheduledForBillingDate({
-        dateOnly: cursor,
-        includeBySchedule,
-        baseSchedule: input.schedule ?? input.attendanceSetting,
-        holds: input.holds,
-        scheduleChanges: input.scheduleChanges,
-        nonBillableClosures: input.nonBillableClosures
-      })
-    ) {
-      dates.add(cursor);
-    }
-    cursor = addDays(cursor, 1);
-  }
-  return dates;
-}
-
-function getMonthlyBillingBasis(setting: BillingSettingRow) {
-  return setting.monthly_billing_basis === "ActualAttendanceMonthBehind"
-    ? ("ActualAttendanceMonthBehind" as const)
-    : ("ScheduledMonthBehind" as const);
-}
-
-type MemberInvoicePeriods = {
-  invoiceMonth: string;
-  baseRange: DateRange;
-  variableRange: DateRange;
-  billingModeSnapshot: "Membership" | "Monthly" | "Custom";
-};
-
-function resolveMemberInvoicePeriods(input: {
-  mode: "Membership" | "Monthly" | "Custom";
-  batchType: (typeof BILLING_BATCH_TYPE_OPTIONS)[number];
-  invoiceMonthStart: string;
-}): MemberInvoicePeriods {
-  if (input.mode === "Membership") {
-    return {
-      invoiceMonth: input.invoiceMonthStart,
-      baseRange: toMonthRange(input.invoiceMonthStart),
-      variableRange: toMonthRange(previousMonth(input.invoiceMonthStart)),
-      billingModeSnapshot: "Membership"
-    };
-  }
-
-  if (input.mode === "Monthly") {
-    const invoiceMonth = input.batchType === "Mixed" ? previousMonth(input.invoiceMonthStart) : input.invoiceMonthStart;
-    const baseMonth = previousMonth(invoiceMonth);
-    const baseRange = toMonthRange(baseMonth);
-    return {
-      invoiceMonth,
-      baseRange,
-      variableRange: baseRange,
-      billingModeSnapshot: "Monthly"
-    };
-  }
-
-  return {
-    invoiceMonth: input.invoiceMonthStart,
-    baseRange: toMonthRange(input.invoiceMonthStart),
-    variableRange: toMonthRange(input.invoiceMonthStart),
-    billingModeSnapshot: "Custom"
-  };
-}
-
-function shouldProcessModeInBatch(input: {
-  mode: "Membership" | "Monthly" | "Custom";
-  batchType: (typeof BILLING_BATCH_TYPE_OPTIONS)[number];
-}) {
-  if (input.mode === "Custom") return false;
-  if (input.batchType === "Mixed") return input.mode === "Membership" || input.mode === "Monthly";
-  return input.mode === input.batchType;
-}
-
 async function resolveDailyRate(input: {
   memberId: string;
   memberSetting: BillingSettingRow;
@@ -298,42 +166,6 @@ async function resolveTransportationBillingStatus(input: {
   const attendanceSetting = await getMemberAttendanceBillingSetting(input.memberId);
   if (attendanceSetting?.transportationBillingStatus) return attendanceSetting.transportationBillingStatus;
   return input.memberSetting?.transportation_billing_status ?? "BillNormally";
-}
-
-function mapCoverageTypeForLineType(
-  lineType: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment" | "Credit" | "PriorBalance"
-): "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment" {
-  if (lineType === "BaseProgram") return "BaseProgram";
-  if (lineType === "Transportation") return "Transportation";
-  if (lineType === "Ancillary") return "Ancillary";
-  return "Adjustment";
-}
-
-function computeDueState(nextDueDate: string | null, completionDate: string | null) {
-  if (completionDate) return "Completed";
-  if (!nextDueDate) return "Pending";
-  const today = toEasternDate();
-  if (nextDueDate < today) return "Overdue";
-  if (nextDueDate === today) return "Due Today";
-  return "Open";
-}
-
-function toDataUrl(fileName: string, csv: string) {
-  void fileName;
-  return `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
-}
-
-function normalizeInvoiceRow(row: any) {
-  return {
-    ...row,
-    base_program_billed_days: asNumber(row.base_program_billed_days),
-    member_daily_rate_snapshot: asNumber(row.member_daily_rate_snapshot),
-    base_program_amount: asNumber(row.base_program_amount),
-    transportation_amount: asNumber(row.transportation_amount),
-    ancillary_amount: asNumber(row.ancillary_amount),
-    adjustment_amount: asNumber(row.adjustment_amount),
-    total_amount: asNumber(row.total_amount)
-  };
 }
 
 async function getBillingPreviewRows(input: {
@@ -1767,16 +1599,13 @@ export async function createBillingExport(input: {
           payor?.quickbooks_customer_id ?? "",
           row.invoice_status,
           toAmount(row.total_amount)
-        ]
-          .map(escapeCsv)
-          .join(",");
+        ];
       });
-      csv = [header.join(","), ...body].join("\n");
+      csv = buildCsvRows(header, body);
     } else if (input.exportType === "InternalReviewCSV") {
       const header = ["InvoiceNumber", "LineType", "Description", "ServiceDate", "Quantity", "UnitRate", "Amount"];
       const invoiceById = new Map(invoiceRows.map((row: any) => [String(row.id), row] as const));
-      const body = (lines ?? []).map((line: any) =>
-        [
+      const body = (lines ?? []).map((line: any) => [
           invoiceById.get(String(line.invoice_id))?.invoice_number ?? "",
           line.line_type,
           line.description,
@@ -1784,11 +1613,8 @@ export async function createBillingExport(input: {
           asNumber(line.quantity),
           toAmount(asNumber(line.unit_rate)),
           toAmount(asNumber(line.amount))
-        ]
-          .map(escapeCsv)
-          .join(",")
-      );
-      csv = [header.join(","), ...body].join("\n");
+        ]);
+      csv = buildCsvRows(header, body);
     } else {
       const header = ["Customer", "CustomerContactId", "QuickBooksCustomerId", "InvoiceNumber", "Date", "DueDate", "Amount"];
       const body = invoiceRows.map((row: any) => {
@@ -1801,11 +1627,9 @@ export async function createBillingExport(input: {
           row.invoice_date ?? row.created_at,
           row.due_date ?? "",
           toAmount(row.total_amount)
-        ]
-          .map(escapeCsv)
-          .join(",");
+        ];
       });
-      csv = [header.join(","), ...body].join("\n");
+      csv = buildCsvRows(header, body);
     }
 
     const fileName = `${input.exportType}-${startOfMonth(String((batch as any).billing_month))}-${Date.now()}.csv`;

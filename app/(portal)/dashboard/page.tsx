@@ -7,7 +7,7 @@ import { canView, normalizeRoleKey } from "@/lib/permissions";
 import { getDailyAttendanceView } from "@/lib/services/attendance";
 import { getDashboardAlerts, getDashboardStats } from "@/lib/services/dashboard";
 import { listMemberHolds } from "@/lib/services/holds-supabase";
-import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { getSalesOpenLeadSummary } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
@@ -92,7 +92,7 @@ export default async function DashboardPage() {
         ? withDashboardTiming("query:adminSnapshot", async () => {
             const supabase = await createClient();
             const [membersData, holds, { data: ancillaryData }] = await Promise.all([
-              listMembersSupabase({ status: "all" }),
+              listMemberNameLookupSupabase({ status: "all" }),
               listMemberHolds(),
               supabase
                 .from("ancillary_charge_logs")

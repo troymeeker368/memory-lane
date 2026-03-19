@@ -1,4 +1,4 @@
-import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";
 import { createClient } from "@/lib/supabase/server";
 
 export type StaffLookupRow = {
@@ -26,7 +26,7 @@ export async function listStaffLookupSupabase(): Promise<StaffLookupRow[]> {
 }
 
 export async function listActiveMemberLookupSupabase(): Promise<MemberLookupRow[]> {
-  const members = await listMembersSupabase({ status: "active" });
+  const members = await listMemberNameLookupSupabase({ status: "active" });
   return members.map((row) => ({
     id: row.id,
     display_name: row.display_name

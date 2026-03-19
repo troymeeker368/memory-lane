@@ -12,6 +12,15 @@ export interface AdminAuditTrailRow {
   actor_name: string | null;
 }
 
+const ADMIN_AUDIT_AREA_SQL_TERMS = [
+  { label: "Time & Attendance", entityTypeTerms: ["time"] },
+  { label: "Sales", entityTypeTerms: ["lead"] },
+  { label: "Documentation", entityTypeTerms: ["photo"] },
+  { label: "Transportation", entityTypeTerms: ["transport"] },
+  { label: "Member", entityTypeTerms: ["member"] },
+  { label: "Charges", entityTypeTerms: ["charge", "ancillary"] }
+] as const;
+
 export function resolveAdminAuditArea(entityType: string) {
   const normalized = String(entityType ?? "").toLowerCase();
   if (normalized.includes("time")) return "Time & Attendance";
@@ -21,6 +30,15 @@ export function resolveAdminAuditArea(entityType: string) {
   if (normalized.includes("member")) return "Member";
   if (normalized.includes("charge") || normalized.includes("ancillary")) return "Charges";
   return "General";
+}
+
+function resolveAdminAuditAreaSqlFilter(areaFilter: string) {
+  if (!areaFilter) return null;
+  const terms = ADMIN_AUDIT_AREA_SQL_TERMS.filter(({ label }) => label.toLowerCase().includes(areaFilter)).flatMap(
+    ({ entityTypeTerms }) => entityTypeTerms
+  );
+  if (terms.length === 0) return null;
+  return Array.from(new Set(terms)).map((term) => `entity_type.ilike.%${term}%`).join(",");
 }
 
 export async function listAdminAuditTrailRows(input?: {
@@ -39,6 +57,10 @@ export async function listAdminAuditTrailRows(input?: {
     .order("created_at", { ascending: false });
   if (actionFilter) {
     query = query.eq("action", actionFilter);
+  }
+  const areaSqlFilter = resolveAdminAuditAreaSqlFilter(areaFilter);
+  if (areaSqlFilter) {
+    query = query.or(areaSqlFilter);
   }
   const { data: auditRows, error } = await query.limit(limit);
   if (error) {
