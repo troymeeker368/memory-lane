@@ -70,6 +70,44 @@ export type CreateIntakeAssessmentPayload = {
 const CREATE_INTAKE_ASSESSMENT_RPC = "rpc_create_intake_assessment_with_responses";
 const CREATE_INTAKE_ASSESSMENT_MIGRATION = "0051_intake_assessment_atomic_creation_rpc.sql";
 
+function isMissingRpcFunctionError(error: unknown, rpcName: string) {
+  if (!error || typeof error !== "object") return false;
+  const errorWithCause = error as {
+    code?: string | null;
+    message?: string | null;
+    details?: string | null;
+    hint?: string | null;
+    cause?: {
+      code?: string | null;
+      message?: string | null;
+      details?: string | null;
+      hint?: string | null;
+    } | null;
+  };
+  const code = String(errorWithCause.code ?? errorWithCause.cause?.code ?? "").toUpperCase();
+  const message = [
+    errorWithCause.message,
+    errorWithCause.details,
+    errorWithCause.hint,
+    errorWithCause.cause?.message,
+    errorWithCause.cause?.details,
+    errorWithCause.cause?.hint
+  ]
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+  const normalizedName = rpcName.toLowerCase();
+
+  return (
+    code === "PGRST202" ||
+    code === "42883" ||
+    message.includes(`function ${normalizedName}`) ||
+    (message.includes(normalizedName) && message.includes("could not find")) ||
+    (message.includes(normalizedName) && message.includes("does not exist")) ||
+    (message.includes(normalizedName) && message.includes("schema cache"))
+  );
+}
+
 function buildAssessmentResponseRows(input: {
   assessmentId: string;
   memberId: string;
@@ -259,6 +297,7 @@ export async function createIntakeAssessmentWithResponses(input: {
     leadStage?: string | null;
     leadStatus?: string | null;
   };
+  serviceRole?: boolean;
 }) {
   const insertPayload = buildIntakeAssessmentInsertPayload({
     payload: input.payload,
@@ -287,7 +326,7 @@ export async function createIntakeAssessmentWithResponses(input: {
     created_at: row.created_at
   }));
 
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: input.serviceRole });
   let rpcData: unknown;
   try {
     rpcData = await invokeSupabaseRpcOrThrow<unknown>(supabase, CREATE_INTAKE_ASSESSMENT_RPC, {
@@ -295,8 +334,7 @@ export async function createIntakeAssessmentWithResponses(input: {
       p_response_rows: responseRows
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to create intake assessment.";
-    if (message.includes(CREATE_INTAKE_ASSESSMENT_RPC)) {
+    if (isMissingRpcFunctionError(error, CREATE_INTAKE_ASSESSMENT_RPC)) {
       throw new Error(
         `Intake assessment atomic creation RPC is not available. Apply Supabase migration ${CREATE_INTAKE_ASSESSMENT_MIGRATION} and refresh PostgREST schema cache.`
       );

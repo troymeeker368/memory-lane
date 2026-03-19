@@ -5,7 +5,7 @@ import { CarePlanCaregiverEsignActions } from "@/components/care-plans/care-plan
 import { CarePlanPdfActions } from "@/components/care-plans/care-plan-pdf-actions";
 import { CarePlanSignatureBlock } from "@/components/care-plans/care-plan-signature-block";
 import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
-import { CarePlanReviewForm } from "@/components/forms/care-plan-forms";
+import { CarePlanReviewFormShell } from "@/components/forms/care-plan-form-shells";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import {
@@ -55,7 +55,7 @@ export default async function CarePlanDetailPage({
   const reviewForm = (
     <Card id="review-update">
       <CardTitle>{reviewMode ? "New Care Plan Review" : "Review / Update Care Plan"}</CardTitle>
-      <CarePlanReviewForm
+      <CarePlanReviewFormShell
         carePlanId={detail.carePlan.id}
         track={detail.carePlan.track}
         reviewedByDefault={authorizedUser.signatureName}

@@ -20,32 +20,32 @@ type AssessmentFormProps = {
 };
 
 const ToiletLogFormInner = dynamic<ToiletLogFormProps>(
-  () => import("@/components/forms/workflow-forms").then((module) => module.ToiletLogForm),
+  () => import("@/components/forms/documentation-workflow-forms").then((module) => module.ToiletLogForm),
   { ssr: false, loading: () => <div className="p-4 text-sm text-muted">Loading form...</div> }
 );
 
 const ShowerLogFormInner = dynamic<ShowerLogFormProps>(
-  () => import("@/components/forms/workflow-forms").then((module) => module.ShowerLogForm),
+  () => import("@/components/forms/documentation-workflow-forms").then((module) => module.ShowerLogForm),
   { ssr: false, loading: () => <div className="p-4 text-sm text-muted">Loading form...</div> }
 );
 
 const TransportationLogFormInner = dynamic<TransportationLogFormProps>(
-  () => import("@/components/forms/workflow-forms").then((module) => module.TransportationLogForm),
+  () => import("@/components/forms/documentation-workflow-forms").then((module) => module.TransportationLogForm),
   { ssr: false, loading: () => <div className="p-4 text-sm text-muted">Loading form...</div> }
 );
 
 const PhotoUploadFormInner = dynamic<PhotoUploadFormProps>(
-  () => import("@/components/forms/workflow-forms").then((module) => module.PhotoUploadForm),
+  () => import("@/components/forms/documentation-workflow-forms").then((module) => module.PhotoUploadForm),
   { ssr: false, loading: () => <div className="p-4 text-sm text-muted">Loading form...</div> }
 );
 
 const BloodSugarFormInner = dynamic<BloodSugarFormProps>(
-  () => import("@/components/forms/workflow-forms").then((module) => module.BloodSugarForm),
+  () => import("@/components/forms/documentation-workflow-forms").then((module) => module.BloodSugarForm),
   { ssr: false, loading: () => <div className="p-4 text-sm text-muted">Loading form...</div> }
 );
 
 const AssessmentFormInner = dynamic<AssessmentFormProps>(
-  () => import("@/components/forms/workflow-forms").then((module) => module.AssessmentForm),
+  () => import("@/components/forms/assessment-form").then((module) => module.AssessmentForm),
   { ssr: false, loading: () => <div className="p-4 text-sm text-muted">Loading assessment form...</div> }
 );
 

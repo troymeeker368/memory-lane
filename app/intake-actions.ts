@@ -232,7 +232,8 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       responseContext: {
         leadStage: leadStage ?? payload.data.leadStage ?? "",
         leadStatus: leadStatus ?? payload.data.leadStatus ?? ""
-      }
+      },
+      serviceRole: true
     });
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save intake assessment." };
@@ -252,7 +253,8 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       metadata: {
         module: "intake-assessment",
         signedFrom: "createAssessmentAction"
-      }
+      },
+      serviceRole: true
     });
   } catch (error) {
     revalidatePath("/health/assessment");

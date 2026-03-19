@@ -1,4 +1,4 @@
-import { IncidentForm } from "@/components/incidents/incident-form";
+import { IncidentFormShell } from "@/components/incidents/incident-form-shell";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess, requireRoles } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions";
@@ -19,7 +19,7 @@ export default async function NewIncidentPage() {
         </p>
       </Card>
 
-      <IncidentForm
+      <IncidentFormShell
         detail={null}
         lookups={lookups}
         actorId={profile.id}

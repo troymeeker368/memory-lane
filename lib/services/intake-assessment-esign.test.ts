@@ -8,7 +8,7 @@ import {
 } from "@/lib/services/intake-assessment-esign-core";
 
 test("typed signature placeholder text is removed from Intake Assessment form", () => {
-  const source = readFileSync("components/forms/workflow-forms.tsx", "utf8");
+  const source = readFileSync("components/forms/assessment-form.tsx", "utf8");
   assert.equal(source.toLowerCase().includes("replace typed signature"), false);
   assert.equal(source.toLowerCase().includes("pdf/e-sign integration"), false);
   assert.equal(source.includes("placeholder=\"Type full legal name\""), false);

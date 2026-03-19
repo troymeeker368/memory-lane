@@ -12,10 +12,6 @@ import {
 } from "@/components/forms/member-command-center-shells";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
-import AttendanceTab from "@/app/(portal)/operations/member-command-center/attendance-tab";
-import DemographicsTab from "@/app/(portal)/operations/member-command-center/demographics-tab";
-import DietTab from "@/app/(portal)/operations/member-command-center/diet-tab";
-import TransportationTab from "@/app/(portal)/operations/member-command-center/transportation-tab";
 import {
   MCC_TABS,
   TAB_LABELS,
@@ -43,15 +39,14 @@ import {
   listMemberBillingSettingsSupabase
 } from "@/lib/services/member-command-center-supabase";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
-import { getConfiguredClinicalSenderEmail, listPofRequestsByPhysicianOrderIds } from "@/lib/services/pof-read";
+import type { PhysicianOrderMemberHistoryRow } from "@/lib/services/physician-order-model";
+import type { PofRequestSummary } from "@/lib/services/pof-types";
 import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
 import { getScheduledDayAbbreviations } from "@/lib/services/member-schedule-selectors";
 import { listScheduleChangesSupabase, SCHEDULE_WEEKDAY_KEYS } from "@/lib/services/schedule-changes-supabase";
-import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-supabase";
-import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
@@ -103,6 +98,7 @@ async function renderTabSection(input: {
 
   switch (input.tab) {
     case "attendance-enrollment": {
+      const { default: AttendanceTab } = await import("@/app/(portal)/operations/member-command-center/attendance-tab");
       return (
         <AttendanceTab
           canEditAttendanceBilling={input.canEditAttendanceBilling}
@@ -121,6 +117,7 @@ async function renderTabSection(input: {
       );
     }
     case "transportation": {
+      const { default: TransportationTab } = await import("@/app/(portal)/operations/member-command-center/transportation-tab");
       return (
         <TransportationTab
           canEdit={input.canEdit}
@@ -136,6 +133,7 @@ async function renderTabSection(input: {
       );
     }
     case "demographics-contacts": {
+      const { default: DemographicsTab } = await import("@/app/(portal)/operations/member-command-center/demographics-tab");
       return (
         <DemographicsTab
           canEdit={input.canEdit}
@@ -148,6 +146,7 @@ async function renderTabSection(input: {
       );
     }
     case "diet-allergies": {
+      const { default: DietTab } = await import("@/app/(portal)/operations/member-command-center/diet-tab");
       return (
         <DietTab
           canEdit={input.canEdit}
@@ -279,15 +278,38 @@ export default async function MemberCommandCenterDetailPage({
   const filesUpdatedBy = latestUpdatedBy(detail.files, (row) => row.updated_at, (row) => row.uploaded_by_name);
   const allergiesUpdatedAt = latestTimestamp(detail.mhpAllergies.map((row) => row.updated_at));
   const allergiesUpdatedBy = latestUpdatedBy(detail.mhpAllergies, (row) => row.updated_at, (row) => row.created_by_name);
-  const physicianOrders = await getPhysicianOrdersForMember(detail.member.id);
-  const pofRequests = await listPofRequestsByPhysicianOrderIds(
-    detail.member.id,
-    physicianOrders.map((row) => row.id)
-  );
-  const defaultNurseName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
-  const defaultFromEmail = getConfiguredClinicalSenderEmail();
-  const physicianOrdersUpdatedAt = latestTimestamp(physicianOrders.map((row) => row.updatedAt));
-  const physicianOrdersUpdatedBy = latestUpdatedBy(physicianOrders, (row) => row.updatedAt, (row) => row.updatedByName);
+  let physicianOrders: PhysicianOrderMemberHistoryRow[] = [];
+  let pofRequests: PofRequestSummary[] = [];
+  let defaultNurseName = profile.full_name;
+  let defaultFromEmail = "";
+  let physicianOrdersUpdatedAt: string | null = null;
+  let physicianOrdersUpdatedBy: string | null = null;
+
+  if (canAccessPofWorkflow) {
+    const [
+      physicianOrdersModule,
+      pofReadModule,
+      userManagementModule
+    ] = await Promise.all([
+      import("@/lib/services/physician-orders-supabase"),
+      import("@/lib/services/pof-read"),
+      import("@/lib/services/user-management")
+    ]);
+
+    physicianOrders = await physicianOrdersModule.getPhysicianOrdersForMember(detail.member.id);
+    pofRequests = await pofReadModule.listPofRequestsByPhysicianOrderIds(
+      detail.member.id,
+      physicianOrders.map((row) => row.id)
+    );
+    defaultNurseName = await userManagementModule.getManagedUserSignoffLabel(profile.id, profile.full_name);
+    defaultFromEmail = pofReadModule.getConfiguredClinicalSenderEmail();
+    physicianOrdersUpdatedAt = latestTimestamp(physicianOrders.map((row) => row.updatedAt));
+    physicianOrdersUpdatedBy = latestUpdatedBy(
+      physicianOrders,
+      (row) => row.updatedAt,
+      (row) => row.updatedByName
+    );
+  }
   const tabSection = await renderTabSection({
     tab,
     canEdit,

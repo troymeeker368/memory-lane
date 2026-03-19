@@ -1,7 +1,6 @@
 import Link from "next/link";
 
-import { MarMonthlyReportPanel } from "@/components/forms/mar-monthly-report-panel";
-import { MarWorkflowBoard } from "@/components/forms/mar-workflow-board";
+import { MarMonthlyReportPanelShell, MarWorkflowBoardShell } from "@/components/forms/mar-shells";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getMarMonthlyReportMemberOptions } from "@/lib/services/mar-monthly-report";
@@ -52,7 +51,7 @@ export default async function MarWorkflowPage() {
           <p className="mt-1 text-sm text-danger">{reportOptionsLoadError}</p>
         </Card>
       ) : (
-        <MarMonthlyReportPanel canGenerate={canDocument} memberOptions={reportMemberOptions} />
+        <MarMonthlyReportPanelShell canGenerate={canDocument} memberOptions={reportMemberOptions} />
       )}
 
       {loadError ? (
@@ -61,7 +60,7 @@ export default async function MarWorkflowPage() {
           <p className="mt-1 text-sm text-danger">{loadError}</p>
         </Card>
       ) : snapshot ? (
-        <MarWorkflowBoard
+        <MarWorkflowBoardShell
           canDocument={canDocument}
           todayRows={snapshot.today}
           overdueRows={snapshot.overdueToday}

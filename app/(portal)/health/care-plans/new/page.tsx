@@ -1,4 +1,4 @@
-import { NewCarePlanForm } from "@/components/forms/care-plan-forms";
+import { NewCarePlanFormShell } from "@/components/forms/care-plan-form-shells";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { getCarePlanTracks } from "@/lib/services/care-plans";
@@ -20,7 +20,7 @@ export default async function NewCarePlanPage({
       <CardTitle>New Care Plan</CardTitle>
       <p className="mt-1 text-sm text-muted">Track wording is fixed to canonical Town Square Fort Mill source documents.</p>
       <div className="mt-3">
-        <NewCarePlanForm
+        <NewCarePlanFormShell
           members={members}
           tracks={tracks}
           initialMemberId={initialMemberId}

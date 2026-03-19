@@ -66,11 +66,16 @@ test("critical file workflows include cleanup for storage and metadata split-bra
 
 test("intake assessment atomic creation RPC is migration-backed and guarded", () => {
   const intakeSource = readWorkspaceFile("lib/services/intake-pof-mhp-cascade.ts");
+  const actionSource = readWorkspaceFile("app/intake-actions.ts");
   const migrationSource = readWorkspaceFile("supabase/migrations/0051_intake_assessment_atomic_creation_rpc.sql");
 
   assert.equal(intakeSource.includes('const CREATE_INTAKE_ASSESSMENT_RPC = "rpc_create_intake_assessment_with_responses";'), true);
+  assert.equal(intakeSource.includes("const supabase = await createClient({ serviceRole: input.serviceRole });"), true);
+  assert.equal(intakeSource.includes("if (isMissingRpcFunctionError(error, CREATE_INTAKE_ASSESSMENT_RPC)) {"), true);
+  assert.equal(intakeSource.includes("if (message.includes(CREATE_INTAKE_ASSESSMENT_RPC)) {"), false);
   assert.equal(intakeSource.includes("Intake assessment atomic creation RPC is not available."), true);
   assert.equal(intakeSource.includes("0051_intake_assessment_atomic_creation_rpc.sql"), true);
+  assert.equal(actionSource.includes("serviceRole: true"), true);
   assert.equal(migrationSource.includes("create or replace function public.rpc_create_intake_assessment_with_responses("), true);
   assert.equal(migrationSource.includes("p_response_rows must be a JSON array"), true);
   assert.equal(
