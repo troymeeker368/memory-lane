@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getAncillaryEntryCountLastDays } from "@/lib/services/ancillary";
+import { getProgressNoteComplianceLabel } from "@/lib/services/progress-note-model";
 import { staffNameToSlug } from "@/lib/services/activity-snapshots";
 import { getOperationsReports } from "@/lib/services/reports-ops";
 import { getReportingSnapshot } from "@/lib/services/reports";
@@ -153,7 +154,7 @@ export default async function ReportsPage() {
               <th>Care Plan Due</th>
               <th>Care Plan Done</th>
               <th>Progress Note Due</th>
-              <th>Note Done</th>
+              <th>Progress Note Status</th>
             </tr>
           </thead>
           <tbody>
@@ -168,7 +169,10 @@ export default async function ReportsPage() {
                   <td>{formatDate(row.next_care_plan_due)}</td>
                   <td>{row.care_plan_done ? "Yes" : "No"}</td>
                   <td>{formatDate(row.next_progress_note_due)}</td>
-                  <td>{row.note_done ? "Yes" : "No"}</td>
+                  <td>
+                    {getProgressNoteComplianceLabel(row.progress_note_status)}
+                    {row.has_progress_note_draft ? " | Draft" : ""}
+                  </td>
                 </tr>
               ))
             )}

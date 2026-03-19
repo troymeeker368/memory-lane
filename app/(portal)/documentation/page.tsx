@@ -8,6 +8,7 @@ import { canAccessIncidentReportsForRole, normalizeRoleKey } from "@/lib/permiss
 import { getStaffActivitySnapshot, staffNameToSlug } from "@/lib/services/activity-snapshots";
 import { getDocumentationSummary, getDocumentationTracker, getMembers } from "@/lib/services/documentation";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
+import { getProgressNoteComplianceLabel } from "@/lib/services/progress-note-model";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDate, formatDateTime, formatPercent } from "@/lib/utils";
 
@@ -337,7 +338,7 @@ export default async function DocumentationPage({
               <th>Next Care Plan Due</th>
               <th>Care Plan Done</th>
               <th>Next Progress Note Due</th>
-              <th>Note Done</th>
+              <th>Progress Note Status</th>
             </tr>
           </thead>
           <tbody>
@@ -348,7 +349,10 @@ export default async function DocumentationPage({
                 <td>{formatDate(row.next_care_plan_due)}</td>
                 <td>{row.care_plan_done ? "Yes" : "No"}</td>
                 <td>{formatDate(row.next_progress_note_due)}</td>
-                <td>{row.note_done ? "Yes" : "No"}</td>
+                <td>
+                  {getProgressNoteComplianceLabel(row.progress_note_status)}
+                  {row.has_progress_note_draft ? " | Draft" : ""}
+                </td>
               </tr>
             ))}
           </tbody>

@@ -1,12 +1,14 @@
 import Link from "next/link";
 
 import { BloodSugarFormShell } from "@/components/forms/workflow-forms-shells";
+import { ProgressNoteStatusBadge } from "@/components/progress-notes/progress-note-status-badge";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { canAccessIncidentReportsForRole } from "@/lib/permissions";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
+import { canAccessProgressNotesForRole } from "@/lib/services/progress-note-authorization";
 import { getHealthDashboardData } from "@/lib/services/health-dashboard";
-import { formatDateTime, formatOptionalDateTime } from "@/lib/utils";
+import { formatDate, formatDateTime, formatOptionalDateTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -50,8 +52,13 @@ function parseDate(value: string | null | undefined) {
 export default async function HealthPage() {
   const profile = await requireModuleAccess("health");
   const canViewCarePlans = canAccessCarePlansForRole(profile.role);
+  const canViewProgressNotes = canAccessProgressNotesForRole(profile.role);
   const canViewIncidents = canAccessIncidentReportsForRole(profile.role);
-  const dashboard = await getHealthDashboardData({ includeCarePlans: canViewCarePlans, includeIncidents: canViewIncidents });
+  const dashboard = await getHealthDashboardData({
+    includeCarePlans: canViewCarePlans,
+    includeIncidents: canViewIncidents,
+    includeProgressNotes: canViewProgressNotes
+  });
   const marRows = dashboard.marRows as MarRow[];
   const bloodSugarRows = dashboard.bloodSugarRows as BloodSugarRow[];
   const dueMedicationRows = dashboard.dueMedicationRows as MarRow[];
@@ -60,6 +67,7 @@ export default async function HealthPage() {
   const careAlerts = dashboard.careAlerts;
   const carePlans = dashboard.carePlans;
   const incidents = dashboard.incidents;
+  const progressNotes = dashboard.progressNotes;
   const members = dashboard.members;
   const now = new Date();
 
@@ -78,6 +86,15 @@ export default async function HealthPage() {
           ) : null}
           {canViewCarePlans ? (
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Care Plans Overdue</p><p className="text-base font-semibold">{carePlans.summary.overdue}</p></div>
+          ) : null}
+          {canViewProgressNotes ? (
+            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Progress Notes Due Soon</p><p className="text-base font-semibold">{progressNotes.summary.dueSoon}</p></div>
+          ) : null}
+          {canViewProgressNotes ? (
+            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Progress Notes Due Today</p><p className="text-base font-semibold">{progressNotes.summary.dueToday}</p></div>
+          ) : null}
+          {canViewProgressNotes ? (
+            <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Progress Notes Overdue</p><p className="text-base font-semibold">{progressNotes.summary.overdue}</p></div>
           ) : null}
         </div>
       </Card>
@@ -231,6 +248,60 @@ export default async function HealthPage() {
         ) : null}
       </div>
 
+      {canViewProgressNotes ? (
+        <Card className="table-wrap">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle>Progress Notes Due</CardTitle>
+            <Link href="/health/progress-notes" className="text-sm font-semibold text-brand">
+              Open Tracker
+            </Link>
+          </div>
+          <table className="mt-3">
+            <thead>
+              <tr>
+                <th>Member</th>
+                <th>Last Signed</th>
+                <th>Next Due</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {progressNotes.rows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="text-sm text-muted">No progress note reminders are currently surfaced.</td>
+                </tr>
+              ) : (
+                progressNotes.rows.slice(0, 8).map((row) => (
+                  <tr key={row.memberId}>
+                    <td>
+                      <Link href={`/health/member-health-profiles/${row.memberId}`} className="font-semibold text-brand">
+                        {row.memberName}
+                      </Link>
+                    </td>
+                    <td>{row.lastSignedProgressNoteDate ? formatDate(row.lastSignedProgressNoteDate) : "-"}</td>
+                    <td>{row.nextProgressNoteDueDate ? formatDate(row.nextProgressNoteDueDate) : "-"}</td>
+                    <td><ProgressNoteStatusBadge status={row.complianceStatus} /></td>
+                    <td>
+                      <div className="flex flex-wrap gap-2">
+                        <Link href={`/health/progress-notes/new?memberId=${row.memberId}`} className="font-semibold text-brand">
+                          New Progress Note
+                        </Link>
+                        {row.latestDraftId ? (
+                          <Link href={`/health/progress-notes/${row.latestDraftId}`} className="font-semibold text-brand">
+                            Resume Draft
+                          </Link>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </Card>
+      ) : null}
+
       <Card>
         <CardTitle>Health Unit Quick Access</CardTitle>
         <div className="mt-3 flex flex-wrap gap-3 text-sm">
@@ -241,6 +312,7 @@ export default async function HealthPage() {
           <Link href="/health/physician-orders" className="font-semibold text-brand">Physician Orders / POF</Link>
           <Link href="/health/member-health-profiles" className="font-semibold text-brand">Member Health Profiles</Link>
           {canViewCarePlans ? <Link href="/health/care-plans" className="font-semibold text-brand">Care Plans</Link> : null}
+          {canViewProgressNotes ? <Link href="/health/progress-notes" className="font-semibold text-brand">Progress Notes</Link> : null}
         </div>
       </Card>
 

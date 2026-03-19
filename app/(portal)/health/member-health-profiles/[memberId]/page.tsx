@@ -22,6 +22,7 @@ import { requireRoles } from "@/lib/auth";
 import { formatBillingPayorDisplayName, getBillingPayorContact } from "@/lib/services/billing-payor-contacts";
 import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans";
 import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-supabase";
+import { getMemberProgressNoteSummary } from "@/lib/services/progress-notes";
 import {
   MHP_TABS,
   type MhpTab,
@@ -227,6 +228,7 @@ export default async function MemberHealthProfileDetailPage({
   const physicianOrdersUpdatedAt = latestTimestamp(relatedPhysicianOrders.map((row) => row.updatedAt));
   const physicianOrdersUpdatedBy = latestUpdatedBy(relatedPhysicianOrders, (row) => row.updatedAt, (row) => row.updatedByName);
   const carePlanSummary = await getMemberCarePlanSummary(member.id);
+  const progressNoteSummary = await getMemberProgressNoteSummary(member.id);
   const latestIntakeAssessment = detail.assessments[0] ?? null;
   const trackFromRecord = member.latest_assessment_track ?? latestIntakeAssessment?.recommended_track ?? null;
   const trackSourceText = latestIntakeAssessment
@@ -258,6 +260,7 @@ export default async function MemberHealthProfileDetailPage({
           <Link href={`/members/${member.id}`} className="font-semibold text-brand">Member Detail</Link>
           <Link href={`/health/assessment?memberId=${member.id}`} className="font-semibold text-brand">New Intake Assessment</Link>
           <Link href={carePlanSummary.actionHref} className="font-semibold text-brand">{carePlanSummary.actionLabel}</Link>
+          <Link href={`/health/progress-notes?memberId=${member.id}`} className="font-semibold text-brand">Progress Notes</Link>
           <Link href={`/health/physician-orders?memberId=${member.id}`} className="font-semibold text-brand">Physician Orders</Link>
         </div>
         <div id="discharge-actions" className="mt-2 flex justify-center gap-2">
@@ -283,7 +286,7 @@ export default async function MemberHealthProfileDetailPage({
             <MemberStatusToggle memberId={member.id} memberName={member.display_name} status={member.status} />
           ) : null}
         </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-5">
+        <div className="mt-3 grid gap-3 sm:grid-cols-6">
           <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">DOB</p><p className="font-semibold">{formatOptionalDate(member.dob)}</p></div>
           <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Enrollment</p><p className="font-semibold">{formatOptionalDate(member.enrollment_date)}</p></div>
           <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Code Status</p><p className="font-semibold" style={codeStatusStyle}>{codeStatusBanner}</p></div>
@@ -291,6 +294,13 @@ export default async function MemberHealthProfileDetailPage({
             <p className="text-xs text-muted">Next Care Plan Due</p>
             <p className="font-semibold">{carePlanSummary.nextDueDate ? formatDate(carePlanSummary.nextDueDate) : "-"}</p>
             <p className="text-xs text-muted">{carePlanSummary.status ?? "No enrollment date"}</p>
+          </div>
+          <div className="rounded-lg border border-border p-3 text-center">
+            <p className="text-xs text-muted">Next Progress Note Due</p>
+            <p className="font-semibold">{progressNoteSummary?.nextProgressNoteDueDate ? formatDate(progressNoteSummary.nextProgressNoteDueDate) : "-"}</p>
+            <p className="text-xs text-muted">
+              {progressNoteSummary?.dataIssue ?? (progressNoteSummary ? progressNoteSummary.complianceStatus.replaceAll("_", " ") : "No enrollment date")}
+            </p>
           </div>
           <MhpTrackBannerEditor
             memberId={member.id}

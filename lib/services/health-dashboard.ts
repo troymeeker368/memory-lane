@@ -1,6 +1,7 @@
 import { getCarePlanDashboard } from "@/lib/services/care-plans";
 import { listIncidentDashboard } from "@/lib/services/incidents";
 import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow";
+import { getProgressNoteDashboard } from "@/lib/services/progress-notes";
 import { createClient } from "@/lib/supabase/server";
 
 type DashboardMarRow = {
@@ -28,7 +29,11 @@ function parseDate(value: string | null | undefined) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-export async function getHealthDashboardData(options?: { includeCarePlans?: boolean; includeIncidents?: boolean }) {
+export async function getHealthDashboardData(options?: {
+  includeCarePlans?: boolean;
+  includeIncidents?: boolean;
+  includeProgressNotes?: boolean;
+}) {
   const supabase = await createClient();
   const emptyCarePlanDashboard = {
     summary: { total: 0, dueSoon: 0, dueNow: 0, overdue: 0, completedRecently: 0 },
@@ -46,7 +51,19 @@ export async function getHealthDashboardData(options?: { includeCarePlans?: bool
     counts: { total: 0, submitted: 0, returned: 0, approved: 0, reportableOpen: 0 },
     recent: []
   };
-  const [marSnapshot, bloodSugarResult, membersResult, carePlans, incidents] = await Promise.all([
+  const emptyProgressNoteDashboard = {
+    summary: { total: 0, overdue: 0, dueToday: 0, dueSoon: 0, upcoming: 0, dataIssues: 0 },
+    rows: [],
+    overdue: [],
+    dueToday: [],
+    dueSoon: [],
+    dataIssues: [],
+    page: 1,
+    pageSize: 25,
+    totalRows: 0,
+    totalPages: 1
+  };
+  const [marSnapshot, bloodSugarResult, membersResult, carePlans, incidents, progressNotes] = await Promise.all([
     getMarWorkflowSnapshot({ historyLimit: 150, prnLimit: 150, serviceRole: true }),
     supabase
       .from("v_blood_sugar_logs_detailed")
@@ -59,7 +76,10 @@ export async function getHealthDashboardData(options?: { includeCarePlans?: bool
       .eq("status", "active")
       .order("display_name", { ascending: true }),
     options?.includeCarePlans ? getCarePlanDashboard({ page: 1, pageSize: 25 }) : Promise.resolve(emptyCarePlanDashboard),
-    options?.includeIncidents ? listIncidentDashboard({ limit: 6 }) : Promise.resolve(emptyIncidentDashboard)
+    options?.includeIncidents ? listIncidentDashboard({ limit: 6 }) : Promise.resolve(emptyIncidentDashboard),
+    options?.includeProgressNotes
+      ? getProgressNoteDashboard({ page: 1, pageSize: 25, serviceRole: true })
+      : Promise.resolve(emptyProgressNoteDashboard)
   ]);
   if (bloodSugarResult.error) throw new Error(`Unable to load v_blood_sugar_logs_detailed: ${bloodSugarResult.error.message}`);
   if (membersResult.error) throw new Error(`Unable to load active members for health dashboard: ${membersResult.error.message}`);
@@ -166,6 +186,7 @@ export async function getHealthDashboardData(options?: { includeCarePlans?: bool
     careAlerts,
     members: members.map((member) => ({ id: member.id, display_name: member.display_name })),
     carePlans,
-    incidents
+    incidents,
+    progressNotes
   };
 }

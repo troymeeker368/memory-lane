@@ -1,4 +1,5 @@
 import { listCanonicalMemberLinksForLeadIds } from "@/lib/services/canonical-person-ref";
+import { getProgressNoteReminderRows } from "@/lib/services/progress-notes";
 import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import { createClient } from "@/lib/supabase/server";
 import type { CanonicalPersonRef } from "@/types/identity";
@@ -160,11 +161,33 @@ export async function getDocumentationTracker() {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("documentation_tracker")
-    .select("id, member_name, assigned_staff_name, next_care_plan_due, next_progress_note_due, care_plan_done, note_done")
+    .select("id, member_id, member_name, assigned_staff_name, next_care_plan_due, next_progress_note_due, care_plan_done, note_done")
     .order("next_care_plan_due");
   if (error) throw new Error(`Unable to load documentation_tracker: ${error.message}`);
 
-  return data ?? [];
+  const trackerRows = (data ?? []) as Array<{
+    id: string;
+    member_id: string | null;
+    member_name: string;
+    assigned_staff_name: string | null;
+    next_care_plan_due: string | null;
+    next_progress_note_due: string | null;
+    care_plan_done: boolean | null;
+    note_done: boolean | null;
+  }>;
+  const memberIds = trackerRows.map((row) => row.member_id).filter((value): value is string => Boolean(value));
+  const progressNotes = await getProgressNoteReminderRows(memberIds, { serviceRole: true });
+  const progressByMemberId = new Map(progressNotes.map((row) => [row.memberId, row] as const));
+
+  return trackerRows.map((row) => {
+    const progress = row.member_id ? progressByMemberId.get(row.member_id) ?? null : null;
+    return {
+      ...row,
+      next_progress_note_due: progress?.nextProgressNoteDueDate ?? row.next_progress_note_due ?? null,
+      progress_note_status: progress?.complianceStatus ?? "data_issue",
+      has_progress_note_draft: progress?.hasDraftInProgress ?? false
+    };
+  });
 }
 
 

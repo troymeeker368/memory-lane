@@ -575,6 +575,9 @@ export default async function MemberCommandCenterDetailPage({
           ) : null}
           <Link href={`/health/assessment?memberId=${detail.member.id}`} className="rounded-lg border border-border px-3 py-2 font-semibold text-brand">Assessments</Link>
           <Link href={detail.carePlanSummary.actionHref} className="rounded-lg border border-border px-3 py-2 font-semibold text-brand">Care Plans</Link>
+          {canViewMhpFromMcc ? (
+            <Link href={`/health/progress-notes?memberId=${detail.member.id}`} className="rounded-lg border border-border px-3 py-2 font-semibold text-brand">Progress Notes</Link>
+          ) : null}
           {canViewPhysicianOrders ? (
             <Link href={`/health/physician-orders?memberId=${detail.member.id}`} className="rounded-lg border border-border px-3 py-2 font-semibold text-brand">Orders / Physician Order Forms</Link>
           ) : null}

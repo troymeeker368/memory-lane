@@ -95,24 +95,24 @@ function extractNavItems(source) {
   return entries;
 }
 
-function runPermissionChecks(permissionSource) {
+function runPermissionChecks(coreSource, navSource) {
   check(
-    /"program-assistant":\s*\{[\s\S]*?operations:\s*permission\(false,\s*false,\s*false,\s*false\)/.test(permissionSource),
+    /"program-assistant":\s*\{[\s\S]*?operations:\s*permission\(false,\s*false,\s*false,\s*false\)/.test(coreSource),
     "Program assistant default permissions should block operations."
   );
   check(
-    /manager:\s*\{[\s\S]*?operations:\s*permission\(true,\s*true,\s*true,\s*false\)/.test(permissionSource),
+    /manager:\s*\{[\s\S]*?operations:\s*permission\(true,\s*true,\s*true,\s*false\)/.test(coreSource),
     "Manager default permissions should allow operations."
   );
   check(
-    /\{ label: "Director Timecards"[\s\S]*?roles: \["manager", "director", "admin"\]/.test(permissionSource),
+    /\{ label: "Director Timecards"[\s\S]*?roles: \["manager", "director", "admin"\]/.test(navSource),
     "Director Timecards nav entry should stay limited to manager/director/admin."
   );
   check(
-    /\{ label: "Billing"[\s\S]*?roles: \["admin", "manager", "director", "coordinator"\]/.test(permissionSource),
+    /\{ label: "Billing"[\s\S]*?roles: \["admin", "manager", "director", "coordinator"\]/.test(navSource),
     "Billing nav entry should stay restricted to elevated roles."
   );
-  check(!/staff_href:\s*`\/staff\//.test(permissionSource), "Legacy /staff links should not appear in permission/navigation source.");
+  check(!/staff_href:\s*`\/staff\//.test(`${coreSource}\n${navSource}`), "Legacy /staff links should not appear in permission/navigation source.");
 }
 
 function runTimeCalculationChecks(workflow) {
@@ -212,11 +212,12 @@ function runMigrationChecks() {
 function main() {
   try {
     compileGateTargets();
-    const permissionSource = fs.readFileSync(path.join(repoRoot, "lib", "permissions.ts"), "utf8");
-    const navItems = extractNavItems(permissionSource);
+    const permissionCoreSource = fs.readFileSync(path.join(repoRoot, "lib", "permissions", "core.ts"), "utf8");
+    const permissionNavSource = fs.readFileSync(path.join(repoRoot, "lib", "permissions", "nav.ts"), "utf8");
+    const navItems = extractNavItems(permissionNavSource);
     const workflow = require(path.join(compiledDir, "timecard-workflow.js"));
 
-    runPermissionChecks(permissionSource);
+    runPermissionChecks(permissionCoreSource, permissionNavSource);
     runTimeCalculationChecks(workflow);
     runRouteChecks(navItems);
     runMigrationChecks();
