@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 
@@ -32,6 +33,15 @@ type ProfileTimingOptions = {
 const getCurrentProfileCached = cache(async (): Promise<UserProfile> => {
   return getCurrentProfile({ skipCache: true });
 });
+
+async function getRequestedPathForLoginRedirect() {
+  const headerStore = await headers();
+  const requestedPath = String(headerStore.get("x-memory-lane-requested-path") ?? "").trim();
+  if (!requestedPath || requestedPath === "/" || !requestedPath.startsWith("/") || requestedPath.startsWith("//")) {
+    return null;
+  }
+  return requestedPath;
+}
 
 function timingNow() {
   return Number(process.hrtime.bigint()) / 1_000_000;
@@ -101,7 +111,12 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
   logTiming(traceLabel, "session-auth-resolution", authStartedAt);
 
   if (!user) {
-    redirect("/login?reason=no-auth-user");
+    const requestedPath = await getRequestedPathForLoginRedirect();
+    const params = new URLSearchParams({ reason: "no-auth-user" });
+    if (requestedPath) {
+      params.set("next", requestedPath);
+    }
+    redirect(`/login?${params.toString()}`);
   }
 
   const baseSelect =

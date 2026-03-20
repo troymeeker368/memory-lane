@@ -12,6 +12,17 @@ export type MemberLookupRow = {
   display_name: string;
 };
 
+export async function listMemberLookupSupabase(filters?: {
+  q?: string;
+  status?: "all" | "active" | "inactive";
+}): Promise<MemberLookupRow[]> {
+  const members = await listMemberNameLookupSupabase(filters);
+  return members.map((row) => ({
+    id: row.id,
+    display_name: row.display_name
+  }));
+}
+
 export async function listStaffLookupSupabase(): Promise<StaffLookupRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase.from("profiles").select("id, full_name, role").order("full_name");
@@ -26,11 +37,7 @@ export async function listStaffLookupSupabase(): Promise<StaffLookupRow[]> {
 }
 
 export async function listActiveMemberLookupSupabase(): Promise<MemberLookupRow[]> {
-  const members = await listMemberNameLookupSupabase({ status: "active" });
-  return members.map((row) => ({
-    id: row.id,
-    display_name: row.display_name
-  }));
+  return listMemberLookupSupabase({ status: "active" });
 }
 
 export async function getStaffNameByIdSupabase(staffId: string): Promise<string | null> {

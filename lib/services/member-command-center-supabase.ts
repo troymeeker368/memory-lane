@@ -11,7 +11,9 @@ import type {
   MemberAllergyRow,
   MemberAttendanceScheduleRow,
   MemberBillingSettingRow,
+  MemberCommandCenterIndexProfileRow,
   MemberCommandCenterIndexResult,
+  MemberCommandCenterIndexScheduleRow,
   MemberCommandCenterRow,
   MemberContactRow,
   MemberFileRow,
@@ -54,7 +56,9 @@ export type {
   MemberAllergyRow,
   MemberAttendanceScheduleRow,
   MemberBillingSettingRow,
+  MemberCommandCenterIndexProfileRow,
   MemberCommandCenterIndexResult,
+  MemberCommandCenterIndexScheduleRow,
   MemberCommandCenterRow,
   MemberContactRow,
   MemberFileRow,
@@ -63,6 +67,40 @@ export type {
 
 function escapeIlikeSearchTerm(value: string) {
   return value.replace(/[%,_]/g, (match) => `\\${match}`);
+}
+
+const MEMBER_FILE_LIST_SELECT =
+  "id, member_id, file_name, file_type, storage_object_path, category, category_other, document_source, pof_request_id, uploaded_by_user_id, uploaded_by_name, uploaded_at, updated_at";
+const MEMBER_COMMAND_CENTER_INDEX_PROFILE_SELECT = "member_id, profile_image_url";
+const MEMBER_COMMAND_CENTER_INDEX_SCHEDULE_SELECT =
+  "member_id, enrollment_date, monday, tuesday, wednesday, thursday, friday, make_up_days_available";
+const LEGACY_INLINE_MEMBER_FILE_SENTINEL = "__legacy_inline_member_file__";
+
+function toMemberCommandCenterIndexProfileRow(
+  row: Pick<MemberCommandCenterRow, "member_id" | "profile_image_url">
+): MemberCommandCenterIndexProfileRow {
+  return {
+    member_id: row.member_id,
+    profile_image_url: row.profile_image_url ?? null
+  };
+}
+
+function toMemberCommandCenterIndexScheduleRow(
+  row: Pick<
+    MemberAttendanceScheduleRow,
+    "member_id" | "enrollment_date" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "make_up_days_available"
+  >
+): MemberCommandCenterIndexScheduleRow {
+  return {
+    member_id: row.member_id,
+    enrollment_date: row.enrollment_date ?? null,
+    monday: Boolean(row.monday),
+    tuesday: Boolean(row.tuesday),
+    wednesday: Boolean(row.wednesday),
+    thursday: Boolean(row.thursday),
+    friday: Boolean(row.friday),
+    make_up_days_available: Number.isFinite(row.make_up_days_available) ? row.make_up_days_available : 0
+  };
 }
 
 export async function listActivePayorsSupabase() {
@@ -198,13 +236,21 @@ export async function listMembersSupabase(filters?: { q?: string; status?: "all"
   return rows;
 }
 
-export async function listMemberNameLookupSupabase(filters?: { status?: "all" | "active" | "inactive" }) {
+export async function listMemberNameLookupSupabase(filters?: {
+  q?: string;
+  status?: "all" | "active" | "inactive";
+}) {
   const supabase = await createClient();
+  const q = (filters?.q ?? "").trim();
   return selectMemberLookupRowsWithFallback(
     async (selectClause) => {
       let query = supabase.from("members").select(selectClause);
       if (filters?.status && filters.status !== "all") {
         query = query.eq("status", filters.status);
+      }
+      if (q) {
+        const escaped = escapeIlikeSearchTerm(q);
+        query = query.ilike("display_name", `%${escaped}%`);
       }
       return query.order("display_name", { ascending: true });
     },
@@ -603,13 +649,34 @@ export async function listMemberFilesSupabase(memberId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_files")
-    .select(
-      "id, member_id, file_name, file_type, file_data_url, storage_object_path, category, category_other, document_source, pof_request_id, uploaded_by_user_id, uploaded_by_name, uploaded_at, updated_at"
-    )
+    .select(MEMBER_FILE_LIST_SELECT)
     .eq("member_id", canonicalMemberId)
     .order("uploaded_at", { ascending: false });
   if (error) throw new Error(error.message);
-  return (data ?? []) as MemberFileRow[];
+  const rows = ((data ?? []) as Array<Omit<MemberFileRow, "file_data_url">>).map((row) => ({
+    ...row,
+    storage_object_path: row.storage_object_path ?? null,
+    pof_request_id: row.pof_request_id ?? null
+  }));
+  const legacyInlineOnlyIds = rows.filter((row) => !row.storage_object_path).map((row) => row.id);
+  let legacyInlineIds = new Set<string>();
+
+  if (legacyInlineOnlyIds.length > 0) {
+    const { data: legacyInlineData, error: legacyInlineError } = await supabase
+      .from("member_files")
+      .select("id")
+      .eq("member_id", canonicalMemberId)
+      .in("id", legacyInlineOnlyIds)
+      .not("file_data_url", "is", null);
+    if (legacyInlineError) throw new Error(legacyInlineError.message);
+    legacyInlineIds = new Set(((legacyInlineData ?? []) as Array<{ id: string }>).map((row) => row.id));
+  }
+
+  // Preserve legacy inline-file actions without loading the full payload into the list view.
+  return rows.map((row) => ({
+    ...row,
+    file_data_url: legacyInlineIds.has(row.id) ? LEGACY_INLINE_MEMBER_FILE_SENTINEL : null
+  })) as MemberFileRow[];
 }
 
 export async function listMemberAllergiesSupabase(memberId: string) {
@@ -745,11 +812,15 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
   const supabase = await createClient();
   const memberIds = members.map((row) => row.id);
   const [{ data: profilesData, error: profilesError }, { data: schedulesData, error: schedulesError }] = await Promise.all([
-    supabase.from("member_command_centers").select("*").in("member_id", memberIds),
-    supabase.from("member_attendance_schedules").select("*").in("member_id", memberIds)
+    supabase.from("member_command_centers").select(MEMBER_COMMAND_CENTER_INDEX_PROFILE_SELECT).in("member_id", memberIds),
+    supabase.from("member_attendance_schedules").select(MEMBER_COMMAND_CENTER_INDEX_SCHEDULE_SELECT).in("member_id", memberIds)
   ]);
   const profiles = (() => {
-    if (!profilesError) return (profilesData ?? []) as MemberCommandCenterRow[];
+    if (!profilesError) {
+      return ((profilesData ?? []) as Array<Pick<MemberCommandCenterRow, "member_id" | "profile_image_url">>).map(
+        toMemberCommandCenterIndexProfileRow
+      );
+    }
     if (isMissingTableError(profilesError, "member_command_centers")) {
       throw missingMccStorageError({
         objectName: "member_command_centers",
@@ -759,7 +830,16 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
     throw new Error(profilesError.message);
   })();
   const schedules = (() => {
-    if (!schedulesError) return (schedulesData ?? []) as MemberAttendanceScheduleRow[];
+    if (!schedulesError) {
+      return ((
+        schedulesData ?? []
+      ) as Array<
+        Pick<
+          MemberAttendanceScheduleRow,
+          "member_id" | "enrollment_date" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "make_up_days_available"
+        >
+      >).map(toMemberCommandCenterIndexScheduleRow);
+    }
     if (isMissingTableError(schedulesError, "member_attendance_schedules")) {
       throw missingMccStorageError({
         objectName: "member_attendance_schedules",
@@ -781,7 +861,7 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
     );
     ensuredProfiles.forEach((profile) => {
       if (!profile) return;
-      profileByMember.set(profile.member_id, profile);
+      profileByMember.set(profile.member_id, toMemberCommandCenterIndexProfileRow(profile));
     });
   }
 
@@ -798,7 +878,7 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
           `Unable to ensure attendance schedule for member ${missingScheduleMemberIds[index]}.`
         );
       }
-      scheduleByMember.set(schedule.member_id, schedule);
+      scheduleByMember.set(schedule.member_id, toMemberCommandCenterIndexScheduleRow(schedule));
     });
   }
 

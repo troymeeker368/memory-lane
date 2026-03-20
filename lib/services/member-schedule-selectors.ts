@@ -72,6 +72,11 @@ export interface MemberTransportSnapshot {
   doorToDoorAddress: string | null;
 }
 
+type MemberScheduledDayLike = Pick<
+  MemberAttendanceScheduleLike,
+  "monday" | "tuesday" | "wednesday" | "thursday" | "friday"
+>;
+
 const WEEKDAY_ABBREVIATIONS: Record<ScheduleWeekdayKey, string> = {
   monday: "M",
   tuesday: "Tu",
@@ -105,7 +110,7 @@ export function isMemberScheduledForDate(
 }
 
 export function getScheduledDayAbbreviations(
-  schedule: MemberAttendanceScheduleLike | null | undefined
+  schedule: MemberScheduledDayLike | null | undefined
 ): string {
   if (!schedule) return "-";
 

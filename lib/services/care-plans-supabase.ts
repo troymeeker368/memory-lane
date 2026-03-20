@@ -12,6 +12,7 @@ import {
   toCarePlanVersion
 } from "@/lib/services/care-plan-model";
 import { getDefaultCaregiverSignatureExpiresOnDate } from "@/lib/services/care-plan-esign-rules";
+import { listMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import type {
   CarePlan,
@@ -375,14 +376,8 @@ async function listCarePlanRows(filters?: {
 async function resolveCarePlanQueryMemberIds(queryText?: string | null) {
   const query = clean(queryText);
   if (!query) return null;
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("members")
-    .select("id")
-    .ilike("display_name", `%${query.replace(/[%,_]/g, (match) => `\\${match}`)}%`)
-    .order("display_name", { ascending: true });
-  if (error) throw new Error(error.message);
-  return ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
+  const members = await listMemberLookupSupabase({ q: query });
+  return members.map((row) => row.id);
 }
 
 function applyCarePlanStatusFilter(query: any, status: string | undefined) {
@@ -401,12 +396,15 @@ async function getCarePlanCount(filters: {
   track?: string;
   status?: string;
   query?: string;
+}, options?: {
+  queryMemberIds?: string[] | null;
 }) {
   const supabase = await createClient();
   const canonicalMemberId = filters.memberId
     ? await resolveCarePlanMemberId(filters.memberId, "getCarePlanCount")
     : null;
-  const queryMemberIds = await resolveCarePlanQueryMemberIds(filters.query);
+  const queryMemberIds =
+    options && "queryMemberIds" in options ? options.queryMemberIds ?? null : await resolveCarePlanQueryMemberIds(filters.query);
   if (queryMemberIds && queryMemberIds.length === 0) return 0;
   let query: any = supabase.from("care_plans").select("id", { count: "exact", head: true });
   if (canonicalMemberId) query = query.eq("member_id", canonicalMemberId);
@@ -472,10 +470,10 @@ export async function getCarePlans(filters?: {
     openHref: `/health/care-plans/${plan.id}`
   }));
   const [totalCount, dueSoonCount, dueNowCount, overdueCount] = await Promise.all([
-    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query }),
-    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Due Soon" }),
-    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Due Now" }),
-    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Overdue" })
+    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query }, { queryMemberIds }),
+    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Due Soon" }, { queryMemberIds }),
+    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Due Now" }, { queryMemberIds }),
+    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Overdue" }, { queryMemberIds })
   ]);
   return {
     rows,

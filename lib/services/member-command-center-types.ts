@@ -18,8 +18,8 @@ export interface MccMemberRow {
 export interface MemberCommandCenterIndexResult {
   rows: Array<{
     member: MccMemberRow;
-    profile: MemberCommandCenterRow;
-    schedule: MemberAttendanceScheduleRow;
+    profile: MemberCommandCenterIndexProfileRow;
+    schedule: MemberCommandCenterIndexScheduleRow;
     makeupBalance: number;
     age: number | null;
     monthsEnrolled: number | null;
@@ -28,6 +28,22 @@ export interface MemberCommandCenterIndexResult {
   pageSize: number;
   totalRows: number;
   totalPages: number;
+}
+
+export interface MemberCommandCenterIndexProfileRow {
+  member_id: string;
+  profile_image_url: string | null;
+}
+
+export interface MemberCommandCenterIndexScheduleRow {
+  member_id: string;
+  enrollment_date: string | null;
+  monday: boolean;
+  tuesday: boolean;
+  wednesday: boolean;
+  thursday: boolean;
+  friday: boolean;
+  make_up_days_available: number;
 }
 
 export interface MemberCommandCenterRow {

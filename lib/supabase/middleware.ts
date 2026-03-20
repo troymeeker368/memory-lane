@@ -21,12 +21,41 @@ function withAuthCookies(target: NextResponse, source: NextResponse) {
   return target;
 }
 
+function getRequestedPathname(request: NextRequest) {
+  const search = request.nextUrl.search ?? "";
+  return `${request.nextUrl.pathname}${search}`;
+}
+
+function hasSupabaseAuthCookie(request: NextRequest) {
+  return request.cookies
+    .getAll()
+    .some((cookie) => cookie.name.startsWith("sb-") && cookie.name.includes("-auth-token"));
+}
+
+function buildLoginRedirect(request: NextRequest) {
+  const url = request.nextUrl.clone();
+  url.pathname = "/login";
+  const requestedPath = getRequestedPathname(request);
+  if (requestedPath && requestedPath !== "/") {
+    url.searchParams.set("next", requestedPath);
+  }
+  return NextResponse.redirect(url);
+}
+
 export async function updateSession(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const publicRoute = isPublicRoute(pathname);
-  const shouldResolveSession = !publicRoute || pathname === "/login" || pathname.startsWith("/dev/auth");
+  const isLoginRoute = pathname === "/login";
+  const isDevAuthRoute = pathname.startsWith("/dev/auth");
+  const isApiRoute = pathname.startsWith("/api/");
+  const shouldResolveSession = isApiRoute || isLoginRoute || isDevAuthRoute;
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-memory-lane-pathname", pathname);
+  requestHeaders.set("x-memory-lane-requested-path", getRequestedPathname(request));
+
+  if (!publicRoute && !hasSupabaseAuthCookie(request) && !isApiRoute) {
+    return buildLoginRedirect(request);
+  }
 
   if (!shouldResolveSession) {
     return NextResponse.next({
@@ -63,13 +92,7 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user && !publicRoute) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    const requestedPath = `${request.nextUrl.pathname}${request.nextUrl.search}`;
-    if (requestedPath && requestedPath !== "/") {
-      url.searchParams.set("next", requestedPath);
-    }
-    return withAuthCookies(NextResponse.redirect(url), response);
+    return withAuthCookies(buildLoginRedirect(request), response);
   }
 
   if (!user) {
