@@ -118,7 +118,11 @@ export async function getOperationalSettings(): Promise<OperationalSettings> {
   }
 
   if (!data) {
-    const { data: created, error: createError } = await supabase
+    // Repair the required singleton row through a server-only client so
+    // authenticated read paths do not fail RLS when a drifted environment
+    // is missing the seeded record.
+    const adminSupabase = await createClient({ serviceRole: true });
+    const { data: created, error: createError } = await adminSupabase
       .from("operations_settings")
       .upsert(defaultOperationalSettingsRow(), { onConflict: "id" })
       .select(OPERATIONAL_SETTINGS_SELECT_COLUMNS)

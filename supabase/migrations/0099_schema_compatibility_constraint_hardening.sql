@@ -800,19 +800,35 @@ alter table public.ancillary_charge_logs
 
 do $$
 begin
-  begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.care_plan_sections'::regclass
+      and conname = 'care_plan_sections_care_plan_id_section_type_key'
+  ) and not exists (
+    select 1
+    from pg_class
+    where relnamespace = 'public'::regnamespace
+      and relname = 'care_plan_sections_care_plan_id_section_type_key'
+  ) then
     alter table public.care_plan_sections
       add constraint care_plan_sections_care_plan_id_section_type_key unique (care_plan_id, section_type);
-  exception
-    when duplicate_object then null;
-  end;
+  end if;
 
-  begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.care_plan_versions'::regclass
+      and conname = 'care_plan_versions_care_plan_id_version_number_key'
+  ) and not exists (
+    select 1
+    from pg_class
+    where relnamespace = 'public'::regnamespace
+      and relname = 'care_plan_versions_care_plan_id_version_number_key'
+  ) then
     alter table public.care_plan_versions
       add constraint care_plan_versions_care_plan_id_version_number_key unique (care_plan_id, version_number);
-  exception
-    when duplicate_object then null;
-  end;
+  end if;
 end
 $$;
 
