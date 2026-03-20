@@ -297,7 +297,7 @@ export function throwEnrollmentPacketSchemaError(error: unknown, objectName: str
     throw new Error(
       buildMissingSchemaMessage({
         objectName,
-        migration: objectName === "enrollment_packet_requests" ? "0053_artifact_drift_replay_hardening.sql" : "0052_enrollment_packets.sql"
+        migration: objectName === "enrollment_packet_requests" ? "0053_artifact_drift_replay_hardening.sql" : "0024_enrollment_packet_workflow.sql"
       })
     );
   }

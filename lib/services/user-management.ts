@@ -227,7 +227,7 @@ async function loadManagedUsers() {
     }
     if (isMissingProfileManagedMetadataColumnError(profileError)) {
       throw new Error(
-        "Missing Supabase schema dependency on public.profiles managed user metadata columns. Apply migration 0095_user_management_profile_metadata.sql."
+        "Missing Supabase schema dependency on public.profiles managed user metadata columns. Apply migration 0096_user_management_profile_metadata.sql."
       );
     }
     throw new Error(profileError.message);

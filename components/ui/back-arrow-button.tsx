@@ -31,7 +31,7 @@ export function BackArrowButton({
       }}
       className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-border text-lg font-semibold text-brand transition hover:bg-brand hover:text-white ${className ?? ""}`}
     >
-      ←
+      <span aria-hidden="true">&larr;</span>
     </button>
   );
 }
