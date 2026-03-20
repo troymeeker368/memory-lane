@@ -10,11 +10,20 @@ function moduleLabel(module: PermissionModuleKey) {
     .join(" ");
 }
 
-export function UserPermissionsForm({ user, action }: { user: ManagedUser; action: FormAction }) {
+export function UserPermissionsForm({
+  user,
+  action,
+  intent
+}: {
+  user: ManagedUser;
+  action: FormAction;
+  intent: string;
+}) {
   const isCustom = user.hasCustomPermissions;
 
   return (
     <form action={action} className="space-y-3">
+      <input type="hidden" name="intent" value={intent} />
       <input type="hidden" name="userId" value={user.id} />
       <div className="grid gap-2 md:grid-cols-2">
         <label className="grid gap-1 text-sm">

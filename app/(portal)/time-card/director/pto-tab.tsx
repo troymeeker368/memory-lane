@@ -1,7 +1,7 @@
 import { Card, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/utils";
 
-import { addPtoEntryAction, decidePtoEntryAction, updatePendingPtoEntryAction } from "@/app/(portal)/time-card/director/actions";
+import { submitDirectorTimecardAction } from "@/app/(portal)/time-card/director/actions";
 import type { DirectorTimecardsWorkspace } from "@/app/(portal)/time-card/director/director-timecards-shared";
 import { statusBadge } from "@/app/(portal)/time-card/director/director-timecards-shared";
 
@@ -18,7 +18,8 @@ export function PtoTab({
     <>
       <Card>
         <CardTitle>Add PTO Entry</CardTitle>
-        <form action={addPtoEntryAction} className="mt-3 grid gap-2 md:grid-cols-5">
+        <form action={submitDirectorTimecardAction} className="mt-3 grid gap-2 md:grid-cols-5">
+          <input type="hidden" name="intent" value="addPtoEntry" />
           <input type="hidden" name="returnPath" value={ptoHref} />
           <select name="employeeId" defaultValue={employeeId ?? ""} className="h-10 rounded-lg border border-border px-3 text-sm" required>
             <option value="">Employee</option>
@@ -70,7 +71,8 @@ export function PtoTab({
                   <td>
                     {entry.status === "pending" ? (
                       <div className="space-y-2">
-                        <form action={updatePendingPtoEntryAction} className="flex flex-wrap gap-1">
+                        <form action={submitDirectorTimecardAction} className="flex flex-wrap gap-1">
+                          <input type="hidden" name="intent" value="updatePendingPtoEntry" />
                           <input type="hidden" name="returnPath" value={ptoHref} />
                           <input type="hidden" name="entryId" value={entry.id} />
                           <input type="number" step="0.25" min="0" max="24" name="hours" defaultValue={entry.hours} className="h-8 w-16 rounded border border-border px-2 text-xs" />
@@ -83,7 +85,8 @@ export function PtoTab({
                           <input name="note" defaultValue={entry.note ?? ""} className="h-8 rounded border border-border px-2 text-xs" />
                           <button type="submit" className="h-8 rounded-lg border border-border px-2 text-xs font-semibold">Save</button>
                         </form>
-                        <form action={decidePtoEntryAction} className="flex flex-wrap gap-1">
+                        <form action={submitDirectorTimecardAction} className="flex flex-wrap gap-1">
+                          <input type="hidden" name="intent" value="decidePtoEntry" />
                           <input type="hidden" name="returnPath" value={ptoHref} />
                           <input type="hidden" name="entryId" value={entry.id} />
                           <input name="decisionNote" placeholder="Decision note" className="h-8 rounded border border-border px-2 text-xs" />

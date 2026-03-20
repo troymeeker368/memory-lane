@@ -10,37 +10,53 @@ import type {
   createTransportationLogAction as createTransportationLogActionImpl
 } from "@/app/documentation-actions-impl";
 
-export async function createAncillaryChargeAction(raw: Parameters<typeof createAncillaryChargeActionImpl>[0]) {
-  const { createAncillaryChargeAction } = await import("@/app/documentation-actions-impl");
-  return createAncillaryChargeAction(raw);
-}
+export type DocumentationCreateActionRequest =
+  | {
+      kind: "createAncillaryCharge";
+      payload: Parameters<typeof createAncillaryChargeActionImpl>[0];
+    }
+  | {
+      kind: "createDailyActivity";
+      payload: Parameters<typeof createDailyActivityActionImpl>[0];
+    }
+  | {
+      kind: "createToiletLog";
+      payload: Parameters<typeof createToiletLogActionImpl>[0];
+    }
+  | {
+      kind: "createShowerLog";
+      payload: Parameters<typeof createShowerLogActionImpl>[0];
+    }
+  | {
+      kind: "createTransportationLog";
+      payload: Parameters<typeof createTransportationLogActionImpl>[0];
+    }
+  | {
+      kind: "createPhotoUpload";
+      payload: Parameters<typeof createPhotoUploadActionImpl>[0];
+    }
+  | {
+      kind: "createBloodSugarLog";
+      payload: Parameters<typeof createBloodSugarLogActionImpl>[0];
+    };
 
-export async function createDailyActivityAction(raw: Parameters<typeof createDailyActivityActionImpl>[0]) {
-  const { createDailyActivityAction } = await import("@/app/documentation-actions-impl");
-  return createDailyActivityAction(raw);
-}
+export async function runDocumentationCreateAction(request: DocumentationCreateActionRequest) {
+  const implementation = await import("@/app/documentation-actions-impl");
 
-export async function createToiletLogAction(raw: Parameters<typeof createToiletLogActionImpl>[0]) {
-  const { createToiletLogAction } = await import("@/app/documentation-actions-impl");
-  return createToiletLogAction(raw);
-}
-
-export async function createShowerLogAction(raw: Parameters<typeof createShowerLogActionImpl>[0]) {
-  const { createShowerLogAction } = await import("@/app/documentation-actions-impl");
-  return createShowerLogAction(raw);
-}
-
-export async function createTransportationLogAction(raw: Parameters<typeof createTransportationLogActionImpl>[0]) {
-  const { createTransportationLogAction } = await import("@/app/documentation-actions-impl");
-  return createTransportationLogAction(raw);
-}
-
-export async function createPhotoUploadAction(raw: Parameters<typeof createPhotoUploadActionImpl>[0]) {
-  const { createPhotoUploadAction } = await import("@/app/documentation-actions-impl");
-  return createPhotoUploadAction(raw);
-}
-
-export async function createBloodSugarLogAction(raw: Parameters<typeof createBloodSugarLogActionImpl>[0]) {
-  const { createBloodSugarLogAction } = await import("@/app/documentation-actions-impl");
-  return createBloodSugarLogAction(raw);
+  switch (request.kind) {
+    case "createAncillaryCharge":
+      return implementation.createAncillaryChargeAction(request.payload);
+    case "createDailyActivity":
+      return implementation.createDailyActivityAction(request.payload);
+    case "createToiletLog":
+      return implementation.createToiletLogAction(request.payload);
+    case "createShowerLog":
+      return implementation.createShowerLogAction(request.payload);
+    case "createTransportationLog":
+      return implementation.createTransportationLogAction(request.payload);
+    case "createPhotoUpload":
+      return implementation.createPhotoUploadAction(request.payload);
+    case "createBloodSugarLog":
+      return implementation.createBloodSugarLogAction(request.payload);
+  }
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { deleteWorkflowRecordAction, setAncillaryReconciliationAction } from "@/app/documentation-update-actions";
+import { runDocumentationUpdateAction } from "@/app/documentation-update-actions";
 import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { MutationNotice } from "@/components/ui/mutation-notice";
 import { Button } from "@/components/ui/button";
@@ -298,7 +298,11 @@ export function MonthlyAncillaryReport({
     }
 
     void run(
-      async () => deleteWorkflowRecordAction({ entity: "ancillaryLogs", id: entryId }),
+      async () =>
+        runDocumentationUpdateAction({
+          kind: "deleteWorkflowRecord",
+          payload: { entity: "ancillaryLogs", id: entryId }
+        }),
       {
         successMessage: "Ancillary charge entry deleted.",
         onSuccess: async (result) => {
@@ -319,7 +323,11 @@ export function MonthlyAncillaryReport({
     }
 
     void run(
-      async () => setAncillaryReconciliationAction({ id: entryId, status: nextStatus }),
+      async () =>
+        runDocumentationUpdateAction({
+          kind: "setAncillaryReconciliation",
+          payload: { id: entryId, status: nextStatus }
+        }),
       {
         successMessage: `Entry updated to ${nextStatus}.`,
         onSuccess: async (result) => {
@@ -358,8 +366,11 @@ export function MonthlyAncillaryReport({
       const updatedIds: string[] = [];
 
       for (const entryId of monthEntryIdsToReconcile) {
-        const result = await setAncillaryReconciliationAction({ id: entryId, status: "reconciled" });
-        if (result.error) {
+        const result = await runDocumentationUpdateAction({
+          kind: "setAncillaryReconciliation",
+          payload: { id: entryId, status: "reconciled" }
+        });
+        if ("error" in result) {
           failureCount += 1;
         } else {
           successCount += 1;

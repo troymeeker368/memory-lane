@@ -1,7 +1,7 @@
 import { Card, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/utils";
 
-import { decideForgottenPunchRequestAction } from "@/app/(portal)/time-card/director/actions";
+import { submitDirectorTimecardAction } from "@/app/(portal)/time-card/director/actions";
 import type { DirectorTimecardsWorkspace } from "@/app/(portal)/time-card/director/director-timecards-shared";
 import { statusBadge } from "@/app/(portal)/time-card/director/director-timecards-shared";
 
@@ -45,7 +45,8 @@ export function ForgottenTab({
                 <td><span className={statusBadge(request.status === "submitted" ? "pending" : request.status)}>{request.status}</span></td>
                 <td>
                   {request.status === "submitted" ? (
-                    <form action={decideForgottenPunchRequestAction} className="flex flex-wrap gap-2">
+                    <form action={submitDirectorTimecardAction} className="flex flex-wrap gap-2">
+                      <input type="hidden" name="intent" value="decideForgottenPunchRequest" />
                       <input type="hidden" name="returnPath" value={forgottenHref} />
                       <input type="hidden" name="requestId" value={request.id} />
                       <input name="decisionNote" placeholder="Decision note" className="h-8 rounded border border-border px-2 text-xs" />

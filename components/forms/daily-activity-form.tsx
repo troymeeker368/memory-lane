@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 
-import { createDailyActivityAction } from "@/app/documentation-create-actions";
+import { runDocumentationCreateAction } from "@/app/documentation-create-actions";
 import { Button } from "@/components/ui/button";
 import { PARTICIPATION_LEVEL_OPTIONS, PARTICIPATION_MISSING_REASONS } from "@/lib/canonical";
 import { toEasternDate } from "@/lib/timezone";
@@ -138,7 +138,10 @@ export function DailyActivityForm({ members }: { members: SelectMember[] }) {
         disabled={isPending || !form.memberId || requiresReason}
         onClick={() =>
           startTransition(async () => {
-            const res = await createDailyActivityAction(form);
+            const res = await runDocumentationCreateAction({
+              kind: "createDailyActivity",
+              payload: form
+            });
             setStatus(res.error ? `Error: ${res.error}` : "Participation log saved.");
           })
         }

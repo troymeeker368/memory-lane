@@ -73,7 +73,7 @@ function parsePermissionSetFromFormData(formData: FormData): PermissionSet {
   return normalizePermissionSet(base);
 }
 
-export async function createManagedUserFormAction(formData: FormData) {
+async function handleCreateManagedUserForm(formData: FormData) {
   await requireUserManagementAdmin();
   const payload = parseUserFromFormData(formData);
   if (!payload.success) {
@@ -87,7 +87,7 @@ export async function createManagedUserFormAction(formData: FormData) {
   redirect(`/time-hr/user-management/${created.id}`);
 }
 
-export async function updateManagedUserFormAction(formData: FormData) {
+async function handleUpdateManagedUserForm(formData: FormData) {
   await requireUserManagementAdmin();
   const userId = String(formData.get("userId") ?? "").trim();
   if (!userId) {
@@ -109,7 +109,7 @@ export async function updateManagedUserFormAction(formData: FormData) {
   redirect(`/time-hr/user-management/${userId}`);
 }
 
-export async function updateManagedUserStatusAction(formData: FormData) {
+async function handleUpdateManagedUserStatus(formData: FormData) {
   await requireUserManagementAdmin();
   const userId = String(formData.get("userId") ?? "").trim();
   const nextStatusRaw = String(formData.get("nextStatus") ?? "").trim();
@@ -128,7 +128,7 @@ export async function updateManagedUserStatusAction(formData: FormData) {
   revalidatePath(`/time-hr/user-management/${userId}`);
 }
 
-export async function updateManagedUserPermissionsAction(formData: FormData) {
+async function handleUpdateManagedUserPermissions(formData: FormData) {
   await requireUserManagementAdmin();
   const userId = String(formData.get("userId") ?? "").trim();
   if (!userId) {
@@ -159,7 +159,7 @@ export async function updateManagedUserPermissionsAction(formData: FormData) {
   redirect(`/time-hr/user-management/${userId}`);
 }
 
-export async function resetManagedUserPermissionsAction(formData: FormData) {
+async function handleResetManagedUserPermissions(formData: FormData) {
   await requireUserManagementAdmin();
   const userId = String(formData.get("userId") ?? "").trim();
   if (!userId) {
@@ -176,7 +176,7 @@ export async function resetManagedUserPermissionsAction(formData: FormData) {
   redirect(`/time-hr/user-management/${userId}/permissions`);
 }
 
-export async function sendManagedUserInviteAction(formData: FormData) {
+async function handleSendManagedUserInvite(formData: FormData) {
   const profile = await requireUserManagementAdmin();
   const userId = String(formData.get("userId") ?? "").trim();
   if (!userId) return;
@@ -187,7 +187,7 @@ export async function sendManagedUserInviteAction(formData: FormData) {
   revalidatePath(`/time-hr/user-management/${userId}`);
 }
 
-export async function resendManagedUserInviteAction(formData: FormData) {
+async function handleResendManagedUserInvite(formData: FormData) {
   const profile = await requireUserManagementAdmin();
   const userId = String(formData.get("userId") ?? "").trim();
   if (!userId) return;
@@ -198,7 +198,7 @@ export async function resendManagedUserInviteAction(formData: FormData) {
   revalidatePath(`/time-hr/user-management/${userId}`);
 }
 
-export async function sendManagedUserResetAction(formData: FormData) {
+async function handleSendManagedUserReset(formData: FormData) {
   const profile = await requireUserManagementAdmin();
   const userId = String(formData.get("userId") ?? "").trim();
   if (!userId) return;
@@ -209,7 +209,7 @@ export async function sendManagedUserResetAction(formData: FormData) {
   revalidatePath(`/time-hr/user-management/${userId}`);
 }
 
-export async function toggleManagedUserLoginAccessAction(formData: FormData) {
+async function handleToggleManagedUserLoginAccess(formData: FormData) {
   const profile = await requireUserManagementAdmin();
   const userId = String(formData.get("userId") ?? "").trim();
   const disabledRaw = String(formData.get("disabled") ?? "").trim().toLowerCase();
@@ -220,4 +220,44 @@ export async function toggleManagedUserLoginAccessAction(formData: FormData) {
 
   revalidatePath("/time-hr/user-management");
   revalidatePath(`/time-hr/user-management/${userId}`);
+}
+
+const managedUserActionIntentSchema = z.enum([
+  "createManagedUserForm",
+  "updateManagedUserForm",
+  "updateManagedUserStatus",
+  "updateManagedUserPermissions",
+  "resetManagedUserPermissions",
+  "sendManagedUserInvite",
+  "resendManagedUserInvite",
+  "sendManagedUserReset",
+  "toggleManagedUserLoginAccess"
+]);
+
+export async function submitManagedUserAction(formData: FormData) {
+  const intent = managedUserActionIntentSchema.safeParse(String(formData.get("intent") ?? "").trim());
+  if (!intent.success) {
+    return;
+  }
+
+  switch (intent.data) {
+    case "createManagedUserForm":
+      return handleCreateManagedUserForm(formData);
+    case "updateManagedUserForm":
+      return handleUpdateManagedUserForm(formData);
+    case "updateManagedUserStatus":
+      return handleUpdateManagedUserStatus(formData);
+    case "updateManagedUserPermissions":
+      return handleUpdateManagedUserPermissions(formData);
+    case "resetManagedUserPermissions":
+      return handleResetManagedUserPermissions(formData);
+    case "sendManagedUserInvite":
+      return handleSendManagedUserInvite(formData);
+    case "resendManagedUserInvite":
+      return handleResendManagedUserInvite(formData);
+    case "sendManagedUserReset":
+      return handleSendManagedUserReset(formData);
+    case "toggleManagedUserLoginAccess":
+      return handleToggleManagedUserLoginAccess(formData);
+  }
 }

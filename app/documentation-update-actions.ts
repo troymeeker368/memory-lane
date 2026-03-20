@@ -11,44 +11,59 @@ import type {
   updateTransportationLogAction as updateTransportationLogActionImpl
 } from "@/app/documentation-actions-impl";
 
-export async function updateDailyActivityAction(raw: Parameters<typeof updateDailyActivityActionImpl>[0]) {
-  const { updateDailyActivityAction } = await import("@/app/documentation-actions-impl");
-  return updateDailyActivityAction(raw);
-}
+export type DocumentationUpdateActionRequest =
+  | {
+      kind: "updateDailyActivity";
+      payload: Parameters<typeof updateDailyActivityActionImpl>[0];
+    }
+  | {
+      kind: "updateToiletLog";
+      payload: Parameters<typeof updateToiletLogActionImpl>[0];
+    }
+  | {
+      kind: "updateShowerLog";
+      payload: Parameters<typeof updateShowerLogActionImpl>[0];
+    }
+  | {
+      kind: "updateTransportationLog";
+      payload: Parameters<typeof updateTransportationLogActionImpl>[0];
+    }
+  | {
+      kind: "updateBloodSugar";
+      payload: Parameters<typeof updateBloodSugarActionImpl>[0];
+    }
+  | {
+      kind: "updateAncillary";
+      payload: Parameters<typeof updateAncillaryActionImpl>[0];
+    }
+  | {
+      kind: "setAncillaryReconciliation";
+      payload: Parameters<typeof setAncillaryReconciliationActionImpl>[0];
+    }
+  | {
+      kind: "deleteWorkflowRecord";
+      payload: Parameters<typeof deleteWorkflowRecordActionImpl>[0];
+    };
 
-export async function updateToiletLogAction(raw: Parameters<typeof updateToiletLogActionImpl>[0]) {
-  const { updateToiletLogAction } = await import("@/app/documentation-actions-impl");
-  return updateToiletLogAction(raw);
-}
+export async function runDocumentationUpdateAction(request: DocumentationUpdateActionRequest) {
+  const implementation = await import("@/app/documentation-actions-impl");
 
-export async function updateShowerLogAction(raw: Parameters<typeof updateShowerLogActionImpl>[0]) {
-  const { updateShowerLogAction } = await import("@/app/documentation-actions-impl");
-  return updateShowerLogAction(raw);
-}
-
-export async function updateTransportationLogAction(raw: Parameters<typeof updateTransportationLogActionImpl>[0]) {
-  const { updateTransportationLogAction } = await import("@/app/documentation-actions-impl");
-  return updateTransportationLogAction(raw);
-}
-
-export async function updateBloodSugarAction(raw: Parameters<typeof updateBloodSugarActionImpl>[0]) {
-  const { updateBloodSugarAction } = await import("@/app/documentation-actions-impl");
-  return updateBloodSugarAction(raw);
-}
-
-export async function updateAncillaryAction(raw: Parameters<typeof updateAncillaryActionImpl>[0]) {
-  const { updateAncillaryAction } = await import("@/app/documentation-actions-impl");
-  return updateAncillaryAction(raw);
-}
-
-export async function setAncillaryReconciliationAction(
-  raw: Parameters<typeof setAncillaryReconciliationActionImpl>[0]
-) {
-  const { setAncillaryReconciliationAction } = await import("@/app/documentation-actions-impl");
-  return setAncillaryReconciliationAction(raw);
-}
-
-export async function deleteWorkflowRecordAction(raw: Parameters<typeof deleteWorkflowRecordActionImpl>[0]) {
-  const { deleteWorkflowRecordAction } = await import("@/app/documentation-actions-impl");
-  return deleteWorkflowRecordAction(raw);
+  switch (request.kind) {
+    case "updateDailyActivity":
+      return implementation.updateDailyActivityAction(request.payload);
+    case "updateToiletLog":
+      return implementation.updateToiletLogAction(request.payload);
+    case "updateShowerLog":
+      return implementation.updateShowerLogAction(request.payload);
+    case "updateTransportationLog":
+      return implementation.updateTransportationLogAction(request.payload);
+    case "updateBloodSugar":
+      return implementation.updateBloodSugarAction(request.payload);
+    case "updateAncillary":
+      return implementation.updateAncillaryAction(request.payload);
+    case "setAncillaryReconciliation":
+      return implementation.setAncillaryReconciliationAction(request.payload);
+    case "deleteWorkflowRecord":
+      return implementation.deleteWorkflowRecordAction(request.payload);
+  }
 }

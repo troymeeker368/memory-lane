@@ -3,11 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 
 import {
-  createBloodSugarLogAction,
-  createPhotoUploadAction,
-  createShowerLogAction,
-  createToiletLogAction,
-  createTransportationLogAction
+  runDocumentationCreateAction
 } from "@/app/documentation-create-actions";
 import { Button } from "@/components/ui/button";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternDateTimeLocal } from "@/lib/timezone";
@@ -85,13 +81,16 @@ export function ToiletLogForm({ members }: { members: MemberOption[] }) {
       <textarea className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" placeholder="Additional notes (optional)" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
 
       <Button type="button" title={saveToiletTooltip} disabled={isPending || !form.memberId} onClick={() => startTransition(async () => {
-        const res = await createToiletLogAction({
-          memberId: form.memberId,
-          eventAt: easternDateTimeLocalToISO(form.eventAt),
-          briefs: form.briefs,
-          memberSupplied: form.memberSupplied,
-          useType: form.useType,
-          notes: form.notes
+        const res = await runDocumentationCreateAction({
+          kind: "createToiletLog",
+          payload: {
+            memberId: form.memberId,
+            eventAt: easternDateTimeLocalToISO(form.eventAt),
+            briefs: form.briefs,
+            memberSupplied: form.memberSupplied,
+            useType: form.useType,
+            notes: form.notes
+          }
         });
         setStatus(res.error ? `Error: ${res.error}` : "Toilet log saved.");
       })}>Save Toilet Log</Button>
@@ -122,7 +121,16 @@ export function ShowerLogForm({ members }: { members: MemberOption[] }) {
       </div>
       <textarea className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" placeholder="Notes" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
       <Button type="button" disabled={isPending || !form.memberId} onClick={() => startTransition(async () => {
-        const res = await createShowerLogAction({ memberId: form.memberId, eventAt: easternDateTimeLocalToISO(form.eventAt), laundry: form.laundry, briefs: form.briefs, notes: form.notes });
+        const res = await runDocumentationCreateAction({
+          kind: "createShowerLog",
+          payload: {
+            memberId: form.memberId,
+            eventAt: easternDateTimeLocalToISO(form.eventAt),
+            laundry: form.laundry,
+            briefs: form.briefs,
+            notes: form.notes
+          }
+        });
         setStatus(res.error ? `Error: ${res.error}` : "Shower log saved.");
       })}>Save Shower Log</Button>
       {status ? <p className="text-sm text-muted">{status}</p> : null}
@@ -162,7 +170,10 @@ export function TransportationLogForm({ members }: { members: MemberOption[] }) 
       <p className="text-xs text-muted">Notes are intentionally disabled to match AppSheet transportation flow.</p>
 
       <Button type="button" disabled={isPending || !form.memberId} onClick={() => startTransition(async () => {
-        const res = await createTransportationLogAction(form);
+        const res = await runDocumentationCreateAction({
+          kind: "createTransportationLog",
+          payload: form
+        });
         setStatus(res.error ? `Error: ${res.error}` : "Transportation log saved.");
       })}>Save Transportation Log</Button>
       {status ? <p className="text-sm text-muted">{status}</p> : null}
@@ -261,10 +272,13 @@ export function PhotoUploadForm() {
                   continue;
                 }
                 const fileDataUrl = await fileToDataUrl(file);
-                const res = await createPhotoUploadAction({
-                  fileName: file.name,
-                  fileType: file.type || "image/*",
-                  fileDataUrl
+                const res = await runDocumentationCreateAction({
+                  kind: "createPhotoUpload",
+                  payload: {
+                    fileName: file.name,
+                    fileType: file.type || "image/*",
+                    fileDataUrl
+                  }
                 });
 
                 if (res.error) {
@@ -320,7 +334,10 @@ export function BloodSugarForm({ members }: { members: MemberOption[] }) {
       </div>
       <textarea className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" placeholder="Notes" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
       <Button type="button" disabled={isPending || !form.memberId} onClick={() => startTransition(async () => {
-        const res = await createBloodSugarLogAction({ ...form, checkedAt: easternDateTimeLocalToISO(form.checkedAt) });
+        const res = await runDocumentationCreateAction({
+          kind: "createBloodSugarLog",
+          payload: { ...form, checkedAt: easternDateTimeLocalToISO(form.checkedAt) }
+        });
         setStatus(res.error ? `Error: ${res.error}` : "Blood sugar log saved.");
       })}>Save Blood Sugar</Button>
       {status ? <p className="text-sm text-muted">{status}</p> : null}

@@ -128,7 +128,7 @@ const timecardIdSchema = z.object({
   note: z.string().max(1000).optional()
 });
 
-export async function approveDailyTimecardAction(formData: FormData) {
+async function handleApproveDailyTimecard(formData: FormData) {
   await runAction({
     formData,
     fallbackPath: DIRECTOR_BASE_PATH,
@@ -148,7 +148,7 @@ export async function approveDailyTimecardAction(formData: FormData) {
   });
 }
 
-export async function markNeedsReviewTimecardAction(formData: FormData) {
+async function handleMarkNeedsReviewTimecard(formData: FormData) {
   await runAction({
     formData,
     fallbackPath: DIRECTOR_BASE_PATH,
@@ -176,7 +176,7 @@ const correctionSchema = z.object({
   note: z.string().max(1000).optional()
 });
 
-export async function addDirectorCorrectionPunchAction(formData: FormData) {
+async function handleAddDirectorCorrectionPunch(formData: FormData) {
   await runAction({
     formData,
     fallbackPath: DIRECTOR_BASE_PATH,
@@ -211,7 +211,7 @@ const forgotDecisionSchema = z.object({
   decisionNote: z.string().max(1000).optional()
 });
 
-export async function decideForgottenPunchRequestAction(formData: FormData) {
+async function handleDecideForgottenPunchRequest(formData: FormData) {
   await runAction({
     formData,
     fallbackPath: DIRECTOR_BASE_PATH,
@@ -242,7 +242,7 @@ const ptoSchema = z.object({
   note: z.string().max(1000).optional()
 });
 
-export async function addPtoEntryAction(formData: FormData) {
+async function handleAddPtoEntry(formData: FormData) {
   await runAction({
     formData,
     fallbackPath: DIRECTOR_BASE_PATH,
@@ -277,7 +277,7 @@ const updatePtoSchema = z.object({
   note: z.string().max(1000).optional()
 });
 
-export async function updatePendingPtoEntryAction(formData: FormData) {
+async function handleUpdatePendingPtoEntry(formData: FormData) {
   await runAction({
     formData,
     fallbackPath: DIRECTOR_BASE_PATH,
@@ -306,7 +306,7 @@ const decidePtoSchema = z.object({
   decisionNote: z.string().max(1000).optional()
 });
 
-export async function decidePtoEntryAction(formData: FormData) {
+async function handleDecidePtoEntry(formData: FormData) {
   await runAction({
     formData,
     fallbackPath: DIRECTOR_BASE_PATH,
@@ -328,7 +328,7 @@ export async function decidePtoEntryAction(formData: FormData) {
   });
 }
 
-export async function setPayPeriodClosedAction(formData: FormData) {
+async function handleSetPayPeriodClosed(formData: FormData) {
   await runAction({
     formData,
     fallbackPath: DIRECTOR_BASE_PATH,
@@ -352,7 +352,7 @@ const submitForgottenSchema = z.object({
   employeeNote: z.string().max(1000).optional()
 });
 
-export async function submitForgottenPunchRequestAction(formData: FormData) {
+async function handleSubmitForgottenPunchRequest(formData: FormData) {
   await runAction({
     formData,
     fallbackPath: FORGOTTEN_BASE_PATH,
@@ -379,4 +379,47 @@ export async function submitForgottenPunchRequestAction(formData: FormData) {
       });
     }
   });
+}
+
+const directorActionIntentSchema = z.enum([
+  "approveDailyTimecard",
+  "markNeedsReviewTimecard",
+  "addDirectorCorrectionPunch",
+  "decideForgottenPunchRequest",
+  "addPtoEntry",
+  "updatePendingPtoEntry",
+  "decidePtoEntry",
+  "setPayPeriodClosed",
+  "submitForgottenPunchRequest"
+]);
+
+export async function submitDirectorTimecardAction(formData: FormData) {
+  const intent = directorActionIntentSchema.safeParse(asText(formData, "intent"));
+  if (!intent.success) {
+    redirectWithStatus(resolveReturnPath(formData, DIRECTOR_BASE_PATH), {
+      key: "error",
+      message: "Unknown timecard action."
+    });
+  }
+
+  switch (intent.data) {
+    case "approveDailyTimecard":
+      return handleApproveDailyTimecard(formData);
+    case "markNeedsReviewTimecard":
+      return handleMarkNeedsReviewTimecard(formData);
+    case "addDirectorCorrectionPunch":
+      return handleAddDirectorCorrectionPunch(formData);
+    case "decideForgottenPunchRequest":
+      return handleDecideForgottenPunchRequest(formData);
+    case "addPtoEntry":
+      return handleAddPtoEntry(formData);
+    case "updatePendingPtoEntry":
+      return handleUpdatePendingPtoEntry(formData);
+    case "decidePtoEntry":
+      return handleDecidePtoEntry(formData);
+    case "setPayPeriodClosed":
+      return handleSetPayPeriodClosed(formData);
+    case "submitForgottenPunchRequest":
+      return handleSubmitForgottenPunchRequest(formData);
+  }
 }

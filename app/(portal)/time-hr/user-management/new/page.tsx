@@ -1,4 +1,4 @@
-import { createManagedUserFormAction } from "@/lib/actions/user-management";
+import { submitManagedUserAction } from "@/lib/actions/user-management";
 import { UserManagementForm } from "@/components/forms/user-management-form";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
@@ -20,7 +20,7 @@ export default async function NewManagedUserPage() {
       </Card>
 
       <Card>
-        <UserManagementForm action={createManagedUserFormAction} submitLabel="Create User" />
+        <UserManagementForm action={submitManagedUserAction} intent="createManagedUserForm" submitLabel="Create User" />
       </Card>
     </div>
   );

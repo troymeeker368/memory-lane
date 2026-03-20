@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 
-import { createAncillaryChargeAction } from "@/app/documentation-create-actions";
+import { runDocumentationCreateAction } from "@/app/documentation-create-actions";
 import { Button } from "@/components/ui/button";
 import type { SelectCategory, SelectMember } from "@/types/data";
 import { toEasternDate } from "@/lib/timezone";
@@ -114,7 +114,10 @@ export function AncillaryChargeForm({
         disabled={isPending || !form.memberId || !form.categoryId || (requiresLatePickupTime && !form.latePickupTime)}
         onClick={() =>
           startTransition(async () => {
-            const res = await createAncillaryChargeAction(form);
+            const res = await runDocumentationCreateAction({
+              kind: "createAncillaryCharge",
+              payload: form
+            });
             setStatus(res.error ? `Error: ${res.error}` : "Ancillary charge saved.");
           })
         }

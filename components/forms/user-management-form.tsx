@@ -6,15 +6,18 @@ type FormAction = (formData: FormData) => void | Promise<void>;
 
 export function UserManagementForm({
   action,
+  intent,
   user,
   submitLabel
 }: {
   action: FormAction;
+  intent: string;
   user?: ManagedUser;
   submitLabel: string;
 }) {
   return (
     <form action={action} className="grid gap-3 md:grid-cols-2">
+      <input type="hidden" name="intent" value={intent} />
       {user ? <input type="hidden" name="userId" value={user.id} /> : null}
 
       <label className="grid gap-1 text-sm">

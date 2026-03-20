@@ -6,13 +6,7 @@ import {
   updateLeadDetailsAction,
 } from "@/app/actions";
 import {
-  deleteWorkflowRecordAction,
-  updateAncillaryAction,
-  updateBloodSugarAction,
-  updateDailyActivityAction,
-  updateShowerLogAction,
-  updateToiletLogAction,
-  updateTransportationLogAction
+  runDocumentationUpdateAction
 } from "@/app/documentation-update-actions";
 import {
   reviewDocumentationAction,
@@ -84,10 +78,13 @@ export function DeleteRecordButton({ entity, id }: { entity: string; id: string 
       type="button"
       className="bg-slate-700"
       disabled={isPending}
-      onClick={() => {
+          onClick={() => {
         if (!confirmDelete()) return;
         startTransition(async () => {
-          await deleteWorkflowRecordAction({ entity, id });
+          await runDocumentationUpdateAction({
+            kind: "deleteWorkflowRecord",
+            payload: { entity, id }
+          });
         });
       }}
     >
@@ -192,7 +189,10 @@ export function QuickEditToilet({ id, useType, briefs, memberSupplied, notes }: 
             disabled={isPending}
             onClick={() =>
               startTransition(async () => {
-                await updateToiletLogAction({ id, useType: localUseType, briefs: localBriefs, memberSupplied: localMemberSupplied, notes: localNotes });
+                await runDocumentationUpdateAction({
+                  kind: "updateToiletLog",
+                  payload: { id, useType: localUseType, briefs: localBriefs, memberSupplied: localMemberSupplied, notes: localNotes }
+                });
                 setIsOpen(false);
               })
             }
@@ -240,7 +240,10 @@ export function QuickEditShower({ id, laundry, briefs, notes }: { id: string; la
             disabled={isPending}
             onClick={() =>
               startTransition(async () => {
-                await updateShowerLogAction({ id, laundry: localLaundry, briefs: localBriefs, notes: localNotes });
+                await runDocumentationUpdateAction({
+                  kind: "updateShowerLog",
+                  payload: { id, laundry: localLaundry, briefs: localBriefs, notes: localNotes }
+                });
                 setIsOpen(false);
               })
             }
@@ -295,7 +298,10 @@ export function QuickEditTransportation({ id, period, transportType }: { id: str
             disabled={isPending}
             onClick={() =>
               startTransition(async () => {
-                await updateTransportationLogAction({ id, period: localPeriod, transportType: localType });
+                await runDocumentationUpdateAction({
+                  kind: "updateTransportationLog",
+                  payload: { id, period: localPeriod, transportType: localType }
+                });
                 setIsOpen(false);
               })
             }
@@ -338,7 +344,10 @@ export function QuickEditBloodSugar({ id, reading, notes }: { id: string; readin
             disabled={isPending}
             onClick={() =>
               startTransition(async () => {
-                await updateBloodSugarAction({ id, readingMgDl: localReading, notes: localNotes });
+                await runDocumentationUpdateAction({
+                  kind: "updateBloodSugar",
+                  payload: { id, readingMgDl: localReading, notes: localNotes }
+                });
                 setIsOpen(false);
               })
             }
@@ -467,19 +476,22 @@ export function QuickEditDailyActivity({
             disabled={isPending || reasonRequired}
             onClick={() =>
               startTransition(async () => {
-                await updateDailyActivityAction({
-                  id,
-                  activity1: vals.a1,
-                  reasonMissing1: vals.r1,
-                  activity2: vals.a2,
-                  reasonMissing2: vals.r2,
-                  activity3: vals.a3,
-                  reasonMissing3: vals.r3,
-                  activity4: vals.a4,
-                  reasonMissing4: vals.r4,
-                  activity5: vals.a5,
-                  reasonMissing5: vals.r5,
-                  notes: vals.notes
+                await runDocumentationUpdateAction({
+                  kind: "updateDailyActivity",
+                  payload: {
+                    id,
+                    activity1: vals.a1,
+                    reasonMissing1: vals.r1,
+                    activity2: vals.a2,
+                    reasonMissing2: vals.r2,
+                    activity3: vals.a3,
+                    reasonMissing3: vals.r3,
+                    activity4: vals.a4,
+                    reasonMissing4: vals.r4,
+                    activity5: vals.a5,
+                    reasonMissing5: vals.r5,
+                    notes: vals.notes
+                  }
                 });
                 setIsOpen(false);
               })
@@ -516,7 +528,10 @@ export function QuickEditAncillary({ id, notes }: { id: string; notes: string | 
             disabled={isPending}
             onClick={() =>
               startTransition(async () => {
-                await updateAncillaryAction({ id, notes: localNotes });
+                await runDocumentationUpdateAction({
+                  kind: "updateAncillary",
+                  payload: { id, notes: localNotes }
+                });
                 setIsOpen(false);
               })
             }

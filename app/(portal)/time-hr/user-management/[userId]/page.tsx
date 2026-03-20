@@ -1,13 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import {
-  resendManagedUserInviteAction,
-  sendManagedUserInviteAction,
-  sendManagedUserResetAction,
-  toggleManagedUserLoginAccessAction,
-  updateManagedUserStatusAction
-} from "@/lib/actions/user-management";
+import { submitManagedUserAction } from "@/lib/actions/user-management";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
@@ -89,26 +83,30 @@ export default async function ManagedUserDetailPage({
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
-          <form action={user.invitedAt ? resendManagedUserInviteAction : sendManagedUserInviteAction}>
+          <form action={submitManagedUserAction}>
+            <input type="hidden" name="intent" value={user.invitedAt ? "resendManagedUserInvite" : "sendManagedUserInvite"} />
             <input type="hidden" name="userId" value={user.id} />
             <button type="submit" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
               {user.invitedAt ? "Resend Invite" : "Send Invite"}
             </button>
           </form>
-          <form action={sendManagedUserResetAction}>
+          <form action={submitManagedUserAction}>
+            <input type="hidden" name="intent" value="sendManagedUserReset" />
             <input type="hidden" name="userId" value={user.id} />
             <button type="submit" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold text-brand">
               Send Reset Link
             </button>
           </form>
-          <form action={toggleManagedUserLoginAccessAction}>
+          <form action={submitManagedUserAction}>
+            <input type="hidden" name="intent" value="toggleManagedUserLoginAccess" />
             <input type="hidden" name="userId" value={user.id} />
             <input type="hidden" name="disabled" value={user.authStatus === "disabled" ? "false" : "true"} />
             <button type="submit" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold text-brand">
               {user.authStatus === "disabled" ? "Re-enable Login" : "Disable Login"}
             </button>
           </form>
-          <form action={updateManagedUserStatusAction}>
+          <form action={submitManagedUserAction}>
+            <input type="hidden" name="intent" value="updateManagedUserStatus" />
             <input type="hidden" name="userId" value={user.id} />
             <input type="hidden" name="nextStatus" value={user.status === "active" ? "inactive" : "active"} />
             <button type="submit" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold text-brand">

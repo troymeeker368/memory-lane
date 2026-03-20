@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
-import { setPayPeriodClosedAction } from "@/app/(portal)/time-card/director/actions";
+import { submitDirectorTimecardAction } from "@/app/(portal)/time-card/director/actions";
 import type { DirectorTimecardsWorkspace } from "@/app/(portal)/time-card/director/director-timecards-shared";
 import { statusBadge } from "@/app/(portal)/time-card/director/director-timecards-shared";
 
@@ -42,7 +42,8 @@ export function ExportTab({
             Open Printable View
           </Link>
           {canLockPayPeriod ? (
-            <form action={setPayPeriodClosedAction}>
+            <form action={submitDirectorTimecardAction}>
+              <input type="hidden" name="intent" value="setPayPeriodClosed" />
               <input type="hidden" name="returnPath" value={exportHref} />
               <input type="hidden" name="payPeriodId" value={workspace.selectedPayPeriod.id} />
               <input type="hidden" name="isClosed" value={workspace.selectedPayPeriod.is_closed ? "false" : "true"} />

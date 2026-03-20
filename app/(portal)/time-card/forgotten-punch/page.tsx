@@ -5,7 +5,7 @@ import { getCurrentProfile, requireModuleAccess } from "@/lib/auth";
 import { getEmployeeForgottenPunchRequests } from "@/lib/services/director-timecards";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
-import { submitForgottenPunchRequestAction } from "@/app/(portal)/time-card/director/actions";
+import { submitDirectorTimecardAction } from "@/app/(portal)/time-card/director/actions";
 
 function firstString(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -52,7 +52,8 @@ export default async function ForgottenPunchPage({
 
       <Card>
         <CardTitle>New Request</CardTitle>
-        <form action={submitForgottenPunchRequestAction} className="mt-3 grid gap-2 md:grid-cols-6">
+        <form action={submitDirectorTimecardAction} className="mt-3 grid gap-2 md:grid-cols-6">
+          <input type="hidden" name="intent" value="submitForgottenPunchRequest" />
           <input type="hidden" name="returnPath" value="/time-card/forgotten-punch" />
           <input type="date" name="workDate" className="h-10 rounded-lg border border-border px-3 text-sm" required />
           <select name="requestType" defaultValue="missing_out" className="h-10 rounded-lg border border-border px-3 text-sm">
