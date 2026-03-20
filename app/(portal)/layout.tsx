@@ -6,12 +6,45 @@ import { headers } from "next/headers";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { isDevAuthBypassEnabled } from "@/lib/runtime";
-import { PortalNotificationLink } from "@/components/portal/portal-notification-link";
-import { PortalNav } from "@/components/portal-nav";
+import { PortalRuntimeEnhancements } from "@/components/portal/portal-runtime-enhancements";
 import { SignOutForm } from "@/components/sign-out-form";
-import { GlobalTablePaginatorLazy } from "@/components/ui/global-table-paginator-lazy";
+import type { AppRole, PermissionSet } from "@/types/app";
 
 export const dynamic = "force-dynamic";
+
+async function PortalNotificationLinkSlot({ userId }: { userId: string }) {
+  const { PortalNotificationLink } = await import("@/components/portal/portal-notification-link");
+  return <PortalNotificationLink userId={userId} />;
+}
+
+async function PortalNavSlot({
+  role,
+  permissions,
+  pathname
+}: {
+  role: AppRole;
+  permissions?: PermissionSet;
+  pathname: string;
+}) {
+  const { PortalNav } = await import("@/components/portal-nav");
+  return <PortalNav role={role} permissions={permissions} pathname={pathname} />;
+}
+
+function PortalNavFallback() {
+  return (
+    <div className="space-y-2" aria-hidden="true">
+      {[0, 1, 2].map((group) => (
+        <div key={group} className="rounded-lg border border-white/20 bg-white/5 p-2">
+          <div className="h-4 w-28 rounded bg-white/15" />
+          <div className="mt-2 grid gap-2">
+            <div className="h-9 rounded bg-white/10" />
+            <div className="h-9 rounded bg-white/10" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default async function PortalLayout({
   children
@@ -50,7 +83,9 @@ export default async function PortalLayout({
             </p>
           ) : null}
         </div>
-        <PortalNav role={profile.role} permissions={profile.permissions} pathname={pathname} />
+        <Suspense fallback={<PortalNavFallback />}>
+          <PortalNavSlot role={profile.role} permissions={profile.permissions} pathname={pathname} />
+        </Suspense>
         <SignOutForm />
       </aside>
       <main className="space-y-4 pb-10">
@@ -70,9 +105,9 @@ export default async function PortalLayout({
                 </Link>
               }
             >
-              <PortalNotificationLink userId={profile.id} />
+              <PortalNotificationLinkSlot userId={profile.id} />
             </Suspense>
-            <GlobalTablePaginatorLazy />
+            <PortalRuntimeEnhancements />
           </div>
         </div>
         {devAuthSection}

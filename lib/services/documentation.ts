@@ -190,6 +190,40 @@ export async function getDocumentationTracker() {
   });
 }
 
+export async function getRecentDocumentationWorkflowCounts() {
+  const supabase = await createClient();
+
+  const [
+    { data: toiletRows, error: toiletError },
+    { data: showerRows, error: showerError },
+    { data: transportationRows, error: transportationError },
+    { data: photoRows, error: photoError },
+    { data: assessmentRows, error: assessmentError }
+  ] = await Promise.all([
+    supabase.from("toilet_logs").select("id").order("event_at", { ascending: false }).limit(50),
+    supabase.from("shower_logs").select("id").order("event_at", { ascending: false }).limit(50),
+    supabase.from("transportation_logs").select("id").order("created_at", { ascending: false }).limit(50),
+    supabase.from("member_photo_uploads").select("id").order("uploaded_at", { ascending: false }).limit(50),
+    supabase.from("intake_assessments").select("id").order("created_at", { ascending: false }).limit(50)
+  ]);
+
+  if (toiletError) throw new Error(`Unable to load recent toilet workflow counts: ${toiletError.message}`);
+  if (showerError) throw new Error(`Unable to load recent shower workflow counts: ${showerError.message}`);
+  if (transportationError) {
+    throw new Error(`Unable to load recent transportation workflow counts: ${transportationError.message}`);
+  }
+  if (photoError) throw new Error(`Unable to load recent photo workflow counts: ${photoError.message}`);
+  if (assessmentError) throw new Error(`Unable to load recent assessment workflow counts: ${assessmentError.message}`);
+
+  return {
+    toilets: toiletRows?.length ?? 0,
+    showers: showerRows?.length ?? 0,
+    transportation: transportationRows?.length ?? 0,
+    photos: photoRows?.length ?? 0,
+    assessments: assessmentRows?.length ?? 0
+  };
+}
+
 
 
 
