@@ -47,6 +47,7 @@ import {
   selectMembersPageWithFallback,
   selectMembersWithFallback
 } from "@/lib/services/member-command-center-member-queries";
+import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 export type {
   BillingScheduleTemplateRow,
   BusStopDirectoryRow,
@@ -64,10 +65,6 @@ export type {
   MemberFileRow,
   PayorRow
 } from "@/lib/services/member-command-center-types";
-
-function escapeIlikeSearchTerm(value: string) {
-  return value.replace(/[%,_]/g, (match) => `\\${match}`);
-}
 
 const MEMBER_FILE_LIST_SELECT =
   "id, member_id, file_name, file_type, storage_object_path, category, category_other, document_source, pof_request_id, uploaded_by_user_id, uploaded_by_name, uploaded_at, updated_at";
@@ -225,8 +222,8 @@ export async function listMembersSupabase(filters?: { q?: string; status?: "all"
         query = query.eq("status", filters.status);
       }
       if (q) {
-        const escaped = escapeIlikeSearchTerm(q);
-        query = query.or(`display_name.ilike.%${escaped}%,locker_number.ilike.%${escaped}%`);
+        const pattern = buildSupabaseIlikePattern(q);
+        query = query.or(`display_name.ilike.${pattern},locker_number.ilike.${pattern}`);
       }
       return query.order("display_name", { ascending: true });
     },
@@ -249,8 +246,7 @@ export async function listMemberNameLookupSupabase(filters?: {
         query = query.eq("status", filters.status);
       }
       if (q) {
-        const escaped = escapeIlikeSearchTerm(q);
-        query = query.ilike("display_name", `%${escaped}%`);
+        query = query.ilike("display_name", buildSupabaseIlikePattern(q));
       }
       return query.order("display_name", { ascending: true });
     },
@@ -281,7 +277,7 @@ async function listMembersPageSupabase(filters?: {
         query = query.eq("status", filters.status);
       }
       if (q) {
-        query = query.ilike("display_name", `%${q.replace(/[%,_]/g, (match) => `\\${match}`)}%`);
+        query = query.ilike("display_name", buildSupabaseIlikePattern(q));
       }
       return query;
     },

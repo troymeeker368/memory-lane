@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import {
@@ -128,7 +129,7 @@ async function loadProgressNoteMembers(input?: {
   if (input?.memberId) query = query.eq("id", input.memberId);
   if (input?.memberIds && input.memberIds.length > 0) query = query.in("id", input.memberIds);
   if (input?.query) {
-    query = query.ilike("display_name", `%${input.query.replace(/[%,_]/g, (match) => `\\${match}`)}%`);
+    query = query.ilike("display_name", buildSupabaseIlikePattern(input.query));
   }
 
   const { data, error } = await query;

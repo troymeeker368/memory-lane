@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { resolveCanonicalLeadState } from "@/lib/canonical";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
+import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import { buildSalesPipelineStageCounts } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -200,10 +201,6 @@ function normalizePage(rawPage?: number | null) {
 function normalizePageSize(rawPageSize?: number | null, fallback = 25) {
   if (!Number.isFinite(rawPageSize) || !rawPageSize || rawPageSize < 1) return fallback;
   return Math.floor(rawPageSize);
-}
-
-function escapeIlike(value: string) {
-  return value.replace(/[%,_]/g, (match) => `\\${match}`);
 }
 
 export async function getSalesLeadByIdSupabase(leadId: string) {
@@ -689,8 +686,8 @@ export async function getSalesLeadListSupabase(input?: {
   }
   const q = clean(input?.q);
   if (q) {
-    const escaped = escapeIlike(q);
-    query = query.or(`member_name.ilike.%${escaped}%,caregiver_name.ilike.%${escaped}%`);
+    const pattern = buildSupabaseIlikePattern(q);
+    query = query.or(`member_name.ilike.${pattern},caregiver_name.ilike.${pattern}`);
   }
 
   const sortColumn =
@@ -760,8 +757,10 @@ export async function getSalesPartnerDirectoryPageSupabase(input?: { q?: string;
     .order("organization_name", { ascending: true });
   const q = clean(input?.q);
   if (q) {
-    const escaped = escapeIlike(q);
-    query = query.or(`organization_name.ilike.%${escaped}%,category.ilike.%${escaped}%,location.ilike.%${escaped}%,primary_phone.ilike.%${escaped}%,primary_email.ilike.%${escaped}%`);
+    const pattern = buildSupabaseIlikePattern(q);
+    query = query.or(
+      `organization_name.ilike.${pattern},category.ilike.${pattern},location.ilike.${pattern},primary_phone.ilike.${pattern},primary_email.ilike.${pattern}`
+    );
   }
   query = query.range((page - 1) * pageSize, page * pageSize - 1);
   const { data, error, count } = await query;
@@ -791,8 +790,10 @@ export async function getSalesReferralSourceDirectoryPageSupabase(input?: { q?: 
     .order("organization_name", { ascending: true });
   const q = clean(input?.q);
   if (q) {
-    const escaped = escapeIlike(q);
-    query = query.or(`contact_name.ilike.%${escaped}%,organization_name.ilike.%${escaped}%,job_title.ilike.%${escaped}%,primary_phone.ilike.%${escaped}%,primary_email.ilike.%${escaped}%,preferred_contact_method.ilike.%${escaped}%`);
+    const pattern = buildSupabaseIlikePattern(q);
+    query = query.or(
+      `contact_name.ilike.${pattern},organization_name.ilike.${pattern},job_title.ilike.${pattern},primary_phone.ilike.${pattern},primary_email.ilike.${pattern},preferred_contact_method.ilike.${pattern}`
+    );
   }
   query = query.range((page - 1) * pageSize, page * pageSize - 1);
   const { data, error, count } = await query;

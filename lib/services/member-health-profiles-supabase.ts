@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import { toEasternISO } from "@/lib/timezone";
 
 export const MHP_TABS = [
@@ -328,7 +329,7 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
     membersQuery = membersQuery.eq("status", status);
   }
   if (queryText) {
-    membersQuery = membersQuery.ilike("display_name", `%${queryText.replace(/[%,_]/g, (match) => `\\${match}`)}%`);
+    membersQuery = membersQuery.ilike("display_name", buildSupabaseIlikePattern(queryText));
   }
 
   const { data: membersData, error: membersError, count: totalRows } = await membersQuery;
@@ -343,7 +344,7 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
     aggregateMembersQuery = aggregateMembersQuery.eq("status", status);
   }
   if (queryText) {
-    aggregateMembersQuery = aggregateMembersQuery.ilike("display_name", `%${queryText.replace(/[%,_]/g, (match) => `\\${match}`)}%`);
+    aggregateMembersQuery = aggregateMembersQuery.ilike("display_name", buildSupabaseIlikePattern(queryText));
   }
   const { data: aggregateMembersData, error: aggregateMembersError } = await aggregateMembersQuery;
   if (aggregateMembersError) throw new Error(aggregateMembersError.message);
