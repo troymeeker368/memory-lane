@@ -66,6 +66,13 @@ function toNullableUuid(value: string | null | undefined) {
     : null;
 }
 
+function requireWorkflowRpcRow<T>(rpcName: string, row: T | null | undefined): T {
+  if (row != null) return row;
+  throw new Error(
+    `Member Health Profile workflow RPC ${rpcName} returned no result row. Refusing fabricated fallback result.`
+  );
+}
+
 function combineText(parts: Array<string | null | undefined>, separator = " | ") {
   const joined = parts
     .map((part) => clean(part))
@@ -193,7 +200,7 @@ export async function updateMemberTrackWithCarePlanNote(input: {
         p_now: input.now ?? toEasternISO()
       }
     );
-    return result ?? { changed: false, member_note_id: null };
+    return requireWorkflowRpcRow(UPDATE_MEMBER_TRACK_WITH_NOTE_RPC, result);
   } catch (error) {
     if (isMissingRpcFunctionError(error, UPDATE_MEMBER_TRACK_WITH_NOTE_RPC)) {
       throw new Error(
@@ -237,7 +244,7 @@ export async function mutateMemberDiagnosisWorkflow(input: {
       p_actor_name: clean(input.actor.fullName),
       p_now: input.now ?? toEasternISO()
     });
-    return result ?? { entity_row: null, changed: false };
+    return requireWorkflowRpcRow(MUTATE_MEMBER_DIAGNOSIS_WORKFLOW_RPC, result);
   } catch (error) {
     if (isMissingRpcFunctionError(error, MUTATE_MEMBER_DIAGNOSIS_WORKFLOW_RPC)) {
       throw new Error(
@@ -275,18 +282,7 @@ export async function mutateMemberMedicationWorkflow(input: {
         p_mar_end_date: clean(input.marEndDate)
       }
     );
-    return (
-      result ?? {
-        entity_row: null,
-        changed: false,
-        anchor_physician_order_id: null,
-        synced_medications: 0,
-        inserted_schedules: 0,
-        patched_schedules: 0,
-        reactivated_schedules: 0,
-        deactivated_schedules: 0
-      }
-    );
+    return requireWorkflowRpcRow(MUTATE_MEMBER_MEDICATION_WORKFLOW_RPC, result);
   } catch (error) {
     if (isMissingRpcFunctionError(error, MUTATE_MEMBER_MEDICATION_WORKFLOW_RPC)) {
       throw new Error(
@@ -316,7 +312,7 @@ export async function mutateMemberAllergyWorkflow(input: {
       p_actor_name: clean(input.actor.fullName),
       p_now: input.now ?? toEasternISO()
     });
-    return result ?? { entity_row: null, changed: false };
+    return requireWorkflowRpcRow(MUTATE_MEMBER_ALLERGY_WORKFLOW_RPC, result);
   } catch (error) {
     if (isMissingRpcFunctionError(error, MUTATE_MEMBER_ALLERGY_WORKFLOW_RPC)) {
       throw new Error(
@@ -346,7 +342,7 @@ export async function mutateMemberProviderWorkflow(input: {
       p_actor_name: clean(input.actor.fullName),
       p_now: input.now ?? toEasternISO()
     });
-    return result ?? { entity_row: null, changed: false };
+    return requireWorkflowRpcRow(MUTATE_MEMBER_PROVIDER_WORKFLOW_RPC, result);
   } catch (error) {
     if (isMissingRpcFunctionError(error, MUTATE_MEMBER_PROVIDER_WORKFLOW_RPC)) {
       throw new Error(
@@ -380,7 +376,7 @@ export async function mutateMemberEquipmentWorkflow(input: {
         p_now: input.now ?? toEasternISO()
       }
     );
-    return result ?? { entity_row: null, changed: false };
+    return requireWorkflowRpcRow(MUTATE_MEMBER_EQUIPMENT_WORKFLOW_RPC, result);
   } catch (error) {
     if (isMissingRpcFunctionError(error, MUTATE_MEMBER_EQUIPMENT_WORKFLOW_RPC)) {
       throw new Error(
@@ -410,7 +406,7 @@ export async function mutateMemberNoteWorkflow(input: {
       p_actor_name: clean(input.actor.fullName),
       p_now: input.now ?? toEasternISO()
     });
-    return result ?? { entity_row: null, changed: false };
+    return requireWorkflowRpcRow(MUTATE_MEMBER_NOTE_WORKFLOW_RPC, result);
   } catch (error) {
     if (isMissingRpcFunctionError(error, MUTATE_MEMBER_NOTE_WORKFLOW_RPC)) {
       throw new Error(

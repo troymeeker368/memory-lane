@@ -94,6 +94,17 @@ function normalizeMetadata(value: unknown) {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
+function requireNotificationContextRow(
+  row: NotificationDbRow | null | undefined,
+  entityType: string,
+  entityId: string
+) {
+  if (row) return row;
+  throw new Error(
+    `Missing canonical ${entityType} context row for id ${entityId}. Notification recipients require Supabase-backed context.`
+  );
+}
+
 function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((value) => normalizeText(value)).filter(Boolean))) as string[];
 }
@@ -308,7 +319,7 @@ async function loadEnrollmentContext(entityId: string, metadata: Record<string, 
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  const row = (data ?? {}) as NotificationDbRow;
+  const row = requireNotificationContextRow(data as NotificationDbRow | null, "enrollment_packet_request", entityId);
   const member = pickJoinedRow<{ display_name?: string | null }>(row.member);
   const lead = pickJoinedRow<{ created_by_user_id?: string | null; member_name?: string | null }>(row.lead);
   const memberId = normalizeText(row.member_id) ?? normalizeText(String(metadata.member_id ?? metadata.memberId ?? ""));
@@ -352,7 +363,7 @@ async function loadPofContext(entityType: string, entityId: string, metadata: Re
       .eq("id", entityId)
       .maybeSingle();
     if (error) throw new Error(error.message);
-    const row = (data ?? {}) as NotificationDbRow;
+    const row = requireNotificationContextRow(data as NotificationDbRow | null, "pof_request", entityId);
     const member = pickJoinedRow<{ display_name?: string | null }>(row.member);
     const physicianOrder = pickJoinedRow<{
       created_by_user_id?: string | null;
@@ -405,8 +416,8 @@ async function loadPofContext(entityType: string, entityId: string, metadata: Re
     .limit(1)
     .maybeSingle();
   if (requestError) throw new Error(requestError.message);
-  const row = (data ?? {}) as NotificationDbRow;
-  const request = (requestRow ?? {}) as NotificationDbRow;
+  const row = requireNotificationContextRow(data as NotificationDbRow | null, "physician_order", entityId);
+  const request = (requestRow ?? null) as NotificationDbRow | null;
 
   return {
     entityType,
@@ -417,8 +428,8 @@ async function loadPofContext(entityType: string, entityId: string, metadata: Re
     leadOwnerUserId: null,
     enrollmentSenderUserId: null,
     physicianOrderId: normalizeText(row.id),
-    pofRequestId: normalizeText(request.id),
-    pofSenderUserId: normalizeText(request.sent_by_user_id),
+    pofRequestId: normalizeText(request?.id),
+    pofSenderUserId: normalizeText(request?.sent_by_user_id),
     pofOwnerUserId: normalizeText(row.updated_by_user_id) ?? normalizeText(row.created_by_user_id),
     carePlanId: null,
     carePlanCreatedByUserId: null,
@@ -444,7 +455,7 @@ async function loadCarePlanContext(entityId: string, metadata: Record<string, Js
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  const row = (data ?? {}) as NotificationDbRow;
+  const row = requireNotificationContextRow(data as NotificationDbRow | null, "care_plan", entityId);
   const member = pickJoinedRow<{ display_name?: string | null }>(row.member);
   return {
     entityType: "care_plan",
@@ -484,7 +495,7 @@ async function loadIntakeContext(entityId: string, metadata: Record<string, Json
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  const row = (data ?? {}) as NotificationDbRow;
+  const row = requireNotificationContextRow(data as NotificationDbRow | null, "intake_assessment", entityId);
   const member = pickJoinedRow<{ display_name?: string | null }>(row.member);
   const lead = pickJoinedRow<{ created_by_user_id?: string | null; member_name?: string | null }>(row.lead);
   return {
@@ -526,7 +537,7 @@ async function loadMemberFileContext(entityId: string, metadata: Record<string, 
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  const row = (data ?? {}) as NotificationDbRow;
+  const row = requireNotificationContextRow(data as NotificationDbRow | null, "member_file", entityId);
   const member = pickJoinedRow<{ display_name?: string | null }>(row.member);
   const memberId = normalizeText(row.member_id);
   let baseContext: WorkflowRecipientContext = {
