@@ -30,8 +30,9 @@ type MemberLookupRowShape = {
   status: "active" | "inactive";
 };
 
-const MCC_MEMBER_SELECT =
-  "id, display_name, preferred_name, first_name, last_name, full_name, name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track";
+const MCC_MEMBER_BASE_SELECT =
+  "id, display_name, status, locker_number, enrollment_date, dob, city, code_status, latest_assessment_track";
+const MCC_MEMBER_CURRENT_SELECT = `${MCC_MEMBER_BASE_SELECT}, preferred_name, first_name:legal_first_name, last_name:legal_last_name`;
 const MEMBER_LOOKUP_SELECT = "id, display_name, status";
 const MCC_MEMBER_SCHEMA_MIGRATION = "0011_member_command_center_aux_schema.sql";
 
@@ -43,14 +44,16 @@ function buildMccMemberSchemaOutOfDateError(error: PostgrestErrorLike | null | u
 }
 
 export function mapMccMemberRow(row: Record<string, unknown>): MccMemberRowShape {
+  const displayName = String(row.display_name ?? "");
+  const fallbackName = displayName.length > 0 ? displayName : null;
   return {
     id: String(row.id ?? ""),
-    display_name: String(row.display_name ?? ""),
+    display_name: displayName,
     preferred_name: typeof row.preferred_name === "string" ? row.preferred_name : null,
     first_name: typeof row.first_name === "string" ? row.first_name : null,
     last_name: typeof row.last_name === "string" ? row.last_name : null,
-    full_name: typeof row.full_name === "string" ? row.full_name : null,
-    name: typeof row.name === "string" ? row.name : null,
+    full_name: typeof row.full_name === "string" ? row.full_name : fallbackName,
+    name: typeof row.name === "string" ? row.name : fallbackName,
     status: row.status === "inactive" ? "inactive" : "active",
     locker_number: typeof row.locker_number === "string" ? row.locker_number : null,
     enrollment_date: typeof row.enrollment_date === "string" ? row.enrollment_date : null,
@@ -59,6 +62,23 @@ export function mapMccMemberRow(row: Record<string, unknown>): MccMemberRowShape
     code_status: typeof row.code_status === "string" ? row.code_status : null,
     latest_assessment_track: typeof row.latest_assessment_track === "string" ? row.latest_assessment_track : null
   };
+}
+
+async function runMemberQueryWithSchemaFallback<T extends { error: PostgrestErrorLike | null }>(
+  runQuery: (selectClause: string) => PromiseLike<T>,
+  isMissingAnyColumnError: (error: PostgrestErrorLike | null | undefined, tableName: string) => boolean,
+  errorMessage: string
+) {
+  const current = await runQuery(MCC_MEMBER_CURRENT_SELECT);
+  if (!current.error) return current;
+  if (!isMissingAnyColumnError(current.error, "members")) return current;
+
+  const baseline = await runQuery(MCC_MEMBER_BASE_SELECT);
+  if (!baseline.error) return baseline;
+  if (isMissingAnyColumnError(baseline.error, "members")) {
+    throw buildMccMemberSchemaOutOfDateError(baseline.error, errorMessage);
+  }
+  return baseline;
 }
 
 function mapMemberLookupRow(row: Record<string, unknown>): MemberLookupRowShape {
@@ -74,11 +94,8 @@ export async function selectMembersWithFallback(
   isMissingAnyColumnError: (error: PostgrestErrorLike | null | undefined, tableName: string) => boolean,
   errorMessage: string
 ) {
-  const { data, error } = await runQuery(MCC_MEMBER_SELECT);
+  const { data, error } = await runMemberQueryWithSchemaFallback(runQuery, isMissingAnyColumnError, errorMessage);
   if (error) {
-    if (isMissingAnyColumnError(error, "members")) {
-      throw buildMccMemberSchemaOutOfDateError(error, errorMessage);
-    }
     throw new Error(error.message ?? errorMessage);
   }
   return ((Array.isArray(data) ? data : []) as Record<string, unknown>[]).map((row) => mapMccMemberRow(row));
@@ -89,11 +106,8 @@ export async function selectMembersPageWithFallback(
   isMissingAnyColumnError: (error: PostgrestErrorLike | null | undefined, tableName: string) => boolean,
   errorMessage: string
 ) {
-  const { data, error, count } = await runQuery(MCC_MEMBER_SELECT);
+  const { data, error, count } = await runMemberQueryWithSchemaFallback(runQuery, isMissingAnyColumnError, errorMessage);
   if (error) {
-    if (isMissingAnyColumnError(error, "members")) {
-      throw buildMccMemberSchemaOutOfDateError(error, errorMessage);
-    }
     throw new Error(error.message ?? errorMessage);
   }
 
@@ -125,11 +139,8 @@ export async function selectMemberWithFallback(
   isMissingAnyColumnError: (error: PostgrestErrorLike | null | undefined, tableName: string) => boolean,
   errorMessage: string
 ) {
-  const { data, error } = await runQuery(MCC_MEMBER_SELECT);
+  const { data, error } = await runMemberQueryWithSchemaFallback(runQuery, isMissingAnyColumnError, errorMessage);
   if (error) {
-    if (isMissingAnyColumnError(error, "members")) {
-      throw buildMccMemberSchemaOutOfDateError(error, errorMessage);
-    }
     throw new Error(error.message ?? errorMessage);
   }
 
