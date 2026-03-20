@@ -33,7 +33,13 @@ export async function createClient(options: CreateClientOptions = {}) {
       },
       setAll(cookiesToSet: Parameters<SetAllCookies>[0]) {
         cookiesToSet.forEach(({ name, value, options }: Parameters<SetAllCookies>[0][number]) => {
-          cookieStore.set(name, value, options);
+          try {
+            cookieStore.set(name, value, options);
+          } catch {
+            // Server Component renders can read cookies but cannot mutate them.
+            // Middleware and route/action handlers remain the canonical places
+            // where Supabase auth cookie refreshes are persisted.
+          }
         });
       }
     }
