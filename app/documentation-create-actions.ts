@@ -8,7 +8,7 @@ import type {
   createShowerLogAction as createShowerLogActionImpl,
   createToiletLogAction as createToiletLogActionImpl,
   createTransportationLogAction as createTransportationLogActionImpl
-} from "@/app/documentation-actions-impl";
+} from "@/app/documentation-create-actions-impl";
 
 export type DocumentationCreateActionRequest =
   | {
@@ -41,7 +41,7 @@ export type DocumentationCreateActionRequest =
     };
 
 export async function runDocumentationCreateAction(request: DocumentationCreateActionRequest) {
-  const implementation = await import("@/app/documentation-actions-impl");
+  const implementation = await import("@/app/documentation-create-actions-impl");
 
   switch (request.kind) {
     case "createAncillaryCharge":

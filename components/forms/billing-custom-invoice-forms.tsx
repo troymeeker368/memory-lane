@@ -2,10 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import {
-  createCustomInvoiceAction,
-  createEnrollmentInvoiceAction
-} from "@/app/(portal)/operations/payor/actions";
+import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -294,7 +291,8 @@ export function BillingCustomInvoiceForm({
   }
 
   return (
-    <form action={createCustomInvoiceAction} className="mt-5 space-y-5">
+    <form action={submitPayorAction} className="mt-5 space-y-5">
+      <input type="hidden" name="intent" value="createCustomInvoice" />
       <input type="hidden" name="returnPath" value="/operations/payor/custom-invoices?tab=custom-invoice" />
       <input type="hidden" name="flatAmount" value={flatAmount} />
       <input type="hidden" name="manualLineItems" value={manualLineItems} />
@@ -506,7 +504,8 @@ export function BillingEnrollmentProratedForm({
   const payorNote = useMemo(() => getPayorStatusNote(memberId, payorByMember), [memberId, payorByMember]);
 
   return (
-    <form action={createEnrollmentInvoiceAction} className="mt-5 space-y-5">
+    <form action={submitPayorAction} className="mt-5 space-y-5">
+      <input type="hidden" name="intent" value="createEnrollmentInvoice" />
       <input type="hidden" name="returnPath" value="/operations/payor/custom-invoices?tab=prorated-enrollment" />
 
       <Section

@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { finalizeInvoiceAction } from "@/app/(portal)/operations/payor/actions";
+import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 import {
   BillingCustomInvoiceForm,
   BillingEnrollmentProratedForm
@@ -84,7 +84,8 @@ function InvoiceMobileCards({
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {allowFinalize ? (
-              <form action={finalizeInvoiceAction}>
+              <form action={submitPayorAction}>
+                <input type="hidden" name="intent" value="finalizeInvoice" />
                 <input type="hidden" name="invoiceId" value={invoice.id} />
                 <input type="hidden" name="returnPath" value={buildTabHref("drafts-history")} />
                 <button type="submit" className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white">
@@ -171,7 +172,8 @@ function InvoiceHistorySection({
                     <td>
                       <div className="flex flex-wrap gap-2">
                         {allowFinalize ? (
-                          <form action={finalizeInvoiceAction}>
+                          <form action={submitPayorAction}>
+                            <input type="hidden" name="intent" value="finalizeInvoice" />
                             <input type="hidden" name="invoiceId" value={invoice.id} />
                             <input type="hidden" name="returnPath" value={buildTabHref("drafts-history")} />
                             <button type="submit" className="text-xs font-semibold text-brand">

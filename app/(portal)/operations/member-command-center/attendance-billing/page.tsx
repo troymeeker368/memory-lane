@@ -4,7 +4,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
 import { listCenterBillingSettingsSupabase } from "@/lib/services/member-command-center-supabase";
 
-import { saveCenterBillingSettingAction } from "@/app/(portal)/operations/payor/actions";
+import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -30,7 +30,8 @@ export default async function MccAttendanceBillingSettingsPage() {
       </Card>
 
       <Card>
-        <form action={saveCenterBillingSettingAction} className="grid gap-2 md:grid-cols-4">
+        <form action={submitPayorAction} className="grid gap-2 md:grid-cols-4">
+          <input type="hidden" name="intent" value="saveCenterBillingSetting" />
           <input type="hidden" name="id" value={current?.id ?? ""} />
           <label className="space-y-1 text-xs">
             <span className="font-semibold text-muted">Default Daily Rate</span>

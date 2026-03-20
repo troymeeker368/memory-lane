@@ -7,10 +7,7 @@ import {
 } from "@/lib/services/billing-read";
 
 import {
-  deleteCenterClosureAction,
-  ensureCenterClosuresAction,
-  saveClosureRuleAction,
-  saveCenterClosureAction
+  submitPayorAction
 } from "@/app/(portal)/operations/payor/actions";
 
 function todayDate() {
@@ -28,7 +25,8 @@ export default async function CenterClosuresPage() {
         <p className="mt-1 text-sm text-muted">
           Active closure rules automatically generate current and next year dates. Schedule billing excludes active closure dates by default unless Billable Override is checked.
         </p>
-        <form action={ensureCenterClosuresAction} className="mt-3">
+        <form action={submitPayorAction} className="mt-3">
+          <input type="hidden" name="intent" value="ensureCenterClosures" />
           <button type="submit" className="h-9 rounded-lg border border-border px-3 text-xs font-semibold text-brand">
             Regenerate Current + Next Year
           </button>
@@ -65,7 +63,8 @@ export default async function CenterClosuresPage() {
                       : `${rule.occurrence ?? "-"} ${rule.weekday ?? "-"}`}
                   </td>
                   <td>
-                    <form action={saveClosureRuleAction} className="flex items-center gap-2">
+                    <form action={submitPayorAction} className="flex items-center gap-2">
+                      <input type="hidden" name="intent" value="saveClosureRule" />
                       <input type="hidden" name="id" value={rule.id} />
                       <input type="hidden" name="name" value={rule.name} />
                       <input type="hidden" name="ruleType" value={rule.rule_type} />
@@ -103,7 +102,8 @@ export default async function CenterClosuresPage() {
 
       <Card>
         <CardTitle>Add Manual Closure</CardTitle>
-        <form action={saveCenterClosureAction} className="mt-3 grid gap-2 md:grid-cols-6">
+        <form action={submitPayorAction} className="mt-3 grid gap-2 md:grid-cols-6">
+          <input type="hidden" name="intent" value="saveCenterClosure" />
           <label className="space-y-1 text-xs">
             <span className="font-semibold text-muted">Closure Date</span>
             <input name="closureDate" type="date" defaultValue={todayDate()} className="h-10 w-full rounded-lg border border-border px-3" required />
@@ -176,7 +176,8 @@ export default async function CenterClosuresPage() {
                   <td>{row.notes ?? "-"}</td>
                   <td>
                     <div className="flex flex-wrap gap-2">
-                      <form action={saveCenterClosureAction} className="flex flex-wrap items-center gap-2">
+                      <form action={submitPayorAction} className="flex flex-wrap items-center gap-2">
+                        <input type="hidden" name="intent" value="saveCenterClosure" />
                         <input type="hidden" name="id" value={row.id} />
                         <input type="hidden" name="closureDate" value={row.closure_date} />
                         <input type="hidden" name="closureName" value={row.closure_name} />
@@ -194,7 +195,8 @@ export default async function CenterClosuresPage() {
                           Save
                         </button>
                       </form>
-                      <form action={deleteCenterClosureAction}>
+                      <form action={submitPayorAction}>
+                        <input type="hidden" name="intent" value="deleteCenterClosure" />
                         <input type="hidden" name="id" value={row.id} />
                         <button type="submit" className="h-8 rounded border border-border px-2 text-xs font-semibold text-red-700">
                           Delete

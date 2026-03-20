@@ -2,7 +2,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { listBillingScheduleTemplates } from "@/lib/services/billing-read";
 import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";
 
-import { saveBillingScheduleTemplateAction } from "@/app/(portal)/operations/payor/actions";
+import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -21,7 +21,8 @@ export default async function BillingScheduleTemplatesPage() {
         <p className="mt-1 text-sm text-muted">
           Contracted attendance templates drive base prebilling counts for upcoming-month invoices.
         </p>
-        <form action={saveBillingScheduleTemplateAction} className="mt-3 grid gap-2 md:grid-cols-8">
+        <form action={submitPayorAction} className="mt-3 grid gap-2 md:grid-cols-8">
+          <input type="hidden" name="intent" value="saveBillingScheduleTemplate" />
           <select name="memberId" className="h-10 rounded-lg border border-border px-3 md:col-span-2" required>
             <option value="">Member</option>
             {members.map((member) => (

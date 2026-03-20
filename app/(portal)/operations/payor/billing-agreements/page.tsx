@@ -4,9 +4,7 @@ import { listMemberNameLookupSupabase } from "@/lib/services/member-command-cent
 import { listMemberBillingSettings, listPayors } from "@/lib/services/billing-read";
 
 import {
-  saveCenterBillingSettingAction,
-  saveMemberBillingSettingAction,
-  savePayorAction
+  submitPayorAction
 } from "@/app/(portal)/operations/payor/actions";
 
 function todayDate() {
@@ -29,7 +27,8 @@ export default async function BillingAgreementsPage() {
         <p className="mt-1 text-xs text-muted">
           Coordinator-managed defaults used unless a member has an active override.
         </p>
-        <form action={saveCenterBillingSettingAction} className="mt-3 grid gap-2 md:grid-cols-4">
+        <form action={submitPayorAction} className="mt-3 grid gap-2 md:grid-cols-4">
+          <input type="hidden" name="intent" value="saveCenterBillingSetting" />
           <input type="hidden" name="id" value={centerSetting?.id ?? ""} />
           <label className="space-y-1 text-xs">
             <span className="font-semibold text-muted">Default Daily Rate</span>
@@ -133,7 +132,8 @@ export default async function BillingAgreementsPage() {
         <p className="mt-1 text-xs text-muted">
           Legacy payor directory records remain available for backward compatibility and external metadata, but member billing recipient selection now lives on the member contact marked as payor.
         </p>
-        <form action={savePayorAction} className="mt-3 grid gap-2 md:grid-cols-6">
+        <form action={submitPayorAction} className="mt-3 grid gap-2 md:grid-cols-6">
+          <input type="hidden" name="intent" value="savePayor" />
           <input name="payorName" placeholder="Payor Name" className="h-10 rounded-lg border border-border px-3" />
           <input name="payorType" placeholder="Payor Type" defaultValue="Private" className="h-10 rounded-lg border border-border px-3" />
           <input name="billingContactName" placeholder="Billing Contact" className="h-10 rounded-lg border border-border px-3" />
@@ -182,7 +182,8 @@ export default async function BillingAgreementsPage() {
 
       <Card className="table-wrap">
         <CardTitle>Member Billing Settings</CardTitle>
-        <form action={saveMemberBillingSettingAction} className="mt-3 grid gap-2 md:grid-cols-6">
+        <form action={submitPayorAction} className="mt-3 grid gap-2 md:grid-cols-6">
+          <input type="hidden" name="intent" value="saveMemberBillingSetting" />
           <select name="memberId" className="h-10 rounded-lg border border-border px-3" required>
             <option value="">Member</option>
             {members.map((member) => (

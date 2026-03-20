@@ -1,7 +1,7 @@
 import { Card, CardTitle } from "@/components/ui/card";
 import { getBillingBatches, getBillingExports } from "@/lib/services/billing-read";
 
-import { createBillingExportAction } from "@/app/(portal)/operations/payor/actions";
+import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 
 export default async function BillingExportsPage({
   searchParams
@@ -29,7 +29,8 @@ export default async function BillingExportsPage({
         <p className="mt-1 text-sm text-muted">
           Export uses invoice headers and finalized invoice lines. QuickBooks-friendly exports default to summarized invoice-level lines.
         </p>
-        <form action={createBillingExportAction} className="mt-3 grid gap-2 md:grid-cols-4">
+        <form action={submitPayorAction} className="mt-3 grid gap-2 md:grid-cols-4">
+          <input type="hidden" name="intent" value="createBillingExport" />
           <input type="hidden" name="returnPath" value="/operations/payor/exports" />
           <select name="billingBatchId" className="h-10 rounded-lg border border-border px-3" required>
             <option value="">Select batch</option>

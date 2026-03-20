@@ -2,166 +2,129 @@
 
 ## Root Cause
 
-Two different issues showed up during the investigation:
+This warning had more than one contributor:
 
-1. Some hot action entrypoints were eagerly importing heavyweight care-plan, POF, and MHP service graphs, which made those action-related modules much larger than they needed to be.
-2. The repo had several wrapper-only server action modules that exported many tiny actions, which bloated Next's `server-reference-manifest` even though those wrappers did not own any real business logic.
-3. After trimming the action surface, the remaining warning no longer points only to the manifest. The build stats and module-size audit still show a few large server chunks and large service modules with long inline string-heavy logic, especially:
-   - `lib/services/enrollment-packets.ts`
-   - `lib/services/billing-supabase.ts`
-   - `lib/services/pof-esign.ts`
-   - `lib/services/physician-orders-supabase.ts`
+1. Wrapper-heavy server action modules were inflating Next's `server-reference-manifest`.
+2. Some hot action entrypoints were eagerly importing large service graphs.
+3. A very large client module, `components/enrollment-packets/enrollment-packet-public-form.tsx`, was compiling into a single oversized source string.
 
-That means the import/action cleanup was real and effective, but there is still at least one app-owned large-string hotspot left in heavyweight service modules or the chunks they produce.
-
-## Files Changed
-
-- `next.config.ts`
-- `app/care-plan-actions.ts`
-- `app/sign/care-plan/[token]/actions.ts`
-- `app/sign/pof/[token]/actions.ts`
-- `app/(portal)/health/member-health-profiles/actions-impl.ts`
-- `app/(portal)/operations/member-command-center/actions-impl.ts`
-- `app/(portal)/time-card/director/actions.ts`
-- `app/(portal)/time-card/director/pending-tab.tsx`
-- `app/(portal)/time-card/director/pto-tab.tsx`
-- `app/(portal)/time-card/director/forgotten-tab.tsx`
-- `app/(portal)/time-card/director/export-tab.tsx`
-- `app/(portal)/time-card/forgotten-punch/page.tsx`
-- `app/(portal)/time-hr/user-management/page.tsx`
-- `app/(portal)/time-hr/user-management/new/page.tsx`
-- `app/(portal)/time-hr/user-management/[userId]/page.tsx`
-- `app/(portal)/time-hr/user-management/[userId]/edit/page.tsx`
-- `app/(portal)/time-hr/user-management/[userId]/permissions/page.tsx`
-- `app/(auth)/login/page.tsx`
-- `app/auth/forgot-password/page.tsx`
-- `app/documentation-create-actions.ts`
-- `app/documentation-update-actions.ts`
-- `components/forms/ancillary-charge-form.tsx`
-- `components/forms/daily-activity-form.tsx`
-- `components/forms/documentation-workflow-forms.tsx`
-- `components/forms/record-actions.tsx`
-- `components/forms/user-management-form.tsx`
-- `components/forms/user-permissions-form.tsx`
-- `components/reports/monthly-ancillary-report.tsx`
-- `lib/actions/user-management.ts`
-- `lib/utils/uploaded-image-data-url.ts`
+The original `data:image/...;base64,...` suspicion was worth investigating, but it was not the primary build-cache cause in this repo.
 
 ## What Changed
 
 - `next.config.ts`
-  - extended the existing build-stats plugin so it writes `.next/analyze/*.json` from `afterEmit` as well as `done`, which means stats are still available even if a later build phase fails.
-  - added `warnings`, `emittedServerFiles`, and `actionBrowserFiles` to the emitted report so the biggest modules and server artifacts are easier to attribute.
+  - extended the existing build-stats plugin so it writes `.next/analyze/*.json` from both `afterEmit` and `done`
+  - added emitted asset/module/chunk reporting
+  - added `moduleSources` reporting so builds now show the largest compiled module source strings directly
 - `app/care-plan-actions.ts`
-  - moved `CARE_PLAN_SECTION_TYPES` to the smaller `care-plan-track-definitions` import.
-  - lazy-loads `care-plans` and `care-plan-esign` service modules at call time instead of dragging them into the action entrypoint up front.
+  - lazy-loads heavy care-plan services
 - `app/sign/care-plan/[token]/actions.ts`
-  - lazy-loads `care-plan-esign` instead of importing it at module scope.
+  - lazy-loads care-plan e-sign service code
 - `app/sign/pof/[token]/actions.ts`
-  - lazy-loads `pof-esign` instead of importing it at module scope.
-- `app/(portal)/health/member-health-profiles/actions-impl.ts`
-  - removed the duplicated local image-to-data-URL helper in favor of a shared server-only utility.
-- `app/(portal)/operations/member-command-center/actions-impl.ts`
-  - removed the duplicated local image-to-data-URL helper in favor of the same shared utility.
-- `app/documentation-update-actions.ts`
-  - collapsed eight wrapper-only server action exports into one discriminated `runDocumentationUpdateAction(...)` entrypoint.
-- `components/forms/record-actions.tsx`
-  - now calls the single documentation update action entrypoint with explicit `kind` values instead of importing many server actions.
-- `components/reports/monthly-ancillary-report.tsx`
-  - now uses the same single documentation update action entrypoint for delete and reconciliation mutations.
-- `app/documentation-create-actions.ts`
-  - collapsed seven wrapper-only server action exports into one discriminated `runDocumentationCreateAction(...)` entrypoint.
-- `components/forms/ancillary-charge-form.tsx`
-  - now calls the single documentation create entrypoint.
-- `components/forms/daily-activity-form.tsx`
-  - now calls the single documentation create entrypoint.
-- `components/forms/documentation-workflow-forms.tsx`
-  - now routes toilet, shower, transportation, photo upload, and blood sugar mutations through the single documentation create entrypoint.
-- `app/(portal)/time-card/director/actions.ts`
-  - collapsed nine exported server actions into one `submitDirectorTimecardAction(...)` dispatcher.
-  - kept the same permission checks, validation, service calls, redirects, and revalidation behavior.
-- `app/(portal)/time-card/director/*.tsx`
-  - forms now post a hidden `intent` field to the single director action instead of importing separate server actions.
-- `app/(portal)/time-card/forgotten-punch/page.tsx`
-  - now posts forgotten-punch requests through the same single director action boundary.
-- `lib/actions/user-management.ts`
-  - collapsed nine exported admin actions into one `submitManagedUserAction(...)` dispatcher.
-  - preserved the same admin guardrails and canonical service-layer calls.
-- `components/forms/user-management-form.tsx`
-  - now includes an explicit hidden action `intent`.
-- `components/forms/user-permissions-form.tsx`
-  - now includes an explicit hidden action `intent`.
-- `app/(portal)/time-hr/user-management/**/*.tsx`
-  - user-management forms now post through the single dispatcher instead of separate exported actions.
+  - lazy-loads POF e-sign service code
 - `lib/utils/uploaded-image-data-url.ts`
-  - centralized the current image upload parsing/data-URL conversion logic so it is not duplicated across action modules.
+  - centralized duplicated uploaded-image data URL conversion logic
+- `app/(portal)/health/member-health-profiles/actions-impl.ts`
+  - switched to the shared uploaded-image helper
+- `app/(portal)/operations/member-command-center/actions-impl.ts`
+  - switched to the shared uploaded-image helper
+- `app/documentation-update-actions.ts`
+  - collapsed wrapper-only update actions into one dispatcher
+- `app/documentation-create-actions.ts`
+  - collapsed wrapper-only create actions into one dispatcher
+- `app/documentation-create-actions-impl.ts`
+  - isolates the create-side documentation implementation behind the new dispatcher
+- `app/(portal)/time-card/director/actions.ts`
+  - collapsed multiple director actions into one intent-driven action
+- `lib/actions/user-management.ts`
+  - collapsed multiple user-management actions into one intent-driven action
+- `app/(portal)/operations/payor/actions.ts`
+  - reduced the public action surface to a single dispatcher
+- `app/(portal)/operations/payor/actions-impl.ts`
+  - moved the heavy billing implementation behind a lazy-loaded action implementation module
+- `app/(portal)/operations/member-command-center/attendance-billing/page.tsx`
+- `app/(portal)/operations/payor/billing-agreements/page.tsx`
+- `app/(portal)/operations/payor/billing-batches/page.tsx`
+- `app/(portal)/operations/payor/center-closures/page.tsx`
+- `app/(portal)/operations/payor/custom-invoices/page.tsx`
+- `app/(portal)/operations/payor/exports/page.tsx`
+- `app/(portal)/operations/payor/schedule-templates/page.tsx`
+- `app/(portal)/operations/payor/variable-charges/page.tsx`
+- `components/forms/billing-custom-invoice-forms.tsx`
+- `components/forms/billing-manual-adjustment-form.tsx`
+  - all switched to the single payor dispatcher with explicit hidden `intent` values
+- `lib/services/enrollment-packet-mapping-runtime.ts`
+  - extracted mapping/runtime helpers out of `lib/services/enrollment-packets.ts`
+- `lib/services/enrollment-packets.ts`
+  - now delegates mapping/runtime helpers to the extracted module
+- `app/api/internal/enrollment-packet-mapping-sync/route.ts`
+  - imports mapping retry logic from the new narrower runtime module
+- `components/enrollment-packets/enrollment-packet-public-form.tsx`
+  - split large legal/agreement/render blocks into child modules so the main client module no longer compiles as a 140k+ source string
+- `components/enrollment-packets/enrollment-packet-public-form-agreements.tsx`
+  - extracted sections 11-13
+- `components/enrollment-packets/enrollment-packet-public-form-legal.tsx`
+  - extracted sections 14-19
+- `components/enrollment-packets/enrollment-packet-public-form-types.ts`
+  - shared enrollment-packet form types for the split modules
 - `app/(auth)/login/page.tsx`
-  - marked the page `force-dynamic` so `next build` does not fail on search-param usage during prerender.
 - `app/auth/forgot-password/page.tsx`
-  - marked the page `force-dynamic` so auth prerendering does not break the build.
-
-## Investigation Outcome For Base64/Data URLs
-
-- I inspected the suspected `data:image/...;base64,...` and `signatureImageDataUrl` paths first.
-- Those flows are still worth cleaning up architecturally, but the build warning did not track back to them as the primary source.
-- The duplicated profile-photo helper was centralized, but runtime payload behavior was intentionally kept the same in this pass to avoid a riskier storage/read-path refactor across MHP, MCC, attendance, and face-sheet consumers.
+  - marked auth pages `force-dynamic` so build/prerender succeeds
 
 ## Before / After Evidence
 
-- Before the import refactor:
-  - the emitted action/browser artifacts included very large modules such as:
-    - `_action-browser_lib_services_care-plan-esign_ts.js` at `477107` bytes
-    - `_action-browser_app_portal_health_member-health-profiles_actions-impl_ts.js` at `429057` bytes
-- Before the action-surface refactor:
-  - `.next/server/server-reference-manifest.json` was `137371` bytes.
-  - `.next/server/server-reference-manifest.js` was `150214` bytes.
-- After the import refactor:
-  - `.next/analyze/server.json` shows the action-related modules materially smaller:
-    - `./lib/services/care-plan-esign.ts` at `32716` bytes when issued by `./app/sign/care-plan/[token]/actions.ts`
-    - `./app/(portal)/health/member-health-profiles/actions-impl.ts` at `56125` bytes
-  - after collapsing documentation, director-timecard, and user-management wrapper actions:
-    - `.next/server/server-reference-manifest.json` dropped to `110566` bytes
-    - `.next/server/server-reference-manifest.js` dropped to `120857` bytes
-  - builds now complete successfully after the auth-page fixes.
-- Remaining warning:
-  - `npm run build` still emits:
-    - `[webpack.cache.PackFileCacheStrategy] Serializing big strings (140kiB)...`
-  - `.next/analyze/server.json` now shows the biggest remaining server assets in the warning band as:
-    - `1331.js` at `127922` bytes
-    - `app/(portal)/operations/member-command-center/[memberId]/page.js` at `127138` bytes
-    - `server-reference-manifest.js` at `120857` bytes
-    - `5370.js` at `116170` bytes
-    - `server-reference-manifest.json` at `110566` bytes
-  - `npm run audit:module-sizes` still reports large app-owned source modules including:
-    - `lib/services/enrollment-packets.ts` at `91567` bytes
-    - `lib/services/billing-supabase.ts` at `75270` bytes
-    - `lib/services/pof-esign.ts` at `55850` bytes
-    - `lib/services/physician-orders-supabase.ts` at `50042` bytes
-  - current conclusion: the manifest was a major contributor, but not the only one.
+### Server action manifest
 
-## Remaining Hotspots
+- Before action-surface refactors:
+  - `.next/server/server-reference-manifest.json`: `137371`
+  - `.next/server/server-reference-manifest.js`: `150214`
+- After dispatcher consolidation and payor collapse:
+  - `.next/server/server-reference-manifest.json`: `88012`
+  - `.next/server/server-reference-manifest.js`: `96351`
 
-The stats-enabled build still points to these larger modules/assets:
+### App-owned oversized source modules
 
-- `.next/server/chunks/1331.js` at `127922` bytes
-- `.next/server/app/(portal)/operations/member-command-center/[memberId]/page.js` at `127138` bytes
-- `.next/server/server-reference-manifest.js` at `120857` bytes
-- `.next/server/chunks/5370.js` at `116170` bytes
-- `.next/server/server-reference-manifest.json` at `110566` bytes
-- `lib/services/enrollment-packets.ts` at `91567` source bytes
-- `lib/services/billing-supabase.ts` at `75270` source bytes
-- `lib/services/pof-esign.ts` at `55850` source bytes
-- `lib/services/physician-orders-supabase.ts` at `50042` source bytes
+Compiler-side `moduleSources` reporting showed:
 
-The biggest manifest contributors by server-action count are currently:
+- Before enrollment-packet form split:
+  - `components/enrollment-packets/enrollment-packet-public-form.tsx`: about `168365` bytes of compiled source
+- After extracting legal/review/signature sections:
+  - `components/enrollment-packets/enrollment-packet-public-form.tsx`: about `147542`
+- After extracting sections 11-13 as well:
+  - `components/enrollment-packets/enrollment-packet-public-form.tsx`: about `119908`
 
-- `app/(portal)/operations/payor/actions.ts` with `17` action entries
-- `app/(portal)/health/member-health-profiles/profile-actions.ts` with `7`
-- `app/(portal)/health/member-health-profiles/medication-actions.ts` with `7`
-- `app/(portal)/operations/member-command-center/summary-actions.ts` with `7`
-- `app/(portal)/operations/transportation-station/actions.ts` with `6`
-- `app/(portal)/documentation/incidents/actions.ts` with `6`
-- `app/(portal)/health/member-health-profiles/provider-actions.ts` with `6`
+That means the largest app-owned module that was clearly above the warning band is now below it.
+
+### Remaining warning attribution
+
+`next build` still prints:
+
+- `[webpack.cache.PackFileCacheStrategy] Serializing big strings (140kiB)...`
+
+But the current `moduleSources` report shows the remaining modules above that size are now third-party / framework sources:
+
+- `node_modules/next/dist/compiled/react-dom/cjs/react-dom-server.node.production.js`: `262747`
+- `node_modules/next/dist/compiled/react-dom/cjs/react-dom-server-legacy.node.production.js`: `238812`
+- `node_modules/@supabase/auth-js/dist/module/GoTrueClient.js`: `143130`
+
+At this point the warning is no longer being driven by the largest app-owned module we identified.
+
+## Base64 / Data URL Investigation Outcome
+
+- I searched the expected `data:image`, `base64,`, `signatureImageDataUrl`, `asUploadedImageDataUrl`, `toString("base64")`, and related paths.
+- I centralized duplicated uploaded-image helper logic where it was duplicated.
+- I did not do a storage-schema rewrite for signature or image persistence in this pass, because the build warning did not trace back primarily to those flows and a storage-path rewrite would be much riskier.
+
+## Remaining Known Hotspots
+
+Large app-owned modules still worth future cleanup:
+
+- `lib/services/enrollment-packets.ts`
+- `lib/services/billing-supabase.ts`
+- `lib/services/pof-esign.ts`
+- `lib/services/physician-orders-supabase.ts`
+
+Those are still good candidates for future concern-splitting, but they were not the clearest remaining source of the current 140kiB warning once `moduleSources` attribution was added.
 
 ## Commands Run
 
@@ -170,14 +133,14 @@ The biggest manifest contributors by server-action count are currently:
 - `npm run build -- --debug`
 - `npm run typecheck`
 - `npm run build`
-- `NEXT_BUILD_STATS=1 npm run build`
-- `NEXT_BUILD_STATS=1 npm run build` after the action-surface refactors
-- `NEXT_BUILD_STATS=1 npm run build` after the documentation-create refactor
+- `$env:NEXT_BUILD_STATS='1'; npm run build`
+- `Get-ChildItem '.next\\server\\server-reference-manifest*' | Select-Object Name,Length`
+- `Get-Content '.next\\analyze\\server.json' -Raw | ConvertFrom-Json`
 
 ## Current Conclusion
 
-- `next build` now completes successfully.
-- The original investigation target was real: there were oversized action entrypoints worth trimming.
-- The warning is materially narrowed but not fully gone.
-- The server-action manifest was reduced a lot, but the remaining warning still points to a smaller set of heavyweight app-owned server chunks and service modules.
-- The most likely next source-level fix would be to split large multi-concern services like `lib/services/enrollment-packets.ts` and `app/(portal)/operations/payor/actions.ts` along workflow boundaries so hot paths stop carrying oversized string-heavy module payloads.
+- `next build` completes successfully.
+- The biggest app-owned contributors were materially reduced.
+- The server-action manifest was materially reduced.
+- The largest app-owned oversized compiled source module identified by build diagnostics was reduced below the warning threshold.
+- The remaining warning appears to be driven by framework / dependency module sources, especially React server renderer code and Supabase Auth's `GoTrueClient`, not by the original app-owned hotspots that were fixed in this pass.

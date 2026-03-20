@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { saveBillingAdjustmentAction } from "@/app/(portal)/operations/payor/actions";
+import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 
 interface BillingManualAdjustmentFormProps {
   members: Array<{ id: string; displayName: string }>;
@@ -34,7 +34,8 @@ export function BillingManualAdjustmentForm({
   );
 
   return (
-    <form action={saveBillingAdjustmentAction} className="mt-3 grid gap-2 md:grid-cols-6">
+    <form action={submitPayorAction} className="mt-3 grid gap-2 md:grid-cols-6">
+      <input type="hidden" name="intent" value="saveBillingAdjustment" />
       <select
         name="memberId"
         value={memberId}

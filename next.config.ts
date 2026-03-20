@@ -34,6 +34,48 @@ class BuildStatsReportPlugin {
     }
   }
 
+  private collectModuleSourceSizes(stats: any) {
+    const compilation = stats.compilation;
+    if (!compilation?.modules) {
+      return [];
+    }
+
+    const requestShortener = compilation.requestShortener;
+
+    return Array.from(compilation.modules)
+      .map((module: any) => {
+        let sourceSize = 0;
+        try {
+          const source = module.originalSource?.();
+          const value = source?.source?.();
+          if (typeof value === "string") {
+            sourceSize = Buffer.byteLength(value);
+          } else if (value && typeof value.length === "number") {
+            sourceSize = Number(value.length);
+          }
+        } catch {
+          sourceSize = 0;
+        }
+
+        const readableName =
+          module.userRequest ??
+          module.resource ??
+          (typeof module.readableIdentifier === "function" ? module.readableIdentifier(requestShortener) : null) ??
+          (typeof module.identifier === "function" ? module.identifier() : module.identifier) ??
+          "unknown";
+
+        return {
+          name: String(readableName),
+          type: module.type ?? null,
+          layer: module.layer ?? null,
+          sourceSize
+        };
+      })
+      .filter((module) => module.sourceSize > 0)
+      .sort((left, right) => right.sourceSize - left.sourceSize)
+      .slice(0, 120);
+  }
+
   private writeReport(stats: any, compiler: any) {
     const compilerName = stats.compilation?.name ?? compiler.name ?? compiler.options?.name ?? "webpack";
     const json = stats.toJson({
@@ -60,6 +102,7 @@ class BuildStatsReportPlugin {
         : []
     });
     const emittedServerFiles = this.collectEmittedServerFiles();
+    const moduleSources = this.collectModuleSourceSizes(stats);
     const report = {
       generatedAt: new Date().toISOString(),
       compilerName,
@@ -89,6 +132,7 @@ class BuildStatsReportPlugin {
         .map(normalizeModule)
         .sort((left: { size: number }, right: { size: number }) => right.size - left.size)
         .slice(0, 250),
+      moduleSources,
       emittedServerFiles,
       actionBrowserFiles: emittedServerFiles.filter((file) => file.file.includes("_action-browser_")).slice(0, 40)
     };

@@ -2,7 +2,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { firstSearchParam, parseDateOnlySearchParam } from "@/lib/search-params";
 import { getVariableChargesQueue } from "@/lib/services/billing-read";
 
-import { setVariableChargeStatusAction } from "@/app/(portal)/operations/payor/actions";
+import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 
 function previousMonthStart() {
   const now = new Date();
@@ -68,7 +68,8 @@ export default async function VariableChargesQueuePage({
                   <td>{row.billingStatus}</td>
                   <td>{row.exclusionReason ?? "-"}</td>
                   <td>
-                    <form action={setVariableChargeStatusAction} className="flex flex-wrap gap-2">
+                    <form action={submitPayorAction} className="flex flex-wrap gap-2">
+                      <input type="hidden" name="intent" value="setVariableChargeStatus" />
                       <input type="hidden" name="table" value={row.type === "Adjustment" ? "billingAdjustments" : row.type === "Ancillary" ? "ancillaryLogs" : "transportationLogs"} />
                       <input type="hidden" name="id" value={row.id} />
                       <select name="billingStatus" defaultValue={row.billingStatus} className="h-8 rounded border border-border px-2 text-xs">

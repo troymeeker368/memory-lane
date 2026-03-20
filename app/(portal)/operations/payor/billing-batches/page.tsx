@@ -13,9 +13,7 @@ import { normalizeRoleKey } from "@/lib/permissions";
 import { toEasternDate } from "@/lib/timezone";
 
 import {
-  finalizeBillingBatchAction,
-  generateBillingBatchAction,
-  reopenBillingBatchAction
+  submitPayorAction
 } from "@/app/(portal)/operations/payor/actions";
 import { firstSearchParam, parseDateOnlySearchParam, parseEnumSearchParam } from "@/lib/search-params";
 
@@ -78,7 +76,8 @@ export default async function BillingBatchesPage({
         <p className="mt-1 text-sm text-muted">
           Membership runs typically use the upcoming month. Monthly mode bills month-behind service periods. Draft invoices include eligible prior-period variable charges and unbilled adjustments.
         </p>
-        <form action={generateBillingBatchAction} className="mt-3 grid gap-2 md:grid-cols-5">
+        <form action={submitPayorAction} className="mt-3 grid gap-2 md:grid-cols-5">
+          <input type="hidden" name="intent" value="generateBillingBatch" />
           <input type="hidden" name="returnPath" value="/operations/payor/billing-batches" />
           <label className="space-y-1 text-xs">
             <span className="font-semibold text-muted">Batch Type</span>
@@ -160,7 +159,8 @@ export default async function BillingBatchesPage({
                         Review
                       </Link>
                       {batch.batch_status === "Draft" || batch.batch_status === "Reviewed" ? (
-                        <form action={finalizeBillingBatchAction}>
+                        <form action={submitPayorAction}>
+                          <input type="hidden" name="intent" value="finalizeBillingBatch" />
                           <input type="hidden" name="billingBatchId" value={batch.id} />
                           <input type="hidden" name="returnPath" value="/operations/payor/billing-batches" />
                           <button type="submit" className="text-xs font-semibold text-brand">Finalize</button>
@@ -170,7 +170,8 @@ export default async function BillingBatchesPage({
                       (batch.batch_status === "Finalized" ||
                         batch.batch_status === "Exported" ||
                         batch.batch_status === "Closed") ? (
-                        <form action={reopenBillingBatchAction}>
+                        <form action={submitPayorAction}>
+                          <input type="hidden" name="intent" value="reopenBillingBatch" />
                           <input type="hidden" name="billingBatchId" value={batch.id} />
                           <input type="hidden" name="returnPath" value="/operations/payor/billing-batches" />
                           <button type="submit" className="text-xs font-semibold text-brand">Reopen</button>

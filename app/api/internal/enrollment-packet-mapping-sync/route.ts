@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { retryFailedEnrollmentPacketMappings } from "@/lib/services/enrollment-packets";
+import { retryFailedEnrollmentPacketMappings } from "@/lib/services/enrollment-packet-mapping-runtime";
 import { toEasternISO } from "@/lib/timezone";
 
 function readBearerToken(request: NextRequest) {

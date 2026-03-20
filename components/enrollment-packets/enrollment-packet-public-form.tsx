@@ -14,6 +14,8 @@ import {
   savePublicEnrollmentPacketProgressAction,
   submitPublicEnrollmentPacketAction
 } from "@/app/sign/enrollment-packet/[token]/actions";
+import { EnrollmentPacketPublicFormAgreements } from "@/components/enrollment-packets/enrollment-packet-public-form-agreements";
+import { EnrollmentPacketPublicFormLegal } from "@/components/enrollment-packets/enrollment-packet-public-form-legal";
 import { formatPhoneInput } from "@/lib/phone";
 import {
   ENROLLMENT_PACKET_ADL_AMBULATION_OPTIONS,
@@ -28,10 +30,8 @@ import {
   ENROLLMENT_PACKET_RECREATIONAL_INTEREST_OPTIONS,
   ENROLLMENT_PACKET_VETERAN_BRANCH_OPTIONS
 } from "@/lib/services/enrollment-packet-public-options";
-import { ENROLLMENT_PACKET_LEGAL_TEXT } from "@/lib/services/enrollment-packet-legal-text";
 import { ENROLLMENT_PACKET_UPLOAD_FIELDS } from "@/lib/services/enrollment-packet-public-uploads";
 import {
-  formatEnrollmentPacketValue,
   validateEnrollmentPacketCompletion
 } from "@/lib/services/enrollment-packet-public-validation";
 import {
@@ -424,6 +424,10 @@ export function EnrollmentPacketPublicForm({
     setText(key, checked ? "Acknowledged" : "");
   };
 
+  const setExpandedLegalSection = (section: "privacy" | "rights" | "photo" | "ancillary", open: boolean) => {
+    setExpandedLegalSections((current) => ({ ...current, [section]: open }));
+  };
+
   const toggleArray = (key: EnrollmentPacketIntakeArrayKey, option: string, checked: boolean) => {
     setPayload((current) => {
       const selected = new Set(arrayValue(current, key));
@@ -783,165 +787,41 @@ export function EnrollmentPacketPublicForm({
         </div>
       </Section>
 
-      <Section title="11. Payment & Membership Agreement">
-        <div className="space-y-2 rounded-lg border border-border bg-slate-50 p-3 text-sm">{ENROLLMENT_PACKET_LEGAL_TEXT.membershipAgreement.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>
-        <p className="text-sm">
-          <span className="font-semibold">Member:</span> {formatEnrollmentPacketValue(`${payload.memberLegalFirstName ?? ""} ${payload.memberLegalLastName ?? ""}`)}{" "}
-          <span className="font-semibold">Responsible Party:</span> {formatEnrollmentPacketValue(payload.membershipGuarantorSignatureName)}
-        </p>
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Requested start date (staff set)</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "requestedStartDate")} disabled /></label>
-          <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Total initial enrollment amount (staff set)</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "totalInitialEnrollmentAmount")} disabled /></label>
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Member Name <span className="text-red-600">*</span></span><input id="field-membershipMemberSignatureName" className={controlClassName("membershipMemberSignatureName", "Member name")} value={textValue(payload, "membershipMemberSignatureName")} onChange={(event) => setText("membershipMemberSignatureName", event.target.value)} onBlur={() => markTouched("membershipMemberSignatureName")} disabled={isPending} />{fieldError("membershipMemberSignatureName", "Member name") ? <p className="text-xs text-red-600">{fieldError("membershipMemberSignatureName", "Member name")}</p> : null}</label>
-          <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Member Signature Date <span className="text-red-600">*</span></span><input id="field-membershipMemberSignatureDate" type="date" className={controlClassName("membershipMemberSignatureDate", "Member signature date")} value={textValue(payload, "membershipMemberSignatureDate")} onChange={(event) => setText("membershipMemberSignatureDate", event.target.value)} onBlur={() => markTouched("membershipMemberSignatureDate")} disabled={isPending} />{fieldError("membershipMemberSignatureDate", "Member signature date") ? <p className="text-xs text-red-600">{fieldError("membershipMemberSignatureDate", "Member signature date")}</p> : null}</label>
-          <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Responsible Party / Guarantor Name <span className="text-red-600">*</span></span><input id="field-membershipGuarantorSignatureName" className={controlClassName("membershipGuarantorSignatureName", "Responsible party / guarantor name")} value={textValue(payload, "membershipGuarantorSignatureName")} onChange={(event) => setText("membershipGuarantorSignatureName", event.target.value)} onBlur={() => markTouched("membershipGuarantorSignatureName")} disabled={isPending} />{fieldError("membershipGuarantorSignatureName", "Responsible party / guarantor name") ? <p className="text-xs text-red-600">{fieldError("membershipGuarantorSignatureName", "Responsible party / guarantor name")}</p> : null}</label>
-        </div>
-      </Section>
-      <Section title="12. Exhibit A - Payment Authorization">
-        <div className="space-y-2 rounded-lg border border-border bg-slate-50 p-3 text-sm">{ENROLLMENT_PACKET_LEGAL_TEXT.exhibitAPaymentAuthorization.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>
-        <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Payment method <span className="text-red-600">*</span></span><select id="field-paymentMethodSelection" className={controlClassName("paymentMethodSelection", "Payment method")} value={textValue(payload, "paymentMethodSelection")} onChange={(event) => setText("paymentMethodSelection", event.target.value)} onBlur={() => markTouched("paymentMethodSelection")} disabled={isPending}><option value="">Select</option><option>ACH</option><option>Credit Card</option></select>{fieldError("paymentMethodSelection", "Payment method") ? <p className="text-xs text-red-600">{fieldError("paymentMethodSelection", "Payment method")}</p> : null}</label>
-        {textValue(payload, "paymentMethodSelection") === "ACH" ? (
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Bank name</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "bankName")} onChange={(event) => setText("bankName", event.target.value)} disabled={isPending} /></label>
-            <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Routing number</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "bankAba")} onChange={(event) => setText("bankAba", event.target.value)} disabled={isPending} /></label>
-            <label className="space-y-1 text-sm md:col-span-2"><span className="text-xs font-semibold text-muted">Account number</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "bankAccountNumber")} onChange={(event) => setText("bankAccountNumber", event.target.value)} disabled={isPending} /></label>
-          </div>
-        ) : null}
-        {textValue(payload, "paymentMethodSelection") === "Credit Card" ? (
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="space-y-1 text-sm md:col-span-2"><span className="text-xs font-semibold text-muted">Card number</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "cardNumber")} onChange={(event) => setText("cardNumber", event.target.value)} disabled={isPending} /></label>
-            <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Expiration</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "cardExpiration")} onChange={(event) => setText("cardExpiration", event.target.value)} disabled={isPending} /></label>
-            <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">CVV</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "cardCvv")} onChange={(event) => setText("cardCvv", event.target.value)} disabled={isPending} /></label>
-            <label className="space-y-1 text-sm md:col-span-2"><span className="text-xs font-semibold text-muted">Use Primary Contact Address as Billing Address</span><select className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "cardUsePrimaryContactAddress")} onChange={(event) => setText("cardUsePrimaryContactAddress", event.target.value)} disabled={isPending}><option value="">Select</option><option>Yes</option><option>No</option></select></label>
-            <label className="space-y-1 text-sm md:col-span-2"><span className="text-xs font-semibold text-muted">Billing Street Address</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "cardBillingAddressLine1")} onChange={(event) => setText("cardBillingAddressLine1", event.target.value)} disabled={isPending || textValue(payload, "cardUsePrimaryContactAddress") === "Yes"} /></label>
-            <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Billing City / Town</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "cardBillingCity")} onChange={(event) => setText("cardBillingCity", event.target.value)} disabled={isPending || textValue(payload, "cardUsePrimaryContactAddress") === "Yes"} /></label>
-            <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Billing State</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "cardBillingState")} onChange={(event) => setText("cardBillingState", event.target.value)} disabled={isPending || textValue(payload, "cardUsePrimaryContactAddress") === "Yes"} /></label>
-            <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Billing ZIP Code</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "cardBillingZip")} onChange={(event) => setText("cardBillingZip", event.target.value)} disabled={isPending || textValue(payload, "cardUsePrimaryContactAddress") === "Yes"} /></label>
-          </div>
-        ) : null}
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Exhibit A Responsible Party / Guarantor Name <span className="text-red-600">*</span></span><input id="field-exhibitAGuarantorSignatureName" className={controlClassName("exhibitAGuarantorSignatureName", "Exhibit A responsible party / guarantor name")} value={textValue(payload, "exhibitAGuarantorSignatureName")} onChange={(event) => setText("exhibitAGuarantorSignatureName", event.target.value)} onBlur={() => markTouched("exhibitAGuarantorSignatureName")} disabled={isPending} />{fieldError("exhibitAGuarantorSignatureName", "Exhibit A responsible party / guarantor name") ? <p className="text-xs text-red-600">{fieldError("exhibitAGuarantorSignatureName", "Exhibit A responsible party / guarantor name")}</p> : null}</label>
-        </div>
-      </Section>
+      <EnrollmentPacketPublicFormAgreements
+        payload={payload}
+        isPending={isPending}
+        uploads={uploads}
+        setUploads={setUploads}
+        markTouched={markTouched}
+        fieldError={fieldError}
+        controlClassName={controlClassName}
+        setText={setText}
+      />
 
-      <Section title="13. Insurance / Legal Uploads">
-        <div className="grid gap-3 md:grid-cols-2">
-          {ENROLLMENT_PACKET_UPLOAD_FIELDS.map((uploadField) => (
-            <label key={uploadField.key} className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">{uploadField.label}</span>
-              <input type="file" multiple onChange={(event) => setUploads((current) => ({ ...current, [uploadField.key]: Array.from(event.target.files ?? []) }))} disabled={isPending} />
-              <p className="text-xs text-muted">{uploads[uploadField.key].length > 0 ? `${uploads[uploadField.key].length} file(s) selected` : "No files selected"}</p>
-            </label>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="14. Privacy Practices Acknowledgement">
-        <details
-          className="rounded-lg border border-border bg-slate-50 p-3 text-sm"
-          open={expandedLegalSections.privacy}
-          onToggle={(event) =>
-            setExpandedLegalSections((current) => ({ ...current, privacy: (event.currentTarget as HTMLDetailsElement).open }))
-          }
-        >
-          <summary className="cursor-pointer font-semibold">Expand to read full notice</summary>
-          <div className="mt-2 space-y-2">
-            {ENROLLMENT_PACKET_LEGAL_TEXT.privacyPractices.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-          </div>
-        </details>
-        <label className="flex items-start gap-2 text-sm">
-          <input id="field-privacyPracticesAcknowledged" type="checkbox" checked={textValue(payload, "privacyPracticesAcknowledged") === "Acknowledged"} onChange={(event) => { setAck("privacyPracticesAcknowledged", event.target.checked); markTouched("privacyPracticesAcknowledged"); }} disabled={isPending} />
-          <span>I acknowledge that I have read and received the Privacy Practices notice. <span className="text-red-600">*</span></span>
-        </label>
-        {fieldError("privacyPracticesAcknowledged", "Privacy Practices acknowledgement") ? <p className="text-xs text-red-600">{fieldError("privacyPracticesAcknowledged", "Privacy Practices acknowledgement")}</p> : null}
-      </Section>
-
-      <Section title="15. Statement of Rights">
-        <details
-          className="rounded-lg border border-border bg-slate-50 p-3 text-sm"
-          open={expandedLegalSections.rights}
-          onToggle={(event) =>
-            setExpandedLegalSections((current) => ({ ...current, rights: (event.currentTarget as HTMLDetailsElement).open }))
-          }
-        >
-          <summary className="cursor-pointer font-semibold">Expand to read full notice</summary>
-          <div className="mt-2 space-y-2">
-            {ENROLLMENT_PACKET_LEGAL_TEXT.statementOfRights.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-          </div>
-        </details>
-        <label className="flex items-start gap-2 text-sm">
-          <input id="field-statementOfRightsAcknowledged" type="checkbox" checked={textValue(payload, "statementOfRightsAcknowledged") === "Acknowledged"} onChange={(event) => { setAck("statementOfRightsAcknowledged", event.target.checked); markTouched("statementOfRightsAcknowledged"); }} disabled={isPending} />
-          <span>I acknowledge that I have read and received the Statement of Rights notice. <span className="text-red-600">*</span></span>
-        </label>
-        {fieldError("statementOfRightsAcknowledged", "Statement of Rights acknowledgement") ? <p className="text-xs text-red-600">{fieldError("statementOfRightsAcknowledged", "Statement of Rights acknowledgement")}</p> : null}
-      </Section>
-
-      <Section title="16. Photo Consent">
-        <details
-          className="rounded-lg border border-border bg-slate-50 p-3 text-sm"
-          open={expandedLegalSections.photo}
-          onToggle={(event) =>
-            setExpandedLegalSections((current) => ({ ...current, photo: (event.currentTarget as HTMLDetailsElement).open }))
-          }
-        >
-          <summary className="cursor-pointer font-semibold">Expand to read full notice</summary>
-          <div className="mt-2 space-y-2">
-            {ENROLLMENT_PACKET_LEGAL_TEXT.photoConsent.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-          </div>
-        </details>
-        <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Photo consent <span className="text-red-600">*</span></span><select id="field-photoConsentChoice" className={controlClassName("photoConsentChoice", "Photo consent")} value={textValue(payload, "photoConsentChoice")} onChange={(event) => setText("photoConsentChoice", event.target.value)} onBlur={() => markTouched("photoConsentChoice")} disabled={isPending}><option value="">Select</option><option>I do permit</option><option>I do not permit</option></select>{fieldError("photoConsentChoice", "Photo consent") ? <p className="text-xs text-red-600">{fieldError("photoConsentChoice", "Photo consent")}</p> : null}</label>
-        <label className="flex items-start gap-2 text-sm"><input id="field-photoConsentAcknowledged" type="checkbox" checked={textValue(payload, "photoConsentAcknowledged") === "Acknowledged"} onChange={(event) => { setAck("photoConsentAcknowledged", event.target.checked); markTouched("photoConsentAcknowledged"); }} disabled={isPending} /><span>I acknowledge that I have read and received the Photo Consent notice. <span className="text-red-600">*</span></span></label>
-        {fieldError("photoConsentAcknowledged", "Photo consent acknowledgement") ? <p className="text-xs text-red-600">{fieldError("photoConsentAcknowledged", "Photo consent acknowledgement")}</p> : null}
-      </Section>
-
-      <Section title="17. Ancillary Charges Notice">
-        <details
-          className="rounded-lg border border-border bg-slate-50 p-3 text-sm"
-          open={expandedLegalSections.ancillary}
-          onToggle={(event) =>
-            setExpandedLegalSections((current) => ({ ...current, ancillary: (event.currentTarget as HTMLDetailsElement).open }))
-          }
-        >
-          <summary className="cursor-pointer font-semibold">Expand to read full notice</summary>
-          <div className="mt-2 space-y-2">
-            {ENROLLMENT_PACKET_LEGAL_TEXT.ancillaryCharges.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
-          </div>
-        </details>
-        <label className="flex items-start gap-2 text-sm"><input id="field-ancillaryChargesAcknowledged" type="checkbox" checked={textValue(payload, "ancillaryChargesAcknowledged") === "Acknowledged"} onChange={(event) => { setAck("ancillaryChargesAcknowledged", event.target.checked); markTouched("ancillaryChargesAcknowledged"); }} disabled={isPending} /><span>I acknowledge that I have read and received the Ancillary Charges notice. <span className="text-red-600">*</span></span></label>
-        {fieldError("ancillaryChargesAcknowledged", "Ancillary Charges acknowledgement") ? <p className="text-xs text-red-600">{fieldError("ancillaryChargesAcknowledged", "Ancillary Charges acknowledgement")}</p> : null}
-      </Section>
-
-      <Section title="18. Final Review">
-        <div className="space-y-2 rounded-lg border border-border bg-slate-50 p-3 text-sm">
-          <p><span className="font-semibold">Member:</span> {formatEnrollmentPacketValue(`${payload.memberLegalFirstName ?? ""} ${payload.memberLegalLastName ?? ""}`)}</p>
-          <p><span className="font-semibold">Primary contact:</span> {formatEnrollmentPacketValue(payload.primaryContactName)}</p>
-          <p><span className="font-semibold">Photo consent:</span> {formatEnrollmentPacketValue(payload.photoConsentChoice)}</p>
-        </div>
-        {!completion.isComplete ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            <p className="font-semibold">Complete these items before signature:</p>
-            <ul className="mt-1 list-disc pl-5">{completion.missingItems.map((item) => <li key={item}>{item}</li>)}</ul>
-            <button type="button" className="mt-2 rounded-lg border border-amber-300 px-3 py-1 text-xs font-semibold text-amber-900" onClick={scrollToFirstMissingField}>
-              Go to first missing field
-            </button>
-          </div>
-        ) : <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">All required fields are complete. Signature is now available.</p>}
-      </Section>
-
-      {completion.isComplete ? (
-        <Section title="19. Signature">
-          <p className="text-sm text-muted">Sign to complete and submit all packet sections.</p>
-          <label className="block space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Typed signature name <span className="text-red-600">*</span></span><input id="field-guarantorSignatureName" className={`h-11 w-full rounded-lg border px-3 ${submitAttempted && !caregiverTypedName.trim() ? "border-red-500 bg-red-50" : "border-border"}`} value={caregiverTypedName} onChange={(event) => setCaregiverTypedName(event.target.value)} disabled={isPending} />{submitAttempted && !caregiverTypedName.trim() ? <p className="text-xs text-red-600">Typed signature name is required.</p> : null}</label>
-          <div className="rounded-lg border border-border p-3">
-            <p className="text-xs font-semibold text-muted">Draw signature</p>
-            <canvas ref={canvasRef} width={920} height={220} className="mt-2 w-full rounded-lg border border-border bg-white" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onPointerLeave={onPointerUp} />
-            <div className="mt-2 flex justify-end"><button type="button" className="rounded-lg border border-border px-3 py-2 text-xs font-semibold" onClick={clearSignature} disabled={isPending}>Clear Signature</button></div>
-          </div>
-          <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={attested} onChange={(event) => setAttested(event.target.checked)} className="mt-1" disabled={isPending} /><span>I attest this electronic signature is mine and I approve this enrollment packet.</span></label>
-        </Section>
-      ) : null}
+      <EnrollmentPacketPublicFormLegal
+        payload={payload}
+        completion={completion}
+        isPending={isPending}
+        caregiverTypedName={caregiverTypedName}
+        setCaregiverTypedName={setCaregiverTypedName}
+        submitAttempted={submitAttempted}
+        hasSignature={hasSignature}
+        attested={attested}
+        setAttested={setAttested}
+        expandedLegalSections={expandedLegalSections}
+        setExpandedLegalSection={setExpandedLegalSection}
+        setText={setText}
+        setAck={setAck}
+        markTouched={markTouched}
+        fieldError={fieldError}
+        controlClassName={controlClassName}
+        scrollToFirstMissingField={scrollToFirstMissingField}
+        canvasRef={canvasRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        clearSignature={clearSignature}
+      />
 
       <div className="flex flex-wrap items-center justify-end gap-2">
         <button type="button" className="rounded-lg border border-border px-4 py-2 text-sm font-semibold" onClick={saveProgress} disabled={isPending}>{isPending ? "Saving..." : "Save Progress"}</button>
