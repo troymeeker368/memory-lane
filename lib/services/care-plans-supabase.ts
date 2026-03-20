@@ -84,6 +84,8 @@ const CARE_PLAN_CORE_RPC = "rpc_upsert_care_plan_core";
 const CARE_PLAN_CORE_RPC_MIGRATION = "0085_care_plan_diagnosis_relation.sql";
 const CARE_PLAN_SNAPSHOT_RPC = "rpc_record_care_plan_snapshot";
 const CARE_PLAN_SNAPSHOT_RPC_MIGRATION = "0054_care_plan_snapshot_atomicity.sql";
+const CARE_PLAN_SUMMARY_COUNTS_RPC = "rpc_get_care_plan_summary_counts";
+const CARE_PLAN_SUMMARY_COUNTS_RPC_MIGRATION = "0098_false_failure_read_path_hardening.sql";
 
 type CarePlanCoreRpcRow = {
   care_plan_id: string;
@@ -93,6 +95,14 @@ type CarePlanCoreRpcRow = {
 type CarePlanSnapshotRpcRow = {
   version_id: string;
   version_number: number;
+};
+
+type CarePlanSummaryCountsRpcRow = {
+  total_count: number | null;
+  due_soon_count: number | null;
+  due_now_count: number | null;
+  overdue_count: number | null;
+  completed_recently_count: number | null;
 };
 
 type CarePlanWorkflowError = Error & {
@@ -451,29 +461,50 @@ function applyCarePlanStatusFilter<T extends {
   return query;
 }
 
-async function getCarePlanCount(filters: {
+async function getCarePlanSummaryCounts(filters?: {
   memberId?: string;
   track?: string;
-  status?: string;
   query?: string;
-}, options?: {
-  queryMemberIds?: string[] | null;
 }) {
   const supabase = await createClient();
-  const canonicalMemberId = filters.memberId
-    ? await resolveCarePlanMemberId(filters.memberId, "getCarePlanCount")
+  const canonicalMemberId = filters?.memberId
+    ? await resolveCarePlanMemberId(filters.memberId, "getCarePlanSummaryCounts")
     : null;
-  const queryMemberIds =
-    options && "queryMemberIds" in options ? options.queryMemberIds ?? null : await resolveCarePlanQueryMemberIds(filters.query);
-  if (queryMemberIds && queryMemberIds.length === 0) return 0;
-  let query = supabase.from("care_plans").select("id", { count: "exact", head: true });
-  if (canonicalMemberId) query = query.eq("member_id", canonicalMemberId);
-  if (filters.track && filters.track !== "All") query = query.eq("track", filters.track);
-  if (queryMemberIds) query = query.in("member_id", queryMemberIds);
-  query = applyCarePlanStatusFilter(query, filters.status);
-  const { count, error } = await query;
-  if (error) throw new Error(error.message);
-  return count ?? 0;
+  const queryMemberIds = await resolveCarePlanQueryMemberIds(filters?.query);
+  if (queryMemberIds && queryMemberIds.length === 0) {
+    return {
+      total: 0,
+      dueSoon: 0,
+      dueNow: 0,
+      overdue: 0,
+      completedRecently: 0
+    };
+  }
+
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, CARE_PLAN_SUMMARY_COUNTS_RPC, {
+      p_member_id: canonicalMemberId,
+      p_track: filters?.track && filters.track !== "All" ? filters.track : null,
+      p_query_member_ids: queryMemberIds ?? null,
+      p_today: toEasternDate()
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as CarePlanSummaryCountsRpcRow | null;
+    return {
+      total: Number(row?.total_count ?? 0),
+      dueSoon: Number(row?.due_soon_count ?? 0),
+      dueNow: Number(row?.due_now_count ?? 0),
+      overdue: Number(row?.overdue_count ?? 0),
+      completedRecently: Number(row?.completed_recently_count ?? 0)
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to load care plan summary counts.";
+    if (message.includes(CARE_PLAN_SUMMARY_COUNTS_RPC)) {
+      throw new Error(
+        `Care plan summary counts RPC is not available. Apply Supabase migration ${CARE_PLAN_SUMMARY_COUNTS_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
 }
 
 export async function getCarePlans(filters?: {
@@ -505,7 +536,10 @@ export async function getCarePlans(filters?: {
 
   let query = supabase
     .from("care_plans")
-    .select("*, member:members!care_plans_member_id_fkey(display_name)", { count: "exact" })
+    .select(
+      "id, member_id, track, enrollment_date, review_date, last_completed_date, next_due_date, status, completed_by, member:members!care_plans_member_id_fkey(display_name)",
+      { count: "exact" }
+    )
     .order("next_due_date", { ascending: true })
     .range((page - 1) * pageSize, page * pageSize - 1);
   if (canonicalMemberId) query = query.eq("member_id", canonicalMemberId);
@@ -514,40 +548,48 @@ export async function getCarePlans(filters?: {
   query = applyCarePlanStatusFilter(query, filters?.status);
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);
-  const rows = ((data ?? []) as DbCarePlan[]).map((plan) => toCarePlan(plan)).map((plan) => ({
-    id: plan.id,
-    memberId: plan.memberId,
-    memberName: plan.memberName,
-    track: plan.track,
-    enrollmentDate: plan.enrollmentDate,
-    reviewDate: plan.reviewDate,
-    lastCompletedDate: plan.lastCompletedDate,
-    nextDueDate: plan.nextDueDate,
-    status: plan.status,
-    completedBy: plan.completedBy,
-    hasExistingPlan: true,
-    actionHref: `/health/care-plans/${plan.id}?view=review`,
-    openHref: `/health/care-plans/${plan.id}`
-  }));
-  const [totalCount, dueSoonCount, dueNowCount, overdueCount] = await Promise.all([
-    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query }, { queryMemberIds }),
-    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Due Soon" }, { queryMemberIds }),
-    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Due Now" }, { queryMemberIds }),
-    getCarePlanCount({ memberId: filters?.memberId, track: filters?.track, query: filters?.query, status: "Overdue" }, { queryMemberIds })
-  ]);
+  const rows = ((data ?? []) as Array<{
+    id: string;
+    member_id: string;
+    track: CarePlanTrack;
+    enrollment_date: string;
+    review_date: string;
+    last_completed_date: string | null;
+    next_due_date: string;
+    status: CarePlanStatus;
+    completed_by: string | null;
+    member: { display_name: string | null } | Array<{ display_name: string | null }> | null;
+  }>).map((plan) => {
+    const memberRow = Array.isArray(plan.member) ? plan.member[0] ?? null : plan.member;
+    const memberName = clean(memberRow?.display_name) ?? "Unknown Member";
+    return {
+      id: plan.id,
+      memberId: plan.member_id,
+      memberName,
+      track: plan.track,
+      enrollmentDate: plan.enrollment_date,
+      reviewDate: plan.review_date,
+      lastCompletedDate: plan.last_completed_date,
+      nextDueDate: plan.next_due_date,
+      status: plan.status,
+      completedBy: plan.completed_by,
+      hasExistingPlan: true,
+      actionHref: `/health/care-plans/${plan.id}?view=review`,
+      openHref: `/health/care-plans/${plan.id}`
+    };
+  });
+  const summary = await getCarePlanSummaryCounts({
+    memberId: filters?.memberId,
+    track: filters?.track,
+    query: filters?.query
+  });
   return {
     rows,
     page,
     pageSize,
     totalRows: count ?? rows.length,
     totalPages: Math.max(1, Math.ceil((count ?? rows.length) / pageSize)),
-    summary: {
-      total: totalCount,
-      dueSoon: dueSoonCount,
-      dueNow: dueNowCount,
-      overdue: overdueCount,
-      completedRecently: 0
-    }
+    summary
   };
 }
 

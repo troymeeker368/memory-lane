@@ -117,7 +117,12 @@ export default async function MemberCommandCenterIndexPage({
                     <td>{formatOptionalDate(row.member.dob)}</td>
                     <td>{formatOptionalDate(row.schedule.enrollment_date ?? row.member.enrollment_date)}</td>
                     <td>{row.monthsEnrolled ?? "-"}</td>
-                    <td>{attendanceDays}</td>
+                    <td>
+                      {attendanceDays}
+                      {row.profileNeedsBackfill || row.scheduleNeedsBackfill ? (
+                        <p className="mt-1 text-xs text-warning">Repair needed</p>
+                      ) : null}
+                    </td>
                   </tr>
                 );
               })

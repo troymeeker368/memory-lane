@@ -89,13 +89,15 @@ function buildPrnAdministrationIdempotencyKey(input: {
   pofMedicationId: string;
   administeredAt: string;
   prnReason: string;
+  submissionId?: string | null;
 }) {
   return createHash("sha256")
     .update(
       JSON.stringify({
         pofMedicationId: input.pofMedicationId,
         administeredAt: input.administeredAt,
-        prnReason: input.prnReason.trim().toLowerCase()
+        prnReason: input.prnReason.trim().toLowerCase(),
+        submissionId: clean(input.submissionId)?.toLowerCase() ?? null
       })
     )
     .digest("hex");
@@ -288,9 +290,12 @@ export async function getMarWorkflowSnapshot(options?: {
   serviceRole?: boolean;
   historyLimit?: number;
   prnLimit?: number;
+  reconcileToday?: boolean;
 }) {
   const serviceRole = options?.serviceRole ?? true;
-  await syncTodayMarSchedules({ serviceRole });
+  if (options?.reconcileToday) {
+    await syncTodayMarSchedules({ serviceRole });
+  }
   const todayDate = toEasternDate();
 
   const historyLimit = Math.max(10, Math.min(options?.historyLimit ?? 200, 500));
@@ -624,6 +629,7 @@ export async function documentPrnMarAdministration(input: {
   prnReason: string;
   notes?: string | null;
   administeredAtIso?: string | null;
+  submissionId?: string | null;
   actor: {
     userId: string;
     fullName: string;
@@ -636,7 +642,8 @@ export async function documentPrnMarAdministration(input: {
   const idempotencyKey = buildPrnAdministrationIdempotencyKey({
     pofMedicationId: input.pofMedicationId,
     administeredAt,
-    prnReason: reason
+    prnReason: reason,
+    submissionId: input.submissionId ?? null
   });
 
   const supabase = await createClient({ serviceRole: input.serviceRole });

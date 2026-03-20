@@ -237,6 +237,14 @@ export default async function MemberHealthProfileDetailPage({
 
   return (
     <div className="space-y-4">
+      {detail.profileNeedsBackfill ? (
+        <Card className="border-warning/40 bg-warning/5">
+          <CardTitle>Profile Repair Needed</CardTitle>
+          <p className="mt-1 text-sm text-muted">
+            This member does not have a persisted Member Health Profile row yet. The page is read-only against an empty profile shape until the canonical backfill or repair path creates the missing row.
+          </p>
+        </Card>
+      ) : null}
       <Card>
         <div className="mb-4 flex flex-col items-center gap-2">
           <MhpPhotoUploader

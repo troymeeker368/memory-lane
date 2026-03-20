@@ -72,6 +72,13 @@ function formatEasternTime(value: string) {
   }).format(new Date(value));
 }
 
+function createPrnSubmissionId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `prn-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function timingBadgeLabel(scheduledTimeIso: string, nowMs: number) {
   const deltaMinutes = toMinutesFromScheduled(scheduledTimeIso, nowMs);
   const state = getTimingState(scheduledTimeIso, nowMs);
@@ -207,6 +214,7 @@ export function MarWorkflowBoard({
   const [prnReason, setPrnReason] = useState("");
   const [prnNotes, setPrnNotes] = useState("");
   const [prnDateTime, setPrnDateTime] = useState(() => toEasternDateTimeLocal());
+  const [prnSubmissionId, setPrnSubmissionId] = useState(() => createPrnSubmissionId());
   const [prnFormOpen, setPrnFormOpen] = useState(false);
 
   const [outcomeOpenForAdministrationId, setOutcomeOpenForAdministrationId] = useState<string | null>(null);
@@ -506,6 +514,7 @@ export function MarWorkflowBoard({
     setPrnAwaitingOutcomeRowsState((current) => prependUniqueHistory(current, historyRow));
     setPrnReason("");
     setPrnNotes("");
+    setPrnSubmissionId(createPrnSubmissionId());
   }
 
   function applyPrnOutcome(
@@ -644,7 +653,8 @@ export function MarWorkflowBoard({
                         pofMedicationId: selectedPrnMedicationId,
                         prnReason,
                         notes: prnNotes,
-                        administeredAtIso
+                        administeredAtIso,
+                        submissionId: prnSubmissionId
                       });
                     },
                     {

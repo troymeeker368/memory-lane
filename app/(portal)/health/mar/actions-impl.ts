@@ -46,7 +46,8 @@ const prnAdministrationSchema = z.object({
   pofMedicationId: z.string().uuid(),
   prnReason: z.string().min(1).max(500),
   notes: z.string().max(1000).optional().nullable(),
-  administeredAtIso: z.string().optional().nullable()
+  administeredAtIso: z.string().optional().nullable(),
+  submissionId: z.string().min(1).max(200).optional().nullable()
 });
 
 const prnOutcomeSchema = z
@@ -149,6 +150,7 @@ export async function recordPrnMarAdministrationAction(raw: z.infer<typeof prnAd
       prnReason: payload.data.prnReason,
       notes: payload.data.notes ?? null,
       administeredAtIso: payload.data.administeredAtIso ?? null,
+      submissionId: payload.data.submissionId ?? null,
       serviceRole: true,
       actor: {
         userId: profile.id,
@@ -156,12 +158,14 @@ export async function recordPrnMarAdministrationAction(raw: z.infer<typeof prnAd
       }
     });
 
-    await insertAudit("create_log", "mar_administration", result.administrationId, {
-      source: "prn",
-      pofMedicationId: payload.data.pofMedicationId,
-      prnReason: payload.data.prnReason,
-      memberId: result.memberId
-    });
+    if (!result.duplicateSafe) {
+      await insertAudit("create_log", "mar_administration", result.administrationId, {
+        source: "prn",
+        pofMedicationId: payload.data.pofMedicationId,
+        prnReason: payload.data.prnReason,
+        memberId: result.memberId
+      });
+    }
 
     revalidateMarRoutes(result.memberId);
     return {

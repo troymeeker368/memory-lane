@@ -79,7 +79,7 @@ const RPC_FINALIZE_POF_SIGNATURE = "rpc_finalize_pof_signature";
 const PREPARE_POF_REQUEST_DELIVERY_RPC = "rpc_prepare_pof_request_delivery";
 const TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC = "rpc_transition_pof_request_delivery_state";
 const POF_DELIVERY_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
-const POF_DELIVERY_TRANSITION_COMPARE_AND_SET_MIGRATION = "0089_pof_public_open_compare_and_set.sql";
+const POF_DELIVERY_TRANSITION_COMPARE_AND_SET_MIGRATION = "0098_false_failure_read_path_hardening.sql";
 
 async function createResendClient() {
   const { Resend } = await import("resend");
@@ -454,6 +454,8 @@ async function markPofRequestDeliveryState(input: {
   providerName?: string | null;
   updatePhysicianOrderSent?: boolean;
   expectedCurrentStatus?: PofRequestStatus | null;
+  expectedCurrentDeliveryStatus?: SendWorkflowDeliveryStatus | null;
+  requireOpenedAtNull?: boolean;
 }) {
   const admin = createSupabaseAdminClient();
   try {
@@ -477,7 +479,9 @@ async function markPofRequestDeliveryState(input: {
       p_delivery_error: clean(input.deliveryError),
       p_provider_name: clean(input.providerName),
       p_update_physician_order_sent: Boolean(input.updatePhysicianOrderSent),
-      p_expected_current_status: input.expectedCurrentStatus ?? null
+      p_expected_current_status: input.expectedCurrentStatus ?? null,
+      p_expected_current_delivery_status: input.expectedCurrentDeliveryStatus ?? null,
+      p_require_opened_at_null: Boolean(input.requireOpenedAtNull)
     });
     const row = (Array.isArray(data) ? data[0] : null) as TransitionResultRow | null;
     return {
@@ -525,6 +529,96 @@ async function buildSignedPdfBytes(input: {
       signatureContentType: input.signatureContentType
     }
   });
+}
+
+async function runBestEffortCommittedPofSignatureFollowUp(input: {
+  finalized: ReturnType<typeof toRpcFinalizePofSignatureRow>;
+  request: PofRequestRow;
+  signedAt: string;
+}) {
+  try {
+    const postSignResult = await processSignedPhysicianOrderPostSignSync({
+      pofId: input.finalized.physician_order_id,
+      memberId: input.finalized.member_id,
+      queueId: input.finalized.queue_id,
+      queueAttemptCount: input.finalized.queue_attempt_count,
+      actor: {
+        id: input.request.sent_by_user_id,
+        fullName: input.request.nurse_name
+      },
+      signedAtIso: input.signedAt,
+      pofRequestId: input.finalized.request_id,
+      serviceRole: true
+    });
+
+    await recordWorkflowMilestone({
+      event: {
+        event_type: "physician_order_signed",
+        entity_type: "physician_order",
+        entity_id: input.finalized.physician_order_id,
+        actor_type: "provider",
+        status: "signed",
+        severity: "low",
+        metadata: {
+          member_id: input.finalized.member_id,
+          pof_request_id: input.finalized.request_id,
+          member_file_id: input.finalized.member_file_id,
+          queue_id: input.finalized.queue_id,
+          post_sign_status: postSignResult.postSignStatus,
+          post_sign_attempt_count: postSignResult.attemptCount,
+          post_sign_next_retry_at: postSignResult.nextRetryAt
+        }
+      }
+    });
+    await recordWorkflowEvent({
+      eventType: "pof_request_signed",
+      entityType: "pof_request",
+      entityId: input.finalized.request_id,
+      actorType: "provider",
+      status: "signed",
+      severity: "low",
+      metadata: {
+        member_id: input.finalized.member_id,
+        physician_order_id: input.finalized.physician_order_id,
+        member_file_id: input.finalized.member_file_id,
+        post_sign_status: postSignResult.postSignStatus,
+        post_sign_attempt_count: postSignResult.attemptCount,
+        post_sign_next_retry_at: postSignResult.nextRetryAt
+      }
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unable to complete signed POF follow-up.";
+    await recordWorkflowEvent({
+      eventType: "pof_post_commit_followup_failed",
+      entityType: "pof_request",
+      entityId: input.finalized.request_id,
+      actorType: "system",
+      actorUserId: input.request.sent_by_user_id,
+      status: "failed",
+      severity: "high",
+      metadata: {
+        member_id: input.finalized.member_id,
+        physician_order_id: input.finalized.physician_order_id,
+        member_file_id: input.finalized.member_file_id,
+        queue_id: input.finalized.queue_id,
+        error: reason
+      }
+    });
+    await recordImmediateSystemAlert({
+      entityType: "pof_request",
+      entityId: input.finalized.request_id,
+      actorUserId: input.request.sent_by_user_id,
+      severity: "high",
+      alertKey: "pof_post_commit_followup_failed",
+      metadata: {
+        member_id: input.finalized.member_id,
+        physician_order_id: input.finalized.physician_order_id,
+        member_file_id: input.finalized.member_file_id,
+        queue_id: input.finalized.queue_id,
+        error: reason
+      }
+    });
+  }
 }
 
 export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
@@ -1201,7 +1295,9 @@ export async function getPublicPofSigningContext(
       signedAt: currentRequest.signed_at,
       deliveryError: null,
       attemptAt: now,
-      expectedCurrentStatus: "sent"
+      expectedCurrentStatus: "sent",
+      expectedCurrentDeliveryStatus: toSendWorkflowDeliveryStatus(currentRequest.delivery_status, "sent"),
+      requireOpenedAtNull: true
     });
     if (transition.didTransition) {
       await createDocumentEvent({
@@ -1386,54 +1482,10 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
       };
     }
 
-    const postSignResult = await processSignedPhysicianOrderPostSignSync({
-      pofId: finalized.physician_order_id,
-      memberId: finalized.member_id,
-      queueId: finalized.queue_id,
-      queueAttemptCount: finalized.queue_attempt_count,
-      actor: {
-        id: request.sent_by_user_id,
-        fullName: request.nurse_name
-      },
-      signedAtIso: now,
-      pofRequestId: finalized.request_id,
-      serviceRole: true
-    });
-
-    await recordWorkflowMilestone({
-      event: {
-        event_type: "physician_order_signed",
-        entity_type: "physician_order",
-        entity_id: finalized.physician_order_id,
-        actor_type: "provider",
-        status: "signed",
-        severity: "low",
-        metadata: {
-          member_id: finalized.member_id,
-          pof_request_id: finalized.request_id,
-          member_file_id: finalized.member_file_id,
-          queue_id: finalized.queue_id,
-          post_sign_status: postSignResult.postSignStatus,
-          post_sign_attempt_count: postSignResult.attemptCount,
-          post_sign_next_retry_at: postSignResult.nextRetryAt
-        }
-      }
-    });
-    await recordWorkflowEvent({
-      eventType: "pof_request_signed",
-      entityType: "pof_request",
-      entityId: finalized.request_id,
-      actorType: "provider",
-      status: "signed",
-      severity: "low",
-      metadata: {
-        member_id: finalized.member_id,
-        physician_order_id: finalized.physician_order_id,
-        member_file_id: finalized.member_file_id,
-        post_sign_status: postSignResult.postSignStatus,
-        post_sign_attempt_count: postSignResult.attemptCount,
-        post_sign_next_retry_at: postSignResult.nextRetryAt
-      }
+    await runBestEffortCommittedPofSignatureFollowUp({
+      finalized,
+      request,
+      signedAt: now
     });
 
     return {

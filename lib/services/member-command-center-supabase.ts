@@ -470,6 +470,46 @@ export async function ensureMemberAttendanceScheduleSupabase(memberId: string, o
   return inserted as MemberAttendanceScheduleRow;
 }
 
+async function getMemberCommandCenterProfileReadOnlySupabase(memberId: string) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterProfileReadOnlySupabase");
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("member_command_centers")
+    .select("*")
+    .eq("member_id", canonicalMemberId)
+    .maybeSingle();
+  if (error) {
+    if (isMissingTableError(error, "member_command_centers")) {
+      throw missingMccStorageError({
+        objectName: "member_command_centers",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
+    }
+    throw new Error(error.message);
+  }
+  return (data as MemberCommandCenterRow | null) ?? null;
+}
+
+async function getMemberAttendanceScheduleReadOnlySupabase(memberId: string) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberAttendanceScheduleReadOnlySupabase");
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("member_attendance_schedules")
+    .select("*")
+    .eq("member_id", canonicalMemberId)
+    .maybeSingle();
+  if (error) {
+    if (isMissingTableError(error, "member_attendance_schedules")) {
+      throw missingMccStorageError({
+        objectName: "member_attendance_schedules",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
+    }
+    throw new Error(error.message);
+  }
+  return (data as MemberAttendanceScheduleRow | null) ?? null;
+}
+
 export async function updateMemberCommandCenterProfileSupabase(id: string, patch: Record<string, unknown>) {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -848,53 +888,22 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
   const profileByMember = new Map(profiles.map((row) => [row.member_id, row] as const));
   const scheduleByMember = new Map(schedules.map((row) => [row.member_id, row] as const));
 
-  const missingProfileMemberIds = members
-    .map((member) => member.id)
-    .filter((memberId) => !profileByMember.has(memberId));
-  if (missingProfileMemberIds.length > 0) {
-    const ensuredProfiles = await Promise.all(
-      missingProfileMemberIds.map((memberId) => ensureMemberCommandCenterProfileSupabase(memberId))
-    );
-    ensuredProfiles.forEach((profile) => {
-      if (!profile) return;
-      profileByMember.set(profile.member_id, toMemberCommandCenterIndexProfileRow(profile));
-    });
-  }
-
-  const missingScheduleMemberIds = members
-    .map((member) => member.id)
-    .filter((memberId) => !scheduleByMember.has(memberId));
-  if (missingScheduleMemberIds.length > 0) {
-    const ensuredSchedules = await Promise.all(
-      missingScheduleMemberIds.map((memberId) => ensureMemberAttendanceScheduleSupabase(memberId))
-    );
-    ensuredSchedules.forEach((schedule, index) => {
-      if (!schedule) {
-        throw new Error(
-          `Unable to ensure attendance schedule for member ${missingScheduleMemberIds[index]}.`
-        );
-      }
-      scheduleByMember.set(schedule.member_id, toMemberCommandCenterIndexScheduleRow(schedule));
-    });
-  }
-
   const rows = members
     .map((member) => {
-      const profile = profileByMember.get(member.id);
-      if (!profile) {
-        throw new Error(`Missing member command center profile for member ${member.id}.`);
-      }
-      const schedule = scheduleByMember.get(member.id);
-      if (!schedule) {
-        throw new Error(`Missing member attendance schedule for member ${member.id}.`);
-      }
+      const profileNeedsBackfill = !profileByMember.has(member.id);
+      const scheduleNeedsBackfill = !scheduleByMember.has(member.id);
+      const profile = profileByMember.get(member.id) ?? toMemberCommandCenterIndexProfileRow(defaultCommandCenter(member.id));
+      const schedule =
+        scheduleByMember.get(member.id) ?? toMemberCommandCenterIndexScheduleRow(defaultAttendanceSchedule(member));
       return {
         member,
         profile,
         schedule,
         makeupBalance: schedule.make_up_days_available ?? 0,
         age: calculateAgeYears(member.dob),
-        monthsEnrolled: calculateMonthsEnrolled(schedule.enrollment_date ?? member.enrollment_date)
+        monthsEnrolled: calculateMonthsEnrolled(schedule.enrollment_date ?? member.enrollment_date),
+        profileNeedsBackfill,
+        scheduleNeedsBackfill
       };
     })
     .sort((a, b) => sortByLastName(a.member.display_name, b.member.display_name));
@@ -918,9 +927,9 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     import("@/lib/services/care-plans-supabase"),
     import("@/lib/services/enrollment-packet-intake-staging")
   ]);
-  const [profile, schedule, contacts, files, busStopDirectory, mhpAllergies, carePlanSummary, carePlans, enrollmentPacketIntakeAlert] = await Promise.all([
-    ensureMemberCommandCenterProfileSupabase(canonicalMemberId),
-    ensureMemberAttendanceScheduleSupabase(canonicalMemberId),
+  const [storedProfile, storedSchedule, contacts, files, busStopDirectory, mhpAllergies, carePlanSummary, carePlans, enrollmentPacketIntakeAlert] = await Promise.all([
+    getMemberCommandCenterProfileReadOnlySupabase(canonicalMemberId),
+    getMemberAttendanceScheduleReadOnlySupabase(canonicalMemberId),
     listMemberContactsSupabase(canonicalMemberId),
     listMemberFilesSupabase(canonicalMemberId),
     listBusStopDirectorySupabase(),
@@ -929,6 +938,8 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     getCarePlansForMember(canonicalMemberId),
     getLatestEnrollmentPacketPofStagingSummary(canonicalMemberId)
   ]);
+  const profile = storedProfile ?? defaultCommandCenter(canonicalMemberId);
+  const schedule = storedSchedule ?? defaultAttendanceSchedule(member);
   const supabase = await createClient();
   const { count, error } = await supabase
     .from("intake_assessments")
@@ -948,12 +959,14 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
   return {
     member,
     profile,
+    profileNeedsBackfill: !storedProfile,
     schedule: schedule
       ? {
           ...schedule,
           make_up_days_available: schedule.make_up_days_available ?? 0
         }
       : null,
+    scheduleNeedsBackfill: !storedSchedule,
     contacts,
     files,
     busStopDirectory,
@@ -966,6 +979,70 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     enrollmentPacketIntakeAlert,
     age: calculateAgeYears(member.dob),
     monthsEnrolled: calculateMonthsEnrolled(schedule?.enrollment_date ?? member.enrollment_date)
+  };
+}
+
+export async function backfillMissingMemberCommandCenterRowsSupabase(memberIds: Array<string | null | undefined>) {
+  const normalizedMemberIds = Array.from(
+    new Set(
+      memberIds
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+  if (normalizedMemberIds.length === 0) {
+    return {
+      commandCentersInserted: 0,
+      schedulesInserted: 0
+    };
+  }
+
+  const members = await listMembersSupabase({ status: "all" });
+  const memberById = new Map(members.map((row) => [row.id, row] as const));
+  const targetMembers = normalizedMemberIds
+    .map((memberId) => memberById.get(memberId))
+    .filter((member): member is MccMemberRow => Boolean(member));
+  if (targetMembers.length === 0) {
+    return {
+      commandCentersInserted: 0,
+      schedulesInserted: 0
+    };
+  }
+
+  const supabase = await createClient({ serviceRole: true });
+  const targetMemberIds = targetMembers.map((member) => member.id);
+  const [{ data: existingCommandCenters, error: commandCentersError }, { data: existingSchedules, error: schedulesError }] =
+    await Promise.all([
+      supabase.from("member_command_centers").select("member_id").in("member_id", targetMemberIds),
+      supabase.from("member_attendance_schedules").select("member_id").in("member_id", targetMemberIds)
+    ]);
+  if (commandCentersError) throw new Error(commandCentersError.message);
+  if (schedulesError) throw new Error(schedulesError.message);
+
+  const existingCommandCenterIds = new Set(
+    ((existingCommandCenters ?? []) as Array<{ member_id: string }>).map((row) => row.member_id)
+  );
+  const existingScheduleIds = new Set(((existingSchedules ?? []) as Array<{ member_id: string }>).map((row) => row.member_id));
+
+  const missingCommandCenters = targetMembers
+    .filter((member) => !existingCommandCenterIds.has(member.id))
+    .map((member) => defaultCommandCenter(member.id));
+  const missingSchedules = targetMembers
+    .filter((member) => !existingScheduleIds.has(member.id))
+    .map((member) => defaultAttendanceSchedule(member));
+
+  if (missingCommandCenters.length > 0) {
+    const { error: insertCommandCentersError } = await supabase.from("member_command_centers").insert(missingCommandCenters);
+    if (insertCommandCentersError) throw new Error(insertCommandCentersError.message);
+  }
+  if (missingSchedules.length > 0) {
+    const { error: insertSchedulesError } = await supabase.from("member_attendance_schedules").insert(missingSchedules);
+    if (insertSchedulesError) throw new Error(insertSchedulesError.message);
+  }
+
+  return {
+    commandCentersInserted: missingCommandCenters.length,
+    schedulesInserted: missingSchedules.length
   };
 }
 

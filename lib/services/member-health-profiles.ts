@@ -1,5 +1,6 @@
 import {
   MHP_TABS,
+  backfillMissingMemberHealthProfilesSupabase,
   ensureMemberHealthProfileSupabase,
   getMemberHealthProfileDetailSupabase,
   getMemberHealthProfileIndexSupabase,
@@ -36,6 +37,10 @@ export async function getMemberHealthProfileIndex(filters?: {
 
 export async function getMemberHealthProfileDetail(memberId: string) {
   return getMemberHealthProfileDetailSupabase(memberId);
+}
+
+export async function backfillMissingMemberHealthProfiles(memberIds: Array<string | null | undefined>) {
+  return backfillMissingMemberHealthProfilesSupabase(memberIds);
 }
 
 function isMissingRpcFunctionError(error: unknown, rpcName: string) {

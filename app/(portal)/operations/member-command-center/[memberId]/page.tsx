@@ -332,6 +332,14 @@ export default async function MemberCommandCenterDetailPage({
 
   return (
     <div className="space-y-4">
+      {detail.profileNeedsBackfill || detail.scheduleNeedsBackfill ? (
+        <Card className="border-warning/40 bg-warning/5">
+          <CardTitle>Member Command Center Repair Needed</CardTitle>
+          <p className="mt-1 text-sm text-muted">
+            This page is rendering with an empty canonical MCC row shape for missing records. Run the explicit MCC backfill or repair path before relying on these defaults as persisted operational truth.
+          </p>
+        </Card>
+      ) : null}
       <Card>
         <div className="mb-4 flex flex-col items-center gap-2">
           <MccPhotoUploader

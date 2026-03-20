@@ -32,6 +32,7 @@ export interface MemberHealthProfileIndexResult {
     latestAssessment: IntakeAssessmentRow | null;
     age: number | null;
     alerts: string[];
+    profileNeedsBackfill: boolean;
   }>;
   page: number;
   pageSize: number;
@@ -220,6 +221,86 @@ type IntakeAssessmentRow = {
   created_at: string;
 };
 
+const EMPTY_MEMBER_HEALTH_PROFILE_TEMPLATE: Omit<MemberHealthProfileRow, "id" | "member_id"> = {
+  gender: null,
+  payor: null,
+  original_referral_source: null,
+  photo_consent: null,
+  profile_image_url: null,
+  primary_caregiver_name: null,
+  primary_caregiver_phone: null,
+  responsible_party_name: null,
+  responsible_party_phone: null,
+  provider_name: null,
+  provider_phone: null,
+  important_alerts: null,
+  diet_type: null,
+  dietary_restrictions: null,
+  swallowing_difficulty: null,
+  diet_texture: null,
+  supplements: null,
+  foods_to_omit: null,
+  ambulation: null,
+  transferring: null,
+  bathing: null,
+  dressing: null,
+  eating: null,
+  bladder_continence: null,
+  bowel_continence: null,
+  toileting: null,
+  toileting_needs: null,
+  toileting_comments: null,
+  hearing: null,
+  vision: null,
+  dental: null,
+  speech_verbal_status: null,
+  speech_comments: null,
+  personal_appearance_hygiene_grooming: null,
+  may_self_medicate: null,
+  medication_manager_name: null,
+  orientation_dob: null,
+  orientation_city: null,
+  orientation_current_year: null,
+  orientation_former_occupation: null,
+  memory_impairment: null,
+  memory_severity: null,
+  wandering: null,
+  combative_disruptive: null,
+  sleep_issues: null,
+  self_harm_unsafe: null,
+  impaired_judgement: null,
+  delirium: null,
+  disorientation: null,
+  agitation_resistive: null,
+  screaming_loud_noises: null,
+  exhibitionism_disrobing: null,
+  exit_seeking: null,
+  cognitive_behavior_comments: null,
+  code_status: null,
+  dnr: null,
+  dni: null,
+  polst_molst_colst: null,
+  hospice: null,
+  advanced_directives_obtained: null,
+  power_of_attorney: null,
+  hospital_preference: null,
+  legal_comments: null,
+  source_assessment_id: null,
+  source_assessment_at: null,
+  updated_by_user_id: null,
+  updated_by_name: null,
+  created_at: "",
+  updated_at: ""
+};
+
+function buildEmptyMemberHealthProfileRow(memberId: string): MemberHealthProfileRow {
+  return {
+    id: `missing-member-health-profile:${memberId}`,
+    member_id: memberId,
+    ...EMPTY_MEMBER_HEALTH_PROFILE_TEMPLATE
+  };
+}
+
 function sortDesc<T>(rows: T[], getValue: (row: T) => string | null | undefined) {
   return [...rows].sort((a, b) => {
     const left = getValue(a) ?? "";
@@ -366,7 +447,10 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   const aggregateMemberIds = aggregateMembers.map((member) => member.id);
 
   const [profilesResult, mccResult, assessmentsResult, aggregateProfilesResult, aggregateAssessmentsResult] = await Promise.all([
-    supabase.from("member_health_profiles").select("*").in("member_id", memberIds),
+    supabase
+      .from("member_health_profiles")
+      .select("member_id, profile_image_url, important_alerts, code_status")
+      .in("member_id", memberIds),
     supabase.from("member_command_centers").select("member_id, profile_image_url").in("member_id", memberIds),
     supabase
       .from("intake_assessments")
@@ -393,20 +477,8 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   if (aggregateProfilesResult.error) throw new Error(aggregateProfilesResult.error.message);
   if (aggregateAssessmentsResult.error) throw new Error(aggregateAssessmentsResult.error.message);
 
-  const profileByMemberId = new Map((profilesResult.data ?? []).map((row) => [String(row.member_id), row as MemberHealthProfileRow] as const));
+  const profileByMemberId = new Map((profilesResult.data ?? []).map((row) => [String(row.member_id), row as Partial<MemberHealthProfileRow>] as const));
   const mccPhotoByMemberId = new Map((mccResult.data ?? []).map((row) => [String(row.member_id), (row.profile_image_url as string | null) ?? null] as const));
-
-  const missingProfileMemberIds = members
-    .map((member) => member.id)
-    .filter((memberId) => !profileByMemberId.has(memberId));
-  if (missingProfileMemberIds.length > 0) {
-    const ensuredProfiles = await Promise.all(
-      missingProfileMemberIds.map((memberId) => ensureMemberHealthProfileSupabase(memberId))
-    );
-    ensuredProfiles.forEach((profile) => {
-      profileByMemberId.set(profile.member_id, profile);
-    });
-  }
 
   const latestAssessmentByMemberId = new Map<string, IntakeAssessmentRow>();
   ((assessmentsResult.data ?? []) as IntakeAssessmentRow[]).forEach((row) => {
@@ -417,11 +489,13 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
 
   const rows = members
     .map((member) => {
-      const profile = profileByMemberId.get(member.id);
-      if (!profile) {
-        throw new Error(`Missing member health profile for member ${member.id}.`);
-      }
+      const storedProfile = profileByMemberId.get(member.id);
       const latestAssessment = latestAssessmentByMemberId.get(member.id) ?? null;
+      const profileNeedsBackfill = !storedProfile;
+      const profile = {
+        ...buildEmptyMemberHealthProfileRow(member.id),
+        ...(storedProfile ?? {})
+      } satisfies MemberHealthProfileRow;
       const effectiveProfile = {
         ...profile,
         profile_image_url: profile.profile_image_url ?? mccPhotoByMemberId.get(member.id) ?? null
@@ -433,9 +507,11 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
         latestAssessment,
         age: calculateAge(member.dob),
         alerts: [
+          profileNeedsBackfill ? "MHP profile row missing" : null,
           latestAssessment?.admission_review_required ? "Assessment review required" : null,
           effectiveProfile.important_alerts
-        ].filter((alert): alert is string => Boolean(alert))
+        ].filter((alert): alert is string => Boolean(alert)),
+        profileNeedsBackfill
       };
     })
     .sort((a, b) => sortByLastName(a.member.display_name, b.member.display_name));
@@ -478,9 +554,9 @@ export async function getMemberHealthProfileDetailSupabase(memberId: string) {
   if (!memberData) return null;
 
   const member = memberData as MemberRow;
-  const profile = await ensureMemberHealthProfileSupabase(memberId);
 
   const [
+    profileResult,
     diagnosesResult,
     medicationsResult,
     allergiesResult,
@@ -492,6 +568,7 @@ export async function getMemberHealthProfileDetailSupabase(memberId: string) {
     assessmentsResult,
     mccResult
   ] = await Promise.all([
+    supabase.from("member_health_profiles").select("*").eq("member_id", memberId).maybeSingle(),
     supabase.from("member_diagnoses").select("*").eq("member_id", memberId),
     supabase.from("member_medications").select("*").eq("member_id", memberId),
     supabase.from("member_allergies").select("*").eq("member_id", memberId),
@@ -509,6 +586,7 @@ export async function getMemberHealthProfileDetailSupabase(memberId: string) {
     supabase.from("member_command_centers").select("member_id, profile_image_url").eq("member_id", memberId).maybeSingle()
   ]);
 
+  if (profileResult.error) throw new Error(profileResult.error.message);
   if (diagnosesResult.error) throw new Error(diagnosesResult.error.message);
   if (medicationsResult.error) throw new Error(medicationsResult.error.message);
   if (allergiesResult.error) throw new Error(allergiesResult.error.message);
@@ -535,6 +613,9 @@ export async function getMemberHealthProfileDetailSupabase(memberId: string) {
   const equipment = sortDesc((equipmentResult.data ?? []) as MemberEquipmentRow[], (row) => row.updated_at);
   const notes = sortDesc((notesResult.data ?? []) as MemberNoteRow[], (row) => row.created_at);
   const assessments = sortDesc((assessmentsResult.data ?? []) as IntakeAssessmentRow[], (row) => row.created_at);
+  const storedProfile = (profileResult.data as MemberHealthProfileRow | null) ?? null;
+  const profileNeedsBackfill = !storedProfile;
+  const profile = storedProfile ?? buildEmptyMemberHealthProfileRow(memberId);
 
   const effectiveProfile = {
     ...profile,
@@ -565,6 +646,7 @@ export async function getMemberHealthProfileDetailSupabase(memberId: string) {
   return {
     member,
     profile: effectiveProfile,
+    profileNeedsBackfill,
     diagnoses,
     medications,
     allergies,
@@ -583,4 +665,38 @@ export async function getMemberHealthProfileDetailSupabase(memberId: string) {
       provider: providers[0]?.provider_name ?? effectiveProfile.provider_name
     }
   };
+}
+
+export async function backfillMissingMemberHealthProfilesSupabase(memberIds: Array<string | null | undefined>) {
+  const normalizedMemberIds = Array.from(
+    new Set(
+      memberIds
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+  if (normalizedMemberIds.length === 0) return { inserted: 0 };
+
+  const now = toEasternISO();
+  const supabase = await createClient({ serviceRole: true });
+  const { data: existingRows, error: existingError } = await supabase
+    .from("member_health_profiles")
+    .select("member_id")
+    .in("member_id", normalizedMemberIds);
+  if (existingError) throw new Error(existingError.message);
+
+  const existingMemberIds = new Set(((existingRows ?? []) as Array<{ member_id: string }>).map((row) => row.member_id));
+  const missingMemberIds = normalizedMemberIds.filter((memberId) => !existingMemberIds.has(memberId));
+  if (missingMemberIds.length === 0) return { inserted: 0 };
+
+  const { error: insertError } = await supabase.from("member_health_profiles").insert(
+    missingMemberIds.map((missingMemberId) => ({
+      member_id: missingMemberId,
+      created_at: now,
+      updated_at: now
+    }))
+  );
+  if (insertError) throw new Error(insertError.message);
+
+  return { inserted: missingMemberIds.length };
 }

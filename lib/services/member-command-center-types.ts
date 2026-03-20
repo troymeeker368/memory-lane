@@ -23,6 +23,8 @@ export interface MemberCommandCenterIndexResult {
     makeupBalance: number;
     age: number | null;
     monthsEnrolled: number | null;
+    profileNeedsBackfill: boolean;
+    scheduleNeedsBackfill: boolean;
   }>;
   page: number;
   pageSize: number;
