@@ -3,6 +3,8 @@ import "server-only";
 import { getCurrentPayPeriod, isDateInPayPeriod } from "@/lib/pay-period";
 import { createClient } from "@/lib/supabase/server";
 
+const STAFF_DETAIL_HISTORY_LIMIT = 250;
+
 function sortDesc<T>(rows: T[], getValue: (row: T) => string) {
   return [...rows].sort((a, b) => (getValue(a) < getValue(b) ? 1 : -1));
 }
@@ -47,14 +49,14 @@ export async function getStaffDetail(staffId: string) {
 
   const [punchesResult, dailyActivitiesResult, toiletsResult, showersResult, transportationResult, ancillaryResult, leadActivitiesResult, assessmentsResult] =
     await Promise.all([
-      supabase.from("time_punches").select("*").eq("staff_user_id", staffId).order("punch_at", { ascending: false }),
-      supabase.from("daily_activity_logs").select("*").eq("staff_user_id", staffId).order("created_at", { ascending: false }),
-      supabase.from("toilet_logs").select("*").eq("staff_user_id", staffId).order("event_at", { ascending: false }),
-      supabase.from("shower_logs").select("*").eq("staff_user_id", staffId).order("event_at", { ascending: false }),
-      supabase.from("transportation_logs").select("*").eq("staff_user_id", staffId).order("service_date", { ascending: false }),
-      supabase.from("ancillary_charge_logs").select("*").eq("staff_user_id", staffId).order("created_at", { ascending: false }),
-      supabase.from("lead_activities").select("*").eq("completed_by_user_id", staffId).order("activity_at", { ascending: false }),
-      supabase.from("intake_assessments").select("*").eq("created_by_user_id", staffId).order("created_at", { ascending: false })
+      supabase.from("time_punches").select("*").eq("staff_user_id", staffId).order("punch_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase.from("daily_activity_logs").select("*").eq("staff_user_id", staffId).order("created_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase.from("toilet_logs").select("*").eq("staff_user_id", staffId).order("event_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase.from("shower_logs").select("*").eq("staff_user_id", staffId).order("event_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase.from("transportation_logs").select("*").eq("staff_user_id", staffId).order("service_date", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase.from("ancillary_charge_logs").select("*").eq("staff_user_id", staffId).order("created_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase.from("lead_activities").select("*").eq("completed_by_user_id", staffId).order("activity_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase.from("intake_assessments").select("*").eq("created_by_user_id", staffId).order("created_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT)
     ]);
 
   if (punchesResult.error) throw new Error(punchesResult.error.message);

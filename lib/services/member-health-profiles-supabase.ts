@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
 
 export const MHP_TABS = [
@@ -11,6 +12,9 @@ export const MHP_TABS = [
   "legal",
   "notes"
 ] as const;
+
+const MHP_SUMMARY_COUNTS_RPC = "rpc_get_member_health_profile_summary_counts";
+const MHP_SUMMARY_COUNTS_RPC_MIGRATION = "0102_mhp_summary_counts_rpc.sql";
 
 export type MhpTab = (typeof MHP_TABS)[number];
 
@@ -417,31 +421,33 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   if (membersError) throw new Error(membersError.message);
   const members = (membersData ?? []) as MemberRow[];
 
-  const activeCount =
-    status === "inactive"
-      ? 0
-      : status === "active"
-        ? totalRows ?? 0
-        : (
-            await (queryText
-              ? supabase
-                  .from("members")
-                  .select("id", { count: "exact", head: true })
-                  .eq("status", "active")
-                  .ilike("display_name", buildSupabaseIlikePattern(queryText))
-              : supabase.from("members").select("id", { count: "exact", head: true }).eq("status", "active"))
-          ).count ?? 0;
-
-  let aggregateMembersQuery = supabase.from("members").select("id");
-  if (status !== "all") {
-    aggregateMembersQuery = aggregateMembersQuery.eq("status", status);
+  type MhpSummaryCountsRpcRow = {
+    active_count: number | string | null;
+    with_alerts_count: number | string | null;
+  };
+  let summaryCounts = {
+    activeCount: 0,
+    withAlertsCount: 0
+  };
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, MHP_SUMMARY_COUNTS_RPC, {
+      p_status: status !== "all" ? status : null,
+      p_query: queryText || null
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as MhpSummaryCountsRpcRow | null;
+    summaryCounts = {
+      activeCount: Number(row?.active_count ?? 0),
+      withAlertsCount: Number(row?.with_alerts_count ?? 0)
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to load member health profile summary counts.";
+    if (message.includes(MHP_SUMMARY_COUNTS_RPC)) {
+      throw new Error(
+        `MHP summary counts RPC is not available. Apply Supabase migration ${MHP_SUMMARY_COUNTS_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
   }
-  if (queryText) {
-    aggregateMembersQuery = aggregateMembersQuery.ilike("display_name", buildSupabaseIlikePattern(queryText));
-  }
-  const { data: aggregateMembersData, error: aggregateMembersError } = await aggregateMembersQuery;
-  if (aggregateMembersError) throw new Error(aggregateMembersError.message);
-  const aggregateMembers = (aggregateMembersData ?? []) as Array<{ id: string }>;
 
   if (members.length === 0) {
     return {
@@ -450,14 +456,13 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
       pageSize,
       totalRows: totalRows ?? 0,
       totalPages: Math.max(1, Math.ceil((totalRows ?? 0) / pageSize)),
-      activeCount,
-      withAlertsCount: 0
+      activeCount: summaryCounts.activeCount,
+      withAlertsCount: summaryCounts.withAlertsCount
     };
   }
   const memberIds = members.map((member) => member.id);
-  const aggregateMemberIds = aggregateMembers.map((member) => member.id);
 
-  const [profilesResult, mccResult, assessmentsResult, aggregateProfilesResult, aggregateAssessmentsResult] = await Promise.all([
+  const [profilesResult, mccResult, assessmentsResult] = await Promise.all([
     supabase
       .from("member_health_profiles")
       .select("member_id, profile_image_url, important_alerts, code_status")
@@ -468,25 +473,12 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
       .select("id, member_id, assessment_date, admission_review_required, recommended_track, created_at")
       .in("member_id", memberIds)
       .order("assessment_date", { ascending: false })
-      .order("created_at", { ascending: false }),
-    aggregateMemberIds.length > 0
-      ? supabase.from("member_health_profiles").select("member_id, important_alerts").in("member_id", aggregateMemberIds)
-      : Promise.resolve({ data: [], error: null }),
-    aggregateMemberIds.length > 0
-      ? supabase
-          .from("intake_assessments")
-          .select("member_id, admission_review_required, assessment_date, created_at")
-          .in("member_id", aggregateMemberIds)
-          .order("assessment_date", { ascending: false })
-          .order("created_at", { ascending: false })
-      : Promise.resolve({ data: [], error: null })
+      .order("created_at", { ascending: false })
   ]);
 
   if (profilesResult.error) throw new Error(profilesResult.error.message);
   if (mccResult.error) throw new Error(mccResult.error.message);
   if (assessmentsResult.error) throw new Error(assessmentsResult.error.message);
-  if (aggregateProfilesResult.error) throw new Error(aggregateProfilesResult.error.message);
-  if (aggregateAssessmentsResult.error) throw new Error(aggregateAssessmentsResult.error.message);
 
   const profileByMemberId = new Map((profilesResult.data ?? []).map((row) => [String(row.member_id), row as Partial<MemberHealthProfileRow>] as const));
   const mccPhotoByMemberId = new Map((mccResult.data ?? []).map((row) => [String(row.member_id), (row.profile_image_url as string | null) ?? null] as const));
@@ -526,31 +518,14 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
       };
     })
     .sort((a, b) => sortByLastName(a.member.display_name, b.member.display_name));
-  const aggregateAssessmentByMemberId = new Map<string, { admission_review_required: boolean | null }>();
-  ((aggregateAssessmentsResult.data ?? []) as Array<{ member_id: string; admission_review_required: boolean | null }>).forEach((row) => {
-    if (!aggregateAssessmentByMemberId.has(row.member_id)) {
-      aggregateAssessmentByMemberId.set(row.member_id, row);
-    }
-  });
-  const aggregateProfileByMemberId = new Map(
-    ((aggregateProfilesResult.data ?? []) as Array<{ member_id: string; important_alerts: string | null }>).map((row) => [
-      row.member_id,
-      row.important_alerts
-    ] as const)
-  );
-  const withAlertsCount = aggregateMemberIds.reduce((count, memberId) => {
-    const assessmentAlert = aggregateAssessmentByMemberId.get(memberId)?.admission_review_required;
-    const profileAlert = (aggregateProfileByMemberId.get(memberId) ?? "").trim().length > 0;
-    return assessmentAlert || profileAlert ? count + 1 : count;
-  }, 0);
   return {
     rows,
     page,
     pageSize,
     totalRows: totalRows ?? rows.length,
     totalPages: Math.max(1, Math.ceil((totalRows ?? rows.length) / pageSize)),
-    activeCount,
-    withAlertsCount
+    activeCount: summaryCounts.activeCount,
+    withAlertsCount: summaryCounts.withAlertsCount
   };
 }
 

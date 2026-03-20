@@ -56,6 +56,7 @@ export type {
 } from "@/lib/services/admin-reporting-core";
 
 const MEMBER_DOCUMENTATION_REPORT_RPC = "rpc_get_member_documentation_summary";
+const ON_DEMAND_REPORT_ROW_LIMIT = 2000;
 
 function relationDisplayName(
   value: { display_name?: string | null } | Array<{ display_name?: string | null }> | null | undefined
@@ -402,6 +403,17 @@ export async function getOnDemandReportData(input: {
   }
 
   if (input.category === "billing-revenue") {
+    const { count, error: countError } = await supabase
+      .from("billing_invoices")
+      .select("id", { count: "exact", head: true })
+      .gte("invoice_date", normalizedRange.from)
+      .lte("invoice_date", normalizedRange.to);
+    if (countError) throw new Error(countError.message);
+    if (Number(count ?? 0) > ON_DEMAND_REPORT_ROW_LIMIT) {
+      throw new Error(
+        `Billing / Revenue on-demand report exceeds ${ON_DEMAND_REPORT_ROW_LIMIT} rows for ${normalizedRange.from} to ${normalizedRange.to}. Narrow the date range before running this report.`
+      );
+    }
     const { data, error } = await supabase
       .from("billing_invoices")
       .select("invoice_number, member_id, invoice_date, invoice_status, invoice_source, total_amount, member:members!billing_invoices_member_id_fkey(display_name)")
@@ -433,6 +445,17 @@ export async function getOnDemandReportData(input: {
   }
 
   if (input.category === "transportation") {
+    const { count, error: countError } = await supabase
+      .from("transportation_logs")
+      .select("id", { count: "exact", head: true })
+      .gte("service_date", normalizedRange.from)
+      .lte("service_date", normalizedRange.to);
+    if (countError) throw new Error(countError.message);
+    if (Number(count ?? 0) > ON_DEMAND_REPORT_ROW_LIMIT) {
+      throw new Error(
+        `Transportation on-demand report exceeds ${ON_DEMAND_REPORT_ROW_LIMIT} rows for ${normalizedRange.from} to ${normalizedRange.to}. Narrow the date range before running this report.`
+      );
+    }
     const { data, error } = await supabase
       .from("transportation_logs")
       .select("service_date, period, transport_type, member:members!transportation_logs_member_id_fkey(display_name), billing_status")
@@ -462,6 +485,17 @@ export async function getOnDemandReportData(input: {
   }
 
   if (input.category === "leads-sales") {
+    const { count, error: countError } = await supabase
+      .from("leads")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", `${normalizedRange.from}T00:00:00.000Z`)
+      .lte("created_at", `${normalizedRange.to}T23:59:59.999Z`);
+    if (countError) throw new Error(countError.message);
+    if (Number(count ?? 0) > ON_DEMAND_REPORT_ROW_LIMIT) {
+      throw new Error(
+        `Leads / Sales on-demand report exceeds ${ON_DEMAND_REPORT_ROW_LIMIT} rows for ${normalizedRange.from} to ${normalizedRange.to}. Narrow the date range before running this report.`
+      );
+    }
     const { data, error } = await supabase
       .from("leads")
       .select("stage, status, created_at")

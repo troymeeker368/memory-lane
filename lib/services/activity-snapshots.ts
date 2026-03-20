@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { toEasternDate } from "@/lib/timezone";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SNAPSHOT_ACTIVITY_FEED_LIMIT = 200;
 type SnapshotRelation = { display_name?: string | null; full_name?: string | null } | Array<{ display_name?: string | null; full_name?: string | null }> | null;
 type SnapshotDbRow = {
   id: string;
@@ -148,78 +149,101 @@ export async function getStaffActivitySnapshot(staffSlug: string, rawFrom?: stri
   const fromIso = range.fromDateTime.toISOString();
   const toIso = range.toDateTime.toISOString();
   const [
-    { data: dailyRows, error: dailyError },
-    { data: toiletRows, error: toiletError },
-    { data: showerRows, error: showerError },
-    { data: transportRows, error: transportError },
-    { data: bloodRows, error: bloodError },
-    { data: photoRows, error: photoError },
-    { data: punchRows, error: punchError },
-    { data: leadRows, error: leadError },
-    { data: partnerRows, error: partnerError },
-    { data: assessmentRows, error: assessmentError }
+    { data: dailyRows, error: dailyError, count: dailyCount },
+    { data: toiletRows, error: toiletError, count: toiletCount },
+    { data: showerRows, error: showerError, count: showerCount },
+    { data: transportRows, error: transportError, count: transportCount },
+    { data: bloodRows, error: bloodError, count: bloodCount },
+    { data: photoRows, error: photoError, count: photoCount },
+    { data: punchRows, error: punchError, count: punchCount },
+    { data: leadRows, error: leadError, count: leadCount },
+    { data: partnerRows, error: partnerError, count: partnerCount },
+    { data: assessmentRows, error: assessmentError, count: assessmentCount }
   ] =
     await Promise.all([
       supabase
         .from("daily_activity_logs")
-        .select("id, created_at, activity_date, member:members!daily_activity_logs_member_id_fkey(display_name)")
+        .select("id, created_at, activity_date, member:members!daily_activity_logs_member_id_fkey(display_name)", { count: "exact" })
         .eq("staff_user_id", staff.id)
         .gte("created_at", fromIso)
-        .lte("created_at", toIso),
+        .lte("created_at", toIso)
+        .order("created_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
       supabase
         .from("toilet_logs")
-        .select("id, event_at, briefs, use_type, member:members!toilet_logs_member_id_fkey(display_name)")
+        .select("id, event_at, briefs, use_type, member:members!toilet_logs_member_id_fkey(display_name)", { count: "exact" })
         .eq("staff_user_id", staff.id)
         .gte("event_at", fromIso)
-        .lte("event_at", toIso),
+        .lte("event_at", toIso)
+        .order("event_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
       supabase
         .from("shower_logs")
-        .select("id, event_at, laundry, member:members!shower_logs_member_id_fkey(display_name)")
+        .select("id, event_at, laundry, member:members!shower_logs_member_id_fkey(display_name)", { count: "exact" })
         .eq("staff_user_id", staff.id)
         .gte("event_at", fromIso)
-        .lte("event_at", toIso),
+        .lte("event_at", toIso)
+        .order("event_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
       supabase
         .from("transportation_logs")
-        .select("id, created_at, service_date, period, transport_type, first_name, member:members!transportation_logs_member_id_fkey(display_name)")
+        .select(
+          "id, created_at, service_date, period, transport_type, first_name, member:members!transportation_logs_member_id_fkey(display_name)",
+          { count: "exact" }
+        )
         .eq("staff_user_id", staff.id)
         .gte("service_date", range.from)
-        .lte("service_date", range.to),
+        .lte("service_date", range.to)
+        .order("service_date", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
       supabase
         .from("v_blood_sugar_logs_detailed")
-        .select("id, checked_at, reading_mg_dl, member_name, nurse_user_id")
+        .select("id, checked_at, reading_mg_dl, member_name, nurse_user_id", { count: "exact" })
         .eq("nurse_user_id", staff.id)
         .gte("checked_at", fromIso)
-        .lte("checked_at", toIso),
+        .lte("checked_at", toIso)
+        .order("checked_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
       supabase
         .from("member_photo_uploads")
-        .select("id, uploaded_at, photo_url, member:members!member_photo_uploads_member_id_fkey(display_name)")
+        .select("id, uploaded_at, photo_url, member:members!member_photo_uploads_member_id_fkey(display_name)", { count: "exact" })
         .eq("uploaded_by", staff.id)
         .gte("uploaded_at", fromIso)
-        .lte("uploaded_at", toIso),
+        .lte("uploaded_at", toIso)
+        .order("uploaded_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
       supabase
         .from("time_punches")
-        .select("id, punch_at, punch_type, within_fence")
+        .select("id, punch_at, punch_type, within_fence", { count: "exact" })
         .eq("staff_user_id", staff.id)
         .gte("punch_at", fromIso)
-        .lte("punch_at", toIso),
+        .lte("punch_at", toIso)
+        .order("punch_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
       supabase
         .from("lead_activities")
-        .select("id, lead_id, member_name, activity_at, activity_type, outcome, completed_by_user_id")
+        .select("id, lead_id, member_name, activity_at, activity_type, outcome, completed_by_user_id", { count: "exact" })
         .eq("completed_by_user_id", staff.id)
         .gte("activity_at", fromIso)
-        .lte("activity_at", toIso),
+        .lte("activity_at", toIso)
+        .order("activity_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
       supabase
         .from("partner_activities")
-        .select("id, organization_name, activity_at, activity_type, completed_by_name")
+        .select("id, organization_name, activity_at, activity_type, completed_by_name", { count: "exact" })
         .eq("completed_by_name", staff.full_name)
         .gte("activity_at", fromIso)
-        .lte("activity_at", toIso),
+        .lte("activity_at", toIso)
+        .order("activity_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
       supabase
         .from("intake_assessments")
-        .select("id, created_at, assessment_date, member:members!intake_assessments_member_id_fkey(display_name)")
+        .select("id, created_at, assessment_date, member:members!intake_assessments_member_id_fkey(display_name)", { count: "exact" })
         .eq("completed_by_user_id", staff.id)
         .gte("created_at", fromIso)
         .lte("created_at", toIso)
+        .order("created_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT)
     ]);
   if (dailyError) throw new Error(`Unable to load staff daily activity rows: ${dailyError.message}`);
   if (toiletError) throw new Error(`Unable to load staff toilet log rows: ${toiletError.message}`);
@@ -254,16 +278,16 @@ export async function getStaffActivitySnapshot(staffSlug: string, rawFrom?: stri
   );
 
   const counts: SnapshotCounts = {
-    dailyActivity: (dailyRows ?? []).length,
-    toilet: (toiletRows ?? []).length,
-    shower: (showerRows ?? []).length,
-    transportation: (transportRows ?? []).length,
-    bloodSugar: (bloodRows ?? []).length,
-    photoUpload: (photoRows ?? []).length,
-    assessments: (assessmentRows ?? []).length,
-    timePunches: (punchRows ?? []).length,
-    leadActivities: (leadRows ?? []).length,
-    partnerActivities: (partnerRows ?? []).length
+    dailyActivity: Number(dailyCount ?? (dailyRows ?? []).length),
+    toilet: Number(toiletCount ?? (toiletRows ?? []).length),
+    shower: Number(showerCount ?? (showerRows ?? []).length),
+    transportation: Number(transportCount ?? (transportRows ?? []).length),
+    bloodSugar: Number(bloodCount ?? (bloodRows ?? []).length),
+    photoUpload: Number(photoCount ?? (photoRows ?? []).length),
+    assessments: Number(assessmentCount ?? (assessmentRows ?? []).length),
+    timePunches: Number(punchCount ?? (punchRows ?? []).length),
+    leadActivities: Number(leadCount ?? (leadRows ?? []).length),
+    partnerActivities: Number(partnerCount ?? (partnerRows ?? []).length)
   };
 
   return {
@@ -300,64 +324,83 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
   const fromIso = range.fromDateTime.toISOString();
   const toIso = range.toDateTime.toISOString();
   const [
-    { data: dailyRows, error: dailyError },
-    { data: toiletRows, error: toiletError },
-    { data: showerRows, error: showerError },
-    { data: transportRows, error: transportError },
-    { data: bloodRows, error: bloodError },
-    { data: photoRows, error: photoError },
-    { data: ancillaryRows, error: ancillaryError },
-    { data: assessmentRows, error: assessmentError }
+    { data: dailyRows, error: dailyError, count: dailyCount },
+    { data: toiletRows, error: toiletError, count: toiletCount },
+    { data: showerRows, error: showerError, count: showerCount },
+    { data: transportRows, error: transportError, count: transportCount },
+    { data: bloodRows, error: bloodError, count: bloodCount },
+    { data: photoRows, error: photoError, count: photoCount },
+    { data: ancillaryRows, error: ancillaryError, count: ancillaryCount },
+    { data: assessmentRows, error: assessmentError, count: assessmentCount }
   ] =
     await Promise.all([
       supabase
         .from("daily_activity_logs")
-        .select("id, created_at, activity_date, staff:profiles!daily_activity_logs_staff_user_id_fkey(full_name)")
-        .eq("member_id", memberRow.id)
-        .gte("created_at", fromIso)
-        .lte("created_at", toIso),
-      supabase
-        .from("toilet_logs")
-        .select("id, event_at, use_type, staff:profiles!toilet_logs_staff_user_id_fkey(full_name)")
-        .eq("member_id", memberRow.id)
-        .gte("event_at", fromIso)
-        .lte("event_at", toIso),
-      supabase
-        .from("shower_logs")
-        .select("id, event_at, laundry, staff:profiles!shower_logs_staff_user_id_fkey(full_name)")
-        .eq("member_id", memberRow.id)
-        .gte("event_at", fromIso)
-        .lte("event_at", toIso),
-      supabase
-        .from("transportation_logs")
-        .select("id, created_at, service_date, transport_type, period, staff:profiles!transportation_logs_staff_user_id_fkey(full_name)")
-        .eq("member_id", memberRow.id)
-        .gte("service_date", range.from)
-        .lte("service_date", range.to),
-      supabase
-        .from("v_blood_sugar_logs_detailed")
-        .select("id, checked_at, reading_mg_dl, nurse_name")
-        .eq("member_id", memberRow.id)
-        .gte("checked_at", fromIso)
-        .lte("checked_at", toIso),
-      supabase
-        .from("member_photo_uploads")
-        .select("id, uploaded_at, photo_url, uploader:profiles!member_photo_uploads_uploaded_by_fkey(full_name)")
-        .eq("member_id", memberRow.id)
-        .gte("uploaded_at", fromIso)
-        .lte("uploaded_at", toIso),
-      supabase
-        .from("v_ancillary_charge_logs_detailed")
-        .select("id, category_name, amount_cents, service_date, created_at")
-        .eq("member_id", memberRow.id)
-        .gte("service_date", range.from)
-        .lte("service_date", range.to),
-      supabase
-        .from("intake_assessments")
-        .select("id, created_at, assessment_date")
+        .select("id, created_at, activity_date, staff:profiles!daily_activity_logs_staff_user_id_fkey(full_name)", { count: "exact" })
         .eq("member_id", memberRow.id)
         .gte("created_at", fromIso)
         .lte("created_at", toIso)
+        .order("created_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
+      supabase
+        .from("toilet_logs")
+        .select("id, event_at, use_type, staff:profiles!toilet_logs_staff_user_id_fkey(full_name)", { count: "exact" })
+        .eq("member_id", memberRow.id)
+        .gte("event_at", fromIso)
+        .lte("event_at", toIso)
+        .order("event_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
+      supabase
+        .from("shower_logs")
+        .select("id, event_at, laundry, staff:profiles!shower_logs_staff_user_id_fkey(full_name)", { count: "exact" })
+        .eq("member_id", memberRow.id)
+        .gte("event_at", fromIso)
+        .lte("event_at", toIso)
+        .order("event_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
+      supabase
+        .from("transportation_logs")
+        .select(
+          "id, created_at, service_date, transport_type, period, staff:profiles!transportation_logs_staff_user_id_fkey(full_name)",
+          { count: "exact" }
+        )
+        .eq("member_id", memberRow.id)
+        .gte("service_date", range.from)
+        .lte("service_date", range.to)
+        .order("service_date", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
+      supabase
+        .from("v_blood_sugar_logs_detailed")
+        .select("id, checked_at, reading_mg_dl, nurse_name", { count: "exact" })
+        .eq("member_id", memberRow.id)
+        .gte("checked_at", fromIso)
+        .lte("checked_at", toIso)
+        .order("checked_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
+      supabase
+        .from("member_photo_uploads")
+        .select("id, uploaded_at, photo_url, uploader:profiles!member_photo_uploads_uploaded_by_fkey(full_name)", { count: "exact" })
+        .eq("member_id", memberRow.id)
+        .gte("uploaded_at", fromIso)
+        .lte("uploaded_at", toIso)
+        .order("uploaded_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
+      supabase
+        .from("v_ancillary_charge_logs_detailed")
+        .select("id, category_name, amount_cents, service_date, created_at", { count: "exact" })
+        .eq("member_id", memberRow.id)
+        .gte("service_date", range.from)
+        .lte("service_date", range.to)
+        .order("service_date", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
+      supabase
+        .from("intake_assessments")
+        .select("id, created_at, assessment_date", { count: "exact" })
+        .eq("member_id", memberRow.id)
+        .gte("created_at", fromIso)
+        .lte("created_at", toIso)
+        .order("created_at", { ascending: false })
+        .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT)
     ]);
   if (dailyError) throw new Error(`Unable to load member daily activity rows: ${dailyError.message}`);
   if (toiletError) throw new Error(`Unable to load member toilet log rows: ${toiletError.message}`);
@@ -388,23 +431,23 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
   );
 
   const counts: MemberSnapshotCounts = {
-    dailyActivity: (dailyRows ?? []).length,
-    toilet: (toiletRows ?? []).length,
-    shower: (showerRows ?? []).length,
-    transportation: (transportRows ?? []).length,
-    bloodSugar: (bloodRows ?? []).length,
-    photos: (photoRows ?? []).length,
-    ancillary: (ancillaryRows ?? []).length,
-    assessments: (assessmentRows ?? []).length,
+    dailyActivity: Number(dailyCount ?? (dailyRows ?? []).length),
+    toilet: Number(toiletCount ?? (toiletRows ?? []).length),
+    shower: Number(showerCount ?? (showerRows ?? []).length),
+    transportation: Number(transportCount ?? (transportRows ?? []).length),
+    bloodSugar: Number(bloodCount ?? (bloodRows ?? []).length),
+    photos: Number(photoCount ?? (photoRows ?? []).length),
+    ancillary: Number(ancillaryCount ?? (ancillaryRows ?? []).length),
+    assessments: Number(assessmentCount ?? (assessmentRows ?? []).length),
     total:
-      (dailyRows ?? []).length +
-      (toiletRows ?? []).length +
-      (showerRows ?? []).length +
-      (transportRows ?? []).length +
-      (bloodRows ?? []).length +
-      (photoRows ?? []).length +
-      (ancillaryRows ?? []).length +
-      (assessmentRows ?? []).length
+      Number(dailyCount ?? (dailyRows ?? []).length) +
+      Number(toiletCount ?? (toiletRows ?? []).length) +
+      Number(showerCount ?? (showerRows ?? []).length) +
+      Number(transportCount ?? (transportRows ?? []).length) +
+      Number(bloodCount ?? (bloodRows ?? []).length) +
+      Number(photoCount ?? (photoRows ?? []).length) +
+      Number(ancillaryCount ?? (ancillaryRows ?? []).length) +
+      Number(assessmentCount ?? (assessmentRows ?? []).length)
   };
 
   return {
