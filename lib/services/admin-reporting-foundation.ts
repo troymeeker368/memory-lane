@@ -20,6 +20,7 @@ import {
   type OnDemandReportCategory,
   type OnDemandReportResult,
   type ReportingAttendanceRow,
+  type ReportingAttendanceBillingRateRow,
   type ReportingCenterBillingSettingRow,
   type ReportingClosureRow,
   type ReportingLocationRow,
@@ -165,7 +166,7 @@ async function loadAttendanceDataset(input: {
 
 async function loadBillingSettingsForMembers(memberIds: string[]) {
   const supabase = await createClient();
-  const [memberSettingsResult, centerSettingsResult] = await Promise.all([
+  const [memberSettingsResult, centerSettingsResult, attendanceSettingsResult] = await Promise.all([
     memberIds.length > 0
       ? supabase
           .from("member_billing_settings")
@@ -174,18 +175,30 @@ async function loadBillingSettingsForMembers(memberIds: string[]) {
       : Promise.resolve({ data: [], error: null }),
     supabase
       .from("center_billing_settings")
-      .select("active, default_daily_rate, default_billing_mode, effective_start_date, effective_end_date")
+      .select("active, default_daily_rate, default_extra_day_rate, default_billing_mode, effective_start_date, effective_end_date"),
+    memberIds.length > 0
+      ? supabase
+          .from("member_attendance_schedules")
+          .select("member_id, daily_rate, custom_daily_rate, default_daily_rate")
+          .in("member_id", memberIds)
+      : Promise.resolve({ data: [], error: null })
   ]);
   if (memberSettingsResult.error) throw new Error(memberSettingsResult.error.message);
   if (centerSettingsResult.error) throw new Error(centerSettingsResult.error.message);
+  if (attendanceSettingsResult.error) throw new Error(attendanceSettingsResult.error.message);
   const memberSettingsByMember = new Map<string, ReportingMemberBillingSettingRow[]>();
   ((memberSettingsResult.data ?? []) as ReportingMemberBillingSettingRow[]).forEach((row) => {
     const existing = memberSettingsByMember.get(row.member_id) ?? [];
     existing.push(row);
     memberSettingsByMember.set(row.member_id, existing);
   });
+  const attendanceSettingsByMember = new Map<string, ReportingAttendanceBillingRateRow>();
+  ((attendanceSettingsResult.data ?? []) as ReportingAttendanceBillingRateRow[]).forEach((row) => {
+    attendanceSettingsByMember.set(row.member_id, row);
+  });
   return {
     memberSettingsByMember,
+    attendanceSettingsByMember,
     centerSettings: (centerSettingsResult.data ?? []) as ReportingCenterBillingSettingRow[]
   };
 }
@@ -265,7 +278,7 @@ export async function getAdminRevenueSummary(input: AdminRevenueSummaryInput): P
   const presentMemberDays = attendanceFacts.filter((row) => row.present).length;
   const absentMemberDays = Math.max(scheduledMemberDays - presentMemberDays, 0);
 
-  const { memberSettingsByMember, centerSettings } = await loadBillingSettingsForMembers(
+  const { memberSettingsByMember, attendanceSettingsByMember, centerSettings } = await loadBillingSettingsForMembers(
     attendanceDataset.members.map((row) => row.id)
   );
   let projectedProgramRevenueCents = 0;
@@ -276,6 +289,7 @@ export async function getAdminRevenueSummary(input: AdminRevenueSummaryInput): P
       memberId: fact.memberId,
       dateOnly: fact.date,
       memberSettingsByMember,
+      attendanceSettingsByMember,
       centerSettings
     });
     projectedProgramRevenueCents += toCents(rate);
@@ -324,7 +338,7 @@ export async function getAdminRevenueSummary(input: AdminRevenueSummaryInput): P
   return {
     from: normalizedRange.from,
     to: normalizedRange.to,
-    programRateSource: "Member billing settings with center default daily rate fallback",
+    programRateSource: "Attendance schedule rate override, then member billing setting, then center default daily rate",
     activeMemberCount: attendanceDataset.members.length,
     scheduledMemberDays,
     presentMemberDays,
@@ -512,7 +526,7 @@ export async function getAttendanceSummaryReport(input: AttendanceSummaryInput):
     range: normalizedRange,
     memberStatus: memberStatusFilter
   });
-  const { memberSettingsByMember, centerSettings } = await loadBillingSettingsForMembers(
+  const { memberSettingsByMember, attendanceSettingsByMember, centerSettings } = await loadBillingSettingsForMembers(
     attendanceDataset.members.map((row) => row.id)
   );
 
@@ -558,6 +572,7 @@ export async function getAttendanceSummaryReport(input: AttendanceSummaryInput):
       memberId: fact.memberId,
       dateOnly: fact.date,
       memberSettingsByMember,
+      attendanceSettingsByMember,
       centerSettings
     });
     projectedRevenueByMember.set(

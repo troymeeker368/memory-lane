@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { resolveCanonicalLeadState } from "@/lib/canonical";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
+import { buildSalesPipelineStageCounts } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -607,61 +608,46 @@ export async function getSalesSummarySnapshotSupabase(): Promise<SalesSummarySna
   const [
     totalResult,
     openResult,
-    eipResult,
     wonResult,
     lostResult,
     convertedResult,
     recentInquiryCountResult,
     recentInquiriesResult,
-    inquiryStageResult,
-    tourStageResult,
-    nurtureStageResult,
-    referralOnlyResult
+    stageSummaryResult
   ] = await Promise.all([
     supabase.from("leads").select("id", { count: "exact", head: true }),
     applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })),
-    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })).in("stage", ["Enrollment in Progress", "EIP"]),
     supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "won"),
     supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "lost"),
     supabase.from("leads").select("id", { count: "exact", head: true }).or("status.eq.won,member_start_date.not.is.null"),
     supabase.from("leads").select("id", { count: "exact", head: true }).gte("inquiry_date", thirtyDaysAgo),
     supabase.from("leads").select(SALES_LEAD_READ_SELECT).order("inquiry_date", { ascending: false }).limit(10),
-    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })).eq("stage", "Inquiry"),
-    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })).eq("stage", "Tour"),
-    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })).eq("stage", "Nurture"),
-    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })).ilike("lead_source", "%referral%")
+    supabase.from("leads").select("stage, status, lead_source")
   ]);
   if (totalResult.error) throw new Error(totalResult.error.message);
   if (openResult.error) throw new Error(openResult.error.message);
-  if (eipResult.error) throw new Error(eipResult.error.message);
   if (wonResult.error) throw new Error(wonResult.error.message);
   if (lostResult.error) throw new Error(lostResult.error.message);
   if (convertedResult.error) throw new Error(convertedResult.error.message);
   if (recentInquiryCountResult.error) throw new Error(recentInquiryCountResult.error.message);
   if (recentInquiriesResult.error) throw new Error(recentInquiriesResult.error.message);
-  if (inquiryStageResult.error) throw new Error(inquiryStageResult.error.message);
-  if (tourStageResult.error) throw new Error(tourStageResult.error.message);
-  if (nurtureStageResult.error) throw new Error(nurtureStageResult.error.message);
-  if (referralOnlyResult.error) throw new Error(referralOnlyResult.error.message);
+  if (stageSummaryResult.error) throw new Error(stageSummaryResult.error.message);
+
+  const stageCounts = buildSalesPipelineStageCounts(
+    (stageSummaryResult.data ?? []) as Array<{ stage: string | null; status: string | null; lead_source: string | null }>
+  );
+  const eipLeadCount = stageCounts.find((row) => row.stage === "Enrollment in Progress")?.count ?? 0;
 
   return {
     totalLeadCount: totalResult.count ?? 0,
     openLeadCount: openResult.count ?? 0,
-    eipLeadCount: eipResult.count ?? 0,
+    eipLeadCount,
     wonLeadCount: wonResult.count ?? 0,
     lostLeadCount: lostResult.count ?? 0,
     convertedOrEnrolledCount: convertedResult.count ?? 0,
     recentInquiryActivityCount: recentInquiryCountResult.count ?? 0,
     recentInquiries: ((recentInquiriesResult.data ?? []) as unknown as Record<string, unknown>[]).map((row) => toSalesLeadReadRow(row)),
-    stageCounts: [
-      { stage: "Inquiry", count: inquiryStageResult.count ?? 0 },
-      { stage: "Tour", count: tourStageResult.count ?? 0 },
-      { stage: "Enrollment in Progress", count: eipResult.count ?? 0 },
-      { stage: "Nurture", count: nurtureStageResult.count ?? 0 },
-      { stage: "Referrals Only", count: referralOnlyResult.count ?? 0 },
-      { stage: "Closed - Won", count: wonResult.count ?? 0 },
-      { stage: "Closed - Lost", count: lostResult.count ?? 0 }
-    ]
+    stageCounts
   };
 }
 

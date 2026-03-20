@@ -45,19 +45,12 @@ import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
-import { getScheduledDayAbbreviations } from "@/lib/services/member-schedule-selectors";
-import { listScheduleChangesSupabase, SCHEDULE_WEEKDAY_KEYS } from "@/lib/services/schedule-changes-supabase";
+import { formatScheduleWeekdayShortLabels, getScheduledDayAbbreviations } from "@/lib/services/member-schedule-selectors";
+import { listScheduleChangesSupabase } from "@/lib/services/schedule-changes-supabase";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 const DIET_TYPE_OPTIONS = ["Regular", "Diabetic", "Low Sodium", "Pureed", "Renal", "Heart Healthy", "Other"] as const;
-const WEEKDAY_LABELS: Record<(typeof SCHEDULE_WEEKDAY_KEYS)[number], string> = {
-  monday: "Mon",
-  tuesday: "Tue",
-  wednesday: "Wed",
-  thursday: "Thu",
-  friday: "Fri"
-};
 
 async function renderTabSection(input: {
   tab: MccTab;
@@ -213,10 +206,7 @@ export default async function MemberCommandCenterDetailPage({
     baseScheduleOverride: detail.schedule,
     scheduleChangesOverride: activeScheduleChangesForToday
   });
-  const effectiveScheduleTodayLabel =
-    effectiveScheduleToday.effectiveDays.length > 0
-      ? effectiveScheduleToday.effectiveDays.map((day) => WEEKDAY_LABELS[day] ?? day).join(", ")
-      : "-";
+  const effectiveScheduleTodayLabel = formatScheduleWeekdayShortLabels(effectiveScheduleToday.effectiveDays);
   const activeOverrideCount = activeScheduleChangesForToday.length;
   const memberBillingSettings = await listMemberBillingSettingsSupabase(detail.member.id);
   const activeMemberBillingSetting = resolveActiveEffectiveMemberRowForDate(

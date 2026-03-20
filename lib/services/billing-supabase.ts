@@ -61,7 +61,8 @@ import {
 } from "@/lib/services/billing-payor-contacts";
 import {
   resolveActiveEffectiveMemberRowForDate,
-  resolveConfiguredDailyRate,
+  resolveEffectiveDailyRate,
+  resolveEffectiveExtraDayRate,
   resolveEffectiveBillingMode
 } from "@/lib/services/billing-effective";
 import {
@@ -142,6 +143,8 @@ export {
   resolveActiveEffectiveMemberRowForDate,
   resolveActiveEffectiveRowForDate,
   resolveConfiguredDailyRate,
+  resolveEffectiveDailyRate,
+  resolveEffectiveExtraDayRate,
   resolveEffectiveBillingMode
 } from "@/lib/services/billing-effective";
 
@@ -151,11 +154,9 @@ async function resolveDailyRate(input: {
   centerSetting: CenterBillingSettingRow | null;
 }) {
   const attendanceSetting = await getMemberAttendanceBillingSetting(input.memberId);
-  if (attendanceSetting?.dailyRate != null && attendanceSetting.dailyRate > 0) {
-    return toAmount(attendanceSetting.dailyRate);
-  }
   return toAmount(
-    resolveConfiguredDailyRate({
+    resolveEffectiveDailyRate({
+      attendanceSetting,
       memberSetting: input.memberSetting,
       centerSetting: input.centerSetting
     })
@@ -168,11 +169,13 @@ async function resolveExtraDayRate(input: {
   centerSetting: CenterBillingSettingRow | null;
 }) {
   const attendanceSetting = await getMemberAttendanceBillingSetting(input.memberId);
-  if (attendanceSetting?.dailyRate != null && attendanceSetting.dailyRate > 0) return toAmount(attendanceSetting.dailyRate);
-  if (!input.memberSetting.use_center_default_rate && input.memberSetting.custom_daily_rate != null) {
-    return toAmount(input.memberSetting.custom_daily_rate);
-  }
-  return toAmount(input.centerSetting?.default_extra_day_rate ?? input.centerSetting?.default_daily_rate ?? 0);
+  return toAmount(
+    resolveEffectiveExtraDayRate({
+      attendanceSetting,
+      memberSetting: input.memberSetting,
+      centerSetting: input.centerSetting
+    })
+  );
 }
 
 async function resolveTransportationBillingStatus(input: {

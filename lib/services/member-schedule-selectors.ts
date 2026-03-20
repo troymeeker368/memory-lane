@@ -85,6 +85,14 @@ const WEEKDAY_ABBREVIATIONS: Record<ScheduleWeekdayKey, string> = {
   friday: "F"
 };
 
+const WEEKDAY_SHORT_LABELS: Record<ScheduleWeekdayKey, string> = {
+  monday: "Mon",
+  tuesday: "Tue",
+  wednesday: "Wed",
+  thursday: "Thu",
+  friday: "Fri"
+};
+
 function toScheduleWeekdayKey(weekday: OperationsWeekdayKey): ScheduleWeekdayKey | null {
   if (weekday === "monday" || weekday === "tuesday" || weekday === "wednesday" || weekday === "thursday" || weekday === "friday") {
     return weekday;
@@ -115,10 +123,19 @@ export function getScheduledDayAbbreviations(
   if (!schedule) return "-";
 
   const days = (["monday", "tuesday", "wednesday", "thursday", "friday"] as ScheduleWeekdayKey[])
-    .filter((day) => Boolean(schedule[day]))
-    .map((day) => WEEKDAY_ABBREVIATIONS[day]);
+    .filter((day) => Boolean(schedule[day]));
 
-  return days.length > 0 ? days.join(", ") : "-";
+  return formatScheduleWeekdayAbbreviations(days);
+}
+
+export function formatScheduleWeekdayAbbreviations(days: readonly ScheduleWeekdayKey[]): string {
+  if (days.length === 0) return "-";
+  return days.map((day) => WEEKDAY_ABBREVIATIONS[day]).join(", ");
+}
+
+export function formatScheduleWeekdayShortLabels(days: readonly ScheduleWeekdayKey[]): string {
+  if (days.length === 0) return "-";
+  return days.map((day) => WEEKDAY_SHORT_LABELS[day]).join(", ");
 }
 
 export function getTransportSlotForScheduleDay(

@@ -9,6 +9,7 @@ import {
   type OperationsWeekdayKey
 } from "@/lib/services/operations-calendar";
 import {
+  formatScheduleWeekdayAbbreviations,
   getTransportSlotForScheduleDay
 } from "@/lib/services/member-schedule-selectors";
 import {
@@ -103,14 +104,6 @@ type AttendanceRecordRow = {
   check_in_at: string | null;
   check_out_at: string | null;
   updated_at: string;
-};
-
-const WEEKDAY_ABBREVIATIONS: Record<ScheduleWeekdayKey, string> = {
-  monday: "M",
-  tuesday: "Tu",
-  wednesday: "W",
-  thursday: "Th",
-  friday: "F"
 };
 
 export interface DailyAttendanceRow {
@@ -301,11 +294,6 @@ function buildAttendanceRecordMap(records: AttendanceRecordRow[]) {
   return map;
 }
 
-function formatScheduledDays(days: ScheduleWeekdayKey[]) {
-  if (days.length === 0) return "-";
-  return days.map((day) => WEEKDAY_ABBREVIATIONS[day]).join(", ");
-}
-
 function toScheduleWeekday(weekday: OperationsWeekdayKey): ScheduleWeekdayKey | null {
   if (
     weekday === "monday" ||
@@ -480,7 +468,7 @@ function buildDailyRows(input: {
         photoUrl: input.mccPhotos.get(member.id) ?? input.mhpPhotos.get(member.id) ?? null,
         lockerNumber: member.locker_number,
         trackLabel: normalizeTrackLabel(member.latest_assessment_track),
-        scheduledDays: formatScheduledDays(resolution.effectiveDays),
+        scheduledDays: formatScheduleWeekdayAbbreviations(resolution.effectiveDays),
         attendanceRecordId: attendanceRecord?.id ?? null,
         attendanceStatus: getStatusLabel({
           status: attendanceRecord?.status ?? null,

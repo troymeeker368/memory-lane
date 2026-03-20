@@ -20,6 +20,21 @@ export interface LeadStageOutcomeSummaryRow {
   lost: number;
 }
 
+export interface LeadPipelineStageCountRow {
+  stage: string;
+  count: number;
+}
+
+const PIPELINE_STAGE_ORDER = [
+  "Inquiry",
+  "Tour",
+  "Enrollment in Progress",
+  "Nurture",
+  "Referrals Only",
+  "Closed - Won",
+  "Closed - Lost"
+] as const;
+
 function resolveCanonicalLeadStageStatus(lead: Pick<LeadSummaryLike, "stage" | "status">) {
   return resolveCanonicalLeadState({
     requestedStage: String(lead.stage ?? "Inquiry"),
@@ -65,6 +80,24 @@ export function buildLeadStageOutcomeSummaryRows(
       lost: counts.lost
     }))
     .sort((left, right) => left.stage.localeCompare(right.stage));
+}
+
+export function buildSalesPipelineStageCounts(
+  leads: Array<Pick<LeadSummaryLike, "stage" | "status" | "lead_source">>
+): LeadPipelineStageCountRow[] {
+  const stageTotals = new Map(
+    buildLeadStageOutcomeSummaryRows(leads).map((row) => [row.stage, row.total] as const)
+  );
+  const referralsOnlyCount = leads.reduce((count, lead) => {
+    const { status } = resolveCanonicalLeadStageStatus(lead);
+    if (!isOpenLeadStatus(status)) return count;
+    return String(lead.lead_source ?? "").toLowerCase().includes("referral") ? count + 1 : count;
+  }, 0);
+
+  return PIPELINE_STAGE_ORDER.map((stage) => ({
+    stage,
+    count: stage === "Referrals Only" ? referralsOnlyCount : stageTotals.get(stage) ?? 0
+  }));
 }
 
 export async function getSalesOpenLeadSummary() {

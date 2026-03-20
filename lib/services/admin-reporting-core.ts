@@ -2,7 +2,7 @@ import type { ReportDateRange } from "@/lib/services/report-date-range";
 import {
   resolveActiveEffectiveMemberRowForDate,
   resolveActiveEffectiveRowForDate,
-  resolveConfiguredDailyRate,
+  resolveEffectiveDailyRate,
   resolveEffectiveBillingMode
 } from "@/lib/services/billing-effective";
 import { resolveExpectedAttendanceFromSupabaseContext } from "@/lib/services/expected-attendance-supabase";
@@ -94,9 +94,17 @@ export type ReportingMemberBillingSettingRow = {
 export type ReportingCenterBillingSettingRow = {
   active: boolean;
   default_daily_rate: number;
+  default_extra_day_rate?: number | null;
   default_billing_mode: "Membership" | "Monthly";
   effective_start_date: string;
   effective_end_date: string | null;
+};
+
+export type ReportingAttendanceBillingRateRow = {
+  member_id: string;
+  daily_rate: number | null;
+  custom_daily_rate: number | null;
+  default_daily_rate: number | null;
 };
 
 export type ReportingAttendanceFact = {
@@ -162,6 +170,7 @@ export function resolveDailyRateForDate(input: {
   dateOnly: string;
   memberSettingsByMember: Map<string, ReportingMemberBillingSettingRow[]>;
   centerSettings: ReportingCenterBillingSettingRow[];
+  attendanceSettingsByMember: Map<string, ReportingAttendanceBillingRateRow>;
 }) {
   const memberSetting = resolveActiveEffectiveMemberRowForDate(
     input.memberId,
@@ -169,7 +178,8 @@ export function resolveDailyRateForDate(input: {
     input.memberSettingsByMember.get(input.memberId) ?? []
   );
   const centerSetting = resolveActiveEffectiveRowForDate(input.dateOnly, input.centerSettings);
-  return resolveConfiguredDailyRate({ memberSetting, centerSetting });
+  const attendanceSetting = input.attendanceSettingsByMember.get(input.memberId) ?? null;
+  return resolveEffectiveDailyRate({ attendanceSetting, memberSetting, centerSetting });
 }
 
 export function buildAttendanceFacts(input: {
