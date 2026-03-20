@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import {
   buildNormalizedSectionsForTrack,
@@ -182,17 +182,7 @@ async function loadWorkflowMilestoneRecorder() {
 }
 
 async function resolveCarePlanMemberId(rawMemberId: string, actionLabel: string) {
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: rawMemberId
-    },
-    { actionLabel }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
-  return canonical.memberId;
+  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
 function clean(value: string | null | undefined) {

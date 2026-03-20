@@ -1,9 +1,11 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { assertCanonicalMemberResolverInput } from "@/lib/services/canonical-member-ref-input";
 import { toEasternDate } from "@/lib/timezone";
 import type {
   CanonicalExpectedIdentity,
+  CanonicalMemberRefInput,
   CanonicalPersonRef,
   CanonicalPersonRefInput,
   CanonicalPersonSourceType
@@ -96,6 +98,7 @@ function buildIdentityErrorMessage(input: {
   selectedId: string | null;
   externalId: string | null;
   legacyId: string | null;
+  resolutionHint?: string | null;
 }) {
   const expectedLabel = input.expectedType === "member" ? "member.id" : "lead.id";
   const sourceLabel = input.incomingSourceType ?? "unknown";
@@ -107,7 +110,8 @@ function buildIdentityErrorMessage(input: {
     `externalId=${input.externalId ?? "none"}`,
     `legacyId=${input.legacyId ?? "none"}`
   ].join(", ");
-  return `${input.actionLabel} expected ${expectedLabel}, but payload did not resolve to a canonical ${expectedLabel}. Received: ${supplied}.`;
+  const hint = clean(input.resolutionHint);
+  return `${input.actionLabel} expected ${expectedLabel}, but payload did not resolve to a canonical ${expectedLabel}.${hint ? ` ${hint}` : ""} Received: ${supplied}.`;
 }
 
 function toCanonicalPersonRef(input: {
@@ -386,6 +390,10 @@ export async function resolveCanonicalPersonRef(
   });
 
   if (expectedType === "member" && !canonical.memberId) {
+    const resolutionHint =
+      candidateMemberId && !memberFromId
+        ? `Supplied memberId ${candidateMemberId} did not resolve to an existing canonical members.id row visible to this request.`
+        : null;
     throw new Error(
       buildIdentityErrorMessage({
         expectedType,
@@ -395,11 +403,16 @@ export async function resolveCanonicalPersonRef(
         candidateMemberId,
         selectedId,
         externalId,
-        legacyId
+        legacyId,
+        resolutionHint
       })
     );
   }
   if (expectedType === "lead" && !canonical.leadId) {
+    const resolutionHint =
+      candidateLeadId && !leadFromId
+        ? `Supplied leadId ${candidateLeadId} did not resolve to an existing canonical leads.id row visible to this request.`
+        : null;
     throw new Error(
       buildIdentityErrorMessage({
         expectedType,
@@ -409,7 +422,8 @@ export async function resolveCanonicalPersonRef(
         candidateMemberId,
         selectedId,
         externalId,
-        legacyId
+        legacyId,
+        resolutionHint
       })
     );
   }
@@ -441,6 +455,22 @@ export async function resolveCanonicalMemberRef(
     );
   }
   return canonical;
+}
+
+export async function resolveCanonicalMemberId(
+  input: CanonicalMemberRefInput | string,
+  options?: { actionLabel?: string; serviceRole?: boolean }
+) {
+  const canonical = await resolveCanonicalMemberRef(
+    assertCanonicalMemberResolverInput(input, clean(options?.actionLabel) ?? "identity resolution"),
+    options
+  );
+  if (!canonical.memberId) {
+    throw new Error(
+      `${clean(options?.actionLabel) ?? "identity resolution"} expected member.id, but canonical member was missing.`
+    );
+  }
+  return canonical.memberId;
 }
 
 export async function resolveCanonicalLeadRef(

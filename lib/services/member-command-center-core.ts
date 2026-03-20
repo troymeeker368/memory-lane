@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import {
   buildMemberContactsSchemaOutOfDateError,
   isMemberContactsPayorColumnMissingError,
@@ -200,17 +200,7 @@ export function slugify(value: string) {
 }
 
 export async function resolveMccMemberId(rawMemberId: string, actionLabel: string) {
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: rawMemberId
-    },
-    { actionLabel }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
-  return canonical.memberId;
+  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
 export function defaultCommandCenter(memberId: string): MemberCommandCenterRow {

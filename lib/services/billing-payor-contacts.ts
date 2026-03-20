@@ -2,7 +2,7 @@ import "server-only";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
-import { resolveCanonicalPersonRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import {
   buildMemberContactsSchemaOutOfDateMessage,
   buildMemberContactsSchemaOutOfDateError,
@@ -134,22 +134,10 @@ export function formatBillingPayorAddress(payor: BillingPayorContact) {
 }
 
 async function resolveBillingMemberId(rawMemberId: string, actionLabel: string) {
-  const canonical = await resolveCanonicalPersonRef(
-    {
-      sourceType: "member",
-      selectedId: rawMemberId,
-      memberId: rawMemberId
-    },
-    {
-      expectedType: "member",
-      actionLabel,
-      serviceRole: true
-    }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
-  return canonical.memberId;
+  return resolveCanonicalMemberId(rawMemberId, {
+    actionLabel,
+    serviceRole: true
+  });
 }
 
 async function recordInvalidMultiplePayorAlert(memberId: string, contactIds: string[], source: string) {

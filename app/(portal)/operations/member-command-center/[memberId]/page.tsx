@@ -214,7 +214,7 @@ export default async function MemberCommandCenterDetailPage({
     billingDate,
     memberBillingSettings
   );
-  const lockerOptions = await getAvailableLockerNumbersForMemberSupabase(memberId);
+  const lockerOptions = await getAvailableLockerNumbersForMemberSupabase(detail.member.id);
   const busNumberOptions = await getConfiguredBusNumbers();
   const currentBillingPayor = detail.contacts.find((row) => row.is_payor) ?? null;
   const billingPayorName = currentBillingPayor?.contact_name ?? "No payor contact designated";

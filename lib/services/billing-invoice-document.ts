@@ -1,5 +1,8 @@
 import "server-only";
 
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 import { createClient } from "@/lib/supabase/server";
 import {
   formatBillingPayorAddress,
@@ -7,7 +10,14 @@ import {
   getBillingPayorContact,
   type BillingPayorContact
 } from "@/lib/services/billing-payor-contacts";
+import {
+  DOCUMENT_CENTER_ADDRESS,
+  DOCUMENT_CENTER_LOGO_PUBLIC_PATH,
+  DOCUMENT_CENTER_NAME,
+  DOCUMENT_CENTER_PHONE
+} from "@/lib/services/document-branding";
 import type { Database } from "@/types/supabase";
+import type { PDFDocument as PDFDocumentType, PDFFont, PDFImage, PDFPage } from "pdf-lib";
 
 type BillingInvoiceRow = Database["public"]["Tables"]["billing_invoices"]["Row"];
 type BillingInvoiceLineRow = Database["public"]["Tables"]["billing_invoice_lines"]["Row"];
@@ -57,6 +67,118 @@ function normalizeDateOnly(value: unknown) {
 
 function formatMoney(value: number) {
   return `$${value.toFixed(2)}`;
+}
+
+function publicAssetPath(publicPath: string) {
+  const normalized = publicPath.startsWith("/") ? publicPath.slice(1) : publicPath;
+  return path.join(process.cwd(), "public", normalized);
+}
+
+async function loadCenterLogoImage(pdf: PDFDocumentType) {
+  try {
+    const bytes = await readFile(publicAssetPath(DOCUMENT_CENTER_LOGO_PUBLIC_PATH));
+    return await pdf.embedPng(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function drawInvoiceHeader(input: {
+  page: PDFPage;
+  font: PDFFont;
+  bold: PDFFont;
+  logo: PDFImage | null;
+  generatedAt: string;
+  left: number;
+  right: number;
+  brand: ReturnType<typeof import("pdf-lib").rgb>;
+  text: ReturnType<typeof import("pdf-lib").rgb>;
+  divider: ReturnType<typeof import("pdf-lib").rgb>;
+}) {
+  const { page, font, bold, logo, generatedAt, left, right, brand, text, divider } = input;
+  const pageWidth = page.getWidth();
+  let y = 760;
+
+  if (logo) {
+    const logoHeight = 38;
+    const scaled = logo.scale(logoHeight / logo.height);
+    const logoWidth = Math.min(scaled.width, 160);
+    page.drawImage(logo, {
+      x: left,
+      y: y - logoHeight + 4,
+      width: logoWidth,
+      height: logoHeight
+    });
+  }
+
+  const centerX = pageWidth / 2;
+  page.drawText(DOCUMENT_CENTER_NAME, {
+    x: centerX - bold.widthOfTextAtSize(DOCUMENT_CENTER_NAME, 14) / 2,
+    y,
+    size: 14,
+    font: bold,
+    color: brand
+  });
+  y -= 14;
+  page.drawText(DOCUMENT_CENTER_ADDRESS, {
+    x: centerX - font.widthOfTextAtSize(DOCUMENT_CENTER_ADDRESS, 9.5) / 2,
+    y,
+    size: 9.5,
+    font,
+    color: text
+  });
+  y -= 12;
+  page.drawText(DOCUMENT_CENTER_PHONE, {
+    x: centerX - font.widthOfTextAtSize(DOCUMENT_CENTER_PHONE, 9.5) / 2,
+    y,
+    size: 9.5,
+    font,
+    color: text
+  });
+
+  const generatedLabel = `Generated: ${generatedAt}`;
+  page.drawText(generatedLabel, {
+    x: right - font.widthOfTextAtSize(generatedLabel, 8.5),
+    y: 760,
+    size: 8.5,
+    font,
+    color: text
+  });
+  page.drawLine({
+    start: { x: left, y: 712 },
+    end: { x: right, y: 712 },
+    thickness: 1,
+    color: divider
+  });
+
+  return 688;
+}
+
+function drawInvoiceFooter(input: {
+  page: PDFPage;
+  font: PDFFont;
+  left: number;
+  right: number;
+  text: ReturnType<typeof import("pdf-lib").rgb>;
+  divider: ReturnType<typeof import("pdf-lib").rgb>;
+}) {
+  const { page, font, left, right, text, divider } = input;
+  const footerY = 58;
+  page.drawLine({
+    start: { x: left, y: footerY + 14 },
+    end: { x: right, y: footerY + 14 },
+    thickness: 1,
+    color: divider
+  });
+
+  const footerText = `${DOCUMENT_CENTER_NAME} | ${DOCUMENT_CENTER_PHONE}`;
+  page.drawText(footerText, {
+    x: (page.getWidth() - font.widthOfTextAtSize(footerText, 8.5)) / 2,
+    y: footerY,
+    size: 8.5,
+    font,
+    color: text
+  });
 }
 
 function buildBillToFields(payor: BillingPayorContact) {
@@ -159,13 +281,28 @@ export async function buildBillingInvoicePdfBytes(model: BillingInvoiceDocumentM
   const page = pdf.addPage([612, 792]);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const logo = await loadCenterLogoImage(pdf);
+  const brand = rgb(0.09, 0.24, 0.55);
+  const text = rgb(0.1, 0.12, 0.16);
+  const divider = rgb(0.85, 0.87, 0.9);
 
-  let y = 748;
   const left = 48;
   const right = 564;
+  let y = drawInvoiceHeader({
+    page,
+    font,
+    bold,
+    logo,
+    generatedAt: model.generatedAt,
+    left,
+    right,
+    brand,
+    text,
+    divider
+  });
 
-  const drawText = (text: string, x: number, size = 10, useBold = false, color = rgb(0.1, 0.12, 0.16)) => {
-    page.drawText(text, {
+  const drawText = (value: string, x: number, size = 10, useBold = false, color = text) => {
+    page.drawText(value, {
       x,
       y,
       size,
@@ -175,25 +312,25 @@ export async function buildBillingInvoicePdfBytes(model: BillingInvoiceDocumentM
     y -= size + 4;
   };
 
-  drawText("Invoice", left, 20, true);
+  drawText("Invoice", left, 20, true, brand);
   drawText(`Invoice #: ${model.invoiceNumber || model.invoiceId}`, left, 11, true);
   drawText(`Status: ${model.invoiceStatus}`, left);
   drawText(`Invoice Date: ${model.invoiceDate ?? "-"}`, left);
   drawText(`Due Date: ${model.dueDate ?? "-"}`, left);
 
   y -= 8;
-  page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 1, color: rgb(0.85, 0.87, 0.9) });
+  page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 1, color: divider });
   y -= 18;
 
   const sectionTop = y;
   let leftColumnY = sectionTop;
-  const drawColumnText = (text: string, x: number, cursor: number, size = 10, useBold = false) => {
-    page.drawText(text, {
+  const drawColumnText = (value: string, x: number, cursor: number, size = 10, useBold = false) => {
+    page.drawText(value, {
       x,
       y: cursor,
       size,
       font: useBold ? bold : font,
-      color: rgb(0.1, 0.12, 0.16)
+      color: useBold ? brand : text
     });
     return cursor - (size + 4);
   };
@@ -215,33 +352,42 @@ export async function buildBillingInvoicePdfBytes(model: BillingInvoiceDocumentM
   if (model.billToMessage) rightColumnY = drawColumnText(model.billToMessage, 330, rightColumnY);
 
   y = Math.min(leftColumnY, rightColumnY) - 8;
-  page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 1, color: rgb(0.85, 0.87, 0.9) });
+  page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 1, color: divider });
   y -= 18;
-  page.drawText("Description", { x: left, y, size: 10, font: bold });
-  page.drawText("Date", { x: 320, y, size: 10, font: bold });
-  page.drawText("Qty", { x: 392, y, size: 10, font: bold });
-  page.drawText("Rate", { x: 436, y, size: 10, font: bold });
-  page.drawText("Amount", { x: 500, y, size: 10, font: bold });
+  page.drawText("Description", { x: left, y, size: 10, font: bold, color: brand });
+  page.drawText("Date", { x: 320, y, size: 10, font: bold, color: brand });
+  page.drawText("Qty", { x: 392, y, size: 10, font: bold, color: brand });
+  page.drawText("Rate", { x: 436, y, size: 10, font: bold, color: brand });
+  page.drawText("Amount", { x: 500, y, size: 10, font: bold, color: brand });
   y -= 14;
-  page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 0.75, color: rgb(0.85, 0.87, 0.9) });
+  page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 0.75, color: divider });
   y -= 14;
 
   const items = model.lineItems.length > 0 ? model.lineItems : [{ description: "No invoice lines available", serviceDate: null, quantity: 0, unitRate: 0, amount: 0 }];
   for (const line of items) {
-    page.drawText(line.description.slice(0, 52), { x: left, y, size: 10, font });
-    page.drawText(line.serviceDate ?? "-", { x: 320, y, size: 10, font });
-    page.drawText(String(line.quantity || 0), { x: 392, y, size: 10, font });
-    page.drawText(formatMoney(line.unitRate), { x: 436, y, size: 10, font });
-    page.drawText(formatMoney(line.amount), { x: 500, y, size: 10, font });
+    page.drawText(line.description.slice(0, 52), { x: left, y, size: 10, font, color: text });
+    page.drawText(line.serviceDate ?? "-", { x: 320, y, size: 10, font, color: text });
+    page.drawText(String(line.quantity || 0), { x: 392, y, size: 10, font, color: text });
+    page.drawText(formatMoney(line.unitRate), { x: 436, y, size: 10, font, color: text });
+    page.drawText(formatMoney(line.amount), { x: 500, y, size: 10, font, color: text });
     y -= 16;
     if (y < 110) break;
   }
 
   y -= 8;
-  page.drawLine({ start: { x: 404, y }, end: { x: right, y }, thickness: 1, color: rgb(0.85, 0.87, 0.9) });
+  page.drawLine({ start: { x: 404, y }, end: { x: right, y }, thickness: 1, color: divider });
   y -= 18;
-  page.drawText("Total", { x: 436, y, size: 11, font: bold });
-  page.drawText(formatMoney(model.totalAmount), { x: 500, y, size: 11, font: bold });
+  page.drawText("Total", { x: 436, y, size: 11, font: bold, color: brand });
+  page.drawText(formatMoney(model.totalAmount), { x: 500, y, size: 11, font: bold, color: brand });
+
+  drawInvoiceFooter({
+    page,
+    font,
+    left,
+    right,
+    text,
+    divider
+  });
 
   return Buffer.from(await pdf.save());
 }

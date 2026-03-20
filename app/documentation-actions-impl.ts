@@ -3,6 +3,7 @@ import "server-only";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { resolveActionMemberIdentity } from "@/app/action-helpers";
 import { getCurrentProfile, getCurrentProfileForRolesOrError } from "@/lib/auth";
 import {
   PARTICIPATION_MISSING_REASONS,
@@ -16,7 +17,6 @@ import {
   updateToiletLogWithAncillarySync
 } from "@/lib/services/ancillary-write-supabase";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import {
   createBloodSugarLogSupabase,
   createDailyActivityLogSupabase,
@@ -94,17 +94,6 @@ async function insertAudit(action: AuditAction, entityType: string, entityId: st
 
 async function requireManagerAdminEditor() {
   return getCurrentProfileForRolesOrError(["admin", "manager", "director"], "Only manager/director/admin can edit submitted entries.");
-}
-
-async function resolveActionMemberIdentity(actionLabel: string, memberId?: string | null) {
-  return resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      selectedId: memberId,
-      memberId
-    },
-    { actionLabel }
-  );
 }
 
 const ancillarySchema = z.object({
@@ -195,7 +184,10 @@ export async function createDailyActivityAction(raw: z.infer<typeof dailyActivit
 
   let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
   try {
-    canonicalMember = await resolveActionMemberIdentity("createDailyActivityAction", payload.data.memberId ?? null);
+    canonicalMember = await resolveActionMemberIdentity({
+      actionLabel: "createDailyActivityAction",
+      memberId: payload.data.memberId ?? null
+    });
   } catch (error) {
     return { error: error instanceof Error ? error.message : "createDailyActivityAction expected member.id." };
   }
@@ -250,7 +242,10 @@ export async function createToiletLogAction(raw: z.infer<typeof toiletSchema>) {
 
   let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
   try {
-    canonicalMember = await resolveActionMemberIdentity("createToiletLogAction", payload.data.memberId);
+    canonicalMember = await resolveActionMemberIdentity({
+      actionLabel: "createToiletLogAction",
+      memberId: payload.data.memberId
+    });
   } catch (error) {
     return { error: error instanceof Error ? error.message : "createToiletLogAction expected member.id." };
   }
@@ -324,7 +319,10 @@ export async function createShowerLogAction(raw: z.infer<typeof showerSchema>) {
 
   let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
   try {
-    canonicalMember = await resolveActionMemberIdentity("createShowerLogAction", payload.data.memberId);
+    canonicalMember = await resolveActionMemberIdentity({
+      actionLabel: "createShowerLogAction",
+      memberId: payload.data.memberId
+    });
   } catch (error) {
     return { error: error instanceof Error ? error.message : "createShowerLogAction expected member.id." };
   }
@@ -453,7 +451,10 @@ export async function createBloodSugarLogAction(raw: z.infer<typeof bloodSugarSc
 
   let canonicalMember: Awaited<ReturnType<typeof resolveActionMemberIdentity>>;
   try {
-    canonicalMember = await resolveActionMemberIdentity("createBloodSugarLogAction", payload.data.memberId);
+    canonicalMember = await resolveActionMemberIdentity({
+      actionLabel: "createBloodSugarLogAction",
+      memberId: payload.data.memberId
+    });
   } catch (error) {
     return { error: error instanceof Error ? error.message : "createBloodSugarLogAction expected member.id." };
   }

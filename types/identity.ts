@@ -40,3 +40,11 @@ export type CanonicalPersonRefInput = {
   displayName?: string | null;
 };
 
+export type CanonicalMemberRefInput = {
+  memberId?: string | null;
+  selectedId?: string | null;
+  leadId?: string | null;
+  externalId?: string | null;
+  legacyId?: string | null;
+  displayName?: string | null;
+};

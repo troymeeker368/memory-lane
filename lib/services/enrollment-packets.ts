@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import {
   ensureCanonicalMemberForLead,
   resolveCanonicalLeadRef,
-  resolveCanonicalMemberRef
+  resolveCanonicalMemberId
 } from "@/lib/services/canonical-person-ref";
 import {
   normalizeEnrollmentPacketIntakePayload,
@@ -832,25 +832,15 @@ function isReusablePreparedEnrollmentPacket(row: EnrollmentPacketRequestRow) {
 export async function listEnrollmentPacketRequestsForMember(memberId: string) {
   const normalizedMemberId = clean(memberId);
   if (!normalizedMemberId) throw new Error("Member ID is required.");
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: normalizedMemberId,
-      selectedId: normalizedMemberId
-    },
-    {
-      actionLabel: "listEnrollmentPacketRequestsForMember",
-      serviceRole: true
-    }
-  );
-  if (!canonical.memberId) {
-    throw new Error("listEnrollmentPacketRequestsForMember expected member.id but canonical member resolution returned empty memberId.");
-  }
+  const canonicalMemberId = await resolveCanonicalMemberId(normalizedMemberId, {
+    actionLabel: "listEnrollmentPacketRequestsForMember",
+    serviceRole: true
+  });
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select("*")
-    .eq("member_id", canonical.memberId)
+    .eq("member_id", canonicalMemberId)
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
   return ((data ?? []) as EnrollmentPacketRequestRow[]).map((row) => toSummary(row));
@@ -1250,18 +1240,11 @@ async function resolveSendContext(input: {
 
   const memberIdFromInput = clean(input.memberId);
   if (memberIdFromInput) {
-    const memberCanonical = await resolveCanonicalMemberRef(
-      {
-        sourceType: "member",
-        memberId: memberIdFromInput,
-        selectedId: memberIdFromInput
-      },
-      {
-        actionLabel: "sendEnrollmentPacketRequest.strictLinkCheck",
-        serviceRole: true
-      }
-    );
-    if (!memberCanonical.memberId || memberCanonical.memberId !== member.id) {
+    const memberCanonicalId = await resolveCanonicalMemberId(memberIdFromInput, {
+      actionLabel: "sendEnrollmentPacketRequest.strictLinkCheck",
+      serviceRole: true
+    });
+    if (memberCanonicalId !== member.id) {
       throw new Error(
         `sendEnrollmentPacketRequest expected canonical member linked to lead.id ${canonicalLead.leadId}, but member.id ${memberIdFromInput} is not linked to that lead.`
       );

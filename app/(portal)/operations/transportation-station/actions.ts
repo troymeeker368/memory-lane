@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizeRoleKey } from "@/lib/permissions";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import {
@@ -104,17 +104,7 @@ async function resolvePreferredContact(memberId: string, explicitContactId?: str
 }
 
 async function resolveTransportationMemberId(rawMemberId: string, actionLabel: string) {
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: rawMemberId
-    },
-    { actionLabel }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
-  return canonical.memberId;
+  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
 async function upsertAdjustment(input: {

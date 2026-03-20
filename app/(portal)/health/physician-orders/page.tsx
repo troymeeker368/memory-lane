@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
 import { canCreatePhysicianOrdersModuleForRole, PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { getPhysicianOrders } from "@/lib/services/physician-orders-supabase";
 import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import { formatDate, formatDateTime } from "@/lib/utils";
@@ -35,15 +35,7 @@ export default async function PhysicianOrdersIndexPage({
 
   let canonicalMemberId = memberId;
   if (memberId) {
-    const canonical = await resolveCanonicalMemberRef(
-      {
-        sourceType: "member",
-        memberId,
-        selectedId: memberId
-      },
-      { actionLabel: "PhysicianOrdersIndexPage" }
-    );
-    canonicalMemberId = canonical.memberId ?? "";
+    canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "PhysicianOrdersIndexPage" });
   }
 
   const rows = await getPhysicianOrders({

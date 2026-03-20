@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import {
@@ -531,17 +531,7 @@ async function runPostSignSyncCascade(input: {
 }
 
 async function resolvePhysicianOrderMemberId(rawMemberId: string, actionLabel: string) {
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: rawMemberId
-    },
-    { actionLabel }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
-  return canonical.memberId;
+  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
 async function getMember(memberId: string) {

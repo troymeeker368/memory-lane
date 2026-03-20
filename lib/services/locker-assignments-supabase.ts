@@ -1,4 +1,4 @@
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -8,23 +8,13 @@ export async function assignLockerToMemberSupabase(input: {
   actionLabel?: string;
 }) {
   const actionLabel = input.actionLabel ?? "assignLockerToMemberSupabase";
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: input.memberId,
-      selectedId: input.memberId
-    },
-    { actionLabel }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
+  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, { actionLabel });
 
   const supabase = await createClient();
   const { data: member, error: memberError } = await supabase
     .from("members")
     .select("id, display_name, status, locker_number")
-    .eq("id", canonical.memberId)
+    .eq("id", canonicalMemberId)
     .maybeSingle();
   if (memberError) throw new Error(memberError.message);
   if (!member) throw new Error("Member not found.");
@@ -33,7 +23,7 @@ export async function assignLockerToMemberSupabase(input: {
   const { data: conflictRows, error: conflictError } = await supabase
     .from("members")
     .select("id, display_name")
-    .neq("id", canonical.memberId)
+    .neq("id", canonicalMemberId)
     .eq("status", "active")
     .eq("locker_number", input.lockerNumber)
     .limit(1);
@@ -49,11 +39,11 @@ export async function assignLockerToMemberSupabase(input: {
       locker_number: input.lockerNumber,
       updated_at: toEasternISO()
     })
-    .eq("id", canonical.memberId);
+    .eq("id", canonicalMemberId);
   if (updateError) throw new Error("Unable to save locker assignment.");
 
   return {
-    memberId: canonical.memberId,
+    memberId: canonicalMemberId,
     memberName: member.display_name,
     lockerNumber: input.lockerNumber
   };
@@ -64,23 +54,13 @@ export async function clearLockerForMemberSupabase(input: {
   actionLabel?: string;
 }) {
   const actionLabel = input.actionLabel ?? "clearLockerForMemberSupabase";
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: input.memberId,
-      selectedId: input.memberId
-    },
-    { actionLabel }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
+  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, { actionLabel });
 
   const supabase = await createClient();
   const { data: member, error: memberError } = await supabase
     .from("members")
     .select("id, display_name, locker_number")
-    .eq("id", canonical.memberId)
+    .eq("id", canonicalMemberId)
     .maybeSingle();
   if (memberError) throw new Error(memberError.message);
   if (!member) throw new Error("Member not found.");
@@ -93,7 +73,7 @@ export async function clearLockerForMemberSupabase(input: {
       .upsert(
         {
           locker_number: clearedLocker,
-          previous_member_id: canonical.memberId,
+          previous_member_id: canonicalMemberId,
           previous_member_assigned: member.display_name,
           previous_assigned_at: at,
           updated_at: at
@@ -109,11 +89,11 @@ export async function clearLockerForMemberSupabase(input: {
       locker_number: null,
       updated_at: at
     })
-    .eq("id", canonical.memberId);
+    .eq("id", canonicalMemberId);
   if (clearError) throw new Error("Unable to clear locker.");
 
   return {
-    memberId: canonical.memberId,
+    memberId: canonicalMemberId,
     memberName: member.display_name
   };
 }

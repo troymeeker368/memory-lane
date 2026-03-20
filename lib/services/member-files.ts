@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 
 import { canAccessClinicalDocumentationForRole, canAccessModule, canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
@@ -483,21 +483,9 @@ export async function saveCommandCenterMemberFileUpload(input: {
 }) {
   assertAuthorizedMemberFileMutator(input.actor);
 
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: input.memberId,
-      selectedId: input.memberId
-    },
-    {
-      actionLabel: "saveCommandCenterMemberFileUpload"
-    }
-  );
-  if (!canonical.memberId) {
-    throw new Error("Member ID is required to upload a member file.");
-  }
-
-  const memberId = canonical.memberId;
+  const memberId = await resolveCanonicalMemberId(input.memberId, {
+    actionLabel: "saveCommandCenterMemberFileUpload"
+  });
   const uploadToken = String(input.uploadToken ?? "").trim();
   if (!uploadToken) throw new Error("Upload token is required.");
 
@@ -634,20 +622,9 @@ export async function getMemberFileDownloadUrl(input: {
 
 export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPdfInput) {
   const now = input.generatedAtIso ?? toEasternISO();
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: input.memberId,
-      selectedId: input.memberId
-    },
-    {
-      actionLabel: "saveGeneratedMemberPdfToFiles"
-    }
-  );
-  if (!canonical.memberId) {
-    throw new Error("saveGeneratedMemberPdfToFiles expected member.id but canonical member resolution returned empty memberId.");
-  }
-  const memberId = canonical.memberId;
+  const memberId = await resolveCanonicalMemberId(input.memberId, {
+    actionLabel: "saveGeneratedMemberPdfToFiles"
+  });
   const admin = createSupabaseAdminClient();
   const defaultName =
     safeFileName(input.fileNameOverride ?? "") || buildDatedPdfFileName(input.documentLabel, input.memberName, now);

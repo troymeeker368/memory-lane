@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { ATTENDANCE_ABSENCE_REASON_OPTIONS } from "@/lib/canonical";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { syncAttendanceBillingForDate } from "@/lib/services/billing-workflows";
 import {
   loadExpectedAttendanceSupabaseContext,
@@ -29,17 +29,7 @@ function asString(formData: FormData, key: string) {
 }
 
 async function resolveAttendanceMemberId(rawMemberId: string, actionLabel: string) {
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: rawMemberId
-    },
-    { actionLabel }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
-  return canonical.memberId;
+  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
 async function requireAttendanceEditor() {

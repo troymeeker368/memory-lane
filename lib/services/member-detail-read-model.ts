@@ -1,6 +1,6 @@
 import { canAccessClinicalDocumentationForRole, normalizeRoleKey } from "@/lib/permissions";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";
 
@@ -15,20 +15,9 @@ export async function getMemberDetail(
     staffUserId?: string | null;
   }
 ) {
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId,
-      selectedId: memberId
-    },
-    {
-      actionLabel: "getMemberDetail"
-    }
-  );
-  if (!canonical.memberId) {
-    throw new Error("getMemberDetail expected member.id but canonical member resolution returned empty memberId.");
-  }
-  const canonicalMemberId = canonical.memberId;
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
+    actionLabel: "getMemberDetail"
+  });
   const supabase = await createClient();
   const { data: member, error } = await supabase.from("members").select("*").eq("id", canonicalMemberId).maybeSingle();
   if (error) throw new Error(error.message);

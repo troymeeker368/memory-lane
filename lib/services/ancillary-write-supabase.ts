@@ -1,4 +1,4 @@
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 
 type CreateAncillaryChargeInput = {
@@ -40,19 +40,9 @@ function isLatePickupCategory(categoryName?: string | null) {
 }
 
 export async function createAncillaryChargeSupabase(input: CreateAncillaryChargeInput) {
-  const canonicalMember = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: input.memberId,
-      selectedId: input.memberId
-    },
-    {
-      actionLabel: "createAncillaryChargeSupabase"
-    }
-  );
-  if (!canonicalMember.memberId) {
-    throw new Error("createAncillaryChargeSupabase expected member.id but canonical member resolution returned empty memberId.");
-  }
+  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, {
+    actionLabel: "createAncillaryChargeSupabase"
+  });
 
   const supabase = await createClient();
   const { data: category, error: categoryError } = await supabase
@@ -73,7 +63,7 @@ export async function createAncillaryChargeSupabase(input: CreateAncillaryCharge
   const duplicateBaseQuery = supabase
     .from("ancillary_charge_logs")
     .select("id")
-    .eq("member_id", canonicalMember.memberId)
+    .eq("member_id", canonicalMemberId)
     .eq("category_id", input.categoryId)
     .eq("service_date", input.serviceDate);
   const duplicateQuery =
@@ -102,7 +92,7 @@ export async function createAncillaryChargeSupabase(input: CreateAncillaryCharge
   const { data, error } = await supabase
     .from("ancillary_charge_logs")
     .insert({
-      member_id: canonicalMember.memberId,
+      member_id: canonicalMemberId,
       category_id: input.categoryId,
       service_date: input.serviceDate,
       late_pickup_time: requiresLatePickupTime ? input.latePickupTime?.trim() || null : null,

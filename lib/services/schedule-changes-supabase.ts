@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
-import { listCanonicalMemberLinksForLeadIds, resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { listCanonicalMemberLinksForLeadIds, resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import {
   SCHEDULE_CHANGE_STATUSES,
   SCHEDULE_CHANGE_TYPES,
@@ -84,17 +84,7 @@ async function resolveScheduleMemberIdsBulk(rawIds: Array<string | null | undefi
 
 
 async function resolveScheduleMemberId(rawMemberId: string, actionLabel: string) {
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: rawMemberId
-    },
-    { actionLabel, serviceRole: true }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
-  return canonical.memberId;
+  return resolveCanonicalMemberId(rawMemberId, { actionLabel, serviceRole: true });
 }
 
 type PostgrestErrorLike = {

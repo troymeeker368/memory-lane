@@ -14,7 +14,7 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import {
   MHP_AMBULATION_OPTIONS,
   MHP_BLADDER_CONTINENCE_OPTIONS,
@@ -109,15 +109,7 @@ export default async function NewPhysicianOrderPage({
   let identityError: string | null = null;
   if (memberId) {
     try {
-      const canonical = await resolveCanonicalMemberRef(
-        {
-          sourceType: "member",
-          memberId,
-          selectedId: memberId
-        },
-        { actionLabel: "NewPhysicianOrderPage" }
-      );
-      canonicalMemberId = canonical.memberId ?? "";
+      canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "NewPhysicianOrderPage" });
     } catch (error) {
       canonicalMemberId = "";
       identityError = error instanceof Error ? error.message : "Invalid member identity for new physician order.";

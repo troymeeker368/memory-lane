@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import {
   MAR_NOT_GIVEN_REASON_OPTIONS,
   MAR_PRN_OUTCOME_OPTIONS,
@@ -104,18 +104,7 @@ function buildPrnAdministrationIdempotencyKey(input: {
 }
 
 async function resolveMarMemberId(memberId: string, actionLabel: string, serviceRole?: boolean) {
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId,
-      selectedId: memberId
-    },
-    { actionLabel, serviceRole }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
-  return canonical.memberId;
+  return resolveCanonicalMemberId(memberId, { actionLabel, serviceRole });
 }
 
 async function syncMarMedicationsFromMhp(input: {

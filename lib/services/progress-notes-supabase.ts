@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
@@ -72,17 +72,7 @@ function toProgressNote(row: DbProgressNote, memberName?: string | null): Progre
 }
 
 async function resolveProgressNoteMemberId(rawMemberId: string, actionLabel: string) {
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: rawMemberId
-    },
-    { actionLabel }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
-  return canonical.memberId;
+  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
 async function loadProgressNoteRows(input?: {

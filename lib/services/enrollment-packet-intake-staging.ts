@@ -1,4 +1,4 @@
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 
 type EnrollmentPacketStagingFlags = {
@@ -112,17 +112,15 @@ export async function getLatestEnrollmentPacketPofStagingSummary(
   memberId: string,
   options?: { serviceRole?: boolean }
 ): Promise<EnrollmentPacketPofStagingSummary | null> {
-  const canonical = await resolveCanonicalMemberRef(
-    { sourceType: "member", memberId },
-    { actionLabel: "getLatestEnrollmentPacketPofStagingSummary" }
-  );
-  if (!canonical.memberId) return null;
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
+    actionLabel: "getLatestEnrollmentPacketPofStagingSummary"
+  });
 
   const supabase = await createClient({ serviceRole: options?.serviceRole });
   const { data: stagingRow, error: stagingError } = await supabase
     .from("enrollment_packet_pof_staging")
     .select("id, packet_id, member_id, prefill_payload, review_required, updated_at")
-    .eq("member_id", canonical.memberId)
+    .eq("member_id", canonicalMemberId)
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -188,24 +186,22 @@ export async function markEnrollmentPacketPofStagingReviewed(input: {
   actorName: string | null;
   serviceRole?: boolean;
 }) {
-  const canonical = await resolveCanonicalMemberRef(
-    { sourceType: "member", memberId: input.memberId },
-    { actionLabel: "markEnrollmentPacketPofStagingReviewed" }
-  );
-  if (!canonical.memberId) return false;
+  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, {
+    actionLabel: "markEnrollmentPacketPofStagingReviewed"
+  });
 
   const supabase = await createClient({ serviceRole: input.serviceRole });
   const { data: latestPending, error: latestPendingError } = await supabase
     .from("enrollment_packet_pof_staging")
     .select("id")
-    .eq("member_id", canonical.memberId)
+    .eq("member_id", canonicalMemberId)
     .eq("review_required", true)
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (latestPendingError) {
     console.error("[enrollment_packet_pof_staging] unable to load latest pending review row", {
-      memberId: canonical.memberId,
+      memberId: canonicalMemberId,
       error: latestPendingError.message
     });
     return false;
@@ -223,7 +219,7 @@ export async function markEnrollmentPacketPofStagingReviewed(input: {
 
   if (error) {
     console.error("[enrollment_packet_pof_staging] unable to mark review completed", {
-      memberId: canonical.memberId,
+      memberId: canonicalMemberId,
       error: error.message
     });
     return false;

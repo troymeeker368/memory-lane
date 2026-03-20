@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { buildPreferredContactByMember } from "@/lib/services/member-contact-priority";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizeOperationalDateOnly, getWeekdayForDate, type OperationsWeekdayKey } from "@/lib/services/operations-calendar";
@@ -175,17 +175,7 @@ function transportationManifestStorageRequiredError() {
 }
 
 async function resolveTransportationServiceMemberId(rawMemberId: string, actionLabel: string) {
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: rawMemberId
-    },
-    { actionLabel }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
-  return canonical.memberId;
+  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
 async function listPreferredContactsByMember(memberIds: string[]) {

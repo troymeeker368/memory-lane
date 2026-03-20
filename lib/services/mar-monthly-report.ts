@@ -1,7 +1,7 @@
 import "server-only";
 
 import { facilityBranding } from "@/lib/config/facility-branding";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import { EASTERN_TIME_ZONE, easternDateTimeLocalToISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
@@ -366,23 +366,10 @@ export async function assembleMarMonthlyReportData(input: {
   const monthWindow = toMonthWindow(input.month);
   const generatedAt = clean(input.generatedAtIso) ?? new Date().toISOString();
 
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: input.memberId,
-      selectedId: input.memberId
-    },
-    {
-      actionLabel: "assembleMarMonthlyReportData",
-      serviceRole
-    }
-  );
-
-  if (!canonical.memberId) {
-    throw new Error("assembleMarMonthlyReportData expected member.id but canonical resolver returned empty memberId.");
-  }
-
-  const memberId = canonical.memberId;
+  const memberId = await resolveCanonicalMemberId(input.memberId, {
+    actionLabel: "assembleMarMonthlyReportData",
+    serviceRole
+  });
   const supabase = await createClient({ serviceRole });
 
   const [memberResult, pofResult, scheduleResult, administrationResult] = await Promise.all([

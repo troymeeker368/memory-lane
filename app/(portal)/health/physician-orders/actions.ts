@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { canCreatePhysicianOrdersModuleForRole } from "@/lib/permissions";
-import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import {
   getPofRequestSummaryById,
@@ -376,17 +376,7 @@ async function savePofPdfToMemberFiles(input: {
 }
 
 async function resolvePofMemberId(rawMemberId: string, actionLabel: string) {
-  const canonical = await resolveCanonicalMemberRef(
-    {
-      sourceType: "member",
-      memberId: rawMemberId
-    },
-    { actionLabel }
-  );
-  if (!canonical.memberId) {
-    throw new Error(`${actionLabel} expected member.id but canonical member resolution returned empty memberId.`);
-  }
-  return canonical.memberId;
+  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
 function clean(value: string | null | undefined) {

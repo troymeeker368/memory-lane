@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { toEasternISO } from "@/lib/timezone";
 
 export const MHP_TABS = [
@@ -370,11 +371,12 @@ function sortByLastName(a: string, b: string) {
 }
 
 export async function ensureMemberHealthProfileSupabase(memberId: string, options?: { serviceRole?: boolean }) {
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "ensureMemberHealthProfileSupabase" });
   const supabase = await createClient();
   const { data: existing, error: existingError } = await supabase
     .from("member_health_profiles")
     .select("*")
-    .eq("member_id", memberId)
+    .eq("member_id", canonicalMemberId)
     .maybeSingle();
   if (existingError) throw new Error(existingError.message);
   if (existing) {
@@ -385,7 +387,7 @@ export async function ensureMemberHealthProfileSupabase(memberId: string, option
   const writeSupabase = await createClient({ serviceRole: options?.serviceRole ?? true });
   const { data, error } = await writeSupabase
     .from("member_health_profiles")
-    .insert({ member_id: memberId, created_at: now, updated_at: now })
+    .insert({ member_id: canonicalMemberId, created_at: now, updated_at: now })
     .select("*")
     .single();
   if (error) throw new Error(error.message);
@@ -530,11 +532,12 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
 }
 
 export async function getMemberHealthProfileDetailSupabase(memberId: string) {
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "getMemberHealthProfileDetailSupabase" });
   const supabase = await createClient();
   const { data: memberData, error: memberError } = await supabase
     .from("members")
     .select("id, display_name, status, dob, enrollment_date, city, code_status, latest_assessment_track")
-    .eq("id", memberId)
+    .eq("id", canonicalMemberId)
     .maybeSingle();
   if (memberError) throw new Error(memberError.message);
   if (!memberData) return null;
@@ -554,22 +557,22 @@ export async function getMemberHealthProfileDetailSupabase(memberId: string) {
     assessmentsResult,
     mccResult
   ] = await Promise.all([
-    supabase.from("member_health_profiles").select("*").eq("member_id", memberId).maybeSingle(),
-    supabase.from("member_diagnoses").select("*").eq("member_id", memberId),
-    supabase.from("member_medications").select("*").eq("member_id", memberId),
-    supabase.from("member_allergies").select("*").eq("member_id", memberId),
-    supabase.from("member_providers").select("*").eq("member_id", memberId),
+    supabase.from("member_health_profiles").select("*").eq("member_id", canonicalMemberId).maybeSingle(),
+    supabase.from("member_diagnoses").select("*").eq("member_id", canonicalMemberId),
+    supabase.from("member_medications").select("*").eq("member_id", canonicalMemberId),
+    supabase.from("member_allergies").select("*").eq("member_id", canonicalMemberId),
+    supabase.from("member_providers").select("*").eq("member_id", canonicalMemberId),
     supabase.from("provider_directory").select("*").order("updated_at", { ascending: false }),
     supabase.from("hospital_preference_directory").select("*").order("updated_at", { ascending: false }),
-    supabase.from("member_equipment").select("*").eq("member_id", memberId),
-    supabase.from("member_notes").select("*").eq("member_id", memberId),
+    supabase.from("member_equipment").select("*").eq("member_id", canonicalMemberId),
+    supabase.from("member_notes").select("*").eq("member_id", canonicalMemberId),
     supabase
       .from("intake_assessments")
       .select("id, member_id, assessment_date, total_score, recommended_track, completed_by, created_at")
-      .eq("member_id", memberId)
+      .eq("member_id", canonicalMemberId)
       .order("assessment_date", { ascending: false })
       .order("created_at", { ascending: false }),
-    supabase.from("member_command_centers").select("member_id, profile_image_url").eq("member_id", memberId).maybeSingle()
+    supabase.from("member_command_centers").select("member_id, profile_image_url").eq("member_id", canonicalMemberId).maybeSingle()
   ]);
 
   if (profileResult.error) throw new Error(profileResult.error.message);
@@ -601,7 +604,7 @@ export async function getMemberHealthProfileDetailSupabase(memberId: string) {
   const assessments = sortDesc((assessmentsResult.data ?? []) as IntakeAssessmentRow[], (row) => row.created_at);
   const storedProfile = (profileResult.data as MemberHealthProfileRow | null) ?? null;
   const profileNeedsBackfill = !storedProfile;
-  const profile = storedProfile ?? buildEmptyMemberHealthProfileRow(memberId);
+  const profile = storedProfile ?? buildEmptyMemberHealthProfileRow(canonicalMemberId);
 
   const effectiveProfile = {
     ...profile,

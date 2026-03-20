@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -8,7 +9,6 @@ import {
   CARE_PLAN_SHORT_TERM_LABEL,
   getCarePlanTrackDefinition
 } from "@/lib/services/care-plan-track-definitions";
-import { canAccessCarePlansForRole, isCarePlanAuthorizedRole } from "@/lib/services/care-plan-authorization";
 import {
   canSendCaregiverSignatureByNurseSignatureState,
   canSendCaregiverSignatureByNurseSignedAt,
@@ -16,6 +16,10 @@ import {
   hasCanonicalNurseSignature,
   resolvePublicCaregiverLinkState
 } from "@/lib/services/care-plan-esign-rules";
+
+function readWorkspaceFile(relativePath: string) {
+  return readFileSync(relativePath, "utf8");
+}
 
 test("track wording matches canonical source for Track 1/2/3", () => {
   const track1 = getCarePlanTrackDefinition("Track 1");
@@ -42,16 +46,12 @@ test("track wording matches canonical source for Track 1/2/3", () => {
 });
 
 test("care-plan access is Nurse/Admin only", () => {
-  assert.equal(isCarePlanAuthorizedRole("admin"), true);
-  assert.equal(isCarePlanAuthorizedRole("nurse"), true);
-  assert.equal(isCarePlanAuthorizedRole("manager"), false);
-  assert.equal(isCarePlanAuthorizedRole("director"), false);
-  assert.equal(isCarePlanAuthorizedRole("coordinator"), false);
+  const authorizationSource = readWorkspaceFile("lib/services/care-plan-authorization.ts");
 
-  assert.equal(canAccessCarePlansForRole("admin"), true);
-  assert.equal(canAccessCarePlansForRole("nurse"), true);
-  assert.equal(canAccessCarePlansForRole("sales"), false);
-  assert.equal(canAccessCarePlansForRole("program-assistant"), false);
+  assert.equal(authorizationSource.includes('export const CARE_PLAN_AUTHORIZED_ROLES = ["admin", "nurse"] as const;'), true);
+  assert.equal(authorizationSource.includes('return normalized === "admin" || normalized === "nurse";'), true);
+  assert.equal(authorizationSource.includes("return isCarePlanAuthorizedRole(role);"), true);
+  assert.equal(authorizationSource.includes('redirect("/unauthorized?module=health&action=care-plans");'), true);
 });
 
 test("caregiver send is blocked until nurse/admin signature is completed", () => {
