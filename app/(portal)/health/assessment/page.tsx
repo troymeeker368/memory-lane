@@ -8,6 +8,8 @@ import { getDocumentationWorkflows } from "@/lib/services/documentation-workflow
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { formatDate } from "@/lib/utils";
 
+type AssessmentWorkflowRow = Awaited<ReturnType<typeof getDocumentationWorkflows>>["assessments"][number];
+
 function draftPofReadinessLabel(status: "not_signed" | "signed_pending_draft_pof" | "draft_pof_failed" | "draft_pof_ready") {
   if (status === "draft_pof_ready") return "Ready";
   if (status === "draft_pof_failed") return "Failed";
@@ -64,7 +66,7 @@ export default async function HealthAssessmentPage({
             </tr>
           </thead>
           <tbody>
-            {workflows.assessments.map((row: any) => (
+            {workflows.assessments.map((row: AssessmentWorkflowRow) => (
               <tr key={row.id}>
                 <td>{formatDate(row.assessment_date)}</td>
                 <td>{row.member_name}</td>

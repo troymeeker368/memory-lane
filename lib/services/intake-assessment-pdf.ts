@@ -235,7 +235,7 @@ async function groupedAssessmentSections(assessmentId: string): Promise<Assessme
   }
 
   const bySection = new Map<string, AssessmentSection>();
-  (responses ?? []).forEach((row: any) => {
+  (responses ?? []).forEach((row) => {
     const section = row.section_type?.trim() || "Other";
     if (PDF_EXCLUDED_SECTION_NAMES.has(section)) return;
     const fieldKey = String(row.field_key ?? "");

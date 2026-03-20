@@ -8,6 +8,7 @@ import { getHealthSnapshot } from "@/lib/services/health-workflows";
 import { formatDateTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
+type BloodSugarHistoryRow = Awaited<ReturnType<typeof getHealthSnapshot>>["bloodSugarHistory"][number];
 
 export default async function BloodSugarPage() {
   const profile = await requireModuleAccess("health");
@@ -22,14 +23,14 @@ export default async function BloodSugarPage() {
         <div className="mt-3"><BloodSugarFormShell members={members} /></div>
       </Card>
 
-      <MobileList items={snapshot.bloodSugarHistory.map((row: any) => ({ id: row.id, title: row.member_name, fields: [{ label: "Checked", value: formatDateTime(row.checked_at) }, { label: "Reading", value: row.reading_mg_dl }, { label: "Nurse", value: row.nurse_name }] }))} />
+      <MobileList items={snapshot.bloodSugarHistory.map((row: BloodSugarHistoryRow) => ({ id: row.id, title: row.member_name, fields: [{ label: "Checked", value: formatDateTime(row.checked_at) }, { label: "Reading", value: row.reading_mg_dl }, { label: "Nurse", value: row.nurse_name }] }))} />
 
       <Card className="table-wrap hidden md:block">
         <CardTitle>Recent Blood Sugar Logs</CardTitle>
         <table>
           <thead><tr><th>Checked At</th><th>Member</th><th>Reading</th><th>Nurse</th><th>Notes</th>{canEdit ? <th>Edit</th> : null}</tr></thead>
           <tbody>
-            {snapshot.bloodSugarHistory.map((row: any) => (
+            {snapshot.bloodSugarHistory.map((row: BloodSugarHistoryRow) => (
               <tr key={row.id}><td>{formatDateTime(row.checked_at)}</td><td>{row.member_name}</td><td>{row.reading_mg_dl}</td><td>{row.nurse_name}</td><td>{row.notes ?? "-"}</td>{canEdit ? <td><QuickEditBloodSugar id={row.id} reading={row.reading_mg_dl} notes={row.notes} /></td> : null}</tr>
             ))}
           </tbody>

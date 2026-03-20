@@ -96,15 +96,25 @@ function isEmail(value: string | null | undefined) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
 }
 
-function isMissingRpcFunctionError(error: any, functionName: string) {
-  const code = String(error?.code ?? error?.cause?.code ?? "").toUpperCase();
+function isMissingRpcFunctionError(error: unknown, functionName: string) {
+  const candidate =
+    error && typeof error === "object"
+      ? (error as {
+          code?: unknown;
+          message?: unknown;
+          details?: unknown;
+          hint?: unknown;
+          cause?: { code?: unknown; message?: unknown; details?: unknown; hint?: unknown } | null;
+        })
+      : null;
+  const code = String(candidate?.code ?? candidate?.cause?.code ?? "").toUpperCase();
   const message = [
-    error?.message,
-    error?.details,
-    error?.hint,
-    error?.cause?.message,
-    error?.cause?.details,
-    error?.cause?.hint
+    candidate?.message,
+    candidate?.details,
+    candidate?.hint,
+    candidate?.cause?.message,
+    candidate?.cause?.details,
+    candidate?.cause?.hint
   ]
     .filter((value) => typeof value === "string" && value.trim().length > 0)
     .join(" ")

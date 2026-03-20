@@ -3,7 +3,10 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { formatPhoneDisplay } from "@/lib/phone";
-import { getSalesReferralSourceDirectoryPageSupabase } from "@/lib/services/sales-crm-supabase";
+import {
+  type SalesReferralSourceRow,
+  getSalesReferralSourceDirectoryPageSupabase
+} from "@/lib/services/sales-crm-supabase";
 import { formatOptionalDate } from "@/lib/utils";
 
 function parsePage(raw: string | string[] | undefined) {
@@ -76,7 +79,7 @@ export default async function ReferralSourcesPage({
                 <td colSpan={8} className="text-center text-sm text-muted">No referral sources found.</td>
               </tr>
             ) : (
-              pageRows.map((source: any) => (
+              pageRows.map((source: SalesReferralSourceRow) => (
                 <tr key={source.id}>
                   <td><Link className="font-semibold text-brand" href={`/sales/community-partners/referral-sources/${source.id}`}>{source.contact_name}</Link></td>
                   <td>{source.organization_name}</td>

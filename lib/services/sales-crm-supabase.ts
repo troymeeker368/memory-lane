@@ -151,7 +151,7 @@ const SALES_PARTNER_LOOKUP_SELECT = "id, partner_id, organization_name, category
 const SALES_REFERRAL_SOURCE_LOOKUP_SELECT =
   "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, active, last_touched";
 
-function applyOpenLeadFilter(query: any) {
+function applyOpenLeadFilter<T extends { or: (filters: string) => T }>(query: T) {
   return query.or("status.eq.open,status.eq.nurture");
 }
 
@@ -559,9 +559,15 @@ export async function getSalesFormLookupsSupabase(options?: {
   }
 
   return {
-    leads: leadRows,
+    leads: leadRows.map((row) => ({
+      ...row,
+      member_name: row.member_name ?? "Unnamed Lead"
+    })),
     partners: partnerRows,
-    referralSources: normalizeReferralSources(partnerRows, referralRows)
+    referralSources: normalizeReferralSources(partnerRows, referralRows).map((row) => ({
+      ...row,
+      organization_name: row.organization_name ?? "Unknown Organization"
+    }))
   };
 }
 
@@ -676,7 +682,7 @@ export async function getSalesLeadListSupabase(input?: {
   const page = normalizePage(input?.page);
   const hasPagination = Boolean(input?.pageSize || input?.limit);
   const pageSize = hasPagination ? normalizePageSize(input?.pageSize ?? input?.limit ?? 25, input?.limit ?? 25) : 0;
-  let query: any = supabase.from("leads").select(SALES_LEAD_READ_SELECT, { count: "exact" });
+  let query = supabase.from("leads").select(SALES_LEAD_READ_SELECT, { count: "exact" });
 
   if (input?.status) {
     query = input.status === "open" ? applyOpenLeadFilter(query) : query.eq("status", input.status);
@@ -730,7 +736,7 @@ export async function getSalesLeadListSupabase(input?: {
 
 export async function getSalesRecentActivitySnapshotSupabase(options?: { leadId?: string | null }) {
   const supabase = await createClient();
-  let leadActivitiesQuery: any = supabase
+  let leadActivitiesQuery = supabase
     .from("lead_activities")
     .select("id, lead_id, activity_at, activity_type, outcome, lost_reason, next_follow_up_date, next_follow_up_type, completed_by_name, notes, member_name")
     .order("activity_at", { ascending: false })
@@ -751,10 +757,10 @@ export async function getSalesRecentActivitySnapshotSupabase(options?: { leadId?
 
   return {
     activities: leadActivitiesResult.data ?? [],
-    partnerActivities: (partnerActivitiesResult.data ?? []).map((activity: any) => ({
-      ...activity,
-      completed_by: activity.completed_by ?? activity.completed_by_name ?? null
-    }))
+      partnerActivities: (partnerActivitiesResult.data ?? []).map((activity) => ({
+        ...activity,
+        completed_by: activity.completed_by ?? activity.completed_by_name ?? null
+      }))
   };
 }
 
@@ -762,7 +768,7 @@ export async function getSalesPartnerDirectoryPageSupabase(input?: { q?: string;
   const supabase = await createClient();
   const page = normalizePage(input?.page);
   const pageSize = normalizePageSize(input?.pageSize ?? 25, 25);
-  let query: any = supabase
+  let query = supabase
     .from("community_partner_organizations")
     .select(SALES_PARTNER_LOOKUP_SELECT, { count: "exact" })
     .order("organization_name", { ascending: true });
@@ -793,7 +799,7 @@ export async function getSalesReferralSourceDirectoryPageSupabase(input?: { q?: 
     .order("organization_name", { ascending: true })
     .limit(500);
   if (partnersError) throw new Error(partnersError.message);
-  let query: any = supabase
+  let query = supabase
     .from("referral_sources")
     .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT, { count: "exact" })
     .order("organization_name", { ascending: true });

@@ -104,7 +104,7 @@ export async function listDevAuthBootstrapAccounts(): Promise<DevAuthBootstrapAc
     throw new Error(`Unable to load dev bootstrap staff accounts: ${error.message}`);
   }
 
-  const rows = (data ?? []).map((row: any) => ({
+  const rows = (data ?? []).map((row) => ({
     email: normalizeEmail(String(row?.email ?? "")) ?? "",
     fullName: clean(String(row?.full_name ?? "")) ?? "",
     role: normalizeRoleKey(String(row?.role ?? "program-assistant") as AppRole),

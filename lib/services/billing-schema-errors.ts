@@ -1,20 +1,34 @@
-function collectErrorText(error: any) {
+function collectErrorText(error: unknown) {
+  const candidate =
+    error && typeof error === "object"
+      ? (error as {
+          message?: unknown;
+          details?: unknown;
+          hint?: unknown;
+          error_description?: unknown;
+          cause?: { message?: unknown; details?: unknown; hint?: unknown } | null;
+        })
+      : null;
   return [
-    error?.message,
-    error?.details,
-    error?.hint,
-    error?.error_description,
-    error?.cause?.message,
-    error?.cause?.details,
-    error?.cause?.hint
+    candidate?.message,
+    candidate?.details,
+    candidate?.hint,
+    candidate?.error_description,
+    candidate?.cause?.message,
+    candidate?.cause?.details,
+    candidate?.cause?.hint
   ]
     .filter((value) => typeof value === "string" && value.trim().length > 0)
     .join(" ")
     .toLowerCase();
 }
 
-export function isMissingSchemaObjectError(error: any) {
-  const code = String(error?.code ?? error?.cause?.code ?? "").toUpperCase();
+export function isMissingSchemaObjectError(error: unknown) {
+  const candidate =
+    error && typeof error === "object"
+      ? (error as { code?: unknown; cause?: { code?: unknown } | null })
+      : null;
+  const code = String(candidate?.code ?? candidate?.cause?.code ?? "").toUpperCase();
   const message = collectErrorText(error);
 
   return (
@@ -35,10 +49,13 @@ export function buildMissingSchemaMessage(input: { objectName: string; migration
 }
 
 export function handleNonCriticalMissingSchemaError(
-  error: any,
+  error: unknown,
   input: { objectName: string; migration: string }
 ) {
   if (!isMissingSchemaObjectError(error)) return;
-  const original = String(error?.message ?? "Unknown schema error");
+  const original =
+    error && typeof error === "object" && "message" in error
+      ? String((error as { message?: unknown }).message ?? "Unknown schema error")
+      : "Unknown schema error";
   throw new Error(`${buildMissingSchemaMessage(input)} Original error: ${original}`);
 }

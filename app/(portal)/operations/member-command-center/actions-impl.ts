@@ -1247,12 +1247,18 @@ export async function deleteMemberFileAction(raw: { id: string; memberId: string
 
 export async function getMemberFileDownloadUrlAction(raw: { id: string; memberId: string }) {
   try {
-    await requireCommandCenterViewer();
+    const viewer = await requireCommandCenterViewer();
     const id = raw.id?.trim();
     const memberId = raw.memberId?.trim();
     if (!id || !memberId) return { ok: false, error: "Invalid file download request." } as const;
 
     const result = await getMemberFileDownloadUrl({
+      actor: {
+        id: viewer.id,
+        fullName: viewer.full_name,
+        role: viewer.role,
+        permissions: viewer.permissions
+      },
       memberFileId: id,
       memberId
     });

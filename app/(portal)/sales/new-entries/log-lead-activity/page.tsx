@@ -6,6 +6,9 @@ import { requireModuleAccess } from "@/lib/auth";
 import { getSalesFormLookupsSupabase, getSalesRecentActivitySnapshotSupabase } from "@/lib/services/sales-crm-supabase";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
+type SalesActivitySnapshot = Awaited<ReturnType<typeof getSalesRecentActivitySnapshotSupabase>>;
+type LeadActivityRow = SalesActivitySnapshot["activities"][number];
+
 export default async function LogLeadActivityPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   await requireModuleAccess("sales");
   const params = await searchParams;
@@ -32,9 +35,9 @@ export default async function LogLeadActivityPage({ searchParams }: { searchPara
         <CardTitle>{selectedLead ? `Log Lead Activity - ${selectedLead.member_name}` : "Log Lead Activity"}</CardTitle>
         <div className="mt-3">
           <SalesLeadActivityForm
-            leads={leads as any[]}
-            partners={partners as any[]}
-            referralSources={referralSources as any[]}
+            leads={leads}
+            partners={partners}
+            referralSources={referralSources}
             initialLeadId={leadId}
             initialPartnerId={partnerId}
             initialReferralSourceId={referralSourceId}
@@ -53,7 +56,7 @@ export default async function LogLeadActivityPage({ searchParams }: { searchPara
                 <td colSpan={8} className="text-center text-sm text-muted">No lead activities found.</td>
               </tr>
             ) : (
-              activities.map((activity: any) => (
+              activities.map((activity: LeadActivityRow) => (
                 <tr key={activity.id}>
                   <td>{formatDateTime(activity.activity_at)}</td>
                   <td><Link className="font-semibold text-brand" href={`/sales/leads/${activity.lead_id}`}>{leadNameById.get(activity.lead_id) ?? activity.member_name}</Link></td>

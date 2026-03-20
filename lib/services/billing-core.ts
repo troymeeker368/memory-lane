@@ -6,6 +6,7 @@ import type {
   DateRange,
   ScheduleTemplateRow
 } from "@/lib/services/billing-types";
+import type { Database } from "@/types/supabase";
 import {
   addDays,
   attendanceSettingIncludesDate,
@@ -179,21 +180,46 @@ export function toDataUrl(fileName: string, csv: string) {
   return `data:text/csv;name=${encodeURIComponent(safeName)};base64,${bytes}`;
 }
 
-export function normalizeInvoiceRow(row: any) {
+type BillingInvoiceLike = Database["public"]["Tables"]["billing_invoices"]["Row"] &
+  Partial<{
+    balance_due: number | null;
+    completion_date: string | null;
+    next_due_date: string | null;
+    status: string | null;
+  }>;
+
+export type NormalizedInvoiceRow = BillingInvoiceLike & {
+  invoice_number: string;
+  member_id: string;
+  billing_batch_id: string | null;
+  invoice_month: string;
+  invoice_date: string | null;
+  due_date: string | null;
+  total_amount: number;
+  balance_due: number;
+  completion_date: string | null;
+  next_due_date: string | null;
+  status: string;
+  due_state: string;
+};
+
+export function normalizeInvoiceRow(row: BillingInvoiceLike): NormalizedInvoiceRow {
+  const nextDueDate = row.next_due_date ? String(row.next_due_date) : null;
+  const completionDate = row.completion_date ? String(row.completion_date) : null;
   return {
     ...row,
     invoice_number: String(row.invoice_number ?? ""),
-    member_id: row.member_id ? String(row.member_id) : null,
+    member_id: String(row.member_id ?? ""),
     billing_batch_id: row.billing_batch_id ? String(row.billing_batch_id) : null,
     invoice_month: String(row.invoice_month ?? ""),
     invoice_date: row.invoice_date ? String(row.invoice_date) : null,
     due_date: row.due_date ? String(row.due_date) : null,
     total_amount: Number(row.total_amount ?? 0),
     balance_due: Number(row.balance_due ?? row.total_amount ?? 0),
-    completion_date: row.completion_date ? String(row.completion_date) : null,
-    next_due_date: row.next_due_date ? String(row.next_due_date) : null,
+    completion_date: completionDate,
+    next_due_date: nextDueDate,
     status: String(row.status ?? ""),
-    due_state: computeDueState(row.next_due_date ?? null, row.completion_date ?? null)
+    due_state: computeDueState(nextDueDate, completionDate)
   };
 }
 

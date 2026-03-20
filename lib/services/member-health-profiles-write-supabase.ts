@@ -372,7 +372,7 @@ export async function upsertProviderDirectoryFromMhpSupabase(input: {
   if (providerError) throw new Error(providerError.message);
 
   const existing = (providerRows ?? []).find(
-    (row: any) => String(row.provider_name ?? "").trim().toLowerCase() === normalizedProviderName.toLowerCase()
+      (row) => String(row.provider_name ?? "").trim().toLowerCase() === normalizedProviderName.toLowerCase()
   );
 
   if (existing?.id) {
@@ -421,7 +421,7 @@ export async function upsertHospitalPreferenceDirectoryFromMhpSupabase(input: {
   if (hospitalError) throw new Error(hospitalError.message);
 
   const existing = (hospitalRows ?? []).find(
-    (row: any) => String(row.hospital_name ?? "").trim().toLowerCase() === normalizedHospitalName.toLowerCase()
+      (row) => String(row.hospital_name ?? "").trim().toLowerCase() === normalizedHospitalName.toLowerCase()
   );
 
   if (existing?.id) {

@@ -7,6 +7,8 @@ import { normalizeRoleKey } from "@/lib/permissions";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
 import { formatDate } from "@/lib/utils";
 
+type TransportationWorkflowRow = Awaited<ReturnType<typeof getDocumentationWorkflows>>["transportation"][number];
+
 export default async function TransportationLogPage() {
   const profile = await requireModuleAccess("documentation");
   const normalizedRole = normalizeRoleKey(profile.role);
@@ -28,7 +30,7 @@ export default async function TransportationLogPage() {
       </Card>
 
       <MobileList
-        items={workflows.transportation.map((row: any) => ({
+        items={workflows.transportation.map((row: TransportationWorkflowRow) => ({
           id: row.id,
           title: row.member_name,
           fields: [
@@ -53,7 +55,7 @@ export default async function TransportationLogPage() {
             </tr>
           </thead>
           <tbody>
-            {workflows.transportation.map((row: any) => (
+            {workflows.transportation.map((row: TransportationWorkflowRow) => (
               <tr key={row.id}>
                 <td>{formatDate(row.service_date)}</td>
                 <td>{row.period}</td>

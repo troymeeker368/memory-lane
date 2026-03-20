@@ -333,7 +333,7 @@ export async function getCarePlanParticipationSummary(memberId: string): Promise
   if (attendanceError) throw new Error(attendanceError.message);
   if (activityError) throw new Error(activityError.message);
   const attendanceDays = (attendanceRows ?? []).length;
-  const participationDays = new Set((activityRows ?? []).map((row: any) => String(row.activity_date).slice(0, 10))).size;
+  const participationDays = new Set((activityRows ?? []).map((row) => String(row.activity_date).slice(0, 10))).size;
   return {
     attendanceDays,
     participationDays,
@@ -380,7 +380,12 @@ async function resolveCarePlanQueryMemberIds(queryText?: string | null) {
   return members.map((row) => row.id);
 }
 
-function applyCarePlanStatusFilter(query: any, status: string | undefined) {
+function applyCarePlanStatusFilter<T extends {
+  lt: (column: string, value: string) => T;
+  eq: (column: string, value: string) => T;
+  gt: (column: string, value: string) => T;
+  lte: (column: string, value: string) => T;
+}>(query: T, status: string | undefined) {
   if (!status || status === "All") return query;
   const today = toEasternDate();
   const dueSoonEnd = addDays(today, 14);
@@ -406,7 +411,7 @@ async function getCarePlanCount(filters: {
   const queryMemberIds =
     options && "queryMemberIds" in options ? options.queryMemberIds ?? null : await resolveCarePlanQueryMemberIds(filters.query);
   if (queryMemberIds && queryMemberIds.length === 0) return 0;
-  let query: any = supabase.from("care_plans").select("id", { count: "exact", head: true });
+  let query = supabase.from("care_plans").select("id", { count: "exact", head: true });
   if (canonicalMemberId) query = query.eq("member_id", canonicalMemberId);
   if (filters.track && filters.track !== "All") query = query.eq("track", filters.track);
   if (queryMemberIds) query = query.in("member_id", queryMemberIds);
@@ -443,7 +448,7 @@ export async function getCarePlans(filters?: {
     };
   }
 
-  let query: any = supabase
+  let query = supabase
     .from("care_plans")
     .select("*, member:members!care_plans_member_id_fkey(display_name)", { count: "exact" })
     .order("next_due_date", { ascending: true })
@@ -546,8 +551,8 @@ export async function getCarePlanById(id: string, options?: { serviceRole?: bool
   return {
     carePlan,
     sections: resolvedSections,
-    history: (historyRows ?? []).map(
-      (row: any) =>
+      history: (historyRows ?? []).map(
+      (row) =>
         ({
           id: row.id,
           carePlanId: row.care_plan_id,

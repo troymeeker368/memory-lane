@@ -12,19 +12,20 @@ export function useConstrainedSelection<TOption extends SelectionOption>(input: 
   options: TOption[];
   autoSelectSingle?: boolean;
 }) {
-  const optionIds = useMemo(() => new Set(input.options.map((option) => option.id)), [input.options]);
-  const autoSelectSingle = input.autoSelectSingle ?? true;
+  const { selectedId, setSelectedId, options, autoSelectSingle: autoSelectSingleInput } = input;
+  const optionIds = useMemo(() => new Set(options.map((option) => option.id)), [options]);
+  const autoSelectSingle = autoSelectSingleInput ?? true;
 
   useEffect(() => {
-    if (!input.selectedId) return;
-    if (optionIds.has(input.selectedId)) return;
-    input.setSelectedId("");
-  }, [input.selectedId, optionIds, input.setSelectedId]);
+    if (!selectedId) return;
+    if (optionIds.has(selectedId)) return;
+    setSelectedId("");
+  }, [selectedId, optionIds, setSelectedId]);
 
   useEffect(() => {
     if (!autoSelectSingle) return;
-    if (input.selectedId) return;
-    if (input.options.length !== 1) return;
-    input.setSelectedId(input.options[0].id);
-  }, [autoSelectSingle, input.options, input.selectedId, input.setSelectedId]);
+    if (selectedId) return;
+    if (options.length !== 1) return;
+    setSelectedId(options[0].id);
+  }, [autoSelectSingle, options, selectedId, setSelectedId]);
 }

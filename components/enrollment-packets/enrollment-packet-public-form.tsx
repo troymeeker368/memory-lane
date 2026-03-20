@@ -365,7 +365,11 @@ export function EnrollmentPacketPublicForm({
     }
   };
 
-  const persistProgress = async (sourcePayload: EnrollmentPacketIntakePayload, mode: "auto" | "manual") => {
+  const persistProgressRef = useRef<(
+    sourcePayload: EnrollmentPacketIntakePayload,
+    mode: "auto" | "manual"
+  ) => Promise<void>>(async () => {});
+  persistProgressRef.current = async (sourcePayload: EnrollmentPacketIntakePayload, mode: "auto" | "manual") => {
     const formData = new FormData();
     appendCommonFields(formData, sourcePayload);
     const result = await savePublicEnrollmentPacketProgressAction(formData);
@@ -394,7 +398,7 @@ export function EnrollmentPacketPublicForm({
   }, []);
 
   useEffect(() => {
-    if (textValue(payload, "cardUsePrimaryContactAddress") !== "Yes") return;
+    if (payload.cardUsePrimaryContactAddress !== "Yes") return;
     setPayload((current) =>
       normalizeEnrollmentPacketIntakePayload({
         ...current,
@@ -460,7 +464,7 @@ export function EnrollmentPacketPublicForm({
   const saveProgress = () => {
     setStatus(null);
     setAutosaveStatus("saving");
-    void persistProgress(payload, "manual");
+    void persistProgressRef.current(payload, "manual");
   };
 
   const submitPacket = () => {
@@ -521,7 +525,7 @@ export function EnrollmentPacketPublicForm({
     if (autosaveTimeoutRef.current) clearTimeout(autosaveTimeoutRef.current);
     setAutosaveStatus("saving");
     autosaveTimeoutRef.current = setTimeout(() => {
-      void persistProgress(payload, "auto");
+      void persistProgressRef.current(payload, "auto");
     }, 2500);
 
     return () => {

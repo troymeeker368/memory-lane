@@ -7,6 +7,11 @@ import {
   getBillingPayorContact,
   type BillingPayorContact
 } from "@/lib/services/billing-payor-contacts";
+import type { Database } from "@/types/supabase";
+
+type BillingInvoiceRow = Database["public"]["Tables"]["billing_invoices"]["Row"];
+type BillingInvoiceLineRow = Database["public"]["Tables"]["billing_invoice_lines"]["Row"];
+type MemberDisplayNameRow = Pick<Database["public"]["Tables"]["members"]["Row"], "id" | "display_name">;
 
 type BillingInvoiceDocumentLine = {
   description: string;
@@ -130,20 +135,20 @@ export async function getBillingInvoiceDocumentModel(invoiceId: string) {
   const { data: member, error: memberError } = await supabase
     .from("members")
     .select("id, display_name")
-    .eq("id", String((invoice as any).member_id))
+    .eq("id", invoice.member_id)
     .maybeSingle();
   if (memberError) throw new Error(memberError.message);
 
-  const payor = await getBillingPayorContact(String((invoice as any).member_id), {
+  const payor = await getBillingPayorContact(invoice.member_id, {
     logMissing: true,
     source: "getBillingInvoiceDocumentModel"
   });
 
   return buildBillingInvoiceDocumentModel({
-    invoice: invoice as Record<string, unknown>,
-    memberName: String((member as any)?.display_name ?? "Unknown Member"),
+    invoice: invoice as BillingInvoiceRow as Record<string, unknown>,
+    memberName: String((member as MemberDisplayNameRow | null)?.display_name ?? "Unknown Member"),
     payor,
-    lines: (lines ?? []) as Array<Record<string, unknown>>,
+    lines: ((lines ?? []) as BillingInvoiceLineRow[]) as Array<Record<string, unknown>>,
     generatedAt: new Date().toISOString()
   });
 }

@@ -24,6 +24,21 @@ import { randomTextId, normalizeDateOnly } from "@/lib/services/billing-utils";
 import { generateClosureDatesFromRules } from "@/lib/services/closure-rules";
 import { handleNonCriticalMissingSchemaError } from "@/lib/services/billing-schema-errors";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
+import type { Database } from "@/types/supabase";
+
+type CenterClosureRow = Database["public"]["Tables"]["center_closures"]["Row"];
+type PayorRow = Database["public"]["Tables"]["payors"]["Row"];
+type MemberLookupRow = Pick<Database["public"]["Tables"]["members"]["Row"], "id" | "display_name">;
+type MemberAttendanceBillingRow = Pick<
+  Database["public"]["Tables"]["member_attendance_schedules"]["Row"],
+  | "member_id"
+  | "daily_rate"
+  | "custom_daily_rate"
+  | "default_daily_rate"
+  | "transportation_billing_status"
+  | "billing_rate_effective_date"
+  | "billing_notes"
+>;
 
 function normalizeYear(value: number) {
   if (!Number.isFinite(value)) return Number(toEasternDate().slice(0, 4));
@@ -95,7 +110,7 @@ export async function getNonBillableCenterClosureSet(range: DateRange) {
     });
     throw new Error(error.message);
   }
-  return new Set((data ?? []).map((row: any) => normalizeDateOnly(row.closure_date)));
+  return new Set((data ?? []).map((row) => normalizeDateOnly(row.closure_date)));
 }
 
 export async function listClosureRules() {
@@ -108,7 +123,7 @@ export async function listClosureRules() {
     });
     throw new Error(error.message);
   }
-  return (data ?? []) as Array<any>;
+  return (data ?? []) as ClosureRuleRow[];
 }
 
 export async function generateClosuresForYear(year: number, input?: { generatedByUserId?: string | null; generatedByName?: string | null }) {
@@ -141,7 +156,7 @@ export async function generateClosuresForYear(year: number, input?: { generatedB
     throw new Error(existingError.message);
   }
 
-  const existingDates = new Set((existingRows ?? []).map((row: any) => normalizeDateOnly(row.closure_date)));
+  const existingDates = new Set((existingRows ?? []).map((row) => normalizeDateOnly(row.closure_date)));
   let insertedCount = 0;
 
   for (const row of generated) {
@@ -204,7 +219,7 @@ export async function getMemberAttendanceBillingSetting(memberId: string) {
     .eq("member_id", memberId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  const schedule = data as any;
+  const schedule = data as MemberAttendanceBillingRow | null;
   if (!schedule) return null;
 
   const dailyRateCandidate = [schedule.daily_rate, schedule.custom_daily_rate, schedule.default_daily_rate]
@@ -296,7 +311,7 @@ export async function listPayors() {
   const supabase = await createClient();
   const { data, error } = await supabase.from("payors").select("*").order("payor_name", { ascending: true });
   if (error) throw new Error(error.message);
-  return (data ?? []) as Array<any>;
+  return (data ?? []) as PayorRow[];
 }
 
 export async function listCenterClosures(input?: { includeInactive?: boolean }) {
@@ -314,7 +329,7 @@ export async function listCenterClosures(input?: { includeInactive?: boolean }) 
     });
     throw new Error(error.message);
   }
-  return (data ?? []) as Array<any>;
+  return (data ?? []) as CenterClosureRow[];
 }
 
 export async function listMemberBillingSettings() {
@@ -325,13 +340,15 @@ export async function listMemberBillingSettings() {
   ]);
   if (settingsError) throw new Error(settingsError.message);
 
-  const settingsRows = (settingsData ?? []) as Array<any>;
-  const memberNameById = new Map((membersData ?? []).map((row: any) => [String(row.id), String(row.display_name)] as const));
+  const settingsRows = (settingsData ?? []) as BillingSettingRow[];
+  const memberNameById = new Map(
+    ((membersData ?? []) as MemberLookupRow[]).map((row) => [String(row.id), String(row.display_name)] as const)
+  );
   const payorByMember = await listBillingPayorContactsForMembers(
     settingsRows.map((row) => String(row.member_id))
   );
 
-  return settingsRows.map((row: any) => ({
+  return settingsRows.map((row) => ({
     ...row,
     member_name: memberNameById.get(String(row.member_id)) ?? "Unknown Member",
     payor_name: formatBillingPayorDisplayName(
@@ -366,8 +383,10 @@ export async function listBillingScheduleTemplates() {
   ]);
   if (templatesError) throw new Error(templatesError.message);
 
-  const memberNameById = new Map((membersData ?? []).map((row: any) => [String(row.id), String(row.display_name)] as const));
-  return (templatesData ?? []).map((row: any) => ({
+  const memberNameById = new Map(
+    ((membersData ?? []) as MemberLookupRow[]).map((row) => [String(row.id), String(row.display_name)] as const)
+  );
+  return ((templatesData ?? []) as ScheduleTemplateRow[]).map((row) => ({
     ...row,
     member_name: memberNameById.get(String(row.member_id)) ?? "Unknown Member"
   }));
@@ -381,7 +400,10 @@ async function getMembersAndPayorsForLookup() {
     .eq("status", "active")
     .order("display_name", { ascending: true });
 
-  const membersList = (members ?? []).map((row: any) => ({ id: String(row.id), displayName: String(row.display_name) }));
+  const membersList = ((members ?? []) as MemberLookupRow[]).map((row) => ({
+    id: String(row.id),
+    displayName: String(row.display_name)
+  }));
   const canonicalPayors = await listBillingPayorContactsForMembers(membersList.map((row) => row.id));
   const payorsList = membersList.reduce<Array<{ id: string; payorName: string }>>((acc, member) => {
     const payor = canonicalPayors.get(member.id);
@@ -491,12 +513,14 @@ export async function deleteCenterClosure(input: { id: string; actorUserId: stri
   if (existingError) throw new Error(existingError.message);
   if (!existing) return false;
 
-  if ((existing as any).auto_generated) {
+  const existingClosure = existing as CenterClosureRow;
+
+  if (existingClosure.auto_generated) {
     const { error } = await supabase
       .from("center_closures")
       .update({
         active: false,
-        notes: (existing as any).notes ?? "Auto-generated closure manually removed.",
+        notes: existingClosure.notes ?? "Auto-generated closure manually removed.",
         updated_at: toEasternISO(),
         updated_by_user_id: input.actorUserId,
         updated_by_name: input.actorName

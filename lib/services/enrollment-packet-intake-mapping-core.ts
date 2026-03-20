@@ -4,6 +4,8 @@ import {
   MEMBER_CONTACT_SELECT_LEGACY,
   MEMBER_CONTACT_SELECT_WITH_PAYOR
 } from "@/lib/services/member-contact-payor-schema";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/supabase";
 
 export type MappingSystem = "mcc" | "mhp" | "pof_staging" | "member_files";
 export type MappingStatus = "written" | "skipped" | "conflict" | "staged" | "error";
@@ -47,7 +49,7 @@ export function coerceMemberContactSchemaError(error: { code?: string | null; me
 }
 
 export async function selectEnrollmentMemberContacts(
-  admin: any,
+  admin: SupabaseClient<Database>,
   memberId: string
 ) {
   let lastError: { code?: string | null; message?: string | null } | null = null;
@@ -58,7 +60,7 @@ export async function selectEnrollmentMemberContacts(
       .eq("member_id", memberId)
       .order("updated_at", { ascending: false });
     if (!result.error) {
-      return (result.data ?? []) as Array<Record<string, unknown>>;
+      return (result.data ?? []) as unknown as Array<Record<string, unknown>>;
     }
     lastError = result.error;
     if (!isMemberContactsPayorColumnMissingError(result.error)) {

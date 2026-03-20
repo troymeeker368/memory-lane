@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { requireRoles } from "@/lib/auth";
+import { CLINICAL_DOCUMENTATION_ACCESS_ROLES } from "@/lib/permissions";
 import { autoCreateDraftPhysicianOrderFromIntake } from "@/lib/services/intake-pof-mhp-cascade";
 import { getAssessmentDetail } from "@/lib/services/relations";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
@@ -11,7 +12,7 @@ import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { toEasternISO } from "@/lib/timezone";
 
 export async function generateAssessmentPdfAction(input: { assessmentId: string }) {
-  const profile = await requireRoles(["admin", "manager", "nurse"]);
+  const profile = await requireRoles(CLINICAL_DOCUMENTATION_ACCESS_ROLES);
   const assessmentId = String(input.assessmentId ?? "").trim();
   if (!assessmentId) {
     return { ok: false, error: "Assessment is required." } as const;
@@ -58,7 +59,7 @@ export async function generateAssessmentPdfAction(input: { assessmentId: string 
 }
 
 export async function retryAssessmentDraftPofAction(input: { assessmentId: string }) {
-  const profile = await requireRoles(["admin", "manager", "nurse"]);
+  const profile = await requireRoles(CLINICAL_DOCUMENTATION_ACCESS_ROLES);
   const assessmentId = String(input.assessmentId ?? "").trim();
   if (!assessmentId) {
     return { ok: false, error: "Assessment is required." } as const;

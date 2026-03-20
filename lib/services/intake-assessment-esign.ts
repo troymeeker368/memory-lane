@@ -197,7 +197,7 @@ export async function listIntakeAssessmentSignatureStatesByAssessmentIds(
       .in("id", missing);
     if (assessmentsError) throw new Error(assessmentsError.message);
 
-    (assessments ?? []).forEach((assessment: any) => {
+  (assessments ?? []).forEach((assessment) => {
       stateByAssessmentId[assessment.id] = {
         assessmentId: assessment.id,
         memberId: assessment.member_id,

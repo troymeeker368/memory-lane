@@ -13,6 +13,8 @@ function briefsLabel(briefs: boolean, memberSupplied: boolean) {
   return memberSupplied ? "Yes (member supplied - no charge)" : "Yes";
 }
 
+type ToiletWorkflowRow = Awaited<ReturnType<typeof getDocumentationWorkflows>>["toilets"][number];
+
 export default async function ToiletLogPage() {
   const profile = await requireModuleAccess("documentation");
   const normalizedRole = normalizeRoleKey(profile.role);
@@ -29,14 +31,14 @@ export default async function ToiletLogPage() {
         <div className="mt-3"><ToiletLogFormShell members={members} /></div>
       </Card>
 
-      <MobileList items={toiletRows.map((row: any) => ({ id: row.id, title: row.member_name, fields: [{ label: "When", value: formatDateTime(row.event_at) }, { label: "Type of Use", value: row.use_type }, { label: "Briefs", value: briefsLabel(row.briefs, row.member_supplied) }] }))} />
+      <MobileList items={toiletRows.map((row: ToiletWorkflowRow) => ({ id: row.id, title: row.member_name, fields: [{ label: "When", value: formatDateTime(row.event_at) }, { label: "Type of Use", value: row.use_type }, { label: "Briefs", value: briefsLabel(row.briefs, row.member_supplied) }] }))} />
 
       <Card className="table-wrap hidden md:block">
         <CardTitle>Recent Toilet Entries</CardTitle>
         <table>
           <thead><tr><th>When</th><th>Member</th><th>Type of Use</th><th>Briefs</th>{showStaffColumn ? <th>Staff</th> : null}<th>Notes</th>{canEdit ? <th>Edit</th> : null}</tr></thead>
           <tbody>
-            {toiletRows.map((row: any) => (
+            {toiletRows.map((row: ToiletWorkflowRow) => (
               <tr key={row.id}><td>{formatDateTime(row.event_at)}</td><td>{row.member_name}</td><td>{row.use_type}</td><td>{briefsLabel(row.briefs, row.member_supplied)}</td>{showStaffColumn ? <td>{row.staff_name}</td> : null}<td>{row.notes ?? "-"}</td>{canEdit ? <td><QuickEditToilet id={row.id} useType={row.use_type} briefs={row.briefs} memberSupplied={row.member_supplied} notes={row.notes} /></td> : null}</tr>
             ))}
           </tbody>

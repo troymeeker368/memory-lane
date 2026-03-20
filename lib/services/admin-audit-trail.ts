@@ -75,7 +75,7 @@ export async function listAdminAuditTrailRows(input?: {
   const actorIds = Array.from(
     new Set(
       (auditRows ?? [])
-        .map((row: any) => row.actor_user_id)
+    .map((row) => row.actor_user_id)
         .filter((value: string | null): value is string => Boolean(value))
     )
   );
@@ -88,7 +88,7 @@ export async function listAdminAuditTrailRows(input?: {
     if (profilesError) {
       throw new Error(profilesError.message);
     }
-    (profiles ?? []).forEach((profile: any) => {
+  (profiles ?? []).forEach((profile) => {
       profileNameById.set(String(profile.id), String(profile.full_name ?? ""));
     });
   }

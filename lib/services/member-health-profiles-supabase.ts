@@ -319,7 +319,7 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   const pageSize =
     Number.isFinite(filters?.pageSize) && Number(filters?.pageSize) > 0 ? Math.floor(Number(filters?.pageSize)) : 25;
 
-  let membersQuery: any = supabase
+  let membersQuery = supabase
     .from("members")
     .select("id, display_name, status, dob, enrollment_date, city, code_status, latest_assessment_track", { count: "exact" })
     .order("display_name", { ascending: true })
@@ -335,7 +335,7 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   if (membersError) throw new Error(membersError.message);
   const members = (membersData ?? []) as MemberRow[];
 
-  let aggregateMembersQuery: any = supabase
+  let aggregateMembersQuery = supabase
     .from("members")
     .select("id, status")
     .order("display_name", { ascending: true });
@@ -392,8 +392,8 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   if (aggregateProfilesResult.error) throw new Error(aggregateProfilesResult.error.message);
   if (aggregateAssessmentsResult.error) throw new Error(aggregateAssessmentsResult.error.message);
 
-  const profileByMemberId = new Map((profilesResult.data ?? []).map((row: any) => [String(row.member_id), row as MemberHealthProfileRow] as const));
-  const mccPhotoByMemberId = new Map((mccResult.data ?? []).map((row: any) => [String(row.member_id), (row.profile_image_url as string | null) ?? null] as const));
+  const profileByMemberId = new Map((profilesResult.data ?? []).map((row) => [String(row.member_id), row as MemberHealthProfileRow] as const));
+  const mccPhotoByMemberId = new Map((mccResult.data ?? []).map((row) => [String(row.member_id), (row.profile_image_url as string | null) ?? null] as const));
 
   const missingProfileMemberIds = members
     .map((member) => member.id)

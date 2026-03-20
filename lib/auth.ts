@@ -12,6 +12,7 @@ import {
   PERMISSION_MODULES,
   resolveEffectivePermissionSet
 } from "@/lib/permissions/core";
+import { canAccessNavItem, getNavItemByHref } from "@/lib/permissions/nav";
 import { createClient } from "@/lib/supabase/server";
 import { isDevAuthBypassEnabled } from "@/lib/runtime";
 
@@ -282,7 +283,6 @@ export async function requireNavItemAccess(
   action: PermissionAction = "canView"
 ): Promise<UserProfile> {
   const profile = await getCurrentProfile();
-  const { canAccessNavItem, getNavItemByHref } = await import("@/lib/permissions/nav");
 
   if (!canAccessNavItem(profile.role as AppRole, href, profile.permissions, action)) {
     const navItem = getNavItemByHref(href);

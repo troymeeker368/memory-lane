@@ -10,6 +10,8 @@ import { getAncillarySummary } from "@/lib/services/ancillary";
 import { getMembers } from "@/lib/services/documentation";
 import { formatDate } from "@/lib/utils";
 
+type AncillarySummaryRow = Awaited<ReturnType<typeof getAncillarySummary>>["logs"][number];
+
 export default async function AncillaryPage() {
   const profile = await requireModuleAccess("ancillary");
   const normalizedRole = normalizeRoleKey(profile.role);
@@ -17,7 +19,7 @@ export default async function AncillaryPage() {
   const showStaffColumn = normalizedRole !== "program-assistant";
   const [summary, members] = await Promise.all([getAncillarySummary(undefined, { role: profile.role, staffUserId: profile.id }), getMembers()]);
 
-  const currentMonthRows = summary.logs.filter((row: any) => {
+  const currentMonthRows = summary.logs.filter((row: AncillarySummaryRow) => {
     const d = new Date(row.service_date);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     return key === summary.selectedMonth;
@@ -32,7 +34,7 @@ export default async function AncillaryPage() {
         </div>
       </Card>
 
-      <MobileList items={summary.logs.map((row: any) => ({ id: row.id, title: row.member_name, fields: [{ label: "Date", value: formatDate(row.service_date) }, { label: "Category", value: row.category_name }, { label: "Qty", value: String(row.quantity ?? 1) }, { label: "Amount", value: `$${(row.amount_cents / 100).toFixed(2)}` }, ...(showStaffColumn ? [{ label: "Staff", value: row.staff_name }] : [])] }))} />
+      <MobileList items={summary.logs.map((row: AncillarySummaryRow) => ({ id: row.id, title: row.member_name, fields: [{ label: "Date", value: formatDate(row.service_date) }, { label: "Category", value: row.category_name }, { label: "Qty", value: String(row.quantity ?? 1) }, { label: "Amount", value: `$${(row.amount_cents / 100).toFixed(2)}` }, ...(showStaffColumn ? [{ label: "Staff", value: row.staff_name }] : [])] }))} />
 
       <Card className="table-wrap hidden md:block">
         <CardTitle>Recent Ancillary Charges</CardTitle>
@@ -50,7 +52,7 @@ export default async function AncillaryPage() {
             </tr>
           </thead>
           <tbody>
-            {summary.logs.map((row: any) => (
+            {summary.logs.map((row: AncillarySummaryRow) => (
               <tr key={row.id}>
                 <td>{formatDate(row.service_date)}</td>
                 <td>{row.member_name}</td>
@@ -77,7 +79,7 @@ export default async function AncillaryPage() {
             <tr>
               <td>{summary.selectedMonth}</td>
               <td>{currentMonthRows.length}</td>
-              <td>${(currentMonthRows.reduce((sum: number, row: any) => sum + row.amount_cents, 0) / 100).toFixed(2)}</td>
+              <td>${(currentMonthRows.reduce((sum: number, row) => sum + row.amount_cents, 0) / 100).toFixed(2)}</td>
             </tr>
           </tbody>
         </table>

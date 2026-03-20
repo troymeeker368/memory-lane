@@ -344,8 +344,8 @@ function getTransportSnapshotForWeekday(input: {
     };
   }
 
-  const amSlot = getTransportSlotForScheduleDay(input.schedule as any, weekday, "AM");
-  const pmSlot = getTransportSlotForScheduleDay(input.schedule as any, weekday, "PM");
+  const amSlot = getTransportSlotForScheduleDay(input.schedule as Parameters<typeof getTransportSlotForScheduleDay>[0], weekday, "AM");
+  const pmSlot = getTransportSlotForScheduleDay(input.schedule as Parameters<typeof getTransportSlotForScheduleDay>[0], weekday, "PM");
   const mode = amSlot.mode ?? pmSlot.mode;
   return {
     required: Boolean(mode),

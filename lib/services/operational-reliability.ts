@@ -7,8 +7,25 @@ import { sendCarePlanToCaregiverForSignature } from "@/lib/services/care-plan-es
 import { createBillingExport } from "@/lib/services/billing-workflows";
 import { resendPofSignatureRequest } from "@/lib/services/pof-esign";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
+import type { Database } from "@/types/supabase";
 
 type WorkflowDomain = "enrollment_packet" | "pof_request" | "care_plan" | "billing";
+type EnrollmentPacketRetryRow = Pick<
+  Database["public"]["Tables"]["enrollment_packet_requests"]["Row"],
+  "id" | "member_id" | "delivery_status" | "updated_at" | "created_at" | "delivery_error"
+>;
+type PofRetryRow = Pick<
+  Database["public"]["Tables"]["pof_requests"]["Row"],
+  "id" | "member_id" | "delivery_status" | "updated_at" | "created_at" | "delivery_error"
+>;
+type CarePlanRetryRow = Pick<
+  Database["public"]["Tables"]["care_plans"]["Row"],
+  "id" | "member_id" | "caregiver_signature_status" | "updated_at" | "created_at" | "caregiver_signature_error"
+>;
+type SystemEventRow = Pick<
+  Database["public"]["Tables"]["system_events"]["Row"],
+  "id" | "event_type" | "entity_id" | "created_at" | "severity" | "metadata"
+>;
 
 type StuckWorkflowRow = {
   workflowType: WorkflowDomain;
@@ -179,7 +196,7 @@ export async function listStuckEnrollmentPacketRequests(options?: {
     .order("updated_at", { ascending: true })
     .limit(limit);
   if (error) throw new Error(error.message);
-  return ((data ?? []) as Array<any>).map((row) =>
+  return ((data ?? []) as EnrollmentPacketRetryRow[]).map((row) =>
     toStuckWorkflowRow({
       workflowType: "enrollment_packet",
       entityId: String(row.id),
@@ -206,7 +223,7 @@ export async function listStuckPofRequests(options?: {
     .order("updated_at", { ascending: true })
     .limit(limit);
   if (error) throw new Error(error.message);
-  return ((data ?? []) as Array<any>).map((row) =>
+  return ((data ?? []) as PofRetryRow[]).map((row) =>
     toStuckWorkflowRow({
       workflowType: "pof_request",
       entityId: String(row.id),
@@ -233,7 +250,7 @@ export async function listStuckCarePlanRequests(options?: {
     .order("updated_at", { ascending: true })
     .limit(limit);
   if (error) throw new Error(error.message);
-  return ((data ?? []) as Array<any>).map((row) =>
+  return ((data ?? []) as CarePlanRetryRow[]).map((row) =>
     toStuckWorkflowRow({
       workflowType: "care_plan",
       entityId: String(row.id),
@@ -261,7 +278,7 @@ export async function listRecentBillingWorkflowFailures(options?: {
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(error.message);
-  return ((data ?? []) as Array<any>).map((row) => ({
+  return ((data ?? []) as SystemEventRow[]).map((row) => ({
     id: String(row.id),
     eventType: String(row.event_type),
     entityId: normalizeText(row.entity_id),

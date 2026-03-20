@@ -71,7 +71,10 @@ export async function getAncillarySummary(monthKey?: string, scope?: AncillarySc
 
   return {
     categories: categories ?? [],
-    logs: logsData ?? [],
+    logs: (logsData ?? []).map((row) => ({
+      ...row,
+      notes: row.reconciliation_note ?? null
+    })),
     monthly: monthly ?? [],
     availableMonths: [],
     selectedMonth: monthKey ?? "",

@@ -49,6 +49,29 @@ const MEDICATION_FORM_OPTIONS = [
 const OPHTHALMIC_LATERALITY_OPTIONS = ["OD", "OS", "OU"] as const;
 const OTIC_LATERALITY_OPTIONS = ["AD", "AS", "AU"] as const;
 
+function normalizeMedicationRoute(route: string | null) {
+  const trimmed = route?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : "Unspecified";
+}
+
+function sortByRouteThenMedicationName(left: MedicationRow, right: MedicationRow) {
+  const leftRoute = normalizeMedicationRoute(left.route);
+  const rightRoute = normalizeMedicationRoute(right.route);
+  const routeCompare = leftRoute.localeCompare(rightRoute, undefined, { sensitivity: "base" });
+  if (routeCompare !== 0) {
+    return routeCompare;
+  }
+
+  const nameCompare = left.medication_name.localeCompare(right.medication_name, undefined, { sensitivity: "base" });
+  if (nameCompare !== 0) {
+    return nameCompare;
+  }
+
+  const leftStarted = Date.parse(left.date_started || "");
+  const rightStarted = Date.parse(right.date_started || "");
+  return Number.isNaN(leftStarted) || Number.isNaN(rightStarted) ? 0 : rightStarted - leftStarted;
+}
+
 export function MhpMedicationsSection({
   memberId,
   initialRows,
@@ -105,29 +128,6 @@ export function MhpMedicationsSection({
 
   const routeDisplay = (row: MedicationRow) =>
     row.route_laterality ? `${row.route ?? "-"} (${row.route_laterality})` : (row.route ?? "-");
-
-  const normalizeRoute = (route: string | null) => {
-    const trimmed = route?.trim();
-    return trimmed && trimmed.length > 0 ? trimmed : "Unspecified";
-  };
-
-  const sortByRouteThenMedicationName = (left: MedicationRow, right: MedicationRow) => {
-    const leftRoute = normalizeRoute(left.route);
-    const rightRoute = normalizeRoute(right.route);
-    const routeCompare = leftRoute.localeCompare(rightRoute, undefined, { sensitivity: "base" });
-    if (routeCompare !== 0) {
-      return routeCompare;
-    }
-
-    const nameCompare = left.medication_name.localeCompare(right.medication_name, undefined, { sensitivity: "base" });
-    if (nameCompare !== 0) {
-      return nameCompare;
-    }
-
-    const leftStarted = Date.parse(left.date_started || "");
-    const rightStarted = Date.parse(right.date_started || "");
-    return Number.isNaN(leftStarted) || Number.isNaN(rightStarted) ? 0 : rightStarted - leftStarted;
-  };
 
   const activeRows = useMemo(
     () =>

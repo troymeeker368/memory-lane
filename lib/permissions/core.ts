@@ -51,6 +51,7 @@ export const ROLE_RANKS: Record<CanonicalAppRole, number> = {
 export const INCIDENT_ALLOWED_ROLES: CanonicalAppRole[] = ["nurse", "manager", "director", "admin"];
 export const PHYSICIAN_ORDER_MODULE_ROLES: AppRole[] = ["admin", "nurse"];
 export const PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES: AppRole[] = ["admin", "nurse", "manager"];
+export const CLINICAL_DOCUMENTATION_ACCESS_ROLES: AppRole[] = ["admin", "manager", "nurse"];
 
 export const PERMISSION_MODULES: PermissionModuleKey[] = [
   "documentation",
@@ -223,6 +224,10 @@ export function canCreatePhysicianOrdersModuleForRole(role: string | AppRole | n
 
 export function canManagePofSignatureWorkflowForRole(role: string | AppRole | null | undefined) {
   return roleMatchesAny(role, PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES);
+}
+
+export function canAccessClinicalDocumentationForRole(role: string | AppRole | null | undefined) {
+  return roleMatchesAny(role, CLINICAL_DOCUMENTATION_ACCESS_ROLES);
 }
 
 export function getDefaultPermissionSet(role: string | AppRole): PermissionSet {

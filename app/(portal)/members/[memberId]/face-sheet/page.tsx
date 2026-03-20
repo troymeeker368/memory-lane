@@ -60,7 +60,10 @@ export default async function MemberFaceSheetPage({
         />
         <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[110px_1fr]">
           {faceSheet.member.photoUrl ? (
-            <img src={faceSheet.member.photoUrl} alt={`${faceSheet.member.name} photo`} className="h-28 w-28 rounded border border-black/30 object-cover" />
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={faceSheet.member.photoUrl} alt={`${faceSheet.member.name} photo`} className="h-28 w-28 rounded border border-black/30 object-cover" />
+            </>
           ) : (
             <div className="flex h-28 w-28 items-center justify-center rounded border border-black/30 text-2xl font-semibold">
               {faceSheet.member.name

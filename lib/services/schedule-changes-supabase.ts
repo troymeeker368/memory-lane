@@ -143,10 +143,31 @@ function normalizeWeekdays(values: Array<string | null | undefined>): ScheduleWe
   return normalized;
 }
 
-function toRow(data: any): ScheduleChangeRow {
+type ScheduleChangeDbRow = Record<string, unknown> & {
+  id?: string;
+  member_id?: string;
+  change_type?: string;
+  effective_start_date?: string;
+  effective_end_date?: string | null;
+  original_days?: Array<string | null>;
+  new_days?: Array<string | null>;
+  suspend_base_schedule?: boolean | null;
+  reason?: string | null;
+  notes?: string | null;
+  entered_by?: string | null;
+  entered_by_user_id?: string | null;
+  status?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  closed_at?: string | null;
+  closed_by?: string | null;
+  closed_by_user_id?: string | null;
+};
+
+function toRow(data: ScheduleChangeDbRow): ScheduleChangeRow {
   return {
-    id: data.id,
-    member_id: data.member_id,
+    id: String(data.id ?? ""),
+    member_id: String(data.member_id ?? ""),
     change_type: normalizeChangeType(String(data.change_type)),
     effective_start_date: String(data.effective_start_date),
     effective_end_date: data.effective_end_date ? String(data.effective_end_date) : null,

@@ -72,7 +72,7 @@ export function MccHeaderCards({
         setEnrollmentValue(detail.enrollment || "-");
       }
     });
-  }, []);
+  }, [setCodeStatus, setEnrollmentValue, setPhotoConsent, setTransportation]);
 
   const codeStatusStyle =
     codeStatus === "DNR"

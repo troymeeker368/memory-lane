@@ -14,6 +14,11 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 const HOLD_EXPIRY_LOOKAHEAD_DAYS = 14;
+type AdminSnapshot = {
+  membersData: Array<{ id: string; display_name: string }>;
+  holds: Awaited<ReturnType<typeof listMemberHolds>>;
+  ancillaryData: Array<{ service_date: string; amount: number | null; billing_status: string | null }>;
+};
 
 function toDateOnly(value: string | null | undefined) {
   const raw = String(value ?? "").trim();
@@ -107,9 +112,9 @@ export default async function DashboardPage() {
               })),
               holds,
               ancillaryData: ancillaryData ?? []
-            };
+            } satisfies AdminSnapshot;
           })
-        : Promise.resolve({ membersData: [], holds: [], ancillaryData: [] as Array<{ service_date: string; amount: number; billing_status: string | null }> })
+        : Promise.resolve({ membersData: [], holds: [], ancillaryData: [] } satisfies AdminSnapshot)
     ]);
 
     const firstName = profile.full_name.trim().split(/\s+/)[0] || profile.full_name;
@@ -119,7 +124,7 @@ export default async function DashboardPage() {
     const ancillaryData = adminSnapshot.ancillaryData;
     const expiryThreshold = addDays(today, HOLD_EXPIRY_LOOKAHEAD_DAYS);
     const activeHolds = holds.filter((row) => row.status === "active");
-    const memberNameById = new Map((membersData ?? []).map((member: any) => [member.id, member.display_name] as const));
+    const memberNameById = new Map(membersData.map((member) => [member.id, member.display_name] as const));
     const upcomingHolds = activeHolds
       .filter((hold) => toDateOnly(hold.start_date) && (toDateOnly(hold.start_date) as string) > today)
       .sort((left, right) => String(left.start_date).localeCompare(String(right.start_date)))
@@ -134,8 +139,8 @@ export default async function DashboardPage() {
       .slice(0, 6);
 
     const monthlyAncillary = ancillaryData ?? [];
-    const monthlyRevenueCents = monthlyAncillary.reduce((sum: number, row: any) => sum + Math.round(Number(row.amount ?? 0) * 100), 0);
-    const unreconciledCharges = monthlyAncillary.filter((row: any) => String(row.billing_status ?? "Unbilled") !== "Billed").length;
+    const monthlyRevenueCents = monthlyAncillary.reduce((sum, row) => sum + Math.round(Number(row.amount ?? 0) * 100), 0);
+    const unreconciledCharges = monthlyAncillary.filter((row) => String(row.billing_status ?? "Unbilled") !== "Billed").length;
 
     const unresolvedLeads = salesSummary.unresolvedLeads;
     const unresolvedInquiryLeads = salesSummary.unresolvedInquiryLeads;

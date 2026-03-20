@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { EmailOtpType } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
 
@@ -9,6 +10,13 @@ function normalizeNextPath(raw: string | null, fallback: string) {
   return value;
 }
 
+function normalizeOtpType(raw: string | null): EmailOtpType | null {
+  if (raw === "signup" || raw === "invite" || raw === "magiclink" || raw === "recovery" || raw === "email_change" || raw === "email") {
+    return raw;
+  }
+  return null;
+}
+
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const searchParams = requestUrl.searchParams;
@@ -16,7 +24,7 @@ export async function GET(request: NextRequest) {
   const tokenHash = searchParams.get("token_hash");
   const token = searchParams.get("token");
   const email = searchParams.get("email");
-  const type = searchParams.get("type");
+  const type = normalizeOtpType(searchParams.get("type"));
   const nextPath = normalizeNextPath(searchParams.get("next"), "/");
 
   const supabase = await createClient();
@@ -33,7 +41,7 @@ export async function GET(request: NextRequest) {
 
   if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({
-      type: type as any,
+      type,
       token_hash: tokenHash
     });
     if (error) {
@@ -46,7 +54,7 @@ export async function GET(request: NextRequest) {
 
   if (token && type && email) {
     const { error } = await supabase.auth.verifyOtp({
-      type: type as any,
+      type,
       token,
       email
     });

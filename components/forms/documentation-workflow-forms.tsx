@@ -234,7 +234,10 @@ export function PhotoUploadForm() {
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {files.map((file, index) => (
               <div key={`${file.name}-${file.size}-${index}`} className="rounded border border-border p-2">
-                <img src={previewUrls[index]} alt={file.name} className="max-h-36 w-full rounded object-cover" />
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={previewUrls[index]} alt={file.name} className="max-h-36 w-full rounded object-cover" />
+                </>
                 <p className="mt-2 truncate text-xs font-semibold">{file.name}</p>
                 <p className="text-xs text-muted">{file.type || "image/*"}</p>
               </div>

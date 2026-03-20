@@ -272,7 +272,7 @@ async function listMembersPageSupabase(filters?: {
   const q = (filters?.q ?? "").trim();
   const { rows, totalRows } = await selectMembersPageWithFallback(
     async (selectClause) => {
-      let query: any = supabase
+  let query = supabase
         .from("members")
         .select(selectClause, { count: "exact" })
         .order("display_name", { ascending: true })

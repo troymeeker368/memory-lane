@@ -90,6 +90,12 @@ const TRANSITION_ENROLLMENT_PACKET_DELIVERY_STATE_RPC = "rpc_transition_enrollme
 const SAVE_ENROLLMENT_PACKET_PROGRESS_RPC = "rpc_save_enrollment_packet_progress";
 const ENROLLMENT_PACKET_DELIVERY_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
 const ENROLLMENT_PACKET_COMPLETION_MIGRATION = "0053_artifact_drift_replay_hardening.sql";
+const PUBLIC_ENROLLMENT_PACKET_UPLOAD_COUNT_LIMIT = 12;
+const PUBLIC_ENROLLMENT_PACKET_TOTAL_UPLOAD_BYTES_LIMIT = 30 * 1024 * 1024;
+const PUBLIC_ENROLLMENT_PACKET_TOTAL_UPLOAD_MB = PUBLIC_ENROLLMENT_PACKET_TOTAL_UPLOAD_BYTES_LIMIT / (1024 * 1024);
+const PUBLIC_ENROLLMENT_PACKET_SUBMIT_LOOKBACK_MINUTES = 15;
+const PUBLIC_ENROLLMENT_PACKET_TOKEN_SUBMIT_ATTEMPT_LIMIT = 5;
+const PUBLIC_ENROLLMENT_PACKET_IP_SUBMIT_ATTEMPT_LIMIT = 10;
 
 export { ENROLLMENT_PACKET_STATUS_VALUES };
 export type {
@@ -174,6 +180,271 @@ async function loadRequestByToken(rawToken: string): Promise<EnrollmentPacketTok
     request: consumedData as EnrollmentPacketRequestRow,
     tokenMatch: "consumed"
   };
+}
+
+function buildEnrollmentPacketPublicIpFingerprint(ipAddress: string | null | undefined) {
+  const normalized = clean(ipAddress);
+  return normalized ? hashToken(`enrollment-packet-ip:${normalized}`) : null;
+}
+
+function sumEnrollmentPacketUploadBytes(uploads: PacketFileUpload[] | null | undefined) {
+  return (uploads ?? []).reduce((total, upload) => total + (upload.bytes?.length ?? 0), 0);
+}
+
+async function countRecentSystemEvents(input: {
+  eventType: string;
+  entityType: string;
+  entityId: string;
+  status?: string | null;
+  sinceIso: string;
+}) {
+  const admin = createSupabaseAdminClient();
+  let query = admin
+    .from("system_events")
+    .select("id", { count: "exact", head: true })
+    .eq("event_type", input.eventType)
+    .eq("entity_type", input.entityType)
+    .eq("entity_id", input.entityId)
+    .gte("created_at", input.sinceIso);
+
+  if (input.status) {
+    query = query.eq("status", input.status);
+  }
+
+  const { count, error } = await query;
+  if (error) throw new Error(error.message);
+  return Number(count ?? 0);
+}
+
+type PublicEnrollmentPacketGuardFailureInput = {
+  request?: EnrollmentPacketRequestRow | null;
+  token?: string | null;
+  caregiverIp?: string | null;
+  caregiverUserAgent?: string | null;
+  failureType: string;
+  message: string;
+  uploadCount?: number;
+  uploadBytes?: number;
+  severity?: "low" | "medium" | "high" | "critical";
+};
+
+async function logPublicEnrollmentPacketGuardFailure(input: PublicEnrollmentPacketGuardFailureInput) {
+  const normalizedToken = clean(input.token);
+  const request =
+    input.request ??
+    (normalizedToken ? (await loadRequestByToken(normalizedToken))?.request ?? null : null);
+  const ipFingerprint = buildEnrollmentPacketPublicIpFingerprint(input.caregiverIp);
+  const baseMetadata = {
+    failure_type: input.failureType,
+    message: input.message,
+    ip_fingerprint: ipFingerprint,
+    user_agent: clean(input.caregiverUserAgent),
+    upload_count: input.uploadCount ?? 0,
+    upload_bytes: input.uploadBytes ?? 0
+  };
+  const severity = input.severity ?? "high";
+
+  await recordWorkflowEvent({
+    eventType: "enrollment_packet_public_guard_rejected",
+    entityType: request ? "enrollment_packet_request" : "enrollment_packet_public_token",
+    entityId: request?.id ?? (normalizedToken ? hashToken(`enrollment-packet-token:${normalizedToken}`) : null),
+    actorType: "system",
+    actorUserId: request?.sender_user_id ?? null,
+    status: "failed",
+    severity,
+    metadata: request
+      ? {
+          member_id: request.member_id,
+          lead_id: request.lead_id,
+          ...baseMetadata
+        }
+      : baseMetadata
+  });
+
+  if (request?.id) {
+    await maybeRecordRepeatedFailureAlert({
+      workflowEventType: "enrollment_packet_public_guard_rejected",
+      entityType: "enrollment_packet_request",
+      entityId: request.id,
+      actorUserId: request.sender_user_id,
+      threshold: 3,
+      metadata: {
+        member_id: request.member_id,
+        lead_id: request.lead_id,
+        failure_type: input.failureType
+      }
+    });
+  }
+
+  if (ipFingerprint) {
+    await recordWorkflowEvent({
+      eventType: "enrollment_packet_public_guard_rejected",
+      entityType: "enrollment_packet_public_ip",
+      entityId: ipFingerprint,
+      actorType: "system",
+      actorUserId: request?.sender_user_id ?? null,
+      status: "failed",
+      severity,
+      metadata: {
+        packet_id: request?.id ?? null,
+        member_id: request?.member_id ?? null,
+        lead_id: request?.lead_id ?? null,
+        ...baseMetadata
+      }
+    });
+    await maybeRecordRepeatedFailureAlert({
+      workflowEventType: "enrollment_packet_public_guard_rejected",
+      entityType: "enrollment_packet_public_ip",
+      entityId: ipFingerprint,
+      actorUserId: request?.sender_user_id ?? null,
+      threshold: 3,
+      metadata: {
+        packet_id: request?.id ?? null,
+        member_id: request?.member_id ?? null,
+        failure_type: input.failureType
+      }
+    });
+  }
+}
+
+export async function recordPublicEnrollmentPacketGuardFailure(
+  input: Omit<PublicEnrollmentPacketGuardFailureInput, "request">
+) {
+  return logPublicEnrollmentPacketGuardFailure({
+    ...input,
+    request: null
+  });
+}
+
+async function enforcePublicEnrollmentPacketSubmissionGuards(input: {
+  request: EnrollmentPacketRequestRow;
+  caregiverIp: string | null;
+  caregiverUserAgent: string | null;
+  uploads: PacketFileUpload[];
+}) {
+  const uploadCount = input.uploads.length;
+  const uploadBytes = sumEnrollmentPacketUploadBytes(input.uploads);
+  const ipFingerprint = buildEnrollmentPacketPublicIpFingerprint(input.caregiverIp);
+  const rateWindowStart = new Date(
+    Date.now() - PUBLIC_ENROLLMENT_PACKET_SUBMIT_LOOKBACK_MINUTES * 60 * 1000
+  ).toISOString();
+
+  if (uploadCount > PUBLIC_ENROLLMENT_PACKET_UPLOAD_COUNT_LIMIT) {
+    await logPublicEnrollmentPacketGuardFailure({
+      request: input.request,
+      caregiverIp: input.caregiverIp,
+      caregiverUserAgent: input.caregiverUserAgent,
+      failureType: "upload_count_cap_exceeded",
+      message: `Too many files were attached to this enrollment packet submission (${uploadCount}).`,
+      uploadCount,
+      uploadBytes,
+      severity: "high"
+    });
+    throw new Error(
+      `Too many files attached. Upload up to ${PUBLIC_ENROLLMENT_PACKET_UPLOAD_COUNT_LIMIT} files per submission.`
+    );
+  }
+
+  if (uploadBytes > PUBLIC_ENROLLMENT_PACKET_TOTAL_UPLOAD_BYTES_LIMIT) {
+    await logPublicEnrollmentPacketGuardFailure({
+      request: input.request,
+      caregiverIp: input.caregiverIp,
+      caregiverUserAgent: input.caregiverUserAgent,
+      failureType: "upload_cumulative_size_cap_exceeded",
+      message: `Combined enrollment packet uploads exceeded the ${PUBLIC_ENROLLMENT_PACKET_TOTAL_UPLOAD_MB}MB cap.`,
+      uploadCount,
+      uploadBytes,
+      severity: "high"
+    });
+    throw new Error(
+      `Attached files are too large in total. Maximum combined upload size is ${PUBLIC_ENROLLMENT_PACKET_TOTAL_UPLOAD_MB}MB.`
+    );
+  }
+
+  const tokenAttemptCount = await countRecentSystemEvents({
+    eventType: "enrollment_packet_public_submit_attempt",
+    entityType: "enrollment_packet_request",
+    entityId: input.request.id,
+    status: "started",
+    sinceIso: rateWindowStart
+  });
+  if (tokenAttemptCount >= PUBLIC_ENROLLMENT_PACKET_TOKEN_SUBMIT_ATTEMPT_LIMIT) {
+    await logPublicEnrollmentPacketGuardFailure({
+      request: input.request,
+      caregiverIp: input.caregiverIp,
+      caregiverUserAgent: input.caregiverUserAgent,
+      failureType: "token_rate_limit_exceeded",
+      message: `Enrollment packet submission throttled after ${tokenAttemptCount} recent token attempts.`,
+      uploadCount,
+      uploadBytes,
+      severity: "high"
+    });
+    throw new Error(
+      `Too many recent submission attempts for this enrollment packet. Wait ${PUBLIC_ENROLLMENT_PACKET_SUBMIT_LOOKBACK_MINUTES} minutes and try again.`
+    );
+  }
+
+  if (ipFingerprint) {
+    const ipAttemptCount = await countRecentSystemEvents({
+      eventType: "enrollment_packet_public_submit_attempt",
+      entityType: "enrollment_packet_public_ip",
+      entityId: ipFingerprint,
+      status: "started",
+      sinceIso: rateWindowStart
+    });
+    if (ipAttemptCount >= PUBLIC_ENROLLMENT_PACKET_IP_SUBMIT_ATTEMPT_LIMIT) {
+      await logPublicEnrollmentPacketGuardFailure({
+        request: input.request,
+        caregiverIp: input.caregiverIp,
+        caregiverUserAgent: input.caregiverUserAgent,
+        failureType: "ip_rate_limit_exceeded",
+        message: `Enrollment packet submission throttled after ${ipAttemptCount} recent IP attempts.`,
+        uploadCount,
+        uploadBytes,
+        severity: "high"
+      });
+      throw new Error(
+        `Too many recent submission attempts from this connection. Wait ${PUBLIC_ENROLLMENT_PACKET_SUBMIT_LOOKBACK_MINUTES} minutes and try again.`
+      );
+    }
+  }
+
+  await recordWorkflowEvent({
+    eventType: "enrollment_packet_public_submit_attempt",
+    entityType: "enrollment_packet_request",
+    entityId: input.request.id,
+    actorType: "system",
+    actorUserId: input.request.sender_user_id,
+    status: "started",
+    severity: "low",
+    metadata: {
+      member_id: input.request.member_id,
+      lead_id: input.request.lead_id,
+      ip_fingerprint: ipFingerprint,
+      user_agent: clean(input.caregiverUserAgent),
+      upload_count: uploadCount,
+      upload_bytes: uploadBytes
+    }
+  });
+
+  if (ipFingerprint) {
+    await recordWorkflowEvent({
+      eventType: "enrollment_packet_public_submit_attempt",
+      entityType: "enrollment_packet_public_ip",
+      entityId: ipFingerprint,
+      actorType: "system",
+      actorUserId: input.request.sender_user_id,
+      status: "started",
+      severity: "low",
+      metadata: {
+        packet_id: input.request.id,
+        member_id: input.request.member_id,
+        lead_id: input.request.lead_id,
+        upload_count: uploadCount,
+        upload_bytes: uploadBytes
+      }
+    });
+  }
 }
 
 async function loadPacketFields(packetId: string) {
@@ -1673,6 +1944,12 @@ export async function submitPublicEnrollmentPacket(input: {
 
   const member = await getMemberById(request.member_id);
   if (!member) throw new Error("Member record was not found.");
+  await enforcePublicEnrollmentPacketSubmissionGuards({
+    request,
+    caregiverIp: input.caregiverIp,
+    caregiverUserAgent: input.caregiverUserAgent,
+    uploads: input.uploads ?? []
+  });
   const artifactOps = await loadEnrollmentPacketArtifactOps();
   let senderSignatureName = "Staff";
   let finalizedAt: string | null = null;

@@ -8,7 +8,9 @@ import { getMembers } from "@/lib/services/documentation";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
 import { formatDate } from "@/lib/utils";
 
-function missingReasons(row: any) {
+type DocumentationDailyActivityRow = Awaited<ReturnType<typeof getDocumentationWorkflows>>["dailyActivities"][number];
+
+function missingReasons(row: DocumentationDailyActivityRow) {
   return [
     row.reason_missing_activity_1,
     row.reason_missing_activity_2,
@@ -34,7 +36,7 @@ export default async function DocumentationActivityPage() {
       </Card>
 
       <MobileList
-        items={workflows.dailyActivities.map((row: any) => ({
+        items={workflows.dailyActivities.map((row: DocumentationDailyActivityRow) => ({
           id: row.id,
           title: row.member_name,
           fields: [
@@ -66,7 +68,7 @@ export default async function DocumentationActivityPage() {
             </tr>
           </thead>
           <tbody>
-            {workflows.dailyActivities.map((row: any) => (
+            {workflows.dailyActivities.map((row: DocumentationDailyActivityRow) => (
               <tr key={row.id}>
                 <td>{formatDate(row.activity_date)}</td>
                 <td>{row.member_name}</td>

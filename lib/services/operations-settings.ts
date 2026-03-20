@@ -1,5 +1,6 @@
 import { MEMBER_BUS_NUMBER_OPTIONS } from "@/lib/canonical";
 import { createClient } from "@/lib/supabase/server";
+import type { Database } from "@/types/supabase";
 
 export interface OperationalSettings {
   busNumbers: string[];
@@ -30,6 +31,18 @@ const OPERATIONAL_SETTINGS_MISSING_TABLE_ERROR =
 
 const OPERATIONAL_SETTINGS_SELECT_COLUMNS =
   "id, bus_numbers, makeup_policy, late_pickup_grace_start_time, late_pickup_first_window_minutes, late_pickup_first_window_fee_cents, late_pickup_additional_per_minute_cents, late_pickup_additional_minutes_cap";
+
+type OperationsSettingsRow = Pick<
+  Database["public"]["Tables"]["operations_settings"]["Row"],
+  | "id"
+  | "bus_numbers"
+  | "makeup_policy"
+  | "late_pickup_grace_start_time"
+  | "late_pickup_first_window_minutes"
+  | "late_pickup_first_window_fee_cents"
+  | "late_pickup_additional_per_minute_cents"
+  | "late_pickup_additional_minutes_cap"
+>;
 
 function defaultOperationalSettingsRow() {
   return {
@@ -66,7 +79,7 @@ function normalizeMakeupPolicy(value: string | null | undefined): OperationalSet
   return value === "running_total" ? "running_total" : "rolling_30_day_expiration";
 }
 
-function normalizeSettingsRow(row: any): OperationalSettings {
+function normalizeSettingsRow(row: OperationsSettingsRow): OperationalSettings {
   const busNumbers = Array.isArray(row?.bus_numbers)
     ? normalizeBusNumbers(row.bus_numbers.map((value: unknown) => String(value)))
     : [...DEFAULT_OPERATIONAL_SETTINGS.busNumbers];

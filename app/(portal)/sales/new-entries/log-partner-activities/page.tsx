@@ -7,6 +7,8 @@ import { getSalesFormLookupsSupabase, getSalesRecentActivitySnapshotSupabase } f
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
+type SalesActivitySnapshot = Awaited<ReturnType<typeof getSalesRecentActivitySnapshotSupabase>>;
+type PartnerActivityRow = SalesActivitySnapshot["partnerActivities"][number];
 
 export default async function LogPartnerActivityPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   await requireModuleAccess("sales");
@@ -32,9 +34,9 @@ export default async function LogPartnerActivityPage({ searchParams }: { searchP
         <CardTitle>Log Partner Activities</CardTitle>
         <div className="mt-3">
           <SalesPartnerActivityForm
-            leads={leads as any[]}
-            partners={partners as any[]}
-            referralSources={referralSources as any[]}
+            leads={leads}
+            partners={partners}
+            referralSources={referralSources}
             initialLeadId={leadId}
             initialPartnerId={partnerId}
             initialReferralSourceId={referralSourceId}
@@ -47,7 +49,7 @@ export default async function LogPartnerActivityPage({ searchParams }: { searchP
         <table>
           <thead><tr><th>When</th><th>Organization</th><th>Contact</th><th>Type</th><th>Linked Lead</th><th>Completed By</th><th>Next Follow-Up</th><th>Notes</th></tr></thead>
           <tbody>
-            {partnerActivities.map((activity: any) => (
+            {partnerActivities.map((activity: PartnerActivityRow) => (
               <tr key={activity.id}>
                 <td>{formatDateTime(activity.activity_at)}</td>
                 <td>{activity.organization_name}</td>

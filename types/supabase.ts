@@ -6949,6 +6949,9 @@ export type Database = {
           active: boolean
           auth_user_id: string | null
           created_at: string
+          credentials: string | null
+          default_landing: string
+          department: string | null
           disabled_at: string | null
           email: string
           full_name: string
@@ -6958,16 +6961,21 @@ export type Database = {
           is_active: boolean
           last_sign_in_at: string | null
           password_set_at: string | null
+          phone: string | null
           role: Database["public"]["Enums"]["app_role"]
           role_id: string | null
           staff_id: string | null
           status: string
+          title: string | null
           updated_at: string
         }
         Insert: {
           active?: boolean
           auth_user_id?: string | null
           created_at?: string
+          credentials?: string | null
+          default_landing?: string
+          department?: string | null
           disabled_at?: string | null
           email: string
           full_name: string
@@ -6977,16 +6985,21 @@ export type Database = {
           is_active?: boolean
           last_sign_in_at?: string | null
           password_set_at?: string | null
+          phone?: string | null
           role?: Database["public"]["Enums"]["app_role"]
           role_id?: string | null
           staff_id?: string | null
           status?: string
+          title?: string | null
           updated_at?: string
         }
         Update: {
           active?: boolean
           auth_user_id?: string | null
           created_at?: string
+          credentials?: string | null
+          default_landing?: string
+          department?: string | null
           disabled_at?: string | null
           email?: string
           full_name?: string
@@ -6996,10 +7009,12 @@ export type Database = {
           is_active?: boolean
           last_sign_in_at?: string | null
           password_set_at?: string | null
+          phone?: string | null
           role?: Database["public"]["Enums"]["app_role"]
           role_id?: string | null
           staff_id?: string | null
           status?: string
+          title?: string | null
           updated_at?: string
         }
         Relationships: [

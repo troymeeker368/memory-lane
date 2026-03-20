@@ -9,6 +9,14 @@ import { getOperationsReports } from "@/lib/services/reports-ops";
 import { getReportingSnapshot } from "@/lib/services/reports";
 import { formatDate, formatOptionalDateTime, formatPercent } from "@/lib/utils";
 
+type ReportingSnapshot = Awaited<ReturnType<typeof getReportingSnapshot>>;
+type TimelyDocsRow = ReportingSnapshot["timelyDocs"][number];
+type CareTrackerRow = ReportingSnapshot["careTracker"][number];
+type ToiletedRow = ReportingSnapshot["toileted"][number];
+type OperationsReports = Awaited<ReturnType<typeof getOperationsReports>>;
+type StaffProductivityRow = OperationsReports["staffProductivity"][number];
+type TimeSummaryRow = OperationsReports["timeSummary"][number];
+
 function StaffLink({ staffName }: { staffName: string }) {
   return (
     <Link href={`/reports/staff/${staffNameToSlug(staffName)}`} className="font-semibold text-brand">
@@ -42,7 +50,7 @@ export default async function ReportsPage() {
                 <td colSpan={5} className="text-center text-sm text-muted">No documentation timeliness rows are available for the current reporting dataset.</td>
               </tr>
             ) : (
-              timelyDocs.map((row: any) => (
+              timelyDocs.map((row: TimelyDocsRow) => (
                 <tr key={row.staff_name}>
                   <td><StaffLink staffName={row.staff_name} /></td>
                   <td>{row.on_time}</td>
@@ -75,7 +83,7 @@ export default async function ReportsPage() {
                 <td colSpan={6} className="text-center text-sm text-muted">No staff productivity rows are available for the current reporting dataset.</td>
               </tr>
             ) : (
-              ops.staffProductivity.map((row: any) => (
+              ops.staffProductivity.map((row: StaffProductivityRow) => (
                 <tr key={row.staff_name}>
                   <td><StaffLink staffName={row.staff_name} /></td>
                   <td>{row.activity_logs}</td>
@@ -106,7 +114,7 @@ export default async function ReportsPage() {
                 <td colSpan={3} className="text-center text-sm text-muted">No time clock summary rows are available for the current reporting dataset.</td>
               </tr>
             ) : (
-              ops.timeSummary.map((row: any) => (
+              ops.timeSummary.map((row: TimeSummaryRow) => (
                 <tr key={row.staff_name}>
                   <td><StaffLink staffName={row.staff_name} /></td>
                   <td>{row.punches}</td>
@@ -163,12 +171,12 @@ export default async function ReportsPage() {
                 <td colSpan={5} className="text-center text-sm text-muted">No care tracker rows are available for the current reporting dataset.</td>
               </tr>
             ) : (
-              careTracker.map((row: any, idx: number) => (
+              careTracker.map((row: CareTrackerRow, idx: number) => (
                 <tr key={`${row.member_name}-${idx}`}>
                   <td>{row.member_name}</td>
-                  <td>{formatDate(row.next_care_plan_due)}</td>
+                  <td>{row.next_care_plan_due ? formatDate(row.next_care_plan_due) : "-"}</td>
                   <td>{row.care_plan_done ? "Yes" : "No"}</td>
-                  <td>{formatDate(row.next_progress_note_due)}</td>
+                  <td>{row.next_progress_note_due ? formatDate(row.next_progress_note_due) : "-"}</td>
                   <td>
                     {getProgressNoteComplianceLabel(row.progress_note_status)}
                     {row.has_progress_note_draft ? " | Draft" : ""}
@@ -196,7 +204,7 @@ export default async function ReportsPage() {
                 <td colSpan={3} className="text-center text-sm text-muted">No toileting rows are available for the current reporting dataset.</td>
               </tr>
             ) : (
-              toileted.map((row: any, idx: number) => (
+              toileted.map((row: ToiletedRow, idx: number) => (
                 <tr key={`${row.member_name}-${idx}`}>
                   <td>{row.member_name}</td>
                   <td>{formatOptionalDateTime(row.last_toileted_at)}</td>

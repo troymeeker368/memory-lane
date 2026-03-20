@@ -66,7 +66,7 @@ export async function getStaffDetail(staffId: string) {
   if (leadActivitiesResult.error) throw new Error(leadActivitiesResult.error.message);
   if (assessmentsResult.error) throw new Error(assessmentsResult.error.message);
 
-  const punches = sortDesc((punchesResult.data ?? []) as Array<{ punch_at: string }>, (r) => r.punch_at);
+  const punches = sortDesc((punchesResult.data ?? []) as Array<{ punch_type: "in" | "out"; punch_at: string }>, (r) => r.punch_at);
 
   return {
     staff,
@@ -79,7 +79,7 @@ export async function getStaffDetail(staffId: string) {
     leadActivities: leadActivitiesResult.data ?? [],
     assessments: assessmentsResult.data ?? [],
     punchSummary: summarizePunches(
-      punches.map((row: any) => ({
+      punches.map((row) => ({
         punch_type: row.punch_type,
         punch_at: row.punch_at
       }))
@@ -101,7 +101,7 @@ export async function getTimeReviewDetail(staffId: string) {
     .order("punch_at", { ascending: false });
   if (punchesError) throw new Error(punchesError.message);
 
-  const periodPunches = (punches ?? []).filter((p: any) => isDateInPayPeriod(p.punch_at, period));
+  const periodPunches = (punches ?? []).filter((p) => isDateInPayPeriod(p.punch_at, period));
   const summary = summarizePunches(periodPunches as Array<{ punch_type: "in" | "out"; punch_at: string }>);
 
   return {

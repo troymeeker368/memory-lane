@@ -35,7 +35,7 @@ export async function getHealthSnapshot() {
   return {
     marToday,
     bloodSugarHistory: bloodSugarHistory ?? [],
-    memberActions: (members ?? []).map((member: any) => ({
+    memberActions: (members ?? []).map((member) => ({
       member_id: member.id,
       member_name: member.display_name,
       action: "Review meds and glucose trends",

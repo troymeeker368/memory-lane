@@ -1,6 +1,6 @@
 "use client";
 
-import { type DependencyList, useEffect, useState } from "react";
+import { type DependencyList, useEffect, useRef, useState } from "react";
 
 function resolveInitial<T>(initialState: T | (() => T)) {
   if (typeof initialState === "function") {
@@ -11,10 +11,13 @@ function resolveInitial<T>(initialState: T | (() => T)) {
 
 export function usePropSyncedState<T>(initialState: T | (() => T), deps: DependencyList) {
   const [state, setState] = useState<T>(() => resolveInitial(initialState));
+  const latestInitialStateRef = useRef(initialState);
+  latestInitialStateRef.current = initialState;
+  const syncKey = JSON.stringify(deps);
 
   useEffect(() => {
-    setState(resolveInitial(initialState));
-  }, deps);
+    setState(resolveInitial(latestInitialStateRef.current));
+  }, [syncKey]);
 
   return [state, setState] as const;
 }

@@ -2,8 +2,10 @@ import { createClient } from "@/lib/supabase/server";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
+import type { Database } from "@/types/supabase";
 
 type StaffAuthStatus = "invited" | "active" | "disabled";
+type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
 
 type StaffAuthProfile = {
   id: string;
@@ -27,15 +29,15 @@ function normalizeStatus(value: string | null | undefined, active: boolean): Sta
   return active ? "active" : "disabled";
 }
 
-function toStaffAuthProfile(row: any): StaffAuthProfile {
-  const active = row?.active !== false;
+function toStaffAuthProfile(row: ProfileRow): StaffAuthProfile {
+  const active = row.active !== false;
   return {
-    id: String(row?.id ?? ""),
-    role: normalizeRoleKey(String(row?.role ?? "program-assistant") as AppRole),
+    id: String(row.id ?? ""),
+    role: normalizeRoleKey(String(row.role ?? "program-assistant") as AppRole),
     active,
-    isActive: row?.is_active !== false,
-    status: normalizeStatus(row?.status, active),
-    passwordSetAt: clean(row?.password_set_at) ?? null
+    isActive: row.is_active !== false,
+    status: normalizeStatus(row.status, active),
+    passwordSetAt: clean(row.password_set_at) ?? null
   };
 }
 

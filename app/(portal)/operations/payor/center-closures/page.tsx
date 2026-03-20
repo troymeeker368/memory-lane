@@ -75,7 +75,7 @@ export default async function CenterClosuresPage() {
                       <input type="hidden" name="occurrence" value={rule.occurrence ?? ""} />
                       <select
                         name="observedWhenWeekend"
-                        defaultValue={rule.observed_when_weekend}
+                        defaultValue={rule.observed_when_weekend ?? undefined}
                         className="h-8 rounded border border-border px-2 text-xs"
                       >
                         {CLOSURE_RULE_OBSERVED_WEEKEND_OPTIONS.map((option) => (

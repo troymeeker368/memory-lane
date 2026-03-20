@@ -168,7 +168,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
   const leadStage = leadRow.stage ?? payload.data.leadStage ?? null;
   const leadStatus = leadRow.status ?? payload.data.leadStatus ?? null;
 
-  let created: any = null;
+  let created: Awaited<ReturnType<typeof createIntakeAssessmentWithResponses>> | null = null;
   try {
     const normalizedAssistiveSelections = normalizeIntakeAssistiveDeviceFields({
       assistiveDevices: payload.data.assistiveDevices || "",
@@ -305,7 +305,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
         id: profile.id,
         name: profile.full_name
       },
-      generatedAtIso: created.created_at,
+      generatedAtIso: toEasternISO(),
       replaceExistingByDocumentSource: true
     });
   } catch (error) {

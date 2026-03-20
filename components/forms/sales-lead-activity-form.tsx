@@ -155,7 +155,7 @@ export function SalesLeadActivityForm({
         referralSourceId: nextReferralSourceId
       };
     });
-  }, [selectedLead?.id, linkedPartnerOptionId, linkedReferralOptionId]);
+  }, [linkedPartnerOptionId, linkedReferralOptionId, selectedLead, setForm]);
 
   const selectedPartner = uniquePartners.find((partner) => partner.id === form.partnerId) ?? null;
   const selectedReferral = uniqueReferralSources.find((source) => source.id === form.referralSourceId) ?? null;

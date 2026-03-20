@@ -200,7 +200,7 @@ export default async function ManagedUserDetailPage({
                         <td>{formatDateTime(item.occurredAt)}</td>
                         <td>{item.context}</td>
                         <td>{item.details}</td>
-                        <td><Link className="font-semibold text-brand" href={item.href as any}>Open</Link></td>
+                        <td><Link className="font-semibold text-brand" href={item.href}>Open</Link></td>
                       </tr>
                     ))}
                   </tbody>

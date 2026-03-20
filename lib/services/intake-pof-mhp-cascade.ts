@@ -298,7 +298,7 @@ export async function createIntakeAssessmentWithResponses(input: {
     leadStatus?: string | null;
   };
   serviceRole?: boolean;
-}) {
+}): Promise<IntakeAssessmentForPofPrefill> {
   const insertPayload = buildIntakeAssessmentInsertPayload({
     payload: input.payload,
     actor: input.actor
@@ -342,7 +342,7 @@ export async function createIntakeAssessmentWithResponses(input: {
     throw error;
   }
 
-  const assessment = (Array.isArray(rpcData) ? rpcData[0] : null) as Record<string, unknown> | null;
+  const assessment = (Array.isArray(rpcData) ? rpcData[0] : null) as IntakeAssessmentForPofPrefill | null;
   if (!assessment?.id) {
     throw new Error("Intake assessment creation RPC did not return the created assessment row.");
   }

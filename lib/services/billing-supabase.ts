@@ -89,6 +89,22 @@ import {
   recordImmediateSystemAlert,
   recordWorkflowEvent
 } from "@/lib/services/workflow-observability";
+import type { Database } from "@/types/supabase";
+
+type Tables = Database["public"]["Tables"];
+type AncillaryChargeCategoryRow = Tables["ancillary_charge_categories"]["Row"];
+type AncillaryChargeLogRow = Tables["ancillary_charge_logs"]["Row"];
+type AttendanceRecordRow = Tables["attendance_records"]["Row"];
+type BillingAdjustmentRow = Tables["billing_adjustments"]["Row"];
+type BillingBatchRow = Tables["billing_batches"]["Row"];
+type BillingExportJobRow = Tables["billing_export_jobs"]["Row"];
+type BillingInvoiceLineRow = Tables["billing_invoice_lines"]["Row"];
+type BillingInvoiceRow = Tables["billing_invoices"]["Row"];
+type MemberAttendanceScheduleRow = Tables["member_attendance_schedules"]["Row"];
+type MemberLookupRow = Pick<Tables["members"]["Row"], "id" | "display_name" | "status">;
+type TransportationLogRow = Tables["transportation_logs"]["Row"];
+type NormalizedBillingInvoiceRow = ReturnType<typeof normalizeInvoiceRow> &
+  Pick<BillingInvoiceRow, "id" | "member_id" | "created_at" | "invoice_status">;
 
 export {
   BILLING_ADJUSTMENT_TYPE_OPTIONS,
@@ -260,15 +276,19 @@ async function getBillingPreviewRows(input: {
     throw new Error(adjustmentError.message);
   }
 
-  const activeMembers = (membersData ?? []) as Array<{ id: string; display_name: string; status: string }>;
+  const activeMembers = (membersData ?? []) as MemberLookupRow[];
   const memberSettings = (memberSettingsData ?? []) as BillingSettingRow[];
-  const attendanceSettingByMemberId = new Map(((attendanceSettingsData ?? []) as Array<any>).map((row: any) => [String(row.member_id), row] as const));
-  const attendanceRows = (attendanceData ?? []) as Array<any>;
+  const attendanceSettingByMemberId = new Map(
+    ((attendanceSettingsData ?? []) as MemberAttendanceScheduleRow[]).map((row) => [String(row.member_id), row] as const)
+  );
+  const attendanceRows = (attendanceData ?? []) as AttendanceRecordRow[];
   const scheduleRows = (scheduleData ?? []) as ScheduleTemplateRow[];
-  const transportationRows = (transportData ?? []) as Array<any>;
-  const ancillaryRows = (ancillaryData ?? []) as Array<any>;
-  const categoryById = new Map(((categoryData ?? []) as Array<any>).map((row: any) => [String(row.id), row] as const));
-  const adjustmentRows = (adjustmentData ?? []) as Array<any>;
+  const transportationRows = (transportData ?? []) as TransportationLogRow[];
+  const ancillaryRows = (ancillaryData ?? []) as AncillaryChargeLogRow[];
+  const categoryById = new Map(
+    ((categoryData ?? []) as AncillaryChargeCategoryRow[]).map((row) => [String(row.id), row] as const)
+  );
+  const adjustmentRows = (adjustmentData ?? []) as BillingAdjustmentRow[];
   const expectedAttendanceContext = await loadExpectedAttendanceSupabaseContext({
     memberIds: activeMembers.map((member) => member.id),
     startDate: minDate,
@@ -506,7 +526,7 @@ export async function syncAttendanceBillingForDate(input: { memberId: string; at
     !isScheduledDay &&
     (memberSetting?.bill_extra_days ?? true);
 
-  let linkedAdjustmentId = (attendance as any).linked_adjustment_id ? String((attendance as any).linked_adjustment_id) : null;
+  let linkedAdjustmentId = attendance.linked_adjustment_id ? String(attendance.linked_adjustment_id) : null;
   if (shouldHaveExtraDayAdjustment) {
     if (linkedAdjustmentId) {
       const { error } = await supabase
@@ -615,7 +635,7 @@ export async function generateBillingBatch(input: BatchGenerationInput) {
       .select("id, invoice_month, invoice_number");
     if (existingInvoiceError) throw new Error(existingInvoiceError.message);
     const existingCountByMonth = new Map<string, number>();
-    (existingInvoiceRows ?? []).forEach((row: any) => {
+    ((existingInvoiceRows ?? []) as Pick<BillingInvoiceRow, "invoice_month">[]).forEach((row) => {
       const month = startOfMonth(String(row.invoice_month));
       existingCountByMonth.set(month, (existingCountByMonth.get(month) ?? 0) + 1);
     });
@@ -695,7 +715,7 @@ export async function finalizeBillingBatch(input: FinalizeBatchInput) {
       .maybeSingle();
     if (batchError) throw new Error(batchError.message);
     if (!batch) return { ok: false as const, error: "Billing batch not found." };
-    if (!["Draft", "Reviewed"].includes(String((batch as any).batch_status))) {
+    if (!["Draft", "Reviewed"].includes(String(batch.batch_status))) {
       return { ok: false as const, error: "Only Draft/Reviewed batches can be finalized." };
     }
 
@@ -704,8 +724,8 @@ export async function finalizeBillingBatch(input: FinalizeBatchInput) {
       .select("id")
       .eq("billing_batch_id", input.billingBatchId);
     if (invoiceError) throw new Error(invoiceError.message);
-    for (const invoice of invoices ?? []) {
-      const finalized = await finalizeInvoice({ invoiceId: String((invoice as any).id), finalizedBy: input.finalizedBy });
+    for (const invoice of (invoices ?? []) as Pick<BillingInvoiceRow, "id">[]) {
+      const finalized = await finalizeInvoice({ invoiceId: String(invoice.id), finalizedBy: input.finalizedBy });
       if (!finalized.ok) return finalized;
     }
 
@@ -716,7 +736,7 @@ export async function finalizeBillingBatch(input: FinalizeBatchInput) {
         finalized_by: input.finalizedBy,
         finalized_at: now,
         completion_date: normalizeDateOnly(now),
-        next_due_date: addMonths(startOfMonth(String((batch as any).billing_month)), 1),
+        next_due_date: addMonths(startOfMonth(String(batch.billing_month)), 1),
         updated_at: now
       })
       .eq("id", input.billingBatchId);
@@ -747,7 +767,7 @@ export async function reopenBillingBatch(input: ReopenBatchInput) {
       .select("id")
       .eq("billing_batch_id", input.billingBatchId);
     if (invoiceError) throw new Error(invoiceError.message);
-    const invoiceIds = (invoices ?? []).map((row: any) => String(row.id));
+    const invoiceIds = ((invoices ?? []) as Pick<BillingInvoiceRow, "id">[]).map((row) => String(row.id));
 
     if (invoiceIds.length > 0) {
       const { data: sourceLines, error: sourceLineError } = await supabase
@@ -756,9 +776,9 @@ export async function reopenBillingBatch(input: ReopenBatchInput) {
         .in("invoice_id", invoiceIds);
       if (sourceLineError) throw new Error(sourceLineError.message);
 
-      for (const line of sourceLines ?? []) {
-        const sourceTable = String((line as any).source_table ?? "");
-        const sourceRecordId = String((line as any).source_record_id ?? "");
+      for (const line of (sourceLines ?? []) as Pick<BillingInvoiceLineRow, "source_table" | "source_record_id">[]) {
+        const sourceTable = String(line.source_table ?? "");
+        const sourceRecordId = String(line.source_record_id ?? "");
         if (!sourceTable || !sourceRecordId) continue;
         if (sourceTable === "transportation_logs") {
           const { error: sourceUpdateError } = await supabase
@@ -834,10 +854,10 @@ export async function finalizeInvoice(input: { invoiceId: string; finalizedBy: s
       .maybeSingle();
     if (invoiceError) throw new Error(invoiceError.message);
     if (!invoice) return { ok: false as const, error: "Invoice not found." };
-    if (String((invoice as any).invoice_status) === "Finalized") return { ok: true as const };
+    if (String(invoice.invoice_status) === "Finalized") return { ok: true as const };
 
-    const invoiceDate = normalizeDateOnly((invoice as any).invoice_date, toEasternDate());
-    const dueDate = normalizeDateOnly((invoice as any).due_date, addDays(invoiceDate, 30));
+    const invoiceDate = normalizeDateOnly(invoice.invoice_date, toEasternDate());
+    const dueDate = normalizeDateOnly(invoice.due_date, addDays(invoiceDate, 30));
     const { error: updateError } = await supabase
       .from("billing_invoices")
       .update({
@@ -975,10 +995,10 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
         .gte("service_date", period.start)
         .lte("service_date", period.end);
       if (error) throw new Error(error.message);
-      (rows ?? [])
-        .filter((row: any) => String(row.billing_status ?? "Unbilled") === "Unbilled")
-        .filter((row: any) => row.billable !== false)
-        .forEach((row: any) => {
+      ((rows ?? []) as TransportationLogRow[])
+        .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
+        .filter((row) => row.billable !== false)
+        .forEach((row) => {
           const amount = toAmount(
             asNumber(row.total_amount) > 0
               ? asNumber(row.total_amount)
@@ -1012,10 +1032,12 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       ]);
       if (error) throw new Error(error.message);
       if (categoryError) throw new Error(categoryError.message);
-      const categoryById = new Map((categories ?? []).map((row: any) => [String(row.id), row] as const));
-      (rows ?? [])
-        .filter((row: any) => String(row.billing_status ?? "Unbilled") === "Unbilled")
-        .forEach((row: any) => {
+      const categoryById = new Map(
+        ((categories ?? []) as AncillaryChargeCategoryRow[]).map((row) => [String(row.id), row] as const)
+      );
+      ((rows ?? []) as AncillaryChargeLogRow[])
+        .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
+        .forEach((row) => {
           const category = categoryById.get(String(row.category_id));
           const unitRate = asNumber(row.unit_rate) > 0 ? asNumber(row.unit_rate) : asNumber(category?.price_cents) / 100;
           const quantity = asNumber(row.quantity || 1);
@@ -1044,9 +1066,9 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
         .gte("adjustment_date", period.start)
         .lte("adjustment_date", period.end);
       if (error) throw new Error(error.message);
-      (rows ?? [])
-        .filter((row: any) => String(row.billing_status ?? "Unbilled") === "Unbilled")
-        .forEach((row: any) => {
+      ((rows ?? []) as BillingAdjustmentRow[])
+        .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
+        .forEach((row) => {
           const amount = toAmount(asNumber(row.amount));
           const serviceDate = normalizeDateOnly(row.adjustment_date);
           variableRows.push({
@@ -1194,7 +1216,10 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       }
     }
 
-    const coverageRows = (insertedLines ?? []).map((line: any) => ({
+    const coverageRows = ((insertedLines ?? []) as Pick<
+      BillingInvoiceLineRow,
+      "id" | "line_type" | "source_table" | "source_record_id" | "service_period_start" | "service_period_end"
+    >[]).map((line) => ({
       member_id: input.memberId,
       coverage_type: mapCoverageTypeForLineType(line.line_type),
       coverage_start_date: normalizeDateOnly(line.service_period_start, period.start),
@@ -1271,7 +1296,7 @@ export async function getBillingBatches() {
     }
     throw new Error(error.message);
   }
-  return (data ?? []).map((row: any) => ({
+  return ((data ?? []) as BillingBatchRow[]).map((row) => ({
     ...row,
     invoice_count: asNumber(row.invoice_count),
     total_amount: toAmount(asNumber(row.total_amount)),
@@ -1365,12 +1390,17 @@ export async function getBillingBatchReviewRows(billingBatchId: string) {
     }
     throw new Error(invoiceError.message);
   }
-  const memberNameById = new Map((members ?? []).map((row: any) => [String(row.id), String(row.display_name)] as const));
+  const memberNameById = new Map(
+    ((members ?? []) as Pick<MemberLookupRow, "id" | "display_name">[]).map((row) => [
+      String(row.id),
+      String(row.display_name)
+    ] as const)
+  );
   const payorByMember = await listBillingPayorContactsForMembers(
-    (invoices ?? []).map((invoice: any) => String(invoice.member_id))
+    ((invoices ?? []) as BillingInvoiceRow[]).map((invoice) => String(invoice.member_id))
   );
 
-  return (invoices ?? []).map((invoice: any) => {
+  return ((invoices ?? []) as BillingInvoiceRow[]).map((invoice) => {
     const payor = payorByMember.get(String(invoice.member_id)) ?? null;
     return {
       invoiceId: String(invoice.id),
@@ -1455,8 +1485,15 @@ export async function getVariableChargesQueue(input: { month: string }) {
     throw new Error(categoryError.message);
   }
 
-  const memberNameById = new Map((membersData ?? []).map((row: any) => [String(row.id), String(row.display_name)] as const));
-  const categoryById = new Map(((categoryData ?? []) as Array<any>).map((row: any) => [String(row.id), row] as const));
+  const memberNameById = new Map(
+    ((membersData ?? []) as Pick<MemberLookupRow, "id" | "display_name">[]).map((row) => [
+      String(row.id),
+      String(row.display_name)
+    ] as const)
+  );
+  const categoryById = new Map(
+    ((categoryData ?? []) as AncillaryChargeCategoryRow[]).map((row) => [String(row.id), row] as const)
+  );
   const rows: Array<{
     type: "Transportation" | "Ancillary" | "Adjustment";
     id: string;
@@ -1468,10 +1505,10 @@ export async function getVariableChargesQueue(input: { month: string }) {
     exclusionReason: string | null;
   }> = [];
 
-  (transportData ?? [])
-    .filter((row: any) => String(row.billing_status ?? "Unbilled") !== "Billed")
-    .filter((row: any) => row.billable !== false)
-    .forEach((row: any) => {
+  ((transportData ?? []) as TransportationLogRow[])
+    .filter((row) => String(row.billing_status ?? "Unbilled") !== "Billed")
+    .filter((row) => row.billable !== false)
+    .forEach((row) => {
       const amount = toAmount(
         asNumber(row.total_amount) > 0
           ? asNumber(row.total_amount)
@@ -1489,9 +1526,9 @@ export async function getVariableChargesQueue(input: { month: string }) {
       });
     });
 
-  (ancillaryData ?? [])
-    .filter((row: any) => String(row.billing_status ?? "Unbilled") !== "Billed")
-    .forEach((row: any) => {
+  ((ancillaryData ?? []) as AncillaryChargeLogRow[])
+    .filter((row) => String(row.billing_status ?? "Unbilled") !== "Billed")
+    .forEach((row) => {
       const category = categoryById.get(String(row.category_id));
       const unitRate = asNumber(row.unit_rate) > 0 ? asNumber(row.unit_rate) : asNumber(category?.price_cents) / 100;
       const quantity = asNumber(row.quantity || 1);
@@ -1508,9 +1545,9 @@ export async function getVariableChargesQueue(input: { month: string }) {
       });
     });
 
-  (adjustmentData ?? [])
-    .filter((row: any) => String(row.billing_status ?? "Unbilled") !== "Billed")
-    .forEach((row: any) => {
+  ((adjustmentData ?? []) as BillingAdjustmentRow[])
+    .filter((row) => String(row.billing_status ?? "Unbilled") !== "Billed")
+    .forEach((row) => {
       rows.push({
         type: "Adjustment",
         id: String(row.id),
@@ -1556,15 +1593,17 @@ export async function createBillingExport(input: {
       throw new Error(invoiceError.message);
     }
     if (!batch) return { ok: false as const, error: "Billing batch not found." };
-    const invoiceRows = (invoices ?? []).map(normalizeInvoiceRow);
+    const invoiceRows = ((invoices ?? []) as BillingInvoiceRow[]).map(
+      (row) => normalizeInvoiceRow(row) as NormalizedBillingInvoiceRow
+    );
     if (invoiceRows.length === 0) {
       return { ok: false as const, error: "No finalized invoices available for export." };
     }
     const payorByMember = await listBillingPayorContactsForMembers(
-      invoiceRows.map((row: any) => String(row.member_id))
+      invoiceRows.map((row) => String(row.member_id))
     );
 
-    const invoiceIds = invoiceRows.map((row: any) => String(row.id));
+    const invoiceIds = invoiceRows.map((row) => String(row.id));
     const { data: lines, error: linesError } = await supabase
       .from("billing_invoice_lines")
       .select("*")
@@ -1588,7 +1627,7 @@ export async function createBillingExport(input: {
         "InvoiceStatus",
         "TotalAmount"
       ];
-      const body = invoiceRows.map((row: any) => {
+      const body = invoiceRows.map((row) => {
         const payor = payorByMember.get(String(row.member_id)) ?? null;
         return [
           row.invoice_number,
@@ -1604,8 +1643,8 @@ export async function createBillingExport(input: {
       csv = buildCsvRows(header, body);
     } else if (input.exportType === "InternalReviewCSV") {
       const header = ["InvoiceNumber", "LineType", "Description", "ServiceDate", "Quantity", "UnitRate", "Amount"];
-      const invoiceById = new Map(invoiceRows.map((row: any) => [String(row.id), row] as const));
-      const body = (lines ?? []).map((line: any) => [
+      const invoiceById = new Map(invoiceRows.map((row) => [String(row.id), row] as const));
+      const body = ((lines ?? []) as BillingInvoiceLineRow[]).map((line) => [
           invoiceById.get(String(line.invoice_id))?.invoice_number ?? "",
           line.line_type,
           line.description,
@@ -1617,7 +1656,7 @@ export async function createBillingExport(input: {
       csv = buildCsvRows(header, body);
     } else {
       const header = ["Customer", "CustomerContactId", "QuickBooksCustomerId", "InvoiceNumber", "Date", "DueDate", "Amount"];
-      const body = invoiceRows.map((row: any) => {
+      const body = invoiceRows.map((row) => {
         const payor = payorByMember.get(String(row.member_id)) ?? null;
         return [
           payor ? formatBillingPayorDisplayName(payor) : "No payor contact designated",
@@ -1632,7 +1671,7 @@ export async function createBillingExport(input: {
       csv = buildCsvRows(header, body);
     }
 
-    const fileName = `${input.exportType}-${startOfMonth(String((batch as any).billing_month))}-${Date.now()}.csv`;
+    const fileName = `${input.exportType}-${startOfMonth(String(batch.billing_month))}-${Date.now()}.csv`;
     const billingExportId = randomUUID();
     await invokeCreateBillingExportRpc({
       exportJobPayload: {
@@ -1720,7 +1759,7 @@ export async function getBillingExports() {
     }
     throw new Error(error.message);
   }
-  return (data ?? []) as Array<any>;
+  return (data ?? []) as BillingExportJobRow[];
 }
 
 export interface BillingDashboardSummary {

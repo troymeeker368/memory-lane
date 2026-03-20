@@ -89,11 +89,14 @@ export default async function MemberCommandCenterIndexPage({
                       <div className="flex items-center gap-2">
                         {row.profile.profile_image_url ? (
                           <Link href={`/operations/member-command-center/${row.member.id}`} aria-label={`Open ${row.member.display_name} command center`}>
-                            <img
-                              src={row.profile.profile_image_url}
-                              alt={`${row.member.display_name} profile`}
-                              className="h-10 w-10 rounded-full border border-border object-cover"
-                            />
+                            <>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={row.profile.profile_image_url}
+                                alt={`${row.member.display_name} profile`}
+                                className="h-10 w-10 rounded-full border border-border object-cover"
+                              />
+                            </>
                           </Link>
                         ) : (
                           <Link

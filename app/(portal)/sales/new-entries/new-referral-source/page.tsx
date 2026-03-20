@@ -10,7 +10,7 @@ export default async function NewReferralSourcePage() {
   return (
     <Card>
       <CardTitle>New Referral Source</CardTitle>
-      <div className="mt-3"><NewReferralSourceForm partners={partners as any[]} /></div>
+      <div className="mt-3"><NewReferralSourceForm partners={partners} /></div>
     </Card>
   );
 }

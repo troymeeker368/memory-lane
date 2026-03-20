@@ -1,11 +1,12 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 
-import { canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
+import { canAccessClinicalDocumentationForRole, canAccessModule, canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export const MEMBER_DOCUMENTS_BUCKET = "member-documents";
@@ -23,6 +24,13 @@ export type MemberFileCategory =
   | "Billing"
   | "Name Badge"
   | "Other";
+
+const CLINICAL_MEMBER_FILE_CATEGORIES = new Set<MemberFileCategory>([
+  "Assessment",
+  "Care Plan",
+  "Orders / POF",
+  "Health Unit"
+]);
 
 type SaveGeneratedMemberPdfInput = {
   memberId: string;
@@ -119,6 +127,24 @@ function assertAuthorizedMemberFileMutator(actor: MemberFileMutationActor) {
   const hasOperationsEdit = canPerformModuleAction(normalizedRole, "operations", "canEdit", actor.permissions);
   if (normalizedRole !== "admin" && normalizedRole !== "manager" && !hasOperationsEdit) {
     throw new Error("Only authorized operations editors can manage member files.");
+  }
+}
+
+function assertAuthorizedMemberFileDownloader(
+  actor: MemberFileMutationActor,
+  category: string | null | undefined
+) {
+  const normalizedRole = normalizeRoleKey(actor.role);
+  const hasOperationsView = canAccessModule(normalizedRole, "operations", actor.permissions);
+  const hasClinicalAccess = canAccessClinicalDocumentationForRole(normalizedRole);
+  const normalizedCategory = String(category ?? "").trim() as MemberFileCategory;
+
+  if (!hasOperationsView && !hasClinicalAccess) {
+    throw new Error("You do not have access to member files.");
+  }
+
+  if (CLINICAL_MEMBER_FILE_CATEGORIES.has(normalizedCategory) && !hasClinicalAccess) {
+    throw new Error("You do not have access to clinical member files.");
   }
 }
 
@@ -385,7 +411,7 @@ export async function upsertMemberFileByDocumentSource(input: {
   uploadedAtIso?: string | null;
   updatedAtIso?: string | null;
   additionalColumns?: Record<string, unknown>;
-  supabase?: any;
+  supabase?: Awaited<ReturnType<typeof createClient>>;
 }) {
   const now = input.updatedAtIso ?? input.uploadedAtIso ?? toEasternISO();
   const admin = input.supabase ?? createSupabaseAdminClient();
@@ -566,6 +592,7 @@ export async function deleteCommandCenterMemberFile(input: {
 }
 
 export async function getMemberFileDownloadUrl(input: {
+  actor: MemberFileMutationActor;
   memberFileId: string;
   memberId?: string | null;
   expiresInSeconds?: number;
@@ -577,6 +604,7 @@ export async function getMemberFileDownloadUrl(input: {
   if (expectedMemberId && String(existing.member_id ?? "").trim() !== expectedMemberId) {
     throw new Error("Member file/member mismatch.");
   }
+  assertAuthorizedMemberFileDownloader(input.actor, String(existing.category ?? ""));
 
   const storageObjectPath = String(existing.storage_object_path ?? "").trim() || null;
   if (storageObjectPath) {

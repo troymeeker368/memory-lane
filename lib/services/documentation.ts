@@ -117,12 +117,12 @@ export async function getAssessmentMembers() {
     .order("member_name", { ascending: true });
   if (leadsError) throw new Error(`Unable to load leads for assessment members: ${leadsError.message}`);
 
-  const leadIds = (leads ?? []).map((lead: any) => String(lead.id)).filter(Boolean);
+  const leadIds = (leads ?? []).map((lead) => String(lead.id)).filter(Boolean);
   const canonicalMemberLinksByLeadId = await listCanonicalMemberLinksForLeadIds(leadIds, {
     actionLabel: "getAssessmentMembers"
   });
 
-  return (leads ?? []).map((lead: any) => {
+  return (leads ?? []).map((lead) => {
     const linkedMember = canonicalMemberLinksByLeadId.get(String(lead.id)) ?? null;
     const memberStatus = linkedMember?.memberStatus ?? null;
     const canonicalRow = {

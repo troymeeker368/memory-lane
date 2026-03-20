@@ -49,6 +49,31 @@ async function loadEnrollmentPacketPublicService() {
   return import("@/lib/services/enrollment-packets-public");
 }
 
+async function recordUploadGuardFailure(input: {
+  token: string;
+  caregiverIp: string | null;
+  caregiverUserAgent: string | null;
+  message: string;
+}) {
+  try {
+    const { recordPublicEnrollmentPacketGuardFailure } = await loadEnrollmentPacketPublicService();
+    await recordPublicEnrollmentPacketGuardFailure({
+      token: input.token,
+      caregiverIp: input.caregiverIp,
+      caregiverUserAgent: input.caregiverUserAgent,
+      failureType: input.message.includes("too large")
+        ? "upload_file_size_limit_exceeded"
+        : input.message.includes("unsupported file type")
+          ? "upload_type_rejected"
+          : "upload_validation_rejected",
+      message: input.message,
+      severity: input.message.includes("too large") ? "high" : "medium"
+    });
+  } catch (loggingError) {
+    console.error("[enrollment-packet] unable to record public upload guard failure", loggingError);
+  }
+}
+
 function asString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
 }
@@ -185,19 +210,44 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
     const forwardedFor = headerMap.get("x-forwarded-for");
     const caregiverIp = forwardedFor ? forwardedFor.split(",")[0].trim() : null;
     const caregiverUserAgent = headerMap.get("user-agent");
+    const token = asString(formData, "token");
     const intakePayload = parseIntakePayload(formData);
 
-    const [medicareCardUploads, primaryInsuranceCardUploads, secondaryInsuranceCardUploads, poaUploads, dnrUploads, advanceDirectiveUploads] = await Promise.all([
-      parseFileUploads(formData, "medicareCardUploads", "medicare_card"),
-      parseFileUploads(formData, "primaryInsuranceCardUploads", "private_insurance"),
-      parseFileUploads(formData, "secondaryInsuranceCardUploads", "supplemental_insurance"),
-      parseFileUploads(formData, "poaUploads", "poa_guardianship"),
-      parseFileUploads(formData, "dnrUploads", "dnr_dni_advance_directive"),
-      parseFileUploads(formData, "advanceDirectiveUploads", "dnr_dni_advance_directive")
-    ]);
+    let medicareCardUploads;
+    let primaryInsuranceCardUploads;
+    let secondaryInsuranceCardUploads;
+    let poaUploads;
+    let dnrUploads;
+    let advanceDirectiveUploads;
+    try {
+      [
+        medicareCardUploads,
+        primaryInsuranceCardUploads,
+        secondaryInsuranceCardUploads,
+        poaUploads,
+        dnrUploads,
+        advanceDirectiveUploads
+      ] = await Promise.all([
+        parseFileUploads(formData, "medicareCardUploads", "medicare_card"),
+        parseFileUploads(formData, "primaryInsuranceCardUploads", "private_insurance"),
+        parseFileUploads(formData, "secondaryInsuranceCardUploads", "supplemental_insurance"),
+        parseFileUploads(formData, "poaUploads", "poa_guardianship"),
+        parseFileUploads(formData, "dnrUploads", "dnr_dni_advance_directive"),
+        parseFileUploads(formData, "advanceDirectiveUploads", "dnr_dni_advance_directive")
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to validate enrollment packet uploads.";
+      await recordUploadGuardFailure({
+        token,
+        caregiverIp,
+        caregiverUserAgent,
+        message
+      });
+      throw error;
+    }
 
     await submitPublicEnrollmentPacket({
-      token: asString(formData, "token"),
+      token,
       caregiverTypedName: asString(formData, "caregiverTypedName"),
       caregiverSignatureImageDataUrl: asString(formData, "caregiverSignatureImageDataUrl"),
       attested: asString(formData, "attested") === "true",

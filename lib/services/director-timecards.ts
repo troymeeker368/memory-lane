@@ -3,6 +3,7 @@ import { normalizeRoleKey } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { easternDateTimeLocalToISO, toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
+import type { Database } from "@/types/supabase";
 
 export type TimecardStatus = "pending" | "needs_review" | "approved" | "corrected";
 type Decision = "approved" | "denied";
@@ -15,6 +16,10 @@ type SupabasePayPeriod = {
   end_date: string;
   is_closed: boolean;
 };
+type DailyTimecardRow = Database["public"]["Tables"]["daily_timecards"]["Row"];
+type ForgottenPunchRequestRow = Database["public"]["Tables"]["forgotten_punch_requests"]["Row"];
+type PtoEntryRow = Database["public"]["Tables"]["pto_entries"]["Row"];
+type ActiveEmployeeRow = Pick<Database["public"]["Tables"]["profiles"]["Row"], "id" | "full_name">;
 
 function addDays(dateOnly: string, days: number) {
   const d = new Date(`${dateOnly}T00:00:00.000Z`);
@@ -180,7 +185,7 @@ export async function getDirectorTimecardsWorkspace(filters?: {
   if (filters?.exceptionOnly) timecardsQuery = timecardsQuery.eq("has_exception", true);
   const { data: dailyTimecardsData, error: timecardsError } = await timecardsQuery;
   if (timecardsError) throw new Error(timecardsError.message);
-  const dailyTimecards = (dailyTimecardsData ?? []) as Array<Record<string, any>>;
+  const dailyTimecards = (dailyTimecardsData ?? []) as DailyTimecardRow[];
 
   let forgottenQuery = supabase
     .from("forgotten_punch_requests")
@@ -191,7 +196,7 @@ export async function getDirectorTimecardsWorkspace(filters?: {
   if (filters?.employeeId) forgottenQuery = forgottenQuery.eq("employee_id", filters.employeeId);
   const { data: forgottenPunchRequestsData, error: forgottenError } = await forgottenQuery;
   if (forgottenError) throw new Error(forgottenError.message);
-  const forgottenPunchRequests = (forgottenPunchRequestsData ?? []) as Array<Record<string, any>>;
+  const forgottenPunchRequests = (forgottenPunchRequestsData ?? []) as ForgottenPunchRequestRow[];
 
   let ptoQuery = supabase
     .from("pto_entries")
@@ -202,7 +207,7 @@ export async function getDirectorTimecardsWorkspace(filters?: {
   if (filters?.employeeId) ptoQuery = ptoQuery.eq("employee_id", filters.employeeId);
   const { data: ptoEntriesData, error: ptoError } = await ptoQuery;
   if (ptoError) throw new Error(ptoError.message);
-  const ptoEntries = (ptoEntriesData ?? []) as Array<Record<string, any>>;
+  const ptoEntries = (ptoEntriesData ?? []) as PtoEntryRow[];
 
   const { data: employeesData, error: employeesError } = await supabase
     .from("profiles")
@@ -307,7 +312,7 @@ export async function getDirectorTimecardsWorkspace(filters?: {
   const blocked = exportRows.filter((row) => row.status !== "approved");
 
   return {
-    availableEmployees: ((employeesData ?? []) as Array<{ id: string; full_name: string }>).map((row) => ({
+    availableEmployees: ((employeesData ?? []) as ActiveEmployeeRow[]).map((row) => ({
       id: row.id,
       name: row.full_name
     })),

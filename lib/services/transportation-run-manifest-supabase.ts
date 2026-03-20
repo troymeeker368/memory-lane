@@ -384,7 +384,7 @@ export async function getTransportationRunManifestSupabase(input: {
 
   schedules.forEach((schedule) => {
     if (!scheduleWeekday) return;
-    const slot = getTransportSlotForScheduleDay(schedule as any, scheduleWeekday, selectedShift);
+    const slot = getTransportSlotForScheduleDay(schedule as Parameters<typeof getTransportSlotForScheduleDay>[0], scheduleWeekday, selectedShift);
     const transportType = coerceTransportMode(slot.mode);
     if (!transportType) return;
     if ((slot.busNumber ?? "").trim() !== selectedBusNumber) return;

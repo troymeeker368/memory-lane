@@ -9,6 +9,74 @@ interface DocumentationWorkflowScope {
   staffUserId?: string | null;
 }
 
+type WorkflowRelation = { display_name?: string | null; full_name?: string | null } | Array<{ display_name?: string | null; full_name?: string | null }> | null;
+type DailyWorkflowRow = {
+  id: string;
+  activity_date: string;
+  created_at: string;
+  activity_1_level: number;
+  activity_2_level: number;
+  activity_3_level: number;
+  activity_4_level: number;
+  activity_5_level: number;
+  missing_reason_1: string | null;
+  missing_reason_2: string | null;
+  missing_reason_3: string | null;
+  missing_reason_4: string | null;
+  missing_reason_5: string | null;
+  notes: string | null;
+  member: WorkflowRelation;
+  staff: WorkflowRelation;
+};
+type ToiletWorkflowQueryRow = {
+  id: string;
+  event_at: string;
+  briefs: boolean | null;
+  member_supplied: boolean | null;
+  use_type: string;
+  notes: string | null;
+  member: WorkflowRelation;
+  staff: WorkflowRelation;
+};
+type ShowerWorkflowQueryRow = {
+  id: string;
+  event_at: string;
+  laundry: boolean | null;
+  briefs: boolean | null;
+  member: WorkflowRelation;
+  staff: WorkflowRelation;
+};
+type TransportationWorkflowQueryRow = {
+  id: string;
+  service_date: string;
+  period: string | null;
+  transport_type: string | null;
+  member: WorkflowRelation;
+  staff: WorkflowRelation;
+};
+type PhotoWorkflowQueryRow = {
+  id: string;
+  uploaded_at: string;
+  photo_url: string | null;
+  uploader: WorkflowRelation;
+};
+type AssessmentWorkflowQueryRow = {
+  id: string;
+  assessment_date: string;
+  total_score: number | null;
+  recommended_track: string | null;
+  admission_review_required: boolean | null;
+  transport_appropriate: boolean | null;
+  complete: boolean | null;
+  completed_by: string | null;
+  signature_status: string | null;
+  signed_by: string | null;
+  signed_at: string | null;
+  draft_pof_status: string | null;
+  created_at: string;
+  member: WorkflowRelation;
+};
+
 function relationDisplayName(value: unknown, fallback: string) {
   if (Array.isArray(value)) {
     const first = value[0] as { display_name?: string; full_name?: string } | undefined;
@@ -80,7 +148,7 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
   if (transportError) throw new Error(`Unable to load transportation workflows: ${transportError.message}`);
   if (photoError) throw new Error(`Unable to load photo workflows: ${photoError.message}`);
 
-  const dailyActivities = (dailyRows ?? []).map((row: any) => {
+  const dailyActivities = ((dailyRows ?? []) as DailyWorkflowRow[]).map((row) => {
     const participation = Math.round(
       ((Number(row.activity_1_level ?? 0) +
         Number(row.activity_2_level ?? 0) +
@@ -110,7 +178,7 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
     };
   });
 
-  const toilets = (toiletRows ?? []).map((row: any) => ({
+  const toilets = ((toiletRows ?? []) as ToiletWorkflowQueryRow[]).map((row) => ({
     id: row.id,
     event_at: row.event_at,
     member_name: relationDisplayName(row.member, "Unknown Member"),
@@ -121,7 +189,7 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
     notes: row.notes ?? null
   }));
 
-  const showers = (showerRows ?? []).map((row: any) => ({
+  const showers = ((showerRows ?? []) as ShowerWorkflowQueryRow[]).map((row) => ({
     id: row.id,
     event_at: row.event_at,
     member_name: relationDisplayName(row.member, "Unknown Member"),
@@ -131,7 +199,7 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
     notes: null
   }));
 
-  const transportation = (transportRows ?? []).map((row: any) => ({
+  const transportation = ((transportRows ?? []) as TransportationWorkflowQueryRow[]).map((row) => ({
     id: row.id,
     service_date: row.service_date,
     period: row.period,
@@ -140,7 +208,7 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
     staff_name: relationDisplayName(row.staff, "Unknown Staff")
   }));
 
-  const photos = (photoRows ?? []).map((row: any) => {
+  const photos = ((photoRows ?? []) as PhotoWorkflowQueryRow[]).map((row) => {
     const mime =
       typeof row.photo_url === "string" && row.photo_url.startsWith("data:")
         ? row.photo_url.slice(5, row.photo_url.indexOf(";")) || "image/*"
@@ -177,10 +245,10 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
       if (assessmentsError) throw new Error(`Unable to load intake assessment workflows: ${assessmentsError.message}`);
       const rows = assessmentRows ?? [];
       const signatureByAssessmentId = await listIntakeAssessmentSignatureStatesByAssessmentIds(
-        rows.map((row: any) => String(row.id))
+        rows.map((row) => String(row.id))
       );
 
-      return rows.map((row: any) => {
+      return (rows as AssessmentWorkflowQueryRow[]).map((row) => {
         const signature = signatureByAssessmentId[String(row.id)] ?? null;
         const signatureStatus = signature?.status ?? "unsigned";
         const draftPofStatus = toIntakeDraftPofStatus(row.draft_pof_status);
@@ -204,7 +272,9 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
           draft_pof_readiness_status: draftPofReadinessStatus,
           draft_pof_ready: draftPofReadinessStatus === "draft_pof_ready",
           member_name: relationDisplayName(row.member, "Unknown Member"),
-          created_at: row.created_at
+          created_at: row.created_at,
+          reviewer_name: null,
+          created_by_name: null
         };
       });
     })()

@@ -56,6 +56,13 @@ export type {
 
 const MEMBER_DOCUMENTATION_REPORT_RPC = "rpc_get_member_documentation_summary";
 
+function relationDisplayName(
+  value: { display_name?: string | null } | Array<{ display_name?: string | null }> | null | undefined
+) {
+  if (Array.isArray(value)) return value[0]?.display_name ?? "Unknown Member";
+  return value?.display_name ?? "Unknown Member";
+}
+
 type MemberDocumentationSummaryRow = {
   member_id: string;
   member_name: string | null;
@@ -225,7 +232,7 @@ async function loadFinalizedRevenueByMember(input: {
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  (data ?? []).forEach((row: any) => {
+  (data ?? []).forEach((row) => {
     const memberId = String(row.member_id ?? "");
     if (!memberId) return;
     const invoiceStatus = String(row.invoice_status ?? "");
@@ -290,7 +297,7 @@ export async function getAdminRevenueSummary(input: AdminRevenueSummaryInput): P
   let transportationAncillaryCount = 0;
   let latePickupTotalCents = 0;
   let latePickupCount = 0;
-  (ancillaryRows ?? []).forEach((row: any) => {
+  (ancillaryRows ?? []).forEach((row) => {
     const reconciliationStatus = String(row.reconciliation_status ?? "open").toLowerCase();
     if (reconciliationStatus === "void") return;
     const amountCents = Number(row.amount_cents ?? 0);
@@ -400,10 +407,10 @@ export async function getOnDemandReportData(input: {
         { key: "source", label: "Source", kind: "text" },
         { key: "totalAmount", label: "Total Amount", kind: "currency_cents" }
       ],
-      rows: (data ?? []).map((row: any) => ({
+      rows: (data ?? []).map((row) => ({
         invoiceDate: row.invoice_date ?? "",
         invoiceNumber: row.invoice_number ?? "",
-        memberName: row.member?.display_name ?? "Unknown Member",
+        memberName: relationDisplayName(row.member),
         status: row.invoice_status ?? "",
         source: row.invoice_source ?? "",
         totalAmount: toCents(Number(row.total_amount ?? 0))
@@ -430,9 +437,9 @@ export async function getOnDemandReportData(input: {
         { key: "transportType", label: "Transport Type", kind: "text" },
         { key: "billingStatus", label: "Billing Status", kind: "text" }
       ],
-      rows: (data ?? []).map((row: any) => ({
+      rows: (data ?? []).map((row) => ({
         serviceDate: row.service_date ?? "",
-        memberName: row.member?.display_name ?? "Unknown Member",
+        memberName: relationDisplayName(row.member),
         period: row.period ?? "",
         transportType: row.transport_type ?? "",
         billingStatus: row.billing_status ?? ""

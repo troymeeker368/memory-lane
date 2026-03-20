@@ -302,7 +302,45 @@ export function toRpcSyncSignedPofToMemberClinicalProfileRow(data: unknown): Rpc
   };
 }
 
-export function rowToForm(row: any, clinicalSyncStatus?: PhysicianOrderClinicalSyncStatus): PhysicianOrderForm {
+type PhysicianOrderDbRow = Record<string, unknown> & {
+  id?: string;
+  member_id?: string;
+  intake_assessment_id?: string | null;
+  member_name_snapshot?: string | null;
+  member_dob_snapshot?: string | null;
+  members?: { display_name?: string | null } | Array<{ display_name?: string | null }> | null;
+  sex?: unknown;
+  level_of_care?: unknown;
+  dnr_selected?: unknown;
+  vitals_blood_pressure?: string | null;
+  vitals_pulse?: string | null;
+  vitals_oxygen_saturation?: string | null;
+  vitals_respiration?: string | null;
+  diagnoses?: unknown;
+  allergies?: unknown;
+  medications?: unknown;
+  standing_orders?: unknown;
+  clinical_support?: unknown;
+  operational_flags?: unknown;
+  provider_name?: string | null;
+  provider_signature?: string | null;
+  provider_signature_date?: string | null;
+  status?: string | null;
+  created_by_user_id?: string | null;
+  created_by_name?: string | null;
+  created_at?: string;
+  sent_at?: string | null;
+  updated_by_user_id?: string | null;
+  updated_by_name?: string | null;
+  next_renewal_due_date?: string | null;
+  signed_by_name?: string | null;
+  signed_at?: string | null;
+  superseded_at?: string | null;
+  superseded_by?: string | null;
+  updated_at?: string;
+};
+
+export function rowToForm(row: PhysicianOrderDbRow, clinicalSyncStatus?: PhysicianOrderClinicalSyncStatus): PhysicianOrderForm {
   const diagnosisRows = sanitizeDiagnosisRows(parseJsonArray<PhysicianOrderDiagnosis>(row.diagnoses, []));
   const allergyRows = sanitizeAllergyRows(parseJsonArray<PhysicianOrderAllergy>(row.allergies, []));
   const medications = sanitizeMedicationRows(parseJsonArray<PhysicianOrderMedication>(row.medications, []));
@@ -318,19 +356,24 @@ export function rowToForm(row: any, clinicalSyncStatus?: PhysicianOrderClinicalS
       queueStatus: null
     });
 
+  const memberRelation = Array.isArray(row.members) ? row.members[0] ?? null : row.members;
   return {
-    id: row.id,
-    memberId: row.member_id,
-    intakeAssessmentId: row.intake_assessment_id,
-    memberNameSnapshot: row.member_name_snapshot ?? row.members?.display_name ?? "Unknown Member",
-    memberDobSnapshot: row.member_dob_snapshot,
+    id: String(row.id ?? ""),
+    memberId: String(row.member_id ?? ""),
+    intakeAssessmentId: clean(row.intake_assessment_id) ?? null,
+    memberNameSnapshot: row.member_name_snapshot ?? memberRelation?.display_name ?? "Unknown Member",
+    memberDobSnapshot: clean(row.member_dob_snapshot) ?? null,
     sex: row.sex === "M" || row.sex === "F" ? row.sex : null,
-    levelOfCare: POF_LEVEL_OF_CARE_OPTIONS.includes(row.level_of_care) ? row.level_of_care : null,
+    levelOfCare:
+      typeof row.level_of_care === "string" &&
+      POF_LEVEL_OF_CARE_OPTIONS.includes(row.level_of_care as (typeof POF_LEVEL_OF_CARE_OPTIONS)[number])
+        ? (row.level_of_care as (typeof POF_LEVEL_OF_CARE_OPTIONS)[number])
+        : null,
     dnrSelected: Boolean(row.dnr_selected),
-    vitalsBloodPressure: row.vitals_blood_pressure,
-    vitalsPulse: row.vitals_pulse,
-    vitalsOxygenSaturation: row.vitals_oxygen_saturation,
-    vitalsRespiration: row.vitals_respiration,
+    vitalsBloodPressure: clean(row.vitals_blood_pressure) ?? null,
+    vitalsPulse: clean(row.vitals_pulse) ?? null,
+    vitalsOxygenSaturation: clean(row.vitals_oxygen_saturation) ?? null,
+    vitalsRespiration: clean(row.vitals_respiration) ?? null,
     diagnosisRows,
     diagnoses: diagnosisRows.map((entry) => entry.diagnosisName),
     allergyRows,
@@ -339,27 +382,27 @@ export function rowToForm(row: any, clinicalSyncStatus?: PhysicianOrderClinicalS
     standingOrders,
     careInformation,
     operationalFlags,
-    providerName: row.provider_name,
-    providerSignature: row.provider_signature,
-    providerSignatureDate: row.provider_signature_date,
+    providerName: clean(row.provider_name) ?? null,
+    providerSignature: clean(row.provider_signature) ?? null,
+    providerSignatureDate: clean(row.provider_signature_date) ?? null,
     status,
     providerSignatureStatus,
-    createdByUserId: row.created_by_user_id,
-    createdByName: row.created_by_name,
-    createdAt: row.created_at,
-    completedByUserId: row.sent_at ? row.updated_by_user_id : null,
-    completedByName: row.sent_at ? row.updated_by_name : null,
+    createdByUserId: clean(row.created_by_user_id) ?? "",
+    createdByName: clean(row.created_by_name) ?? "",
+    createdAt: String(row.created_at ?? ""),
+    completedByUserId: row.sent_at ? clean(row.updated_by_user_id) ?? null : null,
+    completedByName: row.sent_at ? clean(row.updated_by_name) ?? null : null,
     completedDate: row.sent_at ? String(row.sent_at).slice(0, 10) : null,
-    nextRenewalDueDate: row.next_renewal_due_date,
-    signedBy: row.signed_by_name ?? row.provider_name,
+    nextRenewalDueDate: clean(row.next_renewal_due_date) ?? null,
+    signedBy: clean(row.signed_by_name) ?? clean(row.provider_name) ?? null,
     signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
     clinicalSyncStatus: resolvedClinicalSyncStatus,
     clinicalSyncReady: resolvedClinicalSyncStatus === "synced",
-    supersededAt: row.superseded_at,
-    supersededByPofId: row.superseded_by,
-    updatedByUserId: row.updated_by_user_id,
-    updatedByName: row.updated_by_name,
-    updatedAt: row.updated_at,
+    supersededAt: clean(row.superseded_at) ?? null,
+    supersededByPofId: clean(row.superseded_by) ?? null,
+    updatedByUserId: clean(row.updated_by_user_id) ?? null,
+    updatedByName: clean(row.updated_by_name) ?? null,
+    updatedAt: String(row.updated_at ?? ""),
     enrollmentPacketPrefill: null
   };
 }

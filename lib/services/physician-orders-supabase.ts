@@ -76,6 +76,31 @@ import {
 } from "@/lib/services/physician-order-model";
 import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
+type PhysicianOrderIndexSelectRow = {
+  id: string;
+  member_id: string;
+  members: Array<{ display_name: string | null }> | { display_name: string | null } | null;
+  status: string | null;
+  level_of_care: string | null;
+  provider_name: string | null;
+  sent_at: string | null;
+  next_renewal_due_date: string | null;
+  signed_at: string | null;
+  updated_at: string;
+};
+
+type PhysicianOrderMemberHistorySelectRow = {
+  id: string;
+  member_id: string;
+  member_name_snapshot: string | null;
+  status: string | null;
+  provider_name: string | null;
+  sent_at: string | null;
+  next_renewal_due_date: string | null;
+  signed_at: string | null;
+  updated_by_name: string | null;
+  updated_at: string;
+};
 
 export {
   OPHTHALMIC_LATERALITY_OPTIONS,
@@ -473,28 +498,29 @@ export async function getPhysicianOrders(filters?: {
     { serviceRole: true }
   );
 
-  return (data ?? [])
-    .map((row: any) => {
+  return ((data ?? []) as unknown as PhysicianOrderIndexSelectRow[])
+    .map((row) => {
+      const memberRelation = Array.isArray(row.members) ? row.members[0] ?? null : row.members;
       const status = toStatus(row.status);
       return {
-      id: row.id,
-      memberId: row.member_id,
-      memberName: row.members?.display_name ?? "Unknown Member",
-      status,
-      levelOfCare: row.level_of_care,
-      providerName: row.provider_name,
-      completedDate: row.sent_at ? String(row.sent_at).slice(0, 10) : null,
-      nextRenewalDueDate: row.next_renewal_due_date,
-      renewalStatus: resolveRenewalStatus(row.next_renewal_due_date),
-      signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
-      clinicalSyncStatus: resolvePhysicianOrderClinicalSyncStatus({
+        id: row.id,
+        memberId: row.member_id,
+        memberName: memberRelation?.display_name ?? "Unknown Member",
         status,
-        queueStatus: queueStatuses.get(String(row.id))?.status ?? null,
-        lastError: queueStatuses.get(String(row.id))?.lastError ?? null,
-        lastFailedStep: queueStatuses.get(String(row.id))?.lastFailedStep ?? null
-      }),
-      updatedAt: row.updated_at
-    };
+        levelOfCare: row.level_of_care,
+        providerName: row.provider_name,
+        completedDate: row.sent_at ? String(row.sent_at).slice(0, 10) : null,
+        nextRenewalDueDate: row.next_renewal_due_date,
+        renewalStatus: resolveRenewalStatus(row.next_renewal_due_date),
+        signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
+        clinicalSyncStatus: resolvePhysicianOrderClinicalSyncStatus({
+          status,
+          queueStatus: queueStatuses.get(String(row.id))?.status ?? null,
+          lastError: queueStatuses.get(String(row.id))?.lastError ?? null,
+          lastFailedStep: queueStatuses.get(String(row.id))?.lastFailedStep ?? null
+        }),
+        updatedAt: row.updated_at
+      };
     })
     .filter((row) => {
       const q = (filters?.q ?? "").trim().toLowerCase();
@@ -521,12 +547,12 @@ export async function getPhysicianOrdersForMember(memberId: string): Promise<Phy
     }
     throw new Error(error.message);
   }
-  const rows = data ?? [];
+  const rows = (data ?? []) as unknown as PhysicianOrderMemberHistorySelectRow[];
   const queueStatuses = await loadPostSignQueueStatusByPofIds(
-    rows.map((row: any) => String(row.id)),
+    rows.map((row) => String(row.id)),
     { serviceRole: true }
   );
-  return rows.map((row: any) => {
+  return rows.map((row) => {
     const status = toStatus(row.status);
     return {
       id: row.id,

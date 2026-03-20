@@ -2,8 +2,17 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getSalesFormLookupsSupabase, getSalesRecentActivitySnapshotSupabase } from "@/lib/services/sales-crm-supabase";
+import {
+  type SalesPartnerRow,
+  type SalesReferralSourceRow,
+  getSalesFormLookupsSupabase,
+  getSalesRecentActivitySnapshotSupabase
+} from "@/lib/services/sales-crm-supabase";
 import { formatDate, formatDateTime } from "@/lib/utils";
+
+type SalesActivitySnapshot = Awaited<ReturnType<typeof getSalesRecentActivitySnapshotSupabase>>;
+type LeadActivityRow = SalesActivitySnapshot["activities"][number];
+type PartnerActivityRow = SalesActivitySnapshot["partnerActivities"][number];
 
 export default async function SalesRecentActivityPage() {
   await requireModuleAccess("sales");
@@ -13,12 +22,12 @@ export default async function SalesRecentActivityPage() {
   ]);
 
   const leadNameById = new Map(leads.map((lead) => [lead.id, lead.member_name]));
-  const partnerByPartnerId = new Map<string, any>();
+  const partnerByPartnerId = new Map<string, SalesPartnerRow>();
   partners.forEach((partner) => {
     if (partner.partner_id) partnerByPartnerId.set(String(partner.partner_id), partner);
     if (partner.id) partnerByPartnerId.set(String(partner.id), partner);
   });
-  const referralById = new Map<string, any>();
+  const referralById = new Map<string, SalesReferralSourceRow>();
   referralSources.forEach((source) => {
     if (source.referral_source_id) referralById.set(String(source.referral_source_id), source);
     if (source.id) referralById.set(String(source.id), source);
@@ -41,7 +50,7 @@ export default async function SalesRecentActivityPage() {
                 <td colSpan={8} className="text-center text-sm text-muted">No lead activities found.</td>
               </tr>
             ) : (
-              activities.map((activity: any) => (
+              activities.map((activity: LeadActivityRow) => (
                 <tr key={activity.id}>
                   <td>{formatDateTime(activity.activity_at)}</td>
                   <td>
@@ -72,7 +81,7 @@ export default async function SalesRecentActivityPage() {
                 <td colSpan={8} className="text-center text-sm text-muted">No partner activities found.</td>
               </tr>
             ) : (
-              partnerActivities.map((activity: any) => {
+              partnerActivities.map((activity: PartnerActivityRow) => {
                 const partner = partnerByPartnerId.get(activity.partner_id);
                 const referral = activity.referral_source_id ? referralById.get(activity.referral_source_id) : null;
 

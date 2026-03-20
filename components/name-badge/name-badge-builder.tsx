@@ -207,7 +207,10 @@ export function NameBadgeBuilder({
                 onChange={() => toggleIndicator(indicator.key)}
               />
               {indicator.iconSrc ? (
-                <img src={indicator.iconSrc} alt={indicator.label} className="h-6 w-6 object-contain" />
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={indicator.iconSrc} alt={indicator.label} className="h-6 w-6 object-contain" />
+                </>
               ) : (
                 <span className="inline-flex h-6 w-6 items-center justify-center rounded border border-brand text-xs font-semibold text-brand">
                   {indicator.shortLabel}
@@ -249,9 +252,18 @@ export function NameBadgeBuilder({
 
       {hasResolvedName ? (
         <div className="name-badge-preview">
-          <img src={STAR_GROUP_SRC} alt="" aria-hidden className="name-badge-star-group name-badge-star-group-left" />
-          <img src={STAR_GROUP_SRC} alt="" aria-hidden className="name-badge-star-group name-badge-star-group-right" />
-          <img src={badge.logoSrc} alt="Town Square Fort Mill logo" className="name-badge-logo" />
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={STAR_GROUP_SRC} alt="" aria-hidden className="name-badge-star-group name-badge-star-group-left" />
+          </>
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={STAR_GROUP_SRC} alt="" aria-hidden className="name-badge-star-group name-badge-star-group-right" />
+          </>
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={badge.logoSrc} alt="Town Square Fort Mill logo" className="name-badge-logo" />
+          </>
           <p className="name-badge-member-name" style={{ fontSize: `${nameFontSizePx}px` }}>
             {memberDisplayName}
           </p>
@@ -264,7 +276,10 @@ export function NameBadgeBuilder({
               selectedIndicators.map((indicator) =>
                 indicator.iconSrc ? (
                   <div key={indicator.key} className="name-badge-icon-item" title={indicator.label}>
-                    <img src={indicator.iconSrc} alt={indicator.label} className="name-badge-icon" />
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={indicator.iconSrc} alt={indicator.label} className="name-badge-icon" />
+                    </>
                   </div>
                 ) : (
                   <div key={indicator.key} className="name-badge-icon-fallback" title={indicator.label}>

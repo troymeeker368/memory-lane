@@ -2,8 +2,10 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { toSendWorkflowDeliveryStatus } from "@/lib/services/send-workflow-state";
 import { toEasternISO } from "@/lib/timezone";
+import type { Database } from "@/types/supabase";
 
 import type { PofDocumentEvent, PofRequestStatus, PofRequestSummary } from "@/lib/services/pof-types";
+type DocumentEventRow = Database["public"]["Tables"]["document_events"]["Row"];
 
 type PofRequestRow = {
   id: string;
@@ -238,20 +240,20 @@ export async function getPofRequestTimeline(requestId: string, memberId?: string
     .order("created_at", { ascending: true });
   if (eventsError) throw new Error(eventsError.message);
 
-  const events = ((eventsData ?? []) as any[]).map(
+  const events = ((eventsData ?? []) as DocumentEventRow[]).map(
     (row): PofDocumentEvent => ({
       id: row.id,
       documentId: row.document_id,
       memberId: row.member_id,
       physicianOrderId: row.physician_order_id,
-      eventType: row.event_type,
-      actorType: row.actor_type,
+      eventType: row.event_type as PofDocumentEvent["eventType"],
+      actorType: row.actor_type as PofDocumentEvent["actorType"],
       actorUserId: row.actor_user_id,
       actorName: row.actor_name,
       actorEmail: row.actor_email,
       actorIp: row.actor_ip,
       actorUserAgent: row.actor_user_agent,
-      metadata: row.metadata ?? {},
+      metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? (row.metadata as Record<string, unknown>) : {},
       createdAt: row.created_at
     })
   );
@@ -283,20 +285,20 @@ export async function listPofTimelineForPhysicianOrder(physicianOrderId: string)
     .order("created_at", { ascending: true });
   if (eventsError) throw new Error(eventsError.message);
 
-  const events = ((eventsData ?? []) as any[]).map(
+  const events = ((eventsData ?? []) as DocumentEventRow[]).map(
     (row): PofDocumentEvent => ({
       id: row.id,
       documentId: row.document_id,
       memberId: row.member_id,
       physicianOrderId: row.physician_order_id,
-      eventType: row.event_type,
-      actorType: row.actor_type,
+      eventType: row.event_type as PofDocumentEvent["eventType"],
+      actorType: row.actor_type as PofDocumentEvent["actorType"],
       actorUserId: row.actor_user_id,
       actorName: row.actor_name,
       actorEmail: row.actor_email,
       actorIp: row.actor_ip,
       actorUserAgent: row.actor_user_agent,
-      metadata: row.metadata ?? {},
+      metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? (row.metadata as Record<string, unknown>) : {},
       createdAt: row.created_at
     })
   );

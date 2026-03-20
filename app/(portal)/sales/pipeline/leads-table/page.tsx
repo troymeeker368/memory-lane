@@ -53,7 +53,7 @@ export default async function LeadsPipelineTablePage({ searchParams }: { searchP
     <Card className="table-wrap">
       <CardTitle>Leads Pipeline Table</CardTitle>
       <LeadsPipelineTable
-        leads={result.rows as any[]}
+        leads={result.rows}
         initialFilters={{
           q,
           stage,

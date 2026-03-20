@@ -4,9 +4,14 @@ import { AssessmentPdfActions } from "@/components/assessment/assessment-pdf-act
 import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
+import { CLINICAL_DOCUMENTATION_ACCESS_ROLES } from "@/lib/permissions";
 import { getAssessmentDetail } from "@/lib/services/relations";
 import { toEasternISO } from "@/lib/timezone";
 import { formatDate, formatDateTime } from "@/lib/utils";
+
+type AssessmentDetail = NonNullable<Awaited<ReturnType<typeof getAssessmentDetail>>>;
+type AssessmentRecord = AssessmentDetail["assessment"];
+type AssessmentResponseRow = AssessmentDetail["responses"][number];
 
 function yesNo(value: boolean) {
   return value ? "Yes" : "No";
@@ -35,14 +40,14 @@ export default async function HealthAssessmentDetailPage({
   params: Promise<{ assessmentId: string }>;
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireRoles(["admin", "manager", "nurse"]);
+  await requireRoles(CLINICAL_DOCUMENTATION_ACCESS_ROLES);
   const { assessmentId } = await params;
   const query = (await searchParams) ?? {};
   const detail = await getAssessmentDetail(assessmentId);
 
   if (!detail) notFound();
 
-  const assessment = detail.assessment as any;
+  const assessment: AssessmentRecord = detail.assessment;
   const generatedAt = toEasternISO();
   const pdfSaveFailed = firstString(query?.pdfSave) === "failed";
   const filteredResponses = detail.responses.filter((response) => {
@@ -192,7 +197,7 @@ export default async function HealthAssessmentDetailPage({
             <div key={section} className="rounded-lg border border-border p-3">
               <p className="text-sm font-semibold">{section}</p>
               <div className="mt-2 grid gap-2 md:grid-cols-2">
-                {(rows as any[]).map((row: any) => (
+                {(rows as AssessmentResponseRow[]).map((row) => (
                   <div key={row.id} className="rounded border border-border px-2 py-1 text-xs">
                     <p className="font-semibold">{row.field_label}</p>
                     <p className="text-muted">{row.field_value || "-"}</p>

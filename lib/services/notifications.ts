@@ -37,6 +37,55 @@ export type {
   UserNotification
 } from "@/lib/services/notification-types";
 
+type JoinedNotificationRow = {
+  display_name?: string | null;
+  full_name?: string | null;
+  created_by_user_id?: string | null;
+  member_name?: string | null;
+  member_name_snapshot?: string | null;
+  updated_by_user_id?: string | null;
+};
+
+type NotificationDbRow = {
+  [key: string]: unknown;
+  id?: string | null;
+  recipient_user_id?: string | null;
+  actor_user_id?: string | null;
+  event_type?: string | null;
+  title?: string | null;
+  message?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  read_at?: string | null;
+  action_url?: string | null;
+  metadata?: JsonValue | Record<string, unknown> | null;
+  created_at?: string | null;
+  member?: JoinedNotificationRow | JoinedNotificationRow[] | null;
+  lead?: JoinedNotificationRow | JoinedNotificationRow[] | null;
+  physician_order?: JoinedNotificationRow | JoinedNotificationRow[] | null;
+  member_id?: string | null;
+  lead_id?: string | null;
+  sender_user_id?: string | null;
+  physician_order_id?: string | null;
+  sent_by_user_id?: string | null;
+  created_by_user_id?: string | null;
+  updated_by_user_id?: string | null;
+  nurse_designee_user_id?: string | null;
+  nurse_signed_by_user_id?: string | null;
+  caregiver_sent_by_user_id?: string | null;
+  completed_by_user_id?: string | null;
+  signed_by_user_id?: string | null;
+  document_source?: string | null;
+  file_name?: string | null;
+  care_plan_id?: string | null;
+  pof_request_id?: string | null;
+  enrollment_packet_request_id?: string | null;
+  uploaded_by_user_id?: string | null;
+  member_name_snapshot?: string | null;
+};
+
 function normalizeNotificationStatus(value: string | null | undefined): NotificationStatus {
   return value === "read" || value === "dismissed" ? value : "unread";
 }
@@ -179,7 +228,7 @@ function canonicalizeNotificationEventType(eventType: string): NotificationEvent
   return aliases[normalized] ?? null;
 }
 
-function toRow(row: any): UserNotification {
+function toRow(row: NotificationDbRow): UserNotification {
   const readAt = normalizeText(row.read_at);
   const derivedStatus = normalizeText(row.status) ? normalizeNotificationStatus(row.status) : readAt ? "read" : "unread";
   return {
@@ -206,7 +255,7 @@ async function getActiveProfileIds(profileIds: string[]) {
   const supabase = await createClient({ serviceRole: true });
   const { data, error } = await supabase.from("profiles").select("id").in("id", ids).eq("active", true);
   if (error) throw new Error(error.message);
-  return uniqueStrings((data ?? []).map((row: any) => String(row.id)));
+  return uniqueStrings((data ?? []).map((row) => String(row.id)));
 }
 
 async function listFallbackAdminRecipientIds() {
@@ -217,7 +266,7 @@ async function listFallbackAdminRecipientIds() {
     .eq("active", true)
     .in("role", ["admin", "director", "manager"]);
   if (error) throw new Error(error.message);
-  return uniqueStrings((data ?? []).map((row: any) => String(row.id)));
+  return uniqueStrings((data ?? []).map((row) => String(row.id)));
 }
 
 async function resolveOperationsRecipients(input: { memberId?: string | null }) {
@@ -259,7 +308,7 @@ async function loadEnrollmentContext(entityId: string, metadata: Record<string, 
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  const row = (data ?? {}) as any;
+  const row = (data ?? {}) as NotificationDbRow;
   const member = pickJoinedRow<{ display_name?: string | null }>(row.member);
   const lead = pickJoinedRow<{ created_by_user_id?: string | null; member_name?: string | null }>(row.lead);
   const memberId = normalizeText(row.member_id) ?? normalizeText(String(metadata.member_id ?? metadata.memberId ?? ""));
@@ -303,7 +352,7 @@ async function loadPofContext(entityType: string, entityId: string, metadata: Re
       .eq("id", entityId)
       .maybeSingle();
     if (error) throw new Error(error.message);
-    const row = (data ?? {}) as any;
+    const row = (data ?? {}) as NotificationDbRow;
     const member = pickJoinedRow<{ display_name?: string | null }>(row.member);
     const physicianOrder = pickJoinedRow<{
       created_by_user_id?: string | null;
@@ -356,8 +405,8 @@ async function loadPofContext(entityType: string, entityId: string, metadata: Re
     .limit(1)
     .maybeSingle();
   if (requestError) throw new Error(requestError.message);
-  const row = (data ?? {}) as any;
-  const request = (requestRow ?? {}) as any;
+  const row = (data ?? {}) as NotificationDbRow;
+  const request = (requestRow ?? {}) as NotificationDbRow;
 
   return {
     entityType,
@@ -395,7 +444,7 @@ async function loadCarePlanContext(entityId: string, metadata: Record<string, Js
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  const row = (data ?? {}) as any;
+  const row = (data ?? {}) as NotificationDbRow;
   const member = pickJoinedRow<{ display_name?: string | null }>(row.member);
   return {
     entityType: "care_plan",
@@ -435,7 +484,7 @@ async function loadIntakeContext(entityId: string, metadata: Record<string, Json
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  const row = (data ?? {}) as any;
+  const row = (data ?? {}) as NotificationDbRow;
   const member = pickJoinedRow<{ display_name?: string | null }>(row.member);
   const lead = pickJoinedRow<{ created_by_user_id?: string | null; member_name?: string | null }>(row.lead);
   return {
@@ -477,7 +526,7 @@ async function loadMemberFileContext(entityId: string, metadata: Record<string, 
     .eq("id", entityId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  const row = (data ?? {}) as any;
+  const row = (data ?? {}) as NotificationDbRow;
   const member = pickJoinedRow<{ display_name?: string | null }>(row.member);
   const memberId = normalizeText(row.member_id);
   let baseContext: WorkflowRecipientContext = {

@@ -165,7 +165,7 @@ async function loadSupabaseCanonicalPunchRows(input: {
       geofenceError = retry.error;
     }
     if (geofenceError) throw new Error(geofenceError.message);
-    (geofenceRows ?? []).forEach((row: any) => {
+    (geofenceRows ?? []).forEach((row) => {
       geofenceByLinkedId.set(String(row.id), {
         within_fence: Boolean(row.within_fence),
         distance_meters: row.distance_meters == null ? null : Number(row.distance_meters),
@@ -237,7 +237,7 @@ export async function getManagerTimeReview() {
   if (payPeriodsError) throw new Error(payPeriodsError.message);
 
   const selectedPayPeriod =
-    (payPeriodsData ?? []).find((row: any) => row.start_date === period.startDate && row.end_date === period.endDate) ??
+    (payPeriodsData ?? []).find((row) => row.start_date === period.startDate && row.end_date === period.endDate) ??
     (payPeriodsData ?? [])[0];
   if (!selectedPayPeriod) return [];
 
@@ -255,7 +255,7 @@ export async function getManagerTimeReview() {
     exception_count: number;
     statuses: Set<string>;
   }>();
-  (timecardsData ?? []).forEach((row: any) => {
+  (timecardsData ?? []).forEach((row) => {
     const key = String(row.employee_id);
     const existing = byEmployee.get(key) ?? {
       staff_name: String(row.employee_name),

@@ -18,6 +18,15 @@ import {
 } from "@/lib/services/staff-auth";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
+type UserPermissionRow = {
+  user_id: string;
+  module_key: string;
+  can_view: boolean | null;
+  can_create: boolean | null;
+  can_edit: boolean | null;
+  can_admin: boolean | null;
+};
+
 export interface ManagedUserFilters {
   search?: string;
   role?: AppRole | "all";
@@ -92,6 +101,24 @@ function isMissingProfileAuthLifecycleColumnError(error: unknown) {
   );
 }
 
+function isMissingProfileManagedMetadataColumnError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: string; message?: string; details?: string; hint?: string };
+  const code = String(candidate.code ?? "");
+  const text = [candidate.message, candidate.details, candidate.hint]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (code !== "42703") return false;
+  return (
+    text.includes("credentials") ||
+    text.includes("phone") ||
+    text.includes("title") ||
+    text.includes("department") ||
+    text.includes("default_landing")
+  );
+}
+
 function normalizeAuthStatus(statusValue: string | null | undefined, active: boolean) {
   const normalized = String(statusValue ?? "").trim().toLowerCase();
   if (normalized === "invited" || normalized === "active" || normalized === "disabled") {
@@ -150,7 +177,7 @@ function resolveActivityRange(rawFrom?: string, rawTo?: string, fallbackDays = 3
   };
 }
 
-function mapPermissionRowsToSet(role: AppRole, rows: any[]): { permissions: PermissionSet; hasCustomPermissions: boolean } {
+function mapPermissionRowsToSet(role: AppRole, rows: UserPermissionRow[]): { permissions: PermissionSet; hasCustomPermissions: boolean } {
   if (!rows || rows.length === 0) {
     return {
       permissions: getDefaultPermissionSet(role),
@@ -184,7 +211,7 @@ async function loadManagedUsers() {
     supabase
       .from("profiles")
       .select(
-        "id, auth_user_id, email, full_name, role, active, is_active, status, invited_at, password_set_at, last_sign_in_at, disabled_at, created_at, updated_at"
+        "id, auth_user_id, email, full_name, credentials, phone, title, department, default_landing, role, active, is_active, status, invited_at, password_set_at, last_sign_in_at, disabled_at, created_at, updated_at"
       )
       .order("full_name", { ascending: true }),
     supabase
@@ -198,19 +225,24 @@ async function loadManagedUsers() {
         "Missing Supabase schema dependency on public.profiles auth lifecycle columns. Apply migration 0029_staff_auth_lifecycle.sql."
       );
     }
+    if (isMissingProfileManagedMetadataColumnError(profileError)) {
+      throw new Error(
+        "Missing Supabase schema dependency on public.profiles managed user metadata columns. Apply migration 0095_user_management_profile_metadata.sql."
+      );
+    }
     throw new Error(profileError.message);
   }
   if (permissionError) throw new Error(permissionError.message);
 
-  const permissionsByUser = new Map<string, any[]>();
-  (permissionRows ?? []).forEach((row: any) => {
+  const permissionsByUser = new Map<string, UserPermissionRow[]>();
+  (permissionRows ?? []).forEach((row) => {
     const key = String(row.user_id);
     const list = permissionsByUser.get(key) ?? [];
     list.push(row);
     permissionsByUser.set(key, list);
   });
 
-  return (profileRows ?? []).map((row: any) => {
+  return (profileRows ?? []).map((row) => {
     const role = normalizeRoleKey(row.role as AppRole);
     const isActive = row.is_active !== false && row.active !== false;
     const authStatus = normalizeAuthStatus(row.status as string | null | undefined, isActive);
@@ -223,7 +255,7 @@ async function loadManagedUsers() {
       firstName: names.firstName,
       lastName: names.lastName,
       displayName: String(row.full_name ?? "").trim(),
-      credentials: null,
+      credentials: normalizeString(String(row.credentials ?? "")),
       email: String(row.email ?? ""),
       role,
       status: isActive ? "active" : "inactive",
@@ -233,10 +265,10 @@ async function loadManagedUsers() {
       lastSignInAt: row.last_sign_in_at ? String(row.last_sign_in_at) : null,
       disabledAt: row.disabled_at ? String(row.disabled_at) : null,
       isActive,
-      phone: null,
-      title: null,
-      department: defaultDepartmentForRole(role),
-      defaultLanding: DEFAULT_LANDING,
+      phone: normalizeString(String(row.phone ?? "")),
+      title: normalizeString(String(row.title ?? "")),
+      department: normalizeString(String(row.department ?? "")) ?? defaultDepartmentForRole(role),
+      defaultLanding: normalizeString(String(row.default_landing ?? "")) ?? DEFAULT_LANDING,
       permissions: permissionState.permissions,
       hasCustomPermissions: permissionState.hasCustomPermissions,
       customPermissions: permissionState.hasCustomPermissions ? permissionState.permissions : null,
@@ -269,9 +301,17 @@ function sanitizeManagedUserInput(input: ManagedUserInput): ManagedUserInput {
 }
 
 async function replaceUserPermissions(userId: string, permissions: PermissionSet | null) {
-  const supabase = await createClient();
+  const supabase = createSupabaseAdminClient();
   const { error: deleteError } = await supabase.from("user_permissions").delete().eq("user_id", userId);
   if (deleteError) throw new Error(deleteError.message);
+  const { error: profileUpdateError } = await supabase
+    .from("profiles")
+    .update({
+      has_custom_permissions: Boolean(permissions),
+      updated_at: toEasternISO()
+    })
+    .eq("id", userId);
+  if (profileUpdateError) throw new Error(profileUpdateError.message);
   if (!permissions) return;
 
   const rows = PERMISSION_MODULES.map((module) => ({
@@ -385,12 +425,16 @@ export async function createManagedUser(input: ManagedUserInput): Promise<Manage
   }
   const userId = createdAuthUser.user.id;
 
-  const supabase = await createClient();
-  const { error: profileError } = await supabase.from("profiles").insert({
+  const { error: profileError } = await admin.from("profiles").insert({
     id: userId,
     auth_user_id: userId,
     email: cleaned.email,
     full_name: cleaned.displayName,
+    credentials: cleaned.credentials ?? null,
+    phone: cleaned.phone ?? null,
+    title: cleaned.title ?? null,
+    department: cleaned.department ?? null,
+    default_landing: cleaned.defaultLanding ?? DEFAULT_LANDING,
     role,
     active: cleaned.status === "active",
     is_active: cleaned.status === "active",
@@ -403,6 +447,7 @@ export async function createManagedUser(input: ManagedUserInput): Promise<Manage
     updated_at: now
   });
   if (profileError) {
+    await admin.auth.admin.deleteUser(userId);
     throw new Error(profileError.message);
   }
 
@@ -445,20 +490,48 @@ export async function updateManagedUser(userId: string, patch: ManagedUserInput)
   const cleaned = sanitizeManagedUserInput(patch);
   const role = normalizeRoleKey(cleaned.role);
   const now = toEasternISO();
+  const shouldSyncAuth = current.email !== cleaned.email || current.displayName !== cleaned.displayName;
 
-  const supabase = await createClient();
-  const { error } = await supabase
+  const admin = createSupabaseAdminClient();
+  if (shouldSyncAuth) {
+    const { error: authError } = await admin.auth.admin.updateUserById(current.authUserId || userId, {
+      email: cleaned.email,
+      email_confirm: true,
+      user_metadata: {
+        full_name: cleaned.displayName
+      }
+    });
+    if (authError) throw new Error(authError.message);
+  }
+
+  const { error } = await admin
     .from("profiles")
     .update({
       email: cleaned.email,
       full_name: cleaned.displayName,
+      credentials: cleaned.credentials ?? null,
+      phone: cleaned.phone ?? null,
+      title: cleaned.title ?? null,
+      department: cleaned.department ?? null,
+      default_landing: cleaned.defaultLanding ?? DEFAULT_LANDING,
       role,
       active: cleaned.status === "active",
       is_active: cleaned.status === "active",
       updated_at: now
     })
     .eq("id", userId);
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (shouldSyncAuth) {
+      await admin.auth.admin.updateUserById(current.authUserId || userId, {
+        email: current.email,
+        email_confirm: true,
+        user_metadata: {
+          full_name: current.displayName
+        }
+      });
+    }
+    throw new Error(error.message);
+  }
 
   const roleDefaults = getDefaultPermissionSet(role);
   const permissions = current.hasCustomPermissions ? current.permissions : roleDefaults;
@@ -489,7 +562,7 @@ export async function setManagedUserStatus(userId: string, status: UserStatus): 
   const current = await getManagedUserById(userId);
   if (!current) return null;
   const now = toEasternISO();
-  const supabase = await createClient();
+  const supabase = createSupabaseAdminClient();
   const { error } = await supabase
     .from("profiles")
     .update({ active: status === "active", is_active: status === "active", updated_at: now })
@@ -599,7 +672,7 @@ export async function getManagedUserRecentActivity(
     .limit(limit);
   if (error) throw new Error(error.message);
 
-  const items: ManagedUserRecentActivityItem[] = (rows ?? []).map((row: any) => ({
+  const items: ManagedUserRecentActivityItem[] = (rows ?? []).map((row) => ({
     id: String(row.id),
     occurredAt: String(row.created_at),
     activityType: String(row.entity_type ?? row.action ?? "Activity"),

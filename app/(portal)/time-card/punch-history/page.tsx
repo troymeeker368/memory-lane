@@ -6,6 +6,8 @@ import { normalizeRoleKey } from "@/lib/permissions";
 import { getPunchHistory } from "@/lib/services/time";
 import { formatDateTime } from "@/lib/utils";
 
+type PunchHistoryRow = Awaited<ReturnType<typeof getPunchHistory>>[number];
+
 function formatFenceValue(value: boolean | null | undefined) {
   if (value == null) return "-";
   return value ? "Yes" : "No";
@@ -51,7 +53,7 @@ export default async function PunchHistoryPage() {
             </tr>
           </thead>
           <tbody>
-            {punches.map((punch: any) => (
+            {punches.map((punch: PunchHistoryRow) => (
               <tr key={punch.id}>
                 {showStaffColumn ? <td>{punch.staff_name}</td> : null}
                 <td>{formatDateTime(punch.punch_at)}</td>

@@ -1,4 +1,4 @@
-import { normalizeRoleKey } from "@/lib/permissions";
+import { canAccessClinicalDocumentationForRole, normalizeRoleKey } from "@/lib/permissions";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
 import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
@@ -37,7 +37,9 @@ export async function getMemberDetail(
   const normalizedRole = scope?.role ? normalizeRoleKey(scope.role) : null;
   const isStaffViewer = Boolean(normalizedRole === "program-assistant" && !!scope?.staffUserId);
   const canViewCarePlans = canAccessCarePlansForRole(normalizedRole);
+  const canViewAssessments = canAccessClinicalDocumentationForRole(normalizedRole);
   const staffUserId = scope?.staffUserId ?? null;
+  const emptyRelationResult = { data: [] as Record<string, unknown>[], error: null };
 
   const loadMemberRelations = async (client: Awaited<ReturnType<typeof createClient>>) =>
     Promise.all([
@@ -47,7 +49,9 @@ export async function getMemberDetail(
       client.from("transportation_logs").select("*").eq("member_id", canonicalMemberId).order("service_date", { ascending: false }),
       client.from("blood_sugar_logs").select("*").eq("member_id", canonicalMemberId).order("checked_at", { ascending: false }),
       client.from("ancillary_charge_logs").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
-      client.from("intake_assessments").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
+      canViewAssessments
+        ? client.from("intake_assessments").select("*").eq("member_id", canonicalMemberId).order("created_at", { ascending: false })
+        : Promise.resolve(emptyRelationResult),
       client.from("member_photo_uploads").select("*").eq("member_id", canonicalMemberId).order("uploaded_at", { ascending: false })
     ]);
 
@@ -105,7 +109,7 @@ export async function getMemberDetail(
   const transportation = filterByStaff(transportationResult.data ?? [], "staff_user_id");
   const bloodSugar = filterByStaff(bloodSugarResult.data ?? [], "nurse_user_id");
   const ancillary = filterByStaff(ancillaryResult.data ?? [], "staff_user_id");
-  const assessments = filterByStaff(assessmentsResult.data ?? [], "created_by_user_id");
+  const assessments = canViewAssessments ? filterByStaff(assessmentsResult.data ?? [], "created_by_user_id") : [];
   const photos = filterByStaff(photosResult.data ?? [], "uploaded_by");
 
   const carePlans =

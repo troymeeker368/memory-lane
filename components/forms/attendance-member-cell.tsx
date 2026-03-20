@@ -87,7 +87,7 @@ export function AttendanceMemberCell({
     setOpen(false);
     setMode(null);
     setError(null);
-  }, syncDeps);
+  }, [attendanceDate, defaultAbsentReason, defaultAbsentReasonOther, defaultCheckInTime, defaultCheckOutTime, memberId]);
 
   function runAction() {
     if (!mode) return;
@@ -188,7 +188,10 @@ export function AttendanceMemberCell({
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         {memberPhotoUrl ? (
-          <img src={memberPhotoUrl} alt={`${memberName} profile`} className="h-9 w-9 rounded-full border border-border object-cover" />
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={memberPhotoUrl} alt={`${memberName} profile`} className="h-9 w-9 rounded-full border border-border object-cover" />
+          </>
         ) : (
           <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-slate-100 text-xs font-semibold text-slate-700">
             {initialsFromName(memberName)}

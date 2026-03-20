@@ -5,6 +5,7 @@ import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
 import { requireModuleAccess } from "@/lib/auth";
+import { canAccessClinicalDocumentationForRole } from "@/lib/permissions";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
 import { getMemberDetail } from "@/lib/services/relations";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
@@ -14,6 +15,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
   const canManage = profile.role === "admin" || profile.role === "manager";
   const canViewMhp = profile.role === "admin" || profile.role === "nurse";
   const canViewCarePlans = canAccessCarePlansForRole(profile.role);
+  const canViewAssessments = canAccessClinicalDocumentationForRole(profile.role);
   const { memberId } = await params;
   const detail = await getMemberDetail(memberId, { role: profile.role, staffUserId: profile.id });
 
@@ -125,6 +127,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
         </div>
       </RelatedSection>
 
+      {canViewAssessments ? (
       <RelatedSection title="Assessments" count={detail.assessments.length} viewAllHref="/health/assessment" addHref="/health/assessment">
         <div className="space-y-2">
           {detail.member.latest_assessment_id ? (
@@ -144,6 +147,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
           ))}
         </div>
       </RelatedSection>
+      ) : null}
 
       {canViewCarePlans ? (
       <RelatedSection title="Care Plans" count={detail.carePlans.length} viewAllHref="/health/care-plans/list" addHref={`/health/care-plans/new?memberId=${detail.member.id}`}>

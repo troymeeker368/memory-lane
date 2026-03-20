@@ -34,9 +34,9 @@ export async function getPartnerDetail(partnerId: string) {
     .order("organization_name", { ascending: true });
   if (referralError) throw new Error(referralError.message);
 
-  const sourceIds = (referralSources ?? []).map((source: any) => String(source.referral_source_id ?? source.id));
+  const sourceIds = (referralSources ?? []).map((source) => String(source.referral_source_id ?? source.id));
   const sourceUuidIds = (referralSources ?? [])
-    .map((source: any) => String(source.id ?? ""))
+      .map((source) => String(source.id ?? ""))
     .filter((id) => isUuid(id));
 
   const leadFilters = [`partner_id.eq.${partnerKey}`, ...sourceIds.map((id) => `referral_source_id.eq.${id}`)];
@@ -58,7 +58,7 @@ export async function getPartnerDetail(partnerId: string) {
   }
   if (leadsError) throw new Error(leadsError.message);
 
-  const leadIds = (leads ?? []).map((lead: any) => String(lead.id)).filter((id) => isUuid(id));
+  const leadIds = (leads ?? []).map((lead) => String(lead.id)).filter((id) => isUuid(id));
 
   let leadActivitiesQuery = supabase.from("lead_activities").select("*").order("activity_at", { ascending: false }).limit(200);
   if (leadIds.length > 0) {

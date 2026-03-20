@@ -6,6 +6,7 @@ import { buildStaffAuthEmailTemplate } from "@/lib/email/templates/staff-auth";
 import { buildDocumentCenterSenderHeader } from "@/lib/services/document-branding";
 import { toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
+import type { Database } from "@/types/supabase";
 
 export type StaffAuthStatus = "invited" | "active" | "disabled";
 export type StaffAuthEventType =
@@ -34,6 +35,7 @@ export interface StaffAuthProfile {
 
 type SendInviteMode = "invite_sent" | "invite_resent";
 type StaffAuthEmailMode = "set-password" | "reset-password";
+type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
 
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
@@ -55,7 +57,7 @@ function normalizeStatus(value: string | null | undefined, active: boolean) {
   return active ? "active" : "disabled";
 }
 
-function toStaffAuthProfile(row: any): StaffAuthProfile {
+function toStaffAuthProfile(row: ProfileRow): StaffAuthProfile {
   const active = row?.active !== false;
   const isActive = row?.is_active !== false;
   return {

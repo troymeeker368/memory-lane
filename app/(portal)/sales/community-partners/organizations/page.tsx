@@ -4,6 +4,8 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { formatPhoneDisplay } from "@/lib/phone";
 import {
+  type SalesPartnerRow,
+  type SalesReferralSourceRow,
   getSalesPartnerDirectoryPageSupabase,
   getSalesReferralSourcesForPartnerIdsSupabase
 } from "@/lib/services/sales-crm-supabase";
@@ -43,7 +45,7 @@ export default async function CommunityPartnerOrganizationsPage({
   const pageRows = partnerPage.rows;
   const referralSources = await getSalesReferralSourcesForPartnerIdsSupabase(pageRows.map((partner) => partner.id));
 
-  const sourcesByPartner = new Map<string, any[]>();
+  const sourcesByPartner = new Map<string, SalesReferralSourceRow[]>();
   referralSources.forEach((source) => {
     const partnerKeys = [normalizeKey(source.partner_id)].filter(Boolean);
     partnerKeys.forEach((key) => {
@@ -94,7 +96,7 @@ export default async function CommunityPartnerOrganizationsPage({
                 <td colSpan={8} className="text-center text-sm text-muted">No organizations found.</td>
               </tr>
             ) : (
-              pageRows.map((partner: any) => {
+              pageRows.map((partner: SalesPartnerRow) => {
                 const partnerKeys = [normalizeKey(partner.partner_id), normalizeKey(partner.id)].filter(Boolean);
                 const linkedSources = partnerKeys.flatMap((key) => sourcesByPartner.get(key) ?? []);
                 const linkedSource =

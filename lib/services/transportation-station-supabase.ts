@@ -427,7 +427,7 @@ export async function getTransportationManifestSupabase(input?: {
     const contact = preferredContactByMember.get(schedule.member_id) ?? null;
     selectedShifts.forEach((shift) => {
       if (!scheduleWeekday) return;
-      const slot = getTransportSlotForScheduleDay(schedule as any, scheduleWeekday, shift);
+    const slot = getTransportSlotForScheduleDay(schedule as Parameters<typeof getTransportSlotForScheduleDay>[0], scheduleWeekday, shift);
       if (slot.mode !== "Bus Stop" && slot.mode !== "Door to Door") return;
       const rider: TransportationManifestRider = {
         key: `${member.id}:${shift}`,

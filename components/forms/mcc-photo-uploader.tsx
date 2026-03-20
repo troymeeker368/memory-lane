@@ -79,11 +79,14 @@ export function MccPhotoUploader({
         disabled={isSaving}
       >
         {currentPhotoUrl ? (
-          <img
-            src={currentPhotoUrl}
-            alt={`${displayName} profile`}
-            className="h-28 w-28 rounded-full border border-border object-cover"
-          />
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={currentPhotoUrl}
+              alt={`${displayName} profile`}
+              className="h-28 w-28 rounded-full border border-border object-cover"
+            />
+          </>
         ) : (
           <div className="flex h-28 w-28 items-center justify-center rounded-full border border-border bg-slate-100 text-2xl font-semibold text-primary-text">
             {initials}

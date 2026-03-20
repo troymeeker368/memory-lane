@@ -108,7 +108,12 @@ function MedicationLabel({ dose, route }: { dose: string | null; route: string |
 
 function MemberAvatar({ name, photoUrl }: { name: string; photoUrl: string | null }) {
   if (photoUrl) {
-    return <img src={photoUrl} alt={`${name} profile`} className="h-9 w-9 rounded-full border border-border object-cover" />;
+    return (
+      <>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={photoUrl} alt={`${name} profile`} className="h-9 w-9 rounded-full border border-border object-cover" />
+      </>
+    );
   }
   return (
     <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-slate-100 text-xs font-semibold text-slate-700">
