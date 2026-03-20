@@ -1,5 +1,82 @@
 alter table public.member_contacts
-  add column if not exists is_payor boolean not null default false;
+  add column if not exists is_payor boolean default false;
+
+update public.member_contacts
+set
+  is_payor = coalesce(is_payor, false),
+  updated_at = now()
+where is_payor is null;
+
+do $$
+declare
+  v_duplicate_groups integer := 0;
+begin
+  select count(*)
+  into v_duplicate_groups
+  from (
+    select member_id
+    from public.member_contacts
+    where is_payor = true
+    group by member_id
+    having count(*) > 1
+  ) duplicates;
+
+  raise notice
+    '0068 member_contacts payor preflight: % members have duplicate payor flags before cleanup.',
+    v_duplicate_groups;
+end
+$$;
+
+with ranked as (
+  select
+    mc.id,
+    row_number() over (
+      partition by mc.member_id
+      order by
+        case
+          when lower(btrim(coalesce(mc.category, ''))) = 'responsible party' then 0
+          else 1
+        end,
+        mc.updated_at desc nulls last,
+        mc.created_at desc nulls last,
+        mc.id desc
+    ) as duplicate_rank
+  from public.member_contacts mc
+  where mc.is_payor = true
+)
+update public.member_contacts mc
+set
+  is_payor = false,
+  updated_at = now()
+from ranked
+where mc.id = ranked.id
+  and ranked.duplicate_rank > 1;
+
+do $$
+declare
+  v_remaining_duplicate_groups integer := 0;
+begin
+  select count(*)
+  into v_remaining_duplicate_groups
+  from (
+    select member_id
+    from public.member_contacts
+    where is_payor = true
+    group by member_id
+    having count(*) > 1
+  ) duplicates;
+
+  if v_remaining_duplicate_groups > 0 then
+    raise exception
+      '0068 abort: % member_contacts payor duplicate groups remain after deterministic cleanup.',
+      v_remaining_duplicate_groups;
+  end if;
+end
+$$;
+
+alter table public.member_contacts
+  alter column is_payor set default false,
+  alter column is_payor set not null;
 
 create unique index if not exists idx_member_contacts_one_payor_per_member
   on public.member_contacts (member_id)
