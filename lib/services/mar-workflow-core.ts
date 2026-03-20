@@ -19,6 +19,7 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_GENERATION_DAYS = 45;
 const MAR_BASE_SCHEMA_MIGRATION = "0028_pof_seeded_mar_workflow.sql";
 const MAR_NOT_GIVEN_VIEW_ALIGNMENT_MIGRATION = "0103_mar_not_given_view_alignment.sql";
+const MAR_PRN_VIEW_ALIGNMENT_MIGRATION = "0104_mar_prn_view_alignment.sql";
 const MAR_OVERDUE_VIEW_MIGRATION = "0030_mar_overdue_view.sql";
 const MHP_MEDICATIONS_MIGRATION = "0012_legacy_operational_health_alignment.sql";
 
@@ -62,15 +63,26 @@ export function toMemberPhotoLookup(rows: MemberPhotoRow[]): Map<string, string 
 
 export function throwMarSupabaseError(error: unknown, objectName: MarSchemaObjectName) {
   if (!error) return;
+  const isPrnViewColumnDrift =
+    (objectName === "v_mar_prn_log" ||
+      objectName === "v_mar_prn_given_awaiting_outcome" ||
+      objectName === "v_mar_prn_effective" ||
+      objectName === "v_mar_prn_ineffective") &&
+    isMissingSchemaColumnError(error);
   const migration =
     objectName === "v_mar_overdue_today"
       ? MAR_OVERDUE_VIEW_MIGRATION
       : objectName === "v_mar_not_given_today" && isMissingSchemaColumnError(error, objectName)
         ? MAR_NOT_GIVEN_VIEW_ALIGNMENT_MIGRATION
+        : isPrnViewColumnDrift
+          ? MAR_PRN_VIEW_ALIGNMENT_MIGRATION
       : objectName === "member_medications"
         ? MHP_MEDICATIONS_MIGRATION
         : MAR_BASE_SCHEMA_MIGRATION;
-  if (objectName === "v_mar_not_given_today" && isMissingSchemaColumnError(error, objectName)) {
+  if (
+    (objectName === "v_mar_not_given_today" && isMissingSchemaColumnError(error, objectName)) ||
+    isPrnViewColumnDrift
+  ) {
     throw new Error(
       `${buildMissingSchemaColumnMessage({
         objectName,
