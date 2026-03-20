@@ -30,7 +30,7 @@ export type PostgrestErrorLike = {
 };
 
 export type PofPostSignSyncStep = "mhp_mcc" | "mar_medications" | "mar_schedules";
-export type PofPostSignSyncQueueStatus = "queued" | "completed";
+export type PofPostSignSyncQueueStatus = "queued" | "processing" | "completed";
 
 export type PofPostSignSyncQueueRow = {
   id: string;
@@ -62,7 +62,7 @@ export type RpcSyncSignedPofToMemberClinicalProfileRow = {
 
 export type PofPostSignQueueStatusRow = {
   physician_order_id: string;
-  status: "queued" | "completed";
+  status: "queued" | "processing" | "completed";
   last_error: string | null;
   last_failed_step: string | null;
 };

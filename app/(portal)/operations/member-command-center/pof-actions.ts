@@ -8,7 +8,6 @@ import { PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES } from "@/lib/permissions";
 import {
   getPofRequestSummaryById,
   getSignedPofPdfUrlForMember,
-  listPofRequestsByPhysicianOrderIds,
   resendPofSignatureRequest,
   sendNewPofSignatureRequest,
   voidPofSignatureRequest
@@ -76,11 +75,6 @@ function logPofActionDiagnostics(
   });
 }
 
-async function getLatestPofRequestForOrder(memberId: string, physicianOrderId: string) {
-  const requests = await listPofRequestsByPhysicianOrderIds(memberId, [physicianOrderId]);
-  return requests[0] ?? null;
-}
-
 export async function sendPofSignatureRequestAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   const physicianOrderId = asString(formData, "physicianOrderId");
@@ -97,7 +91,7 @@ export async function sendPofSignatureRequestAction(formData: FormData) {
       return { ok: false, error: "Member and POF are required." } as const;
     }
 
-    await sendNewPofSignatureRequest({
+    const request = await sendNewPofSignatureRequest({
       memberId,
       physicianOrderId,
       providerName: asString(formData, "providerName"),
@@ -115,7 +109,7 @@ export async function sendPofSignatureRequestAction(formData: FormData) {
     revalidatePofRoutes(memberId, physicianOrderId);
     return {
       ok: true,
-      request: await getLatestPofRequestForOrder(memberId, physicianOrderId)
+      request
     } as const;
   } catch (error) {
     if (error instanceof WorkflowDeliveryError) {
@@ -155,7 +149,7 @@ export async function resendPofSignatureRequestAction(formData: FormData) {
       return { ok: false, error: "Request, member, and POF are required." } as const;
     }
 
-    await resendPofSignatureRequest({
+    const request = await resendPofSignatureRequest({
       requestId,
       memberId,
       providerName: asString(formData, "providerName"),
@@ -173,7 +167,7 @@ export async function resendPofSignatureRequestAction(formData: FormData) {
     revalidatePofRoutes(memberId, physicianOrderId);
     return {
       ok: true,
-      request: await getPofRequestSummaryById(requestId, memberId)
+      request
     } as const;
   } catch (error) {
     if (error instanceof WorkflowDeliveryError) {

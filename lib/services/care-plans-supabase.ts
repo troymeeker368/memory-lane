@@ -13,7 +13,7 @@ import {
 } from "@/lib/services/care-plan-model";
 import { getDefaultCaregiverSignatureExpiresOnDate } from "@/lib/services/care-plan-esign-rules";
 import { listMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
-import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
+import { recordImmediateSystemAlert, recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import type {
   CarePlan,
   CarePlanListResult,
@@ -105,6 +105,61 @@ function buildCarePlanWorkflowError(message: string, carePlanId: string) {
   error.carePlanId = carePlanId;
   error.partiallyCommitted = true;
   return error;
+}
+
+async function recordCarePlanActionRequired(input: {
+  carePlanId: string;
+  memberId: string;
+  actorUserId: string;
+  alertKey: string;
+  title: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const actionUrl = `/health/care-plans/${input.carePlanId}`;
+  try {
+    await recordImmediateSystemAlert({
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: input.alertKey,
+      metadata: {
+        member_id: input.memberId,
+        title: input.title,
+        message: input.message,
+        action_url: actionUrl,
+        ...(input.metadata ?? {})
+      }
+    });
+  } catch (error) {
+    console.error("[care-plans] unable to persist action-required alert", error);
+  }
+
+  try {
+    const recordWorkflowMilestone = await loadWorkflowMilestoneRecorder();
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "action_required",
+        entityType: "care_plan",
+        entityId: input.carePlanId,
+        actorType: "user",
+        actorUserId: input.actorUserId,
+        status: "open",
+        severity: "high",
+        metadata: {
+          member_id: input.memberId,
+          title: input.title,
+          message: input.message,
+          priority: "high",
+          action_url: actionUrl,
+          ...(input.metadata ?? {})
+        }
+      }
+    });
+  } catch (error) {
+    console.error("[care-plans] unable to emit action-required follow-up", error);
+  }
 }
 
 async function loadCarePlanNurseEsignService() {
@@ -679,20 +734,21 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
   }
 
   const supabase = await createClient();
+  const touchedAt = toEasternISO();
   const { error: touchError } = await supabase
     .from("care_plans")
     .update({
       updated_by_user_id: input.actor.id,
       updated_by_name: input.actor.fullName,
-      updated_at: toEasternISO()
+      updated_at: touchedAt
     })
     .eq("id", input.carePlanId);
   if (touchError) throw new Error(touchError.message);
 
-  const refreshedRows = await listCarePlanRows({ carePlanId: input.carePlanId });
-  const refreshed = refreshedRows[0];
-  if (!refreshed) throw new Error("Care plan could not be reloaded after nurse/admin signature.");
-  return refreshed;
+  return {
+    ...signedCarePlan,
+    updatedAt: touchedAt
+  };
 }
 
 export async function createCarePlan(input: {
@@ -801,6 +857,20 @@ export async function createCarePlan(input: {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to persist care plan version snapshot.";
+    await recordCarePlanActionRequired({
+      carePlanId: createdCarePlanId,
+      memberId: canonicalMemberId,
+      actorUserId: input.actor.id,
+      alertKey: "care_plan_snapshot_follow_up_required",
+      title: "Care Plan Version History Repair Needed",
+      message: "The care plan was created and signed, but version history persistence still needs repair.",
+      metadata: {
+        phase: "create_snapshot",
+        review_date: input.reviewDate,
+        next_due_date: nextDueDate,
+        error: message
+      }
+    });
     throw buildCarePlanWorkflowError(
       `Care Plan was created and signed, but version history persistence failed (${message}). Open the saved care plan before retrying downstream actions.`,
       createdCarePlanId
@@ -852,6 +922,20 @@ export async function createCarePlan(input: {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
+    await recordCarePlanActionRequired({
+      carePlanId: createdCarePlanId,
+      memberId: canonicalMemberId,
+      actorUserId: input.actor.id,
+      alertKey: "care_plan_caregiver_dispatch_follow_up_required",
+      title: "Care Plan Caregiver Send Retry Needed",
+      message: "The care plan was created and signed, but caregiver dispatch still needs follow-up.",
+      metadata: {
+        phase: "create_caregiver_dispatch",
+        review_date: input.reviewDate,
+        next_due_date: nextDueDate,
+        error: message
+      }
+    });
     throw buildCarePlanWorkflowError(
       `Care Plan was created and signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry sending the caregiver link.`,
       createdCarePlanId
@@ -954,6 +1038,20 @@ export async function reviewCarePlan(input: {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to persist care plan review history.";
+    await recordCarePlanActionRequired({
+      carePlanId: input.carePlanId,
+      memberId: String(existing.member_id),
+      actorUserId: input.actor.id,
+      alertKey: "care_plan_review_history_follow_up_required",
+      title: "Care Plan Review History Repair Needed",
+      message: "The care plan review was signed, but version and review history still need repair.",
+      metadata: {
+        phase: "review_snapshot",
+        review_date: input.reviewDate,
+        next_due_date: nextDueDate,
+        error: message
+      }
+    });
     throw buildCarePlanWorkflowError(
       `Care Plan review was saved and signed, but version/review history persistence failed (${message}). Open the saved care plan before retrying downstream actions.`,
       input.carePlanId
@@ -1005,6 +1103,20 @@ export async function reviewCarePlan(input: {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
+    await recordCarePlanActionRequired({
+      carePlanId: input.carePlanId,
+      memberId: String(existing.member_id),
+      actorUserId: input.actor.id,
+      alertKey: "care_plan_review_dispatch_follow_up_required",
+      title: "Care Plan Caregiver Send Retry Needed",
+      message: "The care plan review was signed, but caregiver dispatch still needs follow-up.",
+      metadata: {
+        phase: "review_caregiver_dispatch",
+        review_date: input.reviewDate,
+        next_due_date: nextDueDate,
+        error: message
+      }
+    });
     throw buildCarePlanWorkflowError(
       `Care Plan review was saved and signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry sending the caregiver link.`,
       input.carePlanId

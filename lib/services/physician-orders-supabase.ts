@@ -135,6 +135,8 @@ export type {
 
 const CREATE_DRAFT_POF_FROM_INTAKE_RPC = "rpc_create_draft_physician_order_from_intake";
 const CREATE_DRAFT_POF_FROM_INTAKE_MIGRATION = "0055_intake_draft_pof_atomic_creation.sql";
+const CLAIM_POF_POST_SIGN_SYNC_QUEUE_RPC = "rpc_claim_pof_post_sign_sync_queue";
+const CLAIM_POF_POST_SIGN_SYNC_QUEUE_MIGRATION = "0097_pof_post_sign_retry_claim_rpc.sql";
 
 async function loadPofDocumentPdfBuilder() {
   const { buildPofDocumentPdfBytes } = await import("@/lib/services/pof-document-pdf");
@@ -154,6 +156,68 @@ type CreateDraftPofFromIntakeRpcRow = {
   draft_pof_status: string;
   was_existing: boolean;
 };
+
+function buildDraftPhysicianOrderFromIntakeFallback(input: {
+  physicianOrderId: string;
+  assessment: IntakeAssessmentForPofPrefill;
+  memberName: string;
+  memberDob: string | null;
+  sex: "M" | "F" | null;
+  now: string;
+  mapped: Awaited<ReturnType<Awaited<ReturnType<typeof loadIntakeToPofMapping>>["mapIntakeAssessmentToPofPrefill"]>>;
+  actor: { id: string; fullName: string; signoffName?: string | null };
+}) {
+  const providerName = clean(input.actor.signoffName) ?? input.actor.fullName;
+  return {
+    id: input.physicianOrderId,
+    memberId: input.assessment.member_id,
+    intakeAssessmentId: input.assessment.id,
+    memberNameSnapshot: input.memberName,
+    memberDobSnapshot: clean(input.memberDob),
+    sex: input.sex,
+    levelOfCare: null,
+    dnrSelected: input.mapped.dnrSelected,
+    vitalsBloodPressure: input.mapped.vitalsBloodPressure,
+    vitalsPulse: input.mapped.vitalsPulse,
+    vitalsOxygenSaturation: input.mapped.vitalsOxygenSaturation,
+    vitalsRespiration: input.mapped.vitalsRespiration,
+    diagnosisRows: [],
+    diagnoses: [],
+    allergyRows: input.mapped.allergyRows,
+    allergies: input.mapped.allergyRows
+      .map((row) => clean(row.allergyName))
+      .filter((value): value is string => value !== null),
+    medications: [],
+    standingOrders: POF_STANDING_ORDER_OPTIONS,
+    careInformation: {
+      ...defaultCareInformation(),
+      ...input.mapped.careInformation
+    },
+    operationalFlags: input.mapped.operationalFlags,
+    providerName,
+    providerSignature: providerName,
+    providerSignatureDate: null,
+    status: "Draft" as const,
+    providerSignatureStatus: "Pending" as const,
+    createdByUserId: input.actor.id,
+    createdByName: input.actor.fullName,
+    createdAt: input.now,
+    completedByUserId: null,
+    completedByName: null,
+    completedDate: null,
+    nextRenewalDueDate: null,
+    signedBy: null,
+    signedDate: null,
+    clinicalSyncStatus: "not_signed" as const,
+    clinicalSyncReady: false,
+    supersededAt: null,
+    supersededByPofId: null,
+    updatedByUserId: input.actor.id,
+    updatedByName: input.actor.fullName,
+    updatedAt: input.now,
+    enrollmentPacketPrefill: null
+  };
+}
 
 export type SignPhysicianOrderResult = {
   postSignStatus: "synced" | "queued";
@@ -237,6 +301,36 @@ async function emitAgedPostSignSyncQueueAlerts(input: {
     agedQueueRows: rows.length,
     alertsRaised
   };
+}
+
+async function claimQueuedPhysicianOrderPostSignSyncRows(input: {
+  limit: number;
+  claimAt: string;
+  actor: { id: string | null; fullName: string | null };
+  serviceRole?: boolean;
+}) {
+  const supabase = await createClient({ serviceRole: input.serviceRole ?? true });
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, CLAIM_POF_POST_SIGN_SYNC_QUEUE_RPC, {
+      p_limit: input.limit,
+      p_now: input.claimAt,
+      p_actor_user_id: clean(input.actor.id),
+      p_actor_name: clean(input.actor.fullName)
+    });
+    return ((Array.isArray(data) ? data : []) as PofPostSignSyncQueueRow[]).map((row) => ({
+      ...row,
+      status: row.status === "completed" ? "completed" : row.status === "processing" ? "processing" : "queued"
+    }));
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, CLAIM_POF_POST_SIGN_SYNC_QUEUE_RPC)) {
+      throw new Error(
+        `POF post-sign queue claim RPC is not available. Apply Supabase migration ${CLAIM_POF_POST_SIGN_SYNC_QUEUE_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    const postgrestError = error as PostgrestErrorLike | null | undefined;
+    if (isMissingPofPostSignQueueTableError(postgrestError)) throw pofPostSignQueueTableRequiredError();
+    throw error;
+  }
 }
 
 async function loadPostSignQueueStatusByPofIds(
@@ -347,6 +441,9 @@ async function markPostSignQueueCompleted(input: {
     last_error_at: null,
     last_failed_step: null,
     ...(requestId ? { pof_request_id: requestId } : {}),
+    claimed_at: null,
+    claimed_by_user_id: null,
+    claimed_by_name: null,
     resolved_at: input.completedAt,
     resolved_by_user_id: clean(input.actor.id),
     resolved_by_name: clean(input.actor.fullName)
@@ -383,6 +480,9 @@ async function markPostSignQueueQueued(input: {
     last_error_at: input.queuedAt,
     last_failed_step: input.step,
     ...(requestId ? { pof_request_id: requestId } : {}),
+    claimed_at: null,
+    claimed_by_user_id: null,
+    claimed_by_name: null,
     queued_by_user_id: clean(input.actor.id),
     queued_by_name: clean(input.actor.fullName),
     resolved_at: null,
@@ -862,9 +962,40 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
     throw new Error("Intake draft physician order RPC did not return the physician order id.");
   }
 
-  const saved = await getPhysicianOrderById(row.physician_order_id);
-  if (!saved) throw new Error("Unable to load created physician order.");
-  return saved;
+  const saved = await getPhysicianOrderById(row.physician_order_id, { serviceRole: true });
+  if (saved) return saved;
+
+  try {
+    await recordImmediateSystemAlert({
+      entityType: "intake_assessment",
+      entityId: input.assessment.id,
+      actorUserId: input.actor.id,
+      severity: "medium",
+      alertKey: "intake_draft_pof_post_commit_reload_failed",
+      metadata: {
+        member_id: input.assessment.member_id,
+        physician_order_id: row.physician_order_id,
+        rpc_name: CREATE_DRAFT_POF_FROM_INTAKE_RPC,
+        draft_pof_status: row.draft_pof_status,
+        was_existing: row.was_existing
+      }
+    });
+  } catch (alertError) {
+    console.error("[physician-orders] unable to persist post-commit draft POF reload alert", alertError);
+  }
+
+  // The RPC is the canonical success boundary for draft creation. If the immediate reread
+  // misses, return a deterministic fallback snapshot rather than downgrading the intake.
+  return buildDraftPhysicianOrderFromIntakeFallback({
+    physicianOrderId: row.physician_order_id,
+    assessment: input.assessment,
+    memberName: member.display_name,
+    memberDob: clean(member.dob),
+    sex: sexPrefill,
+    now,
+    mapped,
+    actor: input.actor
+  });
 }
 
 export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
@@ -1144,27 +1275,15 @@ export async function retryQueuedPhysicianOrderPostSignSync(input?: {
   const serviceRole = input?.serviceRole ?? true;
   const now = toEasternISO();
   const limit = Math.min(100, Math.max(1, input?.limit ?? 25));
-  const supabase = await createClient({ serviceRole });
-  const { data, error } = await supabase
-    .from("pof_post_sign_sync_queue")
-    .select(POF_POST_SIGN_QUEUE_SELECT)
-    .eq("status", "queued")
-    .order("next_retry_at", { ascending: true })
-    .limit(limit);
-  if (error) {
-    if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
-    throw new Error(error.message);
-  }
-
   const actor = input?.actor ?? {
     id: null,
     fullName: "System Post-Sign Sync Retry"
   };
-
-  const rows = ((data ?? []) as PofPostSignSyncQueueRow[]).filter((row) => {
-    const retryAt = clean(row.next_retry_at);
-    if (!retryAt) return true;
-    return Date.parse(retryAt) <= Date.parse(now);
+  const rows = await claimQueuedPhysicianOrderPostSignSyncRows({
+    limit,
+    claimAt: now,
+    actor,
+    serviceRole
   });
 
   let processed = 0;

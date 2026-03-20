@@ -49,7 +49,7 @@ import {
 } from "@/lib/services/member-files";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
-import type { PofRequestStatus } from "@/lib/services/pof-types";
+import type { PofRequestStatus, PofRequestSummary } from "@/lib/services/pof-types";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import {
   maybeRecordRepeatedFailureAlert,
@@ -247,6 +247,92 @@ async function cleanupFailedPofSignatureArtifacts(input: {
         signed_pdf_object_path: input.signedPdfObjectPath
       }
     });
+  }
+}
+
+function buildPofRequestSummary(input: {
+  id: string;
+  physicianOrderId: string;
+  memberId: string;
+  providerName: string;
+  providerEmail: string;
+  nurseName: string;
+  fromEmail: string;
+  sentByUserId: string;
+  status: PofRequestStatus;
+  deliveryStatus: SendWorkflowDeliveryStatus;
+  deliveryError: string | null;
+  lastDeliveryAttemptAt: string | null;
+  deliveryFailedAt: string | null;
+  optionalMessage: string | null;
+  sentAt: string | null;
+  openedAt: string | null;
+  signedAt: string | null;
+  expiresAt: string;
+  signatureRequestUrl: string;
+  unsignedPdfUrl: string | null;
+  signedPdfUrl: string | null;
+  memberFileId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}) {
+  const summary: PofRequestSummary = {
+    id: input.id,
+    physicianOrderId: input.physicianOrderId,
+    memberId: input.memberId,
+    providerName: input.providerName,
+    providerEmail: input.providerEmail,
+    nurseName: input.nurseName,
+    fromEmail: input.fromEmail,
+    sentByUserId: input.sentByUserId,
+    status: input.status,
+    deliveryStatus: input.deliveryStatus,
+    deliveryError: input.deliveryError,
+    lastDeliveryAttemptAt: input.lastDeliveryAttemptAt,
+    deliveryFailedAt: input.deliveryFailedAt,
+    optionalMessage: input.optionalMessage,
+    sentAt: input.sentAt,
+    openedAt: input.openedAt,
+    signedAt: input.signedAt,
+    expiresAt: input.expiresAt,
+    signatureRequestUrl: input.signatureRequestUrl,
+    unsignedPdfUrl: input.unsignedPdfUrl,
+    signedPdfUrl: input.signedPdfUrl,
+    memberFileId: input.memberFileId,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt
+  };
+  return summary;
+}
+
+async function maybeCreateSignedPofAccessUrl(input: {
+  requestId: string;
+  memberId: string;
+  actorUserId: string;
+  signedPdfStorageUrl: string | null;
+}) {
+  const storageUrl = clean(input.signedPdfStorageUrl);
+  if (!storageUrl) return null;
+  try {
+    return await createSignedStorageUrl(storageUrl, 60 * 15);
+  } catch (error) {
+    try {
+      await recordImmediateSystemAlert({
+        entityType: "pof_request",
+        entityId: input.requestId,
+        actorUserId: input.actorUserId,
+        severity: "medium",
+        alertKey: "pof_signed_pdf_url_enrichment_failed",
+        metadata: {
+          member_id: input.memberId,
+          signed_pdf_url: storageUrl,
+          error: error instanceof Error ? error.message : "Unable to create signed PDF access URL."
+        }
+      });
+    } catch (alertError) {
+      console.error("[pof-esign] unable to persist signed PDF URL enrichment alert", alertError);
+    }
+    return null;
   }
 }
 
@@ -726,9 +812,32 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     console.error("[pof-esign] unable to emit post-send workflow milestone", error);
   }
 
-  const created = await loadRequestById(requestId);
-  if (!created) throw new Error("POF signature request could not be loaded.");
-  return toSummary(created);
+  return buildPofRequestSummary({
+    id: requestId,
+    physicianOrderId: input.physicianOrderId,
+    memberId: input.memberId,
+    providerName,
+    providerEmail,
+    nurseName,
+    fromEmail,
+    sentByUserId: input.actor.id,
+    status: "sent",
+    deliveryStatus: "sent",
+    deliveryError: null,
+    lastDeliveryAttemptAt: sentAt,
+    deliveryFailedAt: null,
+    optionalMessage,
+    sentAt,
+    openedAt: null,
+    signedAt: null,
+    expiresAt,
+    signatureRequestUrl,
+    unsignedPdfUrl: unsignedStorageUri,
+    signedPdfUrl: null,
+    memberFileId: null,
+    createdAt: now,
+    updatedAt: sentAt
+  });
 }
 
 export async function resendPofSignatureRequest(input: ResendPofSignatureInput) {
@@ -980,9 +1089,32 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
     console.error("[pof-esign] unable to emit post-resend workflow milestone", error);
   }
 
-  const refreshed = await loadRequestById(input.requestId);
-  if (!refreshed) throw new Error("POF signature request could not be loaded.");
-  return toSummary(refreshed);
+  return buildPofRequestSummary({
+    id: input.requestId,
+    physicianOrderId: request.physician_order_id,
+    memberId: request.member_id,
+    providerName,
+    providerEmail,
+    nurseName,
+    fromEmail,
+    sentByUserId: input.actor.id,
+    status: "sent",
+    deliveryStatus: "sent",
+    deliveryError: null,
+    lastDeliveryAttemptAt: now,
+    deliveryFailedAt: null,
+    optionalMessage,
+    sentAt: now,
+    openedAt: null,
+    signedAt: null,
+    expiresAt,
+    signatureRequestUrl,
+    unsignedPdfUrl: unsignedStorageUri,
+    signedPdfUrl: request.signed_pdf_url,
+    memberFileId: request.member_file_id,
+    createdAt: request.created_at,
+    updatedAt: now
+  });
 }
 
 export async function voidPofSignatureRequest(input: VoidPofSignatureInput) {
@@ -1131,7 +1263,12 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
       requestId: request.id,
       memberId: request.member_id,
       memberFileId: request.member_file_id,
-      signedPdfUrl: await createSignedStorageUrl(request.signed_pdf_url, 60 * 15)
+      signedPdfUrl: await maybeCreateSignedPofAccessUrl({
+        requestId: request.id,
+        memberId: request.member_id,
+        actorUserId: request.sent_by_user_id,
+        signedPdfStorageUrl: request.signed_pdf_url
+      })
     };
   }
   if (request.status === "signed") throw new Error("This signature link has already been used.");
@@ -1236,15 +1373,16 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
         signedPdfObjectPath: signedPdfPath,
         reason: "Replay-safe POF signature finalization reused committed signed state."
       });
-      const signedRequest = await loadRequestById(finalized.request_id);
-      if (!signedRequest?.signed_pdf_url || !signedRequest.member_file_id) {
-        throw new Error("POF signature was already finalized, but the signed document could not be loaded.");
-      }
       return {
         requestId: finalized.request_id,
         memberId: finalized.member_id,
-        memberFileId: signedRequest.member_file_id,
-        signedPdfUrl: await createSignedStorageUrl(signedRequest.signed_pdf_url, 60 * 15)
+        memberFileId: finalized.member_file_id,
+        signedPdfUrl: await maybeCreateSignedPofAccessUrl({
+          requestId: finalized.request_id,
+          memberId: finalized.member_id,
+          actorUserId: request.sent_by_user_id,
+          signedPdfStorageUrl: request.signed_pdf_url
+        })
       };
     }
 
@@ -1302,7 +1440,12 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
       requestId: finalized.request_id,
       memberId: finalized.member_id,
       memberFileId: finalized.member_file_id,
-      signedPdfUrl: await createSignedStorageUrl(signedPdfUri, 60 * 15)
+      signedPdfUrl: await maybeCreateSignedPofAccessUrl({
+        requestId: finalized.request_id,
+        memberId: finalized.member_id,
+        actorUserId: request.sent_by_user_id,
+        signedPdfStorageUrl: signedPdfUri
+      })
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete POF signing.";

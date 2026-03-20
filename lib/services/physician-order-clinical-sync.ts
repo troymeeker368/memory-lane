@@ -1,5 +1,5 @@
 export type PhysicianOrderClinicalSyncStatus = "not_signed" | "pending" | "queued" | "failed" | "synced";
-export type PhysicianOrderPostSignQueueStatus = "queued" | "completed";
+export type PhysicianOrderPostSignQueueStatus = "queued" | "processing" | "completed";
 
 export function resolvePhysicianOrderClinicalSyncStatus(input: {
   status: string | null | undefined;
@@ -9,7 +9,7 @@ export function resolvePhysicianOrderClinicalSyncStatus(input: {
 }): PhysicianOrderClinicalSyncStatus {
   if (String(input.status ?? "").trim() !== "Signed") return "not_signed";
   if (input.queueStatus === "completed") return "synced";
-  if (input.queueStatus === "queued") {
+  if (input.queueStatus === "queued" || input.queueStatus === "processing") {
     if (String(input.lastError ?? "").trim() || String(input.lastFailedStep ?? "").trim()) {
       return "failed";
     }

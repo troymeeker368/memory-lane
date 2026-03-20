@@ -1615,10 +1615,29 @@ export async function sendEnrollmentPacketRequest(input: {
     });
   }
 
-  const created = await loadRequestById(requestId);
-  if (!created) throw new Error("Enrollment packet request could not be loaded.");
   return {
-    request: toSummary(created),
+    request: toSummary({
+      id: requestId,
+      member_id: member.id,
+      lead_id: lead?.id ?? null,
+      sender_user_id: senderUserId,
+      caregiver_email: requiredCaregiverEmail,
+      status: "sent",
+      delivery_status: "sent",
+      last_delivery_attempt_at: sentAt,
+      delivery_failed_at: null,
+      delivery_error: null,
+      token: hashedToken,
+      last_consumed_submission_token_hash: reusablePreparedActive?.last_consumed_submission_token_hash ?? null,
+      token_expires_at: expiresAt,
+      created_at: reusablePreparedActive?.created_at ?? now,
+      sent_at: sentAt,
+      completed_at: reusablePreparedActive?.completed_at ?? null,
+      mapping_sync_status: reusablePreparedActive?.mapping_sync_status ?? null,
+      mapping_sync_error: reusablePreparedActive?.mapping_sync_error ?? null,
+      mapping_sync_attempted_at: reusablePreparedActive?.mapping_sync_attempted_at ?? null,
+      latest_mapping_run_id: reusablePreparedActive?.latest_mapping_run_id ?? null
+    }),
     requestUrl
   };
 }

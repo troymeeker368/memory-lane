@@ -10,7 +10,6 @@ import { resolveCanonicalMemberRef } from "@/lib/services/canonical-person-ref";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import {
   getPofRequestSummaryById,
-  listPofRequestsByPhysicianOrderIds,
   resendPofSignatureRequest,
   sendNewPofSignatureRequest
 } from "@/lib/services/pof-esign";
@@ -517,7 +516,7 @@ export async function saveAndDispatchPofSignatureRequestFromEditorAction(formDat
     if (mode === "resend") {
       const requestId = asString(formData, "esignRequestId");
       if (!requestId) return { ok: false, error: "Request ID is required for resend." } as const;
-      await resendPofSignatureRequest({
+      const request = await resendPofSignatureRequest({
         requestId,
         memberId: saved.memberId,
         providerName,
@@ -536,10 +535,10 @@ export async function saveAndDispatchPofSignatureRequestFromEditorAction(formDat
       return {
         ok: true,
         pofId: saved.id,
-        request: await getPofRequestSummaryById(requestId, saved.memberId)
+        request
       } as const;
     } else {
-      await sendNewPofSignatureRequest({
+      const request = await sendNewPofSignatureRequest({
         memberId: saved.memberId,
         physicianOrderId: saved.id,
         providerName,
@@ -555,11 +554,10 @@ export async function saveAndDispatchPofSignatureRequestFromEditorAction(formDat
         }
       });
       revalidatePofRoutes(saved.memberId, saved.id);
-      const requests = await listPofRequestsByPhysicianOrderIds(saved.memberId, [saved.id]);
       return {
         ok: true,
         pofId: saved.id,
-        request: requests[0] ?? null
+        request
       } as const;
     }
   } catch (error) {

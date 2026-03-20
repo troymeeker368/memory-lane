@@ -369,6 +369,28 @@ export function canSendCaregiverSignature(plan: CarePlan) {
   });
 }
 
+function buildCommittedCarePlanSendResult(input: {
+  carePlan: CarePlan;
+  caregiverName: string;
+  caregiverEmail: string;
+  actorUserId: string;
+  sentAt: string;
+  expiresAt: string;
+  signatureRequestUrl: string;
+}) {
+  return {
+    ...input.carePlan,
+    caregiverName: input.caregiverName,
+    caregiverEmail: input.caregiverEmail,
+    caregiverSignatureStatus: "sent" as const,
+    caregiverSentAt: input.sentAt,
+    caregiverSentByUserId: input.actorUserId,
+    caregiverSignatureExpiresAt: input.expiresAt,
+    caregiverSignatureRequestUrl: input.signatureRequestUrl,
+    updatedAt: input.sentAt
+  };
+}
+
 async function sendSignatureEmail(input: {
   toEmail: string;
   caregiverName: string;
@@ -592,9 +614,15 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
     console.error("[care-plan-esign] unable to emit post-send workflow milestone", error);
   }
 
-  const refreshed = await getCarePlanById(input.carePlanId);
-  if (!refreshed) throw new Error("Care plan could not be loaded after send.");
-  return refreshed.carePlan;
+  return buildCommittedCarePlanSendResult({
+    carePlan: detail.carePlan,
+    caregiverName,
+    caregiverEmail: validatedCaregiverEmail,
+    actorUserId: input.actor.id,
+    sentAt: now,
+    expiresAt,
+    signatureRequestUrl
+  });
 }
 
 export async function getPublicCarePlanSigningContext(
