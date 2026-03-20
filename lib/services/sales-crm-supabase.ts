@@ -778,12 +778,6 @@ export async function getSalesReferralSourceDirectoryPageSupabase(input?: { q?: 
   const supabase = await createClient();
   const page = normalizePage(input?.page);
   const pageSize = normalizePageSize(input?.pageSize ?? 25, 25);
-  const { data: partners, error: partnersError } = await supabase
-    .from("community_partner_organizations")
-    .select("id, partner_id, organization_name, category, location, primary_phone, primary_email, active, last_touched")
-    .order("organization_name", { ascending: true })
-    .limit(500);
-  if (partnersError) throw new Error(partnersError.message);
   let query = supabase
     .from("referral_sources")
     .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT, { count: "exact" })
@@ -798,8 +792,19 @@ export async function getSalesReferralSourceDirectoryPageSupabase(input?: { q?: 
   query = query.range((page - 1) * pageSize, page * pageSize - 1);
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);
+  const referralSources = (data ?? []) as SalesReferralSourceRow[];
+  const partnerIds = Array.from(new Set(referralSources.map((row) => row.partner_id).filter(Boolean)));
+  let partners: SalesPartnerRow[] = [];
+  if (partnerIds.length > 0) {
+    const { data: partnerData, error: partnersError } = await supabase
+      .from("community_partner_organizations")
+      .select(SALES_PARTNER_LOOKUP_SELECT)
+      .in("id", partnerIds);
+    if (partnersError) throw new Error(partnersError.message);
+    partners = (partnerData ?? []) as SalesPartnerRow[];
+  }
   return {
-    rows: normalizeReferralSources((partners ?? []) as SalesPartnerRow[], (data ?? []) as SalesReferralSourceRow[]),
+    rows: normalizeReferralSources(partners, referralSources),
     page,
     pageSize,
     totalRows: count ?? 0,

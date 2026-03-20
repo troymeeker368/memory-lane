@@ -417,10 +417,22 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   if (membersError) throw new Error(membersError.message);
   const members = (membersData ?? []) as MemberRow[];
 
-  let aggregateMembersQuery = supabase
-    .from("members")
-    .select("id, status")
-    .order("display_name", { ascending: true });
+  const activeCount =
+    status === "inactive"
+      ? 0
+      : status === "active"
+        ? totalRows ?? 0
+        : (
+            await (queryText
+              ? supabase
+                  .from("members")
+                  .select("id", { count: "exact", head: true })
+                  .eq("status", "active")
+                  .ilike("display_name", buildSupabaseIlikePattern(queryText))
+              : supabase.from("members").select("id", { count: "exact", head: true }).eq("status", "active"))
+          ).count ?? 0;
+
+  let aggregateMembersQuery = supabase.from("members").select("id");
   if (status !== "all") {
     aggregateMembersQuery = aggregateMembersQuery.eq("status", status);
   }
@@ -429,8 +441,7 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   }
   const { data: aggregateMembersData, error: aggregateMembersError } = await aggregateMembersQuery;
   if (aggregateMembersError) throw new Error(aggregateMembersError.message);
-  const aggregateMembers = (aggregateMembersData ?? []) as Array<{ id: string; status: "active" | "inactive" }>;
-  const activeCount = aggregateMembers.filter((member) => member.status === "active").length;
+  const aggregateMembers = (aggregateMembersData ?? []) as Array<{ id: string }>;
 
   if (members.length === 0) {
     return {

@@ -81,6 +81,22 @@ const TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC = "rpc_transition_pof_request_de
 const POF_DELIVERY_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
 const POF_DELIVERY_TRANSITION_COMPARE_AND_SET_MIGRATION = "0098_false_failure_read_path_hardening.sql";
 
+async function recordPofAlertSafely(
+  input: Parameters<typeof recordImmediateSystemAlert>[0],
+  context: string
+) {
+  try {
+    await recordImmediateSystemAlert(input);
+  } catch (error) {
+    console.error("[pof-esign] unable to persist follow-up system alert", {
+      context,
+      entityId: input.entityId ?? null,
+      alertKey: input.alertKey,
+      message: error instanceof Error ? error.message : "Unknown system alert error."
+    });
+  }
+}
+
 async function createResendClient() {
   const { Resend } = await import("resend");
   return new Resend(process.env.RESEND_API_KEY);
@@ -233,7 +249,7 @@ async function cleanupFailedPofSignatureArtifacts(input: {
       await deleteMemberDocumentObject(input.signedPdfObjectPath);
     }
   } catch (cleanupError) {
-    await recordImmediateSystemAlert({
+    await recordPofAlertSafely({
       entityType: "pof_request",
       entityId: input.requestId,
       actorUserId: input.actorUserId,
@@ -246,7 +262,7 @@ async function cleanupFailedPofSignatureArtifacts(input: {
         signature_object_path: input.signatureObjectPath,
         signed_pdf_object_path: input.signedPdfObjectPath
       }
-    });
+    }, "cleanupFailedPofSignatureArtifacts");
   }
 }
 
@@ -386,7 +402,7 @@ async function createDocumentEvent(input: {
     eventType: input.eventType,
     message: error.message
   });
-  await recordImmediateSystemAlert({
+  await recordPofAlertSafely({
     entityType: "pof_request",
     entityId: input.documentId,
     actorUserId: input.actorUserId ?? null,
@@ -398,7 +414,7 @@ async function createDocumentEvent(input: {
       event_type: input.eventType,
       error: error.message
     }
-  });
+  }, "createDocumentEvent");
   return false;
 }
 
@@ -604,7 +620,7 @@ async function runBestEffortCommittedPofSignatureFollowUp(input: {
         error: reason
       }
     });
-    await recordImmediateSystemAlert({
+    await recordPofAlertSafely({
       entityType: "pof_request",
       entityId: input.finalized.request_id,
       actorUserId: input.request.sent_by_user_id,
@@ -617,7 +633,7 @@ async function runBestEffortCommittedPofSignatureFollowUp(input: {
         queue_id: input.finalized.queue_id,
         error: reason
       }
-    });
+    }, "runBestEffortCommittedPofSignatureFollowUp");
   }
 }
 
@@ -693,7 +709,7 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
     try {
       await deleteMemberDocumentObject(unsignedPath);
     } catch (cleanupError) {
-      await recordImmediateSystemAlert({
+      await recordPofAlertSafely({
         entityType: "pof_request",
         entityId: provisionalRequestId,
         actorUserId: input.actor.id,
@@ -706,7 +722,7 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
           create_error: createErrorMessage,
           cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
         }
-      });
+      }, "sendNewPofSignatureRequest.cleanupUnsignedPdf");
     }
     if (isMissingRpcFunctionError(error, PREPARE_POF_REQUEST_DELIVERY_RPC)) {
       throw new Error(
@@ -1531,7 +1547,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
         }
       }
     });
-    await recordImmediateSystemAlert({
+    await recordPofAlertSafely({
       entityType: "pof_request",
       entityId: request.id,
       actorUserId: request.sent_by_user_id,
@@ -1542,7 +1558,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
         physician_order_id: request.physician_order_id,
         error: reason
       }
-    });
+    }, "submitPublicPofSignature");
     throw error;
   }
 }

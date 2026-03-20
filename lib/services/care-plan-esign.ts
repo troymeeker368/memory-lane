@@ -33,6 +33,22 @@ const PREPARE_CARE_PLAN_CAREGIVER_REQUEST_RPC = "rpc_prepare_care_plan_caregiver
 const TRANSITION_CARE_PLAN_CAREGIVER_STATUS_RPC = "rpc_transition_care_plan_caregiver_status";
 const CARE_PLAN_CAREGIVER_DELIVERY_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
 
+async function recordCarePlanAlertSafely(
+  input: Parameters<typeof recordImmediateSystemAlert>[0],
+  context: string
+) {
+  try {
+    await recordImmediateSystemAlert(input);
+  } catch (error) {
+    console.error("[care-plan-esign] unable to persist follow-up system alert", {
+      context,
+      entityId: input.entityId ?? null,
+      alertKey: input.alertKey,
+      message: error instanceof Error ? error.message : "Unknown system alert error."
+    });
+  }
+}
+
 type CarePlanTokenMatch = {
   carePlan: {
     id: string;
@@ -213,7 +229,7 @@ async function createCarePlanSignatureEvent(input: {
     eventType: input.eventType,
     message: error.message
   });
-  await recordImmediateSystemAlert({
+  await recordCarePlanAlertSafely({
     entityType: "care_plan",
     entityId: input.carePlanId,
     actorUserId: input.actorUserId ?? null,
@@ -224,7 +240,7 @@ async function createCarePlanSignatureEvent(input: {
       event_type: input.eventType,
       error: error.message
     }
-  });
+  }, "createCarePlanSignatureEvent");
   return false;
 }
 
@@ -756,7 +772,7 @@ async function cleanupFailedCarePlanCaregiverArtifacts(input: {
       await deleteMemberDocumentObject(input.signedPdfObjectPath);
     }
   } catch (cleanupError) {
-    await recordImmediateSystemAlert({
+    await recordCarePlanAlertSafely({
       entityType: "care_plan",
       entityId: input.carePlanId,
       actorUserId: input.actorUserId,
@@ -769,7 +785,7 @@ async function cleanupFailedCarePlanCaregiverArtifacts(input: {
         signature_object_path: input.signatureObjectPath,
         signed_pdf_object_path: input.signedPdfObjectPath
       }
-    });
+    }, "cleanupFailedCarePlanCaregiverArtifacts");
   }
 }
 
@@ -941,7 +957,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         error: reason
       }
     });
-    await recordImmediateSystemAlert({
+    await recordCarePlanAlertSafely({
       entityType: "care_plan",
       entityId: detail.carePlan.id,
       actorUserId: detail.carePlan.caregiverSentByUserId,
@@ -952,7 +968,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         caregiver_email: detail.carePlan.caregiverEmail,
         error: reason
       }
-    });
+    }, "submitPublicCarePlanSignature");
     throw error;
   }
 }
