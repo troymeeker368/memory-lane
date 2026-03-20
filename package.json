@@ -26,6 +26,7 @@
     "supabase:db:push:local": "npm run db:push:local",
     "supabase:types:linked": "npm run db:types",
     "supabase:types:local": "npm run db:types:local",
+"dev:full": "npm run db:sync && npm run dev",
     "fix-prompts:generate": "tsx scripts/generate-fix-prompt-report.ts",
     "start": "next start -p 3001",
     "lint": "next lint",
