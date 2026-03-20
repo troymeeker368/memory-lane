@@ -1,6 +1,5 @@
 import "server-only";
 
-import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -20,6 +19,7 @@ import {
   getMemberTrackForMhpSupabase,
 } from "@/lib/services/member-health-profiles-write-supabase";
 import { ensureMemberHealthProfileSupabase } from "@/lib/services/member-health-profiles-supabase";
+import { asUploadedImageDataUrl } from "@/lib/utils/uploaded-image-data-url";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 function asString(formData: FormData, key: string) {
@@ -161,15 +161,6 @@ function revalidateMhp(memberId: string) {
   revalidatePath(`/operations/member-command-center/${memberId}`);
   revalidatePath(`/members/${memberId}`);
   revalidatePath("/health");
-}
-
-async function asUploadedImageDataUrl(formData: FormData, key: string, fallback: string | null) {
-  const file = formData.get(key);
-  if (file instanceof File && file.size > 0 && file.type.startsWith("image/")) {
-    const bytes = Buffer.from(await file.arrayBuffer());
-    return `data:${file.type};base64,${bytes.toString("base64")}`;
-  }
-  return fallback;
 }
 
 function addDaysDateOnly(dateValue: string, days: number) {

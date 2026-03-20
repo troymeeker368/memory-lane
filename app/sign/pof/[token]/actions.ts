@@ -2,7 +2,9 @@
 
 import { headers } from "next/headers";
 
-import { submitPublicPofSignature } from "@/lib/services/pof-esign";
+async function loadPublicPofSignatureService() {
+  return import("@/lib/services/pof-esign");
+}
 
 function asString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
@@ -18,6 +20,7 @@ export async function submitPublicPofSignatureAction(formData: FormData) {
     const forwardedFor = headersList.get("x-forwarded-for");
     const providerIp = forwardedFor ? forwardedFor.split(",")[0].trim() : null;
     const providerUserAgent = headersList.get("user-agent");
+    const { submitPublicPofSignature } = await loadPublicPofSignatureService();
 
     const signed = await submitPublicPofSignature({
       token,

@@ -3,6 +3,8 @@ import Link from "next/link";
 import { ForgotPasswordForm } from "@/components/auth/forgot-password-form";
 import { Card } from "@/components/ui/card";
 
+export const dynamic = "force-dynamic";
+
 export default function ForgotPasswordPage() {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-md items-center px-4">

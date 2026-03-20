@@ -2,7 +2,9 @@
 
 import { headers } from "next/headers";
 
-import { submitPublicCarePlanSignature } from "@/lib/services/care-plan-esign";
+async function loadPublicCarePlanSignatureService() {
+  return import("@/lib/services/care-plan-esign");
+}
 
 function asString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
@@ -18,6 +20,7 @@ export async function submitPublicCarePlanSignatureAction(formData: FormData) {
     const forwardedFor = headersList.get("x-forwarded-for");
     const caregiverIp = forwardedFor ? forwardedFor.split(",")[0].trim() : null;
     const caregiverUserAgent = headersList.get("user-agent");
+    const { submitPublicCarePlanSignature } = await loadPublicCarePlanSignatureService();
 
     await submitPublicCarePlanSignature({
       token,

@@ -1,6 +1,5 @@
 import "server-only";
 
-import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
@@ -36,6 +35,7 @@ import {
   saveCommandCenterMemberFileUpload
 } from "@/lib/services/member-files";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
+import { asUploadedImageDataUrl } from "@/lib/utils/uploaded-image-data-url";
 import { toEasternISO } from "@/lib/timezone";
 
 function asString(formData: FormData, key: string) {
@@ -86,15 +86,6 @@ function normalizeLockerInput(raw: string) {
     }
   }
   return normalized.toUpperCase();
-}
-
-async function asUploadedImageDataUrl(formData: FormData, key: string, fallback: string | null) {
-  const file = formData.get(key);
-  if (file instanceof File && file.size > 0 && file.type.startsWith("image/")) {
-    const bytes = Buffer.from(await file.arrayBuffer());
-    return `data:${file.type};base64,${bytes.toString("base64")}`;
-  }
-  return fallback;
 }
 
 async function requireCommandCenterEditor() {

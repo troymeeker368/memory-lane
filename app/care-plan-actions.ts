@@ -4,13 +4,15 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
-import { sendCarePlanToCaregiverForSignature } from "@/lib/services/care-plan-esign";
-import {
-  CARE_PLAN_SECTION_TYPES,
-  createCarePlan,
-  reviewCarePlan,
-  signCarePlanAsNurseAdmin
-} from "@/lib/services/care-plans";
+import { CARE_PLAN_SECTION_TYPES } from "@/lib/services/care-plan-track-definitions";
+
+async function loadCarePlanWriteService() {
+  return import("@/lib/services/care-plans");
+}
+
+async function loadCarePlanEsignService() {
+  return import("@/lib/services/care-plan-esign");
+}
 
 const carePlanSectionSchema = z.object({
   sectionType: z.enum(CARE_PLAN_SECTION_TYPES),
@@ -70,8 +72,9 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
   const payload = createCarePlanSchema.safeParse(raw);
   if (!payload.success) return { ok: false as const, error: "Invalid care plan submission." };
 
-  let created: Awaited<ReturnType<typeof createCarePlan>>;
+  let created: { id: string; memberId: string } | null = null;
   try {
+    const { createCarePlan } = await loadCarePlanWriteService();
     created = await createCarePlan({
       memberId: payload.data.memberId,
       track: payload.data.track,
@@ -106,13 +109,14 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
     };
   }
 
+  const createdCarePlan = created as { id: string; memberId: string };
   revalidatePath("/health");
   revalidatePath("/health/care-plans");
   revalidatePath("/health/care-plans/list");
-  revalidatePath(`/health/care-plans/${created.id}`);
-  revalidatePath(`/health/member-health-profiles/${created.memberId}`);
-  revalidatePath(`/members/${created.memberId}`);
-  return { ok: true as const, error: null, id: created.id };
+  revalidatePath(`/health/care-plans/${createdCarePlan.id}`);
+  revalidatePath(`/health/member-health-profiles/${createdCarePlan.memberId}`);
+  revalidatePath(`/members/${createdCarePlan.memberId}`);
+  return { ok: true as const, error: null, id: createdCarePlan.id };
 }
 
 const reviewCarePlanSchema = z
@@ -165,8 +169,9 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
   const payload = reviewCarePlanSchema.safeParse(raw);
   if (!payload.success) return { ok: false as const, error: "Invalid care plan review submission." };
 
-  let updated: Awaited<ReturnType<typeof reviewCarePlan>>;
+  let updated: { id: string; memberId: string } | null = null;
   try {
+    const { reviewCarePlan } = await loadCarePlanWriteService();
     updated = await reviewCarePlan({
       carePlanId: payload.data.carePlanId,
       reviewDate: payload.data.reviewDate,
@@ -199,13 +204,14 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
     } as const;
   }
 
+  const reviewedCarePlan = updated as { id: string; memberId: string };
   revalidatePath("/health");
   revalidatePath("/health/care-plans");
   revalidatePath("/health/care-plans/list");
   revalidatePath("/health/care-plans/due-report");
-  revalidatePath(`/health/care-plans/${updated.id}`);
-  revalidatePath(`/health/member-health-profiles/${updated.memberId}`);
-  revalidatePath(`/members/${updated.memberId}`);
+  revalidatePath(`/health/care-plans/${reviewedCarePlan.id}`);
+  revalidatePath(`/health/member-health-profiles/${reviewedCarePlan.memberId}`);
+  revalidatePath(`/members/${reviewedCarePlan.memberId}`);
   return { ok: true as const, error: null };
 }
 
@@ -236,8 +242,9 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
   if (!payload.data.signatureImageDataUrl.trim().startsWith("data:image/")) {
     return { ok: false, error: "A valid drawn nurse/admin signature image is required." } as const;
   }
-  let updated: Awaited<ReturnType<typeof signCarePlanAsNurseAdmin>>;
+  let updated: { id: string; memberId: string; caregiverSignatureStatus: string } | null = null;
   try {
+    const { signCarePlanAsNurseAdmin } = await loadCarePlanWriteService();
     updated = await signCarePlanAsNurseAdmin({
       carePlanId: payload.data.carePlanId,
       actor: {
@@ -261,10 +268,11 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
       id: carePlanId
     } as const;
   }
-  revalidatePath(`/health/care-plans/${updated.id}`);
-  revalidatePath(`/health/member-health-profiles/${updated.memberId}`);
-  revalidatePath(`/members/${updated.memberId}`);
-  return { ok: true as const, error: null, status: updated.caregiverSignatureStatus };
+  const signedCarePlan = updated as { id: string; memberId: string; caregiverSignatureStatus: string };
+  revalidatePath(`/health/care-plans/${signedCarePlan.id}`);
+  revalidatePath(`/health/member-health-profiles/${signedCarePlan.memberId}`);
+  revalidatePath(`/members/${signedCarePlan.memberId}`);
+  return { ok: true as const, error: null, status: signedCarePlan.caregiverSignatureStatus };
 }
 
 const sendCaregiverSignatureSchema = z.object({
@@ -283,6 +291,7 @@ export async function sendCarePlanToCaregiverAction(raw: z.infer<typeof sendCare
   }
 
   try {
+    const { sendCarePlanToCaregiverForSignature } = await loadCarePlanEsignService();
     const updated = await sendCarePlanToCaregiverForSignature({
       carePlanId: payload.data.carePlanId,
       caregiverName: payload.data.caregiverName,

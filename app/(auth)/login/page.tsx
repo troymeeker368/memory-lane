@@ -5,6 +5,8 @@ import { isDevAuthBypassEnabled } from "@/lib/runtime";
 import { listDevAuthBootstrapAccounts } from "@/lib/services/dev-auth-bootstrap";
 import Link from "next/link";
 
+export const dynamic = "force-dynamic";
+
 function getAuthIssueMessage(reason: string | undefined) {
   if (reason === "invalid-credentials") {
     return "Email or password was incorrect. Please try again.";

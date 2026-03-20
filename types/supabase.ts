@@ -8717,6 +8717,7 @@ export type Database = {
           administered_by: string | null
           administered_by_user_id: string | null
           administration_date: string | null
+          created_at: string | null
           dose: string | null
           id: string | null
           mar_schedule_id: string | null
@@ -8726,10 +8727,15 @@ export type Database = {
           not_given_reason: string | null
           notes: string | null
           pof_medication_id: string | null
+          prn_followup_note: string | null
+          prn_outcome: string | null
+          prn_outcome_assessed_at: string | null
+          prn_reason: string | null
           route: string | null
           scheduled_time: string | null
           source: string | null
           status: string | null
+          updated_at: string | null
         }
         Relationships: [
           {

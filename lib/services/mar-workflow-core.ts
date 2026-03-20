@@ -6,13 +6,19 @@ import {
   type MarPrnOutcome,
   type MarTodayRow
 } from "@/lib/services/mar-shared";
-import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
+import {
+  buildMissingSchemaColumnMessage,
+  buildMissingSchemaMessage,
+  isMissingSchemaColumnError,
+  isMissingSchemaObjectError
+} from "@/lib/supabase/schema-errors";
 import { toEasternDate } from "@/lib/timezone";
 
 const TIME_24H_PATTERN = /^(\d{1,2}):(\d{2})$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_GENERATION_DAYS = 45;
 const MAR_BASE_SCHEMA_MIGRATION = "0028_pof_seeded_mar_workflow.sql";
+const MAR_NOT_GIVEN_VIEW_ALIGNMENT_MIGRATION = "0103_mar_not_given_view_alignment.sql";
 const MAR_OVERDUE_VIEW_MIGRATION = "0030_mar_overdue_view.sql";
 const MHP_MEDICATIONS_MIGRATION = "0012_legacy_operational_health_alignment.sql";
 
@@ -59,9 +65,19 @@ export function throwMarSupabaseError(error: unknown, objectName: MarSchemaObjec
   const migration =
     objectName === "v_mar_overdue_today"
       ? MAR_OVERDUE_VIEW_MIGRATION
+      : objectName === "v_mar_not_given_today" && isMissingSchemaColumnError(error, objectName)
+        ? MAR_NOT_GIVEN_VIEW_ALIGNMENT_MIGRATION
       : objectName === "member_medications"
         ? MHP_MEDICATIONS_MIGRATION
         : MAR_BASE_SCHEMA_MIGRATION;
+  if (objectName === "v_mar_not_given_today" && isMissingSchemaColumnError(error, objectName)) {
+    throw new Error(
+      `${buildMissingSchemaColumnMessage({
+        objectName,
+        migration
+      })} Original error: ${toSupabaseErrorMessage(error)}`
+    );
+  }
   if (isMissingSchemaObjectError(error)) {
     throw new Error(
       `${buildMissingSchemaMessage({
