@@ -7,7 +7,7 @@ import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authoriz
 import { CARE_PLAN_SECTION_TYPES } from "@/lib/services/care-plan-track-definitions";
 
 async function loadCarePlanWriteService() {
-  return import("@/lib/services/care-plans");
+  return import("@/lib/services/care-plans-write");
 }
 
 async function loadCarePlanEsignService() {

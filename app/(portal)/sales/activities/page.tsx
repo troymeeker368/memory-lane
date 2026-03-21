@@ -3,22 +3,22 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import {
+  getLeadActivitySnapshot,
+  getLeadFormLookups,
   type SalesPartnerRow,
-  type SalesReferralSourceRow,
-  getSalesFormLookupsSupabase,
-  getSalesRecentActivitySnapshotSupabase
-} from "@/lib/services/sales-crm-supabase";
+  type SalesReferralSourceRow
+} from "@/lib/services/leads-read";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
-type SalesActivitySnapshot = Awaited<ReturnType<typeof getSalesRecentActivitySnapshotSupabase>>;
+type SalesActivitySnapshot = Awaited<ReturnType<typeof getLeadActivitySnapshot>>;
 type LeadActivityRow = SalesActivitySnapshot["activities"][number];
 type PartnerActivityRow = SalesActivitySnapshot["partnerActivities"][number];
 
 export default async function SalesRecentActivityPage() {
   await requireModuleAccess("sales");
   const [{ activities, partnerActivities }, { leads, partners, referralSources }] = await Promise.all([
-    getSalesRecentActivitySnapshotSupabase(),
-    getSalesFormLookupsSupabase({ leadLimit: 500 })
+    getLeadActivitySnapshot(),
+    getLeadFormLookups({ leadLimit: 500 })
   ]);
 
   const leadNameById = new Map(leads.map((lead) => [lead.id, lead.member_name]));

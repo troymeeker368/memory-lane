@@ -8,10 +8,9 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions/core";
-import { getTransportationAddRiderMemberOptionsSupabase } from "@/lib/services/member-command-center-read";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
-import { getTransportationRunManifestSupabase } from "@/lib/services/transportation-run-manifest-supabase";
+import { getTransportationAddRiderMembers, getTransportationRunManifest } from "@/lib/services/transportation-read";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 type Shift = "AM" | "PM";
@@ -61,14 +60,14 @@ export default async function TransportationStationPage({
   const selectedBusNumber = normalizeBusNumber(firstString(query.bus), busNumberOptions);
 
   const manifest = selectedBusNumber
-    ? await getTransportationRunManifestSupabase({
+    ? await getTransportationRunManifest({
         selectedDate,
         shift: selectedShift,
         busNumber: selectedBusNumber
       })
     : null;
 
-  const addRiderMemberOptions = canManageManifest ? await getTransportationAddRiderMemberOptionsSupabase() : [];
+  const addRiderMemberOptions = canManageManifest ? await getTransportationAddRiderMembers() : [];
 
   return (
     <div className="space-y-4">

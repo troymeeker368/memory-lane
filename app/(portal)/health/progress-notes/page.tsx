@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ProgressNoteStatusBadge } from "@/components/progress-notes/progress-note-status-badge";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireProgressNoteAuthorizedUser } from "@/lib/services/progress-note-authorization";
-import { getProgressNoteTracker } from "@/lib/services/progress-notes";
+import { getProgressNoteTracker } from "@/lib/services/notes-read";
 import { formatOptionalDate } from "@/lib/utils";
 
 const FILTER_OPTIONS = ["All", "Overdue", "Due Today", "Due Soon", "Completed/Upcoming"] as const;

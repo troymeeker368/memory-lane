@@ -5,7 +5,6 @@ import { z } from "zod";
 
 import { getCurrentProfile } from "@/lib/auth";
 import {
-  getEnrollmentPacketSenderSignatureProfile,
   sendEnrollmentPacketRequest,
   upsertEnrollmentPacketSenderSignatureProfile
 } from "@/lib/services/enrollment-packets-sender";
@@ -97,18 +96,6 @@ const enrollmentSignatureSchema = z.object({
   signatureName: z.string().min(1),
   signatureImageDataUrl: z.string().min(1)
 });
-
-export async function getEnrollmentPacketSenderSignatureProfileAction() {
-  await requireSalesRoles();
-  const profile = await getCurrentProfile();
-  const signature = await getEnrollmentPacketSenderSignatureProfile(profile.id);
-  if (!signature) return null;
-  return {
-    signatureName: signature.signature_name,
-    signatureImageDataUrl: signature.signature_blob,
-    updatedAt: signature.updated_at
-  };
-}
 
 export async function saveEnrollmentPacketSenderSignatureProfileAction(raw: z.infer<typeof enrollmentSignatureSchema>) {
   await requireSalesRoles();

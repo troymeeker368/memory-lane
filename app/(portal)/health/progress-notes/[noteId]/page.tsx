@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { ProgressNoteForm } from "@/components/progress-notes/progress-note-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireProgressNoteAuthorizedUser } from "@/lib/services/progress-note-authorization";
-import { getProgressNoteById } from "@/lib/services/progress-notes";
+import { getProgressNoteById } from "@/lib/services/notes-read";
 
 export default async function ProgressNoteDetailPage({
   params

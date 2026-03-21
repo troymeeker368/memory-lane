@@ -381,7 +381,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
   if (!member) return null;
   const [{ getMemberCarePlanSummary, getCarePlansForMember }, { getLatestEnrollmentPacketPofStagingSummary }] =
     await Promise.all([
-      import("@/lib/services/care-plans-supabase"),
+      import("@/lib/services/care-plans-read"),
       import("@/lib/services/enrollment-packet-intake-staging")
     ]);
   const [

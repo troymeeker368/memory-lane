@@ -4,7 +4,11 @@ import { redirect } from "next/navigation";
 import { ProgressNoteForm } from "@/components/progress-notes/progress-note-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireProgressNoteAuthorizedUser } from "@/lib/services/progress-note-authorization";
-import { getExistingProgressNoteDraftForMember, getProgressNoteMemberOptions, getProgressNoteTracker } from "@/lib/services/progress-notes";
+import {
+  getExistingProgressNoteDraftForMember,
+  getProgressNoteDraftContext,
+  getProgressNoteMemberOptions
+} from "@/lib/services/notes-read";
 import { toEasternDate } from "@/lib/timezone";
 
 function firstString(value: string | string[] | undefined) {
@@ -66,12 +70,7 @@ export default async function NewProgressNotePage({
     redirect(`/health/progress-notes/${existingDraft.id}`);
   }
 
-  const tracker = await getProgressNoteTracker({
-    memberId,
-    page: 1,
-    pageSize: 1
-  });
-  const memberRow = tracker.rows[0] ?? null;
+  const memberRow = await getProgressNoteDraftContext(memberId);
   if (!memberRow) {
     redirect("/health/progress-notes/new");
   }

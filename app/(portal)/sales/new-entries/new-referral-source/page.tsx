@@ -1,11 +1,11 @@
 import { NewReferralSourceForm } from "@/components/forms/sales-partner-source-forms";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getSalesFormLookupsSupabase } from "@/lib/services/sales-crm-supabase";
+import { getLeadFormLookups } from "@/lib/services/leads-read";
 
 export default async function NewReferralSourcePage() {
   await requireModuleAccess("sales");
-  const { partners } = await getSalesFormLookupsSupabase();
+  const { partners } = await getLeadFormLookups();
 
   return (
     <Card>

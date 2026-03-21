@@ -17,11 +17,10 @@ import {
   MEMBER_TRANSPORTATION_SERVICE_OPTIONS
 } from "@/lib/canonical";
 import {
-  getMemberSupabase,
   listBillingScheduleTemplatesSupabase,
-  listMemberBillingSettingsSupabase,
-  listMembersSupabase
+  listMemberBillingSettingsSupabase
 } from "@/lib/services/member-command-center-read";
+import { getMemberLockerConflict } from "@/lib/services/members-read";
 import {
   addMemberAllergySupabase,
   deleteMemberAllergySupabase,
@@ -142,19 +141,11 @@ export async function saveMemberCommandCenterSummaryAction(formData: FormData) {
   const memberId = asString(formData, "memberId");
   if (!memberId) return { ok: false, error: "Member is required." };
 
-  const member = await getMemberSupabase(memberId);
-  if (!member) return { ok: false, error: "Member not found." };
   const lockerNumber = normalizeLockerInput(asString(formData, "lockerNumber"));
-  if (lockerNumber && member.status === "active") {
-    const members = await listMembersSupabase({ status: "active" });
-    const conflict = members.find(
-      (candidate) =>
-        candidate.id !== memberId &&
-        String(candidate.locker_number ?? "").trim().toLowerCase() === lockerNumber.toLowerCase()
-    );
-    if (conflict) {
-      return { ok: false, error: `Locker ${lockerNumber} is already assigned to ${conflict.display_name}.` };
-    }
+  const { member, conflict } = await getMemberLockerConflict({ memberId, lockerNumber });
+  if (!member) return { ok: false, error: "Member not found." };
+  if (lockerNumber && conflict) {
+    return { ok: false, error: `Locker ${lockerNumber} is already assigned to ${conflict.displayName}.` };
   }
 
   const now = toEasternISO();

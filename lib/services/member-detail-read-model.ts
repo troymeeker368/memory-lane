@@ -254,7 +254,7 @@ export async function getMemberDetail(
   const carePlans =
     isStaffViewer || !canViewCarePlans
       ? []
-      : await (await import("@/lib/services/care-plans")).getCarePlansForMember(canonicalMemberId);
+      : await (await import("@/lib/services/care-plans-read")).getCarePlansForMember(canonicalMemberId);
   const latestCarePlan = [...carePlans].sort((a, b) => {
     if (a.updatedAt !== b.updatedAt) return a.updatedAt < b.updatedAt ? 1 : -1;
     return a.reviewDate < b.reviewDate ? 1 : -1;

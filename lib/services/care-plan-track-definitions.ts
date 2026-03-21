@@ -262,6 +262,22 @@ export function getCarePlanTrackDefinition(track: CarePlanTrack): CarePlanTrackD
   return TRACK_DEFINITIONS[track];
 }
 
+export function getCarePlanDocumentBlueprint(track: CarePlanTrack) {
+  return {
+    definition: getCarePlanTrackDefinition(track),
+    labels: {
+      shortTerm: CARE_PLAN_SHORT_TERM_LABEL,
+      longTerm: CARE_PLAN_LONG_TERM_LABEL,
+      reviewUpdates: CARE_PLAN_REVIEW_UPDATES_LABEL,
+      reviewOptions: [...CARE_PLAN_REVIEW_OPTIONS],
+      careTeamNotes: CARE_PLAN_CARE_TEAM_NOTES_LABEL,
+      separatorLine: CARE_PLAN_SEPARATOR_LINE,
+      signatureLabels: CARE_PLAN_SIGNATURE_LABELS,
+      signatures: CARE_PLAN_SIGNATURE_LINE_TEMPLATES
+    }
+  };
+}
+
 export function getAllCarePlanTrackDefinitions(): CarePlanTrackDefinition[] {
   return CARE_PLAN_TRACK_IDS.map((track) => TRACK_DEFINITIONS[track]);
 }

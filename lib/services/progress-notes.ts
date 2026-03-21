@@ -1,1 +1,1 @@
-export * from "./progress-notes-supabase";
+export * from "./notes-read";

@@ -9,7 +9,7 @@ import {
   serializeSectionsSnapshot,
   toCarePlan
 } from "@/lib/services/care-plan-model";
-import { listCarePlanRows } from "@/lib/services/care-plans-read-model";
+import { getCarePlanDispatchState } from "@/lib/services/care-plans-read-model";
 import { getDefaultCaregiverSignatureExpiresOnDate } from "@/lib/services/care-plan-esign-rules";
 import { recordImmediateSystemAlert, recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import type {
@@ -29,22 +29,10 @@ import {
   CARE_PLAN_SIGNATURE_LINE_TEMPLATES,
   type CarePlanSectionType,
   type CarePlanTrack,
-  getCarePlanTrackDefinition,
   getCarePlanTracks,
   getGoalListItems,
   isCarePlanTrack
 } from "@/lib/services/care-plan-track-definitions";
-export {
-  getCarePlanById,
-  getCarePlanDashboard,
-  getCarePlanParticipationSummary,
-  getCarePlans,
-  getCarePlansForMember,
-  getCarePlanVersionById,
-  getLatestCarePlanForMember,
-  getMemberCarePlanSummary
-} from "@/lib/services/care-plans-read-model";
-
 export {
   CARE_PLAN_CARE_TEAM_NOTES_LABEL,
   CARE_PLAN_LONG_TERM_LABEL,
@@ -99,6 +87,12 @@ type CarePlanSnapshotRpcRow = {
 type CarePlanWorkflowError = Error & {
   carePlanId?: string;
   partiallyCommitted?: boolean;
+};
+
+type CarePlanWriteResult = {
+  id: string;
+  memberId: string;
+  caregiverSignatureStatus: string;
 };
 
 function buildCarePlanWorkflowError(message: string, carePlanId: string) {
@@ -170,10 +164,6 @@ async function loadCarePlanNurseEsignService() {
 async function loadWorkflowMilestoneRecorder() {
   const { recordWorkflowMilestone } = await import("@/lib/services/lifecycle-milestones");
   return recordWorkflowMilestone;
-}
-
-async function resolveCarePlanMemberId(rawMemberId: string, actionLabel: string) {
-  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
 function clean(value: string | null | undefined) {
@@ -364,22 +354,19 @@ function sanitizeCaregiverEmail(value: string | null | undefined) {
 async function finalizeCaregiverDispatchAfterNurseSignature(input: {
   carePlanId: string;
   actor: { id: string; fullName: string; signatureName: string };
-}) {
-  const signedRows = await listCarePlanRows({ carePlanId: input.carePlanId });
-  const signedCarePlan = signedRows[0];
+}): Promise<CarePlanWriteResult> {
+  const signedCarePlan = await getCarePlanDispatchState(input.carePlanId);
   if (!signedCarePlan) throw new Error("Care plan could not be loaded after nurse/admin signature.");
-  const caregiverName = clean(signedCarePlan.caregiverName);
-  const caregiverEmail = clean(signedCarePlan.caregiverEmail);
 
-  const hasCaregiverContact = Boolean(caregiverName) && Boolean(caregiverEmail);
+  const hasCaregiverContact = Boolean(signedCarePlan.caregiverName) && Boolean(signedCarePlan.caregiverEmail);
   const shouldAutoSend = hasCaregiverContact && signedCarePlan.caregiverSignatureStatus !== "signed";
 
-  if (shouldAutoSend && caregiverName && caregiverEmail) {
+  if (shouldAutoSend && signedCarePlan.caregiverName && signedCarePlan.caregiverEmail) {
     const { sendCarePlanToCaregiverForSignature } = await import("@/lib/services/care-plan-esign");
-    return sendCarePlanToCaregiverForSignature({
+    const sent = await sendCarePlanToCaregiverForSignature({
       carePlanId: signedCarePlan.id,
-      caregiverName,
-      caregiverEmail,
+      caregiverName: signedCarePlan.caregiverName,
+      caregiverEmail: signedCarePlan.caregiverEmail,
       optionalMessage: null,
       expiresOnDate: getDefaultCaregiverSignatureExpiresOnDate(),
       actor: {
@@ -388,6 +375,11 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
         signatureName: input.actor.signatureName
       }
     });
+    return {
+      id: sent.id,
+      memberId: sent.memberId,
+      caregiverSignatureStatus: sent.caregiverSignatureStatus
+    };
   }
 
   const supabase = await createClient();
@@ -403,8 +395,9 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
   if (touchError) throw new Error(touchError.message);
 
   return {
-    ...signedCarePlan,
-    updatedAt: touchedAt
+    id: signedCarePlan.id,
+    memberId: signedCarePlan.memberId,
+    caregiverSignatureStatus: signedCarePlan.caregiverSignatureStatus
   };
 }
 
@@ -425,7 +418,9 @@ export async function createCarePlan(input: {
   signatureImageDataUrl: string;
   actor: { id: string; fullName: string; signatureName: string; role: string };
 }) {
-  const canonicalMemberId = await resolveCarePlanMemberId(input.memberId, "createCarePlan");
+  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, {
+    actionLabel: "createCarePlan"
+  });
   const existingCarePlanId = await findCarePlanRootByMemberTrack(canonicalMemberId, input.track);
   if (existingCarePlanId) {
     throw new Error("A care plan already exists for this member and track. Review the existing plan instead of creating a new root record.");
@@ -847,20 +842,4 @@ export async function updateCarePlanCaregiverContact(input: {
     .single();
   if (error) throw new Error(error.message);
   return toCarePlan(data as DbCarePlan);
-}
-
-export function getCarePlanDocumentBlueprint(track: CarePlanTrack) {
-  return {
-    definition: getCarePlanTrackDefinition(track),
-    labels: {
-      shortTerm: CARE_PLAN_SHORT_TERM_LABEL,
-      longTerm: CARE_PLAN_LONG_TERM_LABEL,
-      reviewUpdates: CARE_PLAN_REVIEW_UPDATES_LABEL,
-      reviewOptions: [...CARE_PLAN_REVIEW_OPTIONS],
-      careTeamNotes: CARE_PLAN_CARE_TEAM_NOTES_LABEL,
-      separatorLine: CARE_PLAN_SEPARATOR_LINE,
-      signatureLabels: CARE_PLAN_SIGNATURE_LABELS,
-      signatures: CARE_PLAN_SIGNATURE_LINE_TEMPLATES
-    }
-  };
 }

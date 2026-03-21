@@ -23,7 +23,7 @@ import {
   resolveSalesPartnerAndReferralSupabase
 } from "@/lib/services/sales-crm-supabase";
 import { applyLeadStageTransitionSupabase } from "@/lib/services/sales-lead-stage-supabase";
-import { toEasternDate, toEasternDateTimeLocal, toEasternISO } from "@/lib/timezone";
+import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 import {
   applyClosedWonLeadConversion,
@@ -585,8 +585,4 @@ export async function createLeadQuickContactActivityAction(raw: z.infer<typeof q
   revalidatePath(`/sales/leads/${created.leadId}`);
 
   return { ok: true, id: created.activityId };
-}
-
-export async function getSalesNowLocalAction() {
-  return { now: toEasternDateTimeLocal() };
 }

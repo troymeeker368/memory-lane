@@ -76,10 +76,6 @@ export async function resolveCurrentHomeLanding(
   const supabase = await createClient();
   logTiming(traceLabel, "create-user-client", userClientStartedAt);
 
-  const serviceClientStartedAt = timingNow();
-  const serviceSupabase = await createClient({ serviceRole: true });
-  logTiming(traceLabel, "create-service-client", serviceClientStartedAt);
-
   const authStartedAt = timingNow();
   const {
     data: { user }
@@ -92,6 +88,10 @@ export async function resolveCurrentHomeLanding(
 
   const baseSelect = "id, email, full_name, role, active, is_active, status, password_set_at";
   const legacySelect = "id, email, full_name, role, active";
+
+  const serviceClientStartedAt = timingNow();
+  const serviceSupabase = await createClient({ serviceRole: true });
+  logTiming(traceLabel, "create-service-client", serviceClientStartedAt);
 
   const profileLookupStartedAt = timingNow();
   const permissionsLookupStartedAt = timingNow();

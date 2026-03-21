@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireProgressNoteAuthorizedUser } from "@/lib/services/progress-note-authorization";
-import { saveProgressNoteDraft, signProgressNote } from "@/lib/services/progress-notes";
+import { saveProgressNoteDraft, signProgressNote } from "@/lib/services/progress-notes-write";
 
 const progressNoteMutationSchema = z.object({
   noteId: z.string().uuid().optional().or(z.literal("")),

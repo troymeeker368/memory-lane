@@ -8,8 +8,7 @@ import { LEAD_ACTIVITY_TYPES, LEAD_FOLLOW_UP_TYPES } from "@/lib/canonical";
 import {
   createCommunityPartnerSupabase,
   createPartnerActivitySupabase,
-  createReferralSourceSupabase,
-  getSalesFormLookupsSupabase
+  createReferralSourceSupabase
 } from "@/lib/services/sales-crm-supabase";
 
 import { optionalString, requireSalesRoles } from "@/app/sales-action-helpers";
@@ -144,9 +143,4 @@ export async function createReferralSourceAction(raw: z.infer<typeof referralSou
     id: created.id,
     source: created.source
   };
-}
-
-export async function getSalesFormLookups() {
-  await requireSalesRoles();
-  return getSalesFormLookupsSupabase();
 }

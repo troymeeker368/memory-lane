@@ -15,7 +15,7 @@ import {
   CARE_PLAN_SHORT_TERM_LABEL,
   getCarePlanById,
   getGoalListItems
-} from "@/lib/services/care-plans";
+} from "@/lib/services/care-plans-read";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
 
 function GoalList({ value }: { value: string }) {

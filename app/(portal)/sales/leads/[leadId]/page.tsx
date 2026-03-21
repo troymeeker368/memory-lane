@@ -10,14 +10,14 @@ import { requireModuleAccess } from "@/lib/auth";
 import { canonicalLeadStage } from "@/lib/canonical";
 import { formatPhoneDisplay } from "@/lib/phone";
 import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
-import { getLeadDetail } from "@/lib/services/relations";
+import { getLeadById } from "@/lib/services/leads-read";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ leadId: string }> }) {
   await requireModuleAccess("sales");
   const { leadId } = await params;
   const [detail, pricingOverview] = await Promise.all([
-    getLeadDetail(leadId),
+    getLeadById(leadId),
     getEnrollmentPricingOverview()
   ]);
 

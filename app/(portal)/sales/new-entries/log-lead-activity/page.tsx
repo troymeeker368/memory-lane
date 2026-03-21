@@ -3,10 +3,10 @@ import Link from "next/link";
 import { SalesLeadActivityForm } from "@/components/forms/sales-lead-activity-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getSalesFormLookupsSupabase, getSalesRecentActivitySnapshotSupabase } from "@/lib/services/sales-crm-supabase";
+import { getLeadActivitySnapshot, getLeadFormLookups } from "@/lib/services/leads-read";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
-type SalesActivitySnapshot = Awaited<ReturnType<typeof getSalesRecentActivitySnapshotSupabase>>;
+type SalesActivitySnapshot = Awaited<ReturnType<typeof getLeadActivitySnapshot>>;
 type LeadActivityRow = SalesActivitySnapshot["activities"][number];
 
 export default async function LogLeadActivityPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -17,8 +17,8 @@ export default async function LogLeadActivityPage({ searchParams }: { searchPara
   const partnerId = typeof params.partnerId === "string" ? params.partnerId : undefined;
   const referralSourceId = typeof params.referralSourceId === "string" ? params.referralSourceId : undefined;
   const [{ activities }, { leads, partners, referralSources }] = await Promise.all([
-    getSalesRecentActivitySnapshotSupabase({ leadId }),
-    getSalesFormLookupsSupabase({
+    getLeadActivitySnapshot({ leadId }),
+    getLeadFormLookups({
       leadLimit: 500,
       includeLeadId: leadId,
       includePartnerId: partnerId,

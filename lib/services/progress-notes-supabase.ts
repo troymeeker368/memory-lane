@@ -71,10 +71,6 @@ function toProgressNote(row: DbProgressNote, memberName?: string | null): Progre
   };
 }
 
-async function resolveProgressNoteMemberId(rawMemberId: string, actionLabel: string) {
-  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
-}
-
 async function loadProgressNoteRows(input?: {
   memberIds?: string[];
   memberId?: string;
@@ -244,7 +240,7 @@ export async function getProgressNoteTracker(input?: {
   const pageSize = Number.isFinite(input?.pageSize) && Number(input?.pageSize) > 0 ? Math.floor(Number(input?.pageSize)) : 25;
   const filter = input?.status ?? "All";
   const canonicalMemberId = input?.memberId
-    ? await resolveProgressNoteMemberId(input.memberId, "getProgressNoteTracker")
+    ? await resolveCanonicalMemberId(input.memberId, { actionLabel: "getProgressNoteTracker" })
     : null;
   const members = await loadProgressNoteMembers({
     memberId: canonicalMemberId ?? undefined,
@@ -292,7 +288,9 @@ export async function getProgressNoteDashboard(input?: { page?: number; pageSize
 }
 
 export async function getMemberProgressNoteSummary(memberId: string, options?: { serviceRole?: boolean }) {
-  const canonicalMemberId = await resolveProgressNoteMemberId(memberId, "getMemberProgressNoteSummary");
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
+    actionLabel: "getMemberProgressNoteSummary"
+  });
   const tracker = await getProgressNoteTracker({
     memberId: canonicalMemberId,
     page: 1,
@@ -303,7 +301,9 @@ export async function getMemberProgressNoteSummary(memberId: string, options?: {
 }
 
 export async function getProgressNotesForMember(memberId: string, options?: { serviceRole?: boolean }) {
-  const canonicalMemberId = await resolveProgressNoteMemberId(memberId, "getProgressNotesForMember");
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
+    actionLabel: "getProgressNotesForMember"
+  });
   const [rows, memberMap] = await Promise.all([
     loadProgressNoteRows({ memberId: canonicalMemberId, serviceRole: Boolean(options?.serviceRole) }),
     loadMemberNameMap([canonicalMemberId], Boolean(options?.serviceRole))
@@ -336,7 +336,9 @@ export async function getProgressNoteById(noteId: string, options?: { serviceRol
 }
 
 export async function getExistingProgressNoteDraftForMember(memberId: string, options?: { serviceRole?: boolean }) {
-  const canonicalMemberId = await resolveProgressNoteMemberId(memberId, "getExistingProgressNoteDraftForMember");
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
+    actionLabel: "getExistingProgressNoteDraftForMember"
+  });
   const row = await findDraftProgressNoteRow(canonicalMemberId, Boolean(options?.serviceRole));
   if (!row) return null;
   const memberMap = await loadMemberNameMap([canonicalMemberId], Boolean(options?.serviceRole));
@@ -357,7 +359,9 @@ export async function saveProgressNoteDraft(input: {
   noteBody: string;
   actor: { id: string; fullName: string; signatureName: string };
 }) {
-  const canonicalMemberId = await resolveProgressNoteMemberId(input.memberId, "saveProgressNoteDraft");
+  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, {
+    actionLabel: "saveProgressNoteDraft"
+  });
   const noteBody = cleanText(input.noteBody);
   if (!noteBody) throw new Error("Progress note content is required.");
 
@@ -404,7 +408,11 @@ export async function saveProgressNoteDraft(input: {
       }
     });
 
-    return toProgressNote(data as DbProgressNote);
+    return {
+      id: String((data as DbProgressNote).id),
+      memberId: canonicalMemberId,
+      status: normalizeProgressNoteStatus((data as DbProgressNote).status)
+    };
   }
 
   const insertPayload = {
@@ -452,7 +460,11 @@ export async function saveProgressNoteDraft(input: {
     }
   });
 
-  return toProgressNote(data as DbProgressNote);
+  return {
+    id: String((data as DbProgressNote).id),
+    memberId: canonicalMemberId,
+    status: normalizeProgressNoteStatus((data as DbProgressNote).status)
+  };
 }
 
 export async function signProgressNote(input: {
@@ -464,7 +476,9 @@ export async function signProgressNote(input: {
   attested: boolean;
   signatureImageDataUrl: string;
 }) {
-  const canonicalMemberId = await resolveProgressNoteMemberId(input.memberId, "signProgressNote");
+  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, {
+    actionLabel: "signProgressNote"
+  });
   const noteBody = cleanText(input.noteBody);
   if (!noteBody) throw new Error("Progress note content is required before signing.");
   if (!input.attested) throw new Error("Electronic signature attestation is required before signing.");
@@ -565,7 +579,11 @@ export async function signProgressNote(input: {
     }
   });
 
-  return toProgressNote(savedRow);
+  return {
+    id: savedRow.id,
+    memberId: canonicalMemberId,
+    status: normalizeProgressNoteStatus(savedRow.status)
+  };
 }
 
 export async function getProgressNoteReminderRows(memberIds: string[], options?: { serviceRole?: boolean }) {

@@ -174,10 +174,6 @@ function transportationManifestStorageRequiredError() {
   );
 }
 
-async function resolveTransportationServiceMemberId(rawMemberId: string, actionLabel: string) {
-  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
-}
-
 async function listPreferredContactsByMember(memberIds: string[]) {
   if (memberIds.length === 0) {
     return { rows: [] as MemberContactRow[], preferred: new Map<string, MemberContactRow>() };
@@ -196,7 +192,9 @@ async function listPreferredContactsByMember(memberIds: string[]) {
 }
 
 export async function resolvePreferredMemberContactSupabase(memberId: string, explicitContactId?: string | null) {
-  const canonicalMemberId = await resolveTransportationServiceMemberId(memberId, "resolvePreferredMemberContactSupabase");
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
+    actionLabel: "resolvePreferredMemberContactSupabase"
+  });
   const supabase = await createClient();
   if (explicitContactId) {
     const { data, error } = await supabase
@@ -223,7 +221,9 @@ export async function findTransportationManifestAdjustmentSupabase(input: {
   memberId: string;
   adjustmentType: "add" | "exclude";
 }) {
-  const canonicalMemberId = await resolveTransportationServiceMemberId(input.memberId, "findTransportationManifestAdjustmentSupabase");
+  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, {
+    actionLabel: "findTransportationManifestAdjustmentSupabase"
+  });
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("transportation_manifest_adjustments")
@@ -260,7 +260,9 @@ export async function upsertTransportationManifestAdjustmentSupabase(input: {
   actorName: string;
   nowIso: string;
 }) {
-  const canonicalMemberId = await resolveTransportationServiceMemberId(input.memberId, "upsertTransportationManifestAdjustmentSupabase");
+  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, {
+    actionLabel: "upsertTransportationManifestAdjustmentSupabase"
+  });
   const supabase = await createClient();
   const existing = await findTransportationManifestAdjustmentSupabase({
     selectedDate: input.selectedDate,

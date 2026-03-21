@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 
-import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
-import { getLatestCarePlanForMember } from "@/lib/services/care-plans";
+import { getLatestCarePlanForMember } from "@/lib/services/care-plans-read";
 
 export default async function LatestMemberCarePlanPage({
   params
@@ -11,11 +10,9 @@ export default async function LatestMemberCarePlanPage({
 }) {
   await requireCarePlanAuthorizedUser();
   const { memberId } = await params;
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "LatestMemberCarePlanPage" });
-
-  const latest = await getLatestCarePlanForMember(canonicalMemberId);
+  const latest = await getLatestCarePlanForMember(memberId);
   if (!latest) {
-    redirect(`/health/care-plans/new?memberId=${canonicalMemberId}`);
+    redirect(`/health/care-plans/new?memberId=${memberId}`);
   }
 
   redirect(`/health/care-plans/${latest.id}`);

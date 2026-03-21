@@ -7,10 +7,10 @@ import { requireModuleAccess } from "@/lib/auth";
 import { formatPhoneDisplay } from "@/lib/phone";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import {
-  getTransportationManifestSupabase,
+  getTransportationManifest,
   type TransportationManifestBusFilter,
   type TransportationStationShift
-} from "@/lib/services/transportation-station-supabase";
+} from "@/lib/services/transportation-read";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
@@ -53,7 +53,7 @@ export default async function TransportationManifestPrintPage({
   const date = firstString(params.date) ?? toEasternDate();
   const shift = normalizeShift(firstString(params.shift));
   const bus = normalizeBusFilter(firstString(params.bus), busNumberOptions);
-  const manifest = await getTransportationManifestSupabase({
+  const manifest = await getTransportationManifest({
     selectedDate: date,
     shift,
     busFilter: bus

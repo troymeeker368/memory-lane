@@ -9,13 +9,13 @@ import { normalizeRoleKey } from "@/lib/permissions";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
+import { getTransportationCopySnapshot } from "@/lib/services/transportation-read";
 import {
   postTransportationRunSupabase,
   type TransportationRunManualExclusionInput
 } from "@/lib/services/transportation-run-posting";
 import {
   findTransportationManifestAdjustmentSupabase,
-  getTransportationManifestSupabase,
   removeTransportationManifestAdjustmentSupabase,
   resolvePreferredMemberContactSupabase,
   upsertTransportationManifestAdjustmentSupabase
@@ -103,10 +103,6 @@ async function resolvePreferredContact(memberId: string, explicitContactId?: str
   return resolvePreferredMemberContactSupabase(memberId, explicitContactId);
 }
 
-async function resolveTransportationMemberId(rawMemberId: string, actionLabel: string) {
-  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
-}
-
 async function upsertAdjustment(input: {
   date: string;
   shift: Shift;
@@ -148,7 +144,9 @@ export async function addTransportationManifestRiderAction(formData: FormData) {
   const actor = await requireTransportationEditor();
   const busNumberOptions = await getConfiguredBusNumbers();
   const selectedDate = normalizeDateOnly(asString(formData, "selectedDate"));
-  const memberId = await resolveTransportationMemberId(asString(formData, "memberId"), "addTransportationManifestRiderAction");
+  const memberId = await resolveCanonicalMemberId(asString(formData, "memberId"), {
+    actionLabel: "addTransportationManifestRiderAction"
+  });
   const shiftInput = asString(formData, "shift");
   const transportType = normalizeTransportMode(asString(formData, "transportType")) ?? "Door to Door";
   const busNumber = normalizeBusNumber(asString(formData, "busNumber"), busNumberOptions);
@@ -212,7 +210,9 @@ export async function excludeTransportationManifestRiderAction(formData: FormDat
   const actor = await requireTransportationEditor();
   const busNumberOptions = await getConfiguredBusNumbers();
   const selectedDate = normalizeDateOnly(asString(formData, "selectedDate"));
-  const memberId = await resolveTransportationMemberId(asString(formData, "memberId"), "excludeTransportationManifestRiderAction");
+  const memberId = await resolveCanonicalMemberId(asString(formData, "memberId"), {
+    actionLabel: "excludeTransportationManifestRiderAction"
+  });
   const shift = normalizeShift(asString(formData, "shift"));
   const busNumber = normalizeBusNumber(asString(formData, "busNumber"), busNumberOptions);
   const transportType = normalizeTransportMode(asString(formData, "transportType"));
@@ -253,7 +253,9 @@ export async function reassignTransportationManifestBusAction(formData: FormData
   const failureHref = (message: string) =>
     buildStationHref({ selectedDate, shift, busFilter, error: message });
   const actor = await requireTransportationEditor();
-  const memberId = await resolveTransportationMemberId(asString(formData, "memberId"), "reassignTransportationManifestBusAction");
+  const memberId = await resolveCanonicalMemberId(asString(formData, "memberId"), {
+    actionLabel: "reassignTransportationManifestBusAction"
+  });
   const busNumber = normalizeBusNumber(asString(formData, "busNumber"), busNumberOptions);
   const transportType = normalizeTransportMode(asString(formData, "transportType"));
   const busStopName = asNullableString(formData, "busStopName");
@@ -327,55 +329,20 @@ export async function undoTransportationManifestAdjustmentAction(formData: FormD
 export async function copyForwardTransportationDetailsAction(formData: FormData) {
   try {
     await requireTransportationEditor();
-    const memberId = await resolveTransportationMemberId(asString(formData, "memberId"), "copyForwardTransportationDetailsAction");
-    const sourceDate = normalizeDateOnly(asString(formData, "sourceDate"));
-    const targetDate = normalizeDateOnly(asString(formData, "targetDate"));
-    const shift = normalizeShift(asString(formData, "shift"));
-
-    const sourceManifest = await getTransportationManifestSupabase({
-      selectedDate: sourceDate,
-      shift,
-      busFilter: "all"
+    const copySnapshot = await getTransportationCopySnapshot({
+      memberId: asString(formData, "memberId"),
+      sourceDate: normalizeDateOnly(asString(formData, "sourceDate")),
+      targetDate: normalizeDateOnly(asString(formData, "targetDate")),
+      shift: normalizeShift(asString(formData, "shift"))
     });
-    const sourceRider =
-      sourceManifest.groups
-        .flatMap((group) => group.riders)
-        .find((rider) => rider.memberId === memberId && rider.shift === shift) ?? null;
-    if (!sourceRider) {
+    if (!copySnapshot) {
       return { ok: false as const, error: "No transport details found for that member/date/shift." };
     }
 
-    const targetManifest = await getTransportationManifestSupabase({
-      selectedDate: targetDate,
-      shift,
-      busFilter: "all"
-    });
-    const targetRider =
-      targetManifest.groups
-        .flatMap((group) => group.riders)
-        .find((rider) => rider.memberId === memberId && rider.shift === shift) ?? null;
-    const unchanged =
-      Boolean(targetRider) &&
-      targetRider?.transportType === sourceRider.transportType &&
-      (targetRider?.busNumber ?? "") === (sourceRider.busNumber ?? "") &&
-      (targetRider?.busStopName ?? "") === (sourceRider.busStopName ?? "") &&
-      (targetRider?.doorToDoorAddress ?? "") === (sourceRider.doorToDoorAddress ?? "") &&
-      (targetRider?.caregiverContactName ?? "") === (sourceRider.caregiverContactName ?? "") &&
-      (targetRider?.caregiverContactPhone ?? "") === (sourceRider.caregiverContactPhone ?? "") &&
-      (targetRider?.caregiverContactAddress ?? "") === (sourceRider.caregiverContactAddress ?? "");
-
     return {
       ok: true as const,
-      unchanged,
-      snapshot: {
-        transportType: sourceRider.transportType,
-        busNumber: sourceRider.busNumber ?? "",
-        busStopName: sourceRider.busStopName ?? "",
-        doorToDoorAddress: sourceRider.doorToDoorAddress ?? "",
-        caregiverContactName: sourceRider.caregiverContactName ?? "",
-        caregiverContactPhone: sourceRider.caregiverContactPhone ?? "",
-        caregiverContactAddress: sourceRider.caregiverContactAddress ?? ""
-      }
+      unchanged: copySnapshot.unchanged,
+      snapshot: copySnapshot.snapshot
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to copy transport details.";

@@ -7,7 +7,7 @@ import { RelatedSection } from "@/components/ui/related-section";
 import { requireModuleAccess } from "@/lib/auth";
 import { canAccessClinicalDocumentationForRole } from "@/lib/permissions";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
-import { getMemberDetail } from "@/lib/services/relations";
+import { getMemberDetailById } from "@/lib/services/members-read";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 export default async function MemberDetailPage({ params }: { params: Promise<{ memberId: string }> }) {
@@ -17,7 +17,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
   const canViewCarePlans = canAccessCarePlansForRole(profile.role);
   const canViewAssessments = canAccessClinicalDocumentationForRole(profile.role);
   const { memberId } = await params;
-  const detail = await getMemberDetail(memberId, { role: profile.role, staffUserId: profile.id });
+  const detail = await getMemberDetailById(memberId, { role: profile.role, staffUserId: profile.id });
 
   if (!detail) notFound();
 
