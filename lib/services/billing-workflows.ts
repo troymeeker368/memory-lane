@@ -9,7 +9,7 @@ type CreateBillingExportInput = Parameters<typeof createBillingExportImpl>[0];
 type SyncAttendanceBillingForDateInput = Parameters<typeof syncAttendanceBillingForDateImpl>[0];
 
 export async function createBillingExport(input: CreateBillingExportInput) {
-  const { createBillingExport } = await import("@/lib/services/billing-supabase");
+  const { createBillingExport } = await import("@/lib/services/billing-exports");
   return createBillingExport(input);
 }
 

@@ -86,6 +86,23 @@ Migration rules:
 - keep migrations forward-only
 - align queries, services, and UI contracts with migration-defined schema
 
+## Large Migration / Patch Hygiene
+
+- Do not emit large SQL migrations as one giant inline patch.
+- For large migration files, write the file directly on disk or append it in small chunks.
+- Prefer chunking by logical section:
+  1. tables / alters
+  2. indexes
+  3. constraints
+  4. functions / triggers
+  5. backfills
+  6. policies
+- After writing a migration, verify the file exists and summarize its sections.
+- Keep follow-up code patches small and scoped.
+- Treat Windows command-length limits as an implementation constraint, not a reason to abandon or partially describe the migration.
+- Do not claim a migration was added if the file write failed.
+- If a migration is too large, split it into multiple ordered forward-only migrations instead of one oversized file when that improves reliability and readability.
+
 ## Mock Data Boundaries
 
 - Mock data is permitted only for isolated UI development and tests.

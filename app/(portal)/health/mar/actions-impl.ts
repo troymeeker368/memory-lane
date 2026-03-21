@@ -9,11 +9,17 @@ import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { MAR_MONTHLY_REPORT_TYPES } from "@/lib/services/mar-monthly-report";
 import { buildMarMonthlyReportPdfDataUrl } from "@/lib/services/mar-monthly-report-pdf";
 import {
+  createPrnOrderAndAdministration,
   documentPrnMarAdministration,
   documentPrnOutcomeAssessment,
   documentScheduledMarAdministration,
 } from "@/lib/services/mar-workflow";
-import { MAR_NOT_GIVEN_REASON_OPTIONS, MAR_PRN_OUTCOME_OPTIONS, type MarPrnOutcome } from "@/lib/services/mar-shared";
+import {
+  MAR_NOT_GIVEN_REASON_OPTIONS,
+  MAR_PRN_OUTCOME_OPTIONS,
+  MAR_PRN_STATUS_OPTIONS,
+  type MarPrnOutcome
+} from "@/lib/services/mar-shared";
 import { toEasternISO } from "@/lib/timezone";
 
 const scheduledAdministrationSchema = z
@@ -43,8 +49,42 @@ const scheduledAdministrationSchema = z
   });
 
 const prnAdministrationSchema = z.object({
-  pofMedicationId: z.string().uuid(),
-  prnReason: z.string().min(1).max(500),
+  medicationOrderId: z.string().uuid(),
+  indication: z.string().min(1).max(500),
+  status: z.enum(MAR_PRN_STATUS_OPTIONS),
+  doseGiven: z.string().max(200).optional().nullable(),
+  routeGiven: z.string().max(120).optional().nullable(),
+  symptomScoreBefore: z.number().int().min(0).max(10).optional().nullable(),
+  followupDueAtIso: z.string().optional().nullable(),
+  notes: z.string().max(1000).optional().nullable(),
+  administeredAtIso: z.string().optional().nullable(),
+  submissionId: z.string().min(1).max(200).optional().nullable()
+});
+
+const createPrnOrderAndAdministrationSchema = z.object({
+  memberId: z.string().uuid(),
+  physicianOrderId: z.string().uuid().optional().nullable(),
+  medicationName: z.string().min(1).max(200),
+  strength: z.string().max(120).optional().nullable(),
+  form: z.string().max(120).optional().nullable(),
+  route: z.string().max(120).optional().nullable(),
+  directions: z.string().min(1).max(1000),
+  prnReason: z.string().max(500).optional().nullable(),
+  frequencyText: z.string().max(250).optional().nullable(),
+  minIntervalMinutes: z.number().int().min(0).optional().nullable(),
+  maxDosesPer24h: z.number().int().min(1).optional().nullable(),
+  maxDailyDose: z.string().max(120).optional().nullable(),
+  startDate: z.string().optional().nullable(),
+  endDate: z.string().optional().nullable(),
+  providerName: z.string().min(1).max(200),
+  requiresReview: z.boolean().optional(),
+  requiresEffectivenessFollowup: z.boolean().optional(),
+  indication: z.string().min(1).max(500),
+  status: z.enum(MAR_PRN_STATUS_OPTIONS),
+  doseGiven: z.string().max(200).optional().nullable(),
+  routeGiven: z.string().max(120).optional().nullable(),
+  symptomScoreBefore: z.number().int().min(0).max(10).optional().nullable(),
+  followupDueAtIso: z.string().optional().nullable(),
   notes: z.string().max(1000).optional().nullable(),
   administeredAtIso: z.string().optional().nullable(),
   submissionId: z.string().min(1).max(200).optional().nullable()
@@ -146,8 +186,13 @@ export async function recordPrnMarAdministrationAction(raw: z.infer<typeof prnAd
 
   try {
     const result = await documentPrnMarAdministration({
-      pofMedicationId: payload.data.pofMedicationId,
-      prnReason: payload.data.prnReason,
+      medicationOrderId: payload.data.medicationOrderId,
+      indication: payload.data.indication,
+      status: payload.data.status,
+      doseGiven: payload.data.doseGiven ?? null,
+      routeGiven: payload.data.routeGiven ?? null,
+      symptomScoreBefore: payload.data.symptomScoreBefore ?? null,
+      followupDueAtIso: payload.data.followupDueAtIso ?? null,
       notes: payload.data.notes ?? null,
       administeredAtIso: payload.data.administeredAtIso ?? null,
       submissionId: payload.data.submissionId ?? null,
@@ -161,8 +206,9 @@ export async function recordPrnMarAdministrationAction(raw: z.infer<typeof prnAd
     if (!result.duplicateSafe) {
       await insertAudit("create_log", "mar_administration", result.administrationId, {
         source: "prn",
-        pofMedicationId: payload.data.pofMedicationId,
-        prnReason: payload.data.prnReason,
+        medicationOrderId: payload.data.medicationOrderId,
+        indication: payload.data.indication,
+        status: payload.data.status,
         memberId: result.memberId
       });
     }
@@ -172,15 +218,95 @@ export async function recordPrnMarAdministrationAction(raw: z.infer<typeof prnAd
       ok: true,
       administrationId: result.administrationId,
       memberId: result.memberId,
-      pofMedicationId: result.pofMedicationId,
+      medicationOrderId: result.medicationOrderId,
       administeredAt: result.administeredAt,
       administeredBy: profile.full_name,
-      prnReason: payload.data.prnReason,
+      indication: payload.data.indication,
+      status: payload.data.status,
+      doseGiven: payload.data.doseGiven ?? null,
+      routeGiven: payload.data.routeGiven ?? null,
+      followupDueAt: result.followupDueAt ?? null,
+      followupStatus: result.followupStatus,
+      orderOption: result.orderOption,
       notes: payload.data.notes ?? null,
       duplicateSafe: result.duplicateSafe
     };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save PRN MAR administration." };
+  }
+}
+
+export async function createPrnOrderAndAdministrationAction(raw: z.infer<typeof createPrnOrderAndAdministrationSchema>) {
+  const payload = createPrnOrderAndAdministrationSchema.safeParse(raw);
+  if (!payload.success) return { error: "Invalid PRN order input." };
+
+  const profile = await requireRoles(["admin", "manager", "director", "nurse"]);
+
+  try {
+    const result = await createPrnOrderAndAdministration({
+      memberId: payload.data.memberId,
+      order: {
+        physicianOrderId: payload.data.physicianOrderId ?? null,
+        medicationName: payload.data.medicationName,
+        strength: payload.data.strength ?? null,
+        form: payload.data.form ?? null,
+        route: payload.data.route ?? null,
+        directions: payload.data.directions,
+        prnReason: payload.data.prnReason ?? null,
+        frequencyText: payload.data.frequencyText ?? null,
+        minIntervalMinutes: payload.data.minIntervalMinutes ?? null,
+        maxDosesPer24h: payload.data.maxDosesPer24h ?? null,
+        maxDailyDose: payload.data.maxDailyDose ?? null,
+        startDate: payload.data.startDate ?? null,
+        endDate: payload.data.endDate ?? null,
+        providerName: payload.data.providerName,
+        requiresReview: payload.data.requiresReview ?? true,
+        requiresEffectivenessFollowup: payload.data.requiresEffectivenessFollowup ?? true
+      },
+      administration: {
+        administeredAtIso: payload.data.administeredAtIso ?? null,
+        doseGiven: payload.data.doseGiven ?? null,
+        routeGiven: payload.data.routeGiven ?? null,
+        indication: payload.data.indication,
+        symptomScoreBefore: payload.data.symptomScoreBefore ?? null,
+        followupDueAtIso: payload.data.followupDueAtIso ?? null,
+        status: payload.data.status,
+        notes: payload.data.notes ?? null,
+        submissionId: payload.data.submissionId ?? null
+      },
+      actor: {
+        userId: profile.id,
+        fullName: profile.full_name
+      },
+      serviceRole: true
+    });
+
+    await insertAudit("create_log", "medication_order", result.medicationOrderId, {
+      source: "prn-create-and-administer",
+      memberId: result.memberId,
+      medicationName: payload.data.medicationName,
+      providerName: payload.data.providerName,
+      administrationId: result.administrationId
+    });
+
+    revalidateMarRoutes(result.memberId);
+    return {
+      ok: true,
+      medicationOrderId: result.medicationOrderId,
+      administrationId: result.administrationId,
+      memberId: result.memberId,
+      administeredAt: result.administeredAt,
+      administeredBy: profile.full_name,
+      indication: payload.data.indication,
+      status: payload.data.status,
+      followupDueAt: result.followupDueAt ?? null,
+      followupStatus: result.followupStatus,
+      orderOption: result.orderOption,
+      notes: payload.data.notes ?? null,
+      duplicateSafe: result.duplicateSafe
+    };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unable to create PRN order." };
   }
 }
 

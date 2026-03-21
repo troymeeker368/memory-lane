@@ -10,7 +10,7 @@ import {
   CARE_PLAN_SHORT_TERM_LABEL,
   getGoalListItems
 } from "@/lib/services/care-plans";
-import { getPublicCarePlanSigningContext } from "@/lib/services/care-plan-esign";
+import { getPublicCarePlanSigningContext } from "@/lib/services/care-plan-esign-public";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 function GoalList({ value }: { value: string }) {

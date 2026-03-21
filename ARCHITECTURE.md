@@ -3,6 +3,8 @@
 This document defines the production runtime architecture contract for Memory Lane.
 All code paths must comply.
 
+- Operational patching and migration-write hygiene rules are defined in `AGENTS.md`.
+
 ## Supabase Source of Truth
 
 - Supabase is the only supported runtime persistence backend.

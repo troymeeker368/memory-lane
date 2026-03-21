@@ -11,7 +11,6 @@ export const MAR_MONTHLY_REPORT_TYPES = ["summary", "detail", "exceptions"] as c
 export type MarMonthlyReportType = (typeof MAR_MONTHLY_REPORT_TYPES)[number];
 
 const MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
-const MAR_MHP_SOURCE_PREFIX = "mhp-";
 
 function clean(value: unknown): string | null {
   const normalized = typeof value === "string" ? value.trim() : "";
@@ -151,6 +150,42 @@ type MarAdministrationRow = {
   source: "scheduled" | "prn";
 };
 
+type MedicationOrderRow = {
+  id: string;
+  member_id: string;
+  pof_medication_id: string | null;
+  medication_name: string;
+  strength: string | null;
+  form: string | null;
+  route: string | null;
+  directions: string | null;
+  prn_reason: string | null;
+  frequency_text: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  provider_name: string | null;
+  order_source: "pof" | "manual_provider_order" | "legacy_mhp";
+  status: "active" | "inactive" | "expired" | "discontinued";
+  requires_effectiveness_followup: boolean | null;
+};
+
+type MedAdministrationLogRow = {
+  id: string;
+  medication_order_id: string;
+  admin_datetime: string;
+  dose_given: string | null;
+  route_given: string | null;
+  indication: string | null;
+  followup_due_at: string | null;
+  followup_status: "not_required" | "due" | "completed" | "overdue" | null;
+  effectiveness_result: "Effective" | "Ineffective" | null;
+  followup_notes: string | null;
+  administered_by: string | null;
+  administered_by_name: string | null;
+  status: "Given" | "Refused" | "Held" | "Omitted";
+  notes: string | null;
+};
+
 type ProfileRow = {
   id: string;
   full_name: string;
@@ -202,7 +237,7 @@ export type MarMonthlyMedicationRollup = {
 
 export type MarMonthlyExceptionRow = {
   id: string;
-  eventType: "scheduled-not-given" | "prn-ineffective";
+  eventType: "scheduled-not-given" | "prn-ineffective" | "prn-status-variance";
   dateTime: string;
   medicationName: string;
   scheduledTime: string | null;
@@ -217,16 +252,21 @@ export type MarMonthlyPrnRow = {
   id: string;
   medicationName: string;
   administeredAt: string;
+  status: "Given" | "Refused" | "Held" | "Omitted";
   reasonGiven: string | null;
-  effectiveness: "Effective" | "Ineffective" | "Pending";
+  effectiveness: "Effective" | "Ineffective" | "Pending" | "Not Applicable";
+  followupDueAt: string | null;
+  followupStatus: "not_required" | "due" | "completed" | "overdue" | null;
   followupDocumentation: string | null;
   staffName: string;
   notes: string | null;
 };
 
 function toPrnEffectiveness(
-  value: "Effective" | "Ineffective" | null
+  value: "Effective" | "Ineffective" | null,
+  status: "Given" | "Refused" | "Held" | "Omitted" = "Given"
 ): MarMonthlyPrnRow["effectiveness"] {
+  if (status !== "Given") return "Not Applicable";
   return value ?? "Pending";
 }
 
@@ -234,7 +274,7 @@ export type MarMonthlyAdministrationDetailRow = {
   id: string;
   medicationName: string;
   source: "scheduled" | "prn";
-  status: "Given" | "Not Given";
+  status: "Given" | "Not Given" | "Refused" | "Held" | "Omitted";
   dueTime: string | null;
   administeredAt: string;
   reason: string | null;
@@ -244,6 +284,20 @@ export type MarMonthlyAdministrationDetailRow = {
   staffName: string;
   notes: string | null;
 };
+
+type UnifiedStaffEvent = {
+  id: string;
+  administered_by_user_id: string | null;
+  administered_by: string;
+};
+
+function medicationKeyFromPofMedicationId(pofMedicationId: string) {
+  return `pof:${pofMedicationId}`;
+}
+
+function medicationKeyFromOrder(order: Pick<MedicationOrderRow, "id" | "pof_medication_id">) {
+  return order.pof_medication_id ? medicationKeyFromPofMedicationId(order.pof_medication_id) : `order:${order.id}`;
+}
 
 export type MarMonthlyStaffAttribution = {
   userId: string | null;
@@ -307,22 +361,29 @@ export async function getMarMonthlyReportMemberOptions(options?: { serviceRole?:
   const serviceRole = options?.serviceRole ?? true;
   const supabase = await createClient({ serviceRole });
 
-  const [{ data: pofRows, error: pofError }, { data: adminRows, error: adminError }] = await Promise.all([
-    supabase
-      .from("pof_medications")
-      .select("member_id")
-      .eq("given_at_center", true)
-      .like("source_medication_id", `${MAR_MHP_SOURCE_PREFIX}%`),
-    supabase.from("mar_administrations").select("member_id")
+  const [
+    { data: pofRows, error: pofError },
+    { data: adminRows, error: adminError },
+    { data: orderRows, error: orderError },
+    { data: logRows, error: logError }
+  ] = await Promise.all([
+    supabase.from("pof_medications").select("member_id").eq("given_at_center", true),
+    supabase.from("mar_administrations").select("member_id"),
+    supabase.from("medication_orders").select("member_id").eq("order_type", "prn"),
+    supabase.from("med_administration_logs").select("member_id").eq("admin_type", "prn")
   ]);
 
   if (pofError) throw new Error(pofError.message);
   if (adminError) throw new Error(adminError.message);
+  if (orderError) throw new Error(orderError.message);
+  if (logError) throw new Error(logError.message);
 
   const memberIds = Array.from(
     new Set([
       ...(pofRows ?? []).map((row: { member_id: string }) => row.member_id),
-      ...(adminRows ?? []).map((row: { member_id: string }) => row.member_id)
+      ...(adminRows ?? []).map((row: { member_id: string }) => row.member_id),
+      ...(orderRows ?? []).map((row: { member_id: string }) => row.member_id),
+      ...(logRows ?? []).map((row: { member_id: string }) => row.member_id)
     ])
   );
 
@@ -372,7 +433,7 @@ export async function assembleMarMonthlyReportData(input: {
   });
   const supabase = await createClient({ serviceRole });
 
-  const [memberResult, pofResult, scheduleResult, administrationResult] = await Promise.all([
+  const [memberResult, pofResult, scheduleResult, administrationResult, medicationOrderResult, administrationLogResult] = await Promise.all([
     supabase.from("members").select("id, display_name, status, dob, qr_code").eq("id", memberId).maybeSingle(),
     supabase
       .from("pof_medications")
@@ -380,8 +441,7 @@ export async function assembleMarMonthlyReportData(input: {
         "id, medication_name, strength, dose, route, frequency, scheduled_times, prn, prn_instructions, start_date, end_date, provider, instructions, active, given_at_center"
       )
       .eq("member_id", memberId)
-      .eq("given_at_center", true)
-      .like("source_medication_id", `${MAR_MHP_SOURCE_PREFIX}%`),
+      .eq("given_at_center", true),
     supabase
       .from("mar_schedules")
       .select(
@@ -397,13 +457,31 @@ export async function assembleMarMonthlyReportData(input: {
       )
       .eq("member_id", memberId)
       .gte("administered_at", monthWindow.startIso)
-      .lte("administered_at", monthWindow.endIso)
+      .lte("administered_at", monthWindow.endIso),
+    supabase
+      .from("medication_orders")
+      .select(
+        "id, member_id, pof_medication_id, medication_name, strength, form, route, directions, prn_reason, frequency_text, start_date, end_date, provider_name, order_source, status, requires_effectiveness_followup"
+      )
+      .eq("member_id", memberId)
+      .eq("order_type", "prn"),
+    supabase
+      .from("med_administration_logs")
+      .select(
+        "id, medication_order_id, admin_datetime, dose_given, route_given, indication, followup_due_at, followup_status, effectiveness_result, followup_notes, administered_by, administered_by_name, status, notes"
+      )
+      .eq("member_id", memberId)
+      .eq("admin_type", "prn")
+      .gte("admin_datetime", monthWindow.startIso)
+      .lte("admin_datetime", monthWindow.endIso)
   ]);
 
   if (memberResult.error) throw new Error(memberResult.error.message);
   if (pofResult.error) throw new Error(pofResult.error.message);
   if (scheduleResult.error) throw new Error(scheduleResult.error.message);
   if (administrationResult.error) throw new Error(administrationResult.error.message);
+  if (medicationOrderResult.error) throw new Error(medicationOrderResult.error.message);
+  if (administrationLogResult.error) throw new Error(administrationLogResult.error.message);
 
   const member = memberResult.data as MemberRow | null;
   if (!member) throw new Error("Member was not found.");
@@ -436,35 +514,85 @@ export async function assembleMarMonthlyReportData(input: {
     }))
     .sort((left, right) => new Date(left.administered_at).getTime() - new Date(right.administered_at).getTime());
 
-  const medicationIdsFromData = new Set<string>([
-    ...pofRows.map((row) => row.id),
-    ...schedules.map((row) => row.pof_medication_id),
-    ...administrations.map((row) => row.pof_medication_id)
+  const medicationOrders = ((medicationOrderResult.data ?? []) as MedicationOrderRow[]).map((row) => ({
+    ...row,
+    start_date: toOptionalDate(row.start_date),
+    end_date: toOptionalDate(row.end_date),
+    requires_effectiveness_followup: toBoolean(row.requires_effectiveness_followup, true)
+  }));
+
+  const prnAdministrationLogs = ((administrationLogResult.data ?? []) as MedAdministrationLogRow[])
+    .map((row) => ({
+      ...row,
+      dose_given: clean(row.dose_given),
+      route_given: clean(row.route_given),
+      indication: clean(row.indication),
+      followup_due_at: clean(row.followup_due_at),
+      followup_notes: clean(row.followup_notes),
+      administered_by: clean(row.administered_by),
+      administered_by_name: clean(row.administered_by_name),
+      notes: clean(row.notes)
+    }))
+    .sort((left, right) => new Date(left.admin_datetime).getTime() - new Date(right.admin_datetime).getTime());
+
+  const medicationOrderById = new Map(medicationOrders.map((row) => [row.id, row] as const));
+  const medicationKeysFromData = new Set<string>([
+    ...pofRows.map((row) => medicationKeyFromPofMedicationId(row.id)),
+    ...schedules.map((row) => medicationKeyFromPofMedicationId(row.pof_medication_id)),
+    ...administrations.map((row) => medicationKeyFromPofMedicationId(row.pof_medication_id)),
+    ...medicationOrders.map((row) => medicationKeyFromOrder(row)),
+    ...prnAdministrationLogs.flatMap((row) => {
+      const order = medicationOrderById.get(row.medication_order_id);
+      return order ? [medicationKeyFromOrder(order)] : [];
+    })
   ]);
 
   const schedulesByMedicationId = new Map<string, MarScheduleRow[]>();
   schedules.forEach((row) => {
-    const bucket = schedulesByMedicationId.get(row.pof_medication_id) ?? [];
+    const key = medicationKeyFromPofMedicationId(row.pof_medication_id);
+    const bucket = schedulesByMedicationId.get(key) ?? [];
     bucket.push(row);
-    schedulesByMedicationId.set(row.pof_medication_id, bucket);
+    schedulesByMedicationId.set(key, bucket);
   });
 
   const administrationsByMedicationId = new Map<string, MarAdministrationRow[]>();
   administrations.forEach((row) => {
-    const bucket = administrationsByMedicationId.get(row.pof_medication_id) ?? [];
+    const key = medicationKeyFromPofMedicationId(row.pof_medication_id);
+    const bucket = administrationsByMedicationId.get(key) ?? [];
     bucket.push(row);
-    administrationsByMedicationId.set(row.pof_medication_id, bucket);
+    administrationsByMedicationId.set(key, bucket);
   });
 
-  const pofById = new Map(pofRows.map((row) => [row.id, row] as const));
+  const pofById = new Map(pofRows.map((row) => [medicationKeyFromPofMedicationId(row.id), row] as const));
+  const ordersByMedicationKey = new Map<string, MedicationOrderRow[]>();
+  medicationOrders.forEach((row) => {
+    const key = medicationKeyFromOrder(row);
+    const bucket = ordersByMedicationKey.get(key) ?? [];
+    bucket.push(row);
+    ordersByMedicationKey.set(key, bucket);
+  });
 
-  const medications: MarMonthlyMedicationSummary[] = Array.from(medicationIdsFromData)
+  const prnLogsByMedicationKey = new Map<string, MedAdministrationLogRow[]>();
+  prnAdministrationLogs.forEach((row) => {
+    const order = medicationOrderById.get(row.medication_order_id);
+    if (!order) return;
+    const key = medicationKeyFromOrder(order);
+    const bucket = prnLogsByMedicationKey.get(key) ?? [];
+    bucket.push(row);
+    prnLogsByMedicationKey.set(key, bucket);
+  });
+
+  const medications: MarMonthlyMedicationSummary[] = Array.from(medicationKeysFromData)
     .map((medicationId) => {
       const pofMedication = pofById.get(medicationId);
+      const orderRowsForMedication = ordersByMedicationKey.get(medicationId) ?? [];
+      const representativeOrder = orderRowsForMedication[0] ?? null;
       const medicationSchedules = schedulesByMedicationId.get(medicationId) ?? [];
       const medicationAdministrations = administrationsByMedicationId.get(medicationId) ?? [];
+      const medicationPrnLogs = prnLogsByMedicationKey.get(medicationId) ?? [];
 
-      const hasMonthData = medicationSchedules.length > 0 || medicationAdministrations.length > 0;
+      const hasMonthData =
+        medicationSchedules.length > 0 || medicationAdministrations.length > 0 || medicationPrnLogs.length > 0;
       const overlaps = pofMedication
         ? overlapsMonth(
             toOptionalDate(pofMedication.start_date),
@@ -472,7 +600,9 @@ export async function assembleMarMonthlyReportData(input: {
             monthWindow.startDate,
             monthWindow.endDate
           )
-        : false;
+        : representativeOrder
+          ? overlapsMonth(representativeOrder.start_date, representativeOrder.end_date, monthWindow.startDate, monthWindow.endDate)
+          : false;
       if (!hasMonthData && !overlaps) return null;
 
       const scheduledTimesFromSchedules = Array.from(
@@ -499,6 +629,7 @@ export async function assembleMarMonthlyReportData(input: {
 
       const fallbackMedicationName =
         pofMedication?.medication_name ??
+        representativeOrder?.medication_name ??
         medicationSchedules[0]?.medication_name ??
         medicationAdministrations[0]?.medication_name ??
         "Medication";
@@ -506,18 +637,38 @@ export async function assembleMarMonthlyReportData(input: {
       return {
         pofMedicationId: medicationId,
         medicationName: fallbackMedicationName,
-        strength: clean(pofMedication?.strength ?? null),
-        dose: clean(pofMedication?.dose ?? medicationSchedules[0]?.dose ?? medicationAdministrations[0]?.dose ?? null),
-        route: clean(pofMedication?.route ?? medicationSchedules[0]?.route ?? medicationAdministrations[0]?.route ?? null),
-        sig: clean(pofMedication?.instructions ?? medicationSchedules[0]?.instructions ?? null),
-        frequency: clean(pofMedication?.frequency ?? medicationSchedules[0]?.frequency ?? null),
+        strength: clean(pofMedication?.strength ?? representativeOrder?.strength ?? null),
+        dose: clean(
+          pofMedication?.dose ??
+            representativeOrder?.strength ??
+            medicationSchedules[0]?.dose ??
+            medicationAdministrations[0]?.dose ??
+            medicationPrnLogs[0]?.dose_given ??
+            null
+        ),
+        route: clean(
+          pofMedication?.route ??
+            representativeOrder?.route ??
+            medicationSchedules[0]?.route ??
+            medicationAdministrations[0]?.route ??
+            medicationPrnLogs[0]?.route_given ??
+            null
+        ),
+        sig: clean(pofMedication?.instructions ?? representativeOrder?.directions ?? medicationSchedules[0]?.instructions ?? null),
+        frequency: clean(pofMedication?.frequency ?? representativeOrder?.frequency_text ?? medicationSchedules[0]?.frequency ?? null),
         scheduledTimes,
-        prn: Boolean(pofMedication?.prn) || medicationAdministrations.some((administration) => administration.source === "prn"),
-        prnInstructions: clean(pofMedication?.prn_instructions ?? null),
-        startDate: toOptionalDate(pofMedication?.start_date),
-        endDate: toOptionalDate(pofMedication?.end_date),
-        provider: clean(pofMedication?.provider ?? null),
-        active: toBoolean(pofMedication?.active, true)
+        prn:
+          Boolean(pofMedication?.prn) ||
+          Boolean(representativeOrder) ||
+          medicationAdministrations.some((administration) => administration.source === "prn") ||
+          medicationPrnLogs.length > 0,
+        prnInstructions: clean(pofMedication?.prn_instructions ?? representativeOrder?.prn_reason ?? null),
+        startDate: toOptionalDate(pofMedication?.start_date ?? representativeOrder?.start_date),
+        endDate: toOptionalDate(pofMedication?.end_date ?? representativeOrder?.end_date),
+        provider: clean(pofMedication?.provider ?? representativeOrder?.provider_name ?? null),
+        active: representativeOrder
+          ? representativeOrder.status === "active"
+          : toBoolean(pofMedication?.active, true)
       } satisfies MarMonthlyMedicationSummary;
     })
     .filter((row): row is MarMonthlyMedicationSummary => Boolean(row))
@@ -528,8 +679,9 @@ export async function assembleMarMonthlyReportData(input: {
   const medicationRollups: MarMonthlyMedicationRollup[] = medications.map((medication) => {
     const medicationSchedules = schedulesByMedicationId.get(medication.pofMedicationId) ?? [];
     const medicationAdministrations = administrationsByMedicationId.get(medication.pofMedicationId) ?? [];
+    const medicationPrnLogs = prnLogsByMedicationKey.get(medication.pofMedicationId) ?? [];
     const scheduledAdministrations = medicationAdministrations.filter((row) => row.source === "scheduled");
-    const prnAdministrations = medicationAdministrations.filter((row) => row.source === "prn");
+    const legacyPrnAdministrations = medicationAdministrations.filter((row) => row.source === "prn");
 
     const expectedSchedules = medicationSchedules.filter((schedule) => {
       if (schedule.prn) return false;
@@ -538,17 +690,26 @@ export async function assembleMarMonthlyReportData(input: {
     });
 
     const notGivenAdministrations = scheduledAdministrations.filter((administration) => administration.status === "Not Given");
-
     const countByReason = (reason: string) =>
       notGivenAdministrations.filter((administration) => administration.not_given_reason === reason).length;
 
-    const lastAdministrationAt = medicationAdministrations
-      .map((row) => row.administered_at)
+    const prnAdministrationCount = legacyPrnAdministrations.length + medicationPrnLogs.length;
+    const prnEffectiveCount =
+      legacyPrnAdministrations.filter((administration) => administration.prn_outcome === "Effective").length +
+      medicationPrnLogs.filter((log) => log.effectiveness_result === "Effective").length;
+    const prnIneffectiveCount =
+      legacyPrnAdministrations.filter((administration) => administration.prn_outcome === "Ineffective").length +
+      medicationPrnLogs.filter((log) => log.effectiveness_result === "Ineffective").length;
+
+    const lastAdministrationAt = [...medicationAdministrations.map((row) => row.administered_at), ...medicationPrnLogs.map((row) => row.admin_datetime)]
       .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null;
 
-    const lastExceptionAt = notGivenAdministrations
-      .map((row) => row.administered_at)
-      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null;
+    const lastExceptionAt = [
+      ...notGivenAdministrations.map((row) => row.administered_at),
+      ...medicationPrnLogs
+        .filter((row) => row.status !== "Given" || row.effectiveness_result === "Ineffective")
+        .map((row) => row.admin_datetime)
+    ].sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ?? null;
 
     return {
       pofMedicationId: medication.pofMedicationId,
@@ -567,9 +728,9 @@ export async function assembleMarMonthlyReportData(input: {
             ? !["Refused", "Clinical hold", "Medication unavailable", "Absent", "Other"].includes(administration.not_given_reason)
             : false
         ).length,
-      prnAdministrationCount: prnAdministrations.length,
-      prnEffectiveCount: prnAdministrations.filter((administration) => administration.prn_outcome === "Effective").length,
-      prnIneffectiveCount: prnAdministrations.filter((administration) => administration.prn_outcome === "Ineffective").length,
+      prnAdministrationCount,
+      prnEffectiveCount,
+      prnIneffectiveCount,
       lastAdministrationAt,
       lastExceptionAt
     } satisfies MarMonthlyMedicationRollup;
@@ -603,25 +764,67 @@ export async function assembleMarMonthlyReportData(input: {
         reason: row.prn_reason,
         staffName: row.administered_by,
         notes: row.prn_followup_note ?? row.notes
-      }))
+      })),
+    ...prnAdministrationLogs.flatMap((row) => {
+      const order = medicationOrderById.get(row.medication_order_id);
+      if (!order) return [];
+      if (row.status === "Given" && row.effectiveness_result !== "Ineffective") return [];
+      return [
+        {
+          id: row.id,
+          eventType: row.status === "Given" ? ("prn-ineffective" as const) : ("prn-status-variance" as const),
+          dateTime: row.admin_datetime,
+          medicationName: order.medication_name,
+          scheduledTime: null,
+          administeredTime: row.admin_datetime,
+          outcome: row.status === "Given" ? "PRN Ineffective" : `PRN ${row.status}`,
+          reason: row.indication,
+          staffName: row.administered_by_name ?? "Unknown staff",
+          notes: row.followup_notes ?? row.notes
+        } satisfies MarMonthlyExceptionRow
+      ];
+    })
   ].sort((left, right) => new Date(right.dateTime).getTime() - new Date(left.dateTime).getTime());
 
-  const prnRows: MarMonthlyPrnRow[] = administrations
-    .filter((row) => row.source === "prn")
-    .map((row) => ({
-      id: row.id,
-      medicationName: row.medication_name,
-      administeredAt: row.administered_at,
-      reasonGiven: row.prn_reason,
-      effectiveness: toPrnEffectiveness(row.prn_outcome),
-      followupDocumentation: row.prn_followup_note,
-      staffName: row.administered_by,
-      notes: row.notes
-    }))
-    .sort((left, right) => new Date(right.administeredAt).getTime() - new Date(left.administeredAt).getTime());
+  const prnRows: MarMonthlyPrnRow[] = [
+    ...administrations
+      .filter((row) => row.source === "prn")
+      .map((row) => ({
+        id: row.id,
+        medicationName: row.medication_name,
+        administeredAt: row.administered_at,
+        status: "Given" as const,
+        reasonGiven: row.prn_reason,
+        effectiveness: toPrnEffectiveness(row.prn_outcome, "Given"),
+        followupDueAt: null,
+        followupStatus: row.prn_outcome ? ("completed" as const) : null,
+        followupDocumentation: row.prn_followup_note,
+        staffName: row.administered_by,
+        notes: row.notes
+      })),
+    ...prnAdministrationLogs.flatMap((row) => {
+      const order = medicationOrderById.get(row.medication_order_id);
+      if (!order) return [];
+      return [
+        {
+          id: row.id,
+          medicationName: order.medication_name,
+          administeredAt: row.admin_datetime,
+          status: row.status,
+          reasonGiven: row.indication,
+          effectiveness: toPrnEffectiveness(row.effectiveness_result, row.status),
+          followupDueAt: row.followup_due_at,
+          followupStatus: row.followup_status,
+          followupDocumentation: row.followup_notes,
+          staffName: row.administered_by_name ?? "Unknown staff",
+          notes: row.notes
+        } satisfies MarMonthlyPrnRow
+      ];
+    })
+  ].sort((left, right) => new Date(right.administeredAt).getTime() - new Date(left.administeredAt).getTime());
 
-  const detailRows: MarMonthlyAdministrationDetailRow[] = administrations
-    .map((row) => ({
+  const detailRows: MarMonthlyAdministrationDetailRow[] = [
+    ...administrations.map((row) => ({
       id: row.id,
       medicationName: row.medication_name,
       source: row.source,
@@ -634,12 +837,45 @@ export async function assembleMarMonthlyReportData(input: {
       prnFollowupNote: row.prn_followup_note,
       staffName: row.administered_by,
       notes: row.notes
+    })),
+    ...prnAdministrationLogs.flatMap((row) => {
+      const order = medicationOrderById.get(row.medication_order_id);
+      if (!order) return [];
+      return [
+        {
+          id: row.id,
+          medicationName: order.medication_name,
+          source: "prn" as const,
+          status: row.status,
+          dueTime: null,
+          administeredAt: row.admin_datetime,
+          reason: row.status === "Given" ? null : row.indication,
+          prnReason: row.indication,
+          prnOutcome: row.effectiveness_result,
+          prnFollowupNote: row.followup_notes,
+          staffName: row.administered_by_name ?? "Unknown staff",
+          notes: row.notes
+        } satisfies MarMonthlyAdministrationDetailRow
+      ];
+    })
+  ].sort((left, right) => new Date(left.administeredAt).getTime() - new Date(right.administeredAt).getTime());
+
+  const staffEvents: UnifiedStaffEvent[] = [
+    ...administrations.map((row) => ({
+      id: row.id,
+      administered_by_user_id: row.administered_by_user_id,
+      administered_by: row.administered_by
+    })),
+    ...prnAdministrationLogs.map((row) => ({
+      id: row.id,
+      administered_by_user_id: row.administered_by,
+      administered_by: row.administered_by_name ?? "Unknown staff"
     }))
-    .sort((left, right) => new Date(left.administeredAt).getTime() - new Date(right.administeredAt).getTime());
+  ];
 
   const administeredByUserIds = Array.from(
     new Set(
-      administrations
+      staffEvents
         .map((row) => row.administered_by_user_id)
         .filter((row): row is string => Boolean(row))
     )
@@ -660,7 +896,7 @@ export async function assembleMarMonthlyReportData(input: {
   }
 
   const staffSummary = new Map<string, MarMonthlyStaffAttribution>();
-  administrations.forEach((row) => {
+  staffEvents.forEach((row) => {
     const summaryKey = row.administered_by_user_id ?? row.administered_by;
     const existing = staffSummary.get(summaryKey);
 
@@ -688,6 +924,7 @@ export async function assembleMarMonthlyReportData(input: {
   });
 
   const nonPrnMedicationSummaries = medications.filter((medication) => !medication.prn && medication.scheduledTimes.length > 0);
+  const prnLogsMissingOrders = prnAdministrationLogs.filter((row) => !medicationOrderById.has(row.medication_order_id)).length;
   const medsMissingSchedules = nonPrnMedicationSummaries.filter((medication) => {
     const scheduleCount = schedulesByMedicationId.get(medication.pofMedicationId)?.length ?? 0;
     const scheduledAdminCount =
@@ -707,7 +944,7 @@ export async function assembleMarMonthlyReportData(input: {
     warnings.push("No medication records found for this member for the selected month.");
   }
 
-  if (schedules.length === 0 && administrations.length === 0) {
+  if (schedules.length === 0 && administrations.length === 0 && prnAdministrationLogs.length === 0) {
     warnings.push("No MAR data was recorded for this member during the selected month.");
   }
 
@@ -719,6 +956,12 @@ export async function assembleMarMonthlyReportData(input: {
 
   if (administrations.some((row) => row.source === "scheduled" && !row.mar_schedule_id)) {
     warnings.push("Partial records detected: one or more scheduled administrations are missing linked schedule identifiers.");
+  }
+
+  if (prnLogsMissingOrders > 0) {
+    warnings.push(
+      `Partial records detected: ${prnLogsMissingOrders} PRN administration log(s) are missing linked medication orders in the normalized PRN store.`
+    );
   }
 
   const totals = {
@@ -767,7 +1010,7 @@ export async function assembleMarMonthlyReportData(input: {
     totals,
     dataQuality: {
       hasMedicationRecords: medications.length > 0,
-      hasMarDataForMonth: schedules.length > 0 || administrations.length > 0,
+      hasMarDataForMonth: schedules.length > 0 || administrations.length > 0 || prnAdministrationLogs.length > 0,
       partialRecordsDetected: warnings.some((warning) => warning.toLowerCase().includes("partial records")),
       warnings
     }

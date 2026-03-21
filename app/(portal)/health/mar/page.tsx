@@ -4,7 +4,7 @@ import { MarMonthlyReportPanelShell, MarWorkflowBoardShell } from "@/components/
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getMarMonthlyReportMemberOptions } from "@/lib/services/mar-monthly-report";
-import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow";
+import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow-read";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,7 @@ export default async function MarWorkflowPage() {
   let snapshot: Awaited<ReturnType<typeof getMarWorkflowSnapshot>> | null = null;
   let loadError: string | null = null;
   try {
-    snapshot = await getMarWorkflowSnapshot({ historyLimit: 250, prnLimit: 250, serviceRole: true });
+    snapshot = await getMarWorkflowSnapshot({ historyLimit: 250, prnLimit: 250, serviceRole: true, reconcileToday: true });
   } catch (error) {
     loadError = error instanceof Error ? error.message : "Unable to load MAR workflow.";
   }
@@ -71,6 +71,7 @@ export default async function MarWorkflowPage() {
           prnEffectiveRows={snapshot.prnEffective}
           prnIneffectiveRows={snapshot.prnIneffective}
           prnMedicationOptions={snapshot.prnMedicationOptions}
+          memberOptions={snapshot.memberOptions}
         />
       ) : null}
     </div>

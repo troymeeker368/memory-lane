@@ -1,6 +1,7 @@
 "use server";
 
 import type {
+  createPrnOrderAndAdministrationAction as createPrnOrderAndAdministrationActionImpl,
   recordPrnMarAdministrationAction as recordPrnMarAdministrationActionImpl,
   recordPrnOutcomeAction as recordPrnOutcomeActionImpl,
   recordScheduledMarAdministrationAction as recordScheduledMarAdministrationActionImpl
@@ -8,6 +9,7 @@ import type {
 
 type RecordScheduledMarAdministrationInput = Parameters<typeof recordScheduledMarAdministrationActionImpl>[0];
 type RecordPrnMarAdministrationInput = Parameters<typeof recordPrnMarAdministrationActionImpl>[0];
+type CreatePrnOrderAndAdministrationInput = Parameters<typeof createPrnOrderAndAdministrationActionImpl>[0];
 type RecordPrnOutcomeInput = Parameters<typeof recordPrnOutcomeActionImpl>[0];
 
 export async function recordScheduledMarAdministrationAction(raw: RecordScheduledMarAdministrationInput) {
@@ -18,6 +20,11 @@ export async function recordScheduledMarAdministrationAction(raw: RecordSchedule
 export async function recordPrnMarAdministrationAction(raw: RecordPrnMarAdministrationInput) {
   const { recordPrnMarAdministrationAction } = await import("./actions-impl");
   return recordPrnMarAdministrationAction(raw);
+}
+
+export async function createPrnOrderAndAdministrationAction(raw: CreatePrnOrderAndAdministrationInput) {
+  const { createPrnOrderAndAdministrationAction } = await import("./actions-impl");
+  return createPrnOrderAndAdministrationAction(raw);
 }
 
 export async function recordPrnOutcomeAction(raw: RecordPrnOutcomeInput) {

@@ -5,7 +5,7 @@ import type {
   recordPublicEnrollmentPacketGuardFailure as recordPublicEnrollmentPacketGuardFailureImpl,
   savePublicEnrollmentPacketProgress as savePublicEnrollmentPacketProgressImpl,
   submitPublicEnrollmentPacket as submitPublicEnrollmentPacketImpl
-} from "@/lib/services/enrollment-packets";
+} from "@/lib/services/enrollment-packets-public-runtime";
 
 type GetPublicEnrollmentPacketContextInput = Parameters<typeof getPublicEnrollmentPacketContextImpl>;
 type RecordPublicEnrollmentPacketGuardFailureInput = Parameters<typeof recordPublicEnrollmentPacketGuardFailureImpl>[0];
@@ -13,21 +13,21 @@ type SavePublicEnrollmentPacketProgressInput = Parameters<typeof savePublicEnrol
 type SubmitPublicEnrollmentPacketInput = Parameters<typeof submitPublicEnrollmentPacketImpl>[0];
 
 export async function getPublicEnrollmentPacketContext(...args: GetPublicEnrollmentPacketContextInput) {
-  const { getPublicEnrollmentPacketContext } = await import("@/lib/services/enrollment-packets");
+  const { getPublicEnrollmentPacketContext } = await import("@/lib/services/enrollment-packets-public-runtime");
   return getPublicEnrollmentPacketContext(...args);
 }
 
 export async function savePublicEnrollmentPacketProgress(input: SavePublicEnrollmentPacketProgressInput) {
-  const { savePublicEnrollmentPacketProgress } = await import("@/lib/services/enrollment-packets");
+  const { savePublicEnrollmentPacketProgress } = await import("@/lib/services/enrollment-packets-public-runtime");
   return savePublicEnrollmentPacketProgress(input);
 }
 
 export async function recordPublicEnrollmentPacketGuardFailure(input: RecordPublicEnrollmentPacketGuardFailureInput) {
-  const { recordPublicEnrollmentPacketGuardFailure } = await import("@/lib/services/enrollment-packets");
+  const { recordPublicEnrollmentPacketGuardFailure } = await import("@/lib/services/enrollment-packets-public-runtime");
   return recordPublicEnrollmentPacketGuardFailure(input);
 }
 
 export async function submitPublicEnrollmentPacket(input: SubmitPublicEnrollmentPacketInput) {
-  const { submitPublicEnrollmentPacket } = await import("@/lib/services/enrollment-packets");
+  const { submitPublicEnrollmentPacket } = await import("@/lib/services/enrollment-packets-public-runtime");
   return submitPublicEnrollmentPacket(input);
 }

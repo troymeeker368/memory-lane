@@ -555,12 +555,19 @@ function drawSummaryReport(state: PdfLayoutState) {
     subtitle: "PRN reasons, effectiveness, and follow-up documentation",
     columns: [
       { header: "Date / Time", width: 88, value: (row) => formatDateTime(row.administeredAt) },
-      { header: "Medication", width: 110, value: (row) => row.medicationName },
-      { header: "Reason", width: 78, value: (row) => row.reasonGiven ?? "-" },
-      { header: "Outcome", width: 52, value: (row) => row.effectiveness },
-      { header: "Follow-up", width: 112, value: (row) => row.followupDocumentation ?? "-" },
+      { header: "Medication", width: 98, value: (row) => row.medicationName },
+      { header: "Reason", width: 72, value: (row) => row.reasonGiven ?? "-" },
+      { header: "Status / Outcome", width: 84, value: (row) => `${row.status} | ${row.effectiveness}` },
+      {
+        header: "Follow-up",
+        width: 98,
+        value: (row) =>
+          [row.followupStatus, row.followupDueAt ? formatDateTime(row.followupDueAt) : null, row.followupDocumentation]
+            .filter(Boolean)
+            .join(" | ") || "-"
+      },
       { header: "Staff", width: 52, value: (row) => row.staffName },
-      { header: "Notes", width: 52, value: (row) => row.notes ?? "-" }
+      { header: "Notes", width: 54, value: (row) => row.notes ?? "-" }
     ],
     rows: report.prnRows,
     emptyMessage: "No PRN administrations were documented for this month."
@@ -676,10 +683,17 @@ function drawExceptionReport(state: PdfLayoutState) {
     subtitle: "PRN administrations including pending and ineffective effectiveness documentation",
     columns: [
       { header: "Date / Time", width: 94, value: (row) => formatDateTime(row.administeredAt) },
-      { header: "Medication", width: 150, value: (row) => row.medicationName },
-      { header: "Reason", width: 96, value: (row) => row.reasonGiven ?? "-" },
-      { header: "Outcome", width: 72, value: (row) => row.effectiveness },
-      { header: "Follow-up", width: 132, value: (row) => row.followupDocumentation ?? "-" }
+      { header: "Medication", width: 126, value: (row) => row.medicationName },
+      { header: "Reason", width: 84, value: (row) => row.reasonGiven ?? "-" },
+      { header: "Status / Outcome", width: 92, value: (row) => `${row.status} | ${row.effectiveness}` },
+      {
+        header: "Follow-up",
+        width: 148,
+        value: (row) =>
+          [row.followupStatus, row.followupDueAt ? formatDateTime(row.followupDueAt) : null, row.followupDocumentation]
+            .filter(Boolean)
+            .join(" | ") || "-"
+      }
     ],
     rows: report.prnRows,
     emptyMessage: "No PRN events were found for this month."

@@ -1,6 +1,6 @@
 import { getCarePlanDashboard } from "@/lib/services/care-plans";
 import { listIncidentDashboard } from "@/lib/services/incidents";
-import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow";
+import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow-read";
 import { getProgressNoteDashboard } from "@/lib/services/progress-notes";
 import { createClient } from "@/lib/supabase/server";
 

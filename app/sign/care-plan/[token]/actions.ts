@@ -3,7 +3,7 @@
 import { headers } from "next/headers";
 
 async function loadPublicCarePlanSignatureService() {
-  return import("@/lib/services/care-plan-esign");
+  return import("@/lib/services/care-plan-esign-public");
 }
 
 function asString(formData: FormData, key: string) {

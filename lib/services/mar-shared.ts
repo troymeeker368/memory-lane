@@ -7,9 +7,13 @@ export const MAR_NOT_GIVEN_REASON_OPTIONS = [
 ] as const;
 
 export const MAR_PRN_OUTCOME_OPTIONS = ["Effective", "Ineffective"] as const;
+export const MAR_PRN_STATUS_OPTIONS = ["Given", "Refused", "Held", "Omitted"] as const;
+export const MAR_PRN_FOLLOWUP_STATUS_OPTIONS = ["not_required", "due", "completed", "overdue"] as const;
 
 export type MarNotGivenReason = (typeof MAR_NOT_GIVEN_REASON_OPTIONS)[number];
 export type MarPrnOutcome = (typeof MAR_PRN_OUTCOME_OPTIONS)[number];
+export type MarPrnStatus = (typeof MAR_PRN_STATUS_OPTIONS)[number];
+export type MarPrnFollowupStatus = (typeof MAR_PRN_FOLLOWUP_STATUS_OPTIONS)[number];
 
 export interface MarTodayRow {
   marScheduleId: string;
@@ -40,19 +44,23 @@ export interface MarAdministrationHistoryRow {
   id: string;
   memberId: string;
   memberName: string;
-  pofMedicationId: string;
+  medicationOrderId: string | null;
+  pofMedicationId: string | null;
   marScheduleId: string | null;
   administrationDate: string;
   scheduledTime: string | null;
   medicationName: string;
   dose: string | null;
   route: string | null;
-  status: "Given" | "Not Given";
+  status: "Given" | "Not Given" | MarPrnStatus;
   notGivenReason: MarNotGivenReason | null;
   prnReason: string | null;
   prnOutcome: MarPrnOutcome | null;
   prnOutcomeAssessedAt: string | null;
   prnFollowupNote: string | null;
+  followupDueAt: string | null;
+  followupStatus: MarPrnFollowupStatus | null;
+  requiresFollowup: boolean;
   notes: string | null;
   administeredBy: string;
   administeredByUserId: string | null;
@@ -63,13 +71,28 @@ export interface MarAdministrationHistoryRow {
 }
 
 export interface MarPrnOption {
-  pofMedicationId: string;
+  medicationOrderId: string;
   memberId: string;
   memberName: string;
+  physicianOrderId: string | null;
+  pofMedicationId: string | null;
   medicationName: string;
-  dose: string | null;
+  strength: string | null;
+  form: string | null;
   route: string | null;
-  prnInstructions: string | null;
+  directions: string | null;
+  prnReason: string | null;
+  frequencyText: string | null;
+  minIntervalMinutes: number | null;
+  maxDosesPer24h: number | null;
+  maxDailyDose: string | null;
+  providerName: string | null;
+  orderSource: "pof" | "manual_provider_order" | "legacy_mhp";
+  status: "active" | "inactive" | "expired" | "discontinued";
+  requiresReview: boolean;
+  requiresEffectivenessFollowup: boolean;
+  startDate: string | null;
+  endDate: string | null;
 }
 
 export interface MarWorkflowSnapshot {
@@ -82,4 +105,8 @@ export interface MarWorkflowSnapshot {
   prnEffective: MarAdministrationHistoryRow[];
   prnIneffective: MarAdministrationHistoryRow[];
   prnMedicationOptions: MarPrnOption[];
+  memberOptions: Array<{
+    memberId: string;
+    memberName: string;
+  }>;
 }

@@ -4,14 +4,15 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   recordPrnOutcomeAction,
-  recordPrnMarAdministrationAction,
   recordScheduledMarAdministrationAction
 } from "@/app/(portal)/health/mar/administration-actions";
+import { MarPrnRecordModal } from "@/components/forms/mar-prn-record-modal";
 import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { MutationNotice } from "@/components/ui/mutation-notice";
 import type {
   MarAdministrationHistoryRow,
   MarNotGivenReason,
+  MarPrnFollowupStatus,
   MarPrnOutcome,
   MarPrnOption,
   MarTodayRow
@@ -64,21 +65,6 @@ function getTimingState(scheduledTimeIso: string, nowMs: number): TimingState {
   return "due";
 }
 
-function formatEasternTime(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: EASTERN_TIME_ZONE,
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date(value));
-}
-
-function createPrnSubmissionId() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `prn-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
 function timingBadgeLabel(scheduledTimeIso: string, nowMs: number) {
   const deltaMinutes = toMinutesFromScheduled(scheduledTimeIso, nowMs);
   const state = getTimingState(scheduledTimeIso, nowMs);
@@ -107,6 +93,36 @@ function timingBadgeClass(state: TimingState) {
   return "border-emerald-200 bg-emerald-50 text-emerald-700";
 }
 
+function cardStateClass(row: MarTodayRow) {
+  if (!row.completed) return "border-border bg-white";
+  if (row.status === "Not Given") return "border-rose-200 bg-rose-50";
+  return "border-emerald-200 bg-emerald-50";
+}
+
+function formatEasternTime(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: EASTERN_TIME_ZONE,
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function formatPrnFollowupStatusLabel(value: MarPrnFollowupStatus | null) {
+  if (value === "due") return "Follow-up due";
+  if (value === "completed") return "Follow-up completed";
+  if (value === "overdue") return "Follow-up overdue";
+  if (value === "not_required") return "Follow-up not required";
+  return null;
+}
+
+function statusToneClass(status: MarAdministrationHistoryRow["status"]) {
+  if (status === "Given") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "Not Given" || status === "Refused" || status === "Held" || status === "Omitted") {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+  return "border-border bg-slate-50 text-slate-700";
+}
+
 function MedicationLabel({ dose, route }: { dose: string | null; route: string | null }) {
   const detail = [dose, route].filter(Boolean).join(" | ");
   if (!detail) return null;
@@ -122,6 +138,7 @@ function MemberAvatar({ name, photoUrl }: { name: string; photoUrl: string | nul
       </>
     );
   }
+
   return (
     <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-slate-100 text-xs font-semibold text-slate-700">
       {initialsFromName(name)}
@@ -130,27 +147,43 @@ function MemberAvatar({ name, photoUrl }: { name: string; photoUrl: string | nul
 }
 
 function HistoryCardRow({ row }: { row: MarAdministrationHistoryRow }) {
+  const followupLabel = formatPrnFollowupStatusLabel(row.followupStatus);
+  const outcomeDue =
+    row.source === "prn" && row.status === "Given" && row.requiresFollowup && !row.prnOutcome && row.followupStatus !== "completed";
+
   return (
     <div className="rounded-lg border border-border p-3">
-      <p className="text-sm font-semibold">{row.memberName}</p>
-      <p className="text-sm">{row.medicationName}</p>
-      <MedicationLabel dose={row.dose} route={row.route} />
-      <p className="mt-1 text-xs text-muted">
-        {row.source === "prn" ? "PRN" : "Scheduled"} | {row.status} | {formatDateTime(row.administeredAt)}
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold">{row.memberName}</p>
+          <p className="text-sm">{row.medicationName}</p>
+          <MedicationLabel dose={row.dose} route={row.route} />
+        </div>
+        <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusToneClass(row.status)}`}>
+          {row.source === "prn" ? "PRN" : "Scheduled"} | {row.status}
+        </div>
+      </div>
+
+      <p className="mt-1 text-xs text-muted">{formatDateTime(row.administeredAt)}</p>
       {row.notGivenReason ? <p className="text-xs text-rose-700">Reason: {row.notGivenReason}</p> : null}
-      {row.prnReason ? <p className="text-xs text-muted">PRN reason: {row.prnReason}</p> : null}
+      {row.prnReason ? <p className="text-xs text-muted">Indication: {row.prnReason}</p> : null}
+      {row.followupDueAt ? <p className="text-xs text-muted">Follow-up due: {formatDateTime(row.followupDueAt)}</p> : null}
+      {followupLabel ? (
+        <p className={`text-xs ${row.followupStatus === "overdue" ? "text-rose-700" : row.followupStatus === "completed" ? "text-emerald-700" : "text-amber-700"}`}>
+          {followupLabel}
+        </p>
+      ) : null}
       {row.prnOutcome ? (
         <p className={`text-xs ${row.prnOutcome === "Ineffective" ? "text-rose-700" : "text-emerald-700"}`}>
-          PRN outcome: {row.prnOutcome}
+          Effectiveness: {row.prnOutcome}
         </p>
-      ) : row.source === "prn" ? (
-        <p className="text-xs text-amber-700">PRN outcome: Outcome Due</p>
+      ) : outcomeDue ? (
+        <p className="text-xs text-amber-700">Effectiveness follow-up still needs to be documented.</p>
       ) : null}
-      {row.prnOutcomeAssessedAt ? <p className="text-xs text-muted">Outcome assessed: {formatDateTime(row.prnOutcomeAssessedAt)}</p> : null}
-      {row.prnFollowupNote ? <p className="text-xs text-muted">Follow-up: {row.prnFollowupNote}</p> : null}
+      {row.prnOutcomeAssessedAt ? <p className="text-xs text-muted">Follow-up documented: {formatDateTime(row.prnOutcomeAssessedAt)}</p> : null}
+      {row.prnFollowupNote ? <p className="text-xs text-muted">Follow-up note: {row.prnFollowupNote}</p> : null}
       {row.notes ? <p className="text-xs text-muted">Notes: {row.notes}</p> : null}
-      <p className="text-xs text-muted">Nurse: {row.administeredBy}</p>
+      <p className="text-xs text-muted">Staff: {row.administeredBy}</p>
       <p className="text-xs text-muted">Updated: {formatDateTime(row.updatedAt)}</p>
     </div>
   );
@@ -163,7 +196,7 @@ function NotGivenCardRow({ row }: { row: MarAdministrationHistoryRow }) {
       <p className="text-sm">{row.medicationName}</p>
       <MedicationLabel dose={row.dose} route={row.route} />
       <p className="mt-1 text-xs text-muted">Documented: {formatDateTime(row.administeredAt)}</p>
-      <p className="text-xs text-rose-700">Reason: {row.notGivenReason ?? "Not Given"}</p>
+      <p className="text-xs text-rose-700">Reason: {row.notGivenReason ?? row.status}</p>
       {row.notes ? <p className="text-xs text-muted">Note: {row.notes}</p> : null}
     </div>
   );
@@ -179,7 +212,8 @@ export function MarWorkflowBoard({
   prnAwaitingOutcomeRows,
   prnEffectiveRows,
   prnIneffectiveRows,
-  prnMedicationOptions
+  prnMedicationOptions,
+  memberOptions
 }: {
   canDocument: boolean;
   todayRows: MarTodayRow[];
@@ -191,12 +225,14 @@ export function MarWorkflowBoard({
   prnEffectiveRows: MarAdministrationHistoryRow[];
   prnIneffectiveRows: MarAdministrationHistoryRow[];
   prnMedicationOptions: MarPrnOption[];
+  memberOptions: Array<{ memberId: string; memberName: string }>;
 }) {
   const { isSaving, run } = useScopedMutation();
   const [view, setView] = useState<MarBoardView>("today");
   const [prnFilter, setPrnFilter] = useState<PrnFilterView>("awaiting");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+
   const [todayRowsState, setTodayRowsState] = useState(todayRows);
   const [overdueRowsState, setOverdueRowsState] = useState(overdueRows);
   const [notGivenRowsState, setNotGivenRowsState] = useState(notGivenRows);
@@ -210,13 +246,7 @@ export function MarWorkflowBoard({
   const [notGivenReason, setNotGivenReason] = useState<MarNotGivenReason>("Refused");
   const [notGivenNote, setNotGivenNote] = useState("");
 
-  const [selectedPrnMedicationId, setSelectedPrnMedicationId] = useState(prnMedicationOptions[0]?.pofMedicationId ?? "");
-  const [prnReason, setPrnReason] = useState("");
-  const [prnNotes, setPrnNotes] = useState("");
-  const [prnDateTime, setPrnDateTime] = useState(() => toEasternDateTimeLocal());
-  const [prnSubmissionId, setPrnSubmissionId] = useState(() => createPrnSubmissionId());
-  const [prnFormOpen, setPrnFormOpen] = useState(false);
-
+  const [prnModalOpen, setPrnModalOpen] = useState(false);
   const [outcomeOpenForAdministrationId, setOutcomeOpenForAdministrationId] = useState<string | null>(null);
   const [prnOutcome, setPrnOutcome] = useState<MarPrnOutcome>("Effective");
   const [prnOutcomeNote, setPrnOutcomeNote] = useState("");
@@ -259,14 +289,9 @@ export function MarWorkflowBoard({
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (!selectedPrnMedicationId && prnMedicationOptions.length > 0) {
-      setSelectedPrnMedicationId(prnMedicationOptions[0].pofMedicationId);
-    }
-  }, [prnMedicationOptions, selectedPrnMedicationId]);
-
   const memberSummaries = useMemo(() => {
     const summaryByMember = new Map<string, MemberMedPassSummary>();
+
     for (const row of todayRowsState) {
       const timingState = getTimingState(row.scheduledTime, nowMs);
       const current = summaryByMember.get(row.memberId) ?? {
@@ -303,17 +328,23 @@ export function MarWorkflowBoard({
     });
   }, [nowMs, todayRowsState]);
 
-  const [selectedMemberId, setSelectedMemberId] = useState<string>(memberSummaries[0]?.memberId ?? "");
+  const [selectedMemberId, setSelectedMemberId] = useState<string>(
+    memberSummaries[0]?.memberId ?? memberOptions[0]?.memberId ?? ""
+  );
 
   useEffect(() => {
-    if (memberSummaries.length === 0) {
+    const validMemberIds = new Set([
+      ...memberSummaries.map((summary) => summary.memberId),
+      ...memberOptions.map((option) => option.memberId)
+    ]);
+    if (validMemberIds.size === 0) {
       setSelectedMemberId("");
       return;
     }
-    if (!selectedMemberId || !memberSummaries.some((summary) => summary.memberId === selectedMemberId)) {
-      setSelectedMemberId(memberSummaries[0].memberId);
+    if (!selectedMemberId || !validMemberIds.has(selectedMemberId)) {
+      setSelectedMemberId(memberSummaries[0]?.memberId ?? memberOptions[0]?.memberId ?? "");
     }
-  }, [memberSummaries, selectedMemberId]);
+  }, [memberOptions, memberSummaries, selectedMemberId]);
 
   const selectedMemberRows = useMemo(
     () =>
@@ -330,11 +361,13 @@ export function MarWorkflowBoard({
 
   const selectedMemberRowsByScheduledTime = useMemo(() => {
     const grouped = new Map<string, MarTodayRow[]>();
+
     for (const row of selectedMemberRows) {
       const bucket = grouped.get(row.scheduledTime) ?? [];
       bucket.push(row);
       grouped.set(row.scheduledTime, bucket);
     }
+
     return Array.from(grouped.entries())
       .map(([scheduledTime, rows]) => ({
         scheduledTime,
@@ -401,6 +434,7 @@ export function MarWorkflowBoard({
       id: data.administrationId,
       memberId: row.memberId,
       memberName: row.memberName,
+      medicationOrderId: null,
       pofMedicationId: row.pofMedicationId,
       marScheduleId: row.marScheduleId,
       administrationDate: data.administeredAt.slice(0, 10),
@@ -414,6 +448,9 @@ export function MarWorkflowBoard({
       prnOutcome: null,
       prnOutcomeAssessedAt: null,
       prnFollowupNote: null,
+      followupDueAt: null,
+      followupStatus: null,
+      requiresFollowup: false,
       notes: data.notes,
       administeredBy: data.administeredBy,
       administeredByUserId: null,
@@ -430,7 +467,12 @@ export function MarWorkflowBoard({
       administrationId: string;
       administeredAt: string;
       administeredBy: string;
-      prnReason: string;
+      indication: string;
+      status: MarAdministrationHistoryRow["status"];
+      doseGiven: string | null;
+      routeGiven: string | null;
+      followupDueAt: string | null;
+      followupStatus: MarPrnFollowupStatus | null;
       notes: string | null;
     }
   ): MarAdministrationHistoryRow {
@@ -438,19 +480,23 @@ export function MarWorkflowBoard({
       id: data.administrationId,
       memberId: option.memberId,
       memberName: option.memberName,
+      medicationOrderId: option.medicationOrderId,
       pofMedicationId: option.pofMedicationId,
       marScheduleId: null,
       administrationDate: data.administeredAt.slice(0, 10),
       scheduledTime: null,
       medicationName: option.medicationName,
-      dose: option.dose,
-      route: option.route,
-      status: "Given",
+      dose: data.doseGiven ?? option.strength,
+      route: data.routeGiven ?? option.route,
+      status: data.status,
       notGivenReason: null,
-      prnReason: data.prnReason,
+      prnReason: data.indication,
       prnOutcome: null,
       prnOutcomeAssessedAt: null,
       prnFollowupNote: null,
+      followupDueAt: data.followupDueAt,
+      followupStatus: data.followupStatus,
+      requiresFollowup: option.requiresEffectivenessFollowup,
       notes: data.notes,
       administeredBy: data.administeredBy,
       administeredByUserId: null,
@@ -473,6 +519,7 @@ export function MarWorkflowBoard({
     }
   ) {
     const historyRow = buildScheduledHistoryRow(row, data);
+
     setTodayRowsState((current) =>
       current.map((item) =>
         item.marScheduleId === row.marScheduleId
@@ -504,17 +551,23 @@ export function MarWorkflowBoard({
       administrationId: string;
       administeredAt: string;
       administeredBy: string;
-      prnReason: string;
+      indication: string;
+      status: MarAdministrationHistoryRow["status"];
+      doseGiven: string | null;
+      routeGiven: string | null;
+      followupDueAt: string | null;
+      followupStatus: MarPrnFollowupStatus | null;
       notes: string | null;
     }
   ) {
     const historyRow = buildPrnHistoryRow(option, data);
+
     setHistoryRowsState((current) => prependUniqueHistory(current, historyRow));
     setPrnRowsState((current) => prependUniqueHistory(current, historyRow));
-    setPrnAwaitingOutcomeRowsState((current) => prependUniqueHistory(current, historyRow));
-    setPrnReason("");
-    setPrnNotes("");
-    setPrnSubmissionId(createPrnSubmissionId());
+    if (historyRow.status === "Given" && (historyRow.followupStatus === "due" || historyRow.followupStatus === "overdue")) {
+      setPrnAwaitingOutcomeRowsState((current) => prependUniqueHistory(current, historyRow));
+    }
+    setSelectedMemberId(option.memberId);
   }
 
   function applyPrnOutcome(
@@ -532,6 +585,7 @@ export function MarWorkflowBoard({
             prnOutcome: data.prnOutcome,
             prnOutcomeAssessedAt: data.outcomeAssessedAt,
             prnFollowupNote: data.prnFollowupNote,
+            followupStatus: "completed" as MarPrnFollowupStatus,
             updatedAt: data.outcomeAssessedAt
           }
         : row;
@@ -542,8 +596,8 @@ export function MarWorkflowBoard({
 
     const sourceRow = prnRowsState.find((row) => row.id === administrationId);
     if (!sourceRow) return;
-
     const updatedRow = updateRow(sourceRow);
+
     if (data.prnOutcome === "Effective") {
       setPrnEffectiveRowsState((current) => prependUniqueHistory(current, updatedRow));
       setPrnIneffectiveRowsState((current) => current.filter((row) => row.id !== administrationId));
@@ -553,211 +607,172 @@ export function MarWorkflowBoard({
     }
 
     setOutcomeOpenForAdministrationId(null);
-    setPrnOutcome("Effective");
-    setPrnOutcomeNote("");
-  }
-
-  function cardStateClass(row: MarTodayRow) {
-    if (row.status === "Given") return "border-emerald-200 bg-emerald-50";
-    if (row.status === "Not Given") return "border-rose-200 bg-rose-50";
-    const timingState = getTimingState(row.scheduledTime, nowMs);
-    if (timingState === "overdue") return "border-rose-300 bg-rose-50";
-    if (timingState === "late") return "border-amber-300 bg-amber-50";
-    return "border-border bg-white";
   }
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-border p-3">
-        <p className="text-sm font-semibold">MAR Views</p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <button type="button" className={`rounded-lg border px-3 py-1 text-sm ${view === "today" ? "bg-brand text-white" : "border-border"}`} onClick={() => setView("today")}>
-            Today&apos;s MAR ({groupedCounts.today})
-          </button>
-          <button type="button" className={`rounded-lg border px-3 py-1 text-sm ${view === "overdue" ? "bg-brand text-white" : "border-border"}`} onClick={() => setView("overdue")}>
-            Overdue ({groupedCounts.overdue})
-          </button>
-          <button type="button" className={`rounded-lg border px-3 py-1 text-sm ${view === "not-given" ? "bg-brand text-white" : "border-border"}`} onClick={() => setView("not-given")}>
-            Not Given ({groupedCounts.notGiven})
-          </button>
-          <button type="button" className={`rounded-lg border px-3 py-1 text-sm ${view === "prn-log" ? "bg-brand text-white" : "border-border"}`} onClick={() => setView("prn-log")}>
-            PRN Outcome Pending ({groupedCounts.prnAwaiting})
-          </button>
-          <button type="button" className={`rounded-lg border px-3 py-1 text-sm ${view === "history" ? "bg-brand text-white" : "border-border"}`} onClick={() => setView("history")}>
-            Administration History ({groupedCounts.history})
-          </button>
-        </div>
-      </div>
-
-      <div className="rounded-lg border border-border p-3">
-        <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="rounded-2xl border border-border bg-white p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold">Record PRN Administration</p>
-            <p className="text-xs text-muted">PRN medications are documented separately from scheduled med-pass doses.</p>
+            <p className="text-sm font-semibold">Medication Administration</p>
+            <p className="text-sm text-muted">Operational MAR board for scheduled doses, PRN documentation, and follow-up tracking.</p>
           </div>
           <button
             type="button"
             disabled={!canDocument}
-            className="rounded-lg border border-border px-3 py-1 text-sm font-semibold disabled:opacity-60"
-            onClick={() => setPrnFormOpen((current) => !current)}
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            onClick={() => setPrnModalOpen(true)}
           >
-            {prnFormOpen ? "Hide PRN Form" : "Record PRN"}
+            Record PRN
           </button>
         </div>
 
-        {prnFormOpen ? (
-          <div className="mt-3 grid gap-2">
-            <div className="grid gap-2 md:grid-cols-2">
-              <select
-                className="h-10 rounded border border-border px-2 text-sm"
-                value={selectedPrnMedicationId}
-                onChange={(event) => setSelectedPrnMedicationId(event.target.value)}
-              >
-                {prnMedicationOptions.length === 0 ? <option value="">No PRN medications available</option> : null}
-                {prnMedicationOptions.map((option) => (
-                  <option key={option.pofMedicationId} value={option.pofMedicationId}>
-                    {option.memberName} | {option.medicationName}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="datetime-local"
-                className="h-10 rounded border border-border px-2 text-sm"
-                value={prnDateTime}
-                onChange={(event) => setPrnDateTime(event.target.value)}
-              />
-              <input
-                className="h-10 rounded border border-border px-2 text-sm"
-                placeholder="Reason / indication (required)"
-                value={prnReason}
-                onChange={(event) => setPrnReason(event.target.value)}
-              />
-              <input
-                className="h-10 rounded border border-border px-2 text-sm"
-                placeholder="Notes (optional)"
-                value={prnNotes}
-                onChange={(event) => setPrnNotes(event.target.value)}
-              />
-            </div>
-            <div>
-              <button
-                type="button"
-                disabled={isSaving || !canDocument || !selectedPrnMedicationId || !prnReason.trim()}
-                className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                onClick={() =>
-                  void run(
-                    async () => {
-                      const parsed = new Date(prnDateTime);
-                      const administeredAtIso = Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
-                      return recordPrnMarAdministrationAction({
-                        pofMedicationId: selectedPrnMedicationId,
-                        prnReason,
-                        notes: prnNotes,
-                        administeredAtIso,
-                        submissionId: prnSubmissionId
-                      });
-                    },
-                    {
-                      successMessage: "PRN administration saved. Outcome is now due.",
-                      fallbackData: {
-                        administrationId: "",
-                        administeredAt: "",
-                        administeredBy: "",
-                        prnReason: "",
-                        notes: null as string | null,
-                        pofMedicationId: ""
-                      },
-                      onSuccess: async (result) => {
-                        const option = prnMedicationOptions.find((item) => item.pofMedicationId === result.data.pofMedicationId);
-                        if (option) {
-                          applyPrnAdministration(option, result.data);
-                        }
-                        setStatusMessage(result.message);
-                      },
-                      onError: async (result) => {
-                        setStatusMessage(`Error: ${result.error}`);
-                      }
-                    }
-                  )
-                }
-              >
-                Save PRN Administration
-              </button>
-            </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <div className="rounded-xl border border-border bg-slate-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Scheduled Today</p>
+            <p className="mt-1 text-2xl font-semibold">{groupedCounts.today}</p>
+            <p className="text-xs text-muted">{documentedToday} documented so far</p>
           </div>
-        ) : null}
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-rose-700">Overdue</p>
+            <p className="mt-1 text-2xl font-semibold text-rose-700">{groupedCounts.overdue}</p>
+            <p className="text-xs text-rose-700">Past due doses needing attention</p>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-800">PRN Follow-up Due</p>
+            <p className="mt-1 text-2xl font-semibold text-amber-800">{groupedCounts.prnAwaiting}</p>
+            <p className="text-xs text-amber-800">Given PRNs still awaiting effectiveness review</p>
+          </div>
+          <div className="rounded-xl border border-border bg-slate-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Not Given Today</p>
+            <p className="mt-1 text-2xl font-semibold">{groupedCounts.notGiven}</p>
+            <p className="text-xs text-muted">Scheduled doses documented as not given</p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {[
+            { key: "today", label: `Today (${groupedCounts.today})` },
+            { key: "overdue", label: `Overdue (${groupedCounts.overdue})` },
+            { key: "not-given", label: `Not Given (${groupedCounts.notGiven})` },
+            { key: "history", label: `History (${groupedCounts.history})` },
+            { key: "prn-log", label: `PRN Log (${groupedCounts.prn})` }
+          ].map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${view === option.key ? "border-brand bg-brand text-white" : "border-border bg-white"}`}
+              onClick={() => setView(option.key as MarBoardView)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {view === "today" ? (
-        <div className="grid gap-3 lg:grid-cols-[320px_minmax(0,1fr)]">
-          <div className="rounded-lg border border-border p-3">
-            <p className="text-sm font-semibold">Members Due Today</p>
-            <p className="text-xs text-muted">
-              Documented: <span className="font-semibold">{documentedToday}</span> / {todayRowsState.length}
-            </p>
-            <div className="mt-3 space-y-2">
-              {memberSummaries.length === 0 ? (
-                <div className="rounded-lg border border-border p-3 text-sm text-muted">No scheduled doses due today.</div>
-              ) : (
-                memberSummaries.map((summary) => {
-                  const active = summary.memberId === selectedMemberId;
-                  return (
+        <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-border bg-white p-4">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold">Member Queue</p>
+                  <p className="text-xs text-muted">Prioritized by overdue and due medication passes.</p>
+                </div>
+                <button
+                  type="button"
+                  disabled={!canDocument}
+                  className="rounded-lg border border-border px-3 py-1 text-xs font-semibold disabled:opacity-60"
+                  onClick={() => setPrnModalOpen(true)}
+                >
+                  Record PRN
+                </button>
+              </div>
+
+              <div className="mt-3 space-y-2">
+                {memberSummaries.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted">
+                    No scheduled medications are due right now.
+                  </div>
+                ) : (
+                  memberSummaries.map((summary) => (
                     <button
                       key={summary.memberId}
                       type="button"
-                      className={`w-full rounded-lg border p-2 text-left ${active ? "border-brand bg-brand/5" : "border-border bg-white"}`}
+                      className={`w-full rounded-xl border p-3 text-left ${selectedMemberId === summary.memberId ? "border-brand bg-brand/5" : "border-border bg-white"}`}
                       onClick={() => setSelectedMemberId(summary.memberId)}
                     >
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-start gap-3">
                         <MemberAvatar name={summary.memberName} photoUrl={summary.memberPhotoUrl} />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold">{summary.memberName}</p>
-                          <p className="text-xs text-muted">{summary.completedCount}/{summary.scheduledCount} complete</p>
+                          <p className="text-sm font-semibold">{summary.memberName}</p>
+                          <p className="text-xs text-muted">
+                            {summary.completedCount}/{summary.scheduledCount} documented
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold">
+                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
+                              Due {summary.dueCount}
+                            </span>
+                            <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-rose-700">
+                              Overdue {summary.overdueCount}
+                            </span>
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-700">
+                              Not Given {summary.notGivenCount}
+                            </span>
+                          </div>
+                          {summary.nextDueTime ? <p className="mt-2 text-xs text-muted">Next due: {formatDateTime(summary.nextDueTime)}</p> : null}
                         </div>
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-1 text-[11px]">
-                        {summary.overdueCount > 0 ? <span className="rounded-full bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">Overdue {summary.overdueCount}</span> : null}
-                        {summary.notGivenCount > 0 ? <span className="rounded-full bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">Not Given {summary.notGivenCount}</span> : null}
-                        {summary.dueCount > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">Due {summary.dueCount}</span> : null}
-                        {summary.nextDueTime ? (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">
-                            Next {formatEasternTime(summary.nextDueTime)}
-                          </span>
-                        ) : null}
-                      </div>
                     </button>
-                  );
-                })
-              )}
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-border bg-white p-4">
+              <p className="text-sm font-semibold">PRN Standing Orders</p>
+              <p className="text-xs text-muted">
+                {selectedMemberId
+                  ? `${prnMedicationOptions.filter((option) => option.memberId === selectedMemberId).length} active PRN option(s) for the selected member.`
+                  : `${prnMedicationOptions.length} active PRN option(s) available.`}
+              </p>
+              <p className="mt-2 text-xs text-muted">
+                Use Record PRN to select an existing standing order or add a new provider order and administer immediately.
+              </p>
             </div>
           </div>
 
-          <div className="rounded-lg border border-border p-3">
+          <div className="rounded-2xl border border-border bg-white p-4">
             {selectedMember ? (
-              <div className="mb-3 flex items-center gap-2">
+              <div className="mb-4 flex items-center gap-3">
                 <MemberAvatar name={selectedMember.memberName} photoUrl={selectedMember.memberPhotoUrl} />
                 <div>
-                  <p className="text-sm font-semibold">Med Pass: {selectedMember.memberName}</p>
+                  <p className="text-sm font-semibold">{selectedMember.memberName}</p>
                   <p className="text-xs text-muted">Grouped by scheduled time</p>
                 </div>
               </div>
             ) : null}
 
             {selectedMemberRowsByScheduledTime.length === 0 ? (
-              <div className="rounded-lg border border-border p-3 text-sm text-muted">Select a member with scheduled medications due.</div>
+              <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted">
+                Select a member with scheduled medications due.
+              </div>
             ) : (
               <div className="space-y-3">
                 {selectedMemberRowsByScheduledTime.map((group) => (
-                  <div key={group.scheduledTime} className="rounded-lg border border-border p-3">
-                    <div className="mb-2 flex items-center justify-between">
+                  <div key={group.scheduledTime} className="rounded-xl border border-border p-3">
+                    <div className="mb-3 flex items-center justify-between gap-2">
                       <p className="text-sm font-semibold">{formatEasternTime(group.scheduledTime)}</p>
-                      <p className="text-xs text-muted">{group.rows.length} medication{group.rows.length === 1 ? "" : "s"}</p>
+                      <p className="text-xs text-muted">
+                        {group.rows.length} medication{group.rows.length === 1 ? "" : "s"}
+                      </p>
                     </div>
 
                     <div className="space-y-2">
                       {group.rows.map((row) => {
                         const timingState = getTimingState(row.scheduledTime, nowMs);
                         const timingLabel = timingBadgeLabel(row.scheduledTime, nowMs);
+
                         return (
                           <div key={row.marScheduleId} className={`rounded-lg border p-3 ${cardStateClass(row)}`}>
                             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -774,8 +789,15 @@ export function MarWorkflowBoard({
                               </div>
 
                               {row.completed ? (
-                                <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${row.status === "Given" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
-                                  {row.status} | {row.administeredAt ? formatDateTime(row.administeredAt) : "Time"} | {initialsFromName(row.administeredBy ?? "N")}
+                                <div
+                                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                                    row.status === "Given"
+                                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                      : "border-rose-200 bg-rose-50 text-rose-700"
+                                  }`}
+                                >
+                                  {row.status} | {row.administeredAt ? formatDateTime(row.administeredAt) : "Time"} |{" "}
+                                  {initialsFromName(row.administeredBy ?? "N")}
                                 </div>
                               ) : (
                                 <div className="flex flex-wrap gap-2">
@@ -916,7 +938,7 @@ export function MarWorkflowBoard({
       {view === "overdue" ? (
         <div className="space-y-2">
           {overdueRowsState.length === 0 ? (
-            <div className="rounded-lg border border-border p-3 text-sm text-muted">No overdue medications right now.</div>
+            <div className="rounded-lg border border-border bg-white p-3 text-sm text-muted">No overdue medications right now.</div>
           ) : (
             overdueRowsState.map((row) => (
               <div key={row.marScheduleId} className="rounded-lg border border-rose-300 bg-rose-50 p-3">
@@ -935,7 +957,7 @@ export function MarWorkflowBoard({
       {view === "not-given" ? (
         <div className="space-y-2">
           {notGivenRowsState.length === 0 ? (
-            <div className="rounded-lg border border-border p-3 text-sm text-muted">No Not Given entries documented today.</div>
+            <div className="rounded-lg border border-border bg-white p-3 text-sm text-muted">No Not Given entries documented today.</div>
           ) : (
             notGivenRowsState.map((row) => <NotGivenCardRow key={row.id} row={row} />)
           )}
@@ -945,7 +967,7 @@ export function MarWorkflowBoard({
       {view === "history" ? (
         <div className="space-y-2">
           {historyRowsState.length === 0 ? (
-            <div className="rounded-lg border border-border p-3 text-sm text-muted">No administration history available.</div>
+            <div className="rounded-lg border border-border bg-white p-3 text-sm text-muted">No administration history available.</div>
           ) : (
             historyRowsState.map((row) => <HistoryCardRow key={row.id} row={row} />)
           )}
@@ -954,33 +976,66 @@ export function MarWorkflowBoard({
 
       {view === "prn-log" ? (
         <div className="space-y-2">
-          <div className="rounded-lg border border-border p-3">
-            <p className="text-sm font-semibold">PRN Filters</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button type="button" className={`rounded-lg border px-3 py-1 text-sm ${prnFilter === "awaiting" ? "bg-brand text-white" : "border-border"}`} onClick={() => setPrnFilter("awaiting")}>
-                Outcome Due ({groupedCounts.prnAwaiting})
+          <div className="rounded-2xl border border-border bg-white p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">PRN Follow-up Queue</p>
+                <p className="text-xs text-muted">Track new PRN administrations, held or refused PRNs, and effectiveness follow-up.</p>
+              </div>
+              <button
+                type="button"
+                disabled={!canDocument}
+                className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                onClick={() => setPrnModalOpen(true)}
+              >
+                Record PRN
               </button>
-              <button type="button" className={`rounded-lg border px-3 py-1 text-sm ${prnFilter === "effective" ? "bg-brand text-white" : "border-border"}`} onClick={() => setPrnFilter("effective")}>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className={`rounded-lg border px-3 py-1 text-sm ${prnFilter === "awaiting" ? "bg-brand text-white" : "border-border"}`}
+                onClick={() => setPrnFilter("awaiting")}
+              >
+                Follow-up Due ({groupedCounts.prnAwaiting})
+              </button>
+              <button
+                type="button"
+                className={`rounded-lg border px-3 py-1 text-sm ${prnFilter === "effective" ? "bg-brand text-white" : "border-border"}`}
+                onClick={() => setPrnFilter("effective")}
+              >
                 Effective ({groupedCounts.prnEffective})
               </button>
-              <button type="button" className={`rounded-lg border px-3 py-1 text-sm ${prnFilter === "ineffective" ? "bg-brand text-white" : "border-border"}`} onClick={() => setPrnFilter("ineffective")}>
+              <button
+                type="button"
+                className={`rounded-lg border px-3 py-1 text-sm ${prnFilter === "ineffective" ? "bg-brand text-white" : "border-border"}`}
+                onClick={() => setPrnFilter("ineffective")}
+              >
                 Ineffective ({groupedCounts.prnIneffective})
               </button>
-              <button type="button" className={`rounded-lg border px-3 py-1 text-sm ${prnFilter === "all" ? "bg-brand text-white" : "border-border"}`} onClick={() => setPrnFilter("all")}>
+              <button
+                type="button"
+                className={`rounded-lg border px-3 py-1 text-sm ${prnFilter === "all" ? "bg-brand text-white" : "border-border"}`}
+                onClick={() => setPrnFilter("all")}
+              >
                 All PRN ({groupedCounts.prn})
               </button>
             </div>
           </div>
 
           {prnRowsForFilter.length === 0 ? (
-            <div className="rounded-lg border border-border p-3 text-sm text-muted">No PRN administrations for this filter.</div>
+            <div className="rounded-lg border border-border bg-white p-3 text-sm text-muted">No PRN administrations for this filter.</div>
           ) : (
             prnRowsForFilter.map((row) => (
               <div key={row.id} className="space-y-2">
                 <HistoryCardRow row={row} />
-                {row.source === "prn" && row.status === "Given" && !row.prnOutcome ? (
+                {row.source === "prn" && row.status === "Given" && row.requiresFollowup && !row.prnOutcome ? (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                    <p className="text-xs font-semibold text-amber-800">Outcome Due</p>
+                    <p className="text-xs font-semibold text-amber-800">
+                      {row.followupStatus === "overdue" ? "Follow-up Overdue" : "Follow-up Due"}
+                    </p>
+                    {row.followupDueAt ? <p className="mt-1 text-xs text-amber-800">Due by {formatDateTime(row.followupDueAt)}</p> : null}
                     {outcomeOpenForAdministrationId === row.id ? (
                       <div className="mt-2 space-y-2">
                         <div className="grid gap-2 md:grid-cols-3">
@@ -1014,7 +1069,9 @@ export function MarWorkflowBoard({
                               void run(
                                 async () => {
                                   const parsed = new Date(prnOutcomeAssessedDateTime);
-                                  const outcomeAssessedAtIso = Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+                                  const outcomeAssessedAtIso = Number.isNaN(parsed.getTime())
+                                    ? new Date().toISOString()
+                                    : parsed.toISOString();
                                   return recordPrnOutcomeAction({
                                     administrationId: row.id,
                                     prnOutcome,
@@ -1023,7 +1080,7 @@ export function MarWorkflowBoard({
                                   });
                                 },
                                 {
-                                  successMessage: "PRN outcome saved.",
+                                  successMessage: "PRN effectiveness follow-up saved.",
                                   fallbackData: {
                                     administrationId: row.id,
                                     prnOutcome,
@@ -1041,7 +1098,7 @@ export function MarWorkflowBoard({
                               )
                             }
                           >
-                            Save Outcome
+                            Save Follow-up
                           </button>
                           <button
                             type="button"
@@ -1064,7 +1121,7 @@ export function MarWorkflowBoard({
                           setPrnOutcomeAssessedDateTime(toEasternDateTimeLocal());
                         }}
                       >
-                        Document Outcome
+                        Document Follow-up
                       </button>
                     )}
                   </div>
@@ -1077,7 +1134,33 @@ export function MarWorkflowBoard({
 
       <MutationNotice kind={statusMessage?.startsWith("Error") ? "error" : "success"} message={statusMessage} />
       {!canDocument ? <p className="text-sm text-rose-700">You can view MAR records but cannot document administrations.</p> : null}
-      <p className="text-xs text-muted">POF orders remain canonical. MAR administrations are immutable historical events.</p>
+      <p className="text-xs text-muted">
+        Medication orders and PRN administration logs are the audit trail for PRN activity. Scheduled MAR administrations remain immutable historical events.
+      </p>
+
+      <MarPrnRecordModal
+        open={prnModalOpen}
+        onClose={() => setPrnModalOpen(false)}
+        canDocument={canDocument}
+        memberOptions={memberOptions}
+        orderOptions={prnMedicationOptions}
+        defaultMemberId={selectedMemberId}
+        onSaved={(option, data) => {
+          applyPrnAdministration(option, {
+            administrationId: data.administrationId,
+            administeredAt: data.administeredAt,
+            administeredBy: data.administeredBy,
+            indication: data.indication,
+            status: data.status,
+            doseGiven: data.doseGiven,
+            routeGiven: data.routeGiven,
+            followupDueAt: data.followupDueAt,
+            followupStatus: (data.followupStatus as MarPrnFollowupStatus | null) ?? null,
+            notes: data.notes
+          });
+        }}
+        onStatusMessage={setStatusMessage}
+      />
     </div>
   );
 }

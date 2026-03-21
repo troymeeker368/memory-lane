@@ -136,7 +136,7 @@ async function main() {
   const {
     getPublicEnrollmentPacketContext,
     submitPublicEnrollmentPacket,
-  } = await import("../lib/services/enrollment-packets");
+  } = await import("../lib/services/enrollment-packets-public");
   const {
     sendEnrollmentPacketRequest,
     upsertEnrollmentPacketSenderSignatureProfile
