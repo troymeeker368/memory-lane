@@ -4,7 +4,7 @@ import { resolveCanonicalLeadState } from "@/lib/canonical";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
-import { buildSalesPipelineStageCounts } from "@/lib/services/sales-workflows";
+import { fetchSalesPipelineSummaryCountsSupabase } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -604,43 +604,30 @@ export async function getSalesSummarySnapshotSupabase(): Promise<SalesSummarySna
   const thirtyDaysAgo = toEasternDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
   const [
     totalResult,
-    openResult,
-    wonResult,
-    lostResult,
     convertedResult,
     recentInquiryCountResult,
     recentInquiriesResult,
-    stageSummaryResult
+    pipelineSummaryResult
   ] = await Promise.all([
     supabase.from("leads").select("id", { count: "exact", head: true }),
-    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })),
-    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "won"),
-    supabase.from("leads").select("id", { count: "exact", head: true }).eq("status", "lost"),
     supabase.from("leads").select("id", { count: "exact", head: true }).or("status.eq.won,member_start_date.not.is.null"),
     supabase.from("leads").select("id", { count: "exact", head: true }).gte("inquiry_date", thirtyDaysAgo),
     supabase.from("leads").select(SALES_LEAD_READ_SELECT).order("inquiry_date", { ascending: false }).limit(10),
-    supabase.from("leads").select("stage, status, lead_source")
+    fetchSalesPipelineSummaryCountsSupabase(supabase)
   ]);
   if (totalResult.error) throw new Error(totalResult.error.message);
-  if (openResult.error) throw new Error(openResult.error.message);
-  if (wonResult.error) throw new Error(wonResult.error.message);
-  if (lostResult.error) throw new Error(lostResult.error.message);
   if (convertedResult.error) throw new Error(convertedResult.error.message);
   if (recentInquiryCountResult.error) throw new Error(recentInquiryCountResult.error.message);
   if (recentInquiriesResult.error) throw new Error(recentInquiriesResult.error.message);
-  if (stageSummaryResult.error) throw new Error(stageSummaryResult.error.message);
-
-  const stageCounts = buildSalesPipelineStageCounts(
-    (stageSummaryResult.data ?? []) as Array<{ stage: string | null; status: string | null; lead_source: string | null }>
-  );
+  const stageCounts = pipelineSummaryResult.stageCounts;
   const eipLeadCount = stageCounts.find((row) => row.stage === "Enrollment in Progress")?.count ?? 0;
 
   return {
     totalLeadCount: totalResult.count ?? 0,
-    openLeadCount: openResult.count ?? 0,
+    openLeadCount: pipelineSummaryResult.openLeadCount,
     eipLeadCount,
-    wonLeadCount: wonResult.count ?? 0,
-    lostLeadCount: lostResult.count ?? 0,
+    wonLeadCount: pipelineSummaryResult.wonLeadCount,
+    lostLeadCount: pipelineSummaryResult.lostLeadCount,
     convertedOrEnrolledCount: convertedResult.count ?? 0,
     recentInquiryActivityCount: recentInquiryCountResult.count ?? 0,
     recentInquiries: ((recentInquiriesResult.data ?? []) as unknown as Record<string, unknown>[]).map((row) => toSalesLeadReadRow(row)),

@@ -30,7 +30,14 @@ export async function submitPublicPofSignatureAction(formData: FormData) {
       providerIp,
       providerUserAgent
     });
-    return { ok: true, signedPdfUrl: signed.signedPdfUrl } as const;
+    return {
+      ok: true,
+      signedPdfUrl: signed.signedPdfUrl,
+      postSignStatus: signed.postSignStatus,
+      retry: signed.retry,
+      actionNeeded: signed.actionNeeded,
+      actionNeededMessage: signed.actionNeededMessage
+    } as const;
   } catch (error) {
     return {
       ok: false,

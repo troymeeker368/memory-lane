@@ -38,6 +38,12 @@ import {
   toEnrollmentPacketMappingSyncStatus,
 } from "@/lib/services/enrollment-packet-readiness";
 import {
+  buildPublicEnrollmentPacketSubmitResult,
+  enforcePublicEnrollmentPacketSubmissionGuards,
+  insertPacketEvent,
+  recordPublicEnrollmentPacketGuardFailure as recordPublicEnrollmentPacketGuardFailureRuntime
+} from "@/lib/services/enrollment-packet-public-helpers";
+import {
   addLeadActivity,
   getEnrollmentPacketSenderSignatureProfile,
   getLeadById,
@@ -152,42 +158,7 @@ async function loadRequestByToken(rawToken: string): Promise<EnrollmentPacketTok
   };
 }
 
-function buildEnrollmentPacketPublicIpFingerprint(ipAddress: string | null | undefined) {
-  const normalized = clean(ipAddress);
-  return normalized ? hashToken(`enrollment-packet-ip:${normalized}`) : null;
-}
-
-function sumEnrollmentPacketUploadBytes(uploads: PacketFileUpload[] | null | undefined) {
-  return (uploads ?? []).reduce((total, upload) => total + (upload.bytes?.length ?? 0), 0);
-}
-
-async function countRecentSystemEvents(input: {
-  eventType: string;
-  entityType: string;
-  entityId: string;
-  status?: string | null;
-  sinceIso: string;
-}) {
-  const admin = createSupabaseAdminClient();
-  let query = admin
-    .from("system_events")
-    .select("id", { count: "exact", head: true })
-    .eq("event_type", input.eventType)
-    .eq("entity_type", input.entityType)
-    .eq("entity_id", input.entityId)
-    .gte("created_at", input.sinceIso);
-
-  if (input.status) {
-    query = query.eq("status", input.status);
-  }
-
-  const { count, error } = await query;
-  if (error) throw new Error(error.message);
-  return Number(count ?? 0);
-}
-
-type PublicEnrollmentPacketGuardFailureInput = {
-  request?: EnrollmentPacketRequestRow | null;
+export async function recordPublicEnrollmentPacketGuardFailure(input: {
   token?: string | null;
   caregiverIp?: string | null;
   caregiverUserAgent?: string | null;
@@ -196,272 +167,11 @@ type PublicEnrollmentPacketGuardFailureInput = {
   uploadCount?: number;
   uploadBytes?: number;
   severity?: "low" | "medium" | "high" | "critical";
-};
-
-async function logPublicEnrollmentPacketGuardFailure(input: PublicEnrollmentPacketGuardFailureInput) {
-  const normalizedToken = clean(input.token);
-  const request =
-    input.request ??
-    (normalizedToken ? (await loadRequestByToken(normalizedToken))?.request ?? null : null);
-  const ipFingerprint = buildEnrollmentPacketPublicIpFingerprint(input.caregiverIp);
-  const baseMetadata = {
-    failure_type: input.failureType,
-    message: input.message,
-    ip_fingerprint: ipFingerprint,
-    user_agent: clean(input.caregiverUserAgent),
-    upload_count: input.uploadCount ?? 0,
-    upload_bytes: input.uploadBytes ?? 0
-  };
-  const severity = input.severity ?? "high";
-
-  await recordWorkflowEvent({
-    eventType: "enrollment_packet_public_guard_rejected",
-    entityType: request ? "enrollment_packet_request" : "enrollment_packet_public_token",
-    entityId: request?.id ?? (normalizedToken ? hashToken(`enrollment-packet-token:${normalizedToken}`) : null),
-    actorType: "system",
-    actorUserId: request?.sender_user_id ?? null,
-    status: "failed",
-    severity,
-    metadata: request
-      ? {
-          member_id: request.member_id,
-          lead_id: request.lead_id,
-          ...baseMetadata
-        }
-      : baseMetadata
-  });
-
-  if (request?.id) {
-    await maybeRecordRepeatedFailureAlert({
-      workflowEventType: "enrollment_packet_public_guard_rejected",
-      entityType: "enrollment_packet_request",
-      entityId: request.id,
-      actorUserId: request.sender_user_id,
-      threshold: 3,
-      metadata: {
-        member_id: request.member_id,
-        lead_id: request.lead_id,
-        failure_type: input.failureType
-      }
-    });
-  }
-
-  if (ipFingerprint) {
-    await recordWorkflowEvent({
-      eventType: "enrollment_packet_public_guard_rejected",
-      entityType: "enrollment_packet_public_ip",
-      entityId: ipFingerprint,
-      actorType: "system",
-      actorUserId: request?.sender_user_id ?? null,
-      status: "failed",
-      severity,
-      metadata: {
-        packet_id: request?.id ?? null,
-        member_id: request?.member_id ?? null,
-        lead_id: request?.lead_id ?? null,
-        ...baseMetadata
-      }
-    });
-    await maybeRecordRepeatedFailureAlert({
-      workflowEventType: "enrollment_packet_public_guard_rejected",
-      entityType: "enrollment_packet_public_ip",
-      entityId: ipFingerprint,
-      actorUserId: request?.sender_user_id ?? null,
-      threshold: 3,
-      metadata: {
-        packet_id: request?.id ?? null,
-        member_id: request?.member_id ?? null,
-        failure_type: input.failureType
-      }
-    });
-  }
-}
-
-export async function recordPublicEnrollmentPacketGuardFailure(
-  input: Omit<PublicEnrollmentPacketGuardFailureInput, "request">
-) {
-  return logPublicEnrollmentPacketGuardFailure({
+}) {
+  return recordPublicEnrollmentPacketGuardFailureRuntime({
     ...input,
-    request: null
+    resolveRequestByToken: loadRequestByToken
   });
-}
-
-async function enforcePublicEnrollmentPacketSubmissionGuards(input: {
-  request: EnrollmentPacketRequestRow;
-  caregiverIp: string | null;
-  caregiverUserAgent: string | null;
-  uploads: PacketFileUpload[];
-}) {
-  const uploadCount = input.uploads.length;
-  const uploadBytes = sumEnrollmentPacketUploadBytes(input.uploads);
-  const ipFingerprint = buildEnrollmentPacketPublicIpFingerprint(input.caregiverIp);
-  const rateWindowStart = new Date(
-    Date.now() - PUBLIC_ENROLLMENT_PACKET_SUBMIT_LOOKBACK_MINUTES * 60 * 1000
-  ).toISOString();
-
-  if (uploadCount > PUBLIC_ENROLLMENT_PACKET_UPLOAD_COUNT_LIMIT) {
-    await logPublicEnrollmentPacketGuardFailure({
-      request: input.request,
-      caregiverIp: input.caregiverIp,
-      caregiverUserAgent: input.caregiverUserAgent,
-      failureType: "upload_count_cap_exceeded",
-      message: `Too many files were attached to this enrollment packet submission (${uploadCount}).`,
-      uploadCount,
-      uploadBytes,
-      severity: "high"
-    });
-    throw new Error(
-      `Too many files attached. Upload up to ${PUBLIC_ENROLLMENT_PACKET_UPLOAD_COUNT_LIMIT} files per submission.`
-    );
-  }
-
-  if (uploadBytes > PUBLIC_ENROLLMENT_PACKET_TOTAL_UPLOAD_BYTES_LIMIT) {
-    await logPublicEnrollmentPacketGuardFailure({
-      request: input.request,
-      caregiverIp: input.caregiverIp,
-      caregiverUserAgent: input.caregiverUserAgent,
-      failureType: "upload_cumulative_size_cap_exceeded",
-      message: `Combined enrollment packet uploads exceeded the ${PUBLIC_ENROLLMENT_PACKET_TOTAL_UPLOAD_MB}MB cap.`,
-      uploadCount,
-      uploadBytes,
-      severity: "high"
-    });
-    throw new Error(
-      `Attached files are too large in total. Maximum combined upload size is ${PUBLIC_ENROLLMENT_PACKET_TOTAL_UPLOAD_MB}MB.`
-    );
-  }
-
-  const tokenAttemptCount = await countRecentSystemEvents({
-    eventType: "enrollment_packet_public_submit_attempt",
-    entityType: "enrollment_packet_request",
-    entityId: input.request.id,
-    status: "started",
-    sinceIso: rateWindowStart
-  });
-  if (tokenAttemptCount >= PUBLIC_ENROLLMENT_PACKET_TOKEN_SUBMIT_ATTEMPT_LIMIT) {
-    await logPublicEnrollmentPacketGuardFailure({
-      request: input.request,
-      caregiverIp: input.caregiverIp,
-      caregiverUserAgent: input.caregiverUserAgent,
-      failureType: "token_rate_limit_exceeded",
-      message: `Enrollment packet submission throttled after ${tokenAttemptCount} recent token attempts.`,
-      uploadCount,
-      uploadBytes,
-      severity: "high"
-    });
-    throw new Error(
-      `Too many recent submission attempts for this enrollment packet. Wait ${PUBLIC_ENROLLMENT_PACKET_SUBMIT_LOOKBACK_MINUTES} minutes and try again.`
-    );
-  }
-
-  if (ipFingerprint) {
-    const ipAttemptCount = await countRecentSystemEvents({
-      eventType: "enrollment_packet_public_submit_attempt",
-      entityType: "enrollment_packet_public_ip",
-      entityId: ipFingerprint,
-      status: "started",
-      sinceIso: rateWindowStart
-    });
-    if (ipAttemptCount >= PUBLIC_ENROLLMENT_PACKET_IP_SUBMIT_ATTEMPT_LIMIT) {
-      await logPublicEnrollmentPacketGuardFailure({
-        request: input.request,
-        caregiverIp: input.caregiverIp,
-        caregiverUserAgent: input.caregiverUserAgent,
-        failureType: "ip_rate_limit_exceeded",
-        message: `Enrollment packet submission throttled after ${ipAttemptCount} recent IP attempts.`,
-        uploadCount,
-        uploadBytes,
-        severity: "high"
-      });
-      throw new Error(
-        `Too many recent submission attempts from this connection. Wait ${PUBLIC_ENROLLMENT_PACKET_SUBMIT_LOOKBACK_MINUTES} minutes and try again.`
-      );
-    }
-  }
-
-  await recordWorkflowEvent({
-    eventType: "enrollment_packet_public_submit_attempt",
-    entityType: "enrollment_packet_request",
-    entityId: input.request.id,
-    actorType: "system",
-    actorUserId: input.request.sender_user_id,
-    status: "started",
-    severity: "low",
-    metadata: {
-      member_id: input.request.member_id,
-      lead_id: input.request.lead_id,
-      ip_fingerprint: ipFingerprint,
-      user_agent: clean(input.caregiverUserAgent),
-      upload_count: uploadCount,
-      upload_bytes: uploadBytes
-    }
-  });
-
-  if (ipFingerprint) {
-    await recordWorkflowEvent({
-      eventType: "enrollment_packet_public_submit_attempt",
-      entityType: "enrollment_packet_public_ip",
-      entityId: ipFingerprint,
-      actorType: "system",
-      actorUserId: input.request.sender_user_id,
-      status: "started",
-      severity: "low",
-      metadata: {
-        packet_id: input.request.id,
-        member_id: input.request.member_id,
-        lead_id: input.request.lead_id,
-        upload_count: uploadCount,
-        upload_bytes: uploadBytes
-      }
-    });
-  }
-}
-
-async function insertPacketEvent(input: {
-  packetId: string;
-  eventType: string;
-  actorUserId?: string | null;
-  actorEmail?: string | null;
-  metadata?: Record<string, unknown>;
-}) {
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin.from("enrollment_packet_events").insert({
-    packet_id: input.packetId,
-    event_type: input.eventType,
-    actor_user_id: input.actorUserId ?? null,
-    actor_email: cleanEmail(input.actorEmail),
-    timestamp: toEasternISO(),
-    metadata: input.metadata ?? {}
-  });
-  if (!error) return true;
-
-  console.error("[enrollment-packets] packet event insert failed after committed workflow write", {
-    packetId: input.packetId,
-    eventType: input.eventType,
-    message: error.message
-  });
-  try {
-    await recordImmediateSystemAlert({
-      entityType: "enrollment_packet_request",
-      entityId: input.packetId,
-      actorUserId: input.actorUserId ?? null,
-      severity: "medium",
-      alertKey: "enrollment_packet_event_insert_failed",
-      metadata: {
-        actor_email: cleanEmail(input.actorEmail),
-        event_type: input.eventType,
-        error: error.message
-      }
-    });
-  } catch (alertError) {
-    const alertMessage = alertError instanceof Error ? alertError.message : "Unknown system alert error.";
-    console.error("[enrollment-packets] system alert insert failed after packet event insert failure", {
-      packetId: input.packetId,
-      eventType: input.eventType,
-      message: alertMessage
-    });
-  }
-  return false;
 }
 
 async function invokeFinalizeEnrollmentPacketCompletionRpc(input: {
@@ -1628,13 +1338,12 @@ export async function submitPublicEnrollmentPacket(input: {
   const request = matchedRequest.request;
   const status = toStatus(request.status);
   if (matchedRequest.tokenMatch === "consumed" && (status === "completed" || status === "filed")) {
-    return {
+    return buildPublicEnrollmentPacketSubmitResult({
       packetId: request.id,
       memberId: request.member_id,
-      status: "filed" as const,
       mappingSyncStatus: request.mapping_sync_status ?? "pending",
-      wasAlreadyFiled: true as const
-    };
+      wasAlreadyFiled: true
+    });
   }
   if (status === "completed" || status === "filed") throw new Error("This enrollment packet has already been submitted.");
   if (isExpired(request.token_expires_at)) {
@@ -1648,7 +1357,15 @@ export async function submitPublicEnrollmentPacket(input: {
     request,
     caregiverIp: input.caregiverIp,
     caregiverUserAgent: input.caregiverUserAgent,
-    uploads: input.uploads ?? []
+    uploads: input.uploads ?? [],
+    limits: {
+      uploadCountLimit: PUBLIC_ENROLLMENT_PACKET_UPLOAD_COUNT_LIMIT,
+      uploadBytesLimit: PUBLIC_ENROLLMENT_PACKET_TOTAL_UPLOAD_BYTES_LIMIT,
+      totalUploadMb: PUBLIC_ENROLLMENT_PACKET_TOTAL_UPLOAD_MB,
+      submitLookbackMinutes: PUBLIC_ENROLLMENT_PACKET_SUBMIT_LOOKBACK_MINUTES,
+      tokenAttemptLimit: PUBLIC_ENROLLMENT_PACKET_TOKEN_SUBMIT_ATTEMPT_LIMIT,
+      ipAttemptLimit: PUBLIC_ENROLLMENT_PACKET_IP_SUBMIT_ATTEMPT_LIMIT
+    }
   });
   const artifactOps = await loadEnrollmentPacketArtifactOps();
   let senderSignatureName = "Staff";
@@ -1865,14 +1582,13 @@ export async function submitPublicEnrollmentPacket(input: {
         uploads: stagedUploads
       });
       const replayedRequest = await loadRequestById(request.id);
-      return {
+      return buildPublicEnrollmentPacketSubmitResult({
         packetId: request.id,
         memberId: member.id,
-        status: "filed" as const,
         mappingSyncStatus:
           replayedRequest?.mapping_sync_status ?? finalizedSubmission.mappingSyncStatus ?? "pending",
-        wasAlreadyFiled: true as const
-      };
+        wasAlreadyFiled: true
+      });
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete enrollment packet.";
@@ -2134,11 +1850,10 @@ export async function submitPublicEnrollmentPacket(input: {
     console.error("[enrollment-packets] unable to emit post-completion workflow milestone", error);
   }
 
-  return {
+  return buildPublicEnrollmentPacketSubmitResult({
     packetId: request.id,
     memberId: member.id,
-    status: "filed" as const,
     mappingSyncStatus: mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending",
-    wasAlreadyFiled: false as const
-  };
+    wasAlreadyFiled: false
+  });
 }

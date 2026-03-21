@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { summarizeLeadPipeline } from "@/lib/services/sales-workflows";
+import { fetchSalesPipelineSummaryCountsSupabase } from "@/lib/services/sales-workflows";
 
 export async function getOperationsReports() {
   const supabase = await createClient();
@@ -7,8 +7,8 @@ export async function getOperationsReports() {
     { data: staffRows, error: staffError },
     { data: docEvents, error: docEventsError },
     { data: punchRows, error: punchRowsError },
-    { data: leads, error: leadsError },
-    { data: ancillaryRows, error: ancillaryError }
+    { data: ancillaryRows, error: ancillaryError },
+    pipelineSummary
   ] = await Promise.all([
     supabase.from("profiles").select("id, full_name").eq("active", true),
     supabase
@@ -16,13 +16,12 @@ export async function getOperationsReports() {
       .select("staff_user_id, event_table")
       .not("staff_user_id", "is", null),
     supabase.from("time_punches").select("staff_user_id, within_fence"),
-    supabase.from("leads").select("status, stage"),
-    supabase.from("v_monthly_ancillary_summary").select("month_label, total_amount_cents")
+    supabase.from("v_monthly_ancillary_summary").select("month_label, total_amount_cents"),
+    fetchSalesPipelineSummaryCountsSupabase(supabase)
   ]);
   if (staffError) throw new Error(`Unable to load active staff profiles: ${staffError.message}`);
   if (docEventsError) throw new Error(`Unable to load documentation_events: ${docEventsError.message}`);
   if (punchRowsError) throw new Error(`Unable to load time_punches: ${punchRowsError.message}`);
-  if (leadsError) throw new Error(`Unable to load leads: ${leadsError.message}`);
   if (ancillaryError) throw new Error(`Unable to load v_monthly_ancillary_summary: ${ancillaryError.message}`);
 
   const staffById = new Map((staffRows ?? []).map((row) => [row.id, row.full_name] as const));
@@ -73,7 +72,11 @@ export async function getOperationsReports() {
     timeSummaryMap.set(row.staff_user_id, current);
   });
 
-  const pipeline = summarizeLeadPipeline(leads ?? []);
+  const pipeline = {
+    open: pipelineSummary.openLeadCount,
+    won: pipelineSummary.wonLeadCount,
+    lost: pipelineSummary.lostLeadCount
+  };
 
   const ancillaryByMonth = new Map<string, number>();
   (ancillaryRows ?? []).forEach((row) => {

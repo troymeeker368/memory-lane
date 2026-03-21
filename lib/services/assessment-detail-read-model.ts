@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { resolveIntakeDraftPofReadiness, toIntakeDraftPofStatus } from "@/lib/services/intake-draft-pof-readiness";
+import { listIntakePostSignFollowUpTasks } from "@/lib/services/intake-post-sign-follow-up";
 
 export async function getAssessmentDetail(assessmentId: string) {
   const supabase = await createClient();
@@ -18,6 +19,7 @@ export async function getAssessmentDetail(assessmentId: string) {
     signatureStatus: signature.status,
     draftPofStatus
   });
+  const followUpTasks = await listIntakePostSignFollowUpTasks({ assessmentId });
   const { data: responses, error: responsesError } = await supabase
     .from("assessment_responses")
     .select("*")
@@ -45,6 +47,7 @@ export async function getAssessmentDetail(assessmentId: string) {
     },
     member: assessment.member ?? null,
     responses: responses ?? [],
-    signature
+    signature,
+    followUpTasks
   };
 }

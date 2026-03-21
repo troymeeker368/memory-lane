@@ -9,6 +9,18 @@ type PublicSignFormProps = {
   providerNameDefault: string;
 };
 
+type SubmittedPofOutcome = {
+  postSignStatus: "synced" | "queued";
+  retry: {
+    queueId: string | null;
+    attemptCount: number;
+    nextRetryAt: string | null;
+    lastError: string | null;
+  };
+  actionNeeded: boolean;
+  actionNeededMessage: string | null;
+};
+
 export function PofPublicSignForm({ token, providerNameDefault }: PublicSignFormProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
@@ -17,6 +29,7 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
   const [hasSignature, setHasSignature] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [signed, setSigned] = useState(false);
+  const [submittedOutcome, setSubmittedOutcome] = useState<SubmittedPofOutcome | null>(null);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -113,17 +126,40 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
         return;
       }
       setSigned(true);
-      setStatus("Signing successful.");
+      setSubmittedOutcome({
+        postSignStatus: result.postSignStatus,
+        retry: result.retry,
+        actionNeeded: result.actionNeeded,
+        actionNeededMessage: result.actionNeededMessage
+      });
+      setStatus(result.actionNeededMessage ?? "Signing successful.");
     });
   }
 
   if (signed) {
     return (
       <div className="space-y-3">
-        <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">
-          Signing Successful
+        <p
+          className={`rounded-lg p-3 text-sm font-semibold ${
+            submittedOutcome?.actionNeeded
+              ? "border border-amber-200 bg-amber-50 text-amber-700"
+              : "border border-emerald-200 bg-emerald-50 text-emerald-700"
+          }`}
+        >
+          {submittedOutcome?.actionNeeded ? "Signature Received" : "Signing Successful"}
         </p>
-        <p className="text-sm text-muted">Thank you. The signed form has been received and recorded successfully.</p>
+        <p className="text-sm text-muted">
+          {submittedOutcome?.actionNeededMessage ??
+            "Thank you. The signed form has been received and recorded successfully."}
+        </p>
+        {submittedOutcome ? (
+          <p className="text-xs text-muted">
+            Post-sign sync: {submittedOutcome.postSignStatus === "queued" ? "Queued for follow-up" : "Synced"}
+            {submittedOutcome.retry.nextRetryAt
+              ? ` • Next retry: ${new Date(submittedOutcome.retry.nextRetryAt).toLocaleString()}`
+              : ""}
+          </p>
+        ) : null}
       </div>
     );
   }

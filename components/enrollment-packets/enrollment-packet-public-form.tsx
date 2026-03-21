@@ -66,6 +66,21 @@ type PublicEnrollmentPacketFields = {
 type UploadKey = (typeof ENROLLMENT_PACKET_UPLOAD_FIELDS)[number]["key"];
 type UploadState = Record<UploadKey, File[]>;
 
+type EnrollmentPacketSubmitResult = {
+  packetId: string;
+  status: "filed";
+  mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
+  operationalReadinessStatus: "not_filed" | "filed_pending_mapping" | "mapping_failed" | "operationally_ready";
+  actionNeededMessage: string | null;
+};
+
+function mappingSyncLabel(value: EnrollmentPacketSubmitResult["mappingSyncStatus"]) {
+  if (value === "completed") return "Completed";
+  if (value === "failed") return "Needs follow-up";
+  if (value === "not_started") return "Not started";
+  return "Pending";
+}
+
 const ADL_FIELD_LABELS: Record<string, string> = {
   adlMobilityLevel: "Ambulation",
   adlTransferLevel: "Transfers",
@@ -263,6 +278,7 @@ export function EnrollmentPacketPublicForm({
   const [status, setStatus] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submitResult, setSubmitResult] = useState<EnrollmentPacketSubmitResult | null>(null);
   const [attested, setAttested] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
   const [caregiverTypedName, setCaregiverTypedName] = useState(payload.primaryContactName ?? "");
@@ -515,8 +531,15 @@ export function EnrollmentPacketPublicForm({
       }
 
       setPayload(payloadToSubmit);
+      setSubmitResult({
+        packetId: result.packetId,
+        status: result.status,
+        mappingSyncStatus: result.mappingSyncStatus,
+        operationalReadinessStatus: result.operationalReadinessStatus,
+        actionNeededMessage: result.actionNeededMessage
+      });
       setIsSubmitted(true);
-      setStatus("Enrollment packet submitted successfully.");
+      setStatus(result.actionNeededMessage ?? "Enrollment packet submitted successfully.");
     });
   };
 
@@ -591,11 +614,29 @@ export function EnrollmentPacketPublicForm({
 
   if (isSubmitted) {
     return (
-      <div className="space-y-3 rounded-lg border border-emerald-300 bg-emerald-50 p-4">
-        <h3 className="text-base font-semibold text-emerald-900">Enrollment Packet Submitted</h3>
-        <p className="text-sm text-emerald-800">
-          Thank you for completing the enrollment packet. Your information was submitted successfully.
+      <div
+        className={`space-y-3 rounded-lg p-4 ${
+          submitResult?.actionNeededMessage
+            ? "border border-amber-300 bg-amber-50"
+            : "border border-emerald-300 bg-emerald-50"
+        }`}
+      >
+        <h3
+          className={`text-base font-semibold ${
+            submitResult?.actionNeededMessage ? "text-amber-900" : "text-emerald-900"
+          }`}
+        >
+          {submitResult?.actionNeededMessage ? "Enrollment Packet Filed" : "Enrollment Packet Submitted"}
+        </h3>
+        <p className={`text-sm ${submitResult?.actionNeededMessage ? "text-amber-800" : "text-emerald-800"}`}>
+          {submitResult?.actionNeededMessage ??
+            "Thank you for completing the enrollment packet. Your information was submitted successfully."}
         </p>
+        {submitResult ? (
+          <p className={`text-xs ${submitResult.actionNeededMessage ? "text-amber-700" : "text-emerald-700"}`}>
+            Mapping sync: {mappingSyncLabel(submitResult.mappingSyncStatus)}
+          </p>
+        ) : null}
       </div>
     );
   }

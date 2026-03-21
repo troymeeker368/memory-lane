@@ -246,7 +246,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       throw error;
     }
 
-    await submitPublicEnrollmentPacket({
+    const submitted = await submitPublicEnrollmentPacket({
       token,
       caregiverTypedName: asString(formData, "caregiverTypedName"),
       caregiverSignatureImageDataUrl: asString(formData, "caregiverSignatureImageDataUrl"),
@@ -286,7 +286,14 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
         ...advanceDirectiveUploads
       ]
     });
-    return { ok: true } as const;
+    return {
+      ok: true,
+      packetId: submitted.packetId,
+      status: submitted.status,
+      mappingSyncStatus: submitted.mappingSyncStatus,
+      operationalReadinessStatus: submitted.operationalReadinessStatus,
+      actionNeededMessage: submitted.actionNeededMessage
+    } as const;
   } catch (error) {
     return {
       ok: false,

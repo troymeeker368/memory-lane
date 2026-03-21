@@ -1,4 +1,5 @@
 import { isOpenLeadStatus, resolveCanonicalLeadState } from "@/lib/canonical";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
 
 type LeadSummaryLike = {
@@ -25,6 +26,24 @@ export interface LeadPipelineStageCountRow {
   count: number;
 }
 
+export interface SalesPipelineSummaryCountsRow {
+  ord: number;
+  stage: string;
+  count: number;
+  open_count: number;
+  won_count: number;
+  lost_count: number;
+  unresolved_inquiry_count: number;
+}
+
+export interface SalesPipelineSummaryCounts {
+  openLeadCount: number;
+  wonLeadCount: number;
+  lostLeadCount: number;
+  unresolvedInquiryLeadCount: number;
+  stageCounts: LeadPipelineStageCountRow[];
+}
+
 const PIPELINE_STAGE_ORDER = [
   "Inquiry",
   "Tour",
@@ -34,6 +53,7 @@ const PIPELINE_STAGE_ORDER = [
   "Closed - Won",
   "Closed - Lost"
 ] as const;
+const SALES_PIPELINE_SUMMARY_COUNTS_RPC = "rpc_get_sales_pipeline_summary_counts";
 
 function resolveCanonicalLeadStageStatus(lead: Pick<LeadSummaryLike, "stage" | "status">) {
   return resolveCanonicalLeadState({
@@ -100,21 +120,43 @@ export function buildSalesPipelineStageCounts(
   }));
 }
 
-export async function getSalesOpenLeadSummary() {
-  const supabase = await createClient();
-  const { data: leads, error } = await supabase.from("leads").select("stage, status");
-  if (error) {
-    throw new Error(`Unable to load sales lead summary: ${error.message}`);
+function parseSalesPipelineSummaryCounts(rows: SalesPipelineSummaryCountsRow[]): SalesPipelineSummaryCounts {
+  if (rows.length === 0) {
+    throw new Error("Unable to load sales pipeline summary counts: RPC returned no rows.");
   }
-  const unresolvedLeads = summarizeLeadPipeline(leads ?? []).open;
-  const unresolvedInquiryLeads = (leads ?? []).reduce((count, lead) => {
-    const { stage, status } = resolveCanonicalLeadStageStatus(lead);
-    return isOpenLeadStatus(status) && stage === "Inquiry" ? count + 1 : count;
-  }, 0);
 
+  const sortedRows = [...rows].sort((left, right) => left.ord - right.ord);
+  const firstRow = sortedRows[0];
   return {
-    unresolvedLeads,
-    unresolvedInquiryLeads
+    openLeadCount: Number(firstRow.open_count ?? 0),
+    wonLeadCount: Number(firstRow.won_count ?? 0),
+    lostLeadCount: Number(firstRow.lost_count ?? 0),
+    unresolvedInquiryLeadCount: Number(firstRow.unresolved_inquiry_count ?? 0),
+    stageCounts: sortedRows.map((row) => ({
+      stage: row.stage,
+      count: Number(row.count ?? 0)
+    }))
+  };
+}
+
+export async function fetchSalesPipelineSummaryCountsSupabase(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const rows = await invokeSupabaseRpcOrThrow<SalesPipelineSummaryCountsRow[]>(
+    supabase,
+    SALES_PIPELINE_SUMMARY_COUNTS_RPC
+  );
+  return parseSalesPipelineSummaryCounts(rows);
+}
+
+export async function getSalesPipelineSummaryCountsSupabase() {
+  const supabase = await createClient();
+  return fetchSalesPipelineSummaryCountsSupabase(supabase);
+}
+
+export async function getSalesOpenLeadSummary() {
+  const summary = await getSalesPipelineSummaryCountsSupabase();
+  return {
+    unresolvedLeads: summary.openLeadCount,
+    unresolvedInquiryLeads: summary.unresolvedInquiryLeadCount
   };
 }
 

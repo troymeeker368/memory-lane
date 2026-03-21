@@ -17,8 +17,8 @@ import {
   signIntakeAssessment
 } from "@/lib/services/intake-assessment-esign";
 import { getSalesLeadByIdSupabase } from "@/lib/services/sales-crm-supabase";
+import { queueIntakePostSignFollowUpTask } from "@/lib/services/intake-post-sign-follow-up";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
-import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
 import { resolveActionMemberIdentity } from "@/app/action-helpers";
@@ -284,12 +284,21 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       attemptedAt: draftPofAttemptedAt,
       error: message
     });
+    await queueIntakePostSignFollowUpTask({
+      assessmentId: created.id,
+      memberId: effectiveMemberId,
+      taskType: "draft_pof_creation",
+      actorUserId: profile.id,
+      actorName: profile.full_name,
+      errorMessage: message
+    });
     revalidatePath("/health/assessment");
     revalidatePath(`/health/assessment/${created.id}`);
     revalidatePath(`/reports/assessments/${created.id}`);
     return {
       error: `Intake Assessment was signed, but draft POF creation failed (${message}).`,
-      assessmentId: created.id
+      assessmentId: created.id,
+      followUpTaskType: "draft_pof_creation" as const
     };
   }
 
@@ -311,29 +320,18 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown PDF generation error.";
-    try {
-      await recordImmediateSystemAlert({
-        entityType: "intake_assessment",
-        entityId: created.id,
-        actorUserId: profile.id,
-        severity: "high",
-        alertKey: "intake_assessment_member_file_pdf_save_failed",
-        metadata: {
-          member_id: effectiveMemberId,
-          document_source: `Intake Assessment:${created.id}`,
-          title: "Intake PDF Save Retry Needed",
-          message:
-            "The intake assessment was signed, but saving its PDF to Member Files failed. Re-generate the intake PDF and save it to Member Files.",
-          action_url: `/health/assessment/${created.id}`,
-          error: message
-        }
-      });
-    } catch (alertError) {
-      console.error("[intake-actions] unable to persist intake PDF follow-up alert", alertError);
-    }
+    await queueIntakePostSignFollowUpTask({
+      assessmentId: created.id,
+      memberId: effectiveMemberId,
+      taskType: "member_file_pdf_persistence",
+      actorUserId: profile.id,
+      actorName: profile.full_name,
+      errorMessage: message
+    });
     return {
       error: `Intake Assessment was created, but saving its PDF to member files failed (${message}).`,
-      assessmentId: created.id
+      assessmentId: created.id,
+      followUpTaskType: "member_file_pdf_persistence" as const
     };
   }
 

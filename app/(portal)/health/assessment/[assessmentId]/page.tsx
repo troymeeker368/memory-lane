@@ -50,6 +50,7 @@ export default async function HealthAssessmentDetailPage({
   const assessment: AssessmentRecord = detail.assessment;
   const generatedAt = toEasternISO();
   const pdfSaveFailed = firstString(query?.pdfSave) === "failed";
+  const openFollowUpTasks = detail.followUpTasks.filter((task) => task.status === "action_required");
   const filteredResponses = detail.responses.filter((response) => {
     if (response.section_type === "Lead Intake Context") return false;
     if (response.field_key === "admissionReviewRequired") return false;
@@ -113,6 +114,21 @@ export default async function HealthAssessmentDetailPage({
           <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
             Draft POF creation failed after intake signature.
             {assessment.draft_pof_error ? ` ${assessment.draft_pof_error}` : ""}
+          </div>
+        ) : null}
+        {openFollowUpTasks.length > 0 ? (
+          <div className="mt-3 space-y-2">
+            {openFollowUpTasks.map((task) => (
+              <div key={task.id} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <p className="font-semibold">{task.title}</p>
+                <p className="mt-1">{task.message}</p>
+                {task.lastError ? <p className="mt-1 text-xs text-amber-800">Last error: {task.lastError}</p> : null}
+                <p className="mt-1 text-xs text-amber-800">
+                  Attempts: {task.attemptCount}
+                  {task.lastAttemptedAt ? ` • Last attempted ${formatDateTime(task.lastAttemptedAt)}` : ""}
+                </p>
+              </div>
+            ))}
           </div>
         ) : null}
       </Card>

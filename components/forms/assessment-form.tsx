@@ -753,7 +753,11 @@ export function AssessmentForm({
             if (res.error) {
               setStatus(`Error: ${res.error}`);
               if (res.assessmentId) {
-                router.push(`/health/assessment/${res.assessmentId}?pdfSave=failed`);
+                const retryPath =
+                  res.followUpTaskType === "member_file_pdf_persistence"
+                    ? `/health/assessment/${res.assessmentId}?pdfSave=failed`
+                    : `/health/assessment/${res.assessmentId}`;
+                router.push(retryPath);
               }
               return;
             }

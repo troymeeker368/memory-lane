@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 
 import {
   getPhysicianOrderById,
-  processSignedPhysicianOrderPostSignSync,
   type PhysicianOrderForm
 } from "@/lib/services/physician-orders-supabase";
 import {
@@ -49,6 +48,11 @@ import {
 } from "@/lib/services/member-files";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import {
+  loadPublicPofPostSignOutcome,
+  maybeCreateSignedPofAccessUrl,
+  runBestEffortCommittedPofSignatureFollowUp
+} from "@/lib/services/pof-post-sign-runtime";
 import type { PofRequestStatus, PofRequestSummary } from "@/lib/services/pof-types";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import {
@@ -321,37 +325,6 @@ function buildPofRequestSummary(input: {
   return summary;
 }
 
-async function maybeCreateSignedPofAccessUrl(input: {
-  requestId: string;
-  memberId: string;
-  actorUserId: string;
-  signedPdfStorageUrl: string | null;
-}) {
-  const storageUrl = clean(input.signedPdfStorageUrl);
-  if (!storageUrl) return null;
-  try {
-    return await createSignedStorageUrl(storageUrl, 60 * 15);
-  } catch (error) {
-    try {
-      await recordImmediateSystemAlert({
-        entityType: "pof_request",
-        entityId: input.requestId,
-        actorUserId: input.actorUserId,
-        severity: "medium",
-        alertKey: "pof_signed_pdf_url_enrichment_failed",
-        metadata: {
-          member_id: input.memberId,
-          signed_pdf_url: storageUrl,
-          error: error instanceof Error ? error.message : "Unable to create signed PDF access URL."
-        }
-      });
-    } catch (alertError) {
-      console.error("[pof-esign] unable to persist signed PDF URL enrichment alert", alertError);
-    }
-    return null;
-  }
-}
-
 async function listPofRequestsByPhysicianOrderIdsWithAdmin(memberId: string, physicianOrderIds: string[]) {
   if (physicianOrderIds.length === 0) return [] as PofRequestRow[];
   const admin = createSupabaseAdminClient();
@@ -545,96 +518,6 @@ async function buildSignedPdfBytes(input: {
       signatureContentType: input.signatureContentType
     }
   });
-}
-
-async function runBestEffortCommittedPofSignatureFollowUp(input: {
-  finalized: ReturnType<typeof toRpcFinalizePofSignatureRow>;
-  request: PofRequestRow;
-  signedAt: string;
-}) {
-  try {
-    const postSignResult = await processSignedPhysicianOrderPostSignSync({
-      pofId: input.finalized.physician_order_id,
-      memberId: input.finalized.member_id,
-      queueId: input.finalized.queue_id,
-      queueAttemptCount: input.finalized.queue_attempt_count,
-      actor: {
-        id: input.request.sent_by_user_id,
-        fullName: input.request.nurse_name
-      },
-      signedAtIso: input.signedAt,
-      pofRequestId: input.finalized.request_id,
-      serviceRole: true
-    });
-
-    await recordWorkflowMilestone({
-      event: {
-        event_type: "physician_order_signed",
-        entity_type: "physician_order",
-        entity_id: input.finalized.physician_order_id,
-        actor_type: "provider",
-        status: "signed",
-        severity: "low",
-        metadata: {
-          member_id: input.finalized.member_id,
-          pof_request_id: input.finalized.request_id,
-          member_file_id: input.finalized.member_file_id,
-          queue_id: input.finalized.queue_id,
-          post_sign_status: postSignResult.postSignStatus,
-          post_sign_attempt_count: postSignResult.attemptCount,
-          post_sign_next_retry_at: postSignResult.nextRetryAt
-        }
-      }
-    });
-    await recordWorkflowEvent({
-      eventType: "pof_request_signed",
-      entityType: "pof_request",
-      entityId: input.finalized.request_id,
-      actorType: "provider",
-      status: "signed",
-      severity: "low",
-      metadata: {
-        member_id: input.finalized.member_id,
-        physician_order_id: input.finalized.physician_order_id,
-        member_file_id: input.finalized.member_file_id,
-        post_sign_status: postSignResult.postSignStatus,
-        post_sign_attempt_count: postSignResult.attemptCount,
-        post_sign_next_retry_at: postSignResult.nextRetryAt
-      }
-    });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "Unable to complete signed POF follow-up.";
-    await recordWorkflowEvent({
-      eventType: "pof_post_commit_followup_failed",
-      entityType: "pof_request",
-      entityId: input.finalized.request_id,
-      actorType: "system",
-      actorUserId: input.request.sent_by_user_id,
-      status: "failed",
-      severity: "high",
-      metadata: {
-        member_id: input.finalized.member_id,
-        physician_order_id: input.finalized.physician_order_id,
-        member_file_id: input.finalized.member_file_id,
-        queue_id: input.finalized.queue_id,
-        error: reason
-      }
-    });
-    await recordPofAlertSafely({
-      entityType: "pof_request",
-      entityId: input.finalized.request_id,
-      actorUserId: input.request.sent_by_user_id,
-      severity: "high",
-      alertKey: "pof_post_commit_followup_failed",
-      metadata: {
-        member_id: input.finalized.member_id,
-        physician_order_id: input.finalized.physician_order_id,
-        member_file_id: input.finalized.member_file_id,
-        queue_id: input.finalized.queue_id,
-        error: reason
-      }
-    }, "runBestEffortCommittedPofSignatureFollowUp");
-  }
 }
 
 export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
@@ -1368,6 +1251,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
   if (!matched) throw new Error("This signature link is invalid.");
   const request = matched.request;
   if (matched.tokenMatch === "consumed" && request.status === "signed") {
+    const postSign = await loadPublicPofPostSignOutcome(request);
     if (!request.signed_pdf_url || !request.member_file_id) {
       throw new Error("This signature link was already used, but the final signed artifact is missing.");
     }
@@ -1375,6 +1259,10 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
       requestId: request.id,
       memberId: request.member_id,
       memberFileId: request.member_file_id,
+      postSignStatus: postSign.postSignStatus,
+      retry: postSign.retry,
+      actionNeeded: postSign.actionNeeded,
+      actionNeededMessage: postSign.actionNeededMessage,
       signedPdfUrl: await maybeCreateSignedPofAccessUrl({
         requestId: request.id,
         memberId: request.member_id,
@@ -1485,10 +1373,15 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
         signedPdfObjectPath: signedPdfPath,
         reason: "Replay-safe POF signature finalization reused committed signed state."
       });
+      const replayResult = await loadPublicPofPostSignOutcome(request);
       return {
         requestId: finalized.request_id,
         memberId: finalized.member_id,
         memberFileId: finalized.member_file_id,
+        postSignStatus: replayResult.postSignStatus,
+        retry: replayResult.retry,
+        actionNeeded: replayResult.actionNeeded,
+        actionNeededMessage: replayResult.actionNeededMessage,
         signedPdfUrl: await maybeCreateSignedPofAccessUrl({
           requestId: finalized.request_id,
           memberId: finalized.member_id,
@@ -1498,7 +1391,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
       };
     }
 
-    await runBestEffortCommittedPofSignatureFollowUp({
+    const postSign = await runBestEffortCommittedPofSignatureFollowUp({
       finalized,
       request,
       signedAt: now
@@ -1508,6 +1401,10 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
       requestId: finalized.request_id,
       memberId: finalized.member_id,
       memberFileId: finalized.member_file_id,
+      postSignStatus: postSign.postSignStatus,
+      retry: postSign.retry,
+      actionNeeded: postSign.actionNeeded,
+      actionNeededMessage: postSign.actionNeededMessage,
       signedPdfUrl: await maybeCreateSignedPofAccessUrl({
         requestId: finalized.request_id,
         memberId: finalized.member_id,
