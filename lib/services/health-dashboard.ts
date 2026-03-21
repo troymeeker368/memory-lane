@@ -20,7 +20,6 @@ type DashboardBloodSugarRow = {
   member_name: string;
   reading_mg_dl: number | string;
   nurse_name: string | null;
-  notes: string | null;
 };
 
 function parseDate(value: string | null | undefined) {
@@ -67,12 +66,12 @@ export async function getHealthDashboardData(options?: {
     getMarWorkflowSnapshot({ historyLimit: 150, prnLimit: 150, serviceRole: true }),
     supabase
       .from("v_blood_sugar_logs_detailed")
-      .select("id, checked_at, member_id, member_name, reading_mg_dl, nurse_name, notes")
+      .select("id, checked_at, member_id, member_name, reading_mg_dl, nurse_name")
       .order("checked_at", { ascending: false })
       .limit(100),
     supabase
       .from("members")
-      .select("id, display_name, status, code_status")
+      .select("id, display_name, code_status")
       .eq("status", "active")
       .order("display_name", { ascending: true }),
     options?.includeCarePlans ? getCarePlanDashboard({ page: 1, pageSize: 25 }) : Promise.resolve(emptyCarePlanDashboard),
@@ -84,7 +83,7 @@ export async function getHealthDashboardData(options?: {
   if (bloodSugarResult.error) throw new Error(`Unable to load v_blood_sugar_logs_detailed: ${bloodSugarResult.error.message}`);
   if (membersResult.error) throw new Error(`Unable to load active members for health dashboard: ${membersResult.error.message}`);
 
-  const members = (membersResult.data ?? []) as Array<{ id: string; display_name: string; status: "active"; code_status: string | null }>;
+  const members = (membersResult.data ?? []) as Array<{ id: string; display_name: string; code_status: string | null }>;
   const memberIds = members.map((member) => member.id);
   const [mccResult, mhpResult] = memberIds.length
     ? await Promise.all([

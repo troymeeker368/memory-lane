@@ -26,10 +26,14 @@ test("selectMembersWithFallback maps current canonical legal name columns into M
             status: "active",
             locker_number: "12",
             enrollment_date: "2026-01-10",
+            discharge_date: null,
+            discharge_reason: null,
+            discharge_disposition: null,
             dob: "1950-05-11",
             city: "Queens",
             code_status: "Full Code",
-            latest_assessment_track: "Track A"
+            latest_assessment_track: "Track A",
+            updated_at: "2026-02-01T10:00:00Z"
           }
         ],
         error: null
@@ -47,30 +51,30 @@ test("selectMembersWithFallback maps current canonical legal name columns into M
   assert.equal(rows[0]?.full_name, "Jane Smith");
 });
 
-test("member queries retry with baseline schema when newer name columns are unavailable", async () => {
+test("member page and detail queries run with the current canonical select", async () => {
   const seenSelects: string[] = [];
   const page = await selectMembersPageWithFallback(
     async (selectClause) => {
       seenSelects.push(selectClause);
-      if (seenSelects.length === 1) {
-        return {
-          data: null,
-          error: { message: 'column members.preferred_name does not exist' },
-          count: null
-        };
-      }
       return {
         data: [
           {
             id: "member-2",
             display_name: "Robert Jones",
+            preferred_name: null,
+            first_name: "Robert",
+            last_name: "Jones",
             status: "active",
             locker_number: "8",
             enrollment_date: "2025-08-15",
+            discharge_date: null,
+            discharge_reason: null,
+            discharge_disposition: null,
             dob: "1948-02-03",
             city: "Brooklyn",
             code_status: "DNR",
-            latest_assessment_track: "Track B"
+            latest_assessment_track: "Track B",
+            updated_at: "2026-02-11T09:45:00Z"
           }
         ],
         error: null,
@@ -81,31 +85,40 @@ test("member queries retry with baseline schema when newer name columns are unav
     "Unable to query members."
   );
 
-  assert.equal(seenSelects.length, 2);
+  assert.equal(seenSelects.length, 1);
   assert.match(seenSelects[0] ?? "", /preferred_name/);
-  assert.doesNotMatch(seenSelects[1] ?? "", /preferred_name/);
   assert.equal(page.totalRows, 1);
   assert.equal(page.rows[0]?.preferred_name, null);
-  assert.equal(page.rows[0]?.first_name, null);
-  assert.equal(page.rows[0]?.last_name, null);
+  assert.equal(page.rows[0]?.first_name, "Robert");
+  assert.equal(page.rows[0]?.last_name, "Jones");
   assert.equal(page.rows[0]?.name, "Robert Jones");
   assert.equal(page.rows[0]?.full_name, "Robert Jones");
 
   const member = await selectMemberWithFallback(
-    async () => ({
-      data: {
-        id: "member-3",
-        display_name: "Alice Doe",
-        status: "inactive",
-        locker_number: null,
-        enrollment_date: null,
-        dob: null,
-        city: null,
-        code_status: null,
-        latest_assessment_track: null
-      },
-      error: null
-    }),
+    async (selectClause) => {
+      assert.match(selectClause, /preferred_name/);
+      return {
+        data: {
+          id: "member-3",
+          display_name: "Alice Doe",
+          preferred_name: null,
+          first_name: "Alice",
+          last_name: "Doe",
+          status: "inactive",
+          locker_number: null,
+          enrollment_date: null,
+          discharge_date: null,
+          discharge_reason: null,
+          discharge_disposition: null,
+          dob: null,
+          city: null,
+          code_status: null,
+          latest_assessment_track: null,
+          updated_at: null
+        },
+        error: null
+      };
+    },
     isMissingMembersColumnError,
     "Unable to fetch member."
   );
@@ -118,11 +131,9 @@ test("member queries still surface schema-out-of-date errors when required MCC m
   await assert.rejects(
     () =>
       selectMembersWithFallback(
-        async (selectClause) => ({
+        async () => ({
           data: null,
-          error: selectClause.includes("preferred_name")
-            ? { message: "column members.preferred_name does not exist" }
-            : { message: "column members.locker_number does not exist" }
+          error: { message: "column members.preferred_name does not exist" }
         }),
         isMissingMembersColumnError,
         "Unable to query members."

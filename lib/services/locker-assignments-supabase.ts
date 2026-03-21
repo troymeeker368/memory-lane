@@ -2,6 +2,22 @@ import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternISO } from "@/lib/timezone";
 
+export type LockerAssignmentHistoryRow = {
+  locker_number: string | null;
+  previous_member_assigned: string | null;
+  updated_at: string | null;
+};
+
+export async function listLockerAssignmentHistorySupabase() {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("locker_assignment_history")
+    .select("locker_number, previous_member_assigned, updated_at")
+    .order("updated_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LockerAssignmentHistoryRow[];
+}
+
 export async function assignLockerToMemberSupabase(input: {
   memberId: string;
   lockerNumber: string;

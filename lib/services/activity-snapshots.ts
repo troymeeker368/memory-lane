@@ -24,7 +24,6 @@ type SnapshotDbRow = {
   nurse_name?: string | null;
   reading_mg_dl?: number | null;
   uploaded_at?: string | null;
-  photo_url?: string | null;
   punch_at?: string | null;
   punch_type?: string | null;
   within_fence?: boolean | null;
@@ -206,7 +205,7 @@ export async function getStaffActivitySnapshot(staffSlug: string, rawFrom?: stri
         .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
       supabase
         .from("member_photo_uploads")
-        .select("id, uploaded_at, photo_url, member:members!member_photo_uploads_member_id_fkey(display_name)", { count: "exact" })
+        .select("id, uploaded_at, member:members!member_photo_uploads_member_id_fkey(display_name)", { count: "exact" })
         .eq("uploaded_by", staff.id)
         .gte("uploaded_at", fromIso)
         .lte("uploaded_at", toIso)
@@ -262,7 +261,7 @@ export async function getStaffActivitySnapshot(staffSlug: string, rawFrom?: stri
   (showerRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `shower-${row.id}`, type: "Shower Log", when: row.event_at ?? new Date().toISOString(), memberName: extractRelationName(row.member, "Unknown Member"), details: row.laundry ? "Laundry included" : "Shower only", href: "/documentation/shower" }));
   (transportRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `transport-${row.id}`, type: "Transportation", when: row.created_at || `${row.service_date}T12:00:00.000`, memberName: extractRelationName(row.member, typeof row.first_name === "string" ? row.first_name : "Unknown Member"), details: `${row.period ?? ""} ${row.transport_type ?? ""}`.trim(), href: "/documentation/transportation" }));
   (bloodRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `blood-${row.id}`, type: "Blood Sugar", when: row.checked_at ?? new Date().toISOString(), memberName: typeof row.member_name === "string" ? row.member_name : "Unknown Member", details: `${row.reading_mg_dl} mg/dL`, href: "/documentation/blood-sugar" }));
-  (photoRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `photo-${row.id}`, type: "Photo Upload", when: row.uploaded_at ?? new Date().toISOString(), memberName: extractRelationName(row.member, "Unknown Member"), details: row.photo_url ?? "Member photo uploaded", href: "/documentation/photo-upload" }));
+  (photoRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `photo-${row.id}`, type: "Photo Upload", when: row.uploaded_at ?? new Date().toISOString(), memberName: extractRelationName(row.member, "Unknown Member"), details: "Member photo uploaded", href: "/documentation/photo-upload" }));
   (punchRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `punch-${row.id}`, type: "Time Punch", when: row.punch_at ?? new Date().toISOString(), memberName: row.within_fence == null ? "Unknown" : row.within_fence ? "Yes" : "No", details: String(row.punch_type ?? "").toUpperCase(), href: "/time-card" }));
   (leadRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `lead-activity-${row.id}`, type: "Lead Activity", when: row.activity_at ?? new Date().toISOString(), memberName: typeof row.member_name === "string" ? row.member_name : "Unknown Prospect", details: `${row.activity_type ?? "Activity"}${row.outcome ? ` | ${row.outcome}` : ""}`, href: row.lead_id ? `/sales/leads/${row.lead_id}` : "/sales" }));
   (partnerRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `partner-activity-${row.id}`, type: "Partner Activity", when: row.activity_at ?? new Date().toISOString(), memberName: typeof row.organization_name === "string" ? row.organization_name : "Community Partner", details: row.activity_type ?? "Partner activity", href: "/sales/new-entries/log-partner-activities" }));
@@ -379,7 +378,7 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
         .limit(SNAPSHOT_ACTIVITY_FEED_LIMIT),
       supabase
         .from("member_photo_uploads")
-        .select("id, uploaded_at, photo_url, uploader:profiles!member_photo_uploads_uploaded_by_fkey(full_name)", { count: "exact" })
+        .select("id, uploaded_at, uploader:profiles!member_photo_uploads_uploaded_by_fkey(full_name)", { count: "exact" })
         .eq("member_id", memberRow.id)
         .gte("uploaded_at", fromIso)
         .lte("uploaded_at", toIso)
@@ -417,7 +416,7 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
   (showerRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `shower-${row.id}`, type: "Shower Log", when: row.event_at ?? new Date().toISOString(), memberName: memberRow.display_name, details: `${extractRelationName(row.staff, "Staff")}${row.laundry ? " | Laundry" : ""}`, href: "/documentation/shower" }));
   (transportRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `transport-${row.id}`, type: "Transportation", when: row.created_at || `${row.service_date}T12:00:00.000`, memberName: memberRow.display_name, details: `${extractRelationName(row.staff, "Staff")} | ${row.transport_type ?? "Transportation"}`, href: "/documentation/transportation" }));
   (bloodRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `blood-${row.id}`, type: "Blood Sugar", when: row.checked_at ?? new Date().toISOString(), memberName: memberRow.display_name, details: `${row.reading_mg_dl} mg/dL | ${row.nurse_name ?? "Nurse"}`, href: "/documentation/blood-sugar" }));
-  (photoRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `photo-${row.id}`, type: "Photo Upload", when: row.uploaded_at ?? new Date().toISOString(), memberName: memberRow.display_name, details: `${extractRelationName(row.uploader, "Staff")} | ${row.photo_url ?? "Photo upload"}`, href: "/documentation/photo-upload" }));
+  (photoRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `photo-${row.id}`, type: "Photo Upload", when: row.uploaded_at ?? new Date().toISOString(), memberName: memberRow.display_name, details: `${extractRelationName(row.uploader, "Staff")} | Photo upload`, href: "/documentation/photo-upload" }));
   (ancillaryRows ?? []).forEach((row: SnapshotDbRow) => activities.push({ id: `ancillary-${row.id}`, type: "Ancillary Charge", when: row.created_at || `${row.service_date}T12:00:00.000`, memberName: memberRow.display_name, details: `${row.category_name ?? "Ancillary"} | $${(Number(row.amount_cents ?? 0) / 100).toFixed(2)}`, href: "/reports/monthly-ancillary" }));
   (assessmentRows ?? []).forEach((row: SnapshotDbRow) =>
     activities.push({

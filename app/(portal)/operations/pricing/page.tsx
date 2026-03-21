@@ -5,8 +5,7 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireNavItemAccess } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions/core";
-import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
-import { createClient } from "@/lib/supabase/server";
+import { getEnrollmentPricingOverview, listEnrollmentPricingAuditRows } from "@/lib/services/enrollment-pricing";
 import { toEasternDate } from "@/lib/timezone";
 
 type PricingTab = "overview" | "community-fee" | "daily-rates" | "history";
@@ -71,26 +70,7 @@ export default async function OperationsPricingPage({
 
   const [overview, auditRows] = await Promise.all([
     getEnrollmentPricingOverview(),
-    (async () => {
-      const supabase = await createClient();
-      const { data, error } = await supabase
-        .from("audit_logs")
-        .select("id, action, entity_type, entity_id, actor_user_id, actor_role, details, created_at")
-        .in("entity_type", ["enrollment_pricing_community_fee", "enrollment_pricing_daily_rate"])
-        .order("created_at", { ascending: false })
-        .limit(100);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as Array<{
-        id: string;
-        action: string;
-        entity_type: string;
-        entity_id: string;
-        actor_user_id: string | null;
-        actor_role: string | null;
-        details: Record<string, unknown> | null;
-        created_at: string;
-      }>;
-    })()
+    listEnrollmentPricingAuditRows(100)
   ]);
 
   const normalizedRole = normalizeRoleKey(profile.role);

@@ -277,7 +277,8 @@ async function listMembersPageSupabase(filters?: {
         query = query.eq("status", filters.status);
       }
       if (q) {
-        query = query.ilike("display_name", buildSupabaseIlikePattern(q));
+        const pattern = buildSupabaseIlikePattern(q);
+        query = query.or(`display_name.ilike.${pattern},locker_number.ilike.${pattern}`);
       }
       return query;
     },

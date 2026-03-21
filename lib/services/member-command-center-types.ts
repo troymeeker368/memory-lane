@@ -9,10 +9,14 @@ export interface MccMemberRow {
   status: "active" | "inactive";
   locker_number: string | null;
   enrollment_date: string | null;
+  discharge_date: string | null;
+  discharge_reason: string | null;
+  discharge_disposition: string | null;
   dob: string | null;
   city: string | null;
   code_status: string | null;
   latest_assessment_track: string | null;
+  updated_at: string | null;
 }
 
 export interface MemberCommandCenterIndexResult {

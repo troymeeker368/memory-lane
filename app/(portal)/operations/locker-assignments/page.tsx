@@ -7,7 +7,8 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { firstSearchParam, parseEnumSearchParam, parsePositivePageParam } from "@/lib/search-params";
-import { createClient } from "@/lib/supabase/server";
+import { listLockerAssignmentHistorySupabase } from "@/lib/services/locker-assignments-supabase";
+import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
 import { formatOptionalDate } from "@/lib/utils";
 
 const LockerAssignModalTrigger = dynamic(
@@ -77,36 +78,10 @@ export default async function LockerAssignmentsPage({
   const errorMessage = firstSearchParam(params.error) ?? "";
   const successMessage = firstSearchParam(params.success) ?? "";
 
-  const supabase = await createClient();
-  const { data: membersData, error } = await supabase
-    .from("members")
-    .select("id, display_name, status, locker_number, enrollment_date, discharge_date, updated_at")
-    .order("display_name", { ascending: true });
-  if (error) {
-    throw new Error(error.message);
-  }
-  const { data: lockerHistoryData, error: lockerHistoryError } = await supabase
-    .from("locker_assignment_history")
-    .select("locker_number, previous_member_assigned, updated_at")
-    .order("updated_at", { ascending: false });
-  if (lockerHistoryError) {
-    throw new Error(lockerHistoryError.message);
-  }
-  const allMembers = (membersData ?? []) as Array<{
-    id: string;
-    display_name: string;
-    status: "active" | "inactive";
-    locker_number: string | null;
-    enrollment_date: string | null;
-    discharge_date: string | null;
-    updated_at: string | null;
-    locker_assigned_at?: string | null;
-  }>;
-  const lockerHistory = (lockerHistoryData ?? []) as Array<{
-    locker_number: string | null;
-    previous_member_assigned: string | null;
-    updated_at: string | null;
-  }>;
+  const [allMembers, lockerHistory] = await Promise.all([
+    listMembersSupabase({ status: "all" }),
+    listLockerAssignmentHistorySupabase()
+  ]);
   const activeMembers = Array.from(
     new Map(
       allMembers

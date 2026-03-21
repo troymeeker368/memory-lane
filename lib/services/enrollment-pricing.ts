@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { normalizeEnrollmentRequestedDays } from "@/lib/services/enrollment-packet-proration";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
@@ -65,6 +66,17 @@ export type EnrollmentPricingDailyRate = {
   updatedBy: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type EnrollmentPricingAuditRow = {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  actor_user_id: string | null;
+  actor_role: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
 };
 
 export type EnrollmentPricingSnapshot = {
@@ -312,6 +324,29 @@ export async function getEnrollmentPricingOverview(effectiveDateInput?: string |
     dailyRates,
     issues
   };
+}
+
+export async function listEnrollmentPricingAuditRows(limit = 100) {
+  const safeLimit = Number.isFinite(limit) ? Math.min(500, Math.max(1, Math.floor(limit))) : 100;
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("audit_logs")
+    .select("id, action, entity_type, entity_id, actor_user_id, actor_role, details, created_at")
+    .in("entity_type", ["enrollment_pricing_community_fee", "enrollment_pricing_daily_rate"])
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+  if (error) {
+    if (isMissingSchemaObjectError(error)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "audit_logs",
+          migration: "0001_initial_schema.sql"
+        })
+      );
+    }
+    throw new Error(error.message);
+  }
+  return (data ?? []) as EnrollmentPricingAuditRow[];
 }
 
 export async function resolveActiveEnrollmentCommunityFee(effectiveDateInput?: string | null) {
