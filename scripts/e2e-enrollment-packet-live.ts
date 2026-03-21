@@ -135,10 +135,12 @@ async function main() {
 
   const {
     getPublicEnrollmentPacketContext,
-    sendEnrollmentPacketRequest,
     submitPublicEnrollmentPacket,
-    upsertEnrollmentPacketSenderSignatureProfile
   } = await import("../lib/services/enrollment-packets");
+  const {
+    sendEnrollmentPacketRequest,
+    upsertEnrollmentPacketSenderSignatureProfile
+  } = await import("../lib/services/enrollment-packets-sender");
   const { createSupabaseAdminClient } = await import("../lib/supabase/admin");
 
   const admin = createSupabaseAdminClient();
