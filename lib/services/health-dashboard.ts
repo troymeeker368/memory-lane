@@ -20,6 +20,7 @@ type DashboardBloodSugarRow = {
   member_name: string;
   reading_mg_dl: number | string;
   nurse_name: string | null;
+  notes: string | null;
 };
 
 function parseDate(value: string | null | undefined) {
@@ -66,7 +67,7 @@ export async function getHealthDashboardData(options?: {
     getMarWorkflowSnapshot({ historyLimit: 150, prnLimit: 150, serviceRole: true }),
     supabase
       .from("v_blood_sugar_logs_detailed")
-      .select("id, checked_at, member_id, member_name, reading_mg_dl, nurse_name")
+      .select("id, checked_at, member_id, member_name, reading_mg_dl, nurse_name, notes")
       .order("checked_at", { ascending: false })
       .limit(100),
     supabase

@@ -84,6 +84,8 @@ type MemberDetailPhotoRow = {
   photo_url: string;
 };
 
+const MEMBER_DETAIL_PREVIEW_LIMIT = 50;
+
 function isStackDepthLimitError(message: string | null | undefined) {
   return /stack depth limit exceeded/i.test(String(message ?? ""));
 }
@@ -114,8 +116,10 @@ export async function getMemberDetail(
   const canViewCarePlans = canAccessCarePlansForRole(normalizedRole);
   const canViewAssessments = canAccessClinicalDocumentationForRole(normalizedRole);
   const staffUserId = scope?.staffUserId ?? null;
-  const emptyRelationResult = { data: [] as Record<string, unknown>[], error: null };
+  const emptyRelationResult = { data: [] as Record<string, unknown>[], error: null, count: 0 };
 
+  // Supabase query builders here are heterogeneous across tables; keep the helper loose and local.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const withOptionalStaffFilter = (query: any, column: string) =>
     isStaffViewer && staffUserId ? query.eq(column, staffUserId) : query;
 
@@ -124,69 +128,73 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("daily_activity_logs")
-          .select("id, activity_date, activity_1_level, activity_2_level, activity_3_level, activity_4_level, activity_5_level, staff_name")
+          .select("id, activity_date, activity_1_level, activity_2_level, activity_3_level, activity_4_level, activity_5_level, staff_name", {
+            count: "exact"
+          })
           .eq("member_id", canonicalMemberId)
           .order("created_at", { ascending: false }),
         "staff_user_id"
-      ),
+      ).limit(MEMBER_DETAIL_PREVIEW_LIMIT),
       withOptionalStaffFilter(
         client
           .from("toilet_logs")
-          .select("id, event_at, use_type, staff_name")
+          .select("id, event_at, use_type, staff_name", { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("event_at", { ascending: false }),
         "staff_user_id"
-      ),
+      ).limit(MEMBER_DETAIL_PREVIEW_LIMIT),
       withOptionalStaffFilter(
         client
           .from("shower_logs")
-          .select("id, event_at, laundry, staff_name")
+          .select("id, event_at, laundry, staff_name", { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("event_at", { ascending: false }),
         "staff_user_id"
-      ),
+      ).limit(MEMBER_DETAIL_PREVIEW_LIMIT),
       withOptionalStaffFilter(
         client
           .from("transportation_logs")
-          .select("id, service_date, pick_up_drop_off, transport_type, staff_name")
+          .select("id, service_date, pick_up_drop_off, transport_type, staff_name", { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("service_date", { ascending: false }),
         "staff_user_id"
-      ),
+      ).limit(MEMBER_DETAIL_PREVIEW_LIMIT),
       withOptionalStaffFilter(
         client
           .from("blood_sugar_logs")
-          .select("id, checked_at, reading_mg_dl, nurse_name")
+          .select("id, checked_at, reading_mg_dl, nurse_name", { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("checked_at", { ascending: false }),
         "nurse_user_id"
-      ),
+      ).limit(MEMBER_DETAIL_PREVIEW_LIMIT),
       withOptionalStaffFilter(
         client
           .from("ancillary_charge_logs")
-          .select("id, service_date, category_name, amount_cents, staff_name")
+          .select("id, service_date, category_name, amount_cents, staff_name", { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("created_at", { ascending: false }),
         "staff_user_id"
-      ),
+      ).limit(MEMBER_DETAIL_PREVIEW_LIMIT),
       canViewAssessments
         ? withOptionalStaffFilter(
             client
               .from("intake_assessments")
-              .select("id, assessment_date, total_score, recommended_track, completed_by, reviewer_name, admission_review_required, created_at")
+              .select("id, assessment_date, total_score, recommended_track, completed_by, reviewer_name, admission_review_required, created_at", {
+                count: "exact"
+              })
               .eq("member_id", canonicalMemberId)
               .order("created_at", { ascending: false }),
             "created_by_user_id"
-          )
+          ).limit(MEMBER_DETAIL_PREVIEW_LIMIT)
         : Promise.resolve(emptyRelationResult),
       withOptionalStaffFilter(
         client
           .from("member_photo_uploads")
-          .select("id, uploaded_at, uploaded_by_name, photo_url")
+          .select("id, uploaded_at, uploaded_by_name, photo_url", { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("uploaded_at", { ascending: false }),
         "uploaded_by"
-      )
+      ).limit(MEMBER_DETAIL_PREVIEW_LIMIT)
     ]);
 
   let [
@@ -254,6 +262,16 @@ export async function getMemberDetail(
 
   return {
     member: member as MemberDetailMember,
+    counts: {
+      dailyActivities: Number(dailyActivitiesResult.count ?? dailyActivities.length),
+      toilets: Number(toiletsResult.count ?? toilets.length),
+      showers: Number(showersResult.count ?? showers.length),
+      transportation: Number(transportationResult.count ?? transportation.length),
+      bloodSugar: Number(bloodSugarResult.count ?? bloodSugar.length),
+      ancillary: Number(ancillaryResult.count ?? ancillary.length),
+      assessments: Number(assessmentsResult.count ?? assessments.length),
+      photos: Number(photosResult.count ?? photos.length)
+    },
     dailyActivities,
     toilets,
     showers,

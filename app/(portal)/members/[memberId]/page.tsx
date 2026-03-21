@@ -35,8 +35,8 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
         <div className="mt-2 grid gap-3 sm:grid-cols-4">
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Status</p><p className="font-semibold">{detail.member.status}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Discharge Date</p><p className="font-semibold">{formatOptionalDate(detail.member.discharge_date)}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Participation Log Entries</p><p className="font-semibold">{detail.dailyActivities.length}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Health Entries</p><p className="font-semibold">{detail.bloodSugar.length + detail.marToday.length + (canViewCarePlans ? detail.carePlans.length : 0)}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Participation Log Entries</p><p className="font-semibold">{detail.counts.dailyActivities}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Health Entries</p><p className="font-semibold">{detail.counts.bloodSugar + detail.marToday.length + (canViewCarePlans ? detail.carePlans.length : 0)}</p></div>
         </div>
         {detail.member.status === "inactive" ? (
           <div className="mt-3 rounded-lg border border-border bg-brandPale p-3 text-sm">
@@ -55,7 +55,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
         ) : null}
       </Card>
 
-      <RelatedSection title="Toilet Log" count={detail.toilets.length} viewAllHref="/documentation/toilet" addHref="/documentation/toilet">
+      <RelatedSection title="Toilet Log" count={detail.counts.toilets} viewAllHref="/documentation/toilet" addHref="/documentation/toilet">
         <div className="space-y-2">
           {detail.toilets.slice(0, 5).map((row) => (
             <div key={row.id} className="rounded-lg border border-border p-3 text-sm">
@@ -67,7 +67,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
         </div>
       </RelatedSection>
 
-      <RelatedSection title="Transportation Log" count={detail.transportation.length} viewAllHref="/documentation/transportation" addHref="/documentation/transportation">
+      <RelatedSection title="Transportation Log" count={detail.counts.transportation} viewAllHref="/documentation/transportation" addHref="/documentation/transportation">
         <div className="space-y-2">
           {detail.transportation.slice(0, 5).map((row) => (
             <div key={row.id} className="rounded-lg border border-border p-3 text-sm">
@@ -79,7 +79,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
         </div>
       </RelatedSection>
 
-      <RelatedSection title="Shower Log" count={detail.showers.length} viewAllHref="/documentation/shower" addHref="/documentation/shower">
+      <RelatedSection title="Shower Log" count={detail.counts.showers} viewAllHref="/documentation/shower" addHref="/documentation/shower">
         <div className="space-y-2">
           {detail.showers.slice(0, 5).map((row) => (
             <div key={row.id} className="rounded-lg border border-border p-3 text-sm">
@@ -91,7 +91,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
         </div>
       </RelatedSection>
 
-      <RelatedSection title="Participation Log" count={detail.dailyActivities.length} viewAllHref="/documentation/activity" addHref="/documentation/activity">
+      <RelatedSection title="Participation Log" count={detail.counts.dailyActivities} viewAllHref="/documentation/activity" addHref="/documentation/activity">
         <div className="space-y-2">
           {detail.dailyActivities.slice(0, 5).map((row) => (
             <div key={row.id} className="rounded-lg border border-border p-3 text-sm">
@@ -103,7 +103,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
         </div>
       </RelatedSection>
 
-      <RelatedSection title="Blood Sugar Testing" count={detail.bloodSugar.length} viewAllHref="/documentation/blood-sugar" addHref="/documentation/blood-sugar">
+      <RelatedSection title="Blood Sugar Testing" count={detail.counts.bloodSugar} viewAllHref="/documentation/blood-sugar" addHref="/documentation/blood-sugar">
         <div className="space-y-2">
           {detail.bloodSugar.slice(0, 5).map((row) => (
             <div key={row.id} className="rounded-lg border border-border p-3 text-sm">
@@ -115,7 +115,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
         </div>
       </RelatedSection>
 
-      <RelatedSection title="Ancillary Charges" count={detail.ancillary.length} viewAllHref="/ancillary" addHref="/ancillary">
+      <RelatedSection title="Ancillary Charges" count={detail.counts.ancillary} viewAllHref="/ancillary" addHref="/ancillary">
         <div className="space-y-2">
           {detail.ancillary.slice(0, 5).map((row) => (
             <div key={row.id} className="rounded-lg border border-border p-3 text-sm">
@@ -128,7 +128,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
       </RelatedSection>
 
       {canViewAssessments ? (
-      <RelatedSection title="Assessments" count={detail.assessments.length} viewAllHref="/health/assessment" addHref="/health/assessment">
+      <RelatedSection title="Assessments" count={detail.counts.assessments} viewAllHref="/health/assessment" addHref="/health/assessment">
         <div className="space-y-2">
           {detail.member.latest_assessment_id ? (
             <div className="rounded-lg border border-border bg-brandPale p-3 text-sm">
@@ -179,7 +179,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
       </RelatedSection>
       ) : null}
 
-      <RelatedSection title="Photos / Documents" count={detail.photos.length} viewAllHref="/documentation/photo-upload" addHref="/documentation/photo-upload">
+      <RelatedSection title="Photos / Documents" count={detail.counts.photos} viewAllHref="/documentation/photo-upload" addHref="/documentation/photo-upload">
         <div className="space-y-2">
           {detail.photos.slice(0, 5).map((row) => (
             <div key={row.id} className="rounded-lg border border-border p-3 text-sm">
