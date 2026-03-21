@@ -81,6 +81,43 @@ function mappingSyncLabel(value: EnrollmentPacketSubmitResult["mappingSyncStatus
   return "Pending";
 }
 
+function getSubmitResultPresentation(result: EnrollmentPacketSubmitResult | null) {
+  if (!result || result.operationalReadinessStatus === "operationally_ready") {
+    return {
+      panelClassName: "border border-emerald-300 bg-emerald-50",
+      headingClassName: "text-emerald-900",
+      bodyClassName: "text-emerald-800",
+      metaClassName: "text-emerald-700",
+      heading: "Enrollment Packet Submitted",
+      message: result?.actionNeededMessage ?? "Thank you for completing the enrollment packet. Your information was submitted successfully."
+    } as const;
+  }
+
+  if (result.operationalReadinessStatus === "mapping_failed") {
+    return {
+      panelClassName: "border border-rose-300 bg-rose-50",
+      headingClassName: "text-rose-900",
+      bodyClassName: "text-rose-800",
+      metaClassName: "text-rose-700",
+      heading: "Enrollment Packet Filed, Staff Follow-up Required",
+      message:
+        result.actionNeededMessage ??
+        "Enrollment packet was filed, but downstream setup still needs staff follow-up before the member is operationally ready."
+    } as const;
+  }
+
+  return {
+    panelClassName: "border border-amber-300 bg-amber-50",
+    headingClassName: "text-amber-900",
+    bodyClassName: "text-amber-800",
+    metaClassName: "text-amber-700",
+    heading: "Enrollment Packet Filed, Setup Still Pending",
+    message:
+      result.actionNeededMessage ??
+      "Enrollment packet was filed, but downstream setup is still pending. Staff should wait for mapping completion before treating the member as operationally ready."
+  } as const;
+}
+
 const ADL_FIELD_LABELS: Record<string, string> = {
   adlMobilityLevel: "Ambulation",
   adlTransferLevel: "Transfers",
@@ -539,7 +576,7 @@ export function EnrollmentPacketPublicForm({
         actionNeededMessage: result.actionNeededMessage
       });
       setIsSubmitted(true);
-      setStatus(result.actionNeededMessage ?? "Enrollment packet submitted successfully.");
+      setStatus(getSubmitResultPresentation(result).message);
     });
   };
 
@@ -613,27 +650,13 @@ export function EnrollmentPacketPublicForm({
   };
 
   if (isSubmitted) {
+    const submitPresentation = getSubmitResultPresentation(submitResult);
     return (
-      <div
-        className={`space-y-3 rounded-lg p-4 ${
-          submitResult?.actionNeededMessage
-            ? "border border-amber-300 bg-amber-50"
-            : "border border-emerald-300 bg-emerald-50"
-        }`}
-      >
-        <h3
-          className={`text-base font-semibold ${
-            submitResult?.actionNeededMessage ? "text-amber-900" : "text-emerald-900"
-          }`}
-        >
-          {submitResult?.actionNeededMessage ? "Enrollment Packet Filed" : "Enrollment Packet Submitted"}
-        </h3>
-        <p className={`text-sm ${submitResult?.actionNeededMessage ? "text-amber-800" : "text-emerald-800"}`}>
-          {submitResult?.actionNeededMessage ??
-            "Thank you for completing the enrollment packet. Your information was submitted successfully."}
-        </p>
+      <div className={`space-y-3 rounded-lg p-4 ${submitPresentation.panelClassName}`}>
+        <h3 className={`text-base font-semibold ${submitPresentation.headingClassName}`}>{submitPresentation.heading}</h3>
+        <p className={`text-sm ${submitPresentation.bodyClassName}`}>{submitPresentation.message}</p>
         {submitResult ? (
-          <p className={`text-xs ${submitResult.actionNeededMessage ? "text-amber-700" : "text-emerald-700"}`}>
+          <p className={`text-xs ${submitPresentation.metaClassName}`}>
             Mapping sync: {mappingSyncLabel(submitResult.mappingSyncStatus)}
           </p>
         ) : null}

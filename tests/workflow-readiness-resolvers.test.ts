@@ -33,6 +33,22 @@ test("enrollment packet readiness distinguishes filed from operationally ready",
   );
 });
 
+test("enrollment packet readiness keeps pending and failed mapping out of operationally ready state", () => {
+  const pendingReadiness = resolveEnrollmentPacketOperationalReadiness({
+    status: "completed",
+    mappingSyncStatus: "pending"
+  });
+  const failedReadiness = resolveEnrollmentPacketOperationalReadiness({
+    status: "filed",
+    mappingSyncStatus: "failed"
+  });
+
+  assert.notEqual(pendingReadiness, "operationally_ready");
+  assert.equal(pendingReadiness, "filed_pending_mapping");
+  assert.notEqual(failedReadiness, "operationally_ready");
+  assert.equal(failedReadiness, "mapping_failed");
+});
+
 test("intake readiness keeps signed and draft-pof readiness separate", () => {
   assert.equal(
     resolveIntakeDraftPofReadiness({

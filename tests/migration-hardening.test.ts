@@ -44,3 +44,13 @@ test("0099 follow-up migration applies upgraded-env constraint parity for 0015",
   assert.equal(source.includes("transportation_logs_billing_status_check"), true);
   assert.equal(source.includes("validate constraint"), true);
 });
+
+test("0106 moves enrollment contact/payor writes into the conversion RPC and adds intake follow-up queue backing", () => {
+  const source = readWorkspaceFile("supabase/migrations/0106_enrollment_atomicity_and_intake_follow_up_queue.sql");
+
+  assert.equal(source.includes("create table if not exists public.intake_post_sign_follow_up_queue"), true);
+  assert.equal(source.includes("task_type in ('draft_pof_creation', 'member_file_pdf_persistence')"), true);
+  assert.equal(source.includes("insert into public.member_contacts"), true);
+  assert.equal(source.includes("update public.member_contacts as mc"), true);
+  assert.equal(source.includes("perform public.rpc_set_member_contact_payor(p_member_id, v_payor_contact_id);"), true);
+});
