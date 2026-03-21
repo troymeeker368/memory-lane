@@ -2,12 +2,12 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getSalesLeadListSupabase } from "@/lib/services/sales-crm-supabase";
+import { getLeadList } from "@/lib/services/leads-read";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
 
 export default async function SalesTourPage() {
   await requireModuleAccess("sales");
-  const { rows } = await getSalesLeadListSupabase({ status: "open", stage: "Tour" });
+  const { rows } = await getLeadList({ status: "open", stage: "Tour" });
 
   return (
     <Card className="table-wrap">

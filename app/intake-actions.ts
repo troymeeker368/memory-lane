@@ -16,7 +16,7 @@ import {
   isAuthorizedIntakeAssessmentSignerRole,
   signIntakeAssessment
 } from "@/lib/services/intake-assessment-esign";
-import { getSalesLeadByIdSupabase } from "@/lib/services/sales-crm-supabase";
+import { getLeadRecordById } from "@/lib/services/leads-read";
 import { queueIntakePostSignFollowUpTask } from "@/lib/services/intake-post-sign-follow-up";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { toEasternISO } from "@/lib/timezone";
@@ -154,9 +154,9 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
 
   const effectiveMemberId = canonicalIdentity.memberId;
   const leadId = canonicalIdentity.leadId;
-  let leadRow: Awaited<ReturnType<typeof getSalesLeadByIdSupabase>> = null;
+  let leadRow: Awaited<ReturnType<typeof getLeadRecordById>> = null;
   try {
-    leadRow = await getSalesLeadByIdSupabase(leadId);
+    leadRow = await getLeadRecordById(leadId);
   } catch (error) {
     return {
       error: `Unable to resolve canonical lead.id for intake assessment. ${error instanceof Error ? error.message : "Unknown error"}`

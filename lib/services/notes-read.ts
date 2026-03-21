@@ -7,7 +7,7 @@ import {
   getProgressNoteReminderRows as getProgressNoteReminderRowsModel,
   getProgressNoteTracker as getProgressNoteTrackerModel,
   getProgressNotesForMember as getProgressNotesForMemberModel
-} from "@/lib/services/progress-notes-supabase";
+} from "@/lib/services/progress-notes-read-model";
 
 export async function getProgressNoteTracker(...args: Parameters<typeof getProgressNoteTrackerModel>) {
   return getProgressNoteTrackerModel(...args);

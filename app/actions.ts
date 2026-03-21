@@ -12,7 +12,7 @@ import {
   LEAD_STATUS_OPTIONS,
   resolveCanonicalLeadState
 } from "@/lib/canonical";
-import { getSalesLeadByIdSupabase } from "@/lib/services/sales-crm-supabase";
+import { getLeadRecordById } from "@/lib/services/leads-read";
 import { legacyLeadActivityInputSchema, normalizeLegacyLeadActivityInput } from "@/lib/services/sales-lead-activities";
 import { toEasternDate } from "@/lib/timezone";
 
@@ -126,7 +126,7 @@ type LegacyLeadRecord = {
 
 async function getLegacyLeadRecordById(leadId: string): Promise<{ lead: LegacyLeadRecord | null; error?: string }> {
   try {
-    const lead = await getSalesLeadByIdSupabase(leadId);
+    const lead = await getLeadRecordById(leadId);
     if (!lead) return { lead: null };
     return {
       lead: {

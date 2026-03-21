@@ -5,7 +5,7 @@ import { BarChart3, Building2, CirclePlus, Clock3, GitBranch } from "lucide-reac
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions";
-import { getSalesHomeSnapshotSupabase } from "@/lib/services/sales-crm-supabase";
+import { getLeadHomeSnapshot } from "@/lib/services/leads-read";
 
 function SalesMenuCard({ href, label, subtitle, icon }: { href: string; label: string; subtitle: string; icon: ReactNode }) {
   return (
@@ -19,7 +19,7 @@ function SalesMenuCard({ href, label, subtitle, icon }: { href: string; label: s
 export default async function SalesPage() {
   const profile = await requireModuleAccess("sales");
   const isAdmin = normalizeRoleKey(profile.role) === "admin";
-  const snapshot = await getSalesHomeSnapshotSupabase();
+  const snapshot = await getLeadHomeSnapshot();
 
   return (
     <div className="space-y-4">

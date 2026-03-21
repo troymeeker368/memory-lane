@@ -1,7 +1,7 @@
 import { LeadsPipelineTable } from "@/components/sales/leads-pipeline-table";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getSalesLeadListSupabase } from "@/lib/services/sales-crm-supabase";
+import { getLeadList } from "@/lib/services/leads-read";
 
 function firstString(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0];
@@ -37,7 +37,7 @@ export default async function LeadsPipelineTablePage({ searchParams }: { searchP
   const dir = (firstString(params.dir) as "asc" | "desc" | undefined) ?? "desc";
   const page = parsePage(firstString(params.page));
   const dbStatus = status === "Won" ? "won" : status === "Lost" ? "lost" : "open";
-  const result = await getSalesLeadListSupabase({
+  const result = await getLeadList({
     status: dbStatus,
     q: q || undefined,
     stage: (stage || undefined) as "Inquiry" | "Tour" | "Enrollment in Progress" | "Nurture" | undefined,

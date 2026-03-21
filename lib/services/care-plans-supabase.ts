@@ -6,8 +6,7 @@ import {
   buildNormalizedSectionsForTrack,
   computeCarePlanStatus,
   computeNextReviewDueDate,
-  serializeSectionsSnapshot,
-  toCarePlan
+  serializeSectionsSnapshot
 } from "@/lib/services/care-plan-model";
 import { getCarePlanDispatchState } from "@/lib/services/care-plans-read-model";
 import { getDefaultCaregiverSignatureExpiresOnDate } from "@/lib/services/care-plan-esign-rules";
@@ -15,59 +14,12 @@ import { recordImmediateSystemAlert, recordWorkflowEvent } from "@/lib/services/
 import type {
   CarePlanSectionInput,
   CarePlanStatus,
-  DbCarePlan,
 } from "@/lib/services/care-plan-types";
 import {
-  CARE_PLAN_CARE_TEAM_NOTES_LABEL,
-  CARE_PLAN_LONG_TERM_LABEL,
-  CARE_PLAN_REVIEW_OPTIONS,
-  CARE_PLAN_REVIEW_UPDATES_LABEL,
-  CARE_PLAN_SECTION_TYPES,
-  CARE_PLAN_SEPARATOR_LINE,
-  CARE_PLAN_SIGNATURE_LABELS,
-  CARE_PLAN_SHORT_TERM_LABEL,
-  CARE_PLAN_SIGNATURE_LINE_TEMPLATES,
   type CarePlanSectionType,
   type CarePlanTrack,
-  getCarePlanTracks,
-  getGoalListItems,
   isCarePlanTrack
 } from "@/lib/services/care-plan-track-definitions";
-export {
-  CARE_PLAN_CARE_TEAM_NOTES_LABEL,
-  CARE_PLAN_LONG_TERM_LABEL,
-  CARE_PLAN_REVIEW_OPTIONS,
-  CARE_PLAN_REVIEW_UPDATES_LABEL,
-  CARE_PLAN_SECTION_TYPES,
-  CARE_PLAN_SEPARATOR_LINE,
-  CARE_PLAN_SIGNATURE_LABELS,
-  CARE_PLAN_SHORT_TERM_LABEL,
-  CARE_PLAN_SIGNATURE_LINE_TEMPLATES,
-  getCarePlanTracks,
-  getGoalListItems
-};
-export type { CarePlanSectionType, CarePlanTrack };
-export type {
-  CaregiverSignatureStatus,
-  CarePlan,
-  CarePlanListResult,
-  CarePlanListRow,
-  CarePlanParticipationSummary,
-  CarePlanReviewHistory,
-  CarePlanSection,
-  CarePlanSectionInput,
-  CarePlanStatus,
-  CarePlanTemplate,
-  CarePlanVersion,
-  MemberCarePlanSummary
-} from "@/lib/services/care-plan-types";
-export {
-  CAREGIVER_SIGNATURE_STATUS_VALUES,
-  computeCarePlanStatus,
-  computeInitialDueDate,
-  computeNextReviewDueDate,
-  getCarePlanTemplates
-} from "@/lib/services/care-plan-model";
 
 const CARE_PLAN_CORE_RPC = "rpc_upsert_care_plan_core";
 const CARE_PLAN_CORE_RPC_MIGRATION = "0085_care_plan_diagnosis_relation.sql";
@@ -838,8 +790,12 @@ export async function updateCarePlanCaregiverContact(input: {
       updated_at: toEasternISO()
     })
     .eq("id", input.carePlanId)
-    .select("*, member:members!care_plans_member_id_fkey(display_name)")
+    .select("id, member_id, caregiver_signature_status")
     .single();
   if (error) throw new Error(error.message);
-  return toCarePlan(data as DbCarePlan);
+  return {
+    id: String(data.id),
+    memberId: String(data.member_id),
+    caregiverSignatureStatus: clean(String(data.caregiver_signature_status ?? "")) ?? "pending"
+  };
 }

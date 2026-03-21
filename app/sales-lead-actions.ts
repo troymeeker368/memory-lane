@@ -18,10 +18,9 @@ import { createSalesLeadActivity, salesLeadActivityInputSchema } from "@/lib/ser
 import { createLeadWithMemberConversionSupabase } from "@/lib/services/sales-lead-conversion-supabase";
 import {
   createSalesLeadSupabase,
-  getSalesLeadForEnrollmentSupabase,
-  insertSalesAuditLogSupabase,
-  resolveSalesPartnerAndReferralSupabase
+  insertSalesAuditLogSupabase
 } from "@/lib/services/sales-crm-supabase";
+import { getLeadEnrollmentSnapshot, getLeadReferralLinkage } from "@/lib/services/leads-read";
 import { applyLeadStageTransitionSupabase } from "@/lib/services/sales-lead-stage-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -192,7 +191,7 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
   let selectedPartner: { id: string; partner_id: string } | null = null;
   let selectedReferralSource: { id: string; partner_id: string; referral_source_id: string; contact_name: string } | null = null;
   try {
-    const resolved = await resolveSalesPartnerAndReferralSupabase({
+    const resolved = await getLeadReferralLinkage({
       partnerId: requestedPartner,
       referralSourceId: requestedSource
     });
@@ -409,7 +408,7 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
   const profile = await getCurrentProfile();
   let lead;
   try {
-    lead = await getSalesLeadForEnrollmentSupabase(canonicalLeadId);
+    lead = await getLeadEnrollmentSnapshot(canonicalLeadId);
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to load lead for enrollment." };
   }

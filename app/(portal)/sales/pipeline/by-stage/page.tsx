@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getSalesSummarySnapshotSupabase } from "@/lib/services/sales-crm-supabase";
+import { getLeadSummarySnapshot } from "@/lib/services/leads-read";
 
 function stageHref(stage: string) {
   if (stage === "Inquiry") return "/sales/pipeline/leads-table?stage=Inquiry";
@@ -17,7 +17,7 @@ function stageHref(stage: string) {
 
 export default async function PipelineByStagePage() {
   await requireModuleAccess("sales");
-  const { stageCounts } = await getSalesSummarySnapshotSupabase();
+  const { stageCounts } = await getLeadSummarySnapshot();
 
   return (
     <Card>

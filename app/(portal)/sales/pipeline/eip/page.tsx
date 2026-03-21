@@ -3,12 +3,12 @@ import Link from "next/link";
 import { EnrollMemberAction } from "@/components/sales/enroll-member-action";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getSalesLeadListSupabase } from "@/lib/services/sales-crm-supabase";
+import { getLeadList } from "@/lib/services/leads-read";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
 
 export default async function SalesEipPage() {
   await requireModuleAccess("sales");
-  const { rows } = await getSalesLeadListSupabase({ status: "open", stage: "Enrollment in Progress" });
+  const { rows } = await getLeadList({ status: "open", stage: "Enrollment in Progress" });
 
   return (
     <Card className="table-wrap">

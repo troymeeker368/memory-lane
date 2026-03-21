@@ -2,7 +2,7 @@ import { SalesEnrollmentPacketStandaloneAction } from "@/components/sales/sales-
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
-import { getSalesLeadListSupabase } from "@/lib/services/sales-crm-supabase";
+import { getLeadList } from "@/lib/services/leads-read";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,7 @@ export default async function SendEnrollmentPacketStandalonePage() {
   await requireModuleAccess("sales");
   const [pricingOverview, leadResult] = await Promise.all([
     getEnrollmentPricingOverview(),
-    getSalesLeadListSupabase({ status: "open", pageSize: 500 })
+    getLeadList({ status: "open", pageSize: 500 })
   ]);
   const leads = leadResult.rows.map((row) => ({
     id: String(row.id),
