@@ -154,68 +154,6 @@ type CreateDraftPofFromIntakeRpcRow = {
   was_existing: boolean;
 };
 
-function buildDraftPhysicianOrderFromIntakeFallback(input: {
-  physicianOrderId: string;
-  assessment: IntakeAssessmentForPofPrefill;
-  memberName: string;
-  memberDob: string | null;
-  sex: "M" | "F" | null;
-  now: string;
-  mapped: Awaited<ReturnType<Awaited<ReturnType<typeof loadIntakeToPofMapping>>["mapIntakeAssessmentToPofPrefill"]>>;
-  actor: { id: string; fullName: string; signoffName?: string | null };
-}) {
-  const providerName = clean(input.actor.signoffName) ?? input.actor.fullName;
-  return {
-    id: input.physicianOrderId,
-    memberId: input.assessment.member_id,
-    intakeAssessmentId: input.assessment.id,
-    memberNameSnapshot: input.memberName,
-    memberDobSnapshot: clean(input.memberDob),
-    sex: input.sex,
-    levelOfCare: null,
-    dnrSelected: input.mapped.dnrSelected,
-    vitalsBloodPressure: input.mapped.vitalsBloodPressure,
-    vitalsPulse: input.mapped.vitalsPulse,
-    vitalsOxygenSaturation: input.mapped.vitalsOxygenSaturation,
-    vitalsRespiration: input.mapped.vitalsRespiration,
-    diagnosisRows: [],
-    diagnoses: [],
-    allergyRows: input.mapped.allergyRows,
-    allergies: input.mapped.allergyRows
-      .map((row) => clean(row.allergyName))
-      .filter((value): value is string => value !== null),
-    medications: [],
-    standingOrders: POF_STANDING_ORDER_OPTIONS,
-    careInformation: {
-      ...defaultCareInformation(),
-      ...input.mapped.careInformation
-    },
-    operationalFlags: input.mapped.operationalFlags,
-    providerName,
-    providerSignature: providerName,
-    providerSignatureDate: null,
-    status: "Draft" as const,
-    providerSignatureStatus: "Pending" as const,
-    createdByUserId: input.actor.id,
-    createdByName: input.actor.fullName,
-    createdAt: input.now,
-    completedByUserId: null,
-    completedByName: null,
-    completedDate: null,
-    nextRenewalDueDate: null,
-    signedBy: null,
-    signedDate: null,
-    clinicalSyncStatus: "not_signed" as const,
-    clinicalSyncReady: false,
-    supersededAt: null,
-    supersededByPofId: null,
-    updatedByUserId: input.actor.id,
-    updatedByName: input.actor.fullName,
-    updatedAt: input.now,
-    enrollmentPacketPrefill: null
-  };
-}
-
 export type SignPhysicianOrderResult = {
   postSignStatus: "synced" | "queued";
   queueId: string;
@@ -699,18 +637,9 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
     console.error("[physician-orders] unable to persist post-commit draft POF reload alert", alertError);
   }
 
-  // The RPC is the canonical success boundary for draft creation. If the immediate reread
-  // misses, return a deterministic fallback snapshot rather than downgrading the intake.
-  return buildDraftPhysicianOrderFromIntakeFallback({
-    physicianOrderId: row.physician_order_id,
-    assessment: input.assessment,
-    memberName: member.display_name,
-    memberDob: clean(member.dob),
-    sex: sexPrefill,
-    now,
-    mapped,
-    actor: input.actor
-  });
+  throw new Error(
+    `Draft physician order ${row.physician_order_id} was created, but the canonical reload failed immediately afterward. Reopen the draft from the physician orders list after verifying the saved record.`
+  );
 }
 
 export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {

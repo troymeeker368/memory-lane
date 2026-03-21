@@ -36,7 +36,7 @@ test("dashboard member-name lookups use the shared MCC member list service", () 
   const dashboardPageSource = readWorkspaceFile("app/(portal)/dashboard/page.tsx");
 
   assert.equal(
-    dashboardPageSource.includes('import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";'),
+    dashboardPageSource.includes('import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-read";'),
     true
   );
   assert.equal(dashboardPageSource.includes('listMemberNameLookupSupabase({ status: "all" })'), true);

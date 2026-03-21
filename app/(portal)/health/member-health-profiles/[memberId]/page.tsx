@@ -27,7 +27,7 @@ import {
   MHP_TABS,
   type MhpTab,
   getMemberHealthProfileDetailSupabase
-} from "@/lib/services/member-health-profiles-supabase";
+} from "@/lib/services/member-health-profiles-read";
 import {
   MHP_AMBULATION_OPTIONS,
   MHP_BLADDER_CONTINENCE_OPTIONS,

@@ -19,7 +19,7 @@ import {
 import type {
   MemberAttendanceScheduleRow,
   MemberContactRow
-} from "@/lib/services/member-command-center-supabase";
+} from "@/lib/services/member-command-center-read";
 import type { TransportationManifestAdjustmentRow } from "@/lib/services/transportation-station-supabase";
 
 type Shift = "AM" | "PM";

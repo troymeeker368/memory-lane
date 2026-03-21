@@ -1,6 +1,6 @@
 import { CardTitle } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/utils";
-import type { getMemberCommandCenterDetailSupabase } from "@/lib/services/member-command-center-supabase";
+import type { getMemberCommandCenterDetailSupabase } from "@/lib/services/member-command-center-read";
 
 export type MemberCommandCenterDetail = NonNullable<Awaited<ReturnType<typeof getMemberCommandCenterDetailSupabase>>>;
 

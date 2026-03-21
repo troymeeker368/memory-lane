@@ -17,18 +17,20 @@ import {
   MEMBER_TRANSPORTATION_SERVICE_OPTIONS
 } from "@/lib/canonical";
 import {
+  getMemberSupabase,
+  listBillingScheduleTemplatesSupabase,
+  listMemberBillingSettingsSupabase,
+  listMembersSupabase
+} from "@/lib/services/member-command-center-read";
+import {
   addMemberAllergySupabase,
   deleteMemberAllergySupabase,
   deleteMemberContactSupabase,
   ensureMemberAttendanceScheduleSupabase,
   ensureMemberCommandCenterProfileSupabase,
-  getMemberSupabase,
-  listBillingScheduleTemplatesSupabase,
-  listMemberBillingSettingsSupabase,
-  listMembersSupabase,
   updateMemberAllergySupabase,
   upsertMemberContactSupabase
-} from "@/lib/services/member-command-center-supabase";
+} from "@/lib/services/member-command-center-write";
 import {
   deleteCommandCenterMemberFile,
   getMemberFileDownloadUrl,

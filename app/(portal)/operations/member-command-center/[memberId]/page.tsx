@@ -37,7 +37,7 @@ import {
   getAvailableLockerNumbersForMemberSupabase,
   getMemberCommandCenterDetailSupabase,
   listMemberBillingSettingsSupabase
-} from "@/lib/services/member-command-center-supabase";
+} from "@/lib/services/member-command-center-read";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import type { PhysicianOrderMemberHistoryRow } from "@/lib/services/physician-order-model";
 import type { PofRequestSummary } from "@/lib/services/pof-types";

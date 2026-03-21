@@ -12,7 +12,7 @@ import {
 } from "@/lib/services/operations-calendar";
 import { isMemberHoldActiveForDate } from "@/lib/services/expected-attendance";
 import { listMemberHolds } from "@/lib/services/holds-supabase";
-import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-read";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {

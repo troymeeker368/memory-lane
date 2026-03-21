@@ -9,7 +9,7 @@ import {
   ensureMemberAttendanceScheduleSupabase,
   type MemberAttendanceScheduleRow,
   updateMemberAttendanceScheduleSupabase
-} from "@/lib/services/member-command-center-supabase";
+} from "@/lib/services/member-command-center-write";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import {
   getScheduleChangeSupabase,

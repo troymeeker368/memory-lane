@@ -4,7 +4,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { firstSearchParam, parseEnumSearchParam, parsePositivePageParam } from "@/lib/search-params";
 import { getScheduledDayAbbreviations } from "@/lib/services/member-schedule-selectors";
-import { getMemberCommandCenterIndexSupabase } from "@/lib/services/member-command-center-supabase";
+import { getMemberCommandCenterIndexSupabase } from "@/lib/services/member-command-center-read";
 import { formatOptionalDate } from "@/lib/utils";
 
 function initials(name: string) {

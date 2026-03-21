@@ -6,8 +6,10 @@ import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import {
   listCenterBillingSettingsSupabase,
+} from "@/lib/services/member-command-center-read";
+import {
   upsertCenterBillingSettingSupabase
-} from "@/lib/services/member-command-center-supabase";
+} from "@/lib/services/member-command-center-write";
 import {
   CLOSURE_RULE_OBSERVED_WEEKEND_OPTIONS,
   CLOSURE_RULE_OCCURRENCE_OPTIONS,

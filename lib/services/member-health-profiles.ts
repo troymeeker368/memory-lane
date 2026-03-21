@@ -2,10 +2,12 @@ import {
   MHP_TABS,
   backfillMissingMemberHealthProfilesSupabase,
   ensureMemberHealthProfileSupabase,
-  getMemberHealthProfileDetailSupabase,
-  getMemberHealthProfileIndexSupabase,
   type MhpTab
 } from "@/lib/services/member-health-profiles-supabase";
+import {
+  getMemberHealthProfileDetailSupabase,
+  getMemberHealthProfileIndexSupabase
+} from "@/lib/services/member-health-profiles-read";
 import { mapCodeStatusToDnr } from "@/lib/services/intake-pof-shared";
 import { updateMemberHealthProfileByMemberIdSupabase } from "@/lib/services/member-health-profiles-write-supabase";
 import { createClient } from "@/lib/supabase/server";

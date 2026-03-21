@@ -10,7 +10,7 @@ import {
   loadExpectedAttendanceSupabaseContext,
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
-import { ensureMemberAttendanceScheduleSupabase } from "@/lib/services/member-command-center-supabase";
+import { ensureMemberAttendanceScheduleSupabase } from "@/lib/services/member-command-center-write";
 import {
   applyMakeupBalanceDeltaWithAuditSupabase,
   deleteAttendanceRecordSupabase,

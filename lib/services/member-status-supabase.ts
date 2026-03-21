@@ -1,4 +1,4 @@
-import { updateMemberSupabase } from "@/lib/services/member-command-center-supabase";
+import { updateMemberSupabase } from "@/lib/services/member-command-center-write";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export async function updateMemberStatusSupabase(input: {

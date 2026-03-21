@@ -10,7 +10,7 @@ import {
   getBillingMemberPayorLookups,
   getCustomInvoices
 } from "@/lib/services/billing-read";
-import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-read";
 
 type WorkspaceTab = "custom-invoice" | "prorated-enrollment" | "drafts-history";
 type CustomInvoiceRow = Awaited<ReturnType<typeof getCustomInvoices>>[number];

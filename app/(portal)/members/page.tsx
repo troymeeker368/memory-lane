@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMembersSupabase } from "@/lib/services/member-command-center-read";
 import { formatOptionalDate } from "@/lib/utils";
 
 export default async function MembersPage({

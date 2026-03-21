@@ -8,7 +8,7 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions/core";
-import { getTransportationAddRiderMemberOptionsSupabase } from "@/lib/services/member-command-center-supabase";
+import { getTransportationAddRiderMemberOptionsSupabase } from "@/lib/services/member-command-center-read";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import { getTransportationRunManifestSupabase } from "@/lib/services/transportation-run-manifest-supabase";

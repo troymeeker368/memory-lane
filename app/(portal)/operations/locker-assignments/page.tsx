@@ -8,7 +8,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { firstSearchParam, parseEnumSearchParam, parsePositivePageParam } from "@/lib/search-params";
 import { listLockerAssignmentHistorySupabase } from "@/lib/services/locker-assignments-supabase";
-import { listMembersSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMembersSupabase } from "@/lib/services/member-command-center-read";
 import { formatOptionalDate } from "@/lib/utils";
 
 const LockerAssignModalTrigger = dynamic(

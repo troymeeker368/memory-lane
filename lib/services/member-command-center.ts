@@ -2,11 +2,13 @@ import {
   backfillMissingMemberCommandCenterRowsSupabase,
   ensureMemberAttendanceScheduleSupabase,
   ensureMemberCommandCenterProfileSupabase,
+  updateMemberSupabase
+} from "@/lib/services/member-command-center-write";
+import {
   getAvailableLockerNumbersForMemberSupabase,
   getMemberCommandCenterDetailSupabase,
-  getMemberCommandCenterIndexSupabase,
-  updateMemberSupabase
-} from "@/lib/services/member-command-center-supabase";
+  getMemberCommandCenterIndexSupabase
+} from "@/lib/services/member-command-center-read";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";

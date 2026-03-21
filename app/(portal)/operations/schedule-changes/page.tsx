@@ -5,9 +5,11 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import {
-  listMemberAttendanceSchedulesForMemberIdsSupabase,
   listMemberNameLookupSupabase
-} from "@/lib/services/member-command-center-supabase";
+} from "@/lib/services/member-command-center-read";
+import {
+  listMemberAttendanceSchedulesForMemberIdsSupabase,
+} from "@/lib/services/member-command-center-write";
 import { listScheduleChangesSupabase } from "@/lib/services/schedule-changes-supabase";
 import { SCHEDULE_WEEKDAY_KEYS } from "@/lib/services/schedule-changes-shared";
 

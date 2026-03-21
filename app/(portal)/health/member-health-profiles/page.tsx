@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
 import { firstSearchParam, parseEnumSearchParam, parsePositivePageParam } from "@/lib/search-params";
-import { getMemberHealthProfileIndexSupabase } from "@/lib/services/member-health-profiles-supabase";
+import { getMemberHealthProfileIndexSupabase } from "@/lib/services/member-health-profiles-read";
 
 function getInitials(displayName: string) {
   const parts = displayName

@@ -1,4 +1,4 @@
-import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-read";
 import { createClient } from "@/lib/supabase/server";
 
 export type StaffLookupRow = {

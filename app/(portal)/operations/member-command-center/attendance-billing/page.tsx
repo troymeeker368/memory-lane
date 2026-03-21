@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
-import { listCenterBillingSettingsSupabase } from "@/lib/services/member-command-center-supabase";
+import { listCenterBillingSettingsSupabase } from "@/lib/services/member-command-center-read";
 
 import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 

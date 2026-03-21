@@ -15,7 +15,7 @@ import type { ScheduleWeekdayKey } from "@/lib/services/schedule-changes-supabas
 import {
   type MemberAttendanceScheduleRow,
   type MemberContactRow
-} from "@/lib/services/member-command-center-supabase";
+} from "@/lib/services/member-command-center-read";
 
 type Shift = "AM" | "PM";
 type TransportMode = "Bus Stop" | "Door to Door";

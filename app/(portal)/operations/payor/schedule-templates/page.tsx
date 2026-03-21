@@ -1,6 +1,6 @@
 import { Card, CardTitle } from "@/components/ui/card";
 import { listBillingScheduleTemplates } from "@/lib/services/billing-read";
-import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-supabase";
+import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-read";
 
 import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 
