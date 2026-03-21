@@ -1,4 +1,4 @@
-import type { PhysicianOrderForm } from "@/lib/services/physician-orders-supabase";
+import type { PhysicianOrderForm } from "@/lib/services/physician-order-model";
 import { buildPofDocumentSections } from "@/lib/services/pof-document-content";
 import { Card } from "@/components/ui/card";
 import { DocumentBrandHeader } from "@/components/documents/document-brand-header";

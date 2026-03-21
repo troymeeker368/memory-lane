@@ -3,7 +3,7 @@
 import { headers } from "next/headers";
 
 async function loadPublicPofSignatureService() {
-  return import("@/lib/services/pof-esign");
+  return import("@/lib/services/pof-esign-public");
 }
 
 function asString(formData: FormData, key: string) {

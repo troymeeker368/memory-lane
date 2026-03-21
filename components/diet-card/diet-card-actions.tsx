@@ -3,15 +3,7 @@
 import { useTransition } from "react";
 
 import { generateMemberDietCardPdfAction } from "@/app/(portal)/members/[memberId]/diet-card/actions";
-
-function triggerDownload(dataUrl: string, fileName: string) {
-  const anchor = document.createElement("a");
-  anchor.href = dataUrl;
-  anchor.download = fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-}
+import { triggerPdfDownload, triggerPdfPrint } from "@/components/documents/pdf-client";
 
 export function DietCardActions({ memberId }: { memberId: string }) {
   const [isPending, startTransition] = useTransition();
@@ -27,8 +19,8 @@ export function DietCardActions({ memberId }: { memberId: string }) {
           startTransition(async () => {
             const result = await generateMemberDietCardPdfAction({ memberId });
             if (!result?.ok) return;
-            triggerDownload(result.dataUrl, result.fileName);
-            window.print();
+            triggerPdfDownload(result.dataUrl, result.fileName);
+            triggerPdfPrint(result.dataUrl);
           })
         }
       >

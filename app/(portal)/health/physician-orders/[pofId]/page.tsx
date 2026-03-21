@@ -12,7 +12,7 @@ import { getConfiguredClinicalSenderEmail, listPofTimelineForPhysicianOrder } fr
 import {
   getPhysicianOrderById,
   getPhysicianOrdersForMember
-} from "@/lib/services/physician-orders-supabase";
+} from "@/lib/services/physician-orders-read";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {

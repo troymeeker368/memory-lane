@@ -34,10 +34,9 @@ import {
   POF_LEVEL_OF_CARE_OPTIONS,
   POF_NUTRITION_OPTIONS,
   POF_STANDING_ORDER_OPTIONS,
-  buildNewPhysicianOrderDraft,
-  getPhysicianOrderById,
-  listPhysicianOrderMemberLookup
-} from "@/lib/services/physician-orders-supabase";
+} from "@/lib/services/physician-order-config";
+import { buildNewPhysicianOrderDraft } from "@/lib/services/physician-orders-supabase";
+import { getPhysicianOrderById, listPhysicianOrderMemberLookup } from "@/lib/services/physician-orders-read";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {

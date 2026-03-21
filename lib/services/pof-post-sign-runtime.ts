@@ -1,9 +1,9 @@
 import "server-only";
 
 import {
-  getPhysicianOrderClinicalSyncState,
   processSignedPhysicianOrderPostSignSync
 } from "@/lib/services/physician-orders-supabase";
+import { getPhysicianOrderClinicalSyncState } from "@/lib/services/physician-orders-read";
 import {
   clean,
   createSignedStorageUrl,

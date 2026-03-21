@@ -110,10 +110,12 @@ async function main() {
 
   const {
     getConfiguredClinicalSenderEmail,
-    getPublicPofSigningContext,
-    sendNewPofSignatureRequest,
-    submitPublicPofSignature
+    sendNewPofSignatureRequest
   } = await import("../lib/services/pof-esign");
+  const {
+    getPublicPofSigningContext,
+    submitPublicPofSignature
+  } = await import("../lib/services/pof-esign-public");
   const { createSupabaseAdminClient } = await import("../lib/supabase/admin");
   const { toEasternDate } = await import("../lib/timezone");
 

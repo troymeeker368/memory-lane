@@ -21,7 +21,7 @@ import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { requireRoles } from "@/lib/auth";
 import { formatBillingPayorDisplayName, getBillingPayorContact } from "@/lib/services/billing-payor-contacts";
 import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans-read";
-import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-supabase";
+import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-read";
 import { getMemberProgressNoteSummary } from "@/lib/services/notes-read";
 import {
   MHP_TABS,

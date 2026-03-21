@@ -12,7 +12,7 @@ import {
   DOCUMENT_CENTER_NAME,
   DOCUMENT_CENTER_PHONE
 } from "@/lib/services/document-branding";
-import type { PhysicianOrderForm } from "@/lib/services/physician-orders-supabase";
+import type { PhysicianOrderForm } from "@/lib/services/physician-order-model";
 
 type SignaturePayload = {
   providerTypedName: string;

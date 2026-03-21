@@ -4,7 +4,7 @@ import { DocumentBrandHeader } from "@/components/documents/document-brand-heade
 import { PofDocumentRender } from "@/components/physician-orders/pof-document-render";
 import { PofPublicSignForm } from "@/components/physician-orders/pof-public-sign-form";
 import { Card, CardTitle } from "@/components/ui/card";
-import { getPublicPofSigningContext } from "@/lib/services/pof-esign";
+import { getPublicPofSigningContext } from "@/lib/services/pof-esign-public";
 import { formatDateTime } from "@/lib/utils";
 
 export default async function PublicPofSigningPage({

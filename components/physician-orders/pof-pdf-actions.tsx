@@ -3,29 +3,29 @@
 import { useState, useTransition } from "react";
 
 import { generatePhysicianOrderPdfAction } from "@/app/(portal)/health/physician-orders/actions";
-
-function triggerDownload(dataUrl: string, fileName: string) {
-  const anchor = document.createElement("a");
-  anchor.href = dataUrl;
-  anchor.download = fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-}
+import { triggerPdfDownload, triggerPdfPrint } from "@/components/documents/pdf-client";
 
 export function PhysicianOrderPdfActions({ pofId }: { pofId: string }) {
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string>("");
 
-  function downloadPdf() {
+  function runPdfAction(mode: "download" | "print") {
     setStatus("");
     startTransition(async () => {
-      const result = await generatePhysicianOrderPdfAction({ pofId });
+      const result = await generatePhysicianOrderPdfAction({
+        pofId,
+        persistToMemberFiles: mode === "download"
+      });
       if (!result.ok) {
         setStatus(`Error: ${result.error}`);
         return;
       }
-      triggerDownload(result.dataUrl, result.fileName);
+      if (mode === "print") {
+        triggerPdfPrint(result.dataUrl);
+        setStatus("Print dialog opened for the branded PDF.");
+        return;
+      }
+      triggerPdfDownload(result.dataUrl, result.fileName);
       setStatus("PDF downloaded and saved to member files.");
     });
   }
@@ -35,7 +35,7 @@ export function PhysicianOrderPdfActions({ pofId }: { pofId: string }) {
       <button
         type="button"
         className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white"
-        onClick={downloadPdf}
+        onClick={() => runPdfAction("download")}
         disabled={isPending}
       >
         {isPending ? "Generating..." : "Download PDF"}
@@ -43,7 +43,8 @@ export function PhysicianOrderPdfActions({ pofId }: { pofId: string }) {
       <button
         type="button"
         className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
-        onClick={() => window.print()}
+        onClick={() => runPdfAction("print")}
+        disabled={isPending}
       >
         Print
       </button>

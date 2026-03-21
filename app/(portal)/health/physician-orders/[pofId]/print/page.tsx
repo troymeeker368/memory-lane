@@ -6,7 +6,7 @@ import { PhysicianOrderPdfActions } from "@/components/physician-orders/pof-pdf-
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireRoles } from "@/lib/auth";
 import { PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
-import { getPhysicianOrderById } from "@/lib/services/physician-orders-supabase";
+import { getPhysicianOrderById } from "@/lib/services/physician-orders-read";
 import { toEasternISO } from "@/lib/timezone";
 import { formatDateTime } from "@/lib/utils";
 

@@ -1,7 +1,7 @@
 import type {
   PhysicianOrderForm,
   PhysicianOrderMedication
-} from "@/lib/services/physician-orders-supabase";
+} from "@/lib/services/physician-order-model";
 
 export type PofDocumentRow = {
   label: string;

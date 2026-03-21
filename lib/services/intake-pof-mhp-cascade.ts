@@ -5,12 +5,11 @@ import { calculateAssessmentTotal, getAssessmentTrack } from "@/lib/assessment";
 import { type IntakeAssessmentForPofPrefill } from "@/lib/services/intake-to-pof-mapping";
 import {
   createDraftPhysicianOrderFromAssessment,
-  getActivePhysicianOrderForMember,
-  getMemberHealthProfile,
   signPhysicianOrder,
   syncMemberHealthProfileFromSignedPhysicianOrder,
   updatePhysicianOrder
 } from "@/lib/services/physician-orders-supabase";
+import { getActivePhysicianOrderForMember, getMemberHealthProfile } from "@/lib/services/physician-orders-read";
 import { requireSignedIntakeAssessment } from "@/lib/services/intake-assessment-esign";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";

@@ -4,7 +4,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
 import { canCreatePhysicianOrdersModuleForRole, PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
-import { getPhysicianOrders } from "@/lib/services/physician-orders-supabase";
+import { getPhysicianOrders } from "@/lib/services/physician-orders-read";
 import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import { formatDate, formatDateTime } from "@/lib/utils";
 

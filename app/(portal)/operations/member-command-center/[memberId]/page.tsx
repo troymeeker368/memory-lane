@@ -281,7 +281,7 @@ export default async function MemberCommandCenterDetailPage({
       pofReadModule,
       userManagementModule
     ] = await Promise.all([
-      import("@/lib/services/physician-orders-supabase"),
+      import("@/lib/services/physician-orders-read"),
       import("@/lib/services/pof-read"),
       import("@/lib/services/user-management")
     ]);

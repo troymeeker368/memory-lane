@@ -15,9 +15,10 @@ import { buildIntakeAssessmentPdfDataUrl } from "@/lib/services/intake-assessmen
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { toEasternISO } from "@/lib/timezone";
 
-export async function generateAssessmentPdfAction(input: { assessmentId: string }) {
+export async function generateAssessmentPdfAction(input: { assessmentId: string; persistToMemberFiles?: boolean }) {
   const profile = await requireRoles(CLINICAL_DOCUMENTATION_ACCESS_ROLES);
   const assessmentId = String(input.assessmentId ?? "").trim();
+  const persistToMemberFiles = input.persistToMemberFiles !== false;
   if (!assessmentId) {
     return { ok: false, error: "Assessment is required." } as const;
   }
@@ -29,39 +30,50 @@ export async function generateAssessmentPdfAction(input: { assessmentId: string 
 
   try {
     const generated = await buildIntakeAssessmentPdfDataUrl(assessmentId);
-    const saved = await saveGeneratedMemberPdfToFiles({
-      memberId: detail.assessment.member_id,
-      memberName: detail.assessment.member_name,
-      documentLabel: "Intake Assessment",
-      documentSource: `Intake Assessment:${assessmentId}`,
-      category: "Assessment",
-      dataUrl: generated.dataUrl,
-      uploadedBy: {
-        id: profile.id,
-        name: profile.full_name
-      },
-      generatedAtIso: toEasternISO(),
-      replaceExistingByDocumentSource: true
-    });
+    let fileName = generated.fileName;
 
-    revalidatePath(`/health/assessment/${assessmentId}`);
-    revalidatePath(`/members/${detail.assessment.member_id}`);
-    revalidatePath(`/health/member-health-profiles/${detail.assessment.member_id}`);
-    revalidatePath(`/operations/member-command-center/${detail.assessment.member_id}`);
-    await resolveIntakePostSignFollowUpTask({
-      assessmentId,
-      taskType: "member_file_pdf_persistence",
-      actorUserId: profile.id,
-      actorName: profile.full_name,
-      resolutionNote: "Assessment PDF regenerated and saved to Member Files."
-    });
+    if (persistToMemberFiles) {
+      const saved = await saveGeneratedMemberPdfToFiles({
+        memberId: detail.assessment.member_id,
+        memberName: detail.assessment.member_name,
+        documentLabel: "Intake Assessment",
+        documentSource: `Intake Assessment:${assessmentId}`,
+        category: "Assessment",
+        dataUrl: generated.dataUrl,
+        uploadedBy: {
+          id: profile.id,
+          name: profile.full_name
+        },
+        generatedAtIso: toEasternISO(),
+        replaceExistingByDocumentSource: true
+      });
+
+      fileName = saved.fileName;
+      revalidatePath(`/health/assessment/${assessmentId}`);
+      revalidatePath(`/members/${detail.assessment.member_id}`);
+      revalidatePath(`/health/member-health-profiles/${detail.assessment.member_id}`);
+      revalidatePath(`/operations/member-command-center/${detail.assessment.member_id}`);
+      await resolveIntakePostSignFollowUpTask({
+        assessmentId,
+        taskType: "member_file_pdf_persistence",
+        actorUserId: profile.id,
+        actorName: profile.full_name,
+        resolutionNote: "Assessment PDF regenerated and saved to Member Files."
+      });
+    }
 
     return {
       ok: true,
-      fileName: saved.fileName,
+      fileName,
       dataUrl: generated.dataUrl
     } as const;
   } catch (error) {
+    if (!persistToMemberFiles) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unable to generate assessment PDF."
+      } as const;
+    }
     await queueIntakePostSignFollowUpTask({
       assessmentId,
       memberId: detail.assessment.member_id,

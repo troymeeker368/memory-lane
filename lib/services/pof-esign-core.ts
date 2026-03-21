@@ -8,7 +8,7 @@ import {
 } from "@/lib/services/member-files";
 import type {
   PhysicianOrderForm
-} from "@/lib/services/physician-orders-supabase";
+} from "@/lib/services/physician-order-model";
 import type { PofRequestStatus, PofRequestSummary } from "@/lib/services/pof-types";
 import { easternDateTimeLocalToISO } from "@/lib/timezone";
 import { toSendWorkflowDeliveryStatus } from "@/lib/services/send-workflow-state";

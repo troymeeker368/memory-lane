@@ -25,13 +25,15 @@ import {
 import { getManagedUserSignoffLabel } from "@/lib/services/user-management";
 import {
   buildPhysicianOrderPdfDataUrl,
-  savePhysicianOrderForm,
-  type PhysicianOrderAllergy,
-  type PhysicianOrderCareInformation,
-  type PhysicianOrderDiagnosis,
-  type PhysicianOrderMedication,
-  type PhysicianOrderOperationalFlags
+  savePhysicianOrderForm
 } from "@/lib/services/physician-orders-supabase";
+import type {
+  PhysicianOrderAllergy,
+  PhysicianOrderCareInformation,
+  PhysicianOrderDiagnosis,
+  PhysicianOrderMedication,
+  PhysicianOrderOperationalFlags
+} from "@/lib/services/physician-order-model";
 import { toEasternISO } from "@/lib/timezone";
 
 function asString(formData: FormData, key: string) {
@@ -570,9 +572,10 @@ export async function saveAndDispatchPofSignatureRequestFromEditorAction(formDat
   }
 }
 
-export async function generatePhysicianOrderPdfAction(input: { pofId: string }) {
+export async function generatePhysicianOrderPdfAction(input: { pofId: string; persistToMemberFiles?: boolean }) {
   const profile = await getCurrentProfile();
   const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
+  const persistToMemberFiles = input.persistToMemberFiles !== false;
   if (!canCreatePhysicianOrdersModuleForRole(profile.role)) {
     return { ok: false, error: "You do not have access to generate POF PDFs." } as const;
   }
@@ -582,16 +585,18 @@ export async function generatePhysicianOrderPdfAction(input: { pofId: string }) 
 
   try {
     const generated = await buildPhysicianOrderPdfDataUrl(pofId);
-    await savePofPdfToMemberFiles({
-      memberId: generated.form.memberId,
-      memberName: generated.form.memberNameSnapshot,
-      dataUrl: generated.dataUrl,
-      uploadedBy: {
-        id: profile.id,
-        name: actorDisplayName
-      }
-    });
-    revalidatePofRoutes(generated.form.memberId, generated.form.id);
+    if (persistToMemberFiles) {
+      await savePofPdfToMemberFiles({
+        memberId: generated.form.memberId,
+        memberName: generated.form.memberNameSnapshot,
+        dataUrl: generated.dataUrl,
+        uploadedBy: {
+          id: profile.id,
+          name: actorDisplayName
+        }
+      });
+      revalidatePofRoutes(generated.form.memberId, generated.form.id);
+    }
     return {
       ok: true,
       fileName: generated.fileName,
