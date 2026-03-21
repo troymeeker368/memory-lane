@@ -5,8 +5,8 @@ import { requireModuleAccess } from "@/lib/auth";
 import { formatPhoneDisplay } from "@/lib/phone";
 import {
   type SalesReferralSourceRow,
-  getSalesReferralSourceDirectoryPageSupabase
-} from "@/lib/services/sales-crm-supabase";
+  getReferralSourceDirectory
+} from "@/lib/services/sales-community-read";
 import { formatOptionalDate } from "@/lib/utils";
 
 function parsePage(raw: string | string[] | undefined) {
@@ -31,7 +31,7 @@ export default async function ReferralSourcesPage({
 
   const query = normalizeQuery(params.q);
   const requestedPage = parsePage(params.page);
-  const sourcePage = await getSalesReferralSourceDirectoryPageSupabase({
+  const sourcePage = await getReferralSourceDirectory({
     q: query || undefined,
     page: requestedPage,
     pageSize: 25

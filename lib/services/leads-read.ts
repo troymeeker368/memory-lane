@@ -11,7 +11,7 @@ import {
   type SalesLeadEnrollmentRow,
   type SalesPartnerRow,
   type SalesReferralSourceRow
-} from "@/lib/services/sales-crm-supabase";
+} from "@/lib/services/sales-crm-read-model";
 
 export type { SalesLeadEnrollmentRow, SalesPartnerRow, SalesReferralSourceRow };
 

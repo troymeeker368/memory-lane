@@ -6,9 +6,9 @@ import { formatPhoneDisplay } from "@/lib/phone";
 import {
   type SalesPartnerRow,
   type SalesReferralSourceRow,
-  getSalesPartnerDirectoryPageSupabase,
-  getSalesReferralSourcesForPartnerIdsSupabase
-} from "@/lib/services/sales-crm-supabase";
+  getCommunityPartnerDirectory,
+  getReferralSourcesForPartners
+} from "@/lib/services/sales-community-read";
 import { formatOptionalDate } from "@/lib/utils";
 
 function parsePage(raw: string | string[] | undefined) {
@@ -37,13 +37,13 @@ export default async function CommunityPartnerOrganizationsPage({
 
   const query = normalizeQuery(params.q);
   const requestedPage = parsePage(params.page);
-  const partnerPage = await getSalesPartnerDirectoryPageSupabase({
+  const partnerPage = await getCommunityPartnerDirectory({
     q: query || undefined,
     page: requestedPage,
     pageSize: 25
   });
   const pageRows = partnerPage.rows;
-  const referralSources = await getSalesReferralSourcesForPartnerIdsSupabase(pageRows.map((partner) => partner.id));
+  const referralSources = await getReferralSourcesForPartners(pageRows.map((partner) => partner.id));
 
   const sourcesByPartner = new Map<string, SalesReferralSourceRow[]>();
   referralSources.forEach((source) => {
