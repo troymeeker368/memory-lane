@@ -44,10 +44,7 @@ create unique index if not exists uniq_medication_orders_pof_medication
   on public.medication_orders (pof_medication_id);
 
 create unique index if not exists uniq_medication_orders_pof_source
-  on public.medication_orders (physician_order_id, source_medication_id)
-  where order_source = 'pof'
-    and physician_order_id is not null
-    and source_medication_id is not null;
+  on public.medication_orders (physician_order_id, source_medication_id);
 
 create table if not exists public.med_administration_logs (
   id uuid primary key default gen_random_uuid(),
@@ -436,7 +433,7 @@ begin
       v_now,
       v_now
     from source_rows
-    on conflict (physician_order_id, source_medication_id) where order_source = 'pof'
+    on conflict (physician_order_id, source_medication_id)
     do update
     set
       member_id = excluded.member_id,
@@ -679,7 +676,7 @@ begin
     followup_status := 'not_required';
   end if;
 
-  insert into public.med_administration_logs (
+  insert into public.med_administration_logs as logs (
     member_id,
     medication_order_id,
     admin_type,
@@ -722,9 +719,9 @@ begin
     v_now
   )
   returning
-    id,
-    member_id,
-    medication_order_id
+    logs.id,
+    logs.member_id,
+    logs.medication_order_id
   into
     log_id,
     member_id,
