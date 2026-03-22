@@ -215,6 +215,7 @@ export async function buildNewPhysicianOrderDraft(input: {
     signedBy: null,
     signedDate: null,
     clinicalSyncStatus: "not_signed",
+    clinicalSyncDetail: null,
     clinicalSyncReady: false,
     supersededAt: null,
     supersededByPofId: null,

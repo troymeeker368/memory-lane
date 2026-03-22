@@ -12,6 +12,7 @@ import {
 import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { MutationNotice } from "@/components/ui/mutation-notice";
 import type { PofRequestSummary } from "@/lib/services/pof-esign";
+import type { PhysicianOrderClinicalSyncDetail } from "@/lib/services/physician-order-clinical-sync";
 import { formatDateTime } from "@/lib/utils";
 
 export type PofWorkflowStatus = "draft" | "sent" | "opened" | "signed" | "expired" | "declined";
@@ -81,6 +82,7 @@ export function PofEsignWorkflowCard({
   defaultOptionalMessage,
   signedProviderName,
   signedAt,
+  clinicalSyncDetail,
   showProviderNameInput = true,
   saveAndDispatchAction
 }: {
@@ -94,6 +96,7 @@ export function PofEsignWorkflowCard({
   defaultOptionalMessage?: string;
   signedProviderName?: string | null;
   signedAt?: string | null;
+  clinicalSyncDetail?: PhysicianOrderClinicalSyncDetail | null;
   showProviderNameInput?: boolean;
   saveAndDispatchAction?: (formData: FormData) => Promise<{ ok: boolean; error?: string; pofId?: string; request?: PofRequestSummary | null }>;
 }) {
@@ -307,6 +310,27 @@ export function PofEsignWorkflowCard({
           <p>
             <span className="font-semibold">Signed Status:</span> signed
           </p>
+          {clinicalSyncDetail ? (
+            <div className={`mt-3 rounded-lg border p-3 ${clinicalSyncDetail.actionNeeded ? "border-amber-300 bg-amber-50 text-amber-900" : "border-slate-200 bg-white text-slate-800"}`}>
+              <p className="font-semibold">Clinical Sync: {clinicalSyncDetail.label}</p>
+              {clinicalSyncDetail.message ? <p className="mt-1 text-xs">{clinicalSyncDetail.message}</p> : null}
+              {clinicalSyncDetail.nextRetryAt ? (
+                <p className="mt-1 text-xs">
+                  <span className="font-semibold">Next Retry:</span> {formatDateTime(clinicalSyncDetail.nextRetryAt)}
+                </p>
+              ) : null}
+              {typeof clinicalSyncDetail.attemptCount === "number" ? (
+                <p className="mt-1 text-xs">
+                  <span className="font-semibold">Attempts:</span> {clinicalSyncDetail.attemptCount}
+                </p>
+              ) : null}
+              {clinicalSyncDetail.lastError ? (
+                <p className="mt-1 text-xs">
+                  <span className="font-semibold">Latest Error:</span> {clinicalSyncDetail.lastError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

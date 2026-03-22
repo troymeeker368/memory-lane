@@ -2,7 +2,10 @@ import {
   POF_ALLERGY_GROUP_OPTIONS,
   POF_LEVEL_OF_CARE_OPTIONS
 } from "@/lib/services/physician-order-config";
-import type { PhysicianOrderClinicalSyncStatus } from "@/lib/services/physician-order-clinical-sync";
+import type {
+  PhysicianOrderClinicalSyncDetail,
+  PhysicianOrderClinicalSyncStatus
+} from "@/lib/services/physician-order-clinical-sync";
 
 export type PhysicianOrderStatus = "Draft" | "Sent" | "Signed" | "Expired" | "Superseded";
 export type ProviderSignatureStatus = "Pending" | "Signed";
@@ -182,6 +185,7 @@ export interface PhysicianOrderForm {
   signedBy: string | null;
   signedDate: string | null;
   clinicalSyncStatus: PhysicianOrderClinicalSyncStatus;
+  clinicalSyncDetail: PhysicianOrderClinicalSyncDetail | null;
   clinicalSyncReady: boolean;
   supersededAt: string | null;
   supersededByPofId: string | null;
@@ -203,6 +207,7 @@ export interface PhysicianOrderIndexRow {
   renewalStatus: PhysicianOrderRenewalStatus;
   signedDate: string | null;
   clinicalSyncStatus: PhysicianOrderClinicalSyncStatus;
+  clinicalSyncDetail: PhysicianOrderClinicalSyncDetail | null;
   updatedAt: string;
 }
 
@@ -216,6 +221,7 @@ export interface PhysicianOrderMemberHistoryRow {
   nextRenewalDueDate: string | null;
   signedDate: string | null;
   clinicalSyncStatus: PhysicianOrderClinicalSyncStatus;
+  clinicalSyncDetail: PhysicianOrderClinicalSyncDetail | null;
   updatedByName: string | null;
   updatedAt: string;
 }

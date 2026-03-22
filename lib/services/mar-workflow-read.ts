@@ -177,17 +177,18 @@ export async function syncTodayMarSchedules(options?: { serviceRole?: boolean })
   );
 }
 
+export async function refreshMarWorkflowData(options?: { serviceRole?: boolean }) {
+  const serviceRole = options?.serviceRole ?? true;
+  await syncTodayMarSchedules({ serviceRole });
+  await syncActivePrnMedicationOrders({ serviceRole });
+}
+
 export async function getMarWorkflowSnapshot(options?: {
   serviceRole?: boolean;
   historyLimit?: number;
   prnLimit?: number;
-  reconcileToday?: boolean;
 }) {
   const serviceRole = options?.serviceRole ?? true;
-  if (options?.reconcileToday) {
-    await syncTodayMarSchedules({ serviceRole });
-  }
-  await syncActivePrnMedicationOrders({ serviceRole });
 
   const historyLimit = Math.max(10, Math.min(options?.historyLimit ?? 200, 500));
   const prnLimit = Math.max(10, Math.min(options?.prnLimit ?? 200, 500));

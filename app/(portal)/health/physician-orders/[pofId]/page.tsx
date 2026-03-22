@@ -142,6 +142,7 @@ export default async function PhysicianOrderDetailPage({
             defaultOptionalMessage={latestRequest?.optionalMessage ?? ""}
             signedProviderName={form.providerName}
             signedAt={latestRequest?.signedAt ?? null}
+            clinicalSyncDetail={form.clinicalSyncDetail}
             showProviderNameInput={false}
           />
         </div>

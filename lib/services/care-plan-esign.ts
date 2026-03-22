@@ -20,7 +20,8 @@ import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 const TOKEN_BYTE_LENGTH = 32;
 const PREPARE_CARE_PLAN_CAREGIVER_REQUEST_RPC = "rpc_prepare_care_plan_caregiver_request";
 const TRANSITION_CARE_PLAN_CAREGIVER_STATUS_RPC = "rpc_transition_care_plan_caregiver_status";
-const CARE_PLAN_CAREGIVER_DELIVERY_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
+const CARE_PLAN_CAREGIVER_REQUEST_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
+const CARE_PLAN_CAREGIVER_STATUS_TRANSITION_MIGRATION = "0108_care_plan_caregiver_status_compare_and_set.sql";
 
 export async function recordCarePlanAlertSafely(
   input: Parameters<typeof recordImmediateSystemAlert>[0],
@@ -185,7 +186,7 @@ async function prepareCarePlanCaregiverRequest(input: {
     const message = error instanceof Error ? error.message : "Unable to prepare care plan caregiver request.";
     if (message.includes(PREPARE_CARE_PLAN_CAREGIVER_REQUEST_RPC)) {
       throw new Error(
-        `Care plan caregiver request RPC is not available. Apply Supabase migration ${CARE_PLAN_CAREGIVER_DELIVERY_MIGRATION} and refresh PostgREST schema cache.`
+        `Care plan caregiver request RPC is not available. Apply Supabase migration ${CARE_PLAN_CAREGIVER_REQUEST_MIGRATION} and refresh PostgREST schema cache.`
       );
     }
     throw error;
@@ -200,6 +201,7 @@ export async function transitionCarePlanCaregiverStatus(input: {
   caregiverSentAt?: string | null;
   caregiverViewedAt?: string | null;
   caregiverSignatureError?: string | null;
+  expectedCurrentStatuses?: CaregiverSignatureStatus[] | null;
 }) {
   const admin = createSupabaseAdminClient();
   try {
@@ -211,13 +213,14 @@ export async function transitionCarePlanCaregiverStatus(input: {
       p_actor_name: input.actor?.fullName ?? null,
       p_caregiver_sent_at: input.caregiverSentAt ?? null,
       p_caregiver_viewed_at: input.caregiverViewedAt ?? null,
-      p_caregiver_signature_error: input.caregiverSignatureError ?? null
+      p_caregiver_signature_error: input.caregiverSignatureError ?? null,
+      p_expected_current_statuses: input.expectedCurrentStatuses ?? null
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to update care plan caregiver status.";
     if (message.includes(TRANSITION_CARE_PLAN_CAREGIVER_STATUS_RPC)) {
       throw new Error(
-        `Care plan caregiver status RPC is not available. Apply Supabase migration ${CARE_PLAN_CAREGIVER_DELIVERY_MIGRATION} and refresh PostgREST schema cache.`
+        `Care plan caregiver status RPC is not available. Apply Supabase migration ${CARE_PLAN_CAREGIVER_STATUS_TRANSITION_MIGRATION} and refresh PostgREST schema cache.`
       );
     }
     throw error;

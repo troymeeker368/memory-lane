@@ -13,12 +13,14 @@ import {
 import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { MutationNotice } from "@/components/ui/mutation-notice";
 import type { PofRequestSummary } from "@/lib/services/pof-esign";
+import type { PhysicianOrderClinicalSyncDetail } from "@/lib/services/physician-order-clinical-sync";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 type PhysicianOrderListRow = {
   id: string;
   status: string;
   clinicalSyncStatus: "not_signed" | "pending" | "queued" | "failed" | "synced";
+  clinicalSyncDetail: PhysicianOrderClinicalSyncDetail | null;
   providerName: string | null;
   completedDate: string | null;
   signedDate: string | null;
@@ -363,15 +365,28 @@ export function MemberCommandCenterPofSection({
                     </td>
                     <td>{row.status}</td>
                     <td>
-                      {row.clinicalSyncStatus === "synced"
-                        ? "Synced"
-                        : row.clinicalSyncStatus === "failed"
-                          ? "Failed"
-                          : row.clinicalSyncStatus === "queued"
-                            ? "Queued"
-                            : row.clinicalSyncStatus === "pending"
-                              ? "Pending"
-                              : "-"}
+                      <div className="space-y-1">
+                        <div>
+                          {row.clinicalSyncDetail?.label ??
+                            (row.clinicalSyncStatus === "synced"
+                              ? "Synced"
+                              : row.clinicalSyncStatus === "failed"
+                                ? "Failed"
+                                : row.clinicalSyncStatus === "queued"
+                                  ? "Queued"
+                                  : row.clinicalSyncStatus === "pending"
+                                    ? "Pending"
+                                    : "-")}
+                        </div>
+                        {row.clinicalSyncDetail?.message ? (
+                          <p className={`text-xs ${row.clinicalSyncDetail.actionNeeded ? "text-amber-800" : "text-muted"}`}>
+                            {row.clinicalSyncDetail.message}
+                          </p>
+                        ) : null}
+                        {row.clinicalSyncDetail?.nextRetryAt ? (
+                          <p className="text-xs text-muted">Next retry: {formatDateTime(row.clinicalSyncDetail.nextRetryAt)}</p>
+                        ) : null}
+                      </div>
                     </td>
                     <td>
                       <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${statusBadgeClass(eSignStatus)}`}>

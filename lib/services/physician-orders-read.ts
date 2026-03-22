@@ -9,6 +9,7 @@ import {
   PHYSICIAN_ORDER_WITH_MEMBER_SELECT
 } from "@/lib/services/physician-orders-selects";
 import {
+  buildPhysicianOrderClinicalSyncDetail,
   resolvePhysicianOrderClinicalSyncStatus,
   type PhysicianOrderClinicalSyncStatus
 } from "@/lib/services/physician-order-clinical-sync";
@@ -96,6 +97,13 @@ export async function getPhysicianOrders(filters?: {
     .map((row) => {
       const memberRelation = Array.isArray(row.members) ? row.members[0] ?? null : row.members;
       const status = toStatus(row.status);
+      const queueStatus = queueStatuses.get(String(row.id)) ?? null;
+      const clinicalSyncStatus = resolvePhysicianOrderClinicalSyncStatus({
+        status,
+        queueStatus: queueStatus?.status ?? null,
+        lastError: queueStatus?.lastError ?? null,
+        lastFailedStep: queueStatus?.lastFailedStep ?? null
+      });
       return {
         id: row.id,
         memberId: row.member_id,
@@ -107,11 +115,14 @@ export async function getPhysicianOrders(filters?: {
         nextRenewalDueDate: row.next_renewal_due_date,
         renewalStatus: resolveRenewalStatus(row.next_renewal_due_date),
         signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
-        clinicalSyncStatus: resolvePhysicianOrderClinicalSyncStatus({
+        clinicalSyncStatus,
+        clinicalSyncDetail: buildPhysicianOrderClinicalSyncDetail({
           status,
-          queueStatus: queueStatuses.get(String(row.id))?.status ?? null,
-          lastError: queueStatuses.get(String(row.id))?.lastError ?? null,
-          lastFailedStep: queueStatuses.get(String(row.id))?.lastFailedStep ?? null
+          queueStatus: queueStatus?.status ?? null,
+          attemptCount: queueStatus?.attemptCount ?? null,
+          nextRetryAt: queueStatus?.nextRetryAt ?? null,
+          lastError: queueStatus?.lastError ?? null,
+          lastFailedStep: queueStatus?.lastFailedStep ?? null
         }),
         updatedAt: row.updated_at
       };
@@ -148,6 +159,13 @@ export async function getPhysicianOrdersForMember(memberId: string): Promise<Phy
   );
   return rows.map((row) => {
     const status = toStatus(row.status);
+    const queueStatus = queueStatuses.get(String(row.id)) ?? null;
+    const clinicalSyncStatus = resolvePhysicianOrderClinicalSyncStatus({
+      status,
+      queueStatus: queueStatus?.status ?? null,
+      lastError: queueStatus?.lastError ?? null,
+      lastFailedStep: queueStatus?.lastFailedStep ?? null
+    });
     return {
       id: row.id,
       memberId: row.member_id,
@@ -157,11 +175,14 @@ export async function getPhysicianOrdersForMember(memberId: string): Promise<Phy
       completedDate: row.sent_at ? String(row.sent_at).slice(0, 10) : null,
       nextRenewalDueDate: row.next_renewal_due_date ?? null,
       signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
-      clinicalSyncStatus: resolvePhysicianOrderClinicalSyncStatus({
+      clinicalSyncStatus,
+      clinicalSyncDetail: buildPhysicianOrderClinicalSyncDetail({
         status,
-        queueStatus: queueStatuses.get(String(row.id))?.status ?? null,
-        lastError: queueStatuses.get(String(row.id))?.lastError ?? null,
-        lastFailedStep: queueStatuses.get(String(row.id))?.lastFailedStep ?? null
+        queueStatus: queueStatus?.status ?? null,
+        attemptCount: queueStatus?.attemptCount ?? null,
+        nextRetryAt: queueStatus?.nextRetryAt ?? null,
+        lastError: queueStatus?.lastError ?? null,
+        lastFailedStep: queueStatus?.lastFailedStep ?? null
       }),
       updatedByName: clean(row.updated_by_name),
       updatedAt: row.updated_at
@@ -186,13 +207,24 @@ export async function getActivePhysicianOrderForMember(memberId: string) {
   const queueStatuses = await loadPostSignQueueStatusByPofIds([String((data as { id: string }).id)], {
     serviceRole: true
   });
+  const queueStatus = queueStatuses.get(String((data as { id: string }).id)) ?? null;
+  const status = toStatus((data as { status: string }).status);
+  const clinicalSyncStatus = resolvePhysicianOrderClinicalSyncStatus({
+    status,
+    queueStatus: queueStatus?.status ?? null,
+    lastError: queueStatus?.lastError ?? null,
+    lastFailedStep: queueStatus?.lastFailedStep ?? null
+  });
   return rowToForm(
     data,
-    resolvePhysicianOrderClinicalSyncStatus({
-      status: toStatus((data as { status: string }).status),
-      queueStatus: queueStatuses.get(String((data as { id: string }).id))?.status ?? null,
-      lastError: queueStatuses.get(String((data as { id: string }).id))?.lastError ?? null,
-      lastFailedStep: queueStatuses.get(String((data as { id: string }).id))?.lastFailedStep ?? null
+    clinicalSyncStatus,
+    buildPhysicianOrderClinicalSyncDetail({
+      status,
+      queueStatus: queueStatus?.status ?? null,
+      attemptCount: queueStatus?.attemptCount ?? null,
+      nextRetryAt: queueStatus?.nextRetryAt ?? null,
+      lastError: queueStatus?.lastError ?? null,
+      lastFailedStep: queueStatus?.lastFailedStep ?? null
     })
   );
 }
@@ -217,13 +249,24 @@ export async function getPhysicianOrderById(
   const queueStatuses = await loadPostSignQueueStatusByPofIds([String((data as { id: string }).id)], {
     serviceRole: true
   });
+  const queueStatus = queueStatuses.get(String((data as { id: string }).id)) ?? null;
+  const status = toStatus((data as { status: string }).status);
+  const clinicalSyncStatus = resolvePhysicianOrderClinicalSyncStatus({
+    status,
+    queueStatus: queueStatus?.status ?? null,
+    lastError: queueStatus?.lastError ?? null,
+    lastFailedStep: queueStatus?.lastFailedStep ?? null
+  });
   return rowToForm(
     data,
-    resolvePhysicianOrderClinicalSyncStatus({
-      status: toStatus((data as { status: string }).status),
-      queueStatus: queueStatuses.get(String((data as { id: string }).id))?.status ?? null,
-      lastError: queueStatuses.get(String((data as { id: string }).id))?.lastError ?? null,
-      lastFailedStep: queueStatuses.get(String((data as { id: string }).id))?.lastFailedStep ?? null
+    clinicalSyncStatus,
+    buildPhysicianOrderClinicalSyncDetail({
+      status,
+      queueStatus: queueStatus?.status ?? null,
+      attemptCount: queueStatus?.attemptCount ?? null,
+      nextRetryAt: queueStatus?.nextRetryAt ?? null,
+      lastError: queueStatus?.lastError ?? null,
+      lastFailedStep: queueStatus?.lastFailedStep ?? null
     })
   );
 }

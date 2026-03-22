@@ -107,6 +107,22 @@ function isMissingRpcFunctionError(error: unknown, functionName: string) {
   );
 }
 
+function isCarePlanStatusTransitionRaceError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return message.includes("expected current status") || message.includes("cannot move backward");
+}
+
+async function loadCarePlanStatusById(carePlanId: string): Promise<CaregiverSignatureStatus | null> {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("care_plans")
+    .select("caregiver_signature_status")
+    .eq("id", carePlanId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return clean(data?.caregiver_signature_status) as CaregiverSignatureStatus | null;
+}
+
 async function loadCarePlanRowByToken(token: string): Promise<CarePlanTokenMatch | null> {
   const hashed = hashToken(token);
   const admin = createSupabaseAdminClient();
@@ -158,11 +174,19 @@ async function markExpiredIfNeeded(input: {
   }
 
   const now = toEasternISO();
-  await transitionCarePlanCaregiverStatus({
-    carePlanId: input.carePlanId,
-    status: "expired",
-    updatedAt: now
-  });
+  try {
+    await transitionCarePlanCaregiverStatus({
+      carePlanId: input.carePlanId,
+      status: "expired",
+      updatedAt: now,
+      expectedCurrentStatuses: ["ready_to_send", "send_failed", "sent", "viewed"]
+    });
+  } catch (error) {
+    if (!isCarePlanStatusTransitionRaceError(error)) throw error;
+    const refreshedStatus = await loadCarePlanStatusById(input.carePlanId);
+    if (refreshedStatus) return refreshedStatus;
+    return input.status;
+  }
   await createCarePlanSignatureEvent({
     carePlanId: input.carePlanId,
     memberId: input.memberId,
@@ -296,23 +320,28 @@ export async function getPublicCarePlanSigningContext(
 
   if (!detail.carePlan.caregiverViewedAt) {
     const now = toEasternISO();
-    await transitionCarePlanCaregiverStatus({
-      carePlanId: detail.carePlan.id,
-      status: "viewed",
-      updatedAt: now,
-      caregiverSentAt: detail.carePlan.caregiverSentAt,
-      caregiverViewedAt: now
-    });
-    await createCarePlanSignatureEvent({
-      carePlanId: detail.carePlan.id,
-      memberId: detail.carePlan.memberId,
-      eventType: "opened",
-      actorType: "caregiver",
-      actorEmail: detail.carePlan.caregiverEmail,
-      actorName: detail.carePlan.caregiverName,
-      actorIp: metadata?.ip ?? null,
-      actorUserAgent: metadata?.userAgent ?? null
-    });
+    try {
+      await transitionCarePlanCaregiverStatus({
+        carePlanId: detail.carePlan.id,
+        status: "viewed",
+        updatedAt: now,
+        caregiverSentAt: detail.carePlan.caregiverSentAt,
+        caregiverViewedAt: now,
+        expectedCurrentStatuses: ["sent"]
+      });
+      await createCarePlanSignatureEvent({
+        carePlanId: detail.carePlan.id,
+        memberId: detail.carePlan.memberId,
+        eventType: "opened",
+        actorType: "caregiver",
+        actorEmail: detail.carePlan.caregiverEmail,
+        actorName: detail.carePlan.caregiverName,
+        actorIp: metadata?.ip ?? null,
+        actorUserAgent: metadata?.userAgent ?? null
+      });
+    } catch (error) {
+      if (!isCarePlanStatusTransitionRaceError(error)) throw error;
+    }
   }
 
   const refreshed = await getCarePlanById(tokenRow.id, { serviceRole: true });

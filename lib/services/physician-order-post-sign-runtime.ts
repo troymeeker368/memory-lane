@@ -138,6 +138,8 @@ export async function loadPostSignQueueStatusByPofIds(
     string,
     {
       status: PhysicianOrderPostSignQueueStatus;
+      attemptCount: number | null;
+      nextRetryAt: string | null;
       lastError: string | null;
       lastFailedStep: string | null;
     }
@@ -147,7 +149,7 @@ export async function loadPostSignQueueStatusByPofIds(
   const supabase = await createClient({ serviceRole: options?.serviceRole ?? true });
   const { data, error } = await supabase
     .from("pof_post_sign_sync_queue")
-    .select("physician_order_id, status, last_error, last_failed_step")
+    .select("physician_order_id, status, attempt_count, next_retry_at, last_error, last_failed_step")
     .in("physician_order_id", normalizedIds);
   if (error) {
     if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
@@ -159,6 +161,8 @@ export async function loadPostSignQueueStatusByPofIds(
     if (!pofId) continue;
     statuses.set(pofId, {
       status: row.status === "completed" ? "completed" : "queued",
+      attemptCount: typeof row.attempt_count === "number" ? row.attempt_count : null,
+      nextRetryAt: clean(row.next_retry_at),
       lastError: clean(row.last_error),
       lastFailedStep: clean(row.last_failed_step)
     });

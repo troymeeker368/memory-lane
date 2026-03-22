@@ -31,3 +31,8 @@ export async function recordPrnOutcomeAction(raw: RecordPrnOutcomeInput) {
   const { recordPrnOutcomeAction } = await import("./actions-impl");
   return recordPrnOutcomeAction(raw);
 }
+
+export async function refreshMarWorkflowAction() {
+  const { refreshMarWorkflowAction } = await import("./actions-impl");
+  return refreshMarWorkflowAction();
+}

@@ -1,6 +1,8 @@
 import Link from "next/link";
 
+import { refreshMarWorkflowAction } from "@/app/(portal)/health/mar/administration-actions";
 import { MarMonthlyReportPanelShell, MarWorkflowBoardShell } from "@/components/forms/mar-shells";
+import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getMarMonthlyReportMemberOptions } from "@/lib/services/mar-monthly-report";
@@ -22,7 +24,7 @@ export default async function MarWorkflowPage() {
   let snapshot: Awaited<ReturnType<typeof getMarWorkflowSnapshot>> | null = null;
   let loadError: string | null = null;
   try {
-    snapshot = await getMarWorkflowSnapshot({ historyLimit: 250, prnLimit: 250, serviceRole: true, reconcileToday: true });
+    snapshot = await getMarWorkflowSnapshot({ historyLimit: 250, prnLimit: 250, serviceRole: true });
   } catch (error) {
     loadError = error instanceof Error ? error.message : "Unable to load MAR workflow.";
   }
@@ -42,6 +44,11 @@ export default async function MarWorkflowPage() {
           <Link href="/health/physician-orders" className="font-semibold text-brand">
             Open Physician Orders
           </Link>
+          <form action={refreshMarWorkflowAction}>
+            <Button type="submit" className="h-auto px-3 py-2 text-sm">
+              Refresh MAR schedules and PRN sync
+            </Button>
+          </form>
         </div>
       </Card>
 

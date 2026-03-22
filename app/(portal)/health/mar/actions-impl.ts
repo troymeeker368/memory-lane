@@ -8,6 +8,7 @@ import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { MAR_MONTHLY_REPORT_TYPES } from "@/lib/services/mar-monthly-report";
 import { buildMarMonthlyReportPdfDataUrl } from "@/lib/services/mar-monthly-report-pdf";
+import { refreshMarWorkflowData } from "@/lib/services/mar-workflow-read";
 import {
   createPrnOrderAndAdministration,
   documentPrnMarAdministration,
@@ -133,6 +134,13 @@ function revalidateMarRoutes(memberId: string) {
   revalidatePath("/health/mar");
   revalidatePath(`/health/member-health-profiles/${memberId}`);
   revalidatePath(`/members/${memberId}`);
+}
+
+export async function refreshMarWorkflowAction() {
+  await requireRoles(["admin", "manager", "director", "nurse"]);
+  await refreshMarWorkflowData({ serviceRole: true });
+  revalidatePath("/health");
+  revalidatePath("/health/mar");
 }
 
 export async function recordScheduledMarAdministrationAction(raw: z.infer<typeof scheduledAdministrationSchema>) {

@@ -3,7 +3,9 @@ import {
   POF_LEVEL_OF_CARE_OPTIONS
 } from "@/lib/services/physician-order-config";
 import {
+  buildPhysicianOrderClinicalSyncDetail,
   resolvePhysicianOrderClinicalSyncStatus,
+  type PhysicianOrderClinicalSyncDetail,
   type PhysicianOrderClinicalSyncStatus
 } from "@/lib/services/physician-order-clinical-sync";
 import {
@@ -63,6 +65,8 @@ export type RpcSyncSignedPofToMemberClinicalProfileRow = {
 export type PofPostSignQueueStatusRow = {
   physician_order_id: string;
   status: "queued" | "processing" | "completed";
+  attempt_count: number | null;
+  next_retry_at: string | null;
   last_error: string | null;
   last_failed_step: string | null;
 };
@@ -340,7 +344,11 @@ type PhysicianOrderDbRow = Record<string, unknown> & {
   updated_at?: string;
 };
 
-export function rowToForm(row: PhysicianOrderDbRow, clinicalSyncStatus?: PhysicianOrderClinicalSyncStatus): PhysicianOrderForm {
+export function rowToForm(
+  row: PhysicianOrderDbRow,
+  clinicalSyncStatus?: PhysicianOrderClinicalSyncStatus,
+  clinicalSyncDetail?: PhysicianOrderClinicalSyncDetail | null
+): PhysicianOrderForm {
   const diagnosisRows = sanitizeDiagnosisRows(parseJsonArray<PhysicianOrderDiagnosis>(row.diagnoses, []));
   const allergyRows = sanitizeAllergyRows(parseJsonArray<PhysicianOrderAllergy>(row.allergies, []));
   const medications = sanitizeMedicationRows(parseJsonArray<PhysicianOrderMedication>(row.medications, []));
@@ -352,6 +360,12 @@ export function rowToForm(row: PhysicianOrderDbRow, clinicalSyncStatus?: Physici
   const resolvedClinicalSyncStatus =
     clinicalSyncStatus ??
     resolvePhysicianOrderClinicalSyncStatus({
+      status,
+      queueStatus: null
+    });
+  const resolvedClinicalSyncDetail =
+    clinicalSyncDetail ??
+    buildPhysicianOrderClinicalSyncDetail({
       status,
       queueStatus: null
     });
@@ -397,6 +411,7 @@ export function rowToForm(row: PhysicianOrderDbRow, clinicalSyncStatus?: Physici
     signedBy: clean(row.signed_by_name) ?? clean(row.provider_name) ?? null,
     signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
     clinicalSyncStatus: resolvedClinicalSyncStatus,
+    clinicalSyncDetail: resolvedClinicalSyncDetail,
     clinicalSyncReady: resolvedClinicalSyncStatus === "synced",
     supersededAt: clean(row.superseded_at) ?? null,
     supersededByPofId: clean(row.superseded_by) ?? null,
