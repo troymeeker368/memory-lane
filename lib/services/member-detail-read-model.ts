@@ -1,4 +1,14 @@
 import { canAccessClinicalDocumentationForRole, normalizeRoleKey } from "@/lib/permissions";
+import {
+  MEMBER_DETAIL_ANCILLARY_SELECT,
+  MEMBER_DETAIL_ASSESSMENT_SELECT,
+  MEMBER_DETAIL_BLOOD_SUGAR_SELECT,
+  MEMBER_DETAIL_DAILY_ACTIVITY_SELECT,
+  MEMBER_DETAIL_PHOTO_SELECT,
+  MEMBER_DETAIL_SHOWER_SELECT,
+  MEMBER_DETAIL_TOILET_SELECT,
+  MEMBER_DETAIL_TRANSPORTATION_SELECT
+} from "@/lib/services/activity-detail-selects";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
@@ -128,9 +138,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("daily_activity_logs")
-          .select("id, activity_date, activity_1_level, activity_2_level, activity_3_level, activity_4_level, activity_5_level, staff_name", {
-            count: "exact"
-          })
+          .select(MEMBER_DETAIL_DAILY_ACTIVITY_SELECT, { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("created_at", { ascending: false }),
         "staff_user_id"
@@ -138,7 +146,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("toilet_logs")
-          .select("id, event_at, use_type, staff_name", { count: "exact" })
+          .select(MEMBER_DETAIL_TOILET_SELECT, { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("event_at", { ascending: false }),
         "staff_user_id"
@@ -146,7 +154,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("shower_logs")
-          .select("id, event_at, laundry, staff_name", { count: "exact" })
+          .select(MEMBER_DETAIL_SHOWER_SELECT, { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("event_at", { ascending: false }),
         "staff_user_id"
@@ -154,7 +162,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("transportation_logs")
-          .select("id, service_date, pick_up_drop_off, transport_type, staff_name", { count: "exact" })
+          .select(MEMBER_DETAIL_TRANSPORTATION_SELECT, { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("service_date", { ascending: false }),
         "staff_user_id"
@@ -162,7 +170,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("blood_sugar_logs")
-          .select("id, checked_at, reading_mg_dl, nurse_name", { count: "exact" })
+          .select(MEMBER_DETAIL_BLOOD_SUGAR_SELECT, { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("checked_at", { ascending: false }),
         "nurse_user_id"
@@ -170,7 +178,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("ancillary_charge_logs")
-          .select("id, service_date, category_name, amount_cents, staff_name", { count: "exact" })
+          .select(MEMBER_DETAIL_ANCILLARY_SELECT, { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("created_at", { ascending: false }),
         "staff_user_id"
@@ -179,9 +187,7 @@ export async function getMemberDetail(
         ? withOptionalStaffFilter(
             client
               .from("intake_assessments")
-              .select("id, assessment_date, total_score, recommended_track, completed_by, reviewer_name, admission_review_required, created_at", {
-                count: "exact"
-              })
+              .select(MEMBER_DETAIL_ASSESSMENT_SELECT, { count: "exact" })
               .eq("member_id", canonicalMemberId)
               .order("created_at", { ascending: false }),
             "completed_by_user_id"
@@ -190,7 +196,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("member_photo_uploads")
-          .select("id, uploaded_at, uploaded_by_name, photo_url", { count: "exact" })
+          .select(MEMBER_DETAIL_PHOTO_SELECT, { count: "exact" })
           .eq("member_id", canonicalMemberId)
           .order("uploaded_at", { ascending: false }),
         "uploaded_by"

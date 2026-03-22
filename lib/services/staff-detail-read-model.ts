@@ -1,5 +1,15 @@
 import "server-only";
 
+import {
+  STAFF_DETAIL_ANCILLARY_SELECT,
+  STAFF_DETAIL_ASSESSMENT_SELECT,
+  STAFF_DETAIL_DAILY_ACTIVITY_SELECT,
+  STAFF_DETAIL_LEAD_ACTIVITY_SELECT,
+  STAFF_DETAIL_PUNCH_SELECT,
+  STAFF_DETAIL_SHOWER_SELECT,
+  STAFF_DETAIL_TOILET_SELECT,
+  STAFF_DETAIL_TRANSPORTATION_SELECT
+} from "@/lib/services/activity-detail-selects";
 import { getCurrentPayPeriod, isDateInPayPeriod } from "@/lib/pay-period";
 import { createClient } from "@/lib/supabase/server";
 
@@ -49,14 +59,39 @@ export async function getStaffDetail(staffId: string) {
 
   const [punchesResult, dailyActivitiesResult, toiletsResult, showersResult, transportationResult, ancillaryResult, leadActivitiesResult, assessmentsResult] =
     await Promise.all([
-      supabase.from("time_punches").select("*").eq("staff_user_id", staffId).order("punch_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
-      supabase.from("daily_activity_logs").select("*").eq("staff_user_id", staffId).order("created_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
-      supabase.from("toilet_logs").select("*").eq("staff_user_id", staffId).order("event_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
-      supabase.from("shower_logs").select("*").eq("staff_user_id", staffId).order("event_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
-      supabase.from("transportation_logs").select("*").eq("staff_user_id", staffId).order("service_date", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
-      supabase.from("ancillary_charge_logs").select("*").eq("staff_user_id", staffId).order("created_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
-      supabase.from("lead_activities").select("*").eq("completed_by_user_id", staffId).order("activity_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
-      supabase.from("intake_assessments").select("*").eq("completed_by_user_id", staffId).order("created_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT)
+      supabase.from("time_punches").select(STAFF_DETAIL_PUNCH_SELECT).eq("staff_user_id", staffId).order("punch_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase
+        .from("daily_activity_logs")
+        .select(STAFF_DETAIL_DAILY_ACTIVITY_SELECT)
+        .eq("staff_user_id", staffId)
+        .order("created_at", { ascending: false })
+        .limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase.from("toilet_logs").select(STAFF_DETAIL_TOILET_SELECT).eq("staff_user_id", staffId).order("event_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase.from("shower_logs").select(STAFF_DETAIL_SHOWER_SELECT).eq("staff_user_id", staffId).order("event_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase
+        .from("transportation_logs")
+        .select(STAFF_DETAIL_TRANSPORTATION_SELECT)
+        .eq("staff_user_id", staffId)
+        .order("service_date", { ascending: false })
+        .limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase
+        .from("ancillary_charge_logs")
+        .select(STAFF_DETAIL_ANCILLARY_SELECT)
+        .eq("staff_user_id", staffId)
+        .order("created_at", { ascending: false })
+        .limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase
+        .from("lead_activities")
+        .select(STAFF_DETAIL_LEAD_ACTIVITY_SELECT)
+        .eq("completed_by_user_id", staffId)
+        .order("activity_at", { ascending: false })
+        .limit(STAFF_DETAIL_HISTORY_LIMIT),
+      supabase
+        .from("intake_assessments")
+        .select(STAFF_DETAIL_ASSESSMENT_SELECT)
+        .eq("completed_by_user_id", staffId)
+        .order("created_at", { ascending: false })
+        .limit(STAFF_DETAIL_HISTORY_LIMIT)
     ]);
 
   if (punchesResult.error) throw new Error(punchesResult.error.message);
