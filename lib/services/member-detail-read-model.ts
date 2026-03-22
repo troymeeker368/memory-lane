@@ -184,7 +184,7 @@ export async function getMemberDetail(
               })
               .eq("member_id", canonicalMemberId)
               .order("created_at", { ascending: false }),
-            "created_by_user_id"
+            "completed_by_user_id"
           ).limit(MEMBER_DETAIL_PREVIEW_LIMIT)
         : Promise.resolve(emptyRelationResult),
       withOptionalStaffFilter(

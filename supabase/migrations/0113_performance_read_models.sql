@@ -432,9 +432,6 @@ create index if not exists idx_transportation_logs_staff_user_id_service_date_de
 create index if not exists idx_intake_assessments_completed_by_user_id_created_at_desc
   on public.intake_assessments (completed_by_user_id, created_at desc);
 
-create index if not exists idx_intake_assessments_created_by_user_id_created_at_desc
-  on public.intake_assessments (created_by_user_id, created_at desc);
-
 create index if not exists idx_lead_activities_completed_by_user_id_activity_at_desc
   on public.lead_activities (completed_by_user_id, activity_at desc);
 

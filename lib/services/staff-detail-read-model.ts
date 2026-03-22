@@ -56,7 +56,7 @@ export async function getStaffDetail(staffId: string) {
       supabase.from("transportation_logs").select("*").eq("staff_user_id", staffId).order("service_date", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
       supabase.from("ancillary_charge_logs").select("*").eq("staff_user_id", staffId).order("created_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
       supabase.from("lead_activities").select("*").eq("completed_by_user_id", staffId).order("activity_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT),
-      supabase.from("intake_assessments").select("*").eq("created_by_user_id", staffId).order("created_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT)
+      supabase.from("intake_assessments").select("*").eq("completed_by_user_id", staffId).order("created_at", { ascending: false }).limit(STAFF_DETAIL_HISTORY_LIMIT)
     ]);
 
   if (punchesResult.error) throw new Error(punchesResult.error.message);
