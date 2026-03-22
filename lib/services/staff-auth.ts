@@ -96,7 +96,7 @@ async function getServiceClient() {
 
 async function getStaffAuthProfileById(staffUserId: string): Promise<StaffAuthProfile> {
   const supabase = await getServiceClient();
-  const { data, error } = await supabase.from("profiles").select("*").eq("id", staffUserId).maybeSingle();
+  const { data, error } = await supabase.from("profiles").select("id, role, active, is_active, status, password_set_at, last_sign_in_at").eq("id", staffUserId).maybeSingle();
 
   if (error) {
     throw new Error(`Unable to load staff auth profile ${staffUserId}: ${error.message}`);
@@ -112,7 +112,7 @@ async function getStaffAuthProfileByEmail(email: string): Promise<StaffAuthProfi
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return null;
   const supabase = await getServiceClient();
-  const { data, error } = await supabase.from("profiles").select("*").eq("email", normalizedEmail).maybeSingle();
+  const { data, error } = await supabase.from("profiles").select("id, role, active, is_active, status, password_set_at, last_sign_in_at").eq("email", normalizedEmail).maybeSingle();
   if (error) {
     throw new Error(`Unable to load staff auth profile by email: ${error.message}`);
   }
@@ -475,3 +475,4 @@ export async function setStaffLoginDisabled(input: {
     }
   });
 }
+

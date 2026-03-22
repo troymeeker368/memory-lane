@@ -89,7 +89,7 @@ export async function loadProgressNoteRows(input?: {
   const supabase = await createClient({ serviceRole: Boolean(input?.serviceRole) });
   let query = supabase
     .from("progress_notes")
-    .select("*")
+    .select("id, member_id, note_date, note_body, status, signed_at, signed_by_user_id, signed_by_name, signature_attested, signature_blob, signature_metadata, created_by_user_id, created_by_name, updated_by_user_id, updated_by_name, created_at, updated_at")
     .order("updated_at", { ascending: false });
 
   if (input?.noteId) query = query.eq("id", input.noteId);
@@ -423,3 +423,4 @@ export async function getProgressNoteReminderRows(memberIds: string[], options?:
 export function isProgressNoteActionableStatus(status: ProgressNoteComplianceStatus) {
   return status === "overdue" || status === "due" || status === "due_soon";
 }
+
