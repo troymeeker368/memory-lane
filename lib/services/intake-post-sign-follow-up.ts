@@ -50,9 +50,20 @@ export type IntakePostSignFollowUpTask = {
   updatedAt: string;
 };
 
+const INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT =
+  "id, assessment_id, member_id, task_type, status, title, message, action_url, attempt_count, last_error, last_attempted_at, resolved_at, created_at, updated_at";
+const INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_UNIQUE_CONSTRAINT = "intake_post_sign_follow_up_queue_assessment_task_unique";
+
 function clean(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function isUniqueConstraintError(error: { code?: string | null; message?: string | null; details?: string | null } | null) {
+  if (!error) return false;
+  if (error.code === "23505") return true;
+  const message = `${error.message ?? ""} ${error.details ?? ""}`;
+  return message.includes(INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_UNIQUE_CONSTRAINT);
 }
 
 function mapQueueRow(row: IntakePostSignFollowUpQueueRow): IntakePostSignFollowUpTask {
@@ -72,6 +83,21 @@ function mapQueueRow(row: IntakePostSignFollowUpQueueRow): IntakePostSignFollowU
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
+}
+
+async function loadIntakePostSignFollowUpQueueRow(input: {
+  assessmentId: string;
+  taskType: IntakePostSignFollowUpTaskType;
+}) {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("intake_post_sign_follow_up_queue")
+    .select(INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT)
+    .eq("assessment_id", input.assessmentId)
+    .eq("task_type", input.taskType)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as IntakePostSignFollowUpQueueRow | null) ?? null;
 }
 
 function buildTaskPresentation(taskType: IntakePostSignFollowUpTaskType, assessmentId: string) {
@@ -101,7 +127,7 @@ export async function listIntakePostSignFollowUpTasks(input: {
   const admin = createSupabaseAdminClient();
   let query = admin
     .from("intake_post_sign_follow_up_queue")
-    .select("*")
+    .select(INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT)
     .eq("assessment_id", input.assessmentId)
     .order("created_at", { ascending: true });
 
@@ -128,16 +154,7 @@ export async function queueIntakePostSignFollowUpTask(input: {
   const actorName = clean(input.actorName);
   const errorMessage = clean(input.errorMessage) ?? "Unknown follow-up failure.";
   const presentation = buildTaskPresentation(input.taskType, input.assessmentId);
-
-  const { data: existing, error: existingError } = await admin
-    .from("intake_post_sign_follow_up_queue")
-    .select("*")
-    .eq("assessment_id", input.assessmentId)
-    .eq("task_type", input.taskType)
-    .maybeSingle();
-  if (existingError) throw new Error(existingError.message);
-
-  const attemptCount = Math.max(0, Number((existing as { attempt_count?: number } | null)?.attempt_count ?? 0)) + 1;
+  let attemptCount = 1;
 
   const rowPatch = {
     member_id: input.memberId,
@@ -156,30 +173,48 @@ export async function queueIntakePostSignFollowUpTask(input: {
   };
 
   let savedRow: IntakePostSignFollowUpQueueRow | null = null;
-  if (existing) {
+  const { data: insertedRow, error: insertError } = await admin
+    .from("intake_post_sign_follow_up_queue")
+    .insert({
+      assessment_id: input.assessmentId,
+      created_by_user_id: actorUserId,
+      created_by_name: actorName,
+      created_at: now,
+      ...rowPatch
+    })
+    .select(INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT)
+    .maybeSingle();
+
+  if (!insertError) {
+    savedRow = (insertedRow as IntakePostSignFollowUpQueueRow | null) ?? null;
+  } else if (isUniqueConstraintError(insertError)) {
+    const existing = await loadIntakePostSignFollowUpQueueRow({
+      assessmentId: input.assessmentId,
+      taskType: input.taskType
+    });
+    if (!existing) {
+      throw new Error(
+        "Intake post-sign follow-up queue conflict was detected, but the canonical queue row could not be reloaded."
+      );
+    }
+
+    attemptCount = Math.max(0, Number(existing.attempt_count ?? 0)) + 1;
     const { data, error } = await admin
       .from("intake_post_sign_follow_up_queue")
-      .update(rowPatch)
-      .eq("id", String((existing as { id?: string }).id))
-      .select("*")
+      .update({
+        ...rowPatch,
+        attempt_count: attemptCount
+      })
+      .eq("id", existing.id)
+      .select(INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT)
       .maybeSingle();
     if (error) throw new Error(error.message);
     savedRow = (data as IntakePostSignFollowUpQueueRow | null) ?? null;
   } else {
-    const { data, error } = await admin
-      .from("intake_post_sign_follow_up_queue")
-      .insert({
-        assessment_id: input.assessmentId,
-        created_by_user_id: actorUserId,
-        created_by_name: actorName,
-        created_at: now,
-        ...rowPatch
-      })
-      .select("*")
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    savedRow = (data as IntakePostSignFollowUpQueueRow | null) ?? null;
+    throw new Error(insertError.message);
   }
+
+  attemptCount = Math.max(0, Number(savedRow?.attempt_count ?? attemptCount));
 
   await recordWorkflowEvent({
     eventType: "intake_post_sign_follow_up_queued",
@@ -255,15 +290,14 @@ export async function resolveIntakePostSignFollowUpTask(input: {
   const actorUserId = clean(input.actorUserId);
   const actorName = clean(input.actorName);
   const resolutionNote = clean(input.resolutionNote);
-
-  const { data: existing, error: existingError } = await admin
-    .from("intake_post_sign_follow_up_queue")
-    .select("*")
-    .eq("assessment_id", input.assessmentId)
-    .eq("task_type", input.taskType)
-    .maybeSingle();
-  if (existingError) throw new Error(existingError.message);
+  const existing = await loadIntakePostSignFollowUpQueueRow({
+    assessmentId: input.assessmentId,
+    taskType: input.taskType
+  });
   if (!existing) return null;
+  if (existing.status === "completed") {
+    return mapQueueRow(existing);
+  }
 
   const { data: saved, error: savedError } = await admin
     .from("intake_post_sign_follow_up_queue")
@@ -275,12 +309,12 @@ export async function resolveIntakePostSignFollowUpTask(input: {
       updated_by_name: actorName,
       updated_at: now
     })
-    .eq("id", String((existing as { id?: string }).id))
-    .select("*")
+    .eq("id", existing.id)
+    .select(INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT)
     .maybeSingle();
   if (savedError) throw new Error(savedError.message);
 
-  const memberId = clean(String((existing as { member_id?: string }).member_id ?? ""));
+  const memberId = clean(existing.member_id);
   await recordWorkflowEvent({
     eventType: "intake_post_sign_follow_up_completed",
     entityType: "intake_assessment",

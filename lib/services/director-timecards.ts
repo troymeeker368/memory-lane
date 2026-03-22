@@ -1,7 +1,7 @@
 import { getCurrentPayPeriod } from "@/lib/pay-period";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
-import { easternDateTimeLocalToISO, toEasternISO } from "@/lib/timezone";
+import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
 import type { Database } from "@/types/supabase";
 
@@ -32,70 +32,6 @@ function addDays(dateOnly: string, days: number) {
 
 function roundHours(value: number) {
   return Number(value.toFixed(2));
-}
-
-function csvEscape(value: string | number | null | undefined) {
-  const text = String(value ?? "");
-  if (!text.includes(",") && !text.includes("\"") && !text.includes("\n")) return text;
-  return `"${text.replace(/"/g, "\"\"")}"`;
-}
-
-function payrollCsv(rows: Array<{
-  employee_name: string;
-  pay_period_label: string;
-  work_date: string;
-  first_in: string | null;
-  last_out: string | null;
-  raw_hours: number;
-  meal_deduction_hours: number;
-  worked_hours: number;
-  pto_hours: number;
-  overtime_hours: number;
-  total_paid_hours: number;
-  status: string;
-  approved_by: string | null;
-  approved_at: string | null;
-}>) {
-  const header = [
-    "employee_name",
-    "pay_period_label",
-    "work_date",
-    "first_in",
-    "last_out",
-    "raw_hours",
-    "meal_deduction_hours",
-    "worked_hours",
-    "pto_hours",
-    "overtime_hours",
-    "total_paid_hours",
-    "status",
-    "approved_by",
-    "approved_at"
-  ];
-  const lines = [header.join(",")];
-  rows.forEach((row) => {
-    lines.push(
-      [
-        row.employee_name,
-        row.pay_period_label,
-        row.work_date,
-        row.first_in ?? "",
-        row.last_out ?? "",
-        row.raw_hours.toFixed(2),
-        row.meal_deduction_hours.toFixed(2),
-        row.worked_hours.toFixed(2),
-        row.pto_hours.toFixed(2),
-        row.overtime_hours.toFixed(2),
-        row.total_paid_hours.toFixed(2),
-        row.status,
-        row.approved_by ?? "",
-        row.approved_at ?? ""
-      ]
-        .map(csvEscape)
-        .join(",")
-    );
-  });
-  return lines.join("\n");
 }
 
 async function getSupabasePeriodById(payPeriodId: string) {
@@ -167,9 +103,11 @@ export async function getDirectorTimecardsWorkspace(filters?: {
   const supabase = await createClient();
   const payPeriods = await ensurePayPeriodsExist();
   const current = getCurrentPayPeriod();
+  const today = toEasternDate();
   const selectedPayPeriod =
     payPeriods.find((row) => row.id === filters?.payPeriodId) ??
     payPeriods.find((row) => row.start_date === current.startDate && row.end_date === current.endDate) ??
+    payPeriods.find((row) => row.start_date <= today && row.end_date >= today) ??
     payPeriods[0];
 
   if (!selectedPayPeriod) throw new Error("No pay periods available.");
@@ -283,34 +221,6 @@ export async function getDirectorTimecardsWorkspace(filters?: {
           : "approved"
   }));
 
-  const exportRows = dailyTimecards
-    .sort((left, right) =>
-      left.employee_name === right.employee_name
-        ? left.work_date > right.work_date
-          ? 1
-          : -1
-        : left.employee_name > right.employee_name
-          ? 1
-          : -1
-    )
-    .map((row) => ({
-      employee_name: row.employee_name,
-      pay_period_label: selectedPayPeriod.label,
-      work_date: row.work_date,
-      first_in: row.first_in,
-      last_out: row.last_out,
-      raw_hours: Number(row.raw_hours ?? 0),
-      meal_deduction_hours: Number(row.meal_deduction_hours ?? 0),
-      worked_hours: Number(row.worked_hours ?? 0),
-      pto_hours: Number(row.pto_hours ?? 0),
-      overtime_hours: Number(row.overtime_hours ?? 0),
-      total_paid_hours: Number(row.total_paid_hours ?? 0),
-      status: row.status,
-      approved_by: row.approved_by,
-      approved_at: row.approved_at
-    }));
-  const blocked = exportRows.filter((row) => row.status !== "approved");
-
   return {
     availableEmployees: ((employeesData ?? []) as ActiveEmployeeRow[]).map((row) => ({
       id: row.id,
@@ -323,20 +233,7 @@ export async function getDirectorTimecardsWorkspace(filters?: {
     forgottenPunchRequests,
     ptoEntries,
     ptoTotalsByEmployee,
-    payPeriodSummary,
-    payrollExport: {
-      ok: blocked.length === 0,
-      error:
-        blocked.length === 0
-          ? null
-          : `${blocked.length} day(s) still need final approval before payroll export.`,
-      fileName: `payroll-export-${selectedPayPeriod.start_date}.csv`,
-      rows: exportRows,
-      csvDataUrl:
-        blocked.length === 0
-          ? `data:text/csv;charset=utf-8,${encodeURIComponent(payrollCsv(exportRows))}`
-          : null
-    }
+    payPeriodSummary
   };
 }
 

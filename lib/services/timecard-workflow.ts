@@ -122,21 +122,41 @@ export function calculateDailyTimecard(input: DailyTimecardCalculationInput): Da
 
 export function allocatePayPeriodOvertime(
   rows: OvertimeAllocationInputRow[],
-  options?: { countPtoTowardOvertime?: boolean; thresholdHours?: number }
+  options?: {
+    countPtoTowardOvertime?: boolean;
+    thresholdHours?: number;
+    payPeriodStartDate?: string;
+  }
 ) {
   const threshold = options?.thresholdHours ?? OVERTIME_THRESHOLD_HOURS;
   const countPto = options?.countPtoTowardOvertime ?? COUNT_PTO_TOWARD_OVERTIME;
-  const orderedRows = [...rows].sort((left, right) => (left.workDate === right.workDate ? (left.id > right.id ? 1 : -1) : left.workDate > right.workDate ? 1 : -1));
+  const orderedRows = [...rows].sort((left, right) =>
+    left.workDate === right.workDate ? (left.id > right.id ? 1 : -1) : left.workDate > right.workDate ? 1 : -1
+  );
   const byId = new Map<string, number>();
-  let runningEligibleHours = 0;
+  const payPeriodStartDate = options?.payPeriodStartDate ?? orderedRows[0]?.workDate ?? null;
+  const runningEligibleByWeek = new Map<1 | 2, number>([
+    [1, 0],
+    [2, 0]
+  ]);
 
   orderedRows.forEach((row) => {
+    const dayOffset =
+      payPeriodStartDate == null
+        ? 0
+        : Math.floor(
+            (Date.parse(`${row.workDate}T00:00:00.000Z`) -
+              Date.parse(`${payPeriodStartDate}T00:00:00.000Z`)) /
+              86400000
+          );
+    const weekIndex: 1 | 2 = dayOffset >= 7 ? 2 : 1;
     const eligibleHours = row.workedHours + (countPto ? row.ptoHours : 0);
+    const runningEligibleHours = runningEligibleByWeek.get(weekIndex) ?? 0;
     const regularRemaining = Math.max(0, threshold - runningEligibleHours);
     const overtimeEligible = Math.max(0, eligibleHours - regularRemaining);
     const overtimeHours = countPto ? Math.max(0, Math.min(overtimeEligible, row.workedHours)) : overtimeEligible;
     byId.set(row.id, roundHours(overtimeHours));
-    runningEligibleHours += eligibleHours;
+    runningEligibleByWeek.set(weekIndex, roundHours(runningEligibleHours + eligibleHours));
   });
 
   return byId;

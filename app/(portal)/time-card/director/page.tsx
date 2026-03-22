@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
-import { normalizeRoleKey } from "@/lib/permissions";
+import { getDirectorPayrollExportWorkspace } from "@/lib/payroll/payroll-export";
 import { getDirectorTimecardsWorkspace } from "@/lib/services/director-timecards";
 
 import type { DirectorTabKey } from "@/app/(portal)/time-card/director/director-timecards-shared";
@@ -23,12 +23,14 @@ function firstString(value: string | string[] | undefined) {
 async function renderActiveTab(input: {
   activeTab: DirectorTabKey;
   workspace: Awaited<ReturnType<typeof getDirectorTimecardsWorkspace>>;
+  payrollWorkspace: Awaited<ReturnType<typeof getDirectorPayrollExportWorkspace>> | null;
   pendingHref: string;
   forgottenHref: string;
   ptoHref: string;
-  exportHref: string;
+  printHref: string;
+  downloadHref: string;
   employeeId: string | null;
-  canLockPayPeriod: boolean;
+  overridePayPeriodStart: string | null;
 }) {
   if (input.activeTab === "pending") {
     const { PendingTab } = await import("@/app/(portal)/time-card/director/pending-tab");
@@ -52,12 +54,16 @@ async function renderActiveTab(input: {
   }
 
   const { ExportTab } = await import("@/app/(portal)/time-card/director/export-tab");
+  if (!input.payrollWorkspace) {
+    throw new Error("Payroll export workspace is required for export tab rendering.");
+  }
   return (
     <ExportTab
-      workspace={input.workspace}
-      exportHref={input.exportHref}
+      workspace={input.payrollWorkspace}
+      printHref={input.printHref}
+      downloadHref={input.downloadHref}
       employeeId={input.employeeId}
-      canLockPayPeriod={input.canLockPayPeriod}
+      overridePayPeriodStart={input.overridePayPeriodStart}
     />
   );
 }
@@ -67,18 +73,17 @@ export default async function DirectorTimecardsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const profile = await requireRoles(["admin", "director", "manager"]);
-  const role = normalizeRoleKey(profile.role);
+  await requireRoles(["admin", "director", "manager"]);
   const query = await searchParams;
   const tab = (firstString(query.tab) ?? "pending") as DirectorTabKey;
   const activeTab = TABS.some((item) => item.key === tab) ? tab : "pending";
   const payPeriodId = firstString(query.payPeriodId) ?? null;
+  const overridePayPeriodStart = firstString(query.overridePayPeriodStart) ?? null;
   const employeeId = firstString(query.employeeId) ?? null;
   const status = firstString(query.status) ?? "all";
   const exceptionOnly = firstString(query.exceptionOnly) === "1";
   const successMessage = firstString(query.success);
   const errorMessage = firstString(query.error);
-  const canLockPayPeriod = role === "admin" || role === "director";
 
   const workspace = await getDirectorTimecardsWorkspace({
     payPeriodId,
@@ -86,26 +91,44 @@ export default async function DirectorTimecardsPage({
     status,
     exceptionOnly
   });
+  const payrollWorkspace =
+    activeTab === "export"
+      ? await getDirectorPayrollExportWorkspace({
+          employeeId,
+          overridePayPeriodStart
+        })
+      : null;
 
   const buildTabHref = (tabKey: DirectorTabKey) => {
     const params = new URLSearchParams();
     params.set("tab", tabKey);
     params.set("payPeriodId", workspace.selectedPayPeriod.id);
     if (employeeId) params.set("employeeId", employeeId);
+    if (overridePayPeriodStart) params.set("overridePayPeriodStart", overridePayPeriodStart);
     if (status && status !== "all") params.set("status", status);
     if (exceptionOnly) params.set("exceptionOnly", "1");
     return `/time-card/director?${params.toString()}`;
   };
 
+  const payrollPeriodStart = payrollWorkspace?.payPeriod.startDate ?? overridePayPeriodStart;
+  const payrollParams = new URLSearchParams();
+  if (employeeId) payrollParams.set("employeeId", employeeId);
+  if (payrollPeriodStart) payrollParams.set("overridePayPeriodStart", payrollPeriodStart);
+  const payrollQuery = payrollParams.toString();
+  const printHref = `/time-card/director/payroll-print${payrollQuery ? `?${payrollQuery}` : ""}`;
+  const downloadHref = `/time-card/director/payroll-export${payrollQuery ? `?${payrollQuery}` : ""}`;
+
   const activeTabContent = await renderActiveTab({
     activeTab,
     workspace,
+    payrollWorkspace,
     pendingHref: buildTabHref("pending"),
     forgottenHref: buildTabHref("forgotten"),
     ptoHref: buildTabHref("pto"),
-    exportHref: buildTabHref("export"),
+    printHref,
+    downloadHref,
     employeeId,
-    canLockPayPeriod
+    overridePayPeriodStart: payrollPeriodStart ?? null
   });
 
   return (

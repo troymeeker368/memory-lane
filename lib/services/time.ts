@@ -229,6 +229,7 @@ export async function getTimeCardOverview(userId: string) {
 
 export async function getManagerTimeReview() {
   const period = getCurrentPayPeriod();
+  const today = toEasternDate();
   const supabase = await createClient();
   const { data: payPeriodsData, error: payPeriodsError } = await supabase
     .from("pay_periods")
@@ -238,6 +239,7 @@ export async function getManagerTimeReview() {
 
   const selectedPayPeriod =
     (payPeriodsData ?? []).find((row) => row.start_date === period.startDate && row.end_date === period.endDate) ??
+    (payPeriodsData ?? []).find((row) => row.start_date <= today && row.end_date >= today) ??
     (payPeriodsData ?? [])[0];
   if (!selectedPayPeriod) return [];
 

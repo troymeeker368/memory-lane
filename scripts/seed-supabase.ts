@@ -2483,9 +2483,8 @@ function buildDerivedRows(db: SeededDb, staffMap: Map<string, string>) {
       }
     }
     const roundedRaw = Number(rawHours.toFixed(2));
-    const mealDeduction = roundedRaw >= 6 ? 0.5 : 0;
+    const mealDeduction = roundedRaw > 8 ? 0.5 : 0;
     const workedHours = Number(Math.max(0, roundedRaw - mealDeduction).toFixed(2));
-    const overtimeHours = Number(Math.max(0, workedHours - 8).toFixed(2));
     const hasException = !firstIn || !lastOut;
     const status: "pending" | "needs_review" | "approved" | "corrected" = hasException
       ? "needs_review"
@@ -2504,7 +2503,7 @@ function buildDerivedRows(db: SeededDb, staffMap: Map<string, string>) {
       meal_deduction_hours: mealDeduction,
       worked_hours: workedHours,
       pto_hours: 0,
-      overtime_hours: overtimeHours,
+      overtime_hours: 0,
       total_paid_hours: workedHours,
       status,
       director_note: hasException ? "Missing punch pair detected during seed translation." : null,
@@ -2554,6 +2553,45 @@ function buildDerivedRows(db: SeededDb, staffMap: Map<string, string>) {
     const ptoHours = ptoByEmployeeDate.get(`${row.employee_id}:${row.work_date}`) ?? 0;
     row.pto_hours = Number(ptoHours.toFixed(2));
     row.total_paid_hours = Number((row.worked_hours + row.pto_hours).toFixed(2));
+  });
+
+  const payPeriodStartById = new Map(
+    payPeriods.map((row) => [ensureUuid(row.id, `pay-period:${row.id}`), row.start_date] as const)
+  );
+  const timecardsByEmployeePeriod = new Map<string, typeof dailyTimecards>();
+  dailyTimecards.forEach((row) => {
+    const key = `${row.employee_id}:${row.pay_period_id ?? "unassigned"}`;
+    const existing = timecardsByEmployeePeriod.get(key) ?? [];
+    existing.push(row);
+    timecardsByEmployeePeriod.set(key, existing);
+  });
+
+  timecardsByEmployeePeriod.forEach((rows) => {
+    const orderedRows = [...rows].sort((left, right) => (left.work_date < right.work_date ? -1 : 1));
+    const payPeriodStartDate =
+      (orderedRows[0]?.pay_period_id ? payPeriodStartById.get(orderedRows[0].pay_period_id) : null) ??
+      orderedRows[0]?.work_date;
+    const runningWorkedByWeek = new Map<1 | 2, number>([
+      [1, 0],
+      [2, 0]
+    ]);
+
+    orderedRows.forEach((row) => {
+      if (!payPeriodStartDate) return;
+      const dayOffset = Math.floor(
+        (Date.parse(`${row.work_date}T00:00:00.000Z`) - Date.parse(`${payPeriodStartDate}T00:00:00.000Z`)) /
+          86400000
+      );
+      const weekIndex: 1 | 2 = dayOffset >= 7 ? 2 : 1;
+      const runningWorked = runningWorkedByWeek.get(weekIndex) ?? 0;
+      const regularRemaining = Math.max(0, 40 - runningWorked);
+      const overtimeHours = Number(Math.max(0, row.worked_hours - regularRemaining).toFixed(2));
+      row.overtime_hours = overtimeHours;
+      runningWorkedByWeek.set(
+        weekIndex,
+        Number((runningWorked + row.worked_hours).toFixed(2))
+      );
+    });
   });
 
   const forgottenPunchRequests = dailyTimecards
