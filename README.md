@@ -123,6 +123,11 @@ Events are written from canonical services.
 - After edits: `npm run typecheck`
 - After significant edits: `npm run build`
 - After major stabilization: `npm run quality:gates`
+- Build defaults:
+  - `npm run build` (default): Turbopack build with project clean + port kill.
+  - `npm run build:webpack` (debug fallback): explicit webpack build with webpack cache disabled.
+- Local schema sync and typed reads:
+  - `npm run db:sync`
 
 Helpers:
 - `npm run dev`
