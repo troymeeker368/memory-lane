@@ -1,6 +1,7 @@
 import { normalizeRoleKey } from "@/lib/permissions";
-import { listIntakeAssessmentSignatureStatesByAssessmentIds } from "@/lib/services/intake-assessment-esign";
+import { type IntakeAssessmentSignatureState, listIntakeAssessmentSignatureStatesByAssessmentIds } from "@/lib/services/intake-assessment-esign";
 import { resolveIntakeDraftPofReadiness, toIntakeDraftPofStatus } from "@/lib/services/intake-draft-pof-readiness";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";
 
@@ -9,8 +10,24 @@ interface DocumentationWorkflowScope {
   staffUserId?: string | null;
 }
 
-type WorkflowRelation = { display_name?: string | null; full_name?: string | null } | Array<{ display_name?: string | null; full_name?: string | null }> | null;
-type DailyWorkflowRow = {
+type DocumentationWorkflowSourceKind =
+  | "daily_activity"
+  | "toilet_log"
+  | "shower_log"
+  | "transportation"
+  | "photo_upload"
+  | "assessment";
+
+type DocumentationWorkflowRpcRow = {
+  id: string;
+  source_kind: DocumentationWorkflowSourceKind;
+  occurred_at: string | null;
+  member_name: string | null;
+  staff_name: string | null;
+  payload: Record<string, unknown> | null;
+};
+
+export type DocumentationDailyActivityRow = {
   id: string;
   activity_date: string;
   created_at: string;
@@ -19,48 +36,57 @@ type DailyWorkflowRow = {
   activity_3_level: number;
   activity_4_level: number;
   activity_5_level: number;
-  missing_reason_1: string | null;
-  missing_reason_2: string | null;
-  missing_reason_3: string | null;
-  missing_reason_4: string | null;
-  missing_reason_5: string | null;
+  member_name: string;
+  staff_name: string;
+  reason_missing_activity_1: string | null;
+  reason_missing_activity_2: string | null;
+  reason_missing_activity_3: string | null;
+  reason_missing_activity_4: string | null;
+  reason_missing_activity_5: string | null;
+  participation: number;
   notes: string | null;
-  member: WorkflowRelation;
-  staff: WorkflowRelation;
 };
-type ToiletWorkflowQueryRow = {
+
+export type ToiletWorkflowRow = {
   id: string;
   event_at: string;
-  briefs: boolean | null;
-  member_supplied: boolean | null;
+  briefs: boolean;
+  member_name: string;
+  staff_name: string;
   use_type: string;
   notes: string | null;
-  member: WorkflowRelation;
-  staff: WorkflowRelation;
+  member_supplied: boolean;
 };
-type ShowerWorkflowQueryRow = {
+
+export type ShowerWorkflowRow = {
   id: string;
   event_at: string;
-  laundry: boolean | null;
-  briefs: boolean | null;
-  member: WorkflowRelation;
-  staff: WorkflowRelation;
+  laundry: boolean;
+  briefs: boolean;
+  member_name: string;
+  staff_name: string;
+  notes: string | null;
 };
-type TransportationWorkflowQueryRow = {
+
+export type TransportationWorkflowRow = {
   id: string;
   service_date: string;
   period: string | null;
   transport_type: string | null;
-  member: WorkflowRelation;
-  staff: WorkflowRelation;
+  member_name: string;
+  staff_name: string;
 };
-type PhotoWorkflowQueryRow = {
+
+export type PhotoWorkflowRow = {
   id: string;
   uploaded_at: string;
   photo_url: string | null;
-  uploader: WorkflowRelation;
+  uploaded_by_name: string;
+  file_name: string;
+  file_type: string;
 };
-type AssessmentWorkflowQueryRow = {
+
+export type AssessmentWorkflowRow = {
   id: string;
   assessment_date: string;
   total_score: number | null;
@@ -69,214 +95,235 @@ type AssessmentWorkflowQueryRow = {
   transport_appropriate: boolean | null;
   complete: boolean | null;
   completed_by: string | null;
-  signature_status: string | null;
+  signature_status: "unsigned" | "signed" | "voided" | null;
   signed_by: string | null;
   signed_at: string | null;
-  draft_pof_status: string | null;
+  draft_pof_status: "none" | "ready" | "missing_staff_signature" | "pof_not_ready" | "error" | "not_applicable";
+  draft_pof_readiness_status: "not_signed" | "signed_pending_draft_pof" | "draft_pof_failed" | "draft_pof_ready";
+  draft_pof_ready: boolean;
+  member_name: string;
   created_at: string;
-  member: WorkflowRelation;
+  reviewer_name: string | null;
+  created_by_name: string | null;
 };
 
-function relationDisplayName(value: unknown, fallback: string) {
-  if (Array.isArray(value)) {
-    const first = value[0] as { display_name?: string; full_name?: string } | undefined;
-    return first?.display_name ?? first?.full_name ?? fallback;
-  }
-  const row = value as { display_name?: string; full_name?: string } | null;
-  return row?.display_name ?? row?.full_name ?? fallback;
-}
+const DEFAULT_WORKFLOW_MEMBER_NAME = "Unknown Member";
+const DEFAULT_WORKFLOW_STAFF_NAME = "Unknown Staff";
+const DOCUMENTATION_WORKFLOW_LIMIT = 50;
 
 function isStaffScoped(scope?: DocumentationWorkflowScope) {
   return Boolean(scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && !!scope.staffUserId);
 }
 
+function asText(value: unknown, fallback: string | null = null): string | null {
+  if (value == null) return fallback;
+  const text = String(value).trim();
+  return text.length ? text : fallback;
+}
+
+function asTextValue(value: unknown, fallback = ""): string {
+  return asText(value, fallback) ?? fallback;
+}
+
+function asNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function asBoolean(value: unknown) {
+  return Boolean(value);
+}
+
+function asPayload(row: DocumentationWorkflowRpcRow | null | undefined) {
+  return row?.payload && typeof row.payload === "object" ? (row.payload as Record<string, unknown>) : {};
+}
+
+function buildDailyRow(row: DocumentationWorkflowRpcRow): DocumentationDailyActivityRow {
+  const payload = asPayload(row);
+  return {
+    id: row.id,
+    activity_date: asTextValue(payload.activity_date),
+    created_at: asTextValue(payload.created_at),
+    activity_1_level: asNumber(payload.activity_1_level, 0),
+    activity_2_level: asNumber(payload.activity_2_level, 0),
+    activity_3_level: asNumber(payload.activity_3_level, 0),
+    activity_4_level: asNumber(payload.activity_4_level, 0),
+    activity_5_level: asNumber(payload.activity_5_level, 0),
+    member_name: asTextValue(row.member_name, DEFAULT_WORKFLOW_MEMBER_NAME),
+    staff_name: asTextValue(row.staff_name, DEFAULT_WORKFLOW_STAFF_NAME),
+    reason_missing_activity_1: asText(payload.missing_reason_1),
+    reason_missing_activity_2: asText(payload.missing_reason_2),
+    reason_missing_activity_3: asText(payload.missing_reason_3),
+    reason_missing_activity_4: asText(payload.missing_reason_4),
+    reason_missing_activity_5: asText(payload.missing_reason_5),
+    participation: Math.round(
+      (asNumber(payload.activity_1_level, 0) +
+        asNumber(payload.activity_2_level, 0) +
+        asNumber(payload.activity_3_level, 0) +
+        asNumber(payload.activity_4_level, 0) +
+        asNumber(payload.activity_5_level, 0)) /
+        5
+    ),
+    notes: asText(payload.notes)
+  };
+}
+
+function buildToiletRow(row: DocumentationWorkflowRpcRow): ToiletWorkflowRow {
+  const payload = asPayload(row);
+  return {
+    id: row.id,
+    event_at: asTextValue(payload.event_at),
+    briefs: asBoolean(payload.briefs),
+    member_name: asTextValue(row.member_name, DEFAULT_WORKFLOW_MEMBER_NAME),
+    staff_name: asTextValue(row.staff_name, DEFAULT_WORKFLOW_STAFF_NAME),
+    use_type: asTextValue(payload.use_type, "Toilet"),
+    notes: asText(payload.notes),
+    member_supplied: asBoolean(payload.member_supplied)
+  };
+}
+
+function buildShowerRow(row: DocumentationWorkflowRpcRow): ShowerWorkflowRow {
+  const payload = asPayload(row);
+  return {
+    id: row.id,
+    event_at: asTextValue(payload.event_at),
+    laundry: asBoolean(payload.laundry),
+    briefs: asBoolean(payload.briefs),
+    member_name: asTextValue(row.member_name, DEFAULT_WORKFLOW_MEMBER_NAME),
+    staff_name: asTextValue(row.staff_name, DEFAULT_WORKFLOW_STAFF_NAME),
+    notes: asText(payload.notes)
+  };
+}
+
+function buildTransportationRow(row: DocumentationWorkflowRpcRow): TransportationWorkflowRow {
+  const payload = asPayload(row);
+  return {
+    id: row.id,
+    service_date: asTextValue(payload.service_date),
+    period: asText(payload.period),
+    transport_type: asText(payload.transport_type),
+    member_name: asTextValue(row.member_name, DEFAULT_WORKFLOW_MEMBER_NAME),
+    staff_name: asTextValue(row.staff_name, DEFAULT_WORKFLOW_STAFF_NAME)
+  };
+}
+
+function buildPhotoRow(row: DocumentationWorkflowRpcRow): PhotoWorkflowRow {
+  const payload = asPayload(row);
+  const uploadedAt = asTextValue(payload.uploaded_at);
+  const photoUrl = asText(payload.photo_url);
+  const mime =
+    typeof photoUrl === "string" && photoUrl.startsWith("data:")
+      ? photoUrl.slice(5, photoUrl.indexOf(";")) || "image/*"
+      : "image/*";
+  return {
+    id: row.id,
+    uploaded_at: uploadedAt,
+    photo_url: photoUrl,
+    uploaded_by_name: asTextValue(row.staff_name, DEFAULT_WORKFLOW_STAFF_NAME),
+    file_name: uploadedAt ? `Photo Upload - ${uploadedAt.slice(0, 10)}.img` : "Photo Upload",
+    file_type: mime
+  };
+}
+
+function buildAssessmentRows(
+  rows: DocumentationWorkflowRpcRow[],
+  signatureByAssessmentId: Record<string, IntakeAssessmentSignatureState>
+) {
+  return rows.map((row) => {
+    const payload = asPayload(row);
+    const signature = signatureByAssessmentId[row.id] ?? null;
+    const signatureStatus = signature?.status ?? "unsigned";
+    const draftPofStatus = toIntakeDraftPofStatus(asText(payload.draft_pof_status));
+    const draftPofReadiness = resolveIntakeDraftPofReadiness({
+      signatureStatus,
+      draftPofStatus
+    });
+    return {
+      id: row.id,
+      assessment_date: asTextValue(payload.assessment_date),
+      total_score: payload.total_score == null ? null : asNumber(payload.total_score, 0),
+      recommended_track: asText(payload.recommended_track),
+      admission_review_required: payload.admission_review_required == null ? null : Boolean(payload.admission_review_required),
+      transport_appropriate: payload.transport_appropriate == null ? null : Boolean(payload.transport_appropriate),
+      complete: payload.complete == null ? null : Boolean(payload.complete),
+      completed_by: asText(payload.completed_by),
+      signature_status: signatureStatus,
+      signed_by: signature?.signedByName ?? null,
+      signed_at: signature?.signedAt ?? null,
+      draft_pof_status: draftPofStatus,
+      draft_pof_readiness_status: draftPofReadiness,
+      draft_pof_ready: draftPofReadiness === "draft_pof_ready",
+      member_name: asTextValue(row.member_name, DEFAULT_WORKFLOW_MEMBER_NAME),
+      created_at: asTextValue(payload.created_at),
+      reviewer_name: null,
+      created_by_name: null
+    };
+  });
+}
+
+function buildSignatureIndex(rows: DocumentationWorkflowRpcRow[]) {
+  return rows
+    .map((row) => row.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
 export async function getDocumentationWorkflows(scope?: DocumentationWorkflowScope) {
-  const staffUserId = scope?.staffUserId ?? null;
-
-  const supabase = await createClient();
   const staffScoped = isStaffScoped(scope);
-
-  const dailyQuery = supabase
-    .from("daily_activity_logs")
-    .select("id, activity_date, created_at, activity_1_level, activity_2_level, activity_3_level, activity_4_level, activity_5_level, missing_reason_1, missing_reason_2, missing_reason_3, missing_reason_4, missing_reason_5, notes, member:members!daily_activity_logs_member_id_fkey(display_name), staff:profiles!daily_activity_logs_staff_user_id_fkey(full_name)")
-    .order("created_at", { ascending: false })
-    .limit(50);
-  const toiletsQuery = supabase
-    .from("toilet_logs")
-    .select("id, event_at, briefs, member_supplied, use_type, notes, member:members!toilet_logs_member_id_fkey(display_name), staff:profiles!toilet_logs_staff_user_id_fkey(full_name)")
-    .order("event_at", { ascending: false })
-    .limit(50);
-  const showersQuery = supabase
-    .from("shower_logs")
-    .select("id, event_at, laundry, briefs, member:members!shower_logs_member_id_fkey(display_name), staff:profiles!shower_logs_staff_user_id_fkey(full_name)")
-    .order("event_at", { ascending: false })
-    .limit(50);
-  const transportationQuery = supabase
-    .from("transportation_logs")
-    .select("id, service_date, period, transport_type, member:members!transportation_logs_member_id_fkey(display_name), staff:profiles!transportation_logs_staff_user_id_fkey(full_name)")
-    .order("created_at", { ascending: false })
-    .limit(50);
-  const photosQuery = supabase
-    .from("member_photo_uploads")
-    .select("id, uploaded_at, photo_url, uploaded_by, member:members!member_photo_uploads_member_id_fkey(display_name), uploader:profiles!member_photo_uploads_uploaded_by_fkey(full_name)")
-    .order("uploaded_at", { ascending: false })
-    .limit(50);
-
-  const filteredDailyQuery = staffScoped ? dailyQuery.eq("staff_user_id", staffUserId as string) : dailyQuery;
-  const filteredToiletsQuery = staffScoped ? toiletsQuery.eq("staff_user_id", staffUserId as string) : toiletsQuery;
-  const filteredShowersQuery = staffScoped ? showersQuery.eq("staff_user_id", staffUserId as string) : showersQuery;
-  const filteredTransportationQuery = staffScoped ? transportationQuery.eq("staff_user_id", staffUserId as string) : transportationQuery;
-  const filteredPhotosQuery = staffScoped ? photosQuery.eq("uploaded_by", staffUserId as string) : photosQuery;
-
-  const [
-    { data: dailyRows, error: dailyError },
-    { data: toiletRows, error: toiletError },
-    { data: showerRows, error: showerError },
-    { data: transportRows, error: transportError },
-    { data: photoRows, error: photoError }
-  ] =
-    await Promise.all([
-      filteredDailyQuery,
-      filteredToiletsQuery,
-      filteredShowersQuery,
-      filteredTransportationQuery,
-      filteredPhotosQuery
-    ]);
-  if (dailyError) throw new Error(`Unable to load daily activity workflows: ${dailyError.message}`);
-  if (toiletError) throw new Error(`Unable to load toilet workflows: ${toiletError.message}`);
-  if (showerError) throw new Error(`Unable to load shower workflows: ${showerError.message}`);
-  if (transportError) throw new Error(`Unable to load transportation workflows: ${transportError.message}`);
-  if (photoError) throw new Error(`Unable to load photo workflows: ${photoError.message}`);
-
-  const dailyActivities = ((dailyRows ?? []) as DailyWorkflowRow[]).map((row) => {
-    const participation = Math.round(
-      ((Number(row.activity_1_level ?? 0) +
-        Number(row.activity_2_level ?? 0) +
-        Number(row.activity_3_level ?? 0) +
-        Number(row.activity_4_level ?? 0) +
-        Number(row.activity_5_level ?? 0)) /
-        5)
-    );
-    return {
-      id: row.id,
-      activity_date: row.activity_date,
-      created_at: row.created_at,
-      member_name: relationDisplayName(row.member, "Unknown Member"),
-      staff_name: relationDisplayName(row.staff, "Unknown Staff"),
-      participation,
-      activity_1_level: row.activity_1_level,
-      activity_2_level: row.activity_2_level,
-      activity_3_level: row.activity_3_level,
-      activity_4_level: row.activity_4_level,
-      activity_5_level: row.activity_5_level,
-      reason_missing_activity_1: row.missing_reason_1,
-      reason_missing_activity_2: row.missing_reason_2,
-      reason_missing_activity_3: row.missing_reason_3,
-      reason_missing_activity_4: row.missing_reason_4,
-      reason_missing_activity_5: row.missing_reason_5,
-      notes: row.notes ?? null
-    };
+  const supabase = await createClient();
+  const rpcRows = await invokeSupabaseRpcOrThrow<DocumentationWorkflowRpcRow[]>(supabase, "rpc_get_documentation_workflows", {
+    p_staff_user_id: (staffScoped && scope?.staffUserId) || null,
+    p_staff_only: staffScoped,
+    p_limit: DOCUMENTATION_WORKFLOW_LIMIT
   });
 
-  const toilets = ((toiletRows ?? []) as ToiletWorkflowQueryRow[]).map((row) => ({
-    id: row.id,
-    event_at: row.event_at,
-    member_name: relationDisplayName(row.member, "Unknown Member"),
-    staff_name: relationDisplayName(row.staff, "Unknown Staff"),
-    use_type: row.use_type,
-    briefs: Boolean(row.briefs),
-    member_supplied: Boolean(row.member_supplied),
-    notes: row.notes ?? null
-  }));
+  const rows = rpcRows ?? [];
+  const dailyRows: DocumentationDailyActivityRow[] = [];
+  const toiletRows: ToiletWorkflowRow[] = [];
+  const showerRows: ShowerWorkflowRow[] = [];
+  const transportationRows: TransportationWorkflowRow[] = [];
+  const photoRows: PhotoWorkflowRow[] = [];
+  const assessmentRows: DocumentationWorkflowRpcRow[] = [];
 
-  const showers = ((showerRows ?? []) as ShowerWorkflowQueryRow[]).map((row) => ({
-    id: row.id,
-    event_at: row.event_at,
-    member_name: relationDisplayName(row.member, "Unknown Member"),
-    staff_name: relationDisplayName(row.staff, "Unknown Staff"),
-    laundry: Boolean(row.laundry),
-    briefs: Boolean(row.briefs),
-    notes: null
-  }));
+  for (const row of rows) {
+    if (row.source_kind === "daily_activity") {
+      dailyRows.push(buildDailyRow(row));
+      continue;
+    }
+    if (row.source_kind === "toilet_log") {
+      toiletRows.push(buildToiletRow(row));
+      continue;
+    }
+    if (row.source_kind === "shower_log") {
+      showerRows.push(buildShowerRow(row));
+      continue;
+    }
+    if (row.source_kind === "transportation") {
+      transportationRows.push(buildTransportationRow(row));
+      continue;
+    }
+    if (row.source_kind === "photo_upload") {
+      photoRows.push(buildPhotoRow(row));
+      continue;
+    }
+    if (row.source_kind === "assessment") {
+      assessmentRows.push(row);
+    }
+  }
 
-  const transportation = ((transportRows ?? []) as TransportationWorkflowQueryRow[]).map((row) => ({
-    id: row.id,
-    service_date: row.service_date,
-    period: row.period,
-    transport_type: row.transport_type,
-    member_name: relationDisplayName(row.member, "Unknown Member"),
-    staff_name: relationDisplayName(row.staff, "Unknown Staff")
-  }));
+  const signatureByAssessmentId =
+    assessmentRows.length === 0
+      ? ({} as Record<string, IntakeAssessmentSignatureState>)
+      : await listIntakeAssessmentSignatureStatesByAssessmentIds(buildSignatureIndex(assessmentRows));
 
-  const photos = ((photoRows ?? []) as PhotoWorkflowQueryRow[]).map((row) => {
-    const mime =
-      typeof row.photo_url === "string" && row.photo_url.startsWith("data:")
-        ? row.photo_url.slice(5, row.photo_url.indexOf(";")) || "image/*"
-        : "image/*";
-    const uploadedAt = String(row.uploaded_at ?? "");
-    const generatedName = uploadedAt ? `Photo Upload - ${uploadedAt.slice(0, 10)}.img` : "Photo Upload";
-    return {
-      id: row.id,
-      uploaded_at: row.uploaded_at,
-      uploaded_by_name: relationDisplayName(row.uploader, "Unknown Staff"),
-      file_name: generatedName,
-      file_type: mime,
-      photo_url: row.photo_url
-    };
-  });
+  const assessments = buildAssessmentRows(assessmentRows, signatureByAssessmentId);
 
   return {
-    dailyActivities,
-    toilets,
-    showers,
-    transportation,
-    photos,
+    dailyActivities: dailyRows,
+    toilets: toiletRows,
+    showers: showerRows,
+    transportation: transportationRows,
+    photos: photoRows,
     ancillary: [],
-    assessments: await (async () => {
-      const assessmentsQuery = supabase
-        .from("intake_assessments")
-        .select("id, assessment_date, total_score, recommended_track, admission_review_required, transport_appropriate, complete, completed_by, signature_status, signed_by, signed_at, draft_pof_status, created_at, member:members!intake_assessments_member_id_fkey(display_name)")
-        .order("created_at", { ascending: false })
-        .limit(50);
-      const filteredAssessmentsQuery = staffScoped
-        ? assessmentsQuery.eq("completed_by_user_id", staffUserId as string)
-        : assessmentsQuery;
-      const { data: assessmentRows, error: assessmentsError } = await filteredAssessmentsQuery;
-      if (assessmentsError) throw new Error(`Unable to load intake assessment workflows: ${assessmentsError.message}`);
-      const rows = assessmentRows ?? [];
-      const signatureByAssessmentId = await listIntakeAssessmentSignatureStatesByAssessmentIds(
-        rows.map((row) => String(row.id))
-      );
-
-      return (rows as AssessmentWorkflowQueryRow[]).map((row) => {
-        const signature = signatureByAssessmentId[String(row.id)] ?? null;
-        const signatureStatus = signature?.status ?? "unsigned";
-        const draftPofStatus = toIntakeDraftPofStatus(row.draft_pof_status);
-        const draftPofReadinessStatus = resolveIntakeDraftPofReadiness({
-          signatureStatus,
-          draftPofStatus
-        });
-        return {
-          id: row.id,
-          assessment_date: row.assessment_date,
-          total_score: row.total_score,
-          recommended_track: row.recommended_track,
-          admission_review_required: Boolean(row.admission_review_required),
-          transport_appropriate: row.transport_appropriate,
-          complete: Boolean(row.complete),
-          completed_by: row.completed_by,
-          signature_status: signatureStatus,
-          signed_by: signature?.signedByName ?? null,
-          signed_at: signature?.signedAt ?? null,
-          draft_pof_status: draftPofStatus,
-          draft_pof_readiness_status: draftPofReadinessStatus,
-          draft_pof_ready: draftPofReadinessStatus === "draft_pof_ready",
-          member_name: relationDisplayName(row.member, "Unknown Member"),
-          created_at: row.created_at,
-          reviewer_name: null,
-          created_by_name: null
-        };
-      });
-    })()
+    assessments
   };
 }
