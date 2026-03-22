@@ -5,6 +5,7 @@ import type { NextConfig } from "next";
 
 const shouldEmitBuildStats = process.env.NEXT_BUILD_STATS === "1";
 const isTurbopackBuild = process.env.NEXT_USE_TURBOPACK === "1";
+const shouldDisableWebpackCache = process.env.NEXT_DISABLE_WEBPACK_CACHE === "1";
 
 class BuildStatsReportPlugin {
   private collectEmittedServerFiles() {
@@ -166,6 +167,10 @@ const nextConfig: NextConfig = {
     : (config, { dev }) => {
         if (shouldEmitBuildStats && !dev) {
           config.plugins = [...(config.plugins ?? []), new BuildStatsReportPlugin()];
+        }
+
+        if (!dev && shouldDisableWebpackCache) {
+          config.cache = false;
         }
 
         if (dev) {

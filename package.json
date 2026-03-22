@@ -13,7 +13,7 @@
     "dev:clean": "npm run dev",
     "prepare": "node scripts/setup-git-hooks.cjs",
     "build": "npm run build:turbo",
-    "build:webpack": "npm run port:kill && npm run clean:next && next build",
+    "build:webpack": "node scripts/build-webpack.cjs",
     "build:turbo": "node scripts/build-turbo.cjs",
     "audit:module-sizes": "node scripts/audit-module-sizes.cjs",
     "db:push": "supabase db push",
