@@ -4,6 +4,7 @@ import path from "node:path";
 import type { NextConfig } from "next";
 
 const shouldEmitBuildStats = process.env.NEXT_BUILD_STATS === "1";
+const isTurbopackBuild = process.env.NEXT_USE_TURBOPACK === "1";
 
 class BuildStatsReportPlugin {
   private collectEmittedServerFiles() {
@@ -160,34 +161,36 @@ const nextConfig: NextConfig = {
     }
   },
   turbopack: {},
-  webpack: (config, { dev }) => {
-    if (shouldEmitBuildStats && !dev) {
-      config.plugins = [...(config.plugins ?? []), new BuildStatsReportPlugin()];
-    }
+  webpack: isTurbopackBuild
+    ? undefined
+    : (config, { dev }) => {
+        if (shouldEmitBuildStats && !dev) {
+          config.plugins = [...(config.plugins ?? []), new BuildStatsReportPlugin()];
+        }
 
-    if (dev) {
-      const ignored = [
-        "**/.git/**",
-        "**/.next/**",
-        "**/node_modules/**",
-        "**/uploads/**",
-        "**/imports/**",
-        "**/*.xlsx",
-        "**/*.xls",
-        "**/*.csv",
-        "**/*.pdf",
-        "**/*.doc",
-        "**/*.docx"
-      ];
+        if (dev) {
+          const ignored = [
+            "**/.git/**",
+            "**/.next/**",
+            "**/node_modules/**",
+            "**/uploads/**",
+            "**/imports/**",
+            "**/*.xlsx",
+            "**/*.xls",
+            "**/*.csv",
+            "**/*.pdf",
+            "**/*.doc",
+            "**/*.docx"
+          ];
 
-      config.watchOptions = {
-        ...config.watchOptions,
-        ignored
-      };
-    }
+          config.watchOptions = {
+            ...config.watchOptions,
+            ignored
+          };
+        }
 
-    return config;
-  }
+        return config;
+      }
 };
 
 export default nextConfig;
