@@ -197,7 +197,12 @@ export async function dispatchNotification(input: DispatchNotificationEventInput
     metadata: input.metadata,
     explicitRecipientUserIds: input.recipientUserIds
   });
-  if (recipients.length === 0) return [] as UserNotification[];
+  if (recipients.length === 0) {
+    if (input.requireRecipients) {
+      throw new Error(`No notification recipients resolved for required ${eventType} event.`);
+    }
+    return [] as UserNotification[];
+  }
 
   const content = buildNotificationContent(eventType, context);
   return Promise.all(

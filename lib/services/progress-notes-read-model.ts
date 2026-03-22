@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import { toEasternDate } from "@/lib/timezone";
@@ -7,7 +8,6 @@ import {
   computeNextProgressNoteDueDate,
   computeProgressNoteComplianceStatus,
   getProgressNoteSortRank,
-  matchesProgressNoteTrackerFilter,
   normalizeProgressNoteStatus,
   type ProgressNoteComplianceStatus,
   type ProgressNoteTrackerFilter
@@ -26,6 +26,31 @@ type ProgressNoteMemberRow = {
   display_name: string;
   enrollment_date: string | null;
   status: string | null;
+};
+
+type ProgressNoteTrackerPageRpcRow = {
+  member_id: string;
+  member_name: string;
+  member_status: string | null;
+  enrollment_date: string | null;
+  last_signed_progress_note_date: string | null;
+  next_progress_note_due_date: string | null;
+  days_until_due: number | null;
+  compliance_status: ProgressNoteComplianceStatus;
+  has_draft_in_progress: boolean | null;
+  latest_draft_id: string | null;
+  latest_signed_note_id: string | null;
+  data_issue: string | null;
+  total_rows: number | null;
+};
+
+type ProgressNoteTrackerSummaryRpcRow = {
+  total: number | null;
+  overdue: number | null;
+  due_today: number | null;
+  due_soon: number | null;
+  upcoming: number | null;
+  data_issues: number | null;
 };
 
 function toProgressNote(row: DbProgressNote, memberName?: string | null): ProgressNote {
@@ -192,21 +217,79 @@ export function sortProgressNoteTrackerRows(rows: ProgressNoteComplianceRow[]) {
   });
 }
 
-function summarizeProgressNoteTrackerRows(rows: ProgressNoteComplianceRow[]): ProgressNoteTrackerSummary {
-  return {
-    total: rows.length,
-    overdue: rows.filter((row) => row.complianceStatus === "overdue").length,
-    dueToday: rows.filter((row) => row.complianceStatus === "due").length,
-    dueSoon: rows.filter((row) => row.complianceStatus === "due_soon").length,
-    upcoming: rows.filter((row) => row.complianceStatus === "upcoming").length,
-    dataIssues: rows.filter((row) => row.complianceStatus === "data_issue").length
-  };
-}
-
 async function loadMemberNameMap(memberIds: string[], serviceRole = false) {
   if (memberIds.length === 0) return new Map<string, string>();
   const members = await loadProgressNoteMembers({ memberIds, serviceRole });
   return new Map(members.map((member) => [member.id, member.display_name] as const));
+}
+
+async function loadProgressNoteTrackerSummary(input?: {
+  memberId?: string | null;
+  query?: string | null;
+  serviceRole?: boolean;
+}) {
+  const supabase = await createClient({ serviceRole: Boolean(input?.serviceRole) });
+  const rows = await invokeSupabaseRpcOrThrow<ProgressNoteTrackerSummaryRpcRow[]>(
+    supabase,
+    "rpc_get_progress_note_tracker_summary",
+    {
+      p_member_id: input?.memberId ?? null,
+      p_query_pattern: input?.query ?? null
+    }
+  );
+
+  const row = rows?.[0] ?? null;
+  return {
+    total: Number(row?.total ?? 0),
+    overdue: Number(row?.overdue ?? 0),
+    dueToday: Number(row?.due_today ?? 0),
+    dueSoon: Number(row?.due_soon ?? 0),
+    upcoming: Number(row?.upcoming ?? 0),
+    dataIssues: Number(row?.data_issues ?? 0)
+  } satisfies ProgressNoteTrackerSummary;
+}
+
+async function loadProgressNoteTrackerPage(input: {
+  status: ProgressNoteTrackerFilter;
+  memberId?: string | null;
+  query?: string | null;
+  page: number;
+  pageSize: number;
+  serviceRole?: boolean;
+}) {
+  const supabase = await createClient({ serviceRole: Boolean(input.serviceRole) });
+  const rows = await invokeSupabaseRpcOrThrow<ProgressNoteTrackerPageRpcRow[]>(
+    supabase,
+    "rpc_get_progress_note_tracker_page",
+    {
+      p_status_filter: input.status,
+      p_member_id: input.memberId ?? null,
+      p_query_pattern: input.query ?? null,
+      p_page: input.page,
+      p_page_size: input.pageSize
+    }
+  );
+
+  const mappedRows = (rows ?? []).map((row) => ({
+    memberId: row.member_id,
+    memberName: row.member_name,
+    memberStatus: row.member_status,
+    enrollmentDate: row.enrollment_date,
+    lastSignedProgressNoteDate: row.last_signed_progress_note_date,
+    nextProgressNoteDueDate: row.next_progress_note_due_date,
+    daysUntilDue: row.days_until_due == null ? null : Number(row.days_until_due),
+    complianceStatus: row.compliance_status,
+    hasDraftInProgress: Boolean(row.has_draft_in_progress),
+    latestDraftId: row.latest_draft_id,
+    latestSignedNoteId: row.latest_signed_note_id,
+    dataIssue: row.data_issue
+  })) satisfies ProgressNoteComplianceRow[];
+
+  const totalRows = Number(rows?.[0]?.total_rows ?? 0);
+  return {
+    rows: mappedRows,
+    totalRows
+  };
 }
 
 export async function getProgressNoteTracker(input?: {
@@ -223,25 +306,28 @@ export async function getProgressNoteTracker(input?: {
   const canonicalMemberId = input?.memberId
     ? await resolveCanonicalMemberId(input.memberId, { actionLabel: "getProgressNoteTracker" })
     : null;
-  const members = await loadProgressNoteMembers({
-    memberId: canonicalMemberId ?? undefined,
-    query: cleanText(input?.query) ?? undefined,
-    serviceRole: Boolean(input?.serviceRole)
-  });
-  const memberIds = members.map((member) => member.id);
-  const notes = memberIds.length ? await loadProgressNoteRows({ memberIds, serviceRole: Boolean(input?.serviceRole) }) : [];
+  const queryPattern = cleanText(input?.query) ? buildSupabaseIlikePattern(cleanText(input?.query) as string) : null;
+  const [summary, pageResult] = await Promise.all([
+    loadProgressNoteTrackerSummary({
+      memberId: canonicalMemberId,
+      query: queryPattern,
+      serviceRole: Boolean(input?.serviceRole)
+    }),
+    loadProgressNoteTrackerPage({
+      status: filter,
+      memberId: canonicalMemberId,
+      query: queryPattern,
+      page,
+      pageSize,
+      serviceRole: Boolean(input?.serviceRole)
+    })
+  ]);
 
-  const allRows = buildProgressNoteTrackerRows(members, notes);
-  const filteredRows = sortProgressNoteTrackerRows(allRows).filter((row) =>
-    row.complianceStatus === "data_issue" ? filter === "All" : matchesProgressNoteTrackerFilter(row.complianceStatus, filter)
-  );
-  const summary = summarizeProgressNoteTrackerRows(allRows);
-  const totalRows = filteredRows.length;
+  const totalRows = pageResult.totalRows;
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-  const start = (page - 1) * pageSize;
 
   return {
-    rows: filteredRows.slice(start, start + pageSize),
+    rows: pageResult.rows,
     summary,
     page,
     pageSize,

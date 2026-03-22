@@ -28,14 +28,14 @@ import {
   toSummary
 } from "@/lib/services/enrollment-packet-core";
 import {
-  addLeadActivity,
   getLeadById,
   loadEnrollmentPacketArtifactOps,
   getMemberById,
   loadPacketFields,
   loadRequestById,
   recordEnrollmentPacketActionRequired,
-  runEnrollmentPacketDownstreamMapping
+  runEnrollmentPacketDownstreamMapping,
+  syncEnrollmentPacketLeadActivityOrQueue
 } from "@/lib/services/enrollment-packet-mapping-runtime";
 import { markEnrollmentPacketDeliveryState } from "@/lib/services/enrollment-packet-delivery-runtime";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
@@ -859,7 +859,9 @@ export async function submitPublicEnrollmentPacket(input: {
   if (request.lead_id) {
     try {
       const lead = await getLeadById(request.lead_id);
-      await addLeadActivity({
+      await syncEnrollmentPacketLeadActivityOrQueue({
+        packetId: request.id,
+        memberId: member.id,
         leadId: request.lead_id,
         memberName: lead?.member_name ?? member.display_name,
         activityType: "Email",
@@ -867,7 +869,8 @@ export async function submitPublicEnrollmentPacket(input: {
         notes: `Enrollment packet request ${request.id} completed by caregiver and filed to member records.`,
         completedByUserId: request.sender_user_id,
         completedByName: senderSignatureName,
-        activityAt: finalizedAt ?? toEasternISO()
+        activityAt: finalizedAt ?? toEasternISO(),
+        actionUrl: request.lead_id ? `/sales/leads/${request.lead_id}` : "/sales/new-entries/completed-enrollment-packets"
       });
     } catch (error) {
       console.error("[enrollment-packets] unable to record lead activity after packet filing", error);

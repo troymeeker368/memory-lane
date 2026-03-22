@@ -13,6 +13,7 @@ import { getDefaultCaregiverSignatureExpiresOnDate } from "@/lib/services/care-p
 import { recordImmediateSystemAlert, recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import type {
   CarePlanSectionInput,
+  CarePlanPostSignReadinessStatus,
   CarePlanStatus,
 } from "@/lib/services/care-plan-types";
 import {
@@ -107,6 +108,26 @@ async function recordCarePlanActionRequired(input: {
   } catch (error) {
     console.error("[care-plans] unable to emit action-required follow-up", error);
   }
+}
+
+async function updateCarePlanPostSignReadiness(input: {
+  carePlanId: string;
+  status: CarePlanPostSignReadinessStatus;
+  reason?: string | null;
+  actor: { id: string; fullName: string };
+}) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("care_plans")
+    .update({
+      post_sign_readiness_status: input.status,
+      post_sign_readiness_reason: clean(input.reason) ?? null,
+      updated_by_user_id: input.actor.id,
+      updated_by_name: input.actor.fullName,
+      updated_at: toEasternISO()
+    })
+    .eq("id", input.carePlanId);
+  if (error) throw new Error(error.message);
 }
 
 async function loadCarePlanNurseEsignService() {
@@ -313,6 +334,16 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
   const hasCaregiverContact = Boolean(signedCarePlan.caregiverName) && Boolean(signedCarePlan.caregiverEmail);
   const shouldAutoSend = hasCaregiverContact && signedCarePlan.caregiverSignatureStatus !== "signed";
 
+  await updateCarePlanPostSignReadiness({
+    carePlanId: input.carePlanId,
+    status: shouldAutoSend ? "signed_pending_caregiver_dispatch" : "ready",
+    reason: shouldAutoSend ? "Caregiver dispatch still needs to complete." : null,
+    actor: {
+      id: input.actor.id,
+      fullName: input.actor.fullName
+    }
+  });
+
   if (shouldAutoSend && signedCarePlan.caregiverName && signedCarePlan.caregiverEmail) {
     const { sendCarePlanToCaregiverForSignature } = await import("@/lib/services/care-plan-esign");
     const sent = await sendCarePlanToCaregiverForSignature({
@@ -325,6 +356,15 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
         id: input.actor.id,
         fullName: input.actor.fullName,
         signatureName: input.actor.signatureName
+      }
+    });
+    await updateCarePlanPostSignReadiness({
+      carePlanId: signedCarePlan.id,
+      status: "ready",
+      reason: null,
+      actor: {
+        id: input.actor.id,
+        fullName: input.actor.fullName
       }
     });
     return {
@@ -444,6 +484,16 @@ export async function createCarePlan(input: {
       createdCarePlanId
     );
   }
+
+  await updateCarePlanPostSignReadiness({
+    carePlanId: createdCarePlanId,
+    status: "signed_pending_snapshot",
+    reason: "Version snapshot persistence still needs to complete.",
+    actor: {
+      id: input.actor.id,
+      fullName: input.actor.fullName
+    }
+  });
 
   try {
     await createCarePlanVersionSnapshot({
@@ -615,6 +665,16 @@ export async function reviewCarePlan(input: {
     metadata: {
       module: "care-plan",
       signedFrom: "reviewCarePlan"
+    }
+  });
+
+  await updateCarePlanPostSignReadiness({
+    carePlanId: input.carePlanId,
+    status: "signed_pending_snapshot",
+    reason: "Version and review history persistence still needs to complete.",
+    actor: {
+      id: input.actor.id,
+      fullName: input.actor.fullName
     }
   });
 

@@ -91,6 +91,7 @@ export type DispatchNotificationEventInput = {
   recipientUserIds?: string[];
   eventKeySuffix?: string | null;
   reopenOnConflict?: boolean;
+  requireRecipients?: boolean;
 };
 
 export type WorkflowRecipientContext = {

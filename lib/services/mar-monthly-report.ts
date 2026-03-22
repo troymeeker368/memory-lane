@@ -2,6 +2,7 @@ import "server-only";
 
 import { facilityBranding } from "@/lib/config/facility-branding";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
+import { listMarMonthlyReportMemberOptions } from "@/lib/services/mar-member-options";
 import { createClient } from "@/lib/supabase/server";
 import { EASTERN_TIME_ZONE, easternDateTimeLocalToISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
@@ -358,58 +359,7 @@ export type MarMonthlyReportData = {
 };
 
 export async function getMarMonthlyReportMemberOptions(options?: { serviceRole?: boolean }) {
-  const serviceRole = options?.serviceRole ?? true;
-  const supabase = await createClient({ serviceRole });
-
-  const [
-    { data: pofRows, error: pofError },
-    { data: adminRows, error: adminError },
-    { data: orderRows, error: orderError },
-    { data: logRows, error: logError }
-  ] = await Promise.all([
-    supabase.from("pof_medications").select("member_id").eq("given_at_center", true),
-    supabase.from("mar_administrations").select("member_id"),
-    supabase.from("medication_orders").select("member_id").eq("order_type", "prn"),
-    supabase.from("med_administration_logs").select("member_id").eq("admin_type", "prn")
-  ]);
-
-  if (pofError) throw new Error(pofError.message);
-  if (adminError) throw new Error(adminError.message);
-  if (orderError) throw new Error(orderError.message);
-  if (logError) throw new Error(logError.message);
-
-  const memberIds = Array.from(
-    new Set([
-      ...(pofRows ?? []).map((row: { member_id: string }) => row.member_id),
-      ...(adminRows ?? []).map((row: { member_id: string }) => row.member_id),
-      ...(orderRows ?? []).map((row: { member_id: string }) => row.member_id),
-      ...(logRows ?? []).map((row: { member_id: string }) => row.member_id)
-    ])
-  );
-
-  if (memberIds.length === 0) {
-    return [];
-  }
-
-  let memberQuery = supabase
-    .from("members")
-    .select("id, display_name, status, dob, qr_code")
-    .order("display_name", { ascending: true });
-
-  if (memberIds.length > 0) {
-    memberQuery = memberQuery.in("id", memberIds);
-  }
-
-  const { data: members, error: memberError } = await memberQuery;
-  if (memberError) throw new Error(memberError.message);
-
-  return ((members ?? []) as MemberRow[]).map((row) => ({
-    memberId: row.id,
-    memberName: row.display_name,
-    memberDob: toOptionalDate(row.dob),
-    memberIdentifier: clean(row.qr_code),
-    memberStatus: clean(row.status)
-  }));
+  return listMarMonthlyReportMemberOptions(options);
 }
 
 export async function assembleMarMonthlyReportData(input: {

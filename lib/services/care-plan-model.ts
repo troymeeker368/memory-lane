@@ -3,6 +3,7 @@ import { parseCarePlanNurseSignatureStatus } from "@/lib/services/care-plan-nurs
 import type {
   CaregiverSignatureStatus,
   CarePlan,
+  CarePlanPostSignReadinessStatus,
   CarePlanSection,
   CarePlanSectionInput,
   CarePlanStatus,
@@ -29,6 +30,12 @@ export const CAREGIVER_SIGNATURE_STATUS_VALUES = [
   "viewed",
   "signed",
   "expired"
+] as const;
+export const CARE_PLAN_POST_SIGN_READINESS_STATUS_VALUES = [
+  "not_started",
+  "signed_pending_snapshot",
+  "signed_pending_caregiver_dispatch",
+  "ready"
 ] as const;
 
 function addDays(date: string, days: number) {
@@ -63,6 +70,13 @@ function toCaregiverSignatureStatus(value: string | null | undefined): Caregiver
     return value as CaregiverSignatureStatus;
   }
   return "not_requested";
+}
+
+function toPostSignReadinessStatus(value: string | null | undefined): CarePlanPostSignReadinessStatus {
+  if (value && CARE_PLAN_POST_SIGN_READINESS_STATUS_VALUES.includes(value as CarePlanPostSignReadinessStatus)) {
+    return value as CarePlanPostSignReadinessStatus;
+  }
+  return "not_started";
 }
 
 export function toCarePlan(row: DbCarePlan): CarePlan {
@@ -127,6 +141,8 @@ export function toCarePlan(row: DbCarePlan): CarePlan {
     caregiverSignatureRequestUrl: clean(row.caregiver_signature_request_url),
     caregiverSignedName: clean(row.caregiver_signed_name),
     finalMemberFileId: row.final_member_file_id,
+    postSignReadinessStatus: toPostSignReadinessStatus(row.post_sign_readiness_status),
+    postSignReadinessReason: clean(row.post_sign_readiness_reason),
     designeeCleanupRequired: Boolean(row.legacy_cleanup_flag) || !designeeLinkValid,
     createdAt: row.created_at,
     updatedAt: row.updated_at

@@ -137,6 +137,83 @@ export async function addLeadActivity(input: {
   return false;
 }
 
+async function addLeadActivityStrict(input: {
+  leadId: string;
+  memberName: string | null;
+  activityType: string;
+  outcome: string;
+  notes: string;
+  completedByUserId: string;
+  completedByName: string;
+  activityAt?: string;
+}) {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin.from("lead_activities").insert({
+    lead_id: input.leadId,
+    member_name: input.memberName,
+    activity_at: input.activityAt ?? toEasternISO(),
+    activity_type: input.activityType,
+    outcome: input.outcome,
+    notes: input.notes,
+    completed_by_user_id: input.completedByUserId,
+    completed_by_name: input.completedByName
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function syncEnrollmentPacketLeadActivityOrQueue(input: {
+  packetId: string;
+  memberId: string;
+  leadId: string;
+  memberName: string | null;
+  activityType: string;
+  outcome: string;
+  notes: string;
+  completedByUserId: string;
+  completedByName: string;
+  activityAt?: string;
+  actionUrl: string;
+}) {
+  try {
+    await addLeadActivityStrict({
+      leadId: input.leadId,
+      memberName: input.memberName,
+      activityType: input.activityType,
+      outcome: input.outcome,
+      notes: input.notes,
+      completedByUserId: input.completedByUserId,
+      completedByName: input.completedByName,
+      activityAt: input.activityAt
+    });
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to sync enrollment packet lead activity.";
+    console.error("[enrollment-packets] lead activity insert failed after committed workflow write", {
+      leadId: input.leadId,
+      activityType: input.activityType,
+      message
+    });
+    const { queueEnrollmentPacketFollowUpTask } = await import("@/lib/services/enrollment-packet-follow-up");
+    await queueEnrollmentPacketFollowUpTask({
+      packetId: input.packetId,
+      memberId: input.memberId,
+      leadId: input.leadId,
+      taskType: "lead_activity_sync",
+      actionUrl: input.actionUrl,
+      actorUserId: input.completedByUserId,
+      actorName: input.completedByName,
+      errorMessage: message,
+      payload: {
+        activityType: input.activityType,
+        outcome: input.outcome,
+        notes: input.notes,
+        activityAt: input.activityAt ?? null
+      }
+    });
+    return false;
+  }
+}
+
 export async function recordEnrollmentPacketActionRequired(input: {
   packetId: string;
   memberId: string;
@@ -147,30 +224,47 @@ export async function recordEnrollmentPacketActionRequired(input: {
   actionUrl: string;
   eventKeySuffix: string;
 }) {
-  try {
-    await recordWorkflowMilestone({
-      event: {
-        eventType: "action_required",
-        entityType: "enrollment_packet_request",
-        entityId: input.packetId,
-        actorType: "user",
-        actorUserId: input.actorUserId,
-        status: "open",
-        severity: "high",
-        eventKeySuffix: input.eventKeySuffix,
-        reopenOnConflict: true,
-        metadata: {
-          member_id: input.memberId,
-          lead_id: input.leadId ?? null,
-          title: input.title,
-          message: input.message,
-          priority: "high",
-          action_url: input.actionUrl
-        }
+  const milestone = await recordWorkflowMilestone({
+    event: {
+      eventType: "action_required",
+      entityType: "enrollment_packet_request",
+      entityId: input.packetId,
+      actorType: "user",
+      actorUserId: input.actorUserId,
+      status: "open",
+      severity: "high",
+      eventKeySuffix: input.eventKeySuffix,
+      reopenOnConflict: true,
+      requireRecipients: true,
+      metadata: {
+        member_id: input.memberId,
+        lead_id: input.leadId ?? null,
+        title: input.title,
+        message: input.message,
+        priority: "high",
+        action_url: input.actionUrl
       }
+    }
+  });
+
+  if (!milestone.delivered) {
+    console.error("[enrollment-packets] unable to deliver action-required workflow milestone", milestone.failureReason);
+    const { queueEnrollmentPacketFollowUpTask } = await import("@/lib/services/enrollment-packet-follow-up");
+    await queueEnrollmentPacketFollowUpTask({
+      packetId: input.packetId,
+      memberId: input.memberId,
+      leadId: input.leadId ?? null,
+      taskType: "critical_notification_delivery",
+      actionUrl: input.actionUrl,
+      actorUserId: input.actorUserId,
+      errorMessage: milestone.failureReason ?? "Action-required milestone delivery failed.",
+      payload: {
+        title: input.title,
+        message: input.message,
+        eventKeySuffix: input.eventKeySuffix
+      },
+      emitMilestone: false
     });
-  } catch (error) {
-    console.error("[enrollment-packets] unable to emit action-required workflow milestone", error);
   }
 }
 

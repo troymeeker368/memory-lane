@@ -10,6 +10,11 @@ export type CaregiverSignatureStatus =
   | "viewed"
   | "signed"
   | "expired";
+export type CarePlanPostSignReadinessStatus =
+  | "not_started"
+  | "signed_pending_snapshot"
+  | "signed_pending_caregiver_dispatch"
+  | "ready";
 
 export interface CarePlan {
   id: string;
@@ -51,6 +56,8 @@ export interface CarePlan {
   caregiverSignatureRequestUrl: string | null;
   caregiverSignedName: string | null;
   finalMemberFileId: string | null;
+  postSignReadinessStatus: CarePlanPostSignReadinessStatus;
+  postSignReadinessReason: string | null;
   designeeCleanupRequired: boolean;
   createdAt: string;
   updatedAt: string;
@@ -199,6 +206,8 @@ export type DbCarePlan = {
   caregiver_signature_request_url: string | null;
   caregiver_signed_name: string | null;
   final_member_file_id: string | null;
+  post_sign_readiness_status: string | null;
+  post_sign_readiness_reason: string | null;
   legacy_cleanup_flag: boolean | null;
   created_at: string;
   updated_at: string;

@@ -3,6 +3,7 @@ import { listIncidentDashboard } from "@/lib/services/incidents";
 import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow-read";
 import { getProgressNoteDashboard } from "@/lib/services/progress-notes";
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 
 type DashboardMarRow = {
   id: string;
@@ -21,6 +22,13 @@ type DashboardBloodSugarRow = {
   reading_mg_dl: number | string;
   nurse_name: string | null;
   notes: string | null;
+};
+
+type HealthDashboardCareAlertRpcRow = {
+  member_id: string;
+  member_name: string;
+  flags: string[] | null;
+  summary: string | null;
 };
 
 function parseDate(value: string | null | undefined) {
@@ -63,7 +71,7 @@ export async function getHealthDashboardData(options?: {
     totalRows: 0,
     totalPages: 1
   };
-  const [marSnapshot, bloodSugarResult, membersResult, carePlans, incidents, progressNotes] = await Promise.all([
+  const [marSnapshot, bloodSugarResult, membersResult, carePlans, incidents, progressNotes, careAlertRows] = await Promise.all([
     getMarWorkflowSnapshot({ historyLimit: 150, prnLimit: 150, serviceRole: true }),
     supabase
       .from("v_blood_sugar_logs_detailed")
@@ -72,34 +80,22 @@ export async function getHealthDashboardData(options?: {
       .limit(100),
     supabase
       .from("members")
-      .select("id, display_name, code_status")
+      .select("id, display_name")
       .eq("status", "active")
       .order("display_name", { ascending: true }),
     options?.includeCarePlans ? getCarePlanDashboard({ page: 1, pageSize: 25 }) : Promise.resolve(emptyCarePlanDashboard),
     options?.includeIncidents ? listIncidentDashboard({ limit: 6 }) : Promise.resolve(emptyIncidentDashboard),
     options?.includeProgressNotes
       ? getProgressNoteDashboard({ page: 1, pageSize: 25, serviceRole: true })
-      : Promise.resolve(emptyProgressNoteDashboard)
+      : Promise.resolve(emptyProgressNoteDashboard),
+    invokeSupabaseRpcOrThrow<HealthDashboardCareAlertRpcRow[]>(supabase, "rpc_get_health_dashboard_care_alerts", {
+      p_limit: 12
+    })
   ]);
   if (bloodSugarResult.error) throw new Error(`Unable to load v_blood_sugar_logs_detailed: ${bloodSugarResult.error.message}`);
   if (membersResult.error) throw new Error(`Unable to load active members for health dashboard: ${membersResult.error.message}`);
 
-  const members = (membersResult.data ?? []) as Array<{ id: string; display_name: string; code_status: string | null }>;
-  const memberIds = members.map((member) => member.id);
-  const [mccResult, mhpResult] = memberIds.length
-    ? await Promise.all([
-        supabase
-          .from("member_command_centers")
-          .select("member_id, food_allergies, medication_allergies, environmental_allergies, diet_type, dietary_preferences_restrictions, code_status, command_center_notes")
-          .in("member_id", memberIds),
-        supabase
-          .from("member_health_profiles")
-          .select("member_id, important_alerts, diet_type, dietary_restrictions, code_status, cognitive_behavior_comments")
-          .in("member_id", memberIds)
-      ])
-    : [{ data: [], error: null }, { data: [], error: null }];
-  if (mccResult.error) throw new Error(mccResult.error.message);
-  if (mhpResult.error) throw new Error(mhpResult.error.message);
+  const members = (membersResult.data ?? []) as Array<{ id: string; display_name: string }>;
 
   const marRows = marSnapshot.today.map((row) => ({
     id: row.marScheduleId,
@@ -146,36 +142,12 @@ export async function getHealthDashboardData(options?: {
       }))
   ].sort((left, right) => (left.when < right.when ? 1 : -1));
 
-  const mccByMember = new Map(((mccResult.data ?? []) as Array<Record<string, string | null>>).map((row) => [String(row.member_id), row] as const));
-  const mhpByMember = new Map(((mhpResult.data ?? []) as Array<Record<string, string | null>>).map((row) => [String(row.member_id), row] as const));
-  const careAlerts = members
-    .map((member) => {
-      const mcc = mccByMember.get(member.id);
-      const mhp = mhpByMember.get(member.id);
-      const flags: string[] = [];
-      const allergyText = `${mcc?.food_allergies ?? ""} ${mcc?.medication_allergies ?? ""} ${mcc?.environmental_allergies ?? ""}`.trim();
-      const dietType = `${mcc?.diet_type ?? mhp?.diet_type ?? ""}`.trim().toLowerCase();
-      const dietaryRestrictions = `${mcc?.dietary_preferences_restrictions ?? ""} ${mhp?.dietary_restrictions ?? ""}`.trim();
-      const codeStatus = `${mcc?.code_status ?? mhp?.code_status ?? member.code_status ?? ""}`.trim();
-      const importantAlerts = `${mhp?.important_alerts ?? ""}`.trim();
-      const commandCenterNotes = `${mcc?.command_center_notes ?? ""}`.trim();
-      const behaviorNotes = `${mhp?.cognitive_behavior_comments ?? ""}`.trim();
-
-      if (allergyText.length > 0) flags.push("Allergies");
-      if ((dietType && dietType !== "regular") || dietaryRestrictions.length > 0) flags.push("Special diet");
-      if (codeStatus === "DNR") flags.push("DNR");
-      if (importantAlerts.length > 0 || commandCenterNotes.length > 0) flags.push("Care alert");
-      if (behaviorNotes.length > 0) flags.push("Behavior notes");
-      return {
-        memberId: member.id,
-        memberName: member.display_name,
-        flags,
-        summary: importantAlerts || commandCenterNotes || dietaryRestrictions || behaviorNotes || "-"
-      };
-    })
-    .filter((row) => row.flags.length > 0)
-    .sort((left, right) => left.memberName.localeCompare(right.memberName, undefined, { sensitivity: "base" }))
-    .slice(0, 12);
+  const careAlerts = (careAlertRows ?? []).map((row) => ({
+    memberId: row.member_id,
+    memberName: row.member_name,
+    flags: Array.isArray(row.flags) ? row.flags.filter((flag): flag is string => typeof flag === "string" && flag.length > 0) : [],
+    summary: row.summary ?? "-"
+  }));
 
   return {
     marRows,

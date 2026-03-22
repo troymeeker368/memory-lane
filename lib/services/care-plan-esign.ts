@@ -21,7 +21,7 @@ const TOKEN_BYTE_LENGTH = 32;
 const PREPARE_CARE_PLAN_CAREGIVER_REQUEST_RPC = "rpc_prepare_care_plan_caregiver_request";
 const TRANSITION_CARE_PLAN_CAREGIVER_STATUS_RPC = "rpc_transition_care_plan_caregiver_status";
 const CARE_PLAN_CAREGIVER_REQUEST_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
-const CARE_PLAN_CAREGIVER_STATUS_TRANSITION_MIGRATION = "0108_care_plan_caregiver_status_compare_and_set.sql";
+const CARE_PLAN_CAREGIVER_STATUS_TRANSITION_MIGRATION = "0111_care_plan_caregiver_status_compare_and_set.sql";
 
 export async function recordCarePlanAlertSafely(
   input: Parameters<typeof recordImmediateSystemAlert>[0],

@@ -10,6 +10,7 @@ import {
   listActivePrnMedicationOptions,
   syncActivePrnMedicationOrders
 } from "@/lib/services/mar-prn-workflow";
+import { listMarWorkflowMemberOptions, type MarWorkflowMemberOption } from "@/lib/services/mar-member-options";
 import {
   clean,
   isDateWithinMedicationWindow,
@@ -187,6 +188,7 @@ export async function getMarWorkflowSnapshot(options?: {
   serviceRole?: boolean;
   historyLimit?: number;
   prnLimit?: number;
+  memberOptions?: MarWorkflowMemberOption[];
 }) {
   const serviceRole = options?.serviceRole ?? true;
 
@@ -247,13 +249,6 @@ export async function getMarWorkflowSnapshot(options?: {
     });
   }
 
-  const { data: memberOptionsRows, error: memberOptionsError } = await supabase
-    .from("members")
-    .select("id, display_name")
-    .eq("status", "active")
-    .order("display_name", { ascending: true });
-  if (memberOptionsError) throw new Error(memberOptionsError.message);
-
   return {
     today,
     overdueToday,
@@ -264,9 +259,6 @@ export async function getMarWorkflowSnapshot(options?: {
     prnEffective: prnSnapshot.effective,
     prnIneffective: prnSnapshot.ineffective,
     prnMedicationOptions,
-    memberOptions: ((memberOptionsRows ?? []) as Array<{ id: string; display_name: string | null }>).map((row) => ({
-      memberId: row.id,
-      memberName: row.display_name ?? "Member"
-    }))
+    memberOptions: options?.memberOptions ?? (await listMarWorkflowMemberOptions({ serviceRole }))
   } satisfies MarWorkflowSnapshot;
 }

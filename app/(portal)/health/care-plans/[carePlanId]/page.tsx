@@ -34,6 +34,18 @@ function participationRateLabel(rate: number | null) {
   return `${rate}%`;
 }
 
+function postSignReadinessTone(status: string) {
+  if (status === "ready") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  return "border-amber-200 bg-amber-50 text-amber-800";
+}
+
+function postSignReadinessLabel(status: string) {
+  if (status === "signed_pending_snapshot") return "Signed, but version history repair is still needed";
+  if (status === "signed_pending_caregiver_dispatch") return "Signed, but caregiver dispatch still needs follow-up";
+  if (status === "ready") return "Operationally ready";
+  return "Post-sign work has not started";
+}
+
 export default async function CarePlanDetailPage({
   params,
   searchParams
@@ -132,6 +144,12 @@ export default async function CarePlanDetailPage({
 
       <Card className="space-y-1">
         <CardTitle>Signoff</CardTitle>
+        <p className={`rounded-lg border p-3 text-sm ${postSignReadinessTone(detail.carePlan.postSignReadinessStatus)}`}>
+          <span className="font-semibold">Post-sign readiness:</span> {postSignReadinessLabel(detail.carePlan.postSignReadinessStatus)}
+          {detail.carePlan.postSignReadinessReason ? (
+            <span className="block mt-1 text-xs">{detail.carePlan.postSignReadinessReason}</span>
+          ) : null}
+        </p>
         <CarePlanSignatureBlock
           completedBy={detail.carePlan.completedBy}
           dateOfCompletion={detail.carePlan.dateOfCompletion}

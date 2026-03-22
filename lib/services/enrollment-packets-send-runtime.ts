@@ -24,10 +24,10 @@ import {
   toSummary
 } from "@/lib/services/enrollment-packet-core";
 import {
-  addLeadActivity,
   getEnrollmentPacketSenderSignatureProfile,
   getLeadById,
-  getMemberById
+  getMemberById,
+  syncEnrollmentPacketLeadActivityOrQueue
 } from "@/lib/services/enrollment-packet-mapping-runtime";
 import {
   calculateInitialEnrollmentAmount,
@@ -615,14 +615,17 @@ export async function sendEnrollmentPacketRequest(input: {
   }
 
   if (lead?.id) {
-    await addLeadActivity({
+    await syncEnrollmentPacketLeadActivityOrQueue({
+      packetId: requestId,
+      memberId: member.id,
       leadId: lead.id,
       memberName: lead.member_name,
       activityType: "Email",
       outcome: "Enrollment Packet Sent",
       notes: `Enrollment packet request ${requestId} sent to ${caregiverEmail}.`,
       completedByUserId: senderUserId,
-      completedByName: senderFullName
+      completedByName: senderFullName,
+      actionUrl: `/sales/leads/${lead.id}`
     });
   }
 
