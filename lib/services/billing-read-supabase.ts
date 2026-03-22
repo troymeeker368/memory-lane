@@ -25,7 +25,7 @@ import {
 } from "@/lib/services/billing-schema-errors";
 import { getBillingGenerationPreview as getBillingGenerationPreviewFromHelpers } from "@/lib/services/billing-preview-helpers";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 import type {
   listCenterClosures as listCenterClosuresImpl
 } from "@/lib/services/billing-configuration";

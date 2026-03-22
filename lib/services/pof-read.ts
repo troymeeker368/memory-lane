@@ -2,7 +2,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { toSendWorkflowDeliveryStatus } from "@/lib/services/send-workflow-state";
 import { toEasternISO } from "@/lib/timezone";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 
 import type { PofDocumentEvent, PofRequestStatus, PofRequestSummary } from "@/lib/services/pof-types";
 type DocumentEventRow = Database["public"]["Tables"]["document_events"]["Row"];

@@ -3,7 +3,7 @@ import { normalizeRoleKey } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 
 export type TimecardStatus = "pending" | "needs_review" | "approved" | "corrected";
 type Decision = "approved" | "denied";

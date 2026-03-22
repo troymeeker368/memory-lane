@@ -5,7 +5,7 @@ import {
   MEMBER_CONTACT_SELECT_WITH_PAYOR
 } from "@/lib/services/member-contact-payor-schema";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 
 export type MappingSystem = "mcc" | "mhp" | "pof_staging" | "member_files";
 export type MappingStatus = "written" | "skipped" | "conflict" | "staged" | "error";

@@ -1,6 +1,6 @@
 import { MEMBER_BUS_NUMBER_OPTIONS } from "@/lib/canonical";
 import { createClient } from "@/lib/supabase/server";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 
 export interface OperationalSettings {
   busNumbers: string[];

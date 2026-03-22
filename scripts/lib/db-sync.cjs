@@ -7,7 +7,7 @@ const { spawnSync } = require("node:child_process");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const migrationsDir = path.join(repoRoot, "supabase", "migrations");
-const canonicalTypesFile = path.join(repoRoot, "types", "supabase.ts");
+const canonicalTypesFile = path.join(repoRoot, "types", "supabase-types.d.ts");
 
 function getSupabaseExecutable() {
   return process.platform === "win32" ? "supabase.cmd" : "supabase";

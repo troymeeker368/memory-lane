@@ -33,7 +33,7 @@ import {
   recordImmediateSystemAlert,
   recordWorkflowEvent
 } from "@/lib/services/workflow-observability";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 
 type Tables = Database["public"]["Tables"];
 type BillingInvoiceLineRow = Tables["billing_invoice_lines"]["Row"];

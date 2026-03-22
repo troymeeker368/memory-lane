@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 
 type StaffAuthStatus = "invited" | "active" | "disabled";
 type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];

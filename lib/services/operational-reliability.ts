@@ -7,7 +7,7 @@ import { sendCarePlanToCaregiverForSignature } from "@/lib/services/care-plan-es
 import { createBillingExport } from "@/lib/services/billing-workflows";
 import { resendPofSignatureRequest } from "@/lib/services/pof-esign";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 
 type WorkflowDomain = "enrollment_packet" | "pof_request" | "care_plan" | "billing";
 type EnrollmentPacketRetryRow = Pick<

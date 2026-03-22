@@ -6,7 +6,7 @@ import { buildStaffAuthEmailTemplate } from "@/lib/email/templates/staff-auth";
 import { buildDocumentCenterSenderHeader } from "@/lib/services/document-branding";
 import { toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 
 export type StaffAuthStatus = "invited" | "active" | "disabled";
 export type StaffAuthEventType =

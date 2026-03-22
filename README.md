@@ -184,11 +184,11 @@ When runtime code starts referencing a new column or RPC, apply migrations befor
 - Pre-push validation: `npm run prepush`
 - If PostgREST still serves stale schema after pushing migrations, restart the local Supabase stack before retrying the UI save flow.
 
-The canonical generated Supabase types file is checked in at `types/supabase.ts`. Pre-push now validates that the linked database is up to date and that this file matches the linked schema.
+The canonical generated Supabase types file is checked in at `types/supabase-types.d.ts`. Pre-push now validates that the linked database is up to date and that this file matches the linked schema.
 
 ### Troubleshooting
 
 - Run `npm run db:sync` whenever you pull schema changes, add/edit a migration, switch to a branch with Supabase changes, or see a schema-dependent UI failure in local dev.
-- After any migration change, run `npm run db:sync`, commit the updated `types/supabase.ts`, and rerun `npm run typecheck`.
+- After any migration change, run `npm run db:sync`, commit the updated `types/supabase-types.d.ts`, and rerun `npm run typecheck`.
 - Clear `.next` and restart the dev server when generated types changed but the app still behaves like the old schema, or after branch switches that changed migrations, RPCs, or server actions. Use `npm run clean:next` and then `npm run dev`.
 

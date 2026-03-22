@@ -16,7 +16,7 @@ import {
   DOCUMENT_CENTER_NAME,
   DOCUMENT_CENTER_PHONE
 } from "@/lib/services/document-branding";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 import type { PDFDocument as PDFDocumentType, PDFFont, PDFImage, PDFPage } from "pdf-lib";
 
 type BillingInvoiceRow = Database["public"]["Tables"]["billing_invoices"]["Row"];

@@ -24,7 +24,7 @@ import { randomTextId, normalizeDateOnly } from "@/lib/services/billing-utils";
 import { generateClosureDatesFromRules } from "@/lib/services/closure-rules";
 import { handleNonCriticalMissingSchemaError } from "@/lib/services/billing-schema-errors";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 
 type CenterClosureRow = Database["public"]["Tables"]["center_closures"]["Row"];
 type PayorRow = Database["public"]["Tables"]["payors"]["Row"];

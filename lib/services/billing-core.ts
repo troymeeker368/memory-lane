@@ -6,7 +6,7 @@ import type {
   DateRange,
   ScheduleTemplateRow
 } from "@/lib/services/billing-types";
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 import {
   addDays,
   attendanceSettingIncludesDate,

@@ -1,4 +1,4 @@
-import type { Database } from "@/types/supabase";
+import type { Database } from "@/types/supabase-types";
 
 import type { ProgressNoteComplianceStatus, ProgressNoteRecordStatus } from "@/lib/services/progress-note-model";
 
