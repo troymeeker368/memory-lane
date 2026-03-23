@@ -36,6 +36,21 @@ export interface StaffAuthProfile {
 type SendInviteMode = "invite_sent" | "invite_resent";
 type StaffAuthEmailMode = "set-password" | "reset-password";
 type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
+type StaffAuthProfileRow = Pick<
+  ProfileRow,
+  | "id"
+  | "auth_user_id"
+  | "email"
+  | "full_name"
+  | "role"
+  | "active"
+  | "is_active"
+  | "status"
+  | "invited_at"
+  | "password_set_at"
+  | "last_sign_in_at"
+  | "disabled_at"
+>;
 
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
@@ -57,7 +72,7 @@ function normalizeStatus(value: string | null | undefined, active: boolean) {
   return active ? "active" : "disabled";
 }
 
-function toStaffAuthProfile(row: ProfileRow): StaffAuthProfile {
+function toStaffAuthProfile(row: StaffAuthProfileRow): StaffAuthProfile {
   const active = row?.active !== false;
   const isActive = row?.is_active !== false;
   return {
@@ -96,7 +111,13 @@ async function getServiceClient() {
 
 async function getStaffAuthProfileById(staffUserId: string): Promise<StaffAuthProfile> {
   const supabase = await getServiceClient();
-  const { data, error } = await supabase.from("profiles").select("id, role, active, is_active, status, password_set_at, last_sign_in_at").eq("id", staffUserId).maybeSingle();
+  const { data, error } = await supabase
+    .from("profiles")
+    .select(
+      "id, auth_user_id, email, full_name, role, active, is_active, status, invited_at, password_set_at, last_sign_in_at, disabled_at"
+    )
+    .eq("id", staffUserId)
+    .maybeSingle();
 
   if (error) {
     throw new Error(`Unable to load staff auth profile ${staffUserId}: ${error.message}`);
@@ -112,7 +133,13 @@ async function getStaffAuthProfileByEmail(email: string): Promise<StaffAuthProfi
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return null;
   const supabase = await getServiceClient();
-  const { data, error } = await supabase.from("profiles").select("id, role, active, is_active, status, password_set_at, last_sign_in_at").eq("email", normalizedEmail).maybeSingle();
+  const { data, error } = await supabase
+    .from("profiles")
+    .select(
+      "id, auth_user_id, email, full_name, role, active, is_active, status, invited_at, password_set_at, last_sign_in_at, disabled_at"
+    )
+    .eq("email", normalizedEmail)
+    .maybeSingle();
   if (error) {
     throw new Error(`Unable to load staff auth profile by email: ${error.message}`);
   }
