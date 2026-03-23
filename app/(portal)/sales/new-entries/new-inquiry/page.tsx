@@ -13,6 +13,7 @@ export default async function NewInquiryPage({
   const partnerId = typeof params.partnerId === "string" ? params.partnerId : undefined;
   const referralSourceId = typeof params.referralSourceId === "string" ? params.referralSourceId : undefined;
   const { partners, referralSources } = await getLeadFormLookups({
+    includeLeads: false,
     includePartnerId: partnerId,
     includeReferralSourceId: referralSourceId
   });

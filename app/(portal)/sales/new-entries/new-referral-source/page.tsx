@@ -5,7 +5,7 @@ import { getLeadFormLookups } from "@/lib/services/leads-read";
 
 export default async function NewReferralSourcePage() {
   await requireModuleAccess("sales");
-  const { partners } = await getLeadFormLookups();
+  const { partners } = await getLeadFormLookups({ includeLeads: false });
 
   return (
     <Card>

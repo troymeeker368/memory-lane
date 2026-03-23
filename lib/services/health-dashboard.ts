@@ -1,6 +1,6 @@
 import { getCarePlanDashboard } from "@/lib/services/care-plans";
 import { listIncidentDashboard } from "@/lib/services/incidents";
-import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow-read";
+import { getHealthDashboardMarTodayRows } from "@/lib/services/mar-dashboard-read-model";
 import { getProgressNoteDashboard } from "@/lib/services/progress-notes";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
@@ -71,8 +71,8 @@ export async function getHealthDashboardData(options?: {
     totalRows: 0,
     totalPages: 1
   };
-  const [marSnapshot, bloodSugarResult, membersResult, carePlans, incidents, progressNotes, careAlertRows] = await Promise.all([
-    getMarWorkflowSnapshot({ historyLimit: 150, prnLimit: 150, serviceRole: true }),
+  const [marTodayRows, bloodSugarResult, membersResult, carePlans, incidents, progressNotes, careAlertRows] = await Promise.all([
+    getHealthDashboardMarTodayRows({ serviceRole: true }),
     supabase
       .from("v_blood_sugar_logs_detailed")
       .select("id, checked_at, member_id, member_name, reading_mg_dl, nurse_name, notes")
@@ -97,7 +97,7 @@ export async function getHealthDashboardData(options?: {
 
   const members = (membersResult.data ?? []) as Array<{ id: string; display_name: string }>;
 
-  const marRows = marSnapshot.today.map((row) => ({
+  const marRows = marTodayRows.map((row) => ({
     id: row.marScheduleId,
     member_name: row.memberName,
     medication_name: row.medicationName,

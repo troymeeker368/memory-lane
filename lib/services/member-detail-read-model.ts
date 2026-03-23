@@ -11,6 +11,7 @@ import {
 } from "@/lib/services/activity-detail-selects";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";
 
@@ -94,10 +95,27 @@ type MemberDetailPhotoRow = {
   photo_url: string;
 };
 
+type MemberDetailCountsRpcRow = {
+  daily_activities: number | string | null;
+  toilets: number | string | null;
+  showers: number | string | null;
+  transportation: number | string | null;
+  blood_sugar: number | string | null;
+  ancillary: number | string | null;
+  assessments: number | string | null;
+  photos: number | string | null;
+};
+
 const MEMBER_DETAIL_PREVIEW_LIMIT = 50;
+const MEMBER_DETAIL_COUNTS_RPC = "rpc_get_member_detail_counts";
+const MEMBER_DETAIL_COUNTS_MIGRATION = "0122_member_detail_and_care_plan_performance_hardening.sql";
 
 function isStackDepthLimitError(message: string | null | undefined) {
   return /stack depth limit exceeded/i.test(String(message ?? ""));
+}
+
+function toCount(value: number | string | null | undefined) {
+  return Number(value ?? 0);
 }
 
 export async function getMemberDetail(
@@ -136,17 +154,13 @@ export async function getMemberDetail(
   const loadMemberRelations = async (client: Awaited<ReturnType<typeof createClient>>) =>
     Promise.all([
       withOptionalStaffFilter(
-        client
-          .from("daily_activity_logs")
-          .select(MEMBER_DETAIL_DAILY_ACTIVITY_SELECT, { count: "exact" })
-          .eq("member_id", canonicalMemberId)
-          .order("created_at", { ascending: false }),
+        client.from("daily_activity_logs").select(MEMBER_DETAIL_DAILY_ACTIVITY_SELECT).eq("member_id", canonicalMemberId).order("created_at", { ascending: false }),
         "staff_user_id"
       ).limit(MEMBER_DETAIL_PREVIEW_LIMIT),
       withOptionalStaffFilter(
         client
           .from("toilet_logs")
-          .select(MEMBER_DETAIL_TOILET_SELECT, { count: "exact" })
+          .select(MEMBER_DETAIL_TOILET_SELECT)
           .eq("member_id", canonicalMemberId)
           .order("event_at", { ascending: false }),
         "staff_user_id"
@@ -154,7 +168,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("shower_logs")
-          .select(MEMBER_DETAIL_SHOWER_SELECT, { count: "exact" })
+          .select(MEMBER_DETAIL_SHOWER_SELECT)
           .eq("member_id", canonicalMemberId)
           .order("event_at", { ascending: false }),
         "staff_user_id"
@@ -162,7 +176,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("transportation_logs")
-          .select(MEMBER_DETAIL_TRANSPORTATION_SELECT, { count: "exact" })
+          .select(MEMBER_DETAIL_TRANSPORTATION_SELECT)
           .eq("member_id", canonicalMemberId)
           .order("service_date", { ascending: false }),
         "staff_user_id"
@@ -170,7 +184,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("blood_sugar_logs")
-          .select(MEMBER_DETAIL_BLOOD_SUGAR_SELECT, { count: "exact" })
+          .select(MEMBER_DETAIL_BLOOD_SUGAR_SELECT)
           .eq("member_id", canonicalMemberId)
           .order("checked_at", { ascending: false }),
         "nurse_user_id"
@@ -178,7 +192,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("ancillary_charge_logs")
-          .select(MEMBER_DETAIL_ANCILLARY_SELECT, { count: "exact" })
+          .select(MEMBER_DETAIL_ANCILLARY_SELECT)
           .eq("member_id", canonicalMemberId)
           .order("created_at", { ascending: false }),
         "staff_user_id"
@@ -187,7 +201,7 @@ export async function getMemberDetail(
         ? withOptionalStaffFilter(
             client
               .from("intake_assessments")
-              .select(MEMBER_DETAIL_ASSESSMENT_SELECT, { count: "exact" })
+              .select(MEMBER_DETAIL_ASSESSMENT_SELECT)
               .eq("member_id", canonicalMemberId)
               .order("created_at", { ascending: false }),
             "completed_by_user_id"
@@ -196,7 +210,7 @@ export async function getMemberDetail(
       withOptionalStaffFilter(
         client
           .from("member_photo_uploads")
-          .select(MEMBER_DETAIL_PHOTO_SELECT, { count: "exact" })
+          .select(MEMBER_DETAIL_PHOTO_SELECT)
           .eq("member_id", canonicalMemberId)
           .order("uploaded_at", { ascending: false }),
         "uploaded_by"
@@ -248,6 +262,23 @@ export async function getMemberDetail(
   if (assessmentsResult.error) throw new Error(assessmentsResult.error.message);
   if (photosResult.error) throw new Error(photosResult.error.message);
 
+  let countRows: MemberDetailCountsRpcRow[];
+  try {
+    countRows = await invokeSupabaseRpcOrThrow<MemberDetailCountsRpcRow[]>(supabase, MEMBER_DETAIL_COUNTS_RPC, {
+      p_member_id: canonicalMemberId,
+      p_staff_user_id: isStaffViewer ? staffUserId : null
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to load member detail counts.";
+    if (message.includes(MEMBER_DETAIL_COUNTS_RPC)) {
+      throw new Error(
+        `Member detail counts RPC is not available. Apply Supabase migration ${MEMBER_DETAIL_COUNTS_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
+  const countRow = countRows?.[0];
+
   const dailyActivities = (dailyActivitiesResult.data ?? []) as MemberDetailDailyActivityRow[];
   const toilets = (toiletsResult.data ?? []) as MemberDetailToiletRow[];
   const showers = (showersResult.data ?? []) as MemberDetailShowerRow[];
@@ -265,14 +296,14 @@ export async function getMemberDetail(
   return {
     member: member as MemberDetailMember,
     counts: {
-      dailyActivities: Number(dailyActivitiesResult.count ?? dailyActivities.length),
-      toilets: Number(toiletsResult.count ?? toilets.length),
-      showers: Number(showersResult.count ?? showers.length),
-      transportation: Number(transportationResult.count ?? transportation.length),
-      bloodSugar: Number(bloodSugarResult.count ?? bloodSugar.length),
-      ancillary: Number(ancillaryResult.count ?? ancillary.length),
-      assessments: Number(assessmentsResult.count ?? assessments.length),
-      photos: Number(photosResult.count ?? photos.length)
+      dailyActivities: toCount(countRow?.daily_activities),
+      toilets: toCount(countRow?.toilets),
+      showers: toCount(countRow?.showers),
+      transportation: toCount(countRow?.transportation),
+      bloodSugar: toCount(countRow?.blood_sugar),
+      ancillary: toCount(countRow?.ancillary),
+      assessments: canViewAssessments ? toCount(countRow?.assessments) : 0,
+      photos: toCount(countRow?.photos)
     },
     dailyActivities,
     toilets,

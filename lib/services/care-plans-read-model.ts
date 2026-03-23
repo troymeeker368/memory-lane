@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { toEasternDate } from "@/lib/timezone";
 import { resolveCarePlanSections, toCarePlan, toCarePlanVersion } from "@/lib/services/care-plan-model";
@@ -39,25 +40,16 @@ export async function getCarePlanParticipationSummary(memberId: string): Promise
   const supabase = await createClient();
   const windowEndDate = toEasternDate();
   const windowStartDate = addDays(windowEndDate, -180);
-  const [{ data: attendanceRows, error: attendanceError }, { data: activityRows, error: activityError }] =
-    await Promise.all([
-      supabase
-        .from("attendance_records")
-        .select("attendance_date")
-        .eq("member_id", canonicalMemberId)
-        .gte("attendance_date", windowStartDate)
-        .lte("attendance_date", windowEndDate),
-      supabase
-        .from("daily_activity_logs")
-        .select("activity_date")
-        .eq("member_id", canonicalMemberId)
-        .gte("activity_date", windowStartDate)
-        .lte("activity_date", windowEndDate)
-    ]);
-  if (attendanceError) throw new Error(attendanceError.message);
-  if (activityError) throw new Error(activityError.message);
-  const attendanceDays = (attendanceRows ?? []).length;
-  const participationDays = new Set((activityRows ?? []).map((row) => String(row.activity_date).slice(0, 10))).size;
+  const rows = await invokeSupabaseRpcOrThrow<
+    Array<{ attendance_days: number | string | null; participation_days: number | string | null }>
+  >(supabase, "rpc_get_care_plan_participation_summary", {
+    p_member_id: canonicalMemberId,
+    p_window_start_date: windowStartDate,
+    p_window_end_date: windowEndDate
+  });
+  const row = rows?.[0];
+  const attendanceDays = Number(row?.attendance_days ?? 0);
+  const participationDays = Number(row?.participation_days ?? 0);
   return {
     attendanceDays,
     participationDays,
