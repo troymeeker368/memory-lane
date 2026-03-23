@@ -37,7 +37,7 @@ const MAR_MEDICATION_SYNC_RPC = "rpc_sync_mar_medications_from_member_profile";
 const MAR_RECONCILE_RPC = "rpc_reconcile_member_mar_state";
 const MAR_RPC_MIGRATION = "0056_shared_rpc_orchestration_hardening.sql";
 const MAR_DOCUMENT_SCHEDULED_ADMIN_RPC = "rpc_document_scheduled_mar_administration";
-const MAR_DOCUMENT_SCHEDULED_ADMIN_MIGRATION = "0120_document_scheduled_mar_administration_rpc.sql";
+const MAR_DOCUMENT_SCHEDULED_ADMIN_MIGRATION = "0121_document_scheduled_mar_administration_rpc.sql";
 
 type MarMedicationSyncRpcRow = {
   anchor_physician_order_id: string;
