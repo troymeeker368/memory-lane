@@ -357,8 +357,10 @@ export async function updateEnrollmentPacketMappingSyncState(input: {
   attemptedAt: string;
   error?: string | null;
   mappingRunId?: string | null;
+  clearClaim?: boolean;
 }) {
   const admin = createSupabaseAdminClient();
+  const shouldClearClaim = input.clearClaim ?? input.status !== "pending";
   const { error } = await admin
     .from("enrollment_packet_requests")
     .update({
@@ -366,7 +368,27 @@ export async function updateEnrollmentPacketMappingSyncState(input: {
       mapping_sync_attempted_at: input.attemptedAt,
       mapping_sync_error: input.status === "failed" ? String(input.error ?? "").trim() || null : null,
       latest_mapping_run_id: input.mappingRunId ?? null,
+      mapping_sync_claimed_at: shouldClearClaim ? null : undefined,
+      mapping_sync_claimed_by_user_id: shouldClearClaim ? null : undefined,
+      mapping_sync_claimed_by_name: shouldClearClaim ? null : undefined,
       updated_at: input.attemptedAt
+    })
+    .eq("id", input.packetId);
+  if (error) throw new Error(error.message);
+}
+
+export async function releaseEnrollmentPacketMappingClaim(input: {
+  packetId: string;
+  updatedAt: string;
+}) {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
+    .from("enrollment_packet_requests")
+    .update({
+      mapping_sync_claimed_at: null,
+      mapping_sync_claimed_by_user_id: null,
+      mapping_sync_claimed_by_name: null,
+      updated_at: input.updatedAt
     })
     .eq("id", input.packetId);
   if (error) throw new Error(error.message);

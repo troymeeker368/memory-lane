@@ -82,6 +82,13 @@ function asPhone(formData: FormData, key: string) {
   return normalizePhoneForStorage(asString(formData, key)) ?? "";
 }
 
+class InvalidEnrollmentPacketIntakePayloadError extends Error {
+  constructor() {
+    super("Enrollment packet answers are invalid. Refresh the form and try again.");
+    this.name = "InvalidEnrollmentPacketIntakePayloadError";
+  }
+}
+
 function parseIntakePayload(formData: FormData) {
   const raw = asString(formData, "intakePayload");
   if (!raw) return normalizeEnrollmentPacketIntakePayload({});
@@ -89,7 +96,36 @@ function parseIntakePayload(formData: FormData) {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     return normalizeEnrollmentPacketIntakePayload(parsed);
   } catch {
-    return normalizeEnrollmentPacketIntakePayload({});
+    throw new InvalidEnrollmentPacketIntakePayloadError();
+  }
+}
+
+async function getPublicRequestMetadata() {
+  const headerMap = await headers();
+  const forwardedFor = headerMap.get("x-forwarded-for");
+  return {
+    caregiverIp: forwardedFor ? forwardedFor.split(",")[0].trim() : null,
+    caregiverUserAgent: headerMap.get("user-agent")
+  };
+}
+
+async function recordInvalidPayloadGuardFailure(input: {
+  token: string;
+  caregiverIp: string | null;
+  caregiverUserAgent: string | null;
+}) {
+  try {
+    const { recordPublicEnrollmentPacketGuardFailure } = await loadEnrollmentPacketPublicService();
+    await recordPublicEnrollmentPacketGuardFailure({
+      token: input.token,
+      caregiverIp: input.caregiverIp,
+      caregiverUserAgent: input.caregiverUserAgent,
+      failureType: "invalid_intake_payload_json",
+      message: "Public enrollment packet submission included malformed intakePayload JSON.",
+      severity: "medium"
+    });
+  } catch (loggingError) {
+    console.error("[enrollment-packet] unable to record malformed intake payload guard failure", loggingError);
   }
 }
 
@@ -165,10 +201,24 @@ async function parseFileUploads(
 
 export async function savePublicEnrollmentPacketProgressAction(formData: FormData) {
   try {
+    const requestMetadata = await getPublicRequestMetadata();
+    const token = asString(formData, "token");
     const { savePublicEnrollmentPacketProgress } = await loadEnrollmentPacketPublicService();
-    const intakePayload = parseIntakePayload(formData);
+    let intakePayload;
+    try {
+      intakePayload = parseIntakePayload(formData);
+    } catch (error) {
+      if (error instanceof InvalidEnrollmentPacketIntakePayloadError) {
+        await recordInvalidPayloadGuardFailure({
+          token,
+          caregiverIp: requestMetadata.caregiverIp,
+          caregiverUserAgent: requestMetadata.caregiverUserAgent
+        });
+      }
+      throw error;
+    }
     await savePublicEnrollmentPacketProgress({
-      token: asString(formData, "token"),
+      token,
       caregiverName: asString(formData, "caregiverName"),
       caregiverPhone: asPhone(formData, "caregiverPhone"),
       caregiverEmail: asString(formData, "caregiverEmail"),
@@ -206,12 +256,22 @@ export async function savePublicEnrollmentPacketProgressAction(formData: FormDat
 export async function submitPublicEnrollmentPacketAction(formData: FormData) {
   try {
     const { submitPublicEnrollmentPacket } = await loadEnrollmentPacketPublicService();
-    const headerMap = await headers();
-    const forwardedFor = headerMap.get("x-forwarded-for");
-    const caregiverIp = forwardedFor ? forwardedFor.split(",")[0].trim() : null;
-    const caregiverUserAgent = headerMap.get("user-agent");
+    const requestMetadata = await getPublicRequestMetadata();
+    const { caregiverIp, caregiverUserAgent } = requestMetadata;
     const token = asString(formData, "token");
-    const intakePayload = parseIntakePayload(formData);
+    let intakePayload;
+    try {
+      intakePayload = parseIntakePayload(formData);
+    } catch (error) {
+      if (error instanceof InvalidEnrollmentPacketIntakePayloadError) {
+        await recordInvalidPayloadGuardFailure({
+          token,
+          caregiverIp,
+          caregiverUserAgent
+        });
+      }
+      throw error;
+    }
 
     let medicareCardUploads;
     let primaryInsuranceCardUploads;

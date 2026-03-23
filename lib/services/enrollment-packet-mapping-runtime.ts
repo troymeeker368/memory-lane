@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   clean,
+  isMissingRpcFunctionError,
   isRowFoundError,
   throwEnrollmentPacketSchemaError
 } from "@/lib/services/enrollment-packet-core";
@@ -12,6 +13,7 @@ import {
   recordWorkflowEvent
 } from "@/lib/services/workflow-observability";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
 import type {
   EnrollmentPacketFieldsRow,
@@ -34,6 +36,24 @@ type EnrollmentPacketDownstreamMappingResult = {
   status: "completed" | "failed";
   error?: string | null;
 };
+
+type ClaimedEnrollmentPacketRetryRow = Pick<
+  EnrollmentPacketRequestRow,
+  | "id"
+  | "member_id"
+  | "lead_id"
+  | "sender_user_id"
+  | "caregiver_email"
+  | "status"
+  | "mapping_sync_status"
+  | "mapping_sync_error"
+  | "mapping_sync_attempted_at"
+  | "latest_mapping_run_id"
+>;
+
+const CLAIM_ENROLLMENT_PACKET_MAPPING_RETRIES_RPC = "rpc_claim_enrollment_packet_mapping_retries";
+const CLAIM_ENROLLMENT_PACKET_MAPPING_RETRIES_MIGRATION =
+  "0120_enrollment_packet_mapping_retry_claim_rpc.sql";
 
 export async function loadEnrollmentPacketArtifactOps() {
   return import("@/lib/services/enrollment-packet-artifacts");
@@ -429,24 +449,33 @@ export async function getEnrollmentPacketSenderSignatureProfile(userId: string) 
 
 export async function retryFailedEnrollmentPacketMappings(input?: { limit?: number }) {
   const limit = Math.min(100, Math.max(1, input?.limit ?? 25));
-  const admin = createSupabaseAdminClient();
-  const { data, error } = await admin
-    .from("enrollment_packet_requests")
-    .select("*")
-    .eq("mapping_sync_status", "failed")
-    .in("status", ["completed", "filed"])
-    .order("mapping_sync_attempted_at", { ascending: true, nullsFirst: true })
-    .limit(limit);
-  if (error) throw new Error(error.message);
-
   const artifactOps = await loadEnrollmentPacketArtifactOps();
+  const admin = createSupabaseAdminClient();
+  let claimedRows: ClaimedEnrollmentPacketRetryRow[];
+  try {
+    const claimed = await invokeSupabaseRpcOrThrow<unknown>(admin, CLAIM_ENROLLMENT_PACKET_MAPPING_RETRIES_RPC, {
+      p_limit: limit,
+      p_now: toEasternISO(),
+      p_actor_user_id: null,
+      p_actor_name: "Enrollment Packet Mapping Retry Runner"
+    });
+    claimedRows = (Array.isArray(claimed) ? claimed : []) as ClaimedEnrollmentPacketRetryRow[];
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, CLAIM_ENROLLMENT_PACKET_MAPPING_RETRIES_RPC)) {
+      throw new Error(
+        `Enrollment packet mapping retry claim RPC is not available. Apply Supabase migration ${CLAIM_ENROLLMENT_PACKET_MAPPING_RETRIES_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
+
   let processed = 0;
   let succeeded = 0;
   let failed = 0;
 
-  for (const row of (data ?? []) as EnrollmentPacketRequestRow[]) {
+  for (const row of claimedRows) {
     processed += 1;
-    const request = row;
+    const request = row as EnrollmentPacketRequestRow;
     const attemptedAt = toEasternISO();
 
     try {
@@ -469,7 +498,8 @@ export async function retryFailedEnrollmentPacketMappings(input?: { limit?: numb
         status: "pending",
         attemptedAt,
         error: null,
-        mappingRunId: request.latest_mapping_run_id
+        mappingRunId: request.latest_mapping_run_id,
+        clearClaim: false
       });
 
       const mappingSummary = await runEnrollmentPacketDownstreamMapping({
@@ -484,6 +514,30 @@ export async function retryFailedEnrollmentPacketMappings(input?: { limit?: numb
 
       if (mappingSummary.status === "completed") {
         succeeded += 1;
+        try {
+          await artifactOps.releaseEnrollmentPacketMappingClaim({
+            packetId: request.id,
+            updatedAt: toEasternISO()
+          });
+        } catch (claimReleaseError) {
+          console.error("[enrollment-packets] unable to release mapping retry claim after successful retry", claimReleaseError);
+          await recordImmediateSystemAlert({
+            entityType: "enrollment_packet_request",
+            entityId: request.id,
+            actorUserId: request.sender_user_id,
+            severity: "medium",
+            alertKey: "enrollment_packet_mapping_retry_claim_release_failed",
+            metadata: {
+              member_id: request.member_id,
+              lead_id: request.lead_id,
+              mapping_run_id: mappingSummary.mappingRunId,
+              error:
+                claimReleaseError instanceof Error
+                  ? claimReleaseError.message
+                  : "Unable to release enrollment packet mapping retry claim."
+            }
+          });
+        }
       } else {
         failed += 1;
       }
