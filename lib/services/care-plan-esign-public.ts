@@ -483,6 +483,8 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete care plan filing.";
+    const fallbackStatus = detail.carePlan.caregiverSignatureStatus;
+    const canWriteFallbackStatus = fallbackStatus !== "signed";
     await cleanupFailedCarePlanCaregiverArtifacts({
       carePlanId: detail.carePlan.id,
       actorUserId: detail.carePlan.caregiverSentByUserId,
@@ -491,18 +493,27 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
       signedPdfObjectPath: signedPdfStoragePath,
       reason
     });
-    await transitionCarePlanCaregiverStatus({
-      carePlanId: detail.carePlan.id,
-      status: detail.carePlan.caregiverSignatureStatus,
-      updatedAt: toEasternISO(),
-      actor: {
-        id: detail.carePlan.caregiverSentByUserId,
-        fullName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName ?? null
-      },
-      caregiverSentAt: detail.carePlan.caregiverSentAt,
-      caregiverViewedAt: detail.carePlan.caregiverViewedAt,
-      caregiverSignatureError: reason
-    });
+    if (canWriteFallbackStatus) {
+      try {
+        await transitionCarePlanCaregiverStatus({
+          carePlanId: detail.carePlan.id,
+          status: fallbackStatus,
+          updatedAt: toEasternISO(),
+          actor: {
+            id: detail.carePlan.caregiverSentByUserId,
+            fullName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName ?? null
+          },
+          caregiverSentAt: detail.carePlan.caregiverSentAt,
+          caregiverViewedAt: detail.carePlan.caregiverViewedAt,
+          caregiverSignatureError: reason,
+          expectedCurrentStatuses: ["ready_to_send", "send_failed", "sent", "viewed", "expired"]
+        });
+      } catch (statusError) {
+        if (!isCarePlanStatusTransitionRaceError(statusError)) {
+          throw statusError;
+        }
+      }
+    }
     await recordWorkflowEvent({
       eventType: "care_plan_failed",
       entityType: "care_plan",

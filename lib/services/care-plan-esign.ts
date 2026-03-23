@@ -377,7 +377,8 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
       status: "send_failed",
       updatedAt: failedAt,
       actor: input.actor,
-      caregiverSignatureError: message
+      caregiverSignatureError: message,
+      expectedCurrentStatuses: ["ready_to_send", "send_failed", "sent", "viewed"]
     });
     await createCarePlanSignatureEvent({
       carePlanId: input.carePlanId,
@@ -425,7 +426,8 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
       updatedAt: now,
       actor: input.actor,
       caregiverSentAt: now,
-      caregiverSignatureError: null
+      caregiverSignatureError: null,
+      expectedCurrentStatuses: ["ready_to_send", "send_failed"]
     });
   } catch (error) {
     await throwDeliveryStateFinalizeFailure({

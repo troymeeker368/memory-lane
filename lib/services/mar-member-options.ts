@@ -41,7 +41,7 @@ async function loadMarMemberOptionRows(serviceRole: boolean) {
   const supabase = await createClient({ serviceRole });
   const rows = await invokeSupabaseRpcOrThrow<MarMemberOptionRpcRow[]>(
     supabase,
-    "rpc_list_mar_member_options"
+    "rpc_list_mar_monthly_report_member_options"
   );
 
   return (rows ?? []).map((row) => ({
