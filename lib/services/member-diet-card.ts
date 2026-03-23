@@ -66,13 +66,7 @@ export async function getMemberDietCard(memberId: string) {
     eating: mhpProfile.eating
   });
 
-  const notes =
-    clean(profile.dietary_preferences_restrictions) ??
-    clean(mhpProfile.dietary_restrictions) ??
-    clean(profile.command_center_notes) ??
-    clean(profile.food_dislikes) ??
-    clean(profile.foods_to_omit) ??
-    "Not recorded";
+  const notes = clean(profile.command_center_notes) ?? "Not recorded";
 
   const allergies = buildAllergySummary({
     noKnownAllergies: profile.no_known_allergies,
