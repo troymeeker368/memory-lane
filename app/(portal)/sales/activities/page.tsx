@@ -4,7 +4,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import {
   getLeadActivitySnapshot,
-  getLeadFormLookups,
+  getLeadActivityContextLookups,
   type SalesPartnerRow,
   type SalesReferralSourceRow
 } from "@/lib/services/leads-read";
@@ -16,10 +16,28 @@ type PartnerActivityRow = SalesActivitySnapshot["partnerActivities"][number];
 
 export default async function SalesRecentActivityPage() {
   await requireModuleAccess("sales");
-  const [{ activities, partnerActivities }, { leads, partners, referralSources }] = await Promise.all([
-    getLeadActivitySnapshot(),
-    getLeadFormLookups({ leadLimit: 500 })
-  ]);
+  const { activities, partnerActivities } = await getLeadActivitySnapshot();
+  const leadIds = new Set<string>();
+  const partnerIds = new Set<string>();
+  const referralSourceIds = new Set<string>();
+
+  activities.forEach((activity) => {
+    if (activity.lead_id) leadIds.add(activity.lead_id);
+  });
+  partnerActivities.forEach((activity) => {
+    if (activity.lead_id) leadIds.add(activity.lead_id);
+    if (activity.partner_id) partnerIds.add(activity.partner_id);
+    if (activity.referral_source_id) referralSourceIds.add(activity.referral_source_id);
+  });
+
+  const { leads, partners, referralSources } =
+    leadIds.size || partnerIds.size || referralSourceIds.size
+      ? await getLeadActivityContextLookups({
+          leadIds: [...leadIds],
+          partnerIds: [...partnerIds],
+          referralSourceIds: [...referralSourceIds]
+        })
+      : { leads: [], partners: [], referralSources: [] };
 
   const leadNameById = new Map(leads.map((lead) => [lead.id, lead.member_name]));
   const partnerByPartnerId = new Map<string, SalesPartnerRow>();

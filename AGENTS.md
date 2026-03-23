@@ -13,6 +13,7 @@ This repository is governed by a strict production architecture contract.
 - After significant edits, run `npm run build`.
 - After major stabilization edits, run `npm run quality:gates`.
 - Completion reports must include changed files and remaining issues.
+- `npm run dev` now defaults to `npm run dev:turbo` (Turbopack). Use `npm run dev:webpack` only when you need webpack dev-mode behavior.
 
 Windows helpers:
 - `npm run dev:clean`

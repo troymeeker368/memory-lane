@@ -16,6 +16,10 @@ function isUuid(value: string | null | undefined) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized);
 }
 
+function normalizeUuidList(values: Array<string | null | undefined>) {
+  return [...new Set(values.map((value) => clean(value)).filter((value): value is string => Boolean(value) && isUuid(value)))];
+}
+
 export interface SalesPartnerRow {
   id: string;
   partner_id: string;
@@ -156,11 +160,15 @@ const SALES_LEAD_READ_SELECT = [
 ].join(", ");
 
 const SALES_LEAD_LOOKUP_SELECT = "id, member_name, caregiver_name, stage, status, created_at, partner_id, referral_source_id";
-const SALES_PARTNER_LOOKUP_SELECT = "id, partner_id, organization_name, category, location, primary_phone, primary_email, active, last_touched";
+const SALES_PARTNER_LOOKUP_SELECT =
+  "id, partner_id, organization_name, category, location, primary_phone, primary_email, active, last_touched";
 const SALES_REFERRAL_SOURCE_LOOKUP_SELECT =
   "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, active, last_touched";
 const SALES_DASHBOARD_SUMMARY_RPC = "rpc_get_sales_dashboard_summary";
 const SALES_DASHBOARD_SUMMARY_MIGRATION = "0123_sales_dashboard_summary_rpc.sql";
+const SALES_LEAD_LOOKUP_DEFAULT_LIMIT = 120;
+const SALES_LOOKUP_PARTNER_LIMIT = 250;
+const SALES_LOOKUP_REFERRAL_SOURCE_LIMIT = 250;
 
 function applyOpenLeadFilter<T extends { or: (filters: string) => T }>(query: T) {
   return query.or("status.eq.open,status.eq.nurture");
@@ -349,7 +357,7 @@ export async function getSalesFormLookupsSupabase(options?: {
   includePartnerId?: string | null;
   includeReferralSourceId?: string | null;
 }) {
-  const leadLimit = normalizePageSize(options?.leadLimit ?? 500, 500);
+  const leadLimit = normalizePageSize(options?.leadLimit ?? SALES_LEAD_LOOKUP_DEFAULT_LIMIT, SALES_LEAD_LOOKUP_DEFAULT_LIMIT);
   const shouldLoadLeads = options?.includeLeads !== false || Boolean(options?.includeLeadId);
   const supabase = await createClient();
   const [leadResult, { data: partners, error: partnersError }, { data: referralSources, error: referralSourcesError }] = await Promise.all([
@@ -360,8 +368,12 @@ export async function getSalesFormLookupsSupabase(options?: {
       .from("community_partner_organizations")
       .select(SALES_PARTNER_LOOKUP_SELECT)
       .order("organization_name", { ascending: true })
-      .limit(500),
-    supabase.from("referral_sources").select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT).order("organization_name", { ascending: true }).limit(500)
+      .limit(SALES_LOOKUP_PARTNER_LIMIT),
+    supabase
+      .from("referral_sources")
+      .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT)
+      .order("organization_name", { ascending: true })
+      .limit(SALES_LOOKUP_REFERRAL_SOURCE_LIMIT)
   ]);
   if (leadResult.error) throw new Error(leadResult.error.message);
   if (partnersError) throw new Error(partnersError.message);
@@ -406,6 +418,46 @@ export async function getSalesFormLookupsSupabase(options?: {
       organization_name: row.organization_name ?? "Unknown Organization"
     }))
   };
+}
+
+export async function getSalesActivityContextLookupsSupabase(input?: { leadIds?: string[]; partnerIds?: string[]; referralSourceIds?: string[] }) {
+  const leadIds = normalizeUuidList(input?.leadIds ?? []);
+  const partnerIds = normalizeUuidList(input?.partnerIds ?? []);
+  const referralSourceIds = normalizeUuidList(input?.referralSourceIds ?? []);
+  const supabase = await createClient();
+  const [leadResult, partnerResult, referralResult] = await Promise.all([
+    leadIds.length > 0
+      ? supabase.from("leads").select("id, member_name").in("id", leadIds)
+      : Promise.resolve({ data: [] as SalesLeadLookupRow[], error: null } as const),
+    partnerIds.length > 0
+      ? supabase
+          .from("community_partner_organizations")
+          .select(SALES_PARTNER_LOOKUP_SELECT)
+          .in("id", partnerIds)
+      : Promise.resolve({ data: [] as SalesPartnerRow[], error: null } as const),
+    referralSourceIds.length > 0
+      ? supabase.from("referral_sources").select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT).in("id", referralSourceIds)
+      : Promise.resolve({ data: [] as SalesReferralSourceRow[], error: null } as const)
+  ]);
+  if (leadResult.error) throw new Error(leadResult.error.message);
+  if (partnerResult.error) throw new Error(partnerResult.error.message);
+  if (referralResult.error) throw new Error(referralResult.error.message);
+
+  const leads = ((leadResult.data ?? []) as SalesLeadLookupRow[]).map((row) => ({
+    ...row,
+    member_name: row.member_name ?? "Unnamed Lead"
+  }));
+  const partners = ((partnerResult.data ?? []) as SalesPartnerRow[]).map((partner) => ({
+    ...partner,
+    organization_name: partner.organization_name ?? "Unknown Organization"
+  }));
+  const referralSources = normalizeReferralSources(partners, (referralResult.data ?? []) as SalesReferralSourceRow[]).map(
+    (row) => ({
+      ...row,
+      organization_name: row.organization_name ?? "Unknown Organization"
+    })
+  );
+  return { leads, partners, referralSources };
 }
 
 export async function getSalesHomeSnapshotSupabase() {

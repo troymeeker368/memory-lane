@@ -4,7 +4,10 @@ import {
   dispatchNotification,
   type DispatchNotificationEventInput
 } from "@/lib/services/notifications";
-import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
+import {
+  recordImmediateSystemAlert,
+  recordWorkflowEvent
+} from "@/lib/services/workflow-observability";
 
 export type WorkflowMilestoneInput = {
   event: DispatchNotificationEventInput;
@@ -24,12 +27,12 @@ export async function recordWorkflowMilestone(input: WorkflowMilestoneInput) {
       notificationCount: notifications.length,
       failureReason: null
     } satisfies WorkflowMilestoneResult;
-  } catch (error) {
-    console.error("[workflow-milestones] unable to create workflow notification", error);
-    const failureReason = error instanceof Error ? error.message : "Unknown notification dispatch error.";
-    try {
-      const entityType = String(input.event.entityType ?? input.event.entity_type ?? "workflow_event").trim() || "workflow_event";
-      const entityId = String(input.event.entityId ?? input.event.entity_id ?? "").trim() || null;
+    } catch (error) {
+      console.error("[workflow-milestones] unable to create workflow notification", error);
+      const failureReason = error instanceof Error ? error.message : "Unknown notification dispatch error.";
+      try {
+        const entityType = String(input.event.entityType ?? input.event.entity_type ?? "workflow_event").trim() || "workflow_event";
+        const entityId = String(input.event.entityId ?? input.event.entity_id ?? "").trim() || null;
       const actorUserId =
         String(input.event.actorUserId ?? input.event.actor_user_id ?? "").trim() ||
         (String(input.event.actorType ?? input.event.actor_type ?? "").trim().toLowerCase() === "user"
@@ -43,20 +46,41 @@ export async function recordWorkflowMilestone(input: WorkflowMilestoneInput) {
         entityId,
         actorType: "system",
         actorUserId,
-        status: "failed",
-        severity: "medium",
-        metadata: {
-          source_event_type: input.event.eventType ?? input.event.event_type ?? null,
-          notification_error: failureReason
-        }
-      });
-    } catch (recordError) {
-      console.error("[workflow-milestones] unable to persist notification dispatch failure", recordError);
-    }
-    return {
-      delivered: false,
-      notificationCount: 0,
-      failureReason
-    } satisfies WorkflowMilestoneResult;
+          status: "failed",
+          severity: "medium",
+          metadata: {
+            source_event_type: input.event.eventType ?? input.event.event_type ?? null,
+            notification_error: failureReason
+          }
+        });
+      } catch (recordError) {
+        console.error("[workflow-milestones] unable to persist notification dispatch failure", recordError);
+      }
+      const sourceEventType = String(input.event.event_type ?? input.event.eventType ?? "workflow_milestone").trim() || "workflow_milestone";
+      try {
+        await recordImmediateSystemAlert({
+          entityType: String(input.event.entityType ?? input.event.entity_type ?? "workflow_event").trim() || "workflow_event",
+          entityId: String(input.event.entityId ?? input.event.entity_id ?? "").trim() || null,
+          actorUserId:
+            String(input.event.actorUserId ?? input.event.actor_user_id ?? "").trim() ||
+            (String(input.event.actorType ?? input.event.actor_type ?? "").trim().toLowerCase() === "user"
+              ? String(input.event.actorId ?? input.event.actor_id ?? "").trim()
+              : "") ||
+            null,
+          severity: "high",
+          alertKey: `workflow_milestone_notification_failed:${sourceEventType}`,
+          metadata: {
+            source_event_type: input.event.eventType ?? input.event.event_type ?? null,
+            notification_error: failureReason
+          }
+        });
+      } catch (alertError) {
+        console.error("[workflow-milestones] unable to persist workflow milestone alert", alertError);
+      }
+      return {
+        delivered: false,
+        notificationCount: 0,
+        failureReason
+      } satisfies WorkflowMilestoneResult;
   }
 }

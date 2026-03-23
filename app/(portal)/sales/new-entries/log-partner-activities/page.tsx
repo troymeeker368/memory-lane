@@ -19,7 +19,6 @@ export default async function LogPartnerActivityPage({ searchParams }: { searchP
   const [{ partnerActivities }, { leads, partners, referralSources }] = await Promise.all([
     getLeadActivitySnapshot(),
     getLeadFormLookups({
-      leadLimit: 500,
       includeLeadId: leadId,
       includePartnerId: partnerId,
       includeReferralSourceId: referralSourceId

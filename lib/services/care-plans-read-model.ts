@@ -2,7 +2,12 @@ import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { toEasternDate } from "@/lib/timezone";
-import { resolveCarePlanSections, toCarePlan, toCarePlanVersion } from "@/lib/services/care-plan-model";
+import {
+  computeCarePlanStatus,
+  resolveCarePlanSections,
+  toCarePlan,
+  toCarePlanVersion
+} from "@/lib/services/care-plan-model";
 import { listMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import type {
   CarePlan,
@@ -17,6 +22,11 @@ import type {
   MemberCarePlanSummary
 } from "@/lib/services/care-plan-types";
 import type { CarePlanTrack } from "@/lib/services/care-plan-track-definitions";
+
+export interface MemberCarePlanOverview {
+  carePlanCount: number;
+  carePlanSummary: MemberCarePlanSummary;
+}
 
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
@@ -387,6 +397,55 @@ function buildMemberCarePlanSummary(canonicalMemberId: string, latest: CarePlan 
     actionHref: `/health/care-plans/new?memberId=${canonicalMemberId}`,
     actionLabel: "New Care Plan",
     planId: null
+  };
+}
+
+function buildMemberCarePlanOverviewFromLatest(
+  canonicalMemberId: string,
+  latest: { id: string; next_due_date: string | null } | null
+): MemberCarePlanOverview {
+  if (!latest) {
+    return {
+      carePlanCount: 0,
+      carePlanSummary: buildMemberCarePlanSummary(canonicalMemberId, null)
+    };
+  }
+
+  return {
+    carePlanCount: 1,
+    carePlanSummary: {
+      hasExistingPlan: true,
+      nextDueDate: latest.next_due_date,
+      status: latest.next_due_date ? computeCarePlanStatus(latest.next_due_date) : null,
+      actionHref: `/health/care-plans/${latest.id}?view=review`,
+      actionLabel: "Review Care Plan",
+      planId: latest.id
+    }
+  };
+}
+
+export async function getMemberCarePlanOverview(memberId: string): Promise<MemberCarePlanOverview> {
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
+    actionLabel: "getMemberCarePlanOverview"
+  });
+  const supabase = await createClient();
+  const [{ data: latestRows, error: latestError }, { count, error: countError }] = await Promise.all([
+    supabase
+      .from("care_plans")
+      .select("id, next_due_date, review_date, updated_at")
+      .eq("member_id", canonicalMemberId)
+      .order("review_date", { ascending: false })
+      .order("updated_at", { ascending: false })
+      .limit(1),
+    supabase.from("care_plans").select("id", { count: "exact", head: true }).eq("member_id", canonicalMemberId)
+  ]);
+  if (latestError) throw new Error(latestError.message);
+  if (countError) throw new Error(countError.message);
+
+  const latest = (latestRows ?? [])[0] as { id: string; next_due_date: string | null } | null;
+  return {
+    ...buildMemberCarePlanOverviewFromLatest(canonicalMemberId, latest),
+    carePlanCount: Number(count ?? 0)
   };
 }
 

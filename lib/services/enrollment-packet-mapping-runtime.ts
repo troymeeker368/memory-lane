@@ -10,7 +10,8 @@ import { mapEnrollmentPacketToDownstream } from "@/lib/services/enrollment-packe
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import {
   recordImmediateSystemAlert,
-  recordWorkflowEvent
+  recordWorkflowEvent,
+  maybeRecordRepeatedFailureAlert
 } from "@/lib/services/workflow-observability";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
@@ -412,6 +413,19 @@ export async function runEnrollmentPacketDownstreamMapping(input: {
         mapping_run_id: failedMappingRunId
       }
     });
+    await maybeRecordRepeatedFailureAlert({
+      workflowEventType: "enrollment_packet_mapping_failed",
+      entityType: "enrollment_packet_request",
+      entityId: input.request.id,
+      actorUserId: input.request.sender_user_id,
+      threshold: 3,
+      metadata: {
+        member_id: input.member.id,
+        lead_id: input.request.lead_id,
+        mapping_run_id: failedMappingRunId,
+        error: reason
+      }
+    });
     await recordEnrollmentPacketActionRequired({
       packetId: input.request.id,
       memberId: input.member.id,
@@ -451,6 +465,35 @@ export async function retryFailedEnrollmentPacketMappings(input?: { limit?: numb
   const limit = Math.min(100, Math.max(1, input?.limit ?? 25));
   const artifactOps = await loadEnrollmentPacketArtifactOps();
   const admin = createSupabaseAdminClient();
+  const releaseEnrollmentPacketMappingClaimSafely = async (
+    request: ClaimedEnrollmentPacketRetryRow,
+    actorLabel = "Enrollment Packet Mapping Retry Runner"
+  ) => {
+    try {
+      await artifactOps.releaseEnrollmentPacketMappingClaim({
+        packetId: request.id,
+        updatedAt: toEasternISO()
+      });
+    } catch (claimReleaseError) {
+      console.error("[enrollment-packets] unable to release mapping retry claim", claimReleaseError);
+      await recordImmediateSystemAlert({
+        entityType: "enrollment_packet_request",
+        entityId: request.id,
+        actorUserId: request.sender_user_id,
+        severity: "medium",
+        alertKey: "enrollment_packet_mapping_retry_claim_release_failed",
+        metadata: {
+          member_id: request.member_id,
+          lead_id: request.lead_id,
+          actor_label: actorLabel,
+          error:
+            claimReleaseError instanceof Error
+              ? claimReleaseError.message
+              : "Unable to release enrollment packet mapping retry claim."
+        }
+      });
+    }
+  };
   let claimedRows: ClaimedEnrollmentPacketRetryRow[];
   try {
     const claimed = await invokeSupabaseRpcOrThrow<unknown>(admin, CLAIM_ENROLLMENT_PACKET_MAPPING_RETRIES_RPC, {
@@ -514,30 +557,6 @@ export async function retryFailedEnrollmentPacketMappings(input?: { limit?: numb
 
       if (mappingSummary.status === "completed") {
         succeeded += 1;
-        try {
-          await artifactOps.releaseEnrollmentPacketMappingClaim({
-            packetId: request.id,
-            updatedAt: toEasternISO()
-          });
-        } catch (claimReleaseError) {
-          console.error("[enrollment-packets] unable to release mapping retry claim after successful retry", claimReleaseError);
-          await recordImmediateSystemAlert({
-            entityType: "enrollment_packet_request",
-            entityId: request.id,
-            actorUserId: request.sender_user_id,
-            severity: "medium",
-            alertKey: "enrollment_packet_mapping_retry_claim_release_failed",
-            metadata: {
-              member_id: request.member_id,
-              lead_id: request.lead_id,
-              mapping_run_id: mappingSummary.mappingRunId,
-              error:
-                claimReleaseError instanceof Error
-                  ? claimReleaseError.message
-                  : "Unable to release enrollment packet mapping retry claim."
-            }
-          });
-        }
       } else {
         failed += 1;
       }
@@ -568,6 +587,8 @@ export async function retryFailedEnrollmentPacketMappings(input?: { limit?: numb
           mapping_run_id: request.latest_mapping_run_id
         }
       });
+    } finally {
+      await releaseEnrollmentPacketMappingClaimSafely(request, "enrollment-packet-mapping-retry");
     }
   }
 

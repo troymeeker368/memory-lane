@@ -126,6 +126,9 @@ Events are written from canonical services.
 - Build defaults:
   - `npm run build` (default): Turbopack build with project clean + port kill.
   - `npm run build:webpack` (debug fallback): explicit webpack build with webpack cache disabled.
+- Local dev defaults:
+  - `npm run dev` (default): Turbopack dev server (`next dev -p 3001`) to avoid webpack `PackFileCacheStrategy` big-string warnings.
+  - `npm run dev:webpack`: explicit webpack fallback when needed.
 - Local schema sync and typed reads:
   - `npm run db:sync`
 

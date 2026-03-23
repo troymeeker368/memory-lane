@@ -379,7 +379,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterDetailSupabase");
   const member = await getMemberSupabase(canonicalMemberId);
   if (!member) return null;
-  const [{ getMemberCarePlanSnapshot }, { getLatestEnrollmentPacketPofStagingSummary }] =
+  const [{ getMemberCarePlanOverview }, { getLatestEnrollmentPacketPofStagingSummary }] =
     await Promise.all([
       import("@/lib/services/care-plans-read"),
       import("@/lib/services/enrollment-packet-intake-staging")
@@ -391,7 +391,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     files,
     busStopDirectory,
     mhpAllergies,
-    carePlanSnapshot,
+    carePlanOverview,
     enrollmentPacketIntakeAlert
   ] = await Promise.all([
     getMemberCommandCenterProfileReadOnlySupabase(canonicalMemberId),
@@ -400,7 +400,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     listMemberFilesSupabase(canonicalMemberId),
     listBusStopDirectorySupabase(),
     listMemberAllergiesSupabase(canonicalMemberId),
-    getMemberCarePlanSnapshot(canonicalMemberId),
+    getMemberCarePlanOverview(canonicalMemberId),
     getLatestEnrollmentPacketPofStagingSummary(canonicalMemberId)
   ]);
   const profile = storedProfile ?? defaultCommandCenter(canonicalMemberId);
@@ -439,8 +439,8 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     makeupBalance: schedule?.make_up_days_available ?? 0,
     makeupLedger: [] as MakeupLedgerRow[],
     assessmentsCount: safeAssessmentsCount,
-    carePlansCount: carePlanSnapshot.rows.length,
-    carePlanSummary: carePlanSnapshot.summary,
+    carePlansCount: carePlanOverview.carePlanCount,
+    carePlanSummary: carePlanOverview.carePlanSummary,
     enrollmentPacketIntakeAlert,
     age: calculateAgeYears(member.dob),
     monthsEnrolled: calculateMonthsEnrolled(schedule?.enrollment_date ?? member.enrollment_date)

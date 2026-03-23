@@ -1,6 +1,7 @@
 import { getLeadDetail } from "@/lib/services/lead-detail-read-model";
 import {
   getSalesFormLookupsSupabase,
+  getSalesActivityContextLookupsSupabase,
   getSalesHomeSnapshotSupabase,
   getSalesLeadByIdSupabase,
   getSalesLeadForEnrollmentSupabase,
@@ -29,6 +30,10 @@ export async function getLeadRecordById(...args: Parameters<typeof getSalesLeadB
 
 export async function getLeadFormLookups(...args: Parameters<typeof getSalesFormLookupsSupabase>) {
   return getSalesFormLookupsSupabase(...args);
+}
+
+export async function getLeadActivityContextLookups(...args: Parameters<typeof getSalesActivityContextLookupsSupabase>) {
+  return getSalesActivityContextLookupsSupabase(...args);
 }
 
 export async function getLeadList(...args: Parameters<typeof getSalesLeadListSupabase>) {

@@ -27,6 +27,7 @@ import {
   getEnrollmentPacketSenderSignatureProfile,
   getLeadById,
   getMemberById,
+  recordEnrollmentPacketActionRequired,
   syncEnrollmentPacketLeadActivityOrQueue
 } from "@/lib/services/enrollment-packet-mapping-runtime";
 import {
@@ -614,19 +615,80 @@ export async function sendEnrollmentPacketRequest(input: {
     console.error("[enrollment-packets] unable to emit post-send workflow milestone", error);
   }
 
+  let leadActivitySyncError: string | null = null;
+
   if (lead?.id) {
-    await syncEnrollmentPacketLeadActivityOrQueue({
-      packetId: requestId,
-      memberId: member.id,
-      leadId: lead.id,
-      memberName: lead.member_name,
-      activityType: "Email",
-      outcome: "Enrollment Packet Sent",
-      notes: `Enrollment packet request ${requestId} sent to ${caregiverEmail}.`,
-      completedByUserId: senderUserId,
-      completedByName: senderFullName,
-      actionUrl: `/sales/leads/${lead.id}`
-    });
+    try {
+      const synced = await syncEnrollmentPacketLeadActivityOrQueue({
+        packetId: requestId,
+        memberId: member.id,
+        leadId: lead.id,
+        memberName: lead.member_name,
+        activityType: "Email",
+        outcome: "Enrollment Packet Sent",
+        notes: `Enrollment packet request ${requestId} sent to ${caregiverEmail}.`,
+        completedByUserId: senderUserId,
+        completedByName: senderFullName,
+        actionUrl: `/sales/leads/${lead.id}`
+      });
+      if (!synced) {
+        leadActivitySyncError = "Lead activity sync did not persist; follow-up task was queued.";
+      }
+    } catch (error) {
+      leadActivitySyncError =
+        error instanceof Error
+          ? error.message
+          : "Enrollment packet lead activity sync threw an unexpected error.";
+      console.error("[enrollment-packets] lead activity sync failed after packet sent", {
+        packetId: requestId,
+        leadId: lead.id,
+        message: leadActivitySyncError
+      });
+    }
+  }
+
+  if (leadActivitySyncError && lead?.id) {
+    try {
+      await recordEnrollmentPacketActionRequired({
+        packetId: requestId,
+        memberId: member.id,
+        leadId: lead.id,
+        actorUserId: senderUserId,
+        title: "Enrollment Packet Lead Activity Sync Failed",
+        message:
+          "The enrollment packet was sent, but lead activity could not be synced immediately. Complete this workflow after the lead activity is recorded.",
+        actionUrl: `/sales/leads/${lead.id}`,
+        eventKeySuffix: "lead-activity-sync-failed"
+      });
+    } catch (actionRequiredError) {
+      console.error("[enrollment-packets] unable to create lead activity sync warning action required", {
+        packetId: requestId,
+        leadId: lead.id,
+        message: actionRequiredError instanceof Error ? actionRequiredError.message : "Unknown error"
+      });
+    }
+  }
+
+  if (leadActivitySyncError) {
+    try {
+      await insertPacketEvent({
+        packetId: requestId,
+        eventType: "Enrollment Packet Lead Activity Sync Warning",
+        actorUserId: senderUserId,
+        actorEmail: senderEmail,
+        metadata: {
+          member_id: member.id,
+          lead_id: lead?.id ?? null,
+          lead_activity_sync_error: leadActivitySyncError
+        }
+      });
+    } catch (eventError) {
+      console.error("[enrollment-packets] unable to persist lead activity sync warning event", {
+        packetId: requestId,
+        leadId: lead?.id ?? null,
+        message: eventError instanceof Error ? eventError.message : "Unknown error"
+      });
+    }
   }
 
   return {
