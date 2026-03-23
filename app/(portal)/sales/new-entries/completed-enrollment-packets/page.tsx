@@ -43,6 +43,14 @@ export default async function CompletedEnrollmentPacketsPage({
   const q = firstValue(params.q).trim();
   const statusParam = firstValue(params.status).trim().toLowerCase();
   const status = statusParam === "completed" || statusParam === "filed" ? statusParam : "all";
+  const readinessParam = firstValue(params.operationalReadiness).trim().toLowerCase();
+  const operationalReadiness =
+    readinessParam === "operationally_ready" ||
+    readinessParam === "filed_pending_mapping" ||
+    readinessParam === "mapping_failed" ||
+    readinessParam === "not_filed"
+      ? readinessParam
+      : "all";
   const fromDate = firstValue(params.fromDate).trim();
   const toDate = firstValue(params.toDate).trim();
   const packets = await listCompletedEnrollmentPacketRequests({
@@ -50,7 +58,8 @@ export default async function CompletedEnrollmentPacketsPage({
     status,
     fromDate: fromDate || null,
     toDate: toDate || null,
-    search: q || null
+    search: q || null,
+    operationalReadiness
   });
 
   return (
@@ -71,6 +80,17 @@ export default async function CompletedEnrollmentPacketsPage({
             <option value="all">All Statuses</option>
             <option value="completed">Completed</option>
             <option value="filed">Filed</option>
+          </select>
+          <select
+            name="operationalReadiness"
+            defaultValue={operationalReadiness}
+            className="h-10 rounded-lg border border-border px-3"
+          >
+            <option value="all">All Operational Readiness</option>
+            <option value="operationally_ready">Operationally Ready</option>
+            <option value="filed_pending_mapping">Filed, Mapping Pending</option>
+            <option value="mapping_failed">Mapping Failed</option>
+            <option value="not_filed">Not Filed</option>
           </select>
           <input name="fromDate" type="date" defaultValue={fromDate} className="h-10 rounded-lg border border-border px-3" />
           <input name="toDate" type="date" defaultValue={toDate} className="h-10 rounded-lg border border-border px-3" />

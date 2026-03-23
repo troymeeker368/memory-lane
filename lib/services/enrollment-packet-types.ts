@@ -50,6 +50,7 @@ export type CompletedEnrollmentPacketListItem = EnrollmentPacketRequestSummary &
 export type CompletedEnrollmentPacketFilters = {
   limit?: number;
   status?: "completed" | "filed" | "all";
+  operationalReadiness?: EnrollmentPacketOperationalReadinessStatus | "all";
   fromDate?: string | null;
   toDate?: string | null;
   search?: string | null;

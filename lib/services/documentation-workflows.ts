@@ -95,7 +95,7 @@ export type AssessmentWorkflowRow = {
   recommended_track: string | null;
   admission_review_required: boolean | null;
   transport_appropriate: boolean | null;
-  complete: boolean | null;
+  complete: boolean;
   completed_by: string | null;
   signature_status: "unsigned" | "signed" | "voided" | null;
   signed_by: string | null;
@@ -249,7 +249,12 @@ function buildAssessmentRows(
       draftPofStatus
     });
     const openFollowUpTaskTypes = (followUpTasksByAssessmentId.get(row.id) ?? []).map((task) => task.taskType);
-    const postSignReadiness = resolveIntakePostSignReadiness({
+  const postSignReadiness = resolveIntakePostSignReadiness({
+      signatureStatus,
+      draftPofStatus,
+      openFollowUpTaskTypes
+    });
+    const postSignReady = isIntakePostSignReady({
       signatureStatus,
       draftPofStatus,
       openFollowUpTaskTypes
@@ -261,7 +266,7 @@ function buildAssessmentRows(
       recommended_track: asText(payload.recommended_track),
       admission_review_required: payload.admission_review_required == null ? null : Boolean(payload.admission_review_required),
       transport_appropriate: payload.transport_appropriate == null ? null : Boolean(payload.transport_appropriate),
-      complete: payload.complete == null ? null : Boolean(payload.complete),
+      complete: postSignReady,
       completed_by: asText(payload.completed_by),
       signature_status: signatureStatus,
       signed_by: signature?.signedByName ?? null,
@@ -270,11 +275,7 @@ function buildAssessmentRows(
       draft_pof_readiness_status: draftPofReadiness,
       draft_pof_ready: draftPofReadiness === "draft_pof_ready",
       post_sign_readiness_status: postSignReadiness,
-      post_sign_ready: isIntakePostSignReady({
-        signatureStatus,
-        draftPofStatus,
-        openFollowUpTaskTypes
-      }),
+      post_sign_ready: postSignReady,
       member_name: asTextValue(row.member_name, DEFAULT_WORKFLOW_MEMBER_NAME),
       created_at: asTextValue(payload.created_at),
       reviewer_name: null,

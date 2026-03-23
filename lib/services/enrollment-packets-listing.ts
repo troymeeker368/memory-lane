@@ -91,6 +91,13 @@ export async function listCompletedEnrollmentPacketRequests(
 ): Promise<CompletedEnrollmentPacketListItem[]> {
   const safeLimit = Math.max(1, Math.min(500, Math.trunc(filters.limit ?? 200)));
   const normalizedStatus = filters.status === "completed" || filters.status === "filed" ? filters.status : "all";
+  const normalizedOperationalReadiness =
+    filters.operationalReadiness === "operationally_ready" ||
+    filters.operationalReadiness === "filed_pending_mapping" ||
+    filters.operationalReadiness === "mapping_failed" ||
+    filters.operationalReadiness === "not_filed"
+      ? filters.operationalReadiness
+      : "all";
   const fromDate = clean(filters.fromDate);
   const toDate = clean(filters.toDate);
   const searchNeedle = clean(filters.search)?.toLowerCase() ?? null;
@@ -171,9 +178,13 @@ export async function listCompletedEnrollmentPacketRequests(
     };
   });
 
-  if (!searchNeedle) return items;
+  const readinessFilteredItems = normalizedOperationalReadiness === "all"
+    ? items
+    : items.filter((item) => item.operationalReadinessStatus === normalizedOperationalReadiness);
 
-  return items.filter((item) => {
+  if (!searchNeedle) return readinessFilteredItems;
+
+  return readinessFilteredItems.filter((item) => {
     const haystack = [
       item.memberName,
       item.leadMemberName,

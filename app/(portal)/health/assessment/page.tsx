@@ -74,14 +74,14 @@ export default async function HealthAssessmentPage({
               <th>Transport Appropriate</th>
               <th>Completed By</th>
               <th>E-Sign Status</th>
-              <th>Post-Sign Readiness</th>
-              <th>Draft POF Readiness</th>
-              <th>Signed By</th>
-              <th>Complete</th>
-              <th>Open</th>
-            </tr>
-          </thead>
-          <tbody>
+                <th>Post-Sign Readiness</th>
+                <th>Draft POF Readiness</th>
+                <th>Signed By</th>
+                <th>Operationally Ready</th>
+                <th>Open</th>
+              </tr>
+            </thead>
+            <tbody>
             {workflows.assessments.map((row: AssessmentWorkflowRow) => (
               <tr key={row.id}>
                 <td>{formatDate(row.assessment_date)}</td>
