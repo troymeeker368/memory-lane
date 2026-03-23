@@ -15,10 +15,6 @@ import { createClient } from "@/lib/supabase/server";
 
 const STAFF_DETAIL_HISTORY_LIMIT = 250;
 
-function sortDesc<T>(rows: T[], getValue: (row: T) => string) {
-  return [...rows].sort((a, b) => (getValue(a) < getValue(b) ? 1 : -1));
-}
-
 function summarizePunches(punches: { punch_type: "in" | "out"; punch_at: string }[]) {
   const ordered = [...punches].sort((a, b) => (a.punch_at > b.punch_at ? 1 : -1));
   let total = 0;
@@ -103,7 +99,7 @@ export async function getStaffDetail(staffId: string) {
   if (leadActivitiesResult.error) throw new Error(leadActivitiesResult.error.message);
   if (assessmentsResult.error) throw new Error(assessmentsResult.error.message);
 
-  const punches = sortDesc((punchesResult.data ?? []) as Array<{ punch_type: "in" | "out"; punch_at: string }>, (r) => r.punch_at);
+  const punches = (punchesResult.data ?? []) as Array<{ punch_type: "in" | "out"; punch_at: string }>;
 
   return {
     staff,
