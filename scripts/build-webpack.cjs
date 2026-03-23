@@ -3,10 +3,9 @@
 const { rmSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 
-function runShell(command) {
-  const result = spawnSync(command, {
+function runNodeScript(scriptPath, args = []) {
+  const result = spawnSync(process.execPath, [scriptPath, ...args], {
     stdio: "inherit",
-    shell: true,
     env: process.env
   });
 
@@ -22,6 +21,5 @@ function runShell(command) {
 
 process.env.NEXT_DISABLE_WEBPACK_CACHE = "1";
 
-runShell("npx kill-port 3001");
 rmSync(".next", { recursive: true, force: true });
-runShell("npx next build");
+runNodeScript(require.resolve("next/dist/bin/next"), ["build"]);

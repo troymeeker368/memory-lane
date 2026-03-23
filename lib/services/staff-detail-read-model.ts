@@ -10,7 +10,7 @@ import {
   STAFF_DETAIL_TOILET_SELECT,
   STAFF_DETAIL_TRANSPORTATION_SELECT
 } from "@/lib/services/activity-detail-selects";
-import { getCurrentPayPeriod, isDateInPayPeriod } from "@/lib/pay-period";
+import { getCurrentPayPeriod } from "@/lib/pay-period";
 import { createClient } from "@/lib/supabase/server";
 
 const STAFF_DETAIL_HISTORY_LIMIT = 250;
@@ -135,10 +135,12 @@ export async function getTimeReviewDetail(staffId: string) {
     .from("time_punches")
     .select("punch_type, punch_at")
     .eq("staff_user_id", staffId)
+    .gte("punch_at", period.startAtIso)
+    .lt("punch_at", period.endExclusiveIso)
     .order("punch_at", { ascending: false });
   if (punchesError) throw new Error(punchesError.message);
 
-  const periodPunches = (punches ?? []).filter((p) => isDateInPayPeriod(p.punch_at, period));
+  const periodPunches = (punches ?? []) as Array<{ punch_type: "in" | "out"; punch_at: string }>;
   const summary = summarizePunches(periodPunches as Array<{ punch_type: "in" | "out"; punch_at: string }>);
 
   return {

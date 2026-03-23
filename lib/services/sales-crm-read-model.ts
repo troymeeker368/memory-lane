@@ -367,21 +367,20 @@ export async function getSalesFormLookupsSupabase(options?: {
 
 export async function getSalesHomeSnapshotSupabase() {
   const supabase = await createClient();
-  const [openLeadsResult, activitiesResult, partnersResult, referralSourcesResult, partnerActivitiesResult] = await Promise.all([
-    applyOpenLeadFilter(supabase.from("leads").select("id", { count: "exact", head: true })),
+  const [activitiesResult, partnersResult, referralSourcesResult, partnerActivitiesResult, pipelineSummaryResult] = await Promise.all([
     supabase.from("lead_activities").select("id", { count: "exact", head: true }),
     supabase.from("community_partner_organizations").select("id", { count: "exact", head: true }),
     supabase.from("referral_sources").select("id", { count: "exact", head: true }),
-    supabase.from("partner_activities").select("id", { count: "exact", head: true })
+    supabase.from("partner_activities").select("id", { count: "exact", head: true }),
+    fetchSalesPipelineSummaryCountsSupabase(supabase)
   ]);
-  if (openLeadsResult.error) throw new Error(openLeadsResult.error.message);
   if (activitiesResult.error) throw new Error(activitiesResult.error.message);
   if (partnersResult.error) throw new Error(partnersResult.error.message);
   if (referralSourcesResult.error) throw new Error(referralSourcesResult.error.message);
   if (partnerActivitiesResult.error) throw new Error(partnerActivitiesResult.error.message);
 
   return {
-    openLeadCount: openLeadsResult.count ?? 0,
+    openLeadCount: pipelineSummaryResult.openLeadCount,
     leadActivityCount: activitiesResult.count ?? 0,
     partnerCount: partnersResult.count ?? 0,
     referralSourceCount: referralSourcesResult.count ?? 0,
@@ -436,7 +435,7 @@ export async function getSalesLeadListSupabase(input?: {
   const page = normalizePage(input?.page);
   const hasPagination = Boolean(input?.pageSize || input?.limit);
   const pageSize = hasPagination ? normalizePageSize(input?.pageSize ?? input?.limit ?? 25, input?.limit ?? 25) : 0;
-  let query = supabase.from("leads").select(SALES_LEAD_READ_SELECT, { count: "exact" });
+  let query = hasPagination ? supabase.from("leads").select(SALES_LEAD_READ_SELECT, { count: "exact" }) : supabase.from("leads").select(SALES_LEAD_READ_SELECT);
 
   if (input?.status) {
     query = input.status === "open" ? applyOpenLeadFilter(query) : query.eq("status", input.status);
@@ -464,7 +463,7 @@ export async function getSalesLeadListSupabase(input?: {
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);
   const rows = ((data ?? []) as unknown as Record<string, unknown>[]).map((row) => toSalesLeadReadRow(row));
-  const totalRows = count ?? rows.length;
+  const totalRows = hasPagination ? count ?? rows.length : rows.length;
   const effectivePageSize = hasPagination ? pageSize : Math.max(rows.length, 1);
   return {
     rows,

@@ -379,7 +379,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterDetailSupabase");
   const member = await getMemberSupabase(canonicalMemberId);
   if (!member) return null;
-  const [{ getMemberCarePlanSummary, getCarePlansForMember }, { getLatestEnrollmentPacketPofStagingSummary }] =
+  const [{ getMemberCarePlanSnapshot }, { getLatestEnrollmentPacketPofStagingSummary }] =
     await Promise.all([
       import("@/lib/services/care-plans-read"),
       import("@/lib/services/enrollment-packet-intake-staging")
@@ -391,8 +391,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     files,
     busStopDirectory,
     mhpAllergies,
-    carePlanSummary,
-    carePlans,
+    carePlanSnapshot,
     enrollmentPacketIntakeAlert
   ] = await Promise.all([
     getMemberCommandCenterProfileReadOnlySupabase(canonicalMemberId),
@@ -401,8 +400,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     listMemberFilesSupabase(canonicalMemberId),
     listBusStopDirectorySupabase(),
     listMemberAllergiesSupabase(canonicalMemberId),
-    getMemberCarePlanSummary(canonicalMemberId),
-    getCarePlansForMember(canonicalMemberId),
+    getMemberCarePlanSnapshot(canonicalMemberId),
     getLatestEnrollmentPacketPofStagingSummary(canonicalMemberId)
   ]);
   const profile = storedProfile ?? defaultCommandCenter(canonicalMemberId);
@@ -441,8 +439,8 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     makeupBalance: schedule?.make_up_days_available ?? 0,
     makeupLedger: [] as MakeupLedgerRow[],
     assessmentsCount: safeAssessmentsCount,
-    carePlansCount: carePlans.length,
-    carePlanSummary,
+    carePlansCount: carePlanSnapshot.rows.length,
+    carePlanSummary: carePlanSnapshot.summary,
     enrollmentPacketIntakeAlert,
     age: calculateAgeYears(member.dob),
     monthsEnrolled: calculateMonthsEnrolled(schedule?.enrollment_date ?? member.enrollment_date)

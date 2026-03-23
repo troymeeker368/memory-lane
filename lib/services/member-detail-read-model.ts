@@ -259,12 +259,8 @@ export async function getMemberDetail(
 
   const carePlans =
     isStaffViewer || !canViewCarePlans
-      ? []
-      : await (await import("@/lib/services/care-plans-read")).getCarePlansForMember(canonicalMemberId);
-  const latestCarePlan = [...carePlans].sort((a, b) => {
-    if (a.updatedAt !== b.updatedAt) return a.updatedAt < b.updatedAt ? 1 : -1;
-    return a.reviewDate < b.reviewDate ? 1 : -1;
-  })[0] ?? null;
+      ? null
+      : await (await import("@/lib/services/care-plans-read")).getMemberCarePlanSnapshot(canonicalMemberId);
 
   return {
     member: member as MemberDetailMember,
@@ -286,8 +282,8 @@ export async function getMemberDetail(
     ancillary,
     assessments,
     photos,
-    carePlans,
-    latestCarePlan,
+    carePlans: carePlans?.rows ?? [],
+    latestCarePlan: carePlans?.latest ?? null,
     marToday: [] as Array<{
       id: string;
       date: string;

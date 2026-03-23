@@ -159,6 +159,12 @@ export interface MemberCarePlanSummary {
   planId: string | null;
 }
 
+export interface MemberCarePlanSnapshot {
+  rows: CarePlan[];
+  latest: CarePlan | null;
+  summary: MemberCarePlanSummary;
+}
+
 export interface CarePlanParticipationSummary {
   attendanceDays: number;
   participationDays: number;

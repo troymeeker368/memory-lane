@@ -12,6 +12,7 @@ import type {
   DbCarePlan,
   DbCarePlanSection,
   DbCarePlanVersion,
+  MemberCarePlanSnapshot,
   MemberCarePlanSummary
 } from "@/lib/services/care-plan-types";
 import type { CarePlanTrack } from "@/lib/services/care-plan-track-definitions";
@@ -366,31 +367,16 @@ export async function getCarePlanDispatchState(carePlanId: string, options?: { s
   };
 }
 
-export async function getCarePlansForMember(memberId: string) {
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
-    actionLabel: "getCarePlansForMember"
-  });
-  return await listCarePlanRows({ memberId: canonicalMemberId });
-}
-
-export async function getLatestCarePlanForMember(memberId: string) {
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
-    actionLabel: "getLatestCarePlanForMember"
-  });
-  const rows = await listCarePlanRows({ memberId: canonicalMemberId });
+function getLatestCarePlanFromRows(rows: CarePlan[]) {
   return (
-    rows.sort((a, b) => {
+    [...rows].sort((a, b) => {
       if (a.reviewDate === b.reviewDate) return a.updatedAt < b.updatedAt ? 1 : -1;
       return a.reviewDate < b.reviewDate ? 1 : -1;
     })[0] ?? null
   );
 }
 
-export async function getMemberCarePlanSummary(memberId: string): Promise<MemberCarePlanSummary> {
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
-    actionLabel: "getMemberCarePlanSummary"
-  });
-  const latest = await getLatestCarePlanForMember(canonicalMemberId);
+function buildMemberCarePlanSummary(canonicalMemberId: string, latest: CarePlan | null): MemberCarePlanSummary {
   if (latest) {
     return {
       hasExistingPlan: true,
@@ -401,6 +387,7 @@ export async function getMemberCarePlanSummary(memberId: string): Promise<Member
       planId: latest.id
     };
   }
+
   return {
     hasExistingPlan: false,
     nextDueDate: null,
@@ -409,6 +396,32 @@ export async function getMemberCarePlanSummary(memberId: string): Promise<Member
     actionLabel: "New Care Plan",
     planId: null
   };
+}
+
+export async function getMemberCarePlanSnapshot(memberId: string): Promise<MemberCarePlanSnapshot> {
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
+    actionLabel: "getMemberCarePlanSnapshot"
+  });
+  const rows = await listCarePlanRows({ memberId: canonicalMemberId });
+  const latest = getLatestCarePlanFromRows(rows);
+
+  return {
+    rows,
+    latest,
+    summary: buildMemberCarePlanSummary(canonicalMemberId, latest)
+  };
+}
+
+export async function getCarePlansForMember(memberId: string) {
+  return (await getMemberCarePlanSnapshot(memberId)).rows;
+}
+
+export async function getLatestCarePlanForMember(memberId: string) {
+  return (await getMemberCarePlanSnapshot(memberId)).latest;
+}
+
+export async function getMemberCarePlanSummary(memberId: string): Promise<MemberCarePlanSummary> {
+  return (await getMemberCarePlanSnapshot(memberId)).summary;
 }
 
 export async function getCarePlanVersionById(carePlanId: string, versionId: string) {

@@ -20,7 +20,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { requireRoles } from "@/lib/auth";
 import { formatBillingPayorDisplayName, getBillingPayorContact } from "@/lib/services/billing-payor-contacts";
-import { getCarePlansForMember, getMemberCarePlanSummary } from "@/lib/services/care-plans-read";
+import { getMemberCarePlanSnapshot } from "@/lib/services/care-plans-read";
 import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-read";
 import { getMemberProgressNoteSummary } from "@/lib/services/notes-read";
 import {
@@ -218,7 +218,8 @@ export default async function MemberHealthProfileDetailPage({
   const equipmentUpdatedBy = latestUpdatedBy(detail.equipment, (row) => row.updated_at, (row) => row.created_by_name);
   const notesUpdatedBy = latestUpdatedBy(detail.notes, (row) => row.updated_at, (row) => row.created_by_name);
   const assessmentsUpdatedBy = latestUpdatedBy(detail.assessments, (row) => row.created_at, (row) => row.completed_by);
-  const relatedCarePlans = await getCarePlansForMember(member.id);
+  const carePlanSnapshot = await getMemberCarePlanSnapshot(member.id);
+  const relatedCarePlans = carePlanSnapshot.rows;
   const billingPayor = await getBillingPayorContact(member.id, {
     source: "MemberHealthProfileDetailPage"
   });
@@ -227,7 +228,7 @@ export default async function MemberHealthProfileDetailPage({
   const relatedPhysicianOrders = await getPhysicianOrdersForMember(member.id);
   const physicianOrdersUpdatedAt = latestTimestamp(relatedPhysicianOrders.map((row) => row.updatedAt));
   const physicianOrdersUpdatedBy = latestUpdatedBy(relatedPhysicianOrders, (row) => row.updatedAt, (row) => row.updatedByName);
-  const carePlanSummary = await getMemberCarePlanSummary(member.id);
+  const carePlanSummary = carePlanSnapshot.summary;
   const progressNoteSummary = await getMemberProgressNoteSummary(member.id);
   const latestIntakeAssessment = detail.assessments[0] ?? null;
   const trackFromRecord = member.latest_assessment_track ?? latestIntakeAssessment?.recommended_track ?? null;
