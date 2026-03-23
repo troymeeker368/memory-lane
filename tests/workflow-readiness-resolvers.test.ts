@@ -6,6 +6,7 @@ import {
   toEnrollmentPacketMappingSyncStatus
 } from "@/lib/services/enrollment-packet-readiness";
 import { resolveIntakeDraftPofReadiness } from "@/lib/services/intake-draft-pof-readiness";
+import { resolveIntakePostSignReadiness } from "@/lib/services/intake-post-sign-readiness";
 import { resolvePhysicianOrderClinicalSyncStatus } from "@/lib/services/physician-order-clinical-sync";
 
 test("enrollment packet readiness distinguishes filed from operationally ready", () => {
@@ -77,6 +78,33 @@ test("intake readiness keeps signed and draft-pof readiness separate", () => {
       draftPofStatus: "created"
     }),
     "draft_pof_ready"
+  );
+});
+
+test("intake post-sign readiness requires member-file follow-up completion too", () => {
+  assert.equal(
+    resolveIntakePostSignReadiness({
+      signatureStatus: "signed",
+      draftPofStatus: "created",
+      openFollowUpTaskTypes: ["member_file_pdf_persistence"]
+    }),
+    "signed_pending_member_file_pdf"
+  );
+  assert.equal(
+    resolveIntakePostSignReadiness({
+      signatureStatus: "signed",
+      draftPofStatus: "created",
+      openFollowUpTaskTypes: []
+    }),
+    "post_sign_ready"
+  );
+  assert.equal(
+    resolveIntakePostSignReadiness({
+      signatureStatus: "signed",
+      draftPofStatus: "failed",
+      openFollowUpTaskTypes: ["member_file_pdf_persistence"]
+    }),
+    "draft_pof_failed"
   );
 });
 

@@ -140,6 +140,42 @@ export async function listIntakePostSignFollowUpTasks(input: {
   return ((data ?? []) as IntakePostSignFollowUpQueueRow[]).map(mapQueueRow);
 }
 
+export async function listIntakePostSignFollowUpTasksByAssessmentIds(input: {
+  assessmentIds: string[];
+  includeCompleted?: boolean;
+}) {
+  const assessmentIds = Array.from(new Set(input.assessmentIds.map((value) => String(value ?? "").trim()).filter(Boolean)));
+  if (assessmentIds.length === 0) {
+    return new Map<string, IntakePostSignFollowUpTask[]>();
+  }
+
+  const admin = createSupabaseAdminClient();
+  let query = admin
+    .from("intake_post_sign_follow_up_queue")
+    .select(INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT)
+    .in("assessment_id", assessmentIds)
+    .order("created_at", { ascending: true });
+
+  if (!input.includeCompleted) {
+    query = query.eq("status", "action_required");
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const rows = ((data ?? []) as IntakePostSignFollowUpQueueRow[]).map(mapQueueRow);
+  const tasksByAssessmentId = new Map<string, IntakePostSignFollowUpTask[]>();
+  assessmentIds.forEach((assessmentId) => {
+    tasksByAssessmentId.set(assessmentId, []);
+  });
+  rows.forEach((row) => {
+    const existing = tasksByAssessmentId.get(row.assessmentId) ?? [];
+    existing.push(row);
+    tasksByAssessmentId.set(row.assessmentId, existing);
+  });
+  return tasksByAssessmentId;
+}
+
 export async function queueIntakePostSignFollowUpTask(input: {
   assessmentId: string;
   memberId: string;

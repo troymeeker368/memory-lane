@@ -17,6 +17,21 @@ function draftPofReadinessLabel(status: "not_signed" | "signed_pending_draft_pof
   return "Not signed";
 }
 
+function postSignReadinessLabel(
+  status:
+    | "not_signed"
+    | "signed_pending_draft_pof"
+    | "draft_pof_failed"
+    | "signed_pending_member_file_pdf"
+    | "post_sign_ready"
+) {
+  if (status === "post_sign_ready") return "Operationally Ready";
+  if (status === "signed_pending_member_file_pdf") return "PDF Follow-up Needed";
+  if (status === "draft_pof_failed") return "Draft POF Failed";
+  if (status === "signed_pending_draft_pof") return "Draft POF Pending";
+  return "Not signed";
+}
+
 export default async function HealthAssessmentPage({
   searchParams
 }: {
@@ -59,6 +74,7 @@ export default async function HealthAssessmentPage({
               <th>Transport Appropriate</th>
               <th>Completed By</th>
               <th>E-Sign Status</th>
+              <th>Post-Sign Readiness</th>
               <th>Draft POF Readiness</th>
               <th>Signed By</th>
               <th>Complete</th>
@@ -76,6 +92,7 @@ export default async function HealthAssessmentPage({
                 <td>{row.transport_appropriate == null ? "-" : row.transport_appropriate ? "Yes" : "No"}</td>
                 <td>{row.completed_by ?? row.reviewer_name ?? row.created_by_name ?? "-"}</td>
                 <td>{row.signature_status ?? "unsigned"}</td>
+                <td>{postSignReadinessLabel(row.post_sign_readiness_status)}</td>
                 <td>{draftPofReadinessLabel(row.draft_pof_readiness_status)}</td>
                 <td>{row.signed_by ?? "-"}</td>
                 <td>{row.complete ? "Yes" : "No"}</td>

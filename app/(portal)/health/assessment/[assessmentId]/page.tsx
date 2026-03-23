@@ -33,6 +33,21 @@ function draftPofReadinessLabel(status: "not_signed" | "signed_pending_draft_pof
   return "Not signed";
 }
 
+function postSignReadinessLabel(
+  status:
+    | "not_signed"
+    | "signed_pending_draft_pof"
+    | "draft_pof_failed"
+    | "signed_pending_member_file_pdf"
+    | "post_sign_ready"
+) {
+  if (status === "post_sign_ready") return "Operationally Ready";
+  if (status === "signed_pending_member_file_pdf") return "PDF Follow-up Needed";
+  if (status === "draft_pof_failed") return "Draft POF Failed";
+  if (status === "signed_pending_draft_pof") return "Draft POF Pending";
+  return "Not signed";
+}
+
 export default async function HealthAssessmentDetailPage({
   params,
   searchParams
@@ -106,10 +121,16 @@ export default async function HealthAssessmentDetailPage({
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">E-Sign Status</p><p className="font-semibold">{assessment.signature_status ?? "unsigned"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed By</p><p className="font-semibold">{assessment.signed_by ?? "-"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed At</p><p className="font-semibold">{assessment.signed_at ? formatDateTime(assessment.signed_at) : "-"}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Post-Sign Readiness</p><p className="font-semibold">{postSignReadinessLabel(assessment.post_sign_readiness_status)}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Draft POF Readiness</p><p className="font-semibold">{draftPofReadinessLabel(assessment.draft_pof_readiness_status)}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Draft POF Status</p><p className="font-semibold">{assessment.draft_pof_status ?? "pending"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Draft POF Attempted</p><p className="font-semibold">{assessment.draft_pof_attempted_at ? formatDateTime(assessment.draft_pof_attempted_at) : "-"}</p></div>
         </div>
+        {assessment.post_sign_readiness_status === "signed_pending_member_file_pdf" ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            Intake Assessment is signed and draft POF is ready, but the branded PDF still needs to be saved to Member Files before this intake is operationally complete.
+          </div>
+        ) : null}
         {assessment.draft_pof_readiness_status === "draft_pof_failed" ? (
           <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
             Draft POF creation failed after intake signature.

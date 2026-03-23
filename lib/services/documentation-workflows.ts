@@ -1,6 +1,8 @@
 import { normalizeRoleKey } from "@/lib/permissions";
 import { type IntakeAssessmentSignatureState, listIntakeAssessmentSignatureStatesByAssessmentIds } from "@/lib/services/intake-assessment-esign";
 import { resolveIntakeDraftPofReadiness, toIntakeDraftPofStatus } from "@/lib/services/intake-draft-pof-readiness";
+import { listIntakePostSignFollowUpTasksByAssessmentIds } from "@/lib/services/intake-post-sign-follow-up";
+import { isIntakePostSignReady, resolveIntakePostSignReadiness } from "@/lib/services/intake-post-sign-readiness";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";
@@ -101,6 +103,13 @@ export type AssessmentWorkflowRow = {
   draft_pof_status: "none" | "ready" | "missing_staff_signature" | "pof_not_ready" | "error" | "not_applicable";
   draft_pof_readiness_status: "not_signed" | "signed_pending_draft_pof" | "draft_pof_failed" | "draft_pof_ready";
   draft_pof_ready: boolean;
+  post_sign_readiness_status:
+    | "not_signed"
+    | "signed_pending_draft_pof"
+    | "draft_pof_failed"
+    | "signed_pending_member_file_pdf"
+    | "post_sign_ready";
+  post_sign_ready: boolean;
   member_name: string;
   created_at: string;
   reviewer_name: string | null;
@@ -227,7 +236,8 @@ function buildPhotoRow(row: DocumentationWorkflowRpcRow): PhotoWorkflowRow {
 
 function buildAssessmentRows(
   rows: DocumentationWorkflowRpcRow[],
-  signatureByAssessmentId: Record<string, IntakeAssessmentSignatureState>
+  signatureByAssessmentId: Record<string, IntakeAssessmentSignatureState>,
+  followUpTasksByAssessmentId: Map<string, Awaited<ReturnType<typeof listIntakePostSignFollowUpTasksByAssessmentIds>> extends Map<string, infer T> ? T : never>
 ) {
   return rows.map((row) => {
     const payload = asPayload(row);
@@ -237,6 +247,12 @@ function buildAssessmentRows(
     const draftPofReadiness = resolveIntakeDraftPofReadiness({
       signatureStatus,
       draftPofStatus
+    });
+    const openFollowUpTaskTypes = (followUpTasksByAssessmentId.get(row.id) ?? []).map((task) => task.taskType);
+    const postSignReadiness = resolveIntakePostSignReadiness({
+      signatureStatus,
+      draftPofStatus,
+      openFollowUpTaskTypes
     });
     return {
       id: row.id,
@@ -253,6 +269,12 @@ function buildAssessmentRows(
       draft_pof_status: draftPofStatus,
       draft_pof_readiness_status: draftPofReadiness,
       draft_pof_ready: draftPofReadiness === "draft_pof_ready",
+      post_sign_readiness_status: postSignReadiness,
+      post_sign_ready: isIntakePostSignReady({
+        signatureStatus,
+        draftPofStatus,
+        openFollowUpTaskTypes
+      }),
       member_name: asTextValue(row.member_name, DEFAULT_WORKFLOW_MEMBER_NAME),
       created_at: asTextValue(payload.created_at),
       reviewer_name: null,
@@ -314,8 +336,14 @@ export async function getDocumentationWorkflows(scope?: DocumentationWorkflowSco
     assessmentRows.length === 0
       ? ({} as Record<string, IntakeAssessmentSignatureState>)
       : await listIntakeAssessmentSignatureStatesByAssessmentIds(buildSignatureIndex(assessmentRows));
+  const followUpTasksByAssessmentId =
+    assessmentRows.length === 0
+      ? new Map<string, []>()
+      : await listIntakePostSignFollowUpTasksByAssessmentIds({
+          assessmentIds: buildSignatureIndex(assessmentRows)
+        });
 
-  const assessments = buildAssessmentRows(assessmentRows, signatureByAssessmentId);
+  const assessments = buildAssessmentRows(assessmentRows, signatureByAssessmentId, followUpTasksByAssessmentId);
 
   return {
     dailyActivities: dailyRows,

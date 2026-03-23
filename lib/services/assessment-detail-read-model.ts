@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { resolveIntakeDraftPofReadiness, toIntakeDraftPofStatus } from "@/lib/services/intake-draft-pof-readiness";
 import { listIntakePostSignFollowUpTasks } from "@/lib/services/intake-post-sign-follow-up";
+import { isIntakePostSignReady, resolveIntakePostSignReadiness } from "@/lib/services/intake-post-sign-readiness";
 
 export async function getAssessmentDetail(assessmentId: string) {
   const supabase = await createClient();
@@ -20,6 +21,14 @@ export async function getAssessmentDetail(assessmentId: string) {
     draftPofStatus
   });
   const followUpTasks = await listIntakePostSignFollowUpTasks({ assessmentId });
+  const openFollowUpTaskTypes = followUpTasks
+    .filter((task) => task.status === "action_required")
+    .map((task) => task.taskType);
+  const postSignReadinessStatus = resolveIntakePostSignReadiness({
+    signatureStatus: signature.status,
+    draftPofStatus,
+    openFollowUpTaskTypes
+  });
   const { data: responses, error: responsesError } = await supabase
     .from("assessment_responses")
     .select("*")
@@ -38,6 +47,12 @@ export async function getAssessmentDetail(assessmentId: string) {
       draft_pof_status: draftPofStatus,
       draft_pof_readiness_status: draftPofReadinessStatus,
       draft_pof_ready: draftPofReadinessStatus === "draft_pof_ready",
+      post_sign_readiness_status: postSignReadinessStatus,
+      post_sign_ready: isIntakePostSignReady({
+        signatureStatus: signature.status,
+        draftPofStatus,
+        openFollowUpTaskTypes
+      }),
       draft_pof_attempted_at: assessment.draft_pof_attempted_at ?? null,
       draft_pof_error: assessment.draft_pof_error ?? null,
       signature_metadata: signature.signatureMetadata,
