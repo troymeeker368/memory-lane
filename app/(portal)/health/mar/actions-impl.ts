@@ -162,13 +162,15 @@ export async function recordScheduledMarAdministrationAction(raw: z.infer<typeof
       }
     });
 
-    await insertAudit("create_log", "mar_administration", result.administrationId, {
-      source: "scheduled",
-      status: payload.data.status,
-      marScheduleId: payload.data.marScheduleId,
-      memberId: result.memberId,
-      notGivenReason: payload.data.notGivenReason ?? null
-    });
+    if (!result.duplicateSafe) {
+      await insertAudit("create_log", "mar_administration", result.administrationId, {
+        source: "scheduled",
+        status: payload.data.status,
+        marScheduleId: payload.data.marScheduleId,
+        memberId: result.memberId,
+        notGivenReason: payload.data.notGivenReason ?? null
+      });
+    }
 
     revalidateMarRoutes(result.memberId);
     return {
@@ -179,7 +181,8 @@ export async function recordScheduledMarAdministrationAction(raw: z.infer<typeof
       administeredBy: profile.full_name,
       status: payload.data.status,
       notGivenReason: payload.data.notGivenReason ?? null,
-      notes: payload.data.notes ?? null
+      notes: payload.data.notes ?? null,
+      duplicateSafe: result.duplicateSafe
     };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save scheduled MAR administration." };

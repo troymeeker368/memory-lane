@@ -36,6 +36,8 @@ type PhysicianOrderForSyncRow = {
 const MAR_MEDICATION_SYNC_RPC = "rpc_sync_mar_medications_from_member_profile";
 const MAR_RECONCILE_RPC = "rpc_reconcile_member_mar_state";
 const MAR_RPC_MIGRATION = "0056_shared_rpc_orchestration_hardening.sql";
+const MAR_DOCUMENT_SCHEDULED_ADMIN_RPC = "rpc_document_scheduled_mar_administration";
+const MAR_DOCUMENT_SCHEDULED_ADMIN_MIGRATION = "0120_document_scheduled_mar_administration_rpc.sql";
 
 type MarMedicationSyncRpcRow = {
   anchor_physician_order_id: string;
@@ -49,6 +51,13 @@ type MarReconcileRpcRow = {
   patched_schedules: number;
   reactivated_schedules: number;
   deactivated_schedules: number;
+};
+
+type DocumentScheduledMarAdministrationRpcRow = {
+  administration_id: string;
+  member_id: string;
+  administered_at: string;
+  duplicate_safe: boolean;
 };
 
 async function resolveMarMemberId(memberId: string, actionLabel: string, serviceRole?: boolean) {
@@ -222,114 +231,113 @@ export async function documentScheduledMarAdministration(input: {
     throw new Error("The linked medication no longer has an active scheduled-dose configuration.");
   }
 
-  const { data: existingAdministration, error: existingAdministrationError } = await supabase
-    .from("mar_administrations")
-    .select("id")
-    .eq("mar_schedule_id", input.marScheduleId)
-    .maybeSingle();
-  if (existingAdministrationError) throwMarSupabaseError(existingAdministrationError, "mar_administrations");
-  if (existingAdministration?.id) {
-    throw new Error("This MAR dose has already been documented.");
-  }
-
-  const { data: inserted, error: insertError } = await supabase
-    .from("mar_administrations")
-    .insert({
-      member_id: scheduleRow.member_id,
-      pof_medication_id: scheduleRow.pof_medication_id,
-      mar_schedule_id: scheduleRow.id,
-      administration_date: toEasternDate(now),
-      scheduled_time: scheduleRow.scheduled_time,
-      medication_name: scheduleRow.medication_name,
-      dose: scheduleRow.dose,
-      route: scheduleRow.route,
-      status: input.status,
-      not_given_reason: input.status === "Not Given" ? reason : null,
-      prn_reason: null,
-      prn_outcome: null,
-      prn_outcome_assessed_at: null,
-      prn_followup_note: null,
-      notes: note,
-      administered_by: input.actor.fullName,
-      administered_by_user_id: input.actor.userId,
-      administered_at: now,
-      source: "scheduled"
-    })
-    .select("id")
-    .single();
-  if (insertError) throwMarSupabaseError(insertError, "mar_administrations");
-  if (!inserted?.id) throw new Error("Unable to save scheduled MAR administration.");
-  await recordWorkflowEvent({
-    eventType: "mar_administration_documented",
-    entityType: "mar_administration",
-    entityId: inserted.id as string,
-    actorType: "user",
-    actorUserId: input.actor.userId,
-    status: input.status === "Given" ? "given" : "not_given",
-    severity: "low",
-    metadata: {
-      member_id: scheduleRow.member_id,
-      mar_schedule_id: scheduleRow.id,
-      pof_medication_id: scheduleRow.pof_medication_id,
-      scheduled_time: scheduleRow.scheduled_time,
-      not_given_reason: reason
-    }
-  });
+  let rpcResult: DocumentScheduledMarAdministrationRpcRow[];
   try {
-    await recordWorkflowMilestone({
-      event: {
-        event_type: "mar_administration_documented",
-        entity_type: "mar_administration",
-        entity_id: inserted.id as string,
-        actor_type: "user",
-        actor_id: input.actor.userId,
-        actor_user_id: input.actor.userId,
-        status: input.status === "Given" ? "given" : "not_given",
-        severity: "low",
-        metadata: {
-          member_id: scheduleRow.member_id,
-          mar_schedule_id: scheduleRow.id,
-          pof_medication_id: scheduleRow.pof_medication_id,
-          scheduled_time: scheduleRow.scheduled_time,
-          not_given_reason: reason
-        }
-      }
+    rpcResult = await invokeSupabaseRpcOrThrow(supabase, MAR_DOCUMENT_SCHEDULED_ADMIN_RPC, {
+      p_mar_schedule_id: scheduleRow.id,
+      p_member_id: scheduleRow.member_id,
+      p_pof_medication_id: scheduleRow.pof_medication_id,
+      p_medication_name: scheduleRow.medication_name,
+      p_dose: scheduleRow.dose,
+      p_route: scheduleRow.route,
+      p_scheduled_time: scheduleRow.scheduled_time,
+      p_administration_date: toEasternDate(now),
+      p_status: input.status,
+      p_not_given_reason: reason,
+      p_notes: note,
+      p_administered_by: input.actor.userId,
+      p_administered_by_name: input.actor.fullName,
+      p_now: now
     });
   } catch (error) {
-    console.error("[mar-workflow] unable to emit scheduled MAR workflow milestone", error);
+    const message = error instanceof Error ? error.message : "Unable to save scheduled MAR administration.";
+    if (message.includes(MAR_DOCUMENT_SCHEDULED_ADMIN_RPC)) {
+      throw new Error(
+        `Scheduled MAR administration RPC is not available. Apply Supabase migration ${MAR_DOCUMENT_SCHEDULED_ADMIN_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
   }
-  if (input.status === "Not Given") {
+  const row = rpcResult[0];
+  if (!row?.administration_id || !row.member_id || !row.administered_at) {
+    throw new Error("Scheduled MAR administration RPC did not return the saved administration.");
+  }
+  const duplicateSafe = Boolean(row.duplicate_safe);
+
+  if (!duplicateSafe) {
+    await recordWorkflowEvent({
+      eventType: "mar_administration_documented",
+      entityType: "mar_administration",
+      entityId: row.administration_id,
+      actorType: "user",
+      actorUserId: input.actor.userId,
+      status: input.status === "Given" ? "given" : "not_given",
+      severity: "low",
+      metadata: {
+        member_id: scheduleRow.member_id,
+        mar_schedule_id: scheduleRow.id,
+        pof_medication_id: scheduleRow.pof_medication_id,
+        scheduled_time: scheduleRow.scheduled_time,
+        not_given_reason: reason
+      }
+    });
     try {
       await recordWorkflowMilestone({
         event: {
-          eventType: "action_required",
-          entityType: "mar_administration",
-          entityId: inserted.id as string,
-          actorType: "user",
-          actorUserId: input.actor.userId,
-          status: "open",
-          severity: "high",
+          event_type: "mar_administration_documented",
+          entity_type: "mar_administration",
+          entity_id: row.administration_id,
+          actor_type: "user",
+          actor_id: input.actor.userId,
+          actor_user_id: input.actor.userId,
+          status: input.status === "Given" ? "given" : "not_given",
+          severity: "low",
           metadata: {
             member_id: scheduleRow.member_id,
             mar_schedule_id: scheduleRow.id,
             pof_medication_id: scheduleRow.pof_medication_id,
-            title: "MAR Dose Not Given",
-            message: `${scheduleRow.medication_name} was documented as Not Given. Review the MAR entry and follow up on the reason.`,
-            priority: "high",
-            action_url: `/health/mar?memberId=${scheduleRow.member_id}`,
+            scheduled_time: scheduleRow.scheduled_time,
             not_given_reason: reason
           }
         }
       });
     } catch (error) {
-      console.error("[mar-workflow] unable to emit MAR not-given notification", error);
+      console.error("[mar-workflow] unable to emit scheduled MAR workflow milestone", error);
+    }
+    if (input.status === "Not Given") {
+      try {
+        await recordWorkflowMilestone({
+          event: {
+            eventType: "action_required",
+            entityType: "mar_administration",
+            entityId: row.administration_id,
+            actorType: "user",
+            actorUserId: input.actor.userId,
+            status: "open",
+            severity: "high",
+            metadata: {
+              member_id: scheduleRow.member_id,
+              mar_schedule_id: scheduleRow.id,
+              pof_medication_id: scheduleRow.pof_medication_id,
+              title: "MAR Dose Not Given",
+              message: `${scheduleRow.medication_name} was documented as Not Given. Review the MAR entry and follow up on the reason.`,
+              priority: "high",
+              action_url: `/health/mar?memberId=${scheduleRow.member_id}`,
+              not_given_reason: reason
+            }
+          }
+        });
+      } catch (error) {
+        console.error("[mar-workflow] unable to emit MAR not-given notification", error);
+      }
     }
   }
 
   return {
-    administrationId: inserted.id as string,
+    administrationId: row.administration_id as string,
     memberId: scheduleRow.member_id,
-    administeredAt: now
+    administeredAt: row.administered_at,
+    duplicateSafe
   };
 }
 
