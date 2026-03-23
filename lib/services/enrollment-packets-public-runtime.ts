@@ -358,8 +358,27 @@ export async function savePublicEnrollmentPacketProgress(input: {
   notes?: string | null;
   intakePayload?: Partial<Record<string, unknown>> | null;
 }) {
+  const validateIntakePayload = (payload: unknown): payload is Partial<Record<string, unknown>> => {
+    return Boolean(payload) && typeof payload === "object" && !Array.isArray(payload);
+  };
+
   const context = await getPublicEnrollmentPacketContext(input.token);
   if (context.state !== "ready") throw new Error("Enrollment packet link is not active.");
+
+  if (!validateIntakePayload(input.intakePayload)) {
+    await recordPublicEnrollmentPacketGuardFailure({
+      token: input.token,
+      caregiverIp: null,
+      caregiverUserAgent: null,
+      failureType: "invalid_intake_payload_json",
+      message: "Public enrollment packet progress included malformed intakePayload JSON.",
+      severity: "medium"
+    }).catch(() => {
+      // Intentionally ignore logging failures here; preserve deterministic submission failure behavior.
+    });
+    throw new Error("Enrollment packet answers are invalid. Refresh the form and try again.");
+  }
+
   const mergedPayload = mergePublicProgressPayload({
     storedPayload: context.fields.intakePayload,
     intakePayload: input.intakePayload,

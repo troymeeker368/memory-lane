@@ -91,9 +91,15 @@ class InvalidEnrollmentPacketIntakePayloadError extends Error {
 
 function parseIntakePayload(formData: FormData) {
   const raw = asString(formData, "intakePayload");
-  if (!raw) return normalizeEnrollmentPacketIntakePayload({});
+  if (!raw) {
+    throw new InvalidEnrollmentPacketIntakePayloadError();
+  }
+
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new InvalidEnrollmentPacketIntakePayloadError();
+    }
     return normalizeEnrollmentPacketIntakePayload(parsed);
   } catch {
     throw new InvalidEnrollmentPacketIntakePayloadError();
