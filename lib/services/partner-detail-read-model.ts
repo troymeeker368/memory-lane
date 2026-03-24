@@ -11,6 +11,18 @@ function isInvalidUuidFilterError(message: string) {
 }
 
 const NEVER_MATCH_UUID = "00000000-0000-0000-0000-000000000000";
+const PARTNER_DETAIL_SELECT =
+  "id, partner_id, organization_name, category, referral_source_category, contact_name, location, primary_phone, primary_email, notes, last_touched";
+const REFERRAL_SOURCE_LIST_SELECT =
+  "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, last_touched";
+const LEAD_LIST_SELECT =
+  "id, member_name, stage, caregiver_name, lead_source, inquiry_date, created_at";
+const LEAD_ACTIVITY_SELECT =
+  "id, lead_id, referral_source_id, activity_at, activity_type, outcome, notes, member_name";
+const PARTNER_ACTIVITY_SELECT =
+  "id, partner_id, referral_source_id, activity_at, activity_type, contact_name, next_follow_up_date, next_follow_up_type, notes";
+const REFERRAL_SOURCE_DETAIL_SELECT =
+  "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, last_touched";
 
 export async function getPartnerDetail(partnerId: string) {
   const supabase = await createClient();
@@ -20,7 +32,7 @@ export async function getPartnerDetail(partnerId: string) {
   ].filter(Boolean) as string[];
   const { data: partner, error: partnerError } = await supabase
     .from("community_partner_organizations")
-    .select("*")
+    .select(PARTNER_DETAIL_SELECT)
     .or(partnerFilters.join(","))
     .maybeSingle();
   if (partnerError) throw new Error(partnerError.message);
@@ -29,7 +41,7 @@ export async function getPartnerDetail(partnerId: string) {
   const partnerKey = String(partner.partner_id ?? partner.id);
   const { data: referralSources, error: referralError } = await supabase
     .from("referral_sources")
-    .select("*")
+    .select(REFERRAL_SOURCE_LIST_SELECT)
     .eq("partner_id", partnerKey)
     .order("organization_name", { ascending: true });
   if (referralError) throw new Error(referralError.message);
@@ -42,14 +54,14 @@ export async function getPartnerDetail(partnerId: string) {
   const leadFilters = [`partner_id.eq.${partnerKey}`, ...sourceIds.map((id) => `referral_source_id.eq.${id}`)];
   let { data: leads, error: leadsError } = await supabase
     .from("leads")
-    .select("*")
+    .select(LEAD_LIST_SELECT)
     .order("created_at", { ascending: false })
     .limit(200)
     .or(leadFilters.join(","));
   if (leadsError && isInvalidUuidFilterError(leadsError.message)) {
     const fallback = await supabase
       .from("leads")
-      .select("*")
+      .select(LEAD_LIST_SELECT)
       .order("created_at", { ascending: false })
       .limit(200)
       .eq("partner_id", partnerKey);
@@ -60,7 +72,11 @@ export async function getPartnerDetail(partnerId: string) {
 
   const leadIds = (leads ?? []).map((lead) => String(lead.id)).filter((id) => isUuid(id));
 
-  let leadActivitiesQuery = supabase.from("lead_activities").select("*").order("activity_at", { ascending: false }).limit(200);
+  let leadActivitiesQuery = supabase
+    .from("lead_activities")
+    .select(LEAD_ACTIVITY_SELECT)
+    .order("activity_at", { ascending: false })
+    .limit(200);
   if (leadIds.length > 0) {
     leadActivitiesQuery = leadActivitiesQuery.in("lead_id", leadIds);
   } else {
@@ -73,7 +89,11 @@ export async function getPartnerDetail(partnerId: string) {
     isUuid(String(partner.id ?? "")) ? `partner_id.eq.${partner.id}` : null,
     ...sourceUuidIds.map((id) => `referral_source_id.eq.${id}`)
   ].filter(Boolean) as string[];
-  let partnerActivitiesQuery = supabase.from("partner_activities").select("*").order("activity_at", { ascending: false }).limit(200);
+  let partnerActivitiesQuery = supabase
+    .from("partner_activities")
+    .select(PARTNER_ACTIVITY_SELECT)
+    .order("activity_at", { ascending: false })
+    .limit(200);
   if (partnerActivityFilters.length > 0) {
     partnerActivitiesQuery = partnerActivitiesQuery.or(partnerActivityFilters.join(","));
   } else {
@@ -99,7 +119,7 @@ export async function getReferralSourceDetail(sourceId: string) {
   ].filter(Boolean) as string[];
   const { data: referralSource, error: referralError } = await supabase
     .from("referral_sources")
-    .select("*")
+    .select(REFERRAL_SOURCE_DETAIL_SELECT)
     .or(referralSourceFilters.join(","))
     .maybeSingle();
   if (referralError) throw new Error(referralError.message);
@@ -116,7 +136,7 @@ export async function getReferralSourceDetail(sourceId: string) {
           isUuid(partnerKey) ? `id.eq.${partnerKey}` : null,
           `partner_id.eq.${partnerKey}`
         ].filter(Boolean) as string[];
-        return supabase.from("community_partner_organizations").select("*").or(filters.join(",")).maybeSingle();
+        return supabase.from("community_partner_organizations").select(PARTNER_DETAIL_SELECT).or(filters.join(",")).maybeSingle();
       })()
     : Promise.resolve({ data: null, error: null } as const);
 
@@ -125,18 +145,26 @@ export async function getReferralSourceDetail(sourceId: string) {
     partnerKey ? `partner_id.eq.${partnerKey}` : null
   ].filter(Boolean) as string[];
 
-  const leadsQueryBase = supabase.from("leads").select("*").order("created_at", { ascending: false }).limit(200);
+  const leadsQueryBase = supabase.from("leads").select(LEAD_LIST_SELECT).order("created_at", { ascending: false }).limit(200);
   const leadsQuery =
     leadQueryFilters.length > 0 ? leadsQueryBase.or(leadQueryFilters.join(",")) : leadsQueryBase.eq("id", NEVER_MATCH_UUID);
 
-  let leadActivitiesQuery = supabase.from("lead_activities").select("*").order("activity_at", { ascending: false }).limit(200);
+  let leadActivitiesQuery = supabase
+    .from("lead_activities")
+    .select(LEAD_ACTIVITY_SELECT)
+    .order("activity_at", { ascending: false })
+    .limit(200);
   if (sourceUuid) {
     leadActivitiesQuery = leadActivitiesQuery.eq("referral_source_id", sourceUuid);
   } else {
     leadActivitiesQuery = leadActivitiesQuery.eq("lead_id", NEVER_MATCH_UUID);
   }
 
-  let partnerActivitiesQuery = supabase.from("partner_activities").select("*").order("activity_at", { ascending: false }).limit(200);
+  let partnerActivitiesQuery = supabase
+    .from("partner_activities")
+    .select(PARTNER_ACTIVITY_SELECT)
+    .order("activity_at", { ascending: false })
+    .limit(200);
   const referralActivityFilters = [
     sourceUuid ? `referral_source_id.eq.${sourceUuid}` : null,
     partnerUuid ? `partner_id.eq.${partnerUuid}` : null
@@ -157,8 +185,8 @@ export async function getReferralSourceDetail(sourceId: string) {
   if (partnerResult.error) throw new Error(partnerResult.error.message);
   if (leadsResult.error && isInvalidUuidFilterError(leadsResult.error.message)) {
     const fallback = partnerKey
-      ? await supabase.from("leads").select("*").eq("partner_id", partnerKey).order("created_at", { ascending: false }).limit(200)
-      : await supabase.from("leads").select("*").eq("id", NEVER_MATCH_UUID).order("created_at", { ascending: false }).limit(200);
+      ? await supabase.from("leads").select(LEAD_LIST_SELECT).eq("partner_id", partnerKey).order("created_at", { ascending: false }).limit(200)
+      : await supabase.from("leads").select(LEAD_LIST_SELECT).eq("id", NEVER_MATCH_UUID).order("created_at", { ascending: false }).limit(200);
     if (fallback.error) throw new Error(fallback.error.message);
     return {
       referralSource,

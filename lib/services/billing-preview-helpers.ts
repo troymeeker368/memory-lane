@@ -90,6 +90,19 @@ type BillingPreviewCategoryRow = {
   price_cents?: number | string | null;
 };
 
+function groupRowsByMemberId<T extends { member_id: string }>(rows: readonly T[]) {
+  const grouped = new Map<string, T[]>();
+  rows.forEach((row) => {
+    const memberRows = grouped.get(row.member_id);
+    if (memberRows) {
+      memberRows.push(row);
+      return;
+    }
+    grouped.set(row.member_id, [row]);
+  });
+  return grouped;
+}
+
 export async function resolveDailyRate(input: {
   memberId: string;
   memberSetting: BillingSettingRow;
@@ -211,17 +224,23 @@ async function getBillingPreviewRows(input: {
 
   const activeMembers = (membersData ?? []) as Array<{ id: string; display_name: string }>;
   const memberSettings = (memberSettingsData ?? []) as BillingSettingRow[];
+  const memberSettingsByMemberId = groupRowsByMemberId(memberSettings);
   const attendanceSettingByMemberId = new Map(
     ((attendanceSettingsData ?? []) as BillingPreviewAttendanceScheduleRow[]).map((row) => [String(row.member_id), row] as const)
   );
   const attendanceRows = (attendanceData ?? []) as Array<{ member_id: string; status: string; attendance_date: string }>;
+  const attendanceRowsByMemberId = groupRowsByMemberId(attendanceRows);
   const scheduleRows = (scheduleData ?? []) as ScheduleTemplateRow[];
+  const scheduleRowsByMemberId = groupRowsByMemberId(scheduleRows);
   const transportationRows = (transportData ?? []) as BillingPreviewTransportationRow[];
+  const transportationRowsByMemberId = groupRowsByMemberId(transportationRows);
   const ancillaryRows = (ancillaryData ?? []) as BillingPreviewAncillaryRow[];
+  const ancillaryRowsByMemberId = groupRowsByMemberId(ancillaryRows);
   const categoryById = new Map(
     ((categoryData ?? []) as BillingPreviewCategoryRow[]).map((row) => [String(row.id), row] as const)
   );
   const adjustmentRows = (adjustmentData ?? []) as BillingPreviewAdjustmentRow[];
+  const adjustmentRowsByMemberId = groupRowsByMemberId(adjustmentRows);
   const expectedAttendanceContext = await loadExpectedAttendanceSupabaseContext({
     memberIds: activeMembers.map((member) => member.id),
     startDate: minDate,
@@ -234,7 +253,11 @@ async function getBillingPreviewRows(input: {
 
   const previewRows: BillingPreviewRow[] = [];
   for (const member of activeMembers) {
-    const memberSetting = resolveActiveEffectiveMemberRowForDate(member.id, invoiceMonthStart, memberSettings);
+    const memberSetting = resolveActiveEffectiveMemberRowForDate(
+      member.id,
+      invoiceMonthStart,
+      memberSettingsByMemberId.get(member.id) ?? []
+    );
     if (!memberSetting) continue;
 
     const mode = resolveEffectiveBillingMode({ memberSetting, centerSetting });
@@ -252,7 +275,7 @@ async function getBillingPreviewRows(input: {
       nonBillableClosureSetsByRange.set(nonBillableClosureRangeKey, nonBillableClosures);
     }
     const schedule =
-      scheduleRows
+      (scheduleRowsByMemberId.get(member.id) ?? [])
         .filter((row) => row.member_id === member.id)
         .filter((row) => row.active)
         .filter((row) => normalizeDateOnly(row.effective_start_date) <= periods.baseRange.end)
@@ -262,8 +285,7 @@ async function getBillingPreviewRows(input: {
 
     let billedDays = 0;
     if (mode === "Monthly" && getMonthlyBillingBasis(memberSetting) === "ActualAttendanceMonthBehind") {
-      billedDays = attendanceRows
-        .filter((row) => String(row.member_id) === member.id)
+      billedDays = (attendanceRowsByMemberId.get(member.id) ?? [])
         .filter((row) => String(row.status) === "present")
         .filter((row) => isWithin(String(row.attendance_date), periods.baseRange))
         .length;
@@ -281,22 +303,23 @@ async function getBillingPreviewRows(input: {
       }).size;
     }
 
-    const resolvedDailyRate = await resolveDailyRate({
-      memberId: member.id,
-      memberSetting,
-      centerSetting
-    });
+    const resolvedDailyRate = toAmount(
+      resolveEffectiveDailyRate({
+        attendanceSetting,
+        memberSetting,
+        centerSetting
+      })
+    );
     const baseProgramAmount =
       mode === "Monthly" && asNumber(memberSetting.flat_monthly_rate) > 0
         ? toAmount(memberSetting.flat_monthly_rate)
         : toAmount(billedDays * resolvedDailyRate);
-    const transportBillingStatus = await resolveTransportationBillingStatus({
-      memberId: member.id,
-      memberSetting
-    });
+    const transportBillingStatus =
+      attendanceSetting?.transportation_billing_status ??
+      memberSetting.transportation_billing_status ??
+      "BillNormally";
 
-    const transportLines = transportationRows
-      .filter((row) => String(row.member_id) === member.id)
+    const transportLines = (transportationRowsByMemberId.get(member.id) ?? [])
       .filter((row) => isWithin(String(row.service_date), periods.variableRange))
       .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
       .filter((row) => row.billable !== false)
@@ -320,8 +343,7 @@ async function getBillingPreviewRows(input: {
           source_record_id: String(row.id)
         };
       });
-    const ancillaryLines = ancillaryRows
-      .filter((row) => String(row.member_id) === member.id)
+    const ancillaryLines = (ancillaryRowsByMemberId.get(member.id) ?? [])
       .filter((row) => isWithin(String(row.service_date), periods.variableRange))
       .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
       .map((row) => {
@@ -343,8 +365,7 @@ async function getBillingPreviewRows(input: {
           source_record_id: String(row.id)
         };
       });
-    const adjustmentLines = adjustmentRows
-      .filter((row) => String(row.member_id) === member.id)
+    const adjustmentLines = (adjustmentRowsByMemberId.get(member.id) ?? [])
       .filter((row) => isWithin(String(row.adjustment_date), periods.variableRange))
       .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
       .map((row) => {

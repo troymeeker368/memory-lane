@@ -81,6 +81,11 @@ type TransportationRunResultRow = {
   created_at: string;
 };
 
+const MEMBER_CONTACT_MANIFEST_SELECT =
+  "id, member_id, contact_name, category, cellular_number, work_number, home_number, street_address, city, state, zip, updated_at";
+const TRANSPORTATION_RUN_SELECT =
+  "id, service_date, shift, bus_number, status, submitted_by_name, posted_at, last_submitted_at, submission_count, total_expected, total_posted, total_excluded, total_duplicates, total_nonbillable";
+
 export type TransportationOperationalStatus =
   | "eligible"
   | "absent"
@@ -264,7 +269,7 @@ async function listPreferredContactsByMember(memberIds: string[]) {
     return new Map<string, MemberContactRow>();
   }
   const supabase = await createClient();
-  const { data, error } = await supabase.from("member_contacts").select("*").in("member_id", memberIds);
+  const { data, error } = await supabase.from("member_contacts").select(MEMBER_CONTACT_MANIFEST_SELECT).in("member_id", memberIds);
   if (error) throw new Error(error.message);
   return buildPreferredContactByMember((data ?? []) as MemberContactRow[]);
 }
@@ -298,6 +303,7 @@ export async function getTransportationRunManifestSupabase(input: {
   if (adjustmentsError) throw new Error(adjustmentsError.message);
 
   const schedules = (schedulesData ?? []) as MemberAttendanceScheduleRow[];
+  const scheduleByMemberId = new Map(schedules.map((row) => [row.member_id, row] as const));
   const adjustments = (adjustmentsData ?? []) as TransportationManifestAdjustmentRow[];
   const manualAdditions = adjustments.filter((row) => row.adjustment_type === "add");
   const manualExclusionsByMemberId = new Map(
@@ -344,14 +350,14 @@ export async function getTransportationRunManifestSupabase(input: {
       : Promise.resolve({ data: [], error: null }),
     supabase
       .from("transportation_runs")
-      .select("*")
+      .select(TRANSPORTATION_RUN_SELECT)
       .eq("service_date", selectedDate)
       .eq("shift", selectedShift)
       .eq("bus_number", selectedBusNumber)
       .maybeSingle(),
     supabase
       .from("transportation_runs")
-      .select("*")
+      .select(TRANSPORTATION_RUN_SELECT)
       .eq("service_date", selectedDate)
       .order("bus_number", { ascending: true })
       .order("last_submitted_at", { ascending: false }),
@@ -463,7 +469,7 @@ export async function getTransportationRunManifestSupabase(input: {
   manualAdditions.forEach((adjustment) => {
     if ((adjustment.bus_number ?? "").trim() !== selectedBusNumber) return;
     const member = memberById.get(adjustment.member_id);
-    const schedule = schedules.find((row) => row.member_id === adjustment.member_id) ?? null;
+    const schedule = scheduleByMemberId.get(adjustment.member_id) ?? null;
     const attendance = attendanceByMemberId.get(adjustment.member_id) ?? null;
     const existingLog = existingLogByMemberId.get(adjustment.member_id) ?? null;
     const contact = preferredContactsByMember.get(adjustment.member_id) ?? null;

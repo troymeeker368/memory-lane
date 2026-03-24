@@ -174,12 +174,15 @@ function transportationManifestStorageRequiredError() {
   );
 }
 
+const MEMBER_CONTACT_MANIFEST_SELECT =
+  "id, member_id, contact_name, category, cellular_number, work_number, home_number, street_address, city, state, zip, updated_at";
+
 async function listPreferredContactsByMember(memberIds: string[]) {
   if (memberIds.length === 0) {
     return { rows: [] as MemberContactRow[], preferred: new Map<string, MemberContactRow>() };
   }
   const supabase = await createClient();
-  const { data, error } = await supabase.from("member_contacts").select("*").in("member_id", memberIds);
+  const { data, error } = await supabase.from("member_contacts").select(MEMBER_CONTACT_MANIFEST_SELECT).in("member_id", memberIds);
   if (error) {
     if (isMissingTableError(error, "member_contacts")) {
       throw transportationManifestStorageRequiredError();
@@ -199,7 +202,7 @@ export async function resolvePreferredMemberContactSupabase(memberId: string, ex
   if (explicitContactId) {
     const { data, error } = await supabase
       .from("member_contacts")
-      .select("*")
+      .select(MEMBER_CONTACT_MANIFEST_SELECT)
       .eq("id", explicitContactId)
       .eq("member_id", canonicalMemberId)
       .maybeSingle();

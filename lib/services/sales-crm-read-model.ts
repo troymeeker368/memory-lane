@@ -383,29 +383,32 @@ export async function getSalesFormLookupsSupabase(options?: {
   const partnerRows = [...(partners as SalesPartnerRow[])];
   const referralRows = [...(referralSources as SalesReferralSourceRow[])];
 
-  if (options?.includeLeadId && !leadRows.some((row) => row.id === options.includeLeadId)) {
-    const extraLead = await getSalesLeadByIdSupabase(options.includeLeadId);
-    if (extraLead) {
-      leadRows.unshift({
-        id: extraLead.id,
-        member_name: extraLead.member_name,
-        caregiver_name: extraLead.caregiver_name,
-        stage: extraLead.stage,
-        status: extraLead.status,
-        created_at: extraLead.created_at,
-        partner_id: extraLead.partner_id,
-        referral_source_id: extraLead.referral_source_id
-      });
-    }
+  const [extraLead, extraPartner, extraReferralSource] = await Promise.all([
+    options?.includeLeadId && !leadRows.some((row) => row.id === options.includeLeadId)
+      ? getSalesLeadByIdSupabase(options.includeLeadId)
+      : Promise.resolve(null),
+    options?.includePartnerId && !partnerRows.some((row) => row.id === options.includePartnerId)
+      ? fetchPartnerByIdSupabase(options.includePartnerId)
+      : Promise.resolve(null),
+    options?.includeReferralSourceId && !referralRows.some((row) => row.id === options.includeReferralSourceId)
+      ? fetchReferralSourceByIdSupabase(options.includeReferralSourceId)
+      : Promise.resolve(null)
+  ]);
+
+  if (extraLead) {
+    leadRows.unshift({
+      id: extraLead.id,
+      member_name: extraLead.member_name,
+      caregiver_name: extraLead.caregiver_name,
+      stage: extraLead.stage,
+      status: extraLead.status,
+      created_at: extraLead.created_at,
+      partner_id: extraLead.partner_id,
+      referral_source_id: extraLead.referral_source_id
+    });
   }
-  if (options?.includePartnerId && !partnerRows.some((row) => row.id === options.includePartnerId)) {
-    const extraPartner = await fetchPartnerByIdSupabase(options.includePartnerId);
-    if (extraPartner) partnerRows.unshift(extraPartner);
-  }
-  if (options?.includeReferralSourceId && !referralRows.some((row) => row.id === options.includeReferralSourceId)) {
-    const extraReferralSource = await fetchReferralSourceByIdSupabase(options.includeReferralSourceId);
-    if (extraReferralSource) referralRows.unshift(extraReferralSource);
-  }
+  if (extraPartner) partnerRows.unshift(extraPartner);
+  if (extraReferralSource) referralRows.unshift(extraReferralSource);
 
   return {
     leads: leadRows.map((row) => ({

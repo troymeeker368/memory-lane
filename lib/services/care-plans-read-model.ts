@@ -28,6 +28,59 @@ export interface MemberCarePlanOverview {
   carePlanSummary: MemberCarePlanSummary;
 }
 
+const CARE_PLAN_BASE_SELECT = [
+  "id",
+  "member_id",
+  "track",
+  "enrollment_date",
+  "review_date",
+  "last_completed_date",
+  "next_due_date",
+  "completed_by",
+  "date_of_completion",
+  "responsible_party_signature",
+  "responsible_party_signature_date",
+  "administrator_signature",
+  "administrator_signature_date",
+  "care_team_notes",
+  "no_changes_needed",
+  "modifications_required",
+  "modifications_description",
+  "nurse_designee_user_id",
+  "nurse_designee_name",
+  "nurse_signed_at",
+  "nurse_signature_status",
+  "nurse_signed_by_user_id",
+  "nurse_signed_by_name",
+  "nurse_signature_artifact_storage_path",
+  "nurse_signature_artifact_member_file_id",
+  "nurse_signature_metadata",
+  "caregiver_name",
+  "caregiver_email",
+  "caregiver_signature_status",
+  "caregiver_sent_at",
+  "caregiver_sent_by_user_id",
+  "caregiver_viewed_at",
+  "caregiver_signed_at",
+  "caregiver_signature_expires_at",
+  "caregiver_signature_request_url",
+  "caregiver_signed_name",
+  "final_member_file_id",
+  "post_sign_readiness_status",
+  "post_sign_readiness_reason",
+  "legacy_cleanup_flag",
+  "created_at",
+  "updated_at",
+  "member:members!care_plans_member_id_fkey(display_name)"
+].join(", ");
+
+const CARE_PLAN_HISTORY_SELECT =
+  "id, care_plan_id, review_date, reviewed_by, summary, changes_made, next_due_date, version_id";
+const CARE_PLAN_VERSION_SELECT =
+  "id, care_plan_id, version_number, snapshot_type, snapshot_date, reviewed_by, status, next_due_date, no_changes_needed, modifications_required, modifications_description, care_team_notes, sections_snapshot, created_at";
+const CARE_PLAN_SECTION_SELECT =
+  "id, care_plan_id, section_type, short_term_goals, long_term_goals, display_order";
+
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
@@ -83,7 +136,7 @@ export async function listCarePlanRows(filters?: {
     : null;
   let query = supabase
     .from("care_plans")
-    .select("*, member:members!care_plans_member_id_fkey(display_name)")
+    .select(CARE_PLAN_BASE_SELECT)
     .order("next_due_date", { ascending: true });
   if (filters?.carePlanId) query = query.eq("id", filters.carePlanId);
   if (canonicalMemberId) query = query.eq("member_id", canonicalMemberId);
@@ -289,17 +342,17 @@ export async function getCarePlanById(id: string, options?: { serviceRole?: bool
   ] = await Promise.all([
     supabase
       .from("care_plan_review_history")
-      .select("*")
+      .select(CARE_PLAN_HISTORY_SELECT)
       .eq("care_plan_id", id)
       .order("review_date", { ascending: false }),
     supabase
       .from("care_plan_versions")
-      .select("*")
+      .select(CARE_PLAN_VERSION_SELECT)
       .eq("care_plan_id", id)
       .order("version_number", { ascending: false }),
     supabase
       .from("care_plan_sections")
-      .select("*")
+      .select(CARE_PLAN_SECTION_SELECT)
       .eq("care_plan_id", id)
       .order("display_order", { ascending: true })
   ]);
