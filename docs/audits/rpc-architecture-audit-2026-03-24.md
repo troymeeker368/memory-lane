@@ -2,19 +2,24 @@
 
 ## Executive Summary
 
-- SQL files inventoried: `131`
-- Current live SQL functions after the new consolidation migration: `82`
-- Current live RPC-style functions (`rpc_*`): `65`
+- SQL files inventoried: `132`
+- Current live SQL functions after the new consolidation migrations: `80`
+- Current live RPC-style functions (`rpc_*`): `63`
 - Current live views: `12`
 - Trigger definitions inventoried across migrations: `78`
 
 ### What changed in this pass
 
 - Consolidated the sales dashboard into one stronger read-model RPC: `rpc_get_sales_dashboard_summary`
+- Consolidated the progress note tracker into one stronger read-model RPC: `rpc_get_progress_note_tracker`
 - Removed the thin helper RPC `rpc_get_sales_pipeline_summary_counts`
 - Removed the thin wrapper RPC `rpc_list_mar_member_options`
 - Removed stale legacy RPC `rpc_finalize_enrollment_packet_request_completion`
+- Removed split progress note helper RPCs:
+  - `rpc_get_progress_note_tracker_summary`
+  - `rpc_get_progress_note_tracker_page`
 - Updated sales call sites to stop composing the dashboard from multiple round trips
+- Updated progress note tracker call sites to stop composing the screen from summary + page RPCs
 - Added repo guardrails in [docs/database-rpc-architecture.md](/D:/Memory Lane App/docs/database-rpc-architecture.md)
 
 ## Domain Counts
@@ -25,7 +30,7 @@ Counts below reflect live current functions after `0129_sales_dashboard_rpc_cons
 | --- | ---: | ---: |
 | members | 36 | 1 |
 | enrollment | 9 | 0 |
-| health unit | 6 | 0 |
+| health unit | 5 | 0 |
 | intake | 5 | 0 |
 | MAR | 5 | 4 |
 | physician orders | 4 | 0 |
@@ -191,12 +196,11 @@ Counts below reflect live current functions after `0129_sales_dashboard_rpc_cons
 - Read models:
   - `rpc_get_documentation_workflows`
   - `rpc_get_health_dashboard_care_alerts`
-  - `rpc_get_progress_note_tracker_summary`
-  - `rpc_get_progress_note_tracker_page`
+  - `rpc_get_progress_note_tracker`
   - `rpc_get_staff_activity_snapshot_counts`
   - `rpc_get_staff_activity_snapshot_rows`
 - Findings:
-  - `rpc_get_progress_note_tracker_summary` and `rpc_get_progress_note_tracker_page` are still a likely same-screen waterfall pair.
+  - Progress note tracker is now correctly one canonical read path instead of a summary/page split.
   - Activity snapshot counts and rows are similarly split.
 
 ### Auth / Permissions / Low-Level Helpers
@@ -224,6 +228,11 @@ Counts below reflect live current functions after `0129_sales_dashboard_rpc_cons
 ### Stale / Dead Removed
 
 - `rpc_finalize_enrollment_packet_request_completion`
+
+### Fragmented Read Models Consolidated
+
+- `rpc_get_progress_note_tracker_summary` + `rpc_get_progress_note_tracker_page`
+  -> `rpc_get_progress_note_tracker`
 
 ### Strong Read Models That Should Stay
 
@@ -267,10 +276,14 @@ Counts below reflect live current functions after `0129_sales_dashboard_rpc_cons
   - `lib/services/sales-crm-read-model.ts:getSalesSummarySnapshotSupabase`
   - Previous shape: dashboard RPC + pipeline summary RPC + direct recent-inquiry query
   - Current shape: one canonical `rpc_get_sales_dashboard_summary` read model
+- Reduced in this pass:
+  - `/health/progress-notes`
+  - `lib/services/progress-notes-read-model.ts:getProgressNoteTracker`
+  - Previous shape: summary RPC + page RPC
+  - Current shape: one canonical `rpc_get_progress_note_tracker` read model
 - Still fragmented:
   - `lib/services/member-detail-read-model.ts`
   - `lib/services/care-plans-read-model.ts:getCarePlanById`
-  - `lib/services/progress-notes-read-model.ts:getProgressNoteTracker`
   - `lib/services/sales-summary-report.ts`
 
 ## Recommended Next Canonical Merges
@@ -282,7 +295,7 @@ Counts below reflect live current functions after `0129_sales_dashboard_rpc_cons
 - Care plans:
   - create one care plan review read model for detail, sections, history, versions, and participation summary
 - Progress notes:
-  - merge summary and page RPCs into one tracker read model if the screen always needs both
+  - activity/dashboard follow-on read models still deserve cleanup, but the tracker split is now consolidated
 - MHP / MCC:
   - converge the child mutation RPC family toward one authoritative member clinical bundle write path
 

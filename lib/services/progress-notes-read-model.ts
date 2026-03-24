@@ -28,29 +28,15 @@ type ProgressNoteMemberRow = {
   status: string | null;
 };
 
-type ProgressNoteTrackerPageRpcRow = {
-  member_id: string;
-  member_name: string;
-  member_status: string | null;
-  enrollment_date: string | null;
-  last_signed_progress_note_date: string | null;
-  next_progress_note_due_date: string | null;
-  days_until_due: number | null;
-  compliance_status: ProgressNoteComplianceStatus;
-  has_draft_in_progress: boolean | null;
-  latest_draft_id: string | null;
-  latest_signed_note_id: string | null;
-  data_issue: string | null;
-  total_rows: number | null;
-};
-
-type ProgressNoteTrackerSummaryRpcRow = {
+type ProgressNoteTrackerReadModelRpcRow = {
   total: number | null;
   overdue: number | null;
   due_today: number | null;
   due_soon: number | null;
   upcoming: number | null;
   data_issues: number | null;
+  total_rows: number | null;
+  page_rows: unknown;
 };
 
 function toProgressNote(row: DbProgressNote, memberName?: string | null): ProgressNote {
@@ -223,33 +209,30 @@ async function loadMemberNameMap(memberIds: string[], serviceRole = false) {
   return new Map(members.map((member) => [member.id, member.display_name] as const));
 }
 
-async function loadProgressNoteTrackerSummary(input?: {
-  memberId?: string | null;
-  query?: string | null;
-  serviceRole?: boolean;
-}) {
-  const supabase = await createClient({ serviceRole: Boolean(input?.serviceRole) });
-  const rows = await invokeSupabaseRpcOrThrow<ProgressNoteTrackerSummaryRpcRow[]>(
-    supabase,
-    "rpc_get_progress_note_tracker_summary",
-    {
-      p_member_id: input?.memberId ?? null,
-      p_query_pattern: input?.query ?? null
-    }
-  );
-
-  const row = rows?.[0] ?? null;
-  return {
-    total: Number(row?.total ?? 0),
-    overdue: Number(row?.overdue ?? 0),
-    dueToday: Number(row?.due_today ?? 0),
-    dueSoon: Number(row?.due_soon ?? 0),
-    upcoming: Number(row?.upcoming ?? 0),
-    dataIssues: Number(row?.data_issues ?? 0)
-  } satisfies ProgressNoteTrackerSummary;
+function mapProgressNoteTrackerRows(payload: unknown) {
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+    .map((row) => ({
+      memberId: String(row.member_id ?? ""),
+      memberName: String(row.member_name ?? ""),
+      memberStatus: typeof row.member_status === "string" ? row.member_status : null,
+      enrollmentDate: typeof row.enrollment_date === "string" ? row.enrollment_date : null,
+      lastSignedProgressNoteDate:
+        typeof row.last_signed_progress_note_date === "string" ? row.last_signed_progress_note_date : null,
+      nextProgressNoteDueDate:
+        typeof row.next_progress_note_due_date === "string" ? row.next_progress_note_due_date : null,
+      daysUntilDue:
+        row.days_until_due == null || row.days_until_due === "" ? null : Number(row.days_until_due),
+      complianceStatus: row.compliance_status as ProgressNoteComplianceStatus,
+      hasDraftInProgress: Boolean(row.has_draft_in_progress),
+      latestDraftId: typeof row.latest_draft_id === "string" ? row.latest_draft_id : null,
+      latestSignedNoteId: typeof row.latest_signed_note_id === "string" ? row.latest_signed_note_id : null,
+      dataIssue: typeof row.data_issue === "string" ? row.data_issue : null
+    })) satisfies ProgressNoteComplianceRow[];
 }
 
-async function loadProgressNoteTrackerPage(input: {
+async function loadProgressNoteTrackerReadModel(input: {
   status: ProgressNoteTrackerFilter;
   memberId?: string | null;
   query?: string | null;
@@ -257,38 +240,31 @@ async function loadProgressNoteTrackerPage(input: {
   pageSize: number;
   serviceRole?: boolean;
 }) {
-  const supabase = await createClient({ serviceRole: Boolean(input.serviceRole) });
-  const rows = await invokeSupabaseRpcOrThrow<ProgressNoteTrackerPageRpcRow[]>(
+  const supabase = await createClient({ serviceRole: Boolean(input?.serviceRole) });
+  const rows = await invokeSupabaseRpcOrThrow<ProgressNoteTrackerReadModelRpcRow[]>(
     supabase,
-    "rpc_get_progress_note_tracker_page",
+    "rpc_get_progress_note_tracker",
     {
       p_status_filter: input.status,
-      p_member_id: input.memberId ?? null,
-      p_query_pattern: input.query ?? null,
+      p_member_id: input?.memberId ?? null,
+      p_query_pattern: input?.query ?? null,
       p_page: input.page,
       p_page_size: input.pageSize
     }
   );
 
-  const mappedRows = (rows ?? []).map((row) => ({
-    memberId: row.member_id,
-    memberName: row.member_name,
-    memberStatus: row.member_status,
-    enrollmentDate: row.enrollment_date,
-    lastSignedProgressNoteDate: row.last_signed_progress_note_date,
-    nextProgressNoteDueDate: row.next_progress_note_due_date,
-    daysUntilDue: row.days_until_due == null ? null : Number(row.days_until_due),
-    complianceStatus: row.compliance_status,
-    hasDraftInProgress: Boolean(row.has_draft_in_progress),
-    latestDraftId: row.latest_draft_id,
-    latestSignedNoteId: row.latest_signed_note_id,
-    dataIssue: row.data_issue
-  })) satisfies ProgressNoteComplianceRow[];
-
-  const totalRows = Number(rows?.[0]?.total_rows ?? 0);
+  const row = rows?.[0] ?? null;
   return {
-    rows: mappedRows,
-    totalRows
+    summary: {
+      total: Number(row?.total ?? 0),
+      overdue: Number(row?.overdue ?? 0),
+      dueToday: Number(row?.due_today ?? 0),
+      dueSoon: Number(row?.due_soon ?? 0),
+      upcoming: Number(row?.upcoming ?? 0),
+      dataIssues: Number(row?.data_issues ?? 0)
+    } satisfies ProgressNoteTrackerSummary,
+    totalRows: Number(row?.total_rows ?? 0),
+    rows: mapProgressNoteTrackerRows(row?.page_rows)
   };
 }
 
@@ -307,28 +283,21 @@ export async function getProgressNoteTracker(input?: {
     ? await resolveCanonicalMemberId(input.memberId, { actionLabel: "getProgressNoteTracker" })
     : null;
   const queryPattern = cleanText(input?.query) ? buildSupabaseIlikePattern(cleanText(input?.query) as string) : null;
-  const [summary, pageResult] = await Promise.all([
-    loadProgressNoteTrackerSummary({
-      memberId: canonicalMemberId,
-      query: queryPattern,
-      serviceRole: Boolean(input?.serviceRole)
-    }),
-    loadProgressNoteTrackerPage({
-      status: filter,
-      memberId: canonicalMemberId,
-      query: queryPattern,
-      page,
-      pageSize,
-      serviceRole: Boolean(input?.serviceRole)
-    })
-  ]);
+  const trackerResult = await loadProgressNoteTrackerReadModel({
+    status: filter,
+    memberId: canonicalMemberId,
+    query: queryPattern,
+    page,
+    pageSize,
+    serviceRole: Boolean(input?.serviceRole)
+  });
 
-  const totalRows = pageResult.totalRows;
+  const totalRows = trackerResult.totalRows;
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
 
   return {
-    rows: pageResult.rows,
-    summary,
+    rows: trackerResult.rows,
+    summary: trackerResult.summary,
     page,
     pageSize,
     totalRows,
