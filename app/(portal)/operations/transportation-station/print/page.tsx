@@ -74,15 +74,17 @@ export default async function TransportationManifestPrintPage({
     if (bus === "unassigned") return group.busNumber === null;
     return group.busNumber === bus;
   });
-  const printPages = printableGroups.flatMap((group) =>
-    shiftDisplayOrder
-      .map((selectedShift) => ({
-        group,
-        selectedShift,
-        riders: group.riders.filter((row) => row.shift === selectedShift)
-      }))
-      .filter((entry) => entry.riders.length > 0)
-  );
+  const printPages = printableGroups
+    .map((group) => ({
+      group,
+      shifts: shiftDisplayOrder
+        .map((selectedShift) => ({
+          selectedShift,
+          riders: group.riders.filter((row) => row.shift === selectedShift)
+        }))
+        .filter((entry) => entry.riders.length > 0)
+    }))
+    .filter((entry) => entry.shifts.length > 0);
   const baseMetaLines = [
     `Generated: ${formatDateTime(manifest.generatedAt)} (ET)`,
     `Date: ${formatDate(manifest.selectedDate)}`,
@@ -118,44 +120,49 @@ export default async function TransportationManifestPrintPage({
       ) : (
         printPages.map((page, pageIndex) => (
           <section
-            key={`manifest-page-${page.group.label}-${page.selectedShift}`}
+            key={`manifest-page-${page.group.label}`}
             className="face-sheet-section"
             style={pageIndex < printPages.length - 1 ? { breakAfter: "page", pageBreakAfter: "always" } : undefined}
           >
             <DocumentBrandHeader
               title="Transportation Manifest"
-              metaLines={[...baseMetaLines, `Bus: ${page.group.label}`, `Shift: ${page.selectedShift}`]}
+              metaLines={[...baseMetaLines, `Bus: ${page.group.label}`]}
               className="mb-3 hidden print:block"
             />
             <h2 className="face-sheet-heading">
-              {page.group.label} | {page.selectedShift} | {weekdayLabel} ({formatDate(manifest.selectedDate)})
+              {page.group.label} | {weekdayLabel} ({formatDate(manifest.selectedDate)})
             </h2>
-            <table className="face-sheet-table">
-              <thead>
-                <tr>
-                  <th>Member</th>
-                  <th>Type</th>
-                  <th>Location</th>
-                  <th>Contact</th>
-                  <th>Phone</th>
-                  <th>Address</th>
-                  <th>Source</th>
-                </tr>
-              </thead>
-              <tbody>
-                {page.riders.map((rider) => (
-                  <tr key={`${page.group.label}-${page.selectedShift}-${rider.key}`}>
-                    <td>{rider.memberName}</td>
-                    <td>{rider.transportType}</td>
-                    <td>{rider.locationLabel}</td>
-                    <td>{rider.caregiverContactName ?? "-"}</td>
-                    <td>{formatPhoneDisplay(rider.caregiverContactPhone)}</td>
-                    <td>{rider.caregiverContactAddress ?? "-"}</td>
-                    <td>{rider.source === "manual-add" ? "Manual Add" : "Schedule"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {page.shifts.map((shiftGroup) => (
+              <div key={`${page.group.label}-${shiftGroup.selectedShift}`} className="mb-3 last:mb-0">
+                <p className="mb-1 text-sm font-semibold">{shiftGroup.selectedShift} Manifest</p>
+                <table className="face-sheet-table">
+                  <thead>
+                    <tr>
+                      <th>Member</th>
+                      <th>Type</th>
+                      <th>Location</th>
+                      <th>Contact</th>
+                      <th>Phone</th>
+                      <th>Address</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shiftGroup.riders.map((rider) => (
+                      <tr key={`${page.group.label}-${shiftGroup.selectedShift}-${rider.key}`}>
+                        <td>{rider.memberName}</td>
+                        <td>{rider.transportType}</td>
+                        <td>{rider.locationLabel}</td>
+                        <td>{rider.caregiverContactName ?? "-"}</td>
+                        <td>{formatPhoneDisplay(rider.caregiverContactPhone)}</td>
+                        <td>{rider.caregiverContactAddress ?? "-"}</td>
+                        <td>{rider.source === "manual-add" ? "Manual Add" : "Schedule"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
           </section>
         ))
       )}
