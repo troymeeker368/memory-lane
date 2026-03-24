@@ -1,6 +1,6 @@
 import { resolveCanonicalLeadState } from "@/lib/canonical";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
-import { fetchSalesPipelineSummaryCountsSupabase } from "@/lib/services/sales-workflows";
+import { normalizeSalesPipelineStageCounts } from "@/lib/services/sales-workflows";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate } from "@/lib/timezone";
@@ -127,6 +127,8 @@ type SalesDashboardSummaryRpcRow = {
   partner_count: number | string | null;
   referral_source_count: number | string | null;
   partner_activity_count: number | string | null;
+  stage_counts: unknown;
+  recent_inquiries: unknown;
 };
 
 const SALES_LEAD_READ_SELECT = [
@@ -165,7 +167,7 @@ const SALES_PARTNER_LOOKUP_SELECT =
 const SALES_REFERRAL_SOURCE_LOOKUP_SELECT =
   "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, active, last_touched";
 const SALES_DASHBOARD_SUMMARY_RPC = "rpc_get_sales_dashboard_summary";
-const SALES_DASHBOARD_SUMMARY_MIGRATION = "0123_sales_dashboard_summary_rpc.sql";
+const SALES_DASHBOARD_SUMMARY_MIGRATION = "0129_sales_dashboard_rpc_consolidation.sql";
 const SALES_LEAD_LOOKUP_DEFAULT_LIMIT = 120;
 const SALES_LOOKUP_PARTNER_LIMIT = 250;
 const SALES_LOOKUP_REFERRAL_SOURCE_LIMIT = 250;
@@ -230,6 +232,13 @@ function normalizeReferralSources(partners: SalesPartnerRow[], referralSources: 
 
 function toNumber(value: number | string | null | undefined) {
   return Number(value ?? 0);
+}
+
+function normalizeDashboardRecentInquiries(payload: unknown) {
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+    .map((row) => toSalesLeadReadRow(row));
 }
 
 async function getSalesDashboardSummarySupabase(input?: { recentInquiryStartDate?: string | null }) {
@@ -477,16 +486,9 @@ export async function getSalesHomeSnapshotSupabase() {
 }
 
 export async function getSalesSummarySnapshotSupabase(): Promise<SalesSummarySnapshot> {
-  const supabase = await createClient();
   const thirtyDaysAgo = toEasternDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
-  const [dashboardSummary, recentInquiriesResult, pipelineSummaryResult] = await Promise.all([
-    getSalesDashboardSummarySupabase({ recentInquiryStartDate: thirtyDaysAgo }),
-    supabase.from("leads").select(SALES_LEAD_READ_SELECT).order("inquiry_date", { ascending: false }).limit(10),
-    fetchSalesPipelineSummaryCountsSupabase(supabase)
-  ]);
+  const dashboardSummary = await getSalesDashboardSummarySupabase({ recentInquiryStartDate: thirtyDaysAgo });
   if (!dashboardSummary) throw new Error("Sales dashboard summary RPC returned no rows.");
-  if (recentInquiriesResult.error) throw new Error(recentInquiriesResult.error.message);
-  const stageCounts = pipelineSummaryResult.stageCounts;
 
   return {
     totalLeadCount: toNumber(dashboardSummary.total_lead_count),
@@ -496,8 +498,8 @@ export async function getSalesSummarySnapshotSupabase(): Promise<SalesSummarySna
     lostLeadCount: toNumber(dashboardSummary.lost_lead_count),
     convertedOrEnrolledCount: toNumber(dashboardSummary.converted_or_enrolled_count),
     recentInquiryActivityCount: toNumber(dashboardSummary.recent_inquiry_activity_count),
-    recentInquiries: ((recentInquiriesResult.data ?? []) as unknown as Record<string, unknown>[]).map((row) => toSalesLeadReadRow(row)),
-    stageCounts
+    recentInquiries: normalizeDashboardRecentInquiries(dashboardSummary.recent_inquiries),
+    stageCounts: normalizeSalesPipelineStageCounts(dashboardSummary.stage_counts)
   };
 }
 

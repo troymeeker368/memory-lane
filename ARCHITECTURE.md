@@ -97,6 +97,8 @@ Required integrity examples:
 
 Memory Lane distinguishes between simple service CRUD and transactional workflows.
 
+- Detailed guardrails for RPC scope, naming, read-model boundaries, and anti-patterns live in `docs/database-rpc-architecture.md`.
+
 Use canonical services for:
 - single-table writes
 - simple updates

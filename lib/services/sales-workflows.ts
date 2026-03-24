@@ -26,16 +26,6 @@ export interface LeadPipelineStageCountRow {
   count: number;
 }
 
-export interface SalesPipelineSummaryCountsRow {
-  ord: number;
-  stage: string;
-  count: number;
-  open_count: number;
-  won_count: number;
-  lost_count: number;
-  unresolved_inquiry_count: number;
-}
-
 export interface SalesPipelineSummaryCounts {
   openLeadCount: number;
   wonLeadCount: number;
@@ -43,6 +33,19 @@ export interface SalesPipelineSummaryCounts {
   unresolvedInquiryLeadCount: number;
   stageCounts: LeadPipelineStageCountRow[];
 }
+
+type SalesDashboardSummaryCountsRpcRow = {
+  open_lead_count: number | string | null;
+  won_lead_count: number | string | null;
+  lost_lead_count: number | string | null;
+  unresolved_inquiry_lead_count: number | string | null;
+  stage_counts: unknown;
+};
+
+type SalesDashboardStageCountRow = {
+  stage?: unknown;
+  count?: unknown;
+};
 
 const PIPELINE_STAGE_ORDER = [
   "Inquiry",
@@ -53,7 +56,7 @@ const PIPELINE_STAGE_ORDER = [
   "Closed - Won",
   "Closed - Lost"
 ] as const;
-const SALES_PIPELINE_SUMMARY_COUNTS_RPC = "rpc_get_sales_pipeline_summary_counts";
+const SALES_DASHBOARD_SUMMARY_RPC = "rpc_get_sales_dashboard_summary";
 
 function resolveCanonicalLeadStageStatus(lead: Pick<LeadSummaryLike, "stage" | "status">) {
   return resolveCanonicalLeadState({
@@ -120,31 +123,38 @@ export function buildSalesPipelineStageCounts(
   }));
 }
 
-function parseSalesPipelineSummaryCounts(rows: SalesPipelineSummaryCountsRow[]): SalesPipelineSummaryCounts {
-  if (rows.length === 0) {
-    throw new Error("Unable to load sales pipeline summary counts: RPC returned no rows.");
-  }
+export function normalizeSalesPipelineStageCounts(payload: unknown): LeadPipelineStageCountRow[] {
+  const rows = Array.isArray(payload) ? (payload as SalesDashboardStageCountRow[]) : [];
+  const counts = new Map<string, number>();
 
-  const sortedRows = [...rows].sort((left, right) => left.ord - right.ord);
-  const firstRow = sortedRows[0];
-  return {
-    openLeadCount: Number(firstRow.open_count ?? 0),
-    wonLeadCount: Number(firstRow.won_count ?? 0),
-    lostLeadCount: Number(firstRow.lost_count ?? 0),
-    unresolvedInquiryLeadCount: Number(firstRow.unresolved_inquiry_count ?? 0),
-    stageCounts: sortedRows.map((row) => ({
-      stage: row.stage,
-      count: Number(row.count ?? 0)
-    }))
-  };
+  rows.forEach((row) => {
+    if (typeof row.stage !== "string") return;
+    counts.set(row.stage, Number(row.count ?? 0));
+  });
+
+  return PIPELINE_STAGE_ORDER.map((stage) => ({
+    stage,
+    count: counts.get(stage) ?? 0
+  }));
 }
 
 export async function fetchSalesPipelineSummaryCountsSupabase(supabase: Awaited<ReturnType<typeof createClient>>) {
-  const rows = await invokeSupabaseRpcOrThrow<SalesPipelineSummaryCountsRow[]>(
+  const rows = await invokeSupabaseRpcOrThrow<SalesDashboardSummaryCountsRpcRow[]>(
     supabase,
-    SALES_PIPELINE_SUMMARY_COUNTS_RPC
+    SALES_DASHBOARD_SUMMARY_RPC
   );
-  return parseSalesPipelineSummaryCounts(rows);
+  const row = rows?.[0];
+  if (!row) {
+    throw new Error("Unable to load sales pipeline summary counts: dashboard RPC returned no rows.");
+  }
+
+  return {
+    openLeadCount: Number(row.open_lead_count ?? 0),
+    wonLeadCount: Number(row.won_lead_count ?? 0),
+    lostLeadCount: Number(row.lost_lead_count ?? 0),
+    unresolvedInquiryLeadCount: Number(row.unresolved_inquiry_lead_count ?? 0),
+    stageCounts: normalizeSalesPipelineStageCounts(row.stage_counts)
+  } satisfies SalesPipelineSummaryCounts;
 }
 
 export async function getSalesPipelineSummaryCountsSupabase() {
