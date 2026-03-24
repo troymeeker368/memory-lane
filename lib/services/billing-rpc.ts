@@ -72,6 +72,30 @@ export function isMissingRpcFunctionError(error: unknown, functionName: string) 
   );
 }
 
+function buildRpcDiagnosticSuffix(error: unknown) {
+  if (process.env.NODE_ENV === "production") return "";
+  const candidate =
+    error && typeof error === "object"
+      ? (error as {
+          code?: unknown;
+          message?: unknown;
+          details?: unknown;
+          hint?: unknown;
+          cause?: { code?: unknown; message?: unknown; details?: unknown; hint?: unknown } | null;
+        })
+      : null;
+  const parts = [
+    candidate?.code ?? candidate?.cause?.code,
+    candidate?.message ?? candidate?.cause?.message,
+    candidate?.details ?? candidate?.cause?.details,
+    candidate?.hint ?? candidate?.cause?.hint
+  ]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+  if (parts.length === 0) return "";
+  return ` Diagnostic: ${parts.join(" | ")}`;
+}
+
 export function buildBillingBatchWritePlan(input: {
   batchType: (typeof BILLING_BATCH_TYPE_OPTIONS)[number];
   billingMonthStart: string;
@@ -231,7 +255,7 @@ export async function invokeGenerateBillingBatchRpc(plan: BillingBatchWritePlan)
     });
   } catch (error) {
     if (isMissingRpcFunctionError(error, RPC_GENERATE_BILLING_BATCH)) {
-      throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_GENERATE_BILLING_BATCH));
+      throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_GENERATE_BILLING_BATCH) + buildRpcDiagnosticSuffix(error));
     }
     throw error;
   }
@@ -249,7 +273,7 @@ export async function invokeCreateBillingExportRpc(input: {
     });
   } catch (error) {
     if (isMissingRpcFunctionError(error, RPC_CREATE_BILLING_EXPORT)) {
-      throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_CREATE_BILLING_EXPORT));
+      throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_CREATE_BILLING_EXPORT) + buildRpcDiagnosticSuffix(error));
     }
     throw error;
   }
@@ -272,7 +296,7 @@ export async function invokeCreateCustomInvoiceRpc(input: {
     return Array.isArray(result) ? String(result[0] ?? input.invoicePayload.id) : String(result ?? input.invoicePayload.id);
   } catch (error) {
     if (isMissingRpcFunctionError(error, RPC_CREATE_CUSTOM_INVOICE)) {
-      throw new Error(buildMissingCustomInvoiceAtomicWorkflowMessage(RPC_CREATE_CUSTOM_INVOICE));
+      throw new Error(buildMissingCustomInvoiceAtomicWorkflowMessage(RPC_CREATE_CUSTOM_INVOICE) + buildRpcDiagnosticSuffix(error));
     }
     throw error;
   }
