@@ -30,8 +30,10 @@ export async function getMemberDetailById(memberId: string, scope?: MemberDetail
   return getMemberDetail(memberId, scope);
 }
 
-export async function getTransportationAddRiderMembers() {
-  return getTransportationAddRiderMemberOptionsSupabase();
+export async function getTransportationAddRiderMembers(
+  ...args: Parameters<typeof getTransportationAddRiderMemberOptionsSupabase>
+) {
+  return getTransportationAddRiderMemberOptionsSupabase(...args);
 }
 
 export async function getMemberLockerConflict(input: {

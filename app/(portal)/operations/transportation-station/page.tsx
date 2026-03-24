@@ -29,6 +29,25 @@ function normalizeBusNumber(value: string | undefined, options: string[]) {
   return options[0] ?? "";
 }
 
+function buildSearchHref(input: {
+  selectedDate: string;
+  selectedShift: Shift;
+  selectedBusNumber: string;
+  memberSearch?: string | null;
+}) {
+  const params = new URLSearchParams();
+  params.set("date", input.selectedDate);
+  params.set("shift", input.selectedShift);
+  if (input.selectedBusNumber) {
+    params.set("bus", input.selectedBusNumber);
+  }
+  const memberSearch = (input.memberSearch ?? "").trim();
+  if (memberSearch) {
+    params.set("memberSearch", memberSearch);
+  }
+  return `/operations/transportation-station?${params.toString()}`;
+}
+
 function reasonLabel(value: string | null) {
   if (!value) return "-";
   if (value === "already-posted") return "Already posted";
@@ -57,10 +76,14 @@ export default async function TransportationStationPage({
   const query = await searchParams;
   const selectedDate = firstString(query.date) ?? getOperationsTodayDate();
   const selectedShift = normalizeShift(firstString(query.shift));
+  const memberSearch = firstString(query.memberSearch)?.trim() ?? "";
   const selectedBusNumberPromise = busNumberOptionsPromise.then((busNumberOptions) =>
     normalizeBusNumber(firstString(query.bus), busNumberOptions)
   );
-  const addRiderMemberOptionsPromise = canManageManifest ? getTransportationAddRiderMembers() : Promise.resolve([]);
+  const addRiderMemberOptionsPromise =
+    canManageManifest && memberSearch.length >= 2
+      ? getTransportationAddRiderMembers({ q: memberSearch, limit: 25 })
+      : Promise.resolve([]);
   const [busNumberOptions, selectedBusNumber, manifest, addRiderMemberOptions] = await Promise.all([
     busNumberOptionsPromise,
     selectedBusNumberPromise,
@@ -161,6 +184,42 @@ export default async function TransportationStationPage({
           <CardTitle>Same-Day Rider Add</CardTitle>
           <p className="mt-1 text-xs text-muted">
             Use this only for real same-day transportation additions. It adds the rider to the selected run without changing the recurring MCC schedule.
+          </p>
+          <form method="get" className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <input type="hidden" name="date" value={manifest?.selectedDate ?? selectedDate} />
+            <input type="hidden" name="shift" value={manifest?.selectedShift ?? selectedShift} />
+            <input type="hidden" name="bus" value={selectedBusNumber} />
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-semibold text-muted">Find Member</span>
+              <input
+                type="text"
+                name="memberSearch"
+                defaultValue={memberSearch}
+                placeholder="Search active member name"
+                className="h-10 w-full rounded-lg border border-border px-3"
+              />
+            </label>
+            <button type="submit" className="h-10 self-end rounded-lg border border-border px-3 text-sm font-semibold">
+              Search
+            </button>
+            <Link
+              href={buildSearchHref({
+                selectedDate: manifest?.selectedDate ?? selectedDate,
+                selectedShift: manifest?.selectedShift ?? selectedShift,
+                selectedBusNumber,
+                memberSearch: null
+              })}
+              className="h-10 self-end rounded-lg border border-border px-3 text-center text-sm font-semibold leading-10"
+            >
+              Clear
+            </Link>
+          </form>
+          <p className="mt-2 text-xs text-muted">
+            {memberSearch.length < 2
+              ? "Search at least 2 letters to load a limited active-member list for same-day rider add."
+              : addRiderMemberOptions.length === 0
+                ? "No active members matched that search."
+                : `Showing ${addRiderMemberOptions.length} matching active member${addRiderMemberOptions.length === 1 ? "" : "s"} for add-rider.`}
           </p>
           <TransportationStationAddRiderForm
             action={addTransportationManifestRiderAction}

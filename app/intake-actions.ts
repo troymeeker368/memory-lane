@@ -16,14 +16,47 @@ import {
   isAuthorizedIntakeAssessmentSignerRole,
   signIntakeAssessment
 } from "@/lib/services/intake-assessment-esign";
+import {
+  resolveIntakeDraftPofReadiness,
+  type IntakeDraftPofReadinessStatus
+} from "@/lib/services/intake-draft-pof-readiness";
 import { getLeadRecordById } from "@/lib/services/leads-read";
 import { queueIntakePostSignFollowUpTask } from "@/lib/services/intake-post-sign-follow-up";
+import {
+  resolveIntakePostSignReadiness,
+  type IntakePostSignReadinessStatus
+} from "@/lib/services/intake-post-sign-readiness";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { toEasternISO } from "@/lib/timezone";
 
 import { resolveActionMemberIdentity } from "@/app/action-helpers";
 
 const assessmentScoreSchema = z.union([z.literal(15), z.literal(10), z.literal(5)]);
+
+function buildIntakePostSignState(input: {
+  signatureStatus: "unsigned" | "signed";
+  draftPofStatus: "pending" | "created" | "failed";
+  openFollowUpTaskTypes?: Array<"draft_pof_creation" | "member_file_pdf_persistence">;
+}) {
+  const draftPofReadinessStatus = resolveIntakeDraftPofReadiness({
+    signatureStatus: input.signatureStatus,
+    draftPofStatus: input.draftPofStatus
+  });
+  const postSignReadinessStatus = resolveIntakePostSignReadiness({
+    signatureStatus: input.signatureStatus,
+    draftPofStatus: input.draftPofStatus,
+    openFollowUpTaskTypes: input.openFollowUpTaskTypes ?? []
+  });
+  return {
+    draftPofReadinessStatus,
+    postSignReadinessStatus,
+    postSignReady: postSignReadinessStatus === "post_sign_ready"
+  } satisfies {
+    draftPofReadinessStatus: IntakeDraftPofReadinessStatus;
+    postSignReadinessStatus: IntakePostSignReadinessStatus;
+    postSignReady: boolean;
+  };
+}
 
 const assessmentSchema = z
   .object({
@@ -258,6 +291,10 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       serviceRole: true
     });
   } catch (error) {
+    const readiness = buildIntakePostSignState({
+      signatureStatus: "unsigned",
+      draftPofStatus: "pending"
+    });
     revalidatePath("/health/assessment");
     revalidatePath(`/health/assessment/${created.id}`);
     revalidatePath(`/reports/assessments/${created.id}`);
@@ -266,7 +303,8 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
         error instanceof Error
           ? `Intake Assessment was created, but nurse/admin e-signature finalization failed (${error.message}). Open the saved assessment and retry the signature.`
           : "Intake Assessment was created, but nurse/admin e-signature finalization failed.",
-      assessmentId: created.id
+      assessmentId: created.id,
+      ...readiness
     };
   }
 
@@ -284,21 +322,35 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       attemptedAt: draftPofAttemptedAt,
       error: message
     });
-    await queueIntakePostSignFollowUpTask({
-      assessmentId: created.id,
-      memberId: effectiveMemberId,
-      taskType: "draft_pof_creation",
-      actorUserId: profile.id,
-      actorName: profile.full_name,
-      errorMessage: message
-    });
+    let followUpQueueError: string | null = null;
+    try {
+      await queueIntakePostSignFollowUpTask({
+        assessmentId: created.id,
+        memberId: effectiveMemberId,
+        taskType: "draft_pof_creation",
+        actorUserId: profile.id,
+        actorName: profile.full_name,
+        errorMessage: message
+      });
+    } catch (queueError) {
+      followUpQueueError =
+        queueError instanceof Error ? queueError.message : "Unable to queue intake post-sign follow-up task.";
+    }
     revalidatePath("/health/assessment");
     revalidatePath(`/health/assessment/${created.id}`);
     revalidatePath(`/reports/assessments/${created.id}`);
+    const readiness = buildIntakePostSignState({
+      signatureStatus: "signed",
+      draftPofStatus: "failed",
+      openFollowUpTaskTypes: ["draft_pof_creation"]
+    });
     return {
-      error: `Intake Assessment was signed, but draft POF creation failed (${message}).`,
+      error: followUpQueueError
+        ? `Intake Assessment was signed and draft POF creation failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
+        : `Intake Assessment was signed, but draft POF creation failed (${message}).`,
       assessmentId: created.id,
-      followUpTaskType: "draft_pof_creation" as const
+      followUpTaskType: followUpQueueError ? undefined : ("draft_pof_creation" as const),
+      ...readiness
     };
   }
 
@@ -320,18 +372,33 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown PDF generation error.";
-    await queueIntakePostSignFollowUpTask({
-      assessmentId: created.id,
-      memberId: effectiveMemberId,
-      taskType: "member_file_pdf_persistence",
-      actorUserId: profile.id,
-      actorName: profile.full_name,
-      errorMessage: message
-    });
+    let followUpQueueError: string | null = null;
+    try {
+      await queueIntakePostSignFollowUpTask({
+        assessmentId: created.id,
+        memberId: effectiveMemberId,
+        taskType: "member_file_pdf_persistence",
+        actorUserId: profile.id,
+        actorName: profile.full_name,
+        errorMessage: message
+      });
+    } catch (queueError) {
+      followUpQueueError =
+        queueError instanceof Error ? queueError.message : "Unable to queue intake post-sign follow-up task.";
+    }
     return {
-      error: `Intake Assessment was created, but saving its PDF to member files failed (${message}).`,
+      error: followUpQueueError
+        ? `Intake Assessment PDF save to Member Files failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
+        : `Intake Assessment was created, but saving its PDF to member files failed (${message}).`,
       assessmentId: created.id,
-      followUpTaskType: "member_file_pdf_persistence" as const
+      followUpTaskType: followUpQueueError ? undefined : ("member_file_pdf_persistence" as const),
+      ...(followUpQueueError
+        ? {}
+        : buildIntakePostSignState({
+            signatureStatus: "signed",
+            draftPofStatus: "created",
+            openFollowUpTaskTypes: ["member_file_pdf_persistence"]
+          }))
     };
   }
 
@@ -345,5 +412,12 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
   revalidatePath(`/operations/member-command-center/${effectiveMemberId}`);
   revalidatePath(`/members/${effectiveMemberId}`);
   revalidatePath(`/reports/assessments/${created.id}`);
-  return { ok: true, assessmentId: created.id };
+  return {
+    ok: true,
+    assessmentId: created.id,
+    ...buildIntakePostSignState({
+      signatureStatus: "signed",
+      draftPofStatus: "created"
+    })
+  };
 }

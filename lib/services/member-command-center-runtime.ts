@@ -522,13 +522,24 @@ export async function backfillMissingMemberCommandCenterRowsSupabase(memberIds: 
   };
 }
 
-export async function getTransportationAddRiderMemberOptionsSupabase() {
+export async function getTransportationAddRiderMemberOptionsSupabase(filters?: {
+  q?: string;
+  limit?: number;
+}) {
   const supabase = await createClient();
+  const q = (filters?.q ?? "").trim();
+  const limit =
+    Number.isFinite(filters?.limit) && Number(filters?.limit) > 0 ? Math.min(50, Math.floor(Number(filters?.limit))) : 25;
+  if (q.length < 2) {
+    return [];
+  }
   const { data: membersData, error: membersError } = await supabase
     .from("members")
     .select("id, display_name, status")
     .eq("status", "active")
-    .order("display_name", { ascending: true });
+    .ilike("display_name", buildSupabaseIlikePattern(q))
+    .order("display_name", { ascending: true })
+    .range(0, limit - 1);
   if (membersError) throw new Error(membersError.message);
   const members = (membersData ?? []) as Array<{ id: string; display_name: string; status: "active" | "inactive" }>;
   if (members.length === 0) return [];

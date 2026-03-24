@@ -146,6 +146,11 @@ export default async function HealthAssessmentDetailPage({
                 <p className="font-semibold">{task.title}</p>
                 <p className="mt-1">{task.message}</p>
                 {task.lastError ? <p className="mt-1 text-xs text-amber-800">Last error: {task.lastError}</p> : null}
+                {task.claimedAt ? (
+                  <p className="mt-1 text-xs text-amber-800">
+                    In progress{task.claimedByName ? ` by ${task.claimedByName}` : ""} since {formatDateTime(task.claimedAt)}
+                  </p>
+                ) : null}
                 <p className="mt-1 text-xs text-amber-800">
                   Attempts: {task.attemptCount}
                   {task.lastAttemptedAt ? ` • Last attempted ${formatDateTime(task.lastAttemptedAt)}` : ""}

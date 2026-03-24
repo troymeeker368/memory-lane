@@ -752,9 +752,9 @@ export function AssessmentForm({
 
             if (res.error) {
               setStatus(`Error: ${res.error}`);
-              if (res.assessmentId) {
+              if ("assessmentId" in res && res.assessmentId) {
                 const retryPath =
-                  res.followUpTaskType === "member_file_pdf_persistence"
+                  "followUpTaskType" in res && res.followUpTaskType === "member_file_pdf_persistence"
                     ? `/health/assessment/${res.assessmentId}?pdfSave=failed`
                     : `/health/assessment/${res.assessmentId}`;
                 router.push(retryPath);
@@ -764,7 +764,7 @@ export function AssessmentForm({
 
             setValidationErrors([]);
             setStatus("Assessment saved. Intake Assessment PDF saved to member files.");
-            if (res.assessmentId) {
+            if ("assessmentId" in res && res.assessmentId) {
               router.push(`/health/assessment/${res.assessmentId}`);
             }
           })

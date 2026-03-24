@@ -6,6 +6,7 @@ import {
   recordWorkflowEvent
 } from "@/lib/services/workflow-observability";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
 
 export const INTAKE_POST_SIGN_FOLLOW_UP_TASK_TYPES = [
@@ -15,6 +16,9 @@ export const INTAKE_POST_SIGN_FOLLOW_UP_TASK_TYPES = [
 
 export type IntakePostSignFollowUpTaskType = (typeof INTAKE_POST_SIGN_FOLLOW_UP_TASK_TYPES)[number];
 export type IntakePostSignFollowUpStatus = "action_required" | "completed";
+
+const RPC_CLAIM_INTAKE_POST_SIGN_FOLLOW_UP_TASK = "rpc_claim_intake_post_sign_follow_up_task";
+const INTAKE_POST_SIGN_FOLLOW_UP_CLAIM_MIGRATION = "0128_intake_follow_up_retry_claims.sql";
 
 type IntakePostSignFollowUpQueueRow = {
   id: string;
@@ -28,6 +32,9 @@ type IntakePostSignFollowUpQueueRow = {
   attempt_count: number;
   last_error: string | null;
   last_attempted_at: string | null;
+  claimed_at: string | null;
+  claimed_by_user_id: string | null;
+  claimed_by_name: string | null;
   resolved_at: string | null;
   created_at: string;
   updated_at: string;
@@ -45,13 +52,16 @@ export type IntakePostSignFollowUpTask = {
   attemptCount: number;
   lastError: string | null;
   lastAttemptedAt: string | null;
+  claimedAt: string | null;
+  claimedByUserId: string | null;
+  claimedByName: string | null;
   resolvedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
 const INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT =
-  "id, assessment_id, member_id, task_type, status, title, message, action_url, attempt_count, last_error, last_attempted_at, resolved_at, created_at, updated_at";
+  "id, assessment_id, member_id, task_type, status, title, message, action_url, attempt_count, last_error, last_attempted_at, claimed_at, claimed_by_user_id, claimed_by_name, resolved_at, created_at, updated_at";
 const INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_UNIQUE_CONSTRAINT = "intake_post_sign_follow_up_queue_assessment_task_unique";
 
 function clean(value: string | null | undefined) {
@@ -79,10 +89,31 @@ function mapQueueRow(row: IntakePostSignFollowUpQueueRow): IntakePostSignFollowU
     attemptCount: Math.max(0, Number(row.attempt_count ?? 0)),
     lastError: clean(row.last_error),
     lastAttemptedAt: clean(row.last_attempted_at),
+    claimedAt: clean(row.claimed_at),
+    claimedByUserId: clean(row.claimed_by_user_id),
+    claimedByName: clean(row.claimed_by_name),
     resolvedAt: clean(row.resolved_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
+}
+
+async function loadAssessmentMemberId(assessmentId: string) {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("intake_assessments")
+    .select("id, member_id")
+    .eq("id", assessmentId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data?.member_id) {
+    throw new Error("Intake assessment not found for post-sign follow-up.");
+  }
+  return String(data.member_id);
+}
+
+function buildMissingIntakePostSignClaimRpcMessage() {
+  return `Intake post-sign follow-up claim RPC is not available. Apply Supabase migration ${INTAKE_POST_SIGN_FOLLOW_UP_CLAIM_MIGRATION} and refresh PostgREST schema cache.`;
 }
 
 async function loadIntakePostSignFollowUpQueueRow(input: {
@@ -98,6 +129,62 @@ async function loadIntakePostSignFollowUpQueueRow(input: {
     .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as IntakePostSignFollowUpQueueRow | null) ?? null;
+}
+
+export async function claimIntakePostSignFollowUpTask(input: {
+  assessmentId: string;
+  taskType: IntakePostSignFollowUpTaskType;
+  actorUserId?: string | null;
+  actorName?: string | null;
+  claimedAt?: string | null;
+}) {
+  const admin = createSupabaseAdminClient();
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(admin, RPC_CLAIM_INTAKE_POST_SIGN_FOLLOW_UP_TASK, {
+      p_assessment_id: input.assessmentId,
+      p_task_type: input.taskType,
+      p_now: clean(input.claimedAt) ?? toEasternISO(),
+      p_actor_user_id: clean(input.actorUserId),
+      p_actor_name: clean(input.actorName)
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as IntakePostSignFollowUpQueueRow | null;
+    return row ? mapQueueRow(row) : null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to claim intake post-sign follow-up task.";
+    if (message.includes(RPC_CLAIM_INTAKE_POST_SIGN_FOLLOW_UP_TASK)) {
+      throw new Error(buildMissingIntakePostSignClaimRpcMessage());
+    }
+    throw error;
+  }
+}
+
+export async function releaseIntakePostSignFollowUpTaskClaim(input: {
+  assessmentId: string;
+  taskType: IntakePostSignFollowUpTaskType;
+  updatedAt?: string | null;
+}) {
+  const admin = createSupabaseAdminClient();
+  const existing = await loadIntakePostSignFollowUpQueueRow({
+    assessmentId: input.assessmentId,
+    taskType: input.taskType
+  });
+  if (!existing || existing.status !== "action_required") {
+    return existing ? mapQueueRow(existing) : null;
+  }
+
+  const { data, error } = await admin
+    .from("intake_post_sign_follow_up_queue")
+    .update({
+      claimed_at: null,
+      claimed_by_user_id: null,
+      claimed_by_name: null,
+      updated_at: clean(input.updatedAt) ?? toEasternISO()
+    })
+    .eq("id", existing.id)
+    .select(INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? mapQueueRow(data as IntakePostSignFollowUpQueueRow) : null;
 }
 
 function buildTaskPresentation(taskType: IntakePostSignFollowUpTaskType, assessmentId: string) {
@@ -186,6 +273,11 @@ export async function queueIntakePostSignFollowUpTask(input: {
 }) {
   const admin = createSupabaseAdminClient();
   const now = toEasternISO();
+  const canonicalMemberId = await loadAssessmentMemberId(input.assessmentId);
+  const requestedMemberId = clean(input.memberId);
+  if (requestedMemberId && requestedMemberId !== canonicalMemberId) {
+    throw new Error("Intake post-sign follow-up member_id does not match the canonical intake assessment member.");
+  }
   const actorUserId = clean(input.actorUserId);
   const actorName = clean(input.actorName);
   const errorMessage = clean(input.errorMessage) ?? "Unknown follow-up failure.";
@@ -193,7 +285,7 @@ export async function queueIntakePostSignFollowUpTask(input: {
   let attemptCount = 1;
 
   const rowPatch = {
-    member_id: input.memberId,
+    member_id: canonicalMemberId,
     task_type: input.taskType,
     status: "action_required" as const,
     title: presentation.title,
@@ -202,6 +294,9 @@ export async function queueIntakePostSignFollowUpTask(input: {
     attempt_count: attemptCount,
     last_error: errorMessage,
     last_attempted_at: now,
+    claimed_at: null,
+    claimed_by_user_id: null,
+    claimed_by_name: null,
     resolved_at: null,
     updated_by_user_id: actorUserId,
     updated_by_name: actorName,
@@ -261,7 +356,7 @@ export async function queueIntakePostSignFollowUpTask(input: {
     status: "action_required",
     severity: "high",
     metadata: {
-      member_id: input.memberId,
+      member_id: canonicalMemberId,
       follow_up_task_type: input.taskType,
       attempt_count: attemptCount,
       action_url: presentation.actionUrl,
@@ -282,7 +377,7 @@ export async function queueIntakePostSignFollowUpTask(input: {
         eventKeySuffix: `intake-post-sign-${input.taskType}`,
         reopenOnConflict: true,
         metadata: {
-          member_id: input.memberId,
+          member_id: canonicalMemberId,
           follow_up_task_type: input.taskType,
           attempt_count: attemptCount,
           title: presentation.title,
@@ -303,7 +398,7 @@ export async function queueIntakePostSignFollowUpTask(input: {
     severity: "high",
     alertKey: presentation.alertKey,
     metadata: {
-      member_id: input.memberId,
+      member_id: canonicalMemberId,
       follow_up_task_type: input.taskType,
       attempt_count: attemptCount,
       action_url: presentation.actionUrl,
@@ -340,6 +435,9 @@ export async function resolveIntakePostSignFollowUpTask(input: {
     .update({
       status: "completed",
       last_error: null,
+      claimed_at: null,
+      claimed_by_user_id: null,
+      claimed_by_name: null,
       resolved_at: now,
       updated_by_user_id: actorUserId,
       updated_by_name: actorName,
