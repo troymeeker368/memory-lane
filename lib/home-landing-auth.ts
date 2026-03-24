@@ -51,6 +51,12 @@ function extractPostgrestErrorText(error: unknown) {
   return [err.message, err.details, err.hint].filter(Boolean).join(" ").toLowerCase();
 }
 
+function getErrorMessage(error: unknown): string {
+  if (!error || typeof error !== "object") return "Unknown error";
+  const message = (error as { message?: unknown }).message;
+  return typeof message === "string" && message.length > 0 ? message : "Unknown error";
+}
+
 function isMissingSchemaObjectError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const code = String((error as { code?: string }).code ?? "");
@@ -120,7 +126,7 @@ export async function resolveCurrentHomeLanding(
     const fallback = await serviceSupabase.from("profiles").select(legacySelect).eq("id", user.id).maybeSingle();
     logTiming(traceLabel, "profile-legacy-lookup", legacyLookupStartedAt);
     if (fallback.error) {
-      throw new Error(`Failed to load profile row for authenticated user: ${error.message}`);
+      throw new Error(`Failed to load profile row for authenticated user: ${getErrorMessage(error)}`);
     }
     data = fallback.data as typeof data;
     error = null;
@@ -188,7 +194,7 @@ export async function resolveCurrentHomeLanding(
         "Missing Supabase schema object public.user_permissions. Apply migration 0002_rbac_roles_permissions.sql (and any earlier unapplied migrations), then restart Supabase/PostgREST to refresh schema cache."
       );
     }
-    throw new Error(`Failed to load user permissions: ${permissionsError.message}`);
+    throw new Error(`Failed to load user permissions: ${getErrorMessage(permissionsError)}`);
   }
 
   if (!forceDevAdminView && Array.isArray(permissionRows) && permissionRows.length > 0) {
