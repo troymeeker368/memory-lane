@@ -259,6 +259,18 @@ test("pof request delivery stays on the canonical RPC contract for both new send
   assert.equal(migrationSource.includes("was_created := false;"), true);
 });
 
+test("lead stage transition service only rewrites true missing-rpc errors", () => {
+  const leadStageSource = readWorkspaceFile("lib/services/sales-lead-stage-supabase.ts");
+  const migrationSource = readWorkspaceFile("supabase/migrations/0073_delivery_and_member_file_rpc_hardening.sql");
+
+  assert.equal(leadStageSource.includes('const TRANSITION_LEAD_STAGE_RPC = "rpc_transition_lead_stage";'), true);
+  assert.equal(leadStageSource.includes("if (isMissingRpcFunctionError(error, TRANSITION_LEAD_STAGE_RPC)) {"), true);
+  assert.equal(leadStageSource.includes("if (message.includes(TRANSITION_LEAD_STAGE_RPC)) {"), false);
+  assert.equal(leadStageSource.includes("Lead stage transition RPC is not available."), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_transition_lead_stage("), true);
+  assert.equal(migrationSource.includes("rpc_transition_lead_stage requires p_lead_id"), true);
+});
+
 test("pof delivery-state rpc ambiguity fix qualifies physician order status references", () => {
   const migrationSource = readWorkspaceFile("supabase/migrations/0082_fix_pof_delivery_state_rpc_ambiguity.sql");
 

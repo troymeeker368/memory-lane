@@ -27,6 +27,13 @@ export interface LeadStageTransitionResult {
 const TRANSITION_LEAD_STAGE_RPC = "rpc_transition_lead_stage";
 const TRANSITION_LEAD_STAGE_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
 
+function isMissingRpcFunctionError(error: unknown, rpcName: string) {
+  if (!error || typeof error !== "object") return false;
+  const code = String((error as { code?: string }).code ?? "").toUpperCase();
+  const text = String((error as { message?: string }).message ?? "").toLowerCase();
+  return (code === "PGRST202" || code === "42883") && text.includes(rpcName.toLowerCase());
+}
+
 export function resolveCanonicalLeadTransition(input: {
   requestedStage: string;
   requestedStatus: string;
@@ -102,8 +109,7 @@ export async function applyLeadStageTransitionSupabase(input: {
     });
     row = (Array.isArray(data) ? data[0] : null) as TransitionRow | null;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to update lead.";
-    if (message.includes(TRANSITION_LEAD_STAGE_RPC)) {
+    if (isMissingRpcFunctionError(error, TRANSITION_LEAD_STAGE_RPC)) {
       throw new Error(
         `Lead stage transition RPC is not available. Apply Supabase migration ${TRANSITION_LEAD_STAGE_RPC_MIGRATION} and refresh PostgREST schema cache.`
       );
