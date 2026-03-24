@@ -5,7 +5,7 @@ import { toEasternDate } from "@/lib/timezone";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SNAPSHOT_ACTIVITY_FEED_LIMIT = 200;
 
-type StaffSnapshotCountsRpcRow = {
+type StaffSnapshotReadModelRpcRow = {
   daily_activity: number | string | null;
   toilet: number | string | null;
   shower: number | string | null;
@@ -16,9 +16,10 @@ type StaffSnapshotCountsRpcRow = {
   time_punches: number | string | null;
   lead_activities: number | string | null;
   partner_activities: number | string | null;
+  activity_rows: unknown;
 };
 
-type MemberSnapshotCountsRpcRow = {
+type MemberSnapshotReadModelRpcRow = {
   daily_activity: number | string | null;
   toilet: number | string | null;
   shower: number | string | null;
@@ -28,6 +29,7 @@ type MemberSnapshotCountsRpcRow = {
   ancillary: number | string | null;
   assessments: number | string | null;
   ancillary_total_cents: number | string | null;
+  activity_rows: unknown;
 };
 
 type ActivityTimelineRpcRow = {
@@ -110,7 +112,11 @@ function toCount(value: number | string | null | undefined) {
   return Number(value ?? 0);
 }
 
-async function loadStaffSnapshotCounts(input: {
+function mapActivityTimelineRows(payload: unknown) {
+  return Array.isArray(payload) ? ((payload as ActivityTimelineRpcRow[]) ?? []) : [];
+}
+
+async function loadStaffSnapshotReadModel(input: {
   staffUserId: string;
   staffName: string;
   fromIso: string;
@@ -119,31 +125,34 @@ async function loadStaffSnapshotCounts(input: {
   toDate: string;
 }) {
   const supabase = await createClient();
-  const rows = await invokeSupabaseRpcOrThrow<StaffSnapshotCountsRpcRow[]>(supabase, "rpc_get_staff_activity_snapshot_counts", {
+  const rows = await invokeSupabaseRpcOrThrow<StaffSnapshotReadModelRpcRow[]>(supabase, "rpc_get_staff_activity_snapshot", {
     p_staff_user_id: input.staffUserId,
     p_staff_name: input.staffName,
     p_from_ts: input.fromIso,
     p_to_ts: input.toIso,
     p_from_date: input.fromDate,
-    p_to_date: input.toDate
+    p_to_date: input.toDate,
+    p_source_limit: SNAPSHOT_ACTIVITY_FEED_LIMIT
   });
-
   const row = rows?.[0];
   return {
-    dailyActivity: toCount(row?.daily_activity),
-    toilet: toCount(row?.toilet),
-    shower: toCount(row?.shower),
-    transportation: toCount(row?.transportation),
-    bloodSugar: toCount(row?.blood_sugar),
-    photoUpload: toCount(row?.photo_upload),
-    assessments: toCount(row?.assessments),
-    timePunches: toCount(row?.time_punches),
-    leadActivities: toCount(row?.lead_activities),
-    partnerActivities: toCount(row?.partner_activities)
-  } satisfies SnapshotCounts;
+    counts: {
+      dailyActivity: toCount(row?.daily_activity),
+      toilet: toCount(row?.toilet),
+      shower: toCount(row?.shower),
+      transportation: toCount(row?.transportation),
+      bloodSugar: toCount(row?.blood_sugar),
+      photoUpload: toCount(row?.photo_upload),
+      assessments: toCount(row?.assessments),
+      timePunches: toCount(row?.time_punches),
+      leadActivities: toCount(row?.lead_activities),
+      partnerActivities: toCount(row?.partner_activities)
+    } satisfies SnapshotCounts,
+    rows: mapActivityTimelineRows(row?.activity_rows)
+  };
 }
 
-async function loadMemberSnapshotCounts(input: {
+async function loadMemberSnapshotReadModel(input: {
   memberId: string;
   fromIso: string;
   toIso: string;
@@ -151,17 +160,14 @@ async function loadMemberSnapshotCounts(input: {
   toDate: string;
 }) {
   const supabase = await createClient();
-  const rows = await invokeSupabaseRpcOrThrow<MemberSnapshotCountsRpcRow[]>(
-    supabase,
-    "rpc_get_member_activity_snapshot_counts",
-    {
-      p_member_id: input.memberId,
-      p_from_ts: input.fromIso,
-      p_to_ts: input.toIso,
-      p_from_date: input.fromDate,
-      p_to_date: input.toDate
-    }
-  );
+  const rows = await invokeSupabaseRpcOrThrow<MemberSnapshotReadModelRpcRow[]>(supabase, "rpc_get_member_activity_snapshot", {
+    p_member_id: input.memberId,
+    p_from_ts: input.fromIso,
+    p_to_ts: input.toIso,
+    p_from_date: input.fromDate,
+    p_to_date: input.toDate,
+    p_source_limit: SNAPSHOT_ACTIVITY_FEED_LIMIT
+  });
 
   const row = rows?.[0];
   const counts = {
@@ -187,40 +193,9 @@ async function loadMemberSnapshotCounts(input: {
 
   return {
     counts,
-    ancillaryTotalCents: toCount(row?.ancillary_total_cents)
+    ancillaryTotalCents: toCount(row?.ancillary_total_cents),
+    rows: mapActivityTimelineRows(row?.activity_rows)
   };
-}
-
-async function loadStaffSnapshotRows(input: {
-  staffUserId: string;
-  staffName: string;
-  fromIso: string;
-  toIso: string;
-  fromDate: string;
-  toDate: string;
-}) {
-  const supabase = await createClient();
-  return invokeSupabaseRpcOrThrow<ActivityTimelineRpcRow[]>(supabase, "rpc_get_staff_activity_snapshot_rows", {
-    p_staff_user_id: input.staffUserId,
-    p_staff_name: input.staffName,
-    p_from_ts: input.fromIso,
-    p_to_ts: input.toIso,
-    p_from_date: input.fromDate,
-    p_to_date: input.toDate,
-    p_source_limit: SNAPSHOT_ACTIVITY_FEED_LIMIT
-  });
-}
-
-async function loadMemberSnapshotRows(input: { memberId: string; fromIso: string; toIso: string; fromDate: string; toDate: string }) {
-  const supabase = await createClient();
-  return invokeSupabaseRpcOrThrow<ActivityTimelineRpcRow[]>(supabase, "rpc_get_member_activity_snapshot_rows", {
-    p_member_id: input.memberId,
-    p_from_ts: input.fromIso,
-    p_to_ts: input.toIso,
-    p_from_date: input.fromDate,
-    p_to_date: input.toDate,
-    p_source_limit: SNAPSHOT_ACTIVITY_FEED_LIMIT
-  });
 }
 
 function formatTimelineRowForStaff(row: ActivityTimelineRpcRow): SnapshotActivity {
@@ -281,32 +256,22 @@ export async function getStaffActivitySnapshot(staffSlug: string, rawFrom?: stri
 
   const fromIso = range.fromDateTime.toISOString();
   const toIso = range.toDateTime.toISOString();
-  const [counts, rows] = await Promise.all([
-    loadStaffSnapshotCounts({
-      staffUserId: staff.id,
-      staffName: staff.full_name,
-      fromIso,
-      toIso,
-      fromDate: range.from,
-      toDate: range.to
-    }),
-    loadStaffSnapshotRows({
-      staffUserId: staff.id,
-      staffName: staff.full_name,
-      fromIso,
-      toIso,
-      fromDate: range.from,
-      toDate: range.to
-    })
-  ]);
+  const snapshot = await loadStaffSnapshotReadModel({
+    staffUserId: staff.id,
+    staffName: staff.full_name,
+    fromIso,
+    toIso,
+    fromDate: range.from,
+    toDate: range.to
+  });
 
-  const activities: SnapshotActivity[] = (rows ?? []).map(formatTimelineRowForStaff);
+  const activities: SnapshotActivity[] = snapshot.rows.map(formatTimelineRowForStaff);
 
   return {
     staff: { id: staff.id, full_name: staff.full_name },
     range,
-    counts,
-    totalEntries: Object.values(counts).reduce((sum, value) => sum + value, 0),
+    counts: snapshot.counts,
+    totalEntries: Object.values(snapshot.counts).reduce((sum, value) => sum + value, 0),
     activities: activities.sort((a, b) => (a.when < b.when ? 1 : -1)),
     placeholderNotice: null
   };
@@ -335,32 +300,23 @@ export async function getMemberActivitySnapshot(memberId: string, rawFrom?: stri
 
   const fromIso = range.fromDateTime.toISOString();
   const toIso = range.toDateTime.toISOString();
-  const [snapshotSummary, rows] = await Promise.all([
-    loadMemberSnapshotCounts({
-      memberId: memberRow.id,
-      fromIso,
-      toIso,
-      fromDate: range.from,
-      toDate: range.to
-    }),
-    loadMemberSnapshotRows({
-      memberId: memberRow.id,
-      fromIso,
-      toIso,
-      fromDate: range.from,
-      toDate: range.to
-    })
-  ]);
+  const snapshot = await loadMemberSnapshotReadModel({
+    memberId: memberRow.id,
+    fromIso,
+    toIso,
+    fromDate: range.from,
+    toDate: range.to
+  });
 
-  const activities: SnapshotActivity[] = (rows ?? []).map((row) =>
+  const activities: SnapshotActivity[] = snapshot.rows.map((row) =>
     formatTimelineRowForMember(row, memberRow.display_name)
   );
 
   return {
     member: memberRow,
     range,
-    counts: snapshotSummary.counts,
-    ancillaryTotalCents: snapshotSummary.ancillaryTotalCents,
+    counts: snapshot.counts,
+    ancillaryTotalCents: snapshot.ancillaryTotalCents,
     activities: activities.sort((a, b) => (a.when < b.when ? 1 : -1)),
     placeholderNotice: null
   };

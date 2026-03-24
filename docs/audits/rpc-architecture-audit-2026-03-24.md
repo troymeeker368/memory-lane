@@ -3,8 +3,8 @@
 ## Executive Summary
 
 - SQL files inventoried: `132`
-- Current live SQL functions after the new consolidation migrations: `80`
-- Current live RPC-style functions (`rpc_*`): `63`
+- Current live SQL functions after the new consolidation migrations: `78`
+- Current live RPC-style functions (`rpc_*`): `61`
 - Current live views: `12`
 - Trigger definitions inventoried across migrations: `78`
 
@@ -13,6 +13,9 @@
 - Consolidated the sales dashboard into one stronger read-model RPC: `rpc_get_sales_dashboard_summary`
 - Consolidated the progress note tracker into one stronger read-model RPC: `rpc_get_progress_note_tracker`
 - Consolidated the care plan list screen into one stronger read-model RPC: `rpc_get_care_plan_list`
+- Consolidated staff and member activity snapshots into canonical read-model RPCs:
+  - `rpc_get_staff_activity_snapshot`
+  - `rpc_get_member_activity_snapshot`
 - Removed the thin helper RPC `rpc_get_sales_pipeline_summary_counts`
 - Removed the thin wrapper RPC `rpc_list_mar_member_options`
 - Removed stale legacy RPC `rpc_finalize_enrollment_packet_request_completion`
@@ -21,9 +24,15 @@
   - `rpc_get_progress_note_tracker_page`
 - Removed split care plan list helper RPC:
   - `rpc_get_care_plan_summary_counts`
+- Removed split activity snapshot helper RPCs:
+  - `rpc_get_staff_activity_snapshot_counts`
+  - `rpc_get_staff_activity_snapshot_rows`
+  - `rpc_get_member_activity_snapshot_counts`
+  - `rpc_get_member_activity_snapshot_rows`
 - Updated sales call sites to stop composing the dashboard from multiple round trips
 - Updated progress note tracker call sites to stop composing the screen from summary + page RPCs
 - Updated care plan list call sites to stop composing the screen from direct list queries + summary RPCs
+- Updated activity snapshot call sites to stop composing staff/member snapshots from paired count + rows RPCs
 - Added repo guardrails in [docs/database-rpc-architecture.md](/D:/Memory Lane App/docs/database-rpc-architecture.md)
 
 ## Domain Counts
@@ -112,8 +121,7 @@ Counts below reflect live current functions after `0131_care_plan_list_read_mode
 
 - Read-model RPCs:
   - `rpc_get_member_detail_counts`
-  - `rpc_get_member_activity_snapshot_counts`
-  - `rpc_get_member_activity_snapshot_rows`
+  - `rpc_get_member_activity_snapshot`
   - `rpc_get_member_documentation_summary`
   - `rpc_get_member_health_profile_summary_counts`
 - Workflow RPCs:
@@ -202,11 +210,10 @@ Counts below reflect live current functions after `0131_care_plan_list_read_mode
   - `rpc_get_documentation_workflows`
   - `rpc_get_health_dashboard_care_alerts`
   - `rpc_get_progress_note_tracker`
-  - `rpc_get_staff_activity_snapshot_counts`
-  - `rpc_get_staff_activity_snapshot_rows`
+  - `rpc_get_staff_activity_snapshot`
 - Findings:
   - Progress note tracker is now correctly one canonical read path instead of a summary/page split.
-  - Activity snapshot counts and rows are similarly split.
+  - Staff activity snapshots are now one canonical read path instead of a counts/rows split.
 
 ### Auth / Permissions / Low-Level Helpers
 
@@ -240,6 +247,10 @@ Counts below reflect live current functions after `0131_care_plan_list_read_mode
   -> `rpc_get_progress_note_tracker`
 - direct `care_plans` list query + `rpc_get_care_plan_summary_counts`
   -> `rpc_get_care_plan_list`
+- `rpc_get_staff_activity_snapshot_counts` + `rpc_get_staff_activity_snapshot_rows`
+  -> `rpc_get_staff_activity_snapshot`
+- `rpc_get_member_activity_snapshot_counts` + `rpc_get_member_activity_snapshot_rows`
+  -> `rpc_get_member_activity_snapshot`
 
 ### Strong Read Models That Should Stay
 
@@ -248,10 +259,8 @@ Counts below reflect live current functions after `0131_care_plan_list_read_mode
 - `rpc_get_documentation_workflows`
 - `rpc_get_health_dashboard_care_alerts`
 - `rpc_list_mar_monthly_report_member_options`
-- `rpc_get_member_activity_snapshot_counts`
-- `rpc_get_member_activity_snapshot_rows`
-- `rpc_get_staff_activity_snapshot_counts`
-- `rpc_get_staff_activity_snapshot_rows`
+- `rpc_get_member_activity_snapshot`
+- `rpc_get_staff_activity_snapshot`
 
 ### Strong Workflow RPCs That Should Stay
 
@@ -270,8 +279,6 @@ Counts below reflect live current functions after `0131_care_plan_list_read_mode
   - diagnosis, medication, allergy, provider, equipment, and note mutations should converge toward a stronger member clinical workflow boundary
 - Care plan reads:
   - detail/history path still mixes participation RPC + direct table queries
-- Activity snapshots:
-  - counts RPC + rows RPC for the same screen
 - Lead canonicalization:
   - stage/status normalization still exists in both SQL and TypeScript report logic
 
@@ -293,6 +300,17 @@ Counts below reflect live current functions after `0131_care_plan_list_read_mode
   - `lib/services/care-plans-read-model.ts:getCarePlans`
   - Previous shape: direct `care_plans` list query + `rpc_get_care_plan_summary_counts`
   - Current shape: one canonical `rpc_get_care_plan_list` read model
+- Reduced in this pass:
+  - `/documentation`
+  - `/reports/staff/[staffSlug]`
+  - `lib/services/activity-snapshots.ts:getStaffActivitySnapshot`
+  - Previous shape: `rpc_get_staff_activity_snapshot_counts` + `rpc_get_staff_activity_snapshot_rows`
+  - Current shape: one canonical `rpc_get_staff_activity_snapshot` read model
+- Reduced in this pass:
+  - `/reports/member-summary`
+  - `lib/services/activity-snapshots.ts:getMemberActivitySnapshot`
+  - Previous shape: `rpc_get_member_activity_snapshot_counts` + `rpc_get_member_activity_snapshot_rows`
+  - Current shape: one canonical `rpc_get_member_activity_snapshot` read model
 - Still fragmented:
   - `lib/services/member-detail-read-model.ts`
   - `lib/services/care-plans-read-model.ts:getCarePlanById`
@@ -317,11 +335,13 @@ Counts below reflect live current functions after `0131_care_plan_list_read_mode
   - [0129_sales_dashboard_rpc_consolidation.sql](/D:/Memory Lane App/supabase/migrations/0129_sales_dashboard_rpc_consolidation.sql)
   - [0130_progress_note_tracker_read_model_consolidation.sql](/D:/Memory Lane App/supabase/migrations/0130_progress_note_tracker_read_model_consolidation.sql)
   - [0131_care_plan_list_read_model_consolidation.sql](/D:/Memory Lane App/supabase/migrations/0131_care_plan_list_read_model_consolidation.sql)
+  - [0132_activity_snapshot_read_model_consolidation.sql](/D:/Memory Lane App/supabase/migrations/0132_activity_snapshot_read_model_consolidation.sql)
 - Service refactors:
   - [sales-crm-read-model.ts](/D:/Memory Lane App/lib/services/sales-crm-read-model.ts)
   - [sales-workflows.ts](/D:/Memory Lane App/lib/services/sales-workflows.ts)
   - [progress-notes-read-model.ts](/D:/Memory Lane App/lib/services/progress-notes-read-model.ts)
   - [care-plans-read-model.ts](/D:/Memory Lane App/lib/services/care-plans-read-model.ts)
+  - [activity-snapshots.ts](/D:/Memory Lane App/lib/services/activity-snapshots.ts)
 - Guardrails:
   - [database-rpc-architecture.md](/D:/Memory Lane App/docs/database-rpc-architecture.md)
 
@@ -330,4 +350,4 @@ Counts below reflect live current functions after `0131_care_plan_list_read_mode
 - Member detail and care plan detail screens still rely on many direct reads for one obvious payload.
 - Clinical member profile writes are still spread across a family of child mutation RPCs.
 - Sales summary reporting still recomputes canonical lead logic in TypeScript instead of reusing one read-model boundary.
-- Activity snapshot pages still use split count + row RPCs for the same screen.
+- Cross-domain member/staff activity detail still relies on many underlying source tables even though the RPC boundary is now canonical.
