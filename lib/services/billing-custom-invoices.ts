@@ -1,12 +1,18 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
-import { type BillingSettingRow, type CustomInvoiceManualLine, type CreateCustomInvoiceInput, type ScheduleTemplateRow } from "@/lib/services/billing-types";
+import { type CustomInvoiceManualLine, type CreateCustomInvoiceInput, type ScheduleTemplateRow } from "@/lib/services/billing-types";
 import { addDays, asNumber, buildCustomInvoiceNumber, endOfMonth, normalizeDateOnly, startOfMonth, toAmount, toDateRange } from "@/lib/services/billing-utils";
 import { collectBillingEligibleBaseDates } from "@/lib/services/billing-core";
-import { getActiveBillingScheduleTemplate, getActiveCenterBillingSetting, getActiveMemberBillingSetting, getNonBillableCenterClosureSet } from "@/lib/services/billing-configuration";
+import {
+  getActiveBillingScheduleTemplate,
+  getActiveCenterBillingSetting,
+  getMemberAttendanceBillingSetting,
+  getActiveMemberBillingSetting,
+  getNonBillableCenterClosureSet
+} from "@/lib/services/billing-configuration";
 import { loadExpectedAttendanceSupabaseContext } from "@/lib/services/expected-attendance-supabase";
-import { resolveDailyRate, resolveTransportationBillingStatus } from "@/lib/services/billing-preview-helpers";
+import { resolveEffectiveDailyRate, resolveEffectiveTransportationBillingStatus } from "@/lib/services/billing-effective";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
@@ -22,45 +28,29 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
     if (memberError) throw new Error(memberError.message);
     if (!member) return { ok: false as const, error: "Member not found." };
 
-    const centerSetting = await getActiveCenterBillingSetting(period.start);
-    const memberSetting = await getActiveMemberBillingSetting(input.memberId, period.start);
-    const dailyRate = await resolveDailyRate({
-      memberId: input.memberId,
-      memberSetting:
-        memberSetting ??
-        ({
-          id: "",
-          member_id: input.memberId,
-          payor_id: null,
-          use_center_default_billing_mode: true,
-          billing_mode: null,
-          monthly_billing_basis: "ScheduledMonthBehind",
-          use_center_default_rate: true,
-          custom_daily_rate: null,
-          flat_monthly_rate: null,
-          bill_extra_days: true,
-          transportation_billing_status: "BillNormally",
-          bill_ancillary_arrears: true,
-          active: true,
-          effective_start_date: period.start,
-          effective_end_date: null,
-          billing_notes: null,
-          created_at: now,
-          updated_at: now,
-          updated_by_user_id: null,
-          updated_by_name: null
-        } satisfies BillingSettingRow),
-      centerSetting
-    });
+    const [centerSetting, memberSetting, attendanceSetting] = await Promise.all([
+      getActiveCenterBillingSetting(period.start),
+      getActiveMemberBillingSetting(input.memberId, period.start),
+      getMemberAttendanceBillingSetting(input.memberId)
+    ]);
+    const dailyRate = toAmount(
+      resolveEffectiveDailyRate({
+        attendanceSetting,
+        memberSetting,
+        centerSetting
+      })
+    );
 
-    const nonBillableClosures = await getNonBillableCenterClosureSet(period);
-    const schedule = input.useScheduleTemplate ? await getActiveBillingScheduleTemplate(input.memberId, period.start) : null;
-    const expectedAttendanceContext = await loadExpectedAttendanceSupabaseContext({
-      memberIds: [input.memberId],
-      startDate: period.start,
-      endDate: period.end,
-      includeAttendanceRecords: false
-    });
+    const [nonBillableClosures, schedule, expectedAttendanceContext] = await Promise.all([
+      getNonBillableCenterClosureSet(period),
+      input.useScheduleTemplate ? getActiveBillingScheduleTemplate(input.memberId, period.start) : Promise.resolve(null),
+      loadExpectedAttendanceSupabaseContext({
+        memberIds: [input.memberId],
+        startDate: period.start,
+        endDate: period.end,
+        includeAttendanceRecords: false
+      })
+    ]);
     const memberHolds = expectedAttendanceContext.holdsByMember.get(input.memberId) ?? [];
     const memberScheduleChanges = expectedAttendanceContext.scheduleChangesByMember.get(input.memberId) ?? [];
     const manualIncludeDates = (input.manualIncludeDates ?? []).map((value) => normalizeDateOnly(value, "")).filter(Boolean);
@@ -100,8 +90,8 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       });
     }
 
-    const transportBillingStatus = await resolveTransportationBillingStatus({
-      memberId: input.memberId,
+    const transportBillingStatus = resolveEffectiveTransportationBillingStatus({
+      attendanceSetting,
       memberSetting
     });
     const variableRows: Array<{
@@ -117,15 +107,47 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       source_record_id: string;
     }> = [];
 
-    if (input.includeTransportation) {
-      const { data: rows, error } = await supabase
-        .from("transportation_logs")
-        .select("id, service_date, transport_type, quantity, unit_rate, total_amount, billing_status, billable")
-        .eq("member_id", input.memberId)
-        .gte("service_date", period.start)
-        .lte("service_date", period.end);
-      if (error) throw new Error(error.message);
-      ((rows ?? []) as Array<Record<string, unknown>>)
+    const [
+      transportationResult,
+      ancillaryRowsResult,
+      ancillaryCategoriesResult,
+      adjustmentsResult
+    ] = await Promise.all([
+      input.includeTransportation
+        ? supabase
+            .from("transportation_logs")
+            .select("id, service_date, transport_type, quantity, unit_rate, total_amount, billing_status, billable")
+            .eq("member_id", input.memberId)
+            .gte("service_date", period.start)
+            .lte("service_date", period.end)
+        : Promise.resolve({ data: [], error: null }),
+      input.includeAncillary
+        ? supabase
+            .from("ancillary_charge_logs")
+            .select("id, category_id, service_date, quantity, unit_rate, amount, billing_status")
+            .eq("member_id", input.memberId)
+            .gte("service_date", period.start)
+            .lte("service_date", period.end)
+        : Promise.resolve({ data: [], error: null }),
+      input.includeAncillary
+        ? supabase.from("ancillary_charge_categories").select("id, name, price_cents")
+        : Promise.resolve({ data: [], error: null }),
+      input.includeAdjustments
+        ? supabase
+            .from("billing_adjustments")
+            .select("id, adjustment_date, description, quantity, unit_rate, amount, billing_status")
+            .eq("member_id", input.memberId)
+            .gte("adjustment_date", period.start)
+            .lte("adjustment_date", period.end)
+        : Promise.resolve({ data: [], error: null })
+    ]);
+
+    if (transportationResult.error) throw new Error(transportationResult.error.message);
+    if (ancillaryRowsResult.error) throw new Error(ancillaryRowsResult.error.message);
+    if (ancillaryCategoriesResult.error) throw new Error(ancillaryCategoriesResult.error.message);
+    if (adjustmentsResult.error) throw new Error(adjustmentsResult.error.message);
+
+    ((transportationResult.data ?? []) as Array<Record<string, unknown>>)
         .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
         .filter((row) => row.billable !== false)
         .forEach((row) => {
@@ -148,73 +170,52 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
             source_record_id: String(row.id)
           });
         });
-    }
-
-    if (input.includeAncillary) {
-      const [{ data: rows, error }, { data: categories, error: categoryError }] = await Promise.all([
-        supabase
-          .from("ancillary_charge_logs")
-          .select("id, category_id, service_date, quantity, unit_rate, amount, billing_status")
-          .eq("member_id", input.memberId)
-          .gte("service_date", period.start)
-          .lte("service_date", period.end),
-        supabase.from("ancillary_charge_categories").select("id, name, price_cents")
-      ]);
-      if (error) throw new Error(error.message);
-      if (categoryError) throw new Error(categoryError.message);
-      const categoryById = new Map(
-        ((categories ?? []) as Array<{ id: string; name: string | null; price_cents: number | null }>).map((row) => [String(row.id), row] as const)
-      );
-      ((rows ?? []) as Array<Record<string, unknown>>)
-        .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
-        .forEach((row) => {
-          const category = categoryById.get(String(row.category_id));
-          const unitRate = asNumber(row.unit_rate) > 0 ? asNumber(row.unit_rate) : asNumber(category?.price_cents) / 100;
-          const quantity = asNumber(row.quantity || 1);
-          const amount = toAmount(asNumber(row.amount) > 0 ? asNumber(row.amount) : quantity * unitRate);
-          const serviceDate = normalizeDateOnly(String(row.service_date ?? ""));
-          variableRows.push({
-            line_type: "Ancillary",
-            service_date: serviceDate,
-            service_period_start: serviceDate,
-            service_period_end: serviceDate,
-            description: String(category?.name ?? "Ancillary Charge"),
-            quantity,
-            unit_rate: toAmount(unitRate),
-            amount,
-            source_table: "ancillary_charge_logs",
-            source_record_id: String(row.id)
-          });
+    const categoryById = new Map(
+      (((ancillaryCategoriesResult.data ?? []) as Array<{ id: string; name: string | null; price_cents: number | null }>)).map((row) => [
+        String(row.id),
+        row
+      ] as const)
+    );
+    ((ancillaryRowsResult.data ?? []) as Array<Record<string, unknown>>)
+      .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
+      .forEach((row) => {
+        const category = categoryById.get(String(row.category_id));
+        const unitRate = asNumber(row.unit_rate) > 0 ? asNumber(row.unit_rate) : asNumber(category?.price_cents) / 100;
+        const quantity = asNumber(row.quantity || 1);
+        const amount = toAmount(asNumber(row.amount) > 0 ? asNumber(row.amount) : quantity * unitRate);
+        const serviceDate = normalizeDateOnly(String(row.service_date ?? ""));
+        variableRows.push({
+          line_type: "Ancillary",
+          service_date: serviceDate,
+          service_period_start: serviceDate,
+          service_period_end: serviceDate,
+          description: String(category?.name ?? "Ancillary Charge"),
+          quantity,
+          unit_rate: toAmount(unitRate),
+          amount,
+          source_table: "ancillary_charge_logs",
+          source_record_id: String(row.id)
         });
-    }
+      });
 
-    if (input.includeAdjustments) {
-      const { data: rows, error } = await supabase
-        .from("billing_adjustments")
-        .select("id, adjustment_date, description, quantity, unit_rate, amount, billing_status")
-        .eq("member_id", input.memberId)
-        .gte("adjustment_date", period.start)
-        .lte("adjustment_date", period.end);
-      if (error) throw new Error(error.message);
-      ((rows ?? []) as Array<Record<string, unknown>>)
-        .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
-        .forEach((row) => {
-          const amount = toAmount(asNumber(row.amount));
-          const serviceDate = normalizeDateOnly(String(row.adjustment_date ?? ""));
-          variableRows.push({
-            line_type: amount < 0 ? "Credit" : "Adjustment",
-            service_date: serviceDate,
-            service_period_start: serviceDate,
-            service_period_end: serviceDate,
-            description: String(row.description ?? "Adjustment"),
-            quantity: asNumber(row.quantity || 1),
-            unit_rate: toAmount(asNumber(row.unit_rate)),
-            amount,
-            source_table: "billing_adjustments",
-            source_record_id: String(row.id)
-          });
+    ((adjustmentsResult.data ?? []) as Array<Record<string, unknown>>)
+      .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
+      .forEach((row) => {
+        const amount = toAmount(asNumber(row.amount));
+        const serviceDate = normalizeDateOnly(String(row.adjustment_date ?? ""));
+        variableRows.push({
+          line_type: amount < 0 ? "Credit" : "Adjustment",
+          service_date: serviceDate,
+          service_period_start: serviceDate,
+          service_period_end: serviceDate,
+          description: String(row.description ?? "Adjustment"),
+          quantity: asNumber(row.quantity || 1),
+          unit_rate: toAmount(asNumber(row.unit_rate)),
+          amount,
+          source_table: "billing_adjustments",
+          source_record_id: String(row.id)
         });
-    }
+      });
 
     const baseProgramAmount = toAmount(
       baseLineItems
@@ -234,13 +235,13 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
     );
     const totalAmount = toAmount(baseProgramAmount + transportationAmount + ancillaryAmount + adjustmentAmount);
 
-    const { data: monthInvoiceRows, error: monthInvoiceError } = await supabase
+    const { count: monthInvoiceCount, error: monthInvoiceError } = await supabase
       .from("billing_invoices")
-      .select("id")
+      .select("id", { count: "exact", head: true })
       .eq("invoice_source", "Custom")
       .eq("invoice_month", startOfMonth(period.start));
     if (monthInvoiceError) throw new Error(monthInvoiceError.message);
-    const invoiceNumber = buildCustomInvoiceNumber(period.start, (monthInvoiceRows ?? []).length);
+    const invoiceNumber = buildCustomInvoiceNumber(period.start, Number(monthInvoiceCount ?? 0));
 
     const { data: invoiceData, error: invoiceError } = await supabase
       .from("billing_invoices")
@@ -277,7 +278,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
         created_at: now,
         updated_at: now
       })
-      .select("*")
+      .select("id")
       .single();
     if (invoiceError) throw new Error(invoiceError.message);
     const invoiceId = String(invoiceData.id);
@@ -327,24 +328,38 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       .select("id, line_type, source_table, source_record_id, service_period_start, service_period_end");
     if (lineError) throw new Error(lineError.message);
 
-    for (const line of variableRows) {
-      if (line.source_table === "transportation_logs") {
-        await supabase
-          .from("transportation_logs")
-          .update({ billing_status: "Billed", invoice_id: invoiceId, updated_at: now })
-          .eq("id", line.source_record_id);
-      } else if (line.source_table === "ancillary_charge_logs") {
-        await supabase
-          .from("ancillary_charge_logs")
-          .update({ billing_status: "Billed", invoice_id: invoiceId, updated_at: now })
-          .eq("id", line.source_record_id);
-      } else {
-        await supabase
-          .from("billing_adjustments")
-          .update({ billing_status: "Billed", invoice_id: invoiceId, updated_at: now })
-          .eq("id", line.source_record_id);
-      }
-    }
+    const transportationSourceIds = Array.from(
+      new Set(variableRows.filter((line) => line.source_table === "transportation_logs").map((line) => line.source_record_id))
+    );
+    const ancillarySourceIds = Array.from(
+      new Set(variableRows.filter((line) => line.source_table === "ancillary_charge_logs").map((line) => line.source_record_id))
+    );
+    const adjustmentSourceIds = Array.from(
+      new Set(variableRows.filter((line) => line.source_table === "billing_adjustments").map((line) => line.source_record_id))
+    );
+    const [transportationUpdateResult, ancillaryUpdateResult, adjustmentUpdateResult] = await Promise.all([
+      transportationSourceIds.length > 0
+        ? supabase
+            .from("transportation_logs")
+            .update({ billing_status: "Billed", invoice_id: invoiceId, updated_at: now })
+            .in("id", transportationSourceIds)
+        : Promise.resolve({ error: null }),
+      ancillarySourceIds.length > 0
+        ? supabase
+            .from("ancillary_charge_logs")
+            .update({ billing_status: "Billed", invoice_id: invoiceId, updated_at: now })
+            .in("id", ancillarySourceIds)
+        : Promise.resolve({ error: null }),
+      adjustmentSourceIds.length > 0
+        ? supabase
+            .from("billing_adjustments")
+            .update({ billing_status: "Billed", invoice_id: invoiceId, updated_at: now })
+            .in("id", adjustmentSourceIds)
+        : Promise.resolve({ error: null })
+    ]);
+    if (transportationUpdateResult.error) throw new Error(transportationUpdateResult.error.message);
+    if (ancillaryUpdateResult.error) throw new Error(ancillaryUpdateResult.error.message);
+    if (adjustmentUpdateResult.error) throw new Error(adjustmentUpdateResult.error.message);
 
     const coverageRows = ((insertedLines ?? []) as Array<{
       id: string;

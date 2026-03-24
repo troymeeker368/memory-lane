@@ -4,16 +4,16 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
 import { getMembers } from "@/lib/services/documentation";
-import { getHealthSnapshot } from "@/lib/services/health-workflows";
+import { getBloodSugarSnapshot } from "@/lib/services/health-workflows";
 import { formatDateTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
-type BloodSugarHistoryRow = Awaited<ReturnType<typeof getHealthSnapshot>>["bloodSugarHistory"][number];
+type BloodSugarHistoryRow = Awaited<ReturnType<typeof getBloodSugarSnapshot>>["bloodSugarHistory"][number];
 
 export default async function BloodSugarPage() {
   const profile = await requireModuleAccess("health");
   const canEdit = profile.role === "admin" || profile.role === "manager";
-  const [members, snapshot] = await Promise.all([getMembers(), getHealthSnapshot()]);
+  const [members, snapshot] = await Promise.all([getMembers(), getBloodSugarSnapshot()]);
 
   return (
     <div className="space-y-4">

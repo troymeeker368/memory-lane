@@ -31,3 +31,6 @@ create index if not exists idx_partner_activities_partner_id_activity_at_desc
 
 create index if not exists idx_partner_activities_referral_source_id_activity_at_desc
   on public.partner_activities (referral_source_id, activity_at desc);
+
+create index if not exists idx_billing_invoices_invoice_source_month
+  on public.billing_invoices (invoice_source, invoice_month desc);

@@ -12,6 +12,17 @@ export interface AdminAuditTrailRow {
   actor_name: string | null;
 }
 
+export interface AdminAuditTrailListResult {
+  rows: AdminAuditTrailRow[];
+  page: number;
+  pageSize: number;
+  hasPreviousPage: boolean;
+  hasNextPage: boolean;
+}
+
+const DEFAULT_AUDIT_TRAIL_PAGE_SIZE = 50;
+const MAX_AUDIT_TRAIL_PAGE_SIZE = 200;
+
 const ADMIN_AUDIT_AREA_SQL_TERMS = [
   { label: "Time & Attendance", entityTypeTerms: ["time", "attendance", "punch"] },
   { label: "Sales", entityTypeTerms: ["lead", "partner", "referral"] },
@@ -49,11 +60,17 @@ function resolveAdminAuditAreaSqlFilter(areaFilter: string) {
 export async function listAdminAuditTrailRows(input?: {
   actionFilter?: string | null;
   areaFilter?: string | null;
-  limit?: number;
-}) {
+  page?: number;
+  pageSize?: number;
+}): Promise<AdminAuditTrailListResult> {
   const actionFilter = String(input?.actionFilter ?? "").trim();
   const areaFilter = String(input?.areaFilter ?? "").trim().toLowerCase();
-  const limit = Number.isFinite(input?.limit) ? Math.max(1, Number(input?.limit)) : 1000;
+  const page = Number.isFinite(input?.page) ? Math.max(1, Math.floor(Number(input?.page))) : 1;
+  const pageSize = Number.isFinite(input?.pageSize)
+    ? Math.min(MAX_AUDIT_TRAIL_PAGE_SIZE, Math.max(1, Math.floor(Number(input?.pageSize))))
+    : DEFAULT_AUDIT_TRAIL_PAGE_SIZE;
+  const rangeStart = (page - 1) * pageSize;
+  const rangeEnd = rangeStart + pageSize;
 
   const supabase = await createClient();
   let query = supabase
@@ -67,14 +84,16 @@ export async function listAdminAuditTrailRows(input?: {
   if (areaSqlFilter) {
     query = query.or(areaSqlFilter);
   }
-  const { data: auditRows, error } = await query.limit(limit);
+  const { data: auditRows, error } = await query.range(rangeStart, rangeEnd);
   if (error) {
     throw new Error(error.message);
   }
+  const pageRows = (auditRows ?? []).slice(0, pageSize);
+  const hasNextPage = (auditRows?.length ?? 0) > pageSize;
 
   const actorIds = Array.from(
     new Set(
-      (auditRows ?? [])
+      pageRows
     .map((row) => row.actor_user_id)
         .filter((value: string | null): value is string => Boolean(value))
     )
@@ -93,9 +112,14 @@ export async function listAdminAuditTrailRows(input?: {
     });
   }
 
-  return ((auditRows ?? []) as Omit<AdminAuditTrailRow, "actor_name">[])
-    .map((row) => ({
+  return {
+    rows: (pageRows as Omit<AdminAuditTrailRow, "actor_name">[]).map((row) => ({
       ...row,
       actor_name: row.actor_user_id ? profileNameById.get(row.actor_user_id) ?? null : null
-    }));
+    })),
+    page,
+    pageSize,
+    hasPreviousPage: page > 1,
+    hasNextPage
+  };
 }

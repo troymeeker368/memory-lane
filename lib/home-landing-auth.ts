@@ -173,7 +173,7 @@ export async function resolveCurrentHomeLanding(
   const role = (forceDevAdminView ? "admin" : normalizeRoleKey(data.role as AppRole)) as AppRole;
   const hasProfileLevelCustomPermissions = !forceDevAdminView && shouldLookupCustomPermissions;
   let hasCustomPermissions = false;
-  let allowedModules = new Set<PermissionModuleKey>();
+  const allowedModules = new Set<PermissionModuleKey>();
   let permissionRows: Array<{ module_key: string; can_view: boolean }> = [];
   let permissionsError: unknown = null;
 

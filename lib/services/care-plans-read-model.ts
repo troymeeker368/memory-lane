@@ -516,6 +516,23 @@ export async function getMemberCarePlanSnapshot(memberId: string): Promise<Membe
   };
 }
 
+export async function getLatestCarePlanIdForMember(memberId: string): Promise<string | null> {
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
+    actionLabel: "getLatestCarePlanIdForMember"
+  });
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("care_plans")
+    .select("id")
+    .eq("member_id", canonicalMemberId)
+    .order("review_date", { ascending: false })
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.id ? String(data.id) : null;
+}
+
 export async function getCarePlansForMember(memberId: string) {
   return (await getMemberCarePlanSnapshot(memberId)).rows;
 }

@@ -57,7 +57,7 @@ type PartnerLeadRow = {
   stage: string | null;
   caregiver_name: string | null;
   lead_source: string | null;
-  inquiry_date: string | null;
+  inquiry_date: string;
   created_at: string;
 };
 
@@ -79,7 +79,7 @@ type PartnerActivityRow = {
   activity_at: string;
   activity_type: string | null;
   contact_name: string | null;
-  next_follow_up_date: string | null;
+  next_follow_up_date: string;
   next_follow_up_type: string | null;
   notes: string | null;
 };
@@ -166,9 +166,15 @@ export async function getPartnerDetail(partnerId: string) {
   return {
     partner,
     referralSources: ((referralSources ?? []) as unknown) as ReferralSourceListRow[],
-    leads: ((leads ?? []) as unknown) as PartnerLeadRow[],
+    leads: (((leads ?? []) as unknown) as PartnerLeadRow[]).map((lead) => ({
+      ...lead,
+      inquiry_date: String(lead.inquiry_date ?? "")
+    })),
     leadActivities: ((leadActivities ?? []) as unknown) as PartnerLeadActivityRow[],
-    partnerActivities: ((partnerActivities ?? []) as unknown) as PartnerActivityRow[]
+    partnerActivities: (((partnerActivities ?? []) as unknown) as PartnerActivityRow[]).map((activity) => ({
+      ...activity,
+      next_follow_up_date: String(activity.next_follow_up_date ?? "")
+    }))
   };
 }
 
@@ -253,9 +259,15 @@ export async function getReferralSourceDetail(sourceId: string) {
     return {
       referralSource,
       partner: ((partnerResult.data as unknown as PartnerDetailRow | null) ?? null),
-      leads: ((fallback.data ?? []) as unknown) as PartnerLeadRow[],
+      leads: ((((fallback.data ?? []) as unknown) as PartnerLeadRow[])).map((lead) => ({
+        ...lead,
+        inquiry_date: String(lead.inquiry_date ?? "")
+      })),
       leadActivities: ((leadActivitiesResult.data ?? []) as unknown) as PartnerLeadActivityRow[],
-      partnerActivities: ((partnerActivitiesResult.data ?? []) as unknown) as PartnerActivityRow[]
+      partnerActivities: ((((partnerActivitiesResult.data ?? []) as unknown) as PartnerActivityRow[])).map((activity) => ({
+        ...activity,
+        next_follow_up_date: String(activity.next_follow_up_date ?? "")
+      }))
     };
   }
   if (leadsResult.error) throw new Error(leadsResult.error.message);
@@ -265,8 +277,14 @@ export async function getReferralSourceDetail(sourceId: string) {
   return {
     referralSource,
     partner: ((partnerResult.data as unknown as PartnerDetailRow | null) ?? null),
-    leads: ((leadsResult.data ?? []) as unknown) as PartnerLeadRow[],
+    leads: ((((leadsResult.data ?? []) as unknown) as PartnerLeadRow[])).map((lead) => ({
+      ...lead,
+      inquiry_date: String(lead.inquiry_date ?? "")
+    })),
     leadActivities: ((leadActivitiesResult.data ?? []) as unknown) as PartnerLeadActivityRow[],
-    partnerActivities: ((partnerActivitiesResult.data ?? []) as unknown) as PartnerActivityRow[]
+    partnerActivities: ((((partnerActivitiesResult.data ?? []) as unknown) as PartnerActivityRow[])).map((activity) => ({
+      ...activity,
+      next_follow_up_date: String(activity.next_follow_up_date ?? "")
+    }))
   };
 }

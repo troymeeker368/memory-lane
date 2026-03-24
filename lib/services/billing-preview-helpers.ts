@@ -41,7 +41,8 @@ import {
   resolveActiveEffectiveMemberRowForDate,
   resolveEffectiveDailyRate,
   resolveEffectiveExtraDayRate,
-  resolveEffectiveBillingMode
+  resolveEffectiveBillingMode,
+  resolveEffectiveTransportationBillingStatus
 } from "@/lib/services/billing-effective";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/services/billing-schema-errors";
 import {
@@ -126,7 +127,7 @@ export async function resolveDailyRate(input: {
 
 export async function resolveExtraDayRate(input: {
   memberId: string;
-  memberSetting: BillingSettingRow;
+  memberSetting: BillingSettingRow | null;
   centerSetting: CenterBillingSettingRow | null;
 }) {
   const attendanceSetting = await getMemberAttendanceBillingSetting(input.memberId);
@@ -144,8 +145,10 @@ export async function resolveTransportationBillingStatus(input: {
   memberSetting: BillingSettingRow | null;
 }) {
   const attendanceSetting = await getMemberAttendanceBillingSetting(input.memberId);
-  if (attendanceSetting?.transportationBillingStatus) return attendanceSetting.transportationBillingStatus;
-  return input.memberSetting?.transportation_billing_status ?? "BillNormally";
+  return resolveEffectiveTransportationBillingStatus({
+    attendanceSetting,
+    memberSetting: input.memberSetting
+  });
 }
 
 async function getBillingPreviewRows(input: {
@@ -320,10 +323,10 @@ async function getBillingPreviewRows(input: {
       mode === "Monthly" && asNumber(memberSetting.flat_monthly_rate) > 0
         ? toAmount(memberSetting.flat_monthly_rate)
         : toAmount(billedDays * resolvedDailyRate);
-    const transportBillingStatus =
-      attendanceSetting?.transportation_billing_status ??
-      memberSetting.transportation_billing_status ??
-      "BillNormally";
+    const transportBillingStatus = resolveEffectiveTransportationBillingStatus({
+      attendanceSetting,
+      memberSetting
+    });
 
     const transportLines = (transportationRowsByMemberId.get(member.id) ?? [])
       .filter((row) => isWithin(String(row.service_date), periods.variableRange))

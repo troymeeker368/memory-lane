@@ -7,6 +7,7 @@ import {
   getCarePlans as getCarePlansModel,
   getCarePlansForMember as getCarePlansForMemberModel,
   getMemberCarePlanOverview as getMemberCarePlanOverviewModel,
+  getLatestCarePlanIdForMember as getLatestCarePlanIdForMemberModel,
   getCarePlanVersionById as getCarePlanVersionByIdModel,
   getLatestCarePlanForMember as getLatestCarePlanForMemberModel,
   getMemberCarePlanSummary as getMemberCarePlanSummaryModel
@@ -45,6 +46,10 @@ export async function getCarePlansForMember(...args: Parameters<typeof getCarePl
 
 export async function getMemberCarePlanOverview(...args: Parameters<typeof getMemberCarePlanOverviewModel>) {
   return getMemberCarePlanOverviewModel(...args);
+}
+
+export async function getLatestCarePlanIdForMember(...args: Parameters<typeof getLatestCarePlanIdForMemberModel>) {
+  return getLatestCarePlanIdForMemberModel(...args);
 }
 
 export async function getLatestCarePlanForMember(...args: Parameters<typeof getLatestCarePlanForMemberModel>) {

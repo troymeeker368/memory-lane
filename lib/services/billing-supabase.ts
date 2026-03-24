@@ -2,7 +2,6 @@ import { createClient } from "@/lib/supabase/server";
 import {
   BILLING_BATCH_TYPE_OPTIONS,
   type BatchGenerationInput,
-  type BillingSettingRow,
   type FinalizeBatchInput,
   type ReopenBatchInput
 } from "@/lib/services/billing-types";
@@ -69,30 +68,7 @@ export async function syncAttendanceBillingForDate(input: { memberId: string; at
   const centerSetting = await getActiveCenterBillingSetting(attendanceDate);
   const extraDayRate = await resolveExtraDayRate({
     memberId: input.memberId,
-    memberSetting:
-      memberSetting ??
-      ({
-        id: "",
-        member_id: input.memberId,
-        payor_id: null,
-        use_center_default_billing_mode: true,
-        billing_mode: null,
-        monthly_billing_basis: "ScheduledMonthBehind",
-        use_center_default_rate: true,
-        custom_daily_rate: null,
-        flat_monthly_rate: null,
-        bill_extra_days: true,
-        transportation_billing_status: "BillNormally",
-        bill_ancillary_arrears: true,
-        active: true,
-        effective_start_date: attendanceDate,
-        effective_end_date: null,
-        billing_notes: null,
-        created_at: toEasternISO(),
-        updated_at: toEasternISO(),
-        updated_by_user_id: null,
-        updated_by_name: null
-      } satisfies BillingSettingRow),
+    memberSetting,
     centerSetting
   });
 

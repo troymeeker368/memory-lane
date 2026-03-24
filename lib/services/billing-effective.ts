@@ -25,7 +25,11 @@ type AttendanceBillingRateSetting = {
   daily_rate?: number | null;
   custom_daily_rate?: number | null;
   default_daily_rate?: number | null;
+  transportationBillingStatus?: string | null;
+  transportation_billing_status?: string | null;
 };
+
+export type TransportationBillingStatus = "BillNormally" | "Waived" | "IncludedInProgramRate";
 
 function normalizeDateOnly(value: string | null | undefined, fallback = toEasternDate()) {
   const dateOnly = String(value ?? "").trim().slice(0, 10);
@@ -121,4 +125,17 @@ export function resolveEffectiveExtraDayRate(input: {
     return Number(input.memberSetting.custom_daily_rate);
   }
   return Number(input.centerSetting?.default_extra_day_rate ?? input.centerSetting?.default_daily_rate ?? 0);
+}
+
+export function resolveEffectiveTransportationBillingStatus(input: {
+  attendanceSetting?: AttendanceBillingRateSetting | null;
+  memberSetting?: { transportation_billing_status?: string | null } | null;
+}): TransportationBillingStatus {
+  const raw =
+    input.attendanceSetting?.transportationBillingStatus ??
+    input.attendanceSetting?.transportation_billing_status ??
+    input.memberSetting?.transportation_billing_status ??
+    null;
+  if (raw === "Waived" || raw === "IncludedInProgramRate") return raw;
+  return "BillNormally";
 }

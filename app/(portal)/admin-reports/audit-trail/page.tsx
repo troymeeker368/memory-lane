@@ -9,6 +9,30 @@ import {
 } from "@/lib/services/admin-audit-trail";
 import { formatDateTime } from "@/lib/utils";
 
+function firstQueryValue(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
+}
+
+function parsePageNumber(value: string | string[] | undefined) {
+  const normalized = firstQueryValue(value).trim();
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function buildAuditTrailHref(input: {
+  actionFilter: string;
+  areaFilter: string;
+  page: number;
+}) {
+  const params = new URLSearchParams();
+  if (input.actionFilter) params.set("action", input.actionFilter);
+  if (input.areaFilter) params.set("area", input.areaFilter);
+  if (input.page > 1) params.set("page", String(input.page));
+  const query = params.toString();
+  return query ? `/admin-reports/audit-trail?${query}` : "/admin-reports/audit-trail";
+}
+
 function parseDetails(details: unknown) {
   if (details && typeof details === "object") {
     return details as Record<string, unknown>;
@@ -110,13 +134,15 @@ export default async function AdminAuditTrailPage({
   await requireRoles(["admin"]);
 
   const query = searchParams ? await searchParams : {};
-  const actionFilter = typeof query.action === "string" ? query.action.trim() : "";
-  const areaFilter = typeof query.area === "string" ? query.area.trim().toLowerCase() : "";
+  const actionFilter = firstQueryValue(query.action).trim();
+  const areaFilter = firstQueryValue(query.area).trim().toLowerCase();
+  const page = parsePageNumber(query.page);
 
-  const rows = await listAdminAuditTrailRows({
+  const { rows, page: currentPage, pageSize, hasPreviousPage, hasNextPage } = await listAdminAuditTrailRows({
     actionFilter,
     areaFilter,
-    limit: 1000
+    page,
+    pageSize: 50
   });
 
   return (
@@ -162,6 +188,7 @@ export default async function AdminAuditTrailPage({
 
       <Card className="table-wrap">
         <CardTitle>Recent Activity</CardTitle>
+        <p className="mt-1 text-sm text-muted">Showing up to {pageSize} newest events per page.</p>
         <table>
           <thead>
             <tr>
@@ -192,6 +219,27 @@ export default async function AdminAuditTrailPage({
             )}
           </tbody>
         </table>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
+          <span>Page {currentPage}</span>
+          <div className="flex items-center gap-2">
+            {hasPreviousPage ? (
+              <Link
+                href={buildAuditTrailHref({ actionFilter, areaFilter, page: currentPage - 1 })}
+                className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
+              >
+                Previous Page
+              </Link>
+            ) : null}
+            {hasNextPage ? (
+              <Link
+                href={buildAuditTrailHref({ actionFilter, areaFilter, page: currentPage + 1 })}
+                className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
+              >
+                Next Page
+              </Link>
+            ) : null}
+          </div>
+        </div>
       </Card>
     </div>
   );

@@ -34,10 +34,10 @@ const PARTNER_ACTIVITY_DETAIL_SELECT =
 
 type LeadDetailRow = {
   id: string;
-  stage: string | null;
-  status: string | null;
-  inquiry_date: string | null;
-  member_name: string | null;
+  stage: string;
+  status: string;
+  inquiry_date: string;
+  member_name: string;
   caregiver_name: string | null;
   caregiver_relationship: string | null;
   caregiver_phone: string | null;
@@ -58,7 +58,7 @@ type LeadDetailActivityRow = {
   activity_at: string;
   activity_type: string | null;
   outcome: string | null;
-  next_follow_up_date: string | null;
+  next_follow_up_date: string;
   next_follow_up_type: string | null;
   notes: string | null;
   member_name: string | null;
@@ -152,8 +152,15 @@ export async function getLeadDetail(leadId: string): Promise<{
     .eq("id", canonicalLeadId)
     .maybeSingle();
   if (leadResult.error) throw new Error(leadResult.error.message);
-  const lead = (leadResult.data as unknown as LeadDetailRow | null) ?? null;
-  if (!lead) return null;
+  const rawLead = (leadResult.data as unknown as LeadDetailRow | null) ?? null;
+  if (!rawLead) return null;
+  const lead: LeadDetailRow = {
+    ...rawLead,
+    stage: String(rawLead.stage ?? ""),
+    status: String(rawLead.status ?? ""),
+    inquiry_date: String(rawLead.inquiry_date ?? ""),
+    member_name: String(rawLead.member_name ?? "")
+  };
 
   const partnerId = String(lead.partner_id ?? "").trim();
   const referralSourceId = String(lead.referral_source_id ?? "").trim();
@@ -235,7 +242,10 @@ export async function getLeadDetail(leadId: string): Promise<{
 
   return {
     lead,
-    activities: ((activitiesResult.data ?? []) as unknown) as LeadDetailActivityRow[],
+    activities: (((activitiesResult.data ?? []) as unknown) as LeadDetailActivityRow[]).map((activity) => ({
+      ...activity,
+      next_follow_up_date: String(activity.next_follow_up_date ?? "")
+    })),
     stageHistory: ((stageHistoryResult.data ?? []) as unknown) as LeadStageHistoryRow[],
     canonicalMemberId: canonical.memberId ?? null,
     partner,

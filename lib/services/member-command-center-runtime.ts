@@ -2,7 +2,6 @@ import { createClient } from "@/lib/supabase/server";
 import type {
   BusStopDirectoryRow,
   MakeupLedgerRow,
-  MccMemberRow,
   MemberAllergyRow,
   MemberAttendanceScheduleRow,
   MemberCommandCenterIndexProfileRow,
@@ -40,6 +39,8 @@ const MEMBER_FILE_LIST_SELECT =
 const MEMBER_COMMAND_CENTER_INDEX_PROFILE_SELECT = "member_id, profile_image_url";
 const MEMBER_COMMAND_CENTER_INDEX_SCHEDULE_SELECT =
   "member_id, enrollment_date, monday, tuesday, wednesday, thursday, friday, make_up_days_available";
+const MEMBER_LOCKER_AVAILABILITY_SELECT = "id, status, locker_number";
+const MEMBER_COMMAND_CENTER_ADD_RIDER_ADDRESS_SELECT = "member_id, street_address, city, state, zip";
 const LEGACY_INLINE_MEMBER_FILE_SENTINEL = "__legacy_inline_member_file__";
 
 function toMemberCommandCenterIndexProfileRow(
@@ -268,7 +269,10 @@ export async function listBusStopDirectorySupabase() {
 
 export async function getAvailableLockerNumbersForMemberSupabase(memberId: string) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getAvailableLockerNumbersForMemberSupabase");
-  const members = await listMembersSupabase({ status: "all" });
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("members").select(MEMBER_LOCKER_AVAILABILITY_SELECT);
+  if (error) throw new Error(error.message);
+  const members = (data ?? []) as Array<{ id: string; status: "active" | "inactive"; locker_number: string | null }>;
   const member = members.find((row) => row.id === canonicalMemberId) ?? null;
   const currentLocker = normalizeLocker(member?.locker_number ?? null);
   const usedByOtherActive = new Set(
@@ -462,11 +466,12 @@ export async function backfillMissingMemberCommandCenterRowsSupabase(memberIds: 
     };
   }
 
-  const members = await listMembersSupabase({ status: "all" });
-  const memberById = new Map(members.map((row) => [row.id, row] as const));
-  const targetMembers = normalizedMemberIds
-    .map((memberId) => memberById.get(memberId))
-    .filter((member): member is MccMemberRow => Boolean(member));
+  const supabase = await createClient();
+  const targetMembers = await selectMembersWithFallback(
+    (selectClause) => supabase.from("members").select(selectClause).in("id", normalizedMemberIds),
+    isMissingAnyColumnError,
+    "Unable to query members for Member Command Center backfill."
+  );
   if (targetMembers.length === 0) {
     return {
       commandCentersInserted: 0,
@@ -474,12 +479,12 @@ export async function backfillMissingMemberCommandCenterRowsSupabase(memberIds: 
     };
   }
 
-  const supabase = await createClient({ serviceRole: true });
+  const writeSupabase = await createClient({ serviceRole: true });
   const targetMemberIds = targetMembers.map((member) => member.id);
   const [{ data: existingCommandCenters, error: commandCentersError }, { data: existingSchedules, error: schedulesError }] =
     await Promise.all([
-      supabase.from("member_command_centers").select("member_id").in("member_id", targetMemberIds),
-      supabase.from("member_attendance_schedules").select("member_id").in("member_id", targetMemberIds)
+      writeSupabase.from("member_command_centers").select("member_id").in("member_id", targetMemberIds),
+      writeSupabase.from("member_attendance_schedules").select("member_id").in("member_id", targetMemberIds)
     ]);
   if (commandCentersError) throw new Error(commandCentersError.message);
   if (schedulesError) throw new Error(schedulesError.message);
@@ -497,11 +502,11 @@ export async function backfillMissingMemberCommandCenterRowsSupabase(memberIds: 
     .map((member) => defaultAttendanceSchedule(member));
 
   if (missingCommandCenters.length > 0) {
-    const { error: insertCommandCentersError } = await supabase.from("member_command_centers").insert(missingCommandCenters);
+    const { error: insertCommandCentersError } = await writeSupabase.from("member_command_centers").insert(missingCommandCenters);
     if (insertCommandCentersError) throw new Error(insertCommandCentersError.message);
   }
   if (missingSchedules.length > 0) {
-    const { error: insertSchedulesError } = await supabase.from("member_attendance_schedules").insert(missingSchedules);
+    const { error: insertSchedulesError } = await writeSupabase.from("member_attendance_schedules").insert(missingSchedules);
     if (insertSchedulesError) throw new Error(insertSchedulesError.message);
   }
 
@@ -523,12 +528,16 @@ export async function getTransportationAddRiderMemberOptionsSupabase() {
   if (members.length === 0) return [];
   const memberIds = members.map((row) => row.id);
   const [commandCentersResult, contactsResult] = await Promise.all([
-    supabase.from("member_command_centers").select("*").in("member_id", memberIds),
+    supabase.from("member_command_centers").select(MEMBER_COMMAND_CENTER_ADD_RIDER_ADDRESS_SELECT).in("member_id", memberIds),
     selectMemberContactsRows((selectClause) => supabase.from("member_contacts").select(selectClause).in("member_id", memberIds))
   ]);
 
   const commandCenters = (() => {
-    if (!commandCentersResult.error) return (commandCentersResult.data ?? []) as MemberCommandCenterRow[];
+    if (!commandCentersResult.error) {
+      return (commandCentersResult.data ?? []) as Array<
+        Pick<MemberCommandCenterRow, "member_id" | "street_address" | "city" | "state" | "zip">
+      >;
+    }
     if (isMissingTableError(commandCentersResult.error, "member_command_centers")) {
       throw missingMccStorageError({
         objectName: "member_command_centers",
