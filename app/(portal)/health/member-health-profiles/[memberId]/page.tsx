@@ -224,12 +224,13 @@ export default async function MemberHealthProfileDetailPage({
   const notesUpdatedBy = latestUpdatedBy(detail.notes, (row) => row.updated_at, (row) => row.created_by_name);
   const assessmentsUpdatedBy = latestUpdatedBy(detail.assessments, (row) => row.created_at, (row) => row.completed_by);
   const [carePlanSnapshot, billingPayor, relatedPhysicianOrders, progressNoteSummary] = await Promise.all([
-    getMemberCarePlanSnapshot(member.id),
+    getMemberCarePlanSnapshot(member.id, { canonicalInput: true }),
     getBillingPayorContact(member.id, {
-      source: "MemberHealthProfileDetailPage"
+      source: "MemberHealthProfileDetailPage",
+      canonicalInput: true
     }),
-    getPhysicianOrdersForMember(member.id),
-    getMemberProgressNoteSummary(member.id)
+    getPhysicianOrdersForMember(member.id, { canonicalInput: true }),
+    getMemberProgressNoteSummary(member.id, { canonicalInput: true })
   ]);
   const relatedCarePlans = carePlanSnapshot.rows;
   const carePlansUpdatedAt = latestTimestamp(relatedCarePlans.map((row) => row.updatedAt));

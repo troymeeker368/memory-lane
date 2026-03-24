@@ -152,7 +152,7 @@ async function listMembersPageSupabase(filters?: {
 }
 
 export async function getMemberSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberSupabase");
+  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberSupabase", options);
   const supabase = await getMccClient(options);
   return selectMemberWithFallback(
     (selectClause) => supabase.from("members").select(selectClause).eq("id", canonicalMemberId).maybeSingle(),
@@ -161,8 +161,8 @@ export async function getMemberSupabase(memberId: string, options?: EnsureCanoni
   );
 }
 
-async function getMemberCommandCenterProfileReadOnlySupabase(memberId: string) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterProfileReadOnlySupabase");
+async function getMemberCommandCenterProfileReadOnlySupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterProfileReadOnlySupabase", options);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_command_centers")
@@ -181,8 +181,8 @@ async function getMemberCommandCenterProfileReadOnlySupabase(memberId: string) {
   return (data as MemberCommandCenterRow | null) ?? null;
 }
 
-async function getMemberAttendanceScheduleReadOnlySupabase(memberId: string) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberAttendanceScheduleReadOnlySupabase");
+async function getMemberAttendanceScheduleReadOnlySupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberAttendanceScheduleReadOnlySupabase", options);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_attendance_schedules")
@@ -201,8 +201,8 @@ async function getMemberAttendanceScheduleReadOnlySupabase(memberId: string) {
   return (data as MemberAttendanceScheduleRow | null) ?? null;
 }
 
-export async function listMemberContactsSupabase(memberId: string) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberContactsSupabase");
+export async function listMemberContactsSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberContactsSupabase", options);
   const supabase = await createClient();
   return selectMemberContactsRows((selectClause) =>
     supabase
@@ -213,8 +213,8 @@ export async function listMemberContactsSupabase(memberId: string) {
   );
 }
 
-export async function listMemberFilesSupabase(memberId: string) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberFilesSupabase");
+export async function listMemberFilesSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberFilesSupabase", options);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_files")
@@ -247,8 +247,8 @@ export async function listMemberFilesSupabase(memberId: string) {
   })) as MemberFileRow[];
 }
 
-export async function listMemberAllergiesSupabase(memberId: string) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberAllergiesSupabase");
+export async function listMemberAllergiesSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberAllergiesSupabase", options);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_allergies")
@@ -266,8 +266,8 @@ export async function listBusStopDirectorySupabase() {
   return (data ?? []) as BusStopDirectoryRow[];
 }
 
-export async function getAvailableLockerNumbersForMemberSupabase(memberId: string) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "getAvailableLockerNumbersForMemberSupabase");
+export async function getAvailableLockerNumbersForMemberSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "getAvailableLockerNumbersForMemberSupabase", options);
   const supabase = await createClient();
   const [{ data: memberData, error: memberError }, { data: activeLockerData, error: activeLockerError }] = await Promise.all([
     supabase
@@ -385,9 +385,10 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
   };
 }
 
-export async function getMemberCommandCenterDetailSupabase(memberId: string) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterDetailSupabase");
-  const member = await getMemberSupabase(canonicalMemberId);
+export async function getMemberCommandCenterDetailSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterDetailSupabase", options);
+  const canonicalOptions = { ...options, canonicalInput: true } satisfies EnsureCanonicalMemberOptions;
+  const member = await getMemberSupabase(canonicalMemberId, canonicalOptions);
   if (!member) return null;
   const [{ getMemberCarePlanOverview }, { getLatestEnrollmentPacketPofStagingSummary }] =
     await Promise.all([
@@ -404,14 +405,14 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string) {
     carePlanOverview,
     enrollmentPacketIntakeAlert
   ] = await Promise.all([
-    getMemberCommandCenterProfileReadOnlySupabase(canonicalMemberId),
-    getMemberAttendanceScheduleReadOnlySupabase(canonicalMemberId),
-    listMemberContactsSupabase(canonicalMemberId),
-    listMemberFilesSupabase(canonicalMemberId),
+    getMemberCommandCenterProfileReadOnlySupabase(canonicalMemberId, canonicalOptions),
+    getMemberAttendanceScheduleReadOnlySupabase(canonicalMemberId, canonicalOptions),
+    listMemberContactsSupabase(canonicalMemberId, canonicalOptions),
+    listMemberFilesSupabase(canonicalMemberId, canonicalOptions),
     listBusStopDirectorySupabase(),
-    listMemberAllergiesSupabase(canonicalMemberId),
-    getMemberCarePlanOverview(canonicalMemberId),
-    getLatestEnrollmentPacketPofStagingSummary(canonicalMemberId)
+    listMemberAllergiesSupabase(canonicalMemberId, canonicalOptions),
+    getMemberCarePlanOverview(canonicalMemberId, { canonicalInput: true }),
+    getLatestEnrollmentPacketPofStagingSummary(canonicalMemberId, { canonicalInput: true })
   ]);
   const profile = storedProfile ?? defaultCommandCenter(canonicalMemberId);
   const schedule = storedSchedule ?? defaultAttendanceSchedule(member);

@@ -111,19 +111,31 @@ async function runPostSignSyncCascade(input: {
   }
 }
 
-async function resolvePhysicianOrderMemberId(rawMemberId: string, actionLabel: string) {
+type ResolvePhysicianOrderMemberOptions = {
+  canonicalInput?: boolean;
+};
+
+async function resolvePhysicianOrderMemberId(
+  rawMemberId: string,
+  actionLabel: string,
+  options?: ResolvePhysicianOrderMemberOptions
+) {
+  if (options?.canonicalInput) return rawMemberId;
   return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
-async function getMember(memberId: string) {
-  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "physician-orders:getMember");
+async function getMember(memberId: string, options?: ResolvePhysicianOrderMemberOptions) {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "physician-orders:getMember", options);
   const supabase = await createClient();
   const { data } = await supabase.from("members").select("id, display_name, dob").eq("id", canonicalMemberId).single();
   return data;
 }
 
-async function resolvePhysicianOrderSexPrefill(memberId: string): Promise<"M" | "F" | null> {
-  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "resolvePhysicianOrderSexPrefill");
+async function resolvePhysicianOrderSexPrefill(
+  memberId: string,
+  options?: ResolvePhysicianOrderMemberOptions
+): Promise<"M" | "F" | null> {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "resolvePhysicianOrderSexPrefill", options);
   const supabase = await createClient();
   const [mccResult, mhpResult] = await Promise.all([
     supabase.from("member_command_centers").select("gender").eq("member_id", canonicalMemberId).maybeSingle(),
@@ -140,9 +152,9 @@ export async function buildNewPhysicianOrderDraft(input: {
   actor: { id: string; fullName: string; signoffName?: string | null };
 }): Promise<PhysicianOrderForm | null> {
   const memberId = await resolvePhysicianOrderMemberId(input.memberId, "buildNewPhysicianOrderDraft");
-  const member = await getMember(memberId);
+  const member = await getMember(memberId, { canonicalInput: true });
   if (!member) return null;
-  const sexPrefill = await resolvePhysicianOrderSexPrefill(memberId);
+  const sexPrefill = await resolvePhysicianOrderSexPrefill(memberId, { canonicalInput: true });
 
   const supabase = await createClient();
   const { data: latestIntake, error: latestIntakeError } = await supabase
@@ -158,7 +170,7 @@ export async function buildNewPhysicianOrderDraft(input: {
 
   const { mapIntakeAssessmentToPofPrefill } = await loadIntakeToPofMapping();
   const mapped = latestIntake ? mapIntakeAssessmentToPofPrefill(latestIntake as IntakeAssessmentForPofPrefill) : null;
-  const enrollmentPacketPrefill = await getLatestEnrollmentPacketPofStagingSummary(memberId);
+  const enrollmentPacketPrefill = await getLatestEnrollmentPacketPofStagingSummary(memberId, { canonicalInput: true });
   const activeEnrollmentPacketPrefill = enrollmentPacketPrefill?.reviewRequired ? enrollmentPacketPrefill : null;
   const shouldApplyEnrollmentPacketPrefill = activeEnrollmentPacketPrefill !== null;
   const baseCareInformation = mapped
@@ -236,8 +248,8 @@ export async function buildNewPhysicianOrderDraft(input: {
   };
 }
 
-async function nextVersionNumber(memberId: string) {
-  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "nextVersionNumber");
+async function nextVersionNumber(memberId: string, options?: ResolvePhysicianOrderMemberOptions) {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "nextVersionNumber", options);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("physician_orders")
@@ -259,9 +271,9 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
   intakeSignature?: IntakeAssessmentSignatureState;
 }) {
   const supabase = await createClient();
-  const member = await getMember(input.assessment.member_id);
+  const member = await getMember(input.assessment.member_id, { canonicalInput: true });
   if (!member) throw new Error("Member not found for intake assessment.");
-  const sexPrefill = await resolvePhysicianOrderSexPrefill(input.assessment.member_id);
+  const sexPrefill = await resolvePhysicianOrderSexPrefill(input.assessment.member_id, { canonicalInput: true });
 
   const { mapIntakeAssessmentToPofPrefill } = await loadIntakeToPofMapping();
   const mapped = mapIntakeAssessmentToPofPrefill(input.assessment);
@@ -389,7 +401,7 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
     throw new Error("Signed physician orders are locked. Create a new order to make updates.");
   }
 
-  const member = await getMember(canonicalMemberId);
+  const member = await getMember(canonicalMemberId, { canonicalInput: true });
   if (!member) throw new Error("Member not found.");
   const diagnosisRows = sanitizeDiagnosisRows(input.diagnosisRows);
   const allergyRows = sanitizeAllergyRows(input.allergyRows);
@@ -480,7 +492,7 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
     return saved;
   }
 
-  const version = await nextVersionNumber(canonicalMemberId);
+  const version = await nextVersionNumber(canonicalMemberId, { canonicalInput: true });
   const { data, error } = await supabase
     .from("physician_orders")
     .insert({
@@ -742,7 +754,10 @@ export async function syncMemberHealthProfileFromSignedPhysicianOrder(
     serviceRole: options?.serviceRole
   });
 
-  return getMemberHealthProfile(form.memberId);
+  return getMemberHealthProfile(form.memberId, {
+    canonicalInput: true,
+    serviceRole: options?.serviceRole
+  });
 }
 
 export async function savePhysicianOrderForm(input: PhysicianOrderSaveInput) {

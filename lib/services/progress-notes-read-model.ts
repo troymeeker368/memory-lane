@@ -275,12 +275,18 @@ export async function getProgressNoteTracker(input?: {
   page?: number;
   pageSize?: number;
   serviceRole?: boolean;
+  canonicalInput?: boolean;
 }): Promise<ProgressNoteTrackerResult> {
   const page = Number.isFinite(input?.page) && Number(input?.page) > 0 ? Math.floor(Number(input?.page)) : 1;
   const pageSize = Number.isFinite(input?.pageSize) && Number(input?.pageSize) > 0 ? Math.floor(Number(input?.pageSize)) : 25;
   const filter = input?.status ?? "All";
   const canonicalMemberId = input?.memberId
-    ? await resolveCanonicalMemberId(input.memberId, { actionLabel: "getProgressNoteTracker" })
+    ? input.canonicalInput
+      ? input.memberId
+      : await resolveCanonicalMemberId(input.memberId, {
+          actionLabel: "getProgressNoteTracker",
+          serviceRole: Boolean(input?.serviceRole)
+        })
     : null;
   const queryPattern = cleanText(input?.query) ? buildSupabaseIlikePattern(cleanText(input?.query) as string) : null;
   const trackerResult = await loadProgressNoteTrackerReadModel({
@@ -321,23 +327,36 @@ export async function getProgressNoteDashboard(input?: { page?: number; pageSize
   };
 }
 
-export async function getMemberProgressNoteSummary(memberId: string, options?: { serviceRole?: boolean }) {
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
-    actionLabel: "getMemberProgressNoteSummary"
-  });
+export async function getMemberProgressNoteSummary(
+  memberId: string,
+  options?: { serviceRole?: boolean; canonicalInput?: boolean }
+) {
+  const canonicalMemberId = options?.canonicalInput
+    ? memberId
+    : await resolveCanonicalMemberId(memberId, {
+        actionLabel: "getMemberProgressNoteSummary",
+        serviceRole: Boolean(options?.serviceRole)
+      });
   const tracker = await getProgressNoteTracker({
     memberId: canonicalMemberId,
     page: 1,
     pageSize: 1,
-    serviceRole: Boolean(options?.serviceRole)
+    serviceRole: Boolean(options?.serviceRole),
+    canonicalInput: true
   });
   return tracker.rows[0] ?? null;
 }
 
-export async function getProgressNotesForMember(memberId: string, options?: { serviceRole?: boolean }) {
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
-    actionLabel: "getProgressNotesForMember"
-  });
+export async function getProgressNotesForMember(
+  memberId: string,
+  options?: { serviceRole?: boolean; canonicalInput?: boolean }
+) {
+  const canonicalMemberId = options?.canonicalInput
+    ? memberId
+    : await resolveCanonicalMemberId(memberId, {
+        actionLabel: "getProgressNotesForMember",
+        serviceRole: Boolean(options?.serviceRole)
+      });
   const [rows, memberMap] = await Promise.all([
     loadProgressNoteRows({ memberId: canonicalMemberId, serviceRole: Boolean(options?.serviceRole) }),
     loadMemberNameMap([canonicalMemberId], Boolean(options?.serviceRole))
@@ -360,7 +379,10 @@ export async function getProgressNoteById(noteId: string, options?: { serviceRol
 
   const [memberMap, summary] = await Promise.all([
     loadMemberNameMap([row.member_id], Boolean(options?.serviceRole)),
-    getMemberProgressNoteSummary(row.member_id, { serviceRole: Boolean(options?.serviceRole) })
+    getMemberProgressNoteSummary(row.member_id, {
+      serviceRole: Boolean(options?.serviceRole),
+      canonicalInput: true
+    })
   ]);
 
   return {
@@ -369,10 +391,16 @@ export async function getProgressNoteById(noteId: string, options?: { serviceRol
   };
 }
 
-export async function getExistingProgressNoteDraftForMember(memberId: string, options?: { serviceRole?: boolean }) {
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
-    actionLabel: "getExistingProgressNoteDraftForMember"
-  });
+export async function getExistingProgressNoteDraftForMember(
+  memberId: string,
+  options?: { serviceRole?: boolean; canonicalInput?: boolean }
+) {
+  const canonicalMemberId = options?.canonicalInput
+    ? memberId
+    : await resolveCanonicalMemberId(memberId, {
+        actionLabel: "getExistingProgressNoteDraftForMember",
+        serviceRole: Boolean(options?.serviceRole)
+      });
   const row = await findDraftProgressNoteRow(canonicalMemberId, Boolean(options?.serviceRole));
   if (!row) return null;
   const memberMap = await loadMemberNameMap([canonicalMemberId], Boolean(options?.serviceRole));

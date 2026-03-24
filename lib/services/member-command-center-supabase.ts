@@ -100,8 +100,8 @@ export async function upsertCenterBillingSettingSupabase(
   return data as CenterBillingSettingRow;
 }
 
-export async function listMemberBillingSettingsSupabase(memberId: string) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberBillingSettingsSupabase");
+export async function listMemberBillingSettingsSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberBillingSettingsSupabase", options);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_billing_settings")
@@ -112,8 +112,8 @@ export async function listMemberBillingSettingsSupabase(memberId: string) {
   return (data ?? []) as MemberBillingSettingRow[];
 }
 
-export async function listBillingScheduleTemplatesSupabase(memberId: string) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "listBillingScheduleTemplatesSupabase");
+export async function listBillingScheduleTemplatesSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
+  const canonicalMemberId = await resolveMccMemberId(memberId, "listBillingScheduleTemplatesSupabase", options);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("billing_schedule_templates")

@@ -96,9 +96,7 @@ export function MccHeaderCards({
         ? { color: "#4e4e4e" }
         : undefined;
   const lockerValue = (lockerNumber ?? "").trim() || "-";
-  const lockerHref = lockerValue !== "-"
-    ? `/operations/locker-assignments?locker=${encodeURIComponent(lockerValue)}&memberId=${encodeURIComponent(memberId)}`
-    : "/operations/locker-assignments";
+  const lockerHref = `/operations/member-command-center/${memberId}?tab=locker-assignments`;
 
   return (
     <div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-7">

@@ -191,9 +191,9 @@ export default async function OperationsAttendancePage({
         <div className="flex flex-wrap items-center gap-2">
           <BackArrowButton fallbackHref="/operations" forceFallback ariaLabel="Back to operations" />
           <div>
-            <CardTitle>Attendance</CardTitle>
+            <CardTitle>Attendance Board</CardTitle>
             <p className="mt-1 text-sm text-muted">
-              Real-time attendance and census tied to Member Command Center schedules, reusable for future billing and transportation planning.
+              Center-wide attendance and census board tied to Member Command Center schedules for billing and transportation workflows.
             </p>
           </div>
         </div>

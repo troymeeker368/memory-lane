@@ -5,15 +5,44 @@ import { toEasternISO } from "@/lib/timezone";
 export type LockerAssignmentHistoryRow = {
   locker_number: string | null;
   previous_member_assigned: string | null;
+  previous_member_id: string | null;
+  previous_assigned_at: string | null;
   updated_at: string | null;
 };
 
-export async function listLockerAssignmentHistorySupabase() {
+type ResolveLockerMemberOptions = {
+  canonicalInput?: boolean;
+};
+
+async function resolveLockerMemberId(
+  rawMemberId: string,
+  actionLabel: string,
+  options?: ResolveLockerMemberOptions
+) {
+  if (options?.canonicalInput) return rawMemberId;
+  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
+}
+
+export async function listLockerAssignmentHistorySupabase(input?: {
+  memberId?: string | null;
+  limit?: number;
+  canonicalInput?: boolean;
+}) {
   const supabase = await createClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("locker_assignment_history")
-    .select("locker_number, previous_member_assigned, updated_at")
+    .select("locker_number, previous_member_assigned, previous_member_id, previous_assigned_at, updated_at")
     .order("updated_at", { ascending: false });
+  if (input?.memberId) {
+    const canonicalMemberId = await resolveLockerMemberId(input.memberId, "listLockerAssignmentHistorySupabase", {
+      canonicalInput: input.canonicalInput
+    });
+    query = query.eq("previous_member_id", canonicalMemberId);
+  }
+  if (typeof input?.limit === "number" && input.limit > 0) {
+    query = query.limit(input.limit);
+  }
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return (data ?? []) as LockerAssignmentHistoryRow[];
 }
@@ -22,9 +51,12 @@ export async function assignLockerToMemberSupabase(input: {
   memberId: string;
   lockerNumber: string;
   actionLabel?: string;
+  canonicalInput?: boolean;
 }) {
   const actionLabel = input.actionLabel ?? "assignLockerToMemberSupabase";
-  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, { actionLabel });
+  const canonicalMemberId = await resolveLockerMemberId(input.memberId, actionLabel, {
+    canonicalInput: input.canonicalInput
+  });
 
   const supabase = await createClient();
   const { data: member, error: memberError } = await supabase
@@ -68,9 +100,12 @@ export async function assignLockerToMemberSupabase(input: {
 export async function clearLockerForMemberSupabase(input: {
   memberId: string;
   actionLabel?: string;
+  canonicalInput?: boolean;
 }) {
   const actionLabel = input.actionLabel ?? "clearLockerForMemberSupabase";
-  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, { actionLabel });
+  const canonicalMemberId = await resolveLockerMemberId(input.memberId, actionLabel, {
+    canonicalInput: input.canonicalInput
+  });
 
   const supabase = await createClient();
   const { data: member, error: memberError } = await supabase

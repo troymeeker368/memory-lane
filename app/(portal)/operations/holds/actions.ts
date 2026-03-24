@@ -67,7 +67,8 @@ export async function createMemberHoldAction(formData: FormData) {
     reasonOther,
     notes,
     actorUserId: actor.id,
-    actorName: actor.full_name
+    actorName: actor.full_name,
+    canonicalInput: true
   });
 
   revalidateHoldsWorkflows(created.member_id);

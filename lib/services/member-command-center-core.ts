@@ -24,6 +24,7 @@ export type PostgrestErrorLike = {
 
 export type EnsureCanonicalMemberOptions = {
   serviceRole?: boolean;
+  canonicalInput?: boolean;
   actor?: {
     userId?: string | null;
     name?: string | null;
@@ -199,8 +200,18 @@ export function slugify(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
 
-export async function resolveMccMemberId(rawMemberId: string, actionLabel: string) {
-  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
+export async function resolveMccMemberId(
+  rawMemberId: string,
+  actionLabel: string,
+  options?: Pick<EnsureCanonicalMemberOptions, "canonicalInput" | "serviceRole">
+) {
+  if (options?.canonicalInput) {
+    return rawMemberId;
+  }
+  return resolveCanonicalMemberId(rawMemberId, {
+    actionLabel,
+    serviceRole: options?.serviceRole
+  });
 }
 
 export function defaultCommandCenter(memberId: string): MemberCommandCenterRow {

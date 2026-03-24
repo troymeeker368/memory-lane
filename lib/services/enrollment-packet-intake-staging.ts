@@ -110,11 +110,14 @@ export function deriveEnrollmentPacketPofRiskSignals(payload: Record<string, unk
 
 export async function getLatestEnrollmentPacketPofStagingSummary(
   memberId: string,
-  options?: { serviceRole?: boolean }
+  options?: { serviceRole?: boolean; canonicalInput?: boolean }
 ): Promise<EnrollmentPacketPofStagingSummary | null> {
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
-    actionLabel: "getLatestEnrollmentPacketPofStagingSummary"
-  });
+  const canonicalMemberId = options?.canonicalInput
+    ? memberId
+    : await resolveCanonicalMemberId(memberId, {
+        actionLabel: "getLatestEnrollmentPacketPofStagingSummary",
+        serviceRole: options?.serviceRole
+      });
 
   const supabase = await createClient({ serviceRole: options?.serviceRole });
   const { data: stagingRow, error: stagingError } = await supabase
@@ -185,10 +188,14 @@ export async function markEnrollmentPacketPofStagingReviewed(input: {
   actorUserId: string | null;
   actorName: string | null;
   serviceRole?: boolean;
+  canonicalInput?: boolean;
 }) {
-  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, {
-    actionLabel: "markEnrollmentPacketPofStagingReviewed"
-  });
+  const canonicalMemberId = input.canonicalInput
+    ? input.memberId
+    : await resolveCanonicalMemberId(input.memberId, {
+        actionLabel: "markEnrollmentPacketPofStagingReviewed",
+        serviceRole: input.serviceRole
+      });
 
   const supabase = await createClient({ serviceRole: input.serviceRole });
   const { data: latestPending, error: latestPendingError } = await supabase

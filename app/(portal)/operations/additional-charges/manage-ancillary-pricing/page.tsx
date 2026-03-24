@@ -15,7 +15,7 @@ export default async function ManageAncillaryPricingPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <BackArrowButton fallbackHref="/operations/additional-charges" />
+        <BackArrowButton fallbackHref="/operations/pricing" />
       </div>
 
       <Card>

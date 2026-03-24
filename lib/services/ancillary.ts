@@ -1,4 +1,5 @@
 import { normalizeRoleKey } from "@/lib/permissions";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { createClient } from "@/lib/supabase/server";
 import type { AppRole } from "@/types/app";
@@ -7,6 +8,26 @@ interface AncillaryScope {
   role?: AppRole;
   staffUserId?: string | null;
 }
+
+export type MemberAncillaryChargeLogRow = {
+  id: string | null;
+  member_id: string | null;
+  member_name: string | null;
+  service_date: string | null;
+  category_name: string | null;
+  amount_cents: number | null;
+  quantity: number | null;
+  notes: string | null;
+  source_entity: string | null;
+  source_entity_id: string | null;
+  reconciliation_status: string | null;
+  reconciled_by: string | null;
+  reconciled_at: string | null;
+  reconciliation_note: string | null;
+  staff_name: string | null;
+  late_pickup_time: string | null;
+  created_at: string | null;
+};
 
 export async function getAncillarySummary(monthKey?: string, scope?: AncillaryScope) {
   const supabase = await createClient();
@@ -81,6 +102,48 @@ export async function getAncillarySummary(monthKey?: string, scope?: AncillarySc
     monthlyByMember: [],
     monthlyGrandTotalCents: 0
   };
+}
+
+export async function listMemberAncillaryChargeLogs(
+  input: {
+    memberId: string;
+    limit?: number;
+  },
+  scope?: AncillaryScope
+) {
+  const supabase = await createClient();
+  const canonicalMemberId = await resolveCanonicalMemberId(input.memberId, {
+    actionLabel: "listMemberAncillaryChargeLogs"
+  });
+
+  let query = supabase
+    .from("v_ancillary_charge_logs_detailed")
+    .select("id, member_id, member_name, service_date, category_name, amount_cents, quantity, notes, source_entity, source_entity_id, reconciliation_status, reconciled_by, reconciled_at, reconciliation_note, staff_name, late_pickup_time, created_at")
+    .eq("member_id", canonicalMemberId)
+    .order("service_date", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  if (scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && scope.staffUserId) {
+    query = query.eq("staff_user_id", scope.staffUserId);
+  }
+  if (typeof input.limit === "number" && input.limit > 0) {
+    query = query.limit(input.limit);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingSchemaObjectError(error)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "v_ancillary_charge_logs_detailed",
+          migration: "0018_runtime_mock_dependency_cleanup.sql"
+        })
+      );
+    }
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as MemberAncillaryChargeLogRow[];
 }
 
 export async function getAncillaryEntryCountLastDays(days = 30) {

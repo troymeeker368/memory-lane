@@ -1,5 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import {
+  CalendarCheck2,
+  CalendarClock,
+  CircleDollarSign,
+  CirclePause,
+  HandCoins,
+  LayoutDashboard,
+  Lock,
+  type LucideIcon
+} from "lucide-react";
 
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { MccLegalForm } from "@/components/forms/mcc-legal-form";
@@ -13,7 +23,8 @@ import {
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import {
-  MCC_TABS,
+  MCC_PRIMARY_TABS,
+  MCC_SECONDARY_TABS,
   TAB_LABELS,
   SectionHeading,
   boolLabel,
@@ -38,6 +49,7 @@ import {
   getMemberCommandCenterDetailSupabase,
   listMemberBillingSettingsSupabase
 } from "@/lib/services/member-command-center-read";
+import { getOperationsTodayDate, normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import type { PhysicianOrderMemberHistoryRow } from "@/lib/services/physician-order-model";
 import type { PofRequestSummary } from "@/lib/services/pof-types";
@@ -51,6 +63,15 @@ import { toEasternDate } from "@/lib/timezone";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 const DIET_TYPE_OPTIONS = ["Regular", "Diabetic", "Low Sodium", "Pureed", "Renal", "Heart Healthy", "Other"] as const;
+const PRIMARY_TAB_ICONS: Record<(typeof MCC_PRIMARY_TABS)[number], LucideIcon> = {
+  overview: LayoutDashboard,
+  attendance: CalendarCheck2,
+  "schedule-changes": CalendarClock,
+  pricing: CircleDollarSign,
+  "additional-charges": HandCoins,
+  holds: CirclePause,
+  "locker-assignments": Lock
+};
 
 async function renderTabSection(input: {
   tab: MccTab;
@@ -86,11 +107,14 @@ async function renderTabSection(input: {
   dietTextureDefault: string;
   allergiesUpdatedAt: string | null;
   allergiesUpdatedBy: string | null;
+  selectedOperationalDate: string;
+  profile: Awaited<ReturnType<typeof requireModuleAccess>>;
+  lockerOptions: string[];
 }) {
   if (!input.detail) return null;
 
   switch (input.tab) {
-    case "attendance-enrollment": {
+    case "attendance": {
       const { default: AttendanceTab } = await import("@/app/(portal)/operations/member-command-center/attendance-tab");
       return (
         <AttendanceTab
@@ -106,6 +130,64 @@ async function renderTabSection(input: {
           activeMemberBillingSetting={input.activeMemberBillingSetting}
           billingPayorName={input.billingPayorName}
           billingPayorStatus={input.billingPayorStatus}
+        />
+      );
+    }
+    case "schedule-changes": {
+      const { default: ScheduleChangesTab } = await import("@/app/(portal)/operations/member-command-center/schedule-changes-tab");
+      return (
+        <ScheduleChangesTab
+          memberId={input.detail.member.id}
+          memberName={input.detail.member.display_name}
+          canEdit={input.canEditAttendanceBilling}
+        />
+      );
+    }
+    case "pricing": {
+      const { default: PricingTab } = await import("@/app/(portal)/operations/member-command-center/pricing-tab");
+      return (
+        <PricingTab
+          canEditAttendanceBilling={input.canEditAttendanceBilling}
+          detail={input.detail}
+          scheduleUpdatedAt={input.scheduleUpdatedAt}
+          scheduleUpdatedBy={input.scheduleUpdatedBy}
+          activeMemberBillingSetting={input.activeMemberBillingSetting}
+          billingPayorName={input.billingPayorName}
+          billingPayorStatus={input.billingPayorStatus}
+        />
+      );
+    }
+    case "additional-charges": {
+      const { default: AdditionalChargesTab } = await import("@/app/(portal)/operations/member-command-center/additional-charges-tab");
+      return (
+        <AdditionalChargesTab
+          memberId={input.detail.member.id}
+          memberName={input.detail.member.display_name}
+          role={input.profile.role}
+          actorUserId={input.profile.id}
+        />
+      );
+    }
+    case "holds": {
+      const { default: HoldsTab } = await import("@/app/(portal)/operations/member-command-center/holds-tab");
+      return (
+        <HoldsTab
+          memberId={input.detail.member.id}
+          memberName={input.detail.member.display_name}
+          canEdit={input.canEdit}
+          selectedDate={input.selectedOperationalDate}
+        />
+      );
+    }
+    case "locker-assignments": {
+      const { default: LockerAssignmentsTab } = await import("@/app/(portal)/operations/member-command-center/locker-assignments-tab");
+      return (
+        <LockerAssignmentsTab
+          memberId={input.detail.member.id}
+          memberName={input.detail.member.display_name}
+          lockerNumber={input.detail.member.locker_number ?? null}
+          lockerOptions={input.lockerOptions}
+          canEdit={input.canEdit}
         />
       );
     }
@@ -183,6 +265,9 @@ export default async function MemberCommandCenterDetailPage({
   const { memberId } = await params;
   const query = await searchParams;
   const tab = resolveTab(firstString(query.tab));
+  const selectedOperationalDate = normalizeOperationalDateOnly(firstString(query.date) ?? getOperationsTodayDate());
+  const successMessage = firstString(query.success) ?? null;
+  const errorMessage = firstString(query.error) ?? null;
 
   const detail = await getMemberCommandCenterDetailSupabase(memberId);
   if (!detail) notFound();
@@ -201,8 +286,8 @@ export default async function MemberCommandCenterDetailPage({
         endDate: billingDate,
         includeAttendanceRecords: false
       }),
-      listMemberBillingSettingsSupabase(detail.member.id),
-      getAvailableLockerNumbersForMemberSupabase(detail.member.id),
+      listMemberBillingSettingsSupabase(detail.member.id, { canonicalInput: true }),
+      getAvailableLockerNumbersForMemberSupabase(detail.member.id, { canonicalInput: true }),
       getConfiguredBusNumbers()
     ]);
   const effectiveScheduleToday = resolveExpectedAttendanceFromSupabaseContext({
@@ -289,7 +374,9 @@ export default async function MemberCommandCenterDetailPage({
       import("@/lib/services/user-management")
     ]);
 
-    physicianOrders = await physicianOrdersModule.getPhysicianOrdersForMember(detail.member.id);
+    physicianOrders = await physicianOrdersModule.getPhysicianOrdersForMember(detail.member.id, {
+      canonicalInput: true
+    });
     [pofRequests, defaultNurseName] = await Promise.all([
       pofReadModule.listPofRequestsByPhysicianOrderIds(
         detail.member.id,
@@ -332,11 +419,24 @@ export default async function MemberCommandCenterDetailPage({
     dietTypeOtherDefault,
     dietTextureDefault,
     allergiesUpdatedAt,
-    allergiesUpdatedBy
+    allergiesUpdatedBy,
+    selectedOperationalDate,
+    profile,
+    lockerOptions
   });
 
   return (
     <div className="space-y-4">
+      {errorMessage ? (
+        <Card className="border-danger/40 bg-danger/5">
+          <p className="text-sm font-semibold text-danger">{errorMessage}</p>
+        </Card>
+      ) : null}
+      {successMessage ? (
+        <Card className="border-emerald-300 bg-emerald-50">
+          <p className="text-sm font-semibold text-emerald-800">{successMessage}</p>
+        </Card>
+      ) : null}
       {detail.profileNeedsBackfill || detail.scheduleNeedsBackfill ? (
         <Card className="border-warning/40 bg-warning/5">
           <CardTitle>Member Command Center Repair Needed</CardTitle>
@@ -465,8 +565,27 @@ export default async function MemberCommandCenterDetailPage({
       ) : null}
 
       <Card>
-        <div className="flex flex-wrap gap-2">
-          {MCC_TABS.map((item) => (
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">Operational Workspace</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {MCC_PRIMARY_TABS.map((item) => {
+            const Icon = PRIMARY_TAB_ICONS[item];
+            return (
+              <Link
+                key={item}
+                href={`/operations/member-command-center/${detail.member.id}?tab=${item}`}
+                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold ${
+                  item === tab ? "border-brand bg-brand text-white" : "border-border text-primary-text"
+                }`}
+              >
+                <Icon className="h-4 w-4" aria-hidden="true" />
+                <span>{TAB_LABELS[item]}</span>
+              </Link>
+            );
+          })}
+        </div>
+        <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">Member Record</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {MCC_SECONDARY_TABS.map((item) => (
             <Link
               key={item}
               href={`/operations/member-command-center/${detail.member.id}?tab=${item}`}
@@ -478,9 +597,9 @@ export default async function MemberCommandCenterDetailPage({
         </div>
       </Card>
 
-      {tab === "member-summary" ? (
-        <Card id="member-summary">
-          <SectionHeading title="Member Summary" lastUpdatedAt={profileUpdatedAt} lastUpdatedBy={profileUpdatedBy} />
+      {tab === "overview" ? (
+        <Card id="overview">
+          <SectionHeading title="Overview" lastUpdatedAt={profileUpdatedAt} lastUpdatedBy={profileUpdatedBy} />
           <div className="mt-3 grid gap-3 md:grid-cols-6">
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Age</p><p className="font-semibold">{detail.age ?? "-"}</p></div>
             <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Months Enrolled</p><p className="font-semibold">{monthsEnrolled ?? "-"}</p></div>
@@ -495,7 +614,6 @@ export default async function MemberCommandCenterDetailPage({
               key={`mcc-summary-${detail.member.id}-${profileUpdatedAt ?? "na"}`}
               memberId={detail.member.id}
               lockerNumber={detail.member.locker_number ?? ""}
-              lockerOptions={lockerOptions}
               billingPayorDisplay={billingPayorName}
               originalReferralSource={detail.profile.original_referral_source ?? ""}
               photoConsent={detail.profile.photo_consent}

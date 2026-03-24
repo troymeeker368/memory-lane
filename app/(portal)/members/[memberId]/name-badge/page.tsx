@@ -38,7 +38,7 @@ export default async function MemberNameBadgePage({
   const backHref =
     source === "mhp"
       ? `/health/member-health-profiles/${memberId}`
-      : `/operations/member-command-center/${memberId}?tab=member-summary`;
+      : `/operations/member-command-center/${memberId}?tab=overview`;
 
   let badge: Awaited<ReturnType<typeof getMemberNameBadgeDetail>> = null;
   let loadError = "";

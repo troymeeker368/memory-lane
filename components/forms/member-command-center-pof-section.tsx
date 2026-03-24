@@ -456,7 +456,7 @@ export function MemberCommandCenterPofSection({
                           </button>
                         ) : null}
                         {request?.memberFileId ? (
-                          <Link href={`/operations/member-command-center/${memberId}?tab=member-summary#files-documents`} className="font-semibold text-brand">
+                          <Link href={`/operations/member-command-center/${memberId}?tab=overview#files-documents`} className="font-semibold text-brand">
                             View in Member Files
                           </Link>
                         ) : null}

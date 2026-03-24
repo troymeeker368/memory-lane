@@ -22,14 +22,10 @@ export const NAV_ITEMS: AppNavItem[] = [
   { label: "Ancillary Charges", href: "/ancillary", group: "Documentation", module: "ancillary", icon: "ReceiptText" },
 
   { label: "Operations Home", href: "/operations", group: "Operations", module: "operations", icon: "LayoutDashboard" },
-  { label: "Attendance", href: "/operations/attendance", group: "Operations", module: "operations", icon: "CalendarCheck2" },
+  { label: "Attendance Board", href: "/operations/attendance", group: "Operations", module: "operations", icon: "CalendarCheck2" },
   { label: "Member Command Center", href: "/operations/member-command-center", group: "Operations", module: "operations", icon: "MonitorCog" },
-  { label: "Schedule Changes", href: "/operations/schedule-changes", group: "Operations", module: "operations", icon: "CalendarClock" },
-  { label: "Pricing", href: "/operations/pricing", group: "Operations", module: "operations", icon: "CircleDollarSign", roles: ["admin", "director"] },
-  { label: "Additional Charges", href: "/operations/additional-charges", group: "Operations", module: "operations", icon: "HandCoins" },
-  { label: "Holds", href: "/operations/holds", group: "Operations", module: "operations", icon: "CirclePause" },
+  { label: "Pricing Defaults", href: "/operations/pricing", group: "Operations", module: "operations", icon: "CircleDollarSign", roles: ["admin", "director"] },
   { label: "Billing", href: "/operations/payor", group: "Operations", module: "operations", icon: "CreditCard", roles: ["admin", "manager", "director", "coordinator"] },
-  { label: "Locker Assignments", href: "/operations/locker-assignments", group: "Operations", module: "operations", icon: "Lock" },
   { label: "Transportation Station", href: "/operations/transportation-station", group: "Operations", module: "operations", icon: "BusFront" },
 
   { label: "Reports", href: "/reports", group: "Reports", module: "reports", icon: "BarChart3" },

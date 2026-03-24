@@ -43,6 +43,21 @@ function revalidateLockerViews(memberId?: string | null) {
   }
 }
 
+function resolveReturnTo(formData: FormData) {
+  const returnTo = asString(formData, "returnTo");
+  return returnTo.startsWith("/") ? returnTo : "/operations/locker-assignments";
+}
+
+function redirectToTarget(formData: FormData, params: Record<string, string>) {
+  const target = new URL(resolveReturnTo(formData), "http://memorylane.local");
+  const qs = target.searchParams;
+  Object.entries(params).forEach(([key, value]) => {
+    qs.set(key, value);
+  });
+  const search = qs.toString();
+  redirect(search ? `${target.pathname}?${search}` : target.pathname);
+}
+
 function redirectParamsFromForm(formData: FormData) {
   const params = new URLSearchParams();
   const query = asString(formData, "q");
@@ -66,13 +81,8 @@ export async function assignLockerAction(formData: FormData) {
     await requireLockerEditor();
     const memberId = asString(formData, "memberId");
     const lockerNumber = normalizeLockerInput(asString(formData, "lockerNumber"));
-    const redirectWith = (params: Record<string, string>) => {
-      const qs = redirectParamsFromForm(formData);
-      Object.entries(params).forEach(([key, value]) => {
-        qs.set(key, value);
-      });
-      redirect(`/operations/locker-assignments?${qs.toString()}`);
-    };
+    const redirectWith = (params: Record<string, string>) =>
+      redirectToTarget(formData, Object.fromEntries([...redirectParamsFromForm(formData).entries(), ...Object.entries(params)]));
     if (!memberId) {
       redirectWith({ error: "Member is required." });
       return;
@@ -85,7 +95,8 @@ export async function assignLockerAction(formData: FormData) {
     const assigned = await assignLockerToMemberSupabase({
       memberId,
       lockerNumber,
-      actionLabel: "assignLockerAction"
+      actionLabel: "assignLockerAction",
+      canonicalInput: true
     });
 
     revalidateLockerViews(assigned.memberId);
@@ -98,15 +109,13 @@ export async function assignLockerAction(formData: FormData) {
     if (isRedirectError(error)) {
       throw error;
     }
-    const qs = redirectParamsFromForm(formData);
     const message = error instanceof Error ? error.message : "Unable to save locker assignment.";
-    qs.set("error", message);
     console.error("[Locker] assignLockerAction failed", {
       message,
       memberId: asString(formData, "memberId"),
       lockerNumber: asString(formData, "lockerNumber")
     });
-    redirect(`/operations/locker-assignments?${qs.toString()}`);
+    redirectToTarget(formData, Object.fromEntries([...redirectParamsFromForm(formData).entries(), ["error", message]]));
   }
 }
 
@@ -114,13 +123,8 @@ export async function clearLockerAction(formData: FormData) {
   try {
     await requireLockerEditor();
     const memberId = asString(formData, "memberId");
-    const redirectWith = (params: Record<string, string>) => {
-      const qs = redirectParamsFromForm(formData);
-      Object.entries(params).forEach(([key, value]) => {
-        qs.set(key, value);
-      });
-      redirect(`/operations/locker-assignments?${qs.toString()}`);
-    };
+    const redirectWith = (params: Record<string, string>) =>
+      redirectToTarget(formData, Object.fromEntries([...redirectParamsFromForm(formData).entries(), ...Object.entries(params)]));
     if (!memberId) {
       redirectWith({ error: "Member is required." });
       return;
@@ -128,7 +132,8 @@ export async function clearLockerAction(formData: FormData) {
 
     const cleared = await clearLockerForMemberSupabase({
       memberId,
-      actionLabel: "clearLockerAction"
+      actionLabel: "clearLockerAction",
+      canonicalInput: true
     });
 
     revalidateLockerViews(cleared.memberId);
@@ -137,13 +142,11 @@ export async function clearLockerAction(formData: FormData) {
     if (isRedirectError(error)) {
       throw error;
     }
-    const qs = redirectParamsFromForm(formData);
     const message = error instanceof Error ? error.message : "Unable to clear locker.";
-    qs.set("error", message);
     console.error("[Locker] clearLockerAction failed", {
       message,
       memberId: asString(formData, "memberId")
     });
-    redirect(`/operations/locker-assignments?${qs.toString()}`);
+    redirectToTarget(formData, Object.fromEntries([...redirectParamsFromForm(formData).entries(), ["error", message]]));
   }
 }

@@ -146,7 +146,7 @@ export function PofEsignWorkflowCard({
   const canVoid = Boolean(physicianOrderId) && Boolean(currentRequest && canVoidStatus(currentRequest.status));
   const canDownloadSigned = Boolean(currentRequest && currentRequest.status === "signed");
   const viewInFilesHref = currentRequest?.memberFileId
-    ? `/operations/member-command-center/${memberId}?tab=member-summary#files-documents`
+    ? `/operations/member-command-center/${memberId}?tab=overview#files-documents`
     : null;
 
   function validateSendFields() {

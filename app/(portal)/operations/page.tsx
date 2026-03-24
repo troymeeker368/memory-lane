@@ -6,14 +6,10 @@ import { normalizeRoleKey } from "@/lib/permissions/core";
 import type { AppRole } from "@/types/app";
 
 const SECTIONS = [
-  { href: "/operations/attendance", label: "Attendance", description: "Operational attendance scheduling and enrollment cadence." },
-  { href: "/operations/member-command-center", label: "Member Command Center", description: "Coordinator-focused member master record and linked operations." },
-  { href: "/operations/schedule-changes", label: "Schedule Changes", description: "Create temporary or permanent attendance schedule exceptions without destroying recurring history." },
-  { href: "/operations/pricing", label: "Pricing", description: "Canonical enrollment pricing defaults for Enrollment Packet workflows.", roles: ["admin", "director"] as AppRole[] },
-  { href: "/operations/additional-charges", label: "Additional Charges", description: "Quick bridge into ancillary/additional charges oversight." },
-  { href: "/operations/holds", label: "Holds", description: "Date-aware hold management that feeds attendance, census, and transportation manifests." },
+  { href: "/operations/member-command-center", label: "Member Command Center", description: "Canonical member workspace for overview, attendance, schedule changes, pricing, charges, holds, and locker assignments." },
+  { href: "/operations/attendance", label: "Attendance Board", description: "Center-wide daily and weekly attendance, census, and track-sheet operations." },
+  { href: "/operations/pricing", label: "Pricing Defaults", description: "Canonical center-wide enrollment pricing defaults for Enrollment Packet workflows.", roles: ["admin", "director"] as AppRole[] },
   { href: "/operations/payor", label: "Billing", description: "Hybrid billing module for agreements, schedule-based prebilling, arrears, batch review, and exports." },
-  { href: "/operations/locker-assignments", label: "Locker Assignments", description: "Manage controlled locker resources and member assignments with conflict checks." },
   { href: "/operations/transportation-station", label: "Transportation Station", description: "Generate daily AM/PM manifests grouped by bus with one-day add/exclude overrides." }
 ] as const;
 
@@ -29,7 +25,7 @@ export default async function OperationsHomePage() {
     <div className="space-y-4">
       <Card>
         <CardTitle>Operations</CardTitle>
-        <p className="mt-1 text-sm text-muted">Xcite-style operational menu with Member Command Center as the member master hub.</p>
+        <p className="mt-1 text-sm text-muted">Member Command Center is the canonical member operations hub. Center-wide boards stay here only when they serve cross-member workflows.</p>
       </Card>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

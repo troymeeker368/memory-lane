@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
 import { runDocumentationCreateAction } from "@/app/documentation-create-actions";
@@ -14,6 +15,7 @@ export function AncillaryChargeForm({
   members: SelectMember[];
   categories: SelectCategory[];
 }) {
+  const router = useRouter();
   const isLatePickupCategory = (categoryName?: string | null) => {
     const normalized = (categoryName ?? "").toLowerCase();
     return normalized.includes("late pick-up") || normalized.includes("late pickup");
@@ -118,6 +120,9 @@ export function AncillaryChargeForm({
               kind: "createAncillaryCharge",
               payload: form
             });
+            if (!res.error) {
+              router.refresh();
+            }
             setStatus(res.error ? `Error: ${res.error}` : "Ancillary charge saved.");
           })
         }

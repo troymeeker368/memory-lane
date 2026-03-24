@@ -291,7 +291,9 @@ export async function getMemberDetail(
   const carePlans =
     isStaffViewer || !canViewCarePlans
       ? null
-      : await (await import("@/lib/services/care-plans-read")).getMemberCarePlanSnapshot(canonicalMemberId);
+      : await (await import("@/lib/services/care-plans-read")).getMemberCarePlanSnapshot(canonicalMemberId, {
+          canonicalInput: true
+        });
 
   return {
     member: member as MemberDetailMember,

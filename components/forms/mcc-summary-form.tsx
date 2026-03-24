@@ -11,14 +11,12 @@ import { emitClientMutationEvent } from "@/lib/mutations/client-events";
 export function MccSummaryForm({
   memberId,
   lockerNumber,
-  lockerOptions,
   billingPayorDisplay,
   originalReferralSource,
   photoConsent
 }: {
   memberId: string;
   lockerNumber: string;
-  lockerOptions: string[];
   billingPayorDisplay: string;
   originalReferralSource: string;
   photoConsent: boolean | null;
@@ -57,16 +55,11 @@ export function MccSummaryForm({
   return (
     <form onSubmit={onSubmit} className="mt-3 grid gap-2 md:grid-cols-3">
       <input type="hidden" name="memberId" value={memberId} />
+      <input type="hidden" name="lockerNumber" value={lockerNumber} />
       <label className="space-y-1 text-sm">
         <span className="text-xs font-semibold text-muted">Locker #</span>
-        <select name="lockerNumber" defaultValue={lockerNumber} className="h-10 w-full rounded-lg border border-border px-3">
-          <option value="">Unassigned</option>
-          {lockerOptions.map((locker) => (
-            <option key={locker} value={locker}>
-              {locker}
-            </option>
-          ))}
-        </select>
+        <input value={lockerNumber || "Unassigned"} readOnly className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-muted" />
+        <p className="text-[11px] text-muted">Manage locker assignment from the MCC Locker Assignments tab.</p>
       </label>
       <label className="space-y-1 text-sm">
         <span className="text-xs font-semibold text-muted">Billing Payor Contact</span>

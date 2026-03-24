@@ -29,8 +29,21 @@ import type {
   PhysicianOrderStatus
 } from "@/lib/services/physician-order-model";
 
-async function resolvePhysicianOrderMemberId(rawMemberId: string, actionLabel: string) {
-  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
+type ResolvePhysicianOrderMemberOptions = {
+  canonicalInput?: boolean;
+  serviceRole?: boolean;
+};
+
+async function resolvePhysicianOrderMemberId(
+  rawMemberId: string,
+  actionLabel: string,
+  options?: ResolvePhysicianOrderMemberOptions
+) {
+  if (options?.canonicalInput) return rawMemberId;
+  return resolveCanonicalMemberId(rawMemberId, {
+    actionLabel,
+    serviceRole: options?.serviceRole
+  });
 }
 
 type PhysicianOrderIndexSelectRow = {
@@ -67,15 +80,20 @@ export async function getPhysicianOrders(filters?: {
   memberId?: string | null;
   status?: PhysicianOrderStatus | "all";
   q?: string;
+  canonicalInput?: boolean;
+  serviceRole?: boolean;
 }): Promise<PhysicianOrderIndexRow[]> {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: Boolean(filters?.serviceRole) });
   let query = supabase
     .from("physician_orders")
     .select(PHYSICIAN_ORDER_INDEX_SELECT)
     .order("updated_at", { ascending: false });
 
   if (filters?.memberId) {
-    const canonicalMemberId = await resolvePhysicianOrderMemberId(filters.memberId, "getPhysicianOrders");
+    const canonicalMemberId = await resolvePhysicianOrderMemberId(filters.memberId, "getPhysicianOrders", {
+      canonicalInput: filters.canonicalInput,
+      serviceRole: filters.serviceRole
+    });
     query = query.eq("member_id", canonicalMemberId);
   }
   if (filters?.status && filters.status !== "all") query = query.eq("status", fromStatus(filters.status));
@@ -138,9 +156,12 @@ export async function getPhysicianOrders(filters?: {
     });
 }
 
-export async function getPhysicianOrdersForMember(memberId: string): Promise<PhysicianOrderMemberHistoryRow[]> {
-  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "getPhysicianOrdersForMember");
-  const supabase = await createClient();
+export async function getPhysicianOrdersForMember(
+  memberId: string,
+  options?: ResolvePhysicianOrderMemberOptions
+): Promise<PhysicianOrderMemberHistoryRow[]> {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "getPhysicianOrdersForMember", options);
+  const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
   const { data, error } = await supabase
     .from("physician_orders")
     .select(PHYSICIAN_ORDER_MEMBER_HISTORY_SELECT)
@@ -190,9 +211,9 @@ export async function getPhysicianOrdersForMember(memberId: string): Promise<Phy
   });
 }
 
-export async function getActivePhysicianOrderForMember(memberId: string) {
-  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "getActivePhysicianOrderForMember");
-  const supabase = await createClient();
+export async function getActivePhysicianOrderForMember(memberId: string, options?: ResolvePhysicianOrderMemberOptions) {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "getActivePhysicianOrderForMember", options);
+  const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
   const { data, error } = await supabase
     .from("physician_orders")
     .select(PHYSICIAN_ORDER_WITH_MEMBER_SELECT)
@@ -281,10 +302,14 @@ export async function getPhysicianOrderClinicalSyncState(
   return form?.clinicalSyncStatus ?? "not_signed";
 }
 
-export async function getMemberHealthProfile(memberId: string) {
-  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "getMemberHealthProfile");
-  const supabase = await createClient();
-  const { data, error } = await supabase.from("member_health_profiles").select("*").eq("member_id", canonicalMemberId).maybeSingle();
+export async function getMemberHealthProfile(memberId: string, options?: ResolvePhysicianOrderMemberOptions) {
+  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "getMemberHealthProfile", options);
+  const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
+  const { data, error } = await supabase
+    .from("member_health_profiles")
+    .select("*")
+    .eq("member_id", canonicalMemberId)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   return data;
 }

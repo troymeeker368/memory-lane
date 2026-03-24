@@ -246,13 +246,16 @@ export default async function DashboardPage() {
                   <ul className="space-y-1 text-sm">
                     {upcomingHolds.map((hold) => (
                       <li key={`hold-upcoming-${hold.id}`}>
-                        <span className="font-semibold">{memberNameById.get(hold.member_id) ?? "Member"}</span> - starts {formatDate(hold.start_date)}
+                        <Link href={`/operations/member-command-center/${hold.member_id}?tab=holds`} className="font-semibold text-brand">
+                          {memberNameById.get(hold.member_id) ?? "Member"}
+                        </Link>{" "}
+                        - starts {formatDate(hold.start_date)}
                       </li>
                     ))}
                   </ul>
                 )}
-                <Link href="/operations/holds" className="mt-2 inline-block text-sm font-semibold text-brand">
-                  Open Holds
+                <Link href="/operations/member-command-center" className="mt-2 inline-block text-sm font-semibold text-brand">
+                  Open Member Command Center
                 </Link>
               </CardBody>
             </Card>
@@ -266,7 +269,10 @@ export default async function DashboardPage() {
                   <ul className="space-y-1 text-sm">
                     {expiringHolds.map((hold) => (
                       <li key={`hold-expiring-${hold.id}`}>
-                        <span className="font-semibold">{memberNameById.get(hold.member_id) ?? "Member"}</span> - ends {formatDate(hold.end_date as string)}
+                        <Link href={`/operations/member-command-center/${hold.member_id}?tab=holds`} className="font-semibold text-brand">
+                          {memberNameById.get(hold.member_id) ?? "Member"}
+                        </Link>{" "}
+                        - ends {formatDate(hold.end_date as string)}
                       </li>
                     ))}
                   </ul>
@@ -293,9 +299,9 @@ export default async function DashboardPage() {
           <Card>
             <CardTitle>Admin Quick Links</CardTitle>
             <CardBody className="flex flex-wrap gap-3">
-              <Link href="/operations/attendance" className="text-sm font-semibold text-brand">Attendance</Link>
+              <Link href="/operations/attendance" className="text-sm font-semibold text-brand">Attendance Board</Link>
+              <Link href="/operations/member-command-center" className="text-sm font-semibold text-brand">Member Command Center</Link>
               <Link href="/operations/transportation-station" className="text-sm font-semibold text-brand">Transportation Station</Link>
-              <Link href="/operations/holds" className="text-sm font-semibold text-brand">Holds</Link>
               <Link href="/reports/member-summary" className="text-sm font-semibold text-brand">Documentation Summary</Link>
               <Link href="/time-hr/user-management" className="text-sm font-semibold text-brand">User Management</Link>
               <Link href="/admin-reports/audit-trail" className="text-sm font-semibold text-brand">Audit Trail</Link>

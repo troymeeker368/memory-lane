@@ -134,6 +134,8 @@ export async function createAncillaryChargeAction(
   await insertAudit("create_log", "ancillary_charge", created.ancillaryChargeId, payload.data);
   revalidatePath("/ancillary");
   revalidatePath("/documentation/ancillary");
+  revalidatePath("/operations/member-command-center");
+  revalidatePath(`/operations/member-command-center/${payload.data.memberId}`);
   revalidatePath("/reports/monthly-ancillary");
   return { ok: true, ancillaryChargeId: created.ancillaryChargeId };
 }

@@ -4,7 +4,12 @@ import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { toEasternISO } from "@/lib/timezone";
 
 
-async function resolveHoldMemberId(rawMemberId: string, actionLabel: string) {
+type ResolveHoldMemberOptions = {
+  canonicalInput?: boolean;
+};
+
+async function resolveHoldMemberId(rawMemberId: string, actionLabel: string, options?: ResolveHoldMemberOptions) {
+  if (options?.canonicalInput) return rawMemberId;
   return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
@@ -26,12 +31,19 @@ export interface MemberHoldRow {
   ended_by_name: string | null;
 }
 
-export async function listMemberHolds() {
+export async function listMemberHolds(input?: { memberId?: string | null; canonicalInput?: boolean }) {
   const supabase = await createClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("member_holds")
     .select("id, member_id, start_date, end_date, status, reason, reason_other, notes, created_by_user_id, created_by_name, created_at, updated_at, ended_at, ended_by_user_id, ended_by_name")
     .order("start_date", { ascending: false });
+  if (input?.memberId) {
+    const canonicalMemberId = await resolveHoldMemberId(input.memberId, "listMemberHolds", {
+      canonicalInput: input.canonicalInput
+    });
+    query = query.eq("member_id", canonicalMemberId);
+  }
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return (data ?? []) as MemberHoldRow[];
 }
@@ -45,8 +57,11 @@ export async function createMemberHoldSupabase(input: {
   notes?: string | null;
   actorUserId: string;
   actorName: string;
+  canonicalInput?: boolean;
 }) {
-  const canonicalMemberId = await resolveHoldMemberId(input.memberId, "createMemberHoldSupabase");
+  const canonicalMemberId = await resolveHoldMemberId(input.memberId, "createMemberHoldSupabase", {
+    canonicalInput: input.canonicalInput
+  });
   const supabase = await createClient();
   const now = toEasternISO();
   const { data, error } = await supabase

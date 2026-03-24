@@ -1,23 +1,21 @@
-import Link from "next/link";
+import { redirect } from "next/navigation";
 
-import { Card, CardTitle } from "@/components/ui/card";
-import { requireModuleAccess } from "@/lib/auth";
+function firstString(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
 
-export default async function OperationsAdditionalChargesPage() {
-  const profile = await requireModuleAccess("operations");
+export default async function OperationsAdditionalChargesPage({
+  searchParams
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const memberId = firstString(params.memberId);
 
-  return (
-    <Card>
-      <CardTitle>Additional Charges</CardTitle>
-      <p className="mt-1 text-sm text-muted">Charge entry and reconciliation continue in Ancillary Charges while Operations structure is finalized.</p>
-      <div className="mt-3 flex flex-wrap items-center gap-4">
-        <Link href="/ancillary" className="font-semibold text-brand">Open Ancillary Charges</Link>
-        {profile.role === "admin" ? (
-          <Link href="/operations/additional-charges/manage-ancillary-pricing" className="font-semibold text-brand">
-            Manage Ancillary Pricing
-          </Link>
-        ) : null}
-      </div>
-    </Card>
-  );
+  if (memberId) {
+    redirect(`/operations/member-command-center/${memberId}?tab=additional-charges`);
+  }
+
+  redirect("/operations/member-command-center");
 }

@@ -82,9 +82,9 @@ export default async function OperationsPricingPage({
         <div className="flex flex-wrap items-center gap-2">
           <BackArrowButton fallbackHref="/operations" forceFallback ariaLabel="Back to operations" />
           <div>
-            <CardTitle>Pricing</CardTitle>
+            <CardTitle>Pricing Defaults</CardTitle>
             <p className="mt-1 text-sm text-muted">
-              Canonical enrollment pricing defaults used by Enrollment Packet send workflow.
+              Center-wide enrollment pricing defaults used by Enrollment Packet send workflow.
             </p>
           </div>
         </div>

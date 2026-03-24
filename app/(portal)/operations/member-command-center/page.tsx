@@ -43,10 +43,10 @@ export default async function MemberCommandCenterIndexPage({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <CardTitle>Member Command Center</CardTitle>
-            <p className="mt-1 text-sm text-muted">Center Coordinator member master record hub for operations, enrollment, contacts, legal, diet/allergies, and files.</p>
+            <p className="mt-1 text-sm text-muted">Canonical member workspace for overview, attendance, schedule changes, pricing, charges, holds, locker assignments, and supporting records.</p>
           </div>
           <Link href="/operations/member-command-center/attendance-billing" className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-brand">
-            Attendance/Billing Settings
+            Center Attendance/Pricing Settings
           </Link>
         </div>
       </Card>

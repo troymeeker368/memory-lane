@@ -44,8 +44,8 @@ export default function MemberCommandCenterAttendanceTab({
   billingPayorStatus: string;
 }) {
   return (
-    <Card id="attendance-enrollment">
-      <SectionHeading title="Attendance / Enrollment" lastUpdatedAt={scheduleUpdatedAt} lastUpdatedBy={scheduleUpdatedBy} />
+    <Card id="attendance">
+      <SectionHeading title="Attendance" lastUpdatedAt={scheduleUpdatedAt} lastUpdatedBy={scheduleUpdatedBy} />
       <div className="mt-3 grid gap-3 md:grid-cols-5">
         <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Enrollment Date</p><p className="font-semibold">{formatOptionalDate(detail.schedule?.enrollment_date ?? detail.member.enrollment_date)}</p></div>
         <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Months Enrolled</p><p className="font-semibold">{monthsEnrolled ?? "-"}</p></div>
@@ -62,6 +62,7 @@ export default function MemberCommandCenterAttendanceTab({
         <MccAttendanceForm
           key={`mcc-attendance-${detail.member.id}-${scheduleUpdatedAt ?? "na"}`}
           memberId={detail.member.id}
+          mode="attendance"
           enrollmentDate={detail.schedule.enrollment_date ?? ""}
           makeUpDaysAvailable={detail.schedule.make_up_days_available}
           attendanceNotes={detail.schedule.attendance_notes}

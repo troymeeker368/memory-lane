@@ -133,7 +133,12 @@ export function formatBillingPayorAddress(payor: BillingPayorContact) {
     .filter((value): value is string => Boolean(value));
 }
 
-async function resolveBillingMemberId(rawMemberId: string, actionLabel: string) {
+type ResolveBillingMemberOptions = {
+  canonicalInput?: boolean;
+};
+
+async function resolveBillingMemberId(rawMemberId: string, actionLabel: string, options?: ResolveBillingMemberOptions) {
+  if (options?.canonicalInput) return rawMemberId;
   return resolveCanonicalMemberId(rawMemberId, {
     actionLabel,
     serviceRole: true
@@ -165,13 +170,24 @@ async function recordInvalidMultiplePayorAlert(memberId: string, contactIds: str
   });
 }
 
-export async function listBillingPayorContactsForMembers(memberIds: string[]) {
-  const canonicalMemberIds = Array.from(new Set((await Promise.all(
-    memberIds
-      .map((memberId) => clean(memberId))
-      .filter((memberId): memberId is string => Boolean(memberId))
-      .map((memberId) => resolveBillingMemberId(memberId, "listBillingPayorContactsForMembers"))
-  )).filter(Boolean)));
+export async function listBillingPayorContactsForMembers(
+  memberIds: string[],
+  options?: ResolveBillingMemberOptions
+) {
+  const canonicalMemberIds = options?.canonicalInput
+    ? Array.from(new Set(memberIds.map((memberId) => clean(memberId)).filter((memberId): memberId is string => Boolean(memberId))))
+    : Array.from(
+        new Set(
+          (
+            await Promise.all(
+              memberIds
+                .map((memberId) => clean(memberId))
+                .filter((memberId): memberId is string => Boolean(memberId))
+                .map((memberId) => resolveBillingMemberId(memberId, "listBillingPayorContactsForMembers"))
+            )
+          ).filter(Boolean)
+        )
+      );
   const results = new Map<string, BillingPayorContact>();
   if (canonicalMemberIds.length === 0) return results;
 
@@ -206,9 +222,16 @@ export async function listBillingPayorContactsForMembers(memberIds: string[]) {
   return results;
 }
 
-export async function getBillingPayorContact(memberId: string, options?: { logMissing?: boolean; source?: string }) {
-  const canonicalMemberId = await resolveBillingMemberId(memberId, "getBillingPayorContact");
-  const payor = (await listBillingPayorContactsForMembers([canonicalMemberId])).get(canonicalMemberId) ?? buildMissingBillingPayorContact(canonicalMemberId);
+export async function getBillingPayorContact(
+  memberId: string,
+  options?: { logMissing?: boolean; source?: string; canonicalInput?: boolean }
+) {
+  const canonicalMemberId = await resolveBillingMemberId(memberId, "getBillingPayorContact", {
+    canonicalInput: options?.canonicalInput
+  });
+  const payor =
+    (await listBillingPayorContactsForMembers([canonicalMemberId], { canonicalInput: true })).get(canonicalMemberId) ??
+    buildMissingBillingPayorContact(canonicalMemberId);
   if (payor.status === "missing" && options?.logMissing) {
     await recordWorkflowEvent({
       eventType: "billing_payor_missing",
@@ -286,6 +309,7 @@ export async function setBillingPayorContact(input: {
 
   return getBillingPayorContact(canonicalMemberId, {
     logMissing: !contactId,
-    source: clean(input.source) ?? "setBillingPayorContact"
+    source: clean(input.source) ?? "setBillingPayorContact",
+    canonicalInput: true
   });
 }

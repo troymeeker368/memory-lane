@@ -28,7 +28,8 @@ export function MccAttendanceForm({
   tuesday,
   wednesday,
   thursday,
-  friday
+  friday,
+  mode = "combined"
 }: {
   memberId: string;
   enrollmentDate: string;
@@ -50,6 +51,7 @@ export function MccAttendanceForm({
   wednesday: boolean;
   thursday: boolean;
   friday: boolean;
+  mode?: "combined" | "attendance" | "pricing";
 }) {
   const [status, setStatus] = usePropSyncedStatus([memberId, monday, tuesday, wednesday, thursday, friday]);
   const { isSaving, run } = useScopedMutation();
@@ -63,16 +65,30 @@ export function MccAttendanceForm({
     () => [isMonday, isTuesday, isWednesday, isThursday, isFriday].filter(Boolean).length,
     [isMonday, isTuesday, isWednesday, isThursday, isFriday]
   );
+  const showAttendanceFields = mode !== "pricing";
+  const showBillingFields = mode !== "attendance";
+  const saveSuccessMessage =
+    mode === "attendance"
+      ? "Attendance settings saved."
+      : mode === "pricing"
+        ? "Pricing settings saved."
+        : "Attendance and billing settings saved.";
+  const saveErrorMessage =
+    mode === "attendance"
+      ? "Unable to save attendance."
+      : mode === "pricing"
+        ? "Unable to save pricing settings."
+        : "Unable to save attendance.";
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setStatus("");
     const payload = new FormData(event.currentTarget);
     void run(() => saveMemberCommandCenterAttendanceAction(payload), {
-      successMessage: "Attendance and billing settings saved.",
-      errorMessage: "Unable to save attendance.",
+      successMessage: saveSuccessMessage,
+      errorMessage: saveErrorMessage,
       onSuccess: () => {
-        setStatus("Attendance and billing settings saved.");
+        setStatus(saveSuccessMessage);
         emitClientMutationEvent("mcc:header-update", {
           enrollment: String(payload.get("enrollmentDate") ?? "")
         });
@@ -86,157 +102,196 @@ export function MccAttendanceForm({
   return (
     <form onSubmit={onSubmit} className="mt-3 space-y-3">
       <input type="hidden" name="memberId" value={memberId} />
-      <div className="grid gap-2 md:grid-cols-3">
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Enrollment Date</span>
-          <input name="enrollmentDate" type="date" defaultValue={enrollmentDate} className="h-10 w-full rounded-lg border border-border px-3" />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Make-up Days Available</span>
-          <input
-            name="makeUpDaysAvailable"
-            type="number"
-            min={0}
-            defaultValue={makeUpDaysAvailable ?? 0}
-            className="h-10 w-full rounded-lg border border-border px-3"
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-xs font-semibold text-muted">Attendance Days Per Week</span>
-          <input
-            name="attendanceDaysPerWeek"
-            value={String(daysPerWeek)}
-            readOnly
-            className="h-10 w-full rounded-lg border border-border bg-muted px-3"
-          />
-        </label>
-      </div>
+      {!showAttendanceFields ? (
+        <>
+          <input type="hidden" name="enrollmentDate" value={enrollmentDate} />
+          <input type="hidden" name="makeUpDaysAvailable" value={String(makeUpDaysAvailable ?? 0)} />
+          <input type="hidden" name="monday" value={isMonday ? "true" : "false"} />
+          <input type="hidden" name="tuesday" value={isTuesday ? "true" : "false"} />
+          <input type="hidden" name="wednesday" value={isWednesday ? "true" : "false"} />
+          <input type="hidden" name="thursday" value={isThursday ? "true" : "false"} />
+          <input type="hidden" name="friday" value={isFriday ? "true" : "false"} />
+          <input type="hidden" name="attendanceNotes" value={attendanceNotes ?? ""} />
+        </>
+      ) : (
+        <>
+          <div className="grid gap-2 md:grid-cols-3">
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-semibold text-muted">Enrollment Date</span>
+              <input name="enrollmentDate" type="date" defaultValue={enrollmentDate} className="h-10 w-full rounded-lg border border-border px-3" />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-semibold text-muted">Make-up Days Available</span>
+              <input
+                name="makeUpDaysAvailable"
+                type="number"
+                min={0}
+                defaultValue={makeUpDaysAvailable ?? 0}
+                className="h-10 w-full rounded-lg border border-border px-3"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-semibold text-muted">Attendance Days Per Week</span>
+              <input
+                name="attendanceDaysPerWeek"
+                value={String(daysPerWeek)}
+                readOnly
+                className="h-10 w-full rounded-lg border border-border bg-muted px-3"
+              />
+            </label>
+          </div>
 
-      <div className="grid gap-2 md:grid-cols-5 text-sm">
-        <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
-          <input type="checkbox" name="monday" checked={isMonday} onChange={(event) => setIsMonday(event.currentTarget.checked)} disabled={isSaving} /> Monday
-        </label>
-        <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
-          <input type="checkbox" name="tuesday" checked={isTuesday} onChange={(event) => setIsTuesday(event.currentTarget.checked)} disabled={isSaving} /> Tuesday
-        </label>
-        <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
-          <input type="checkbox" name="wednesday" checked={isWednesday} onChange={(event) => setIsWednesday(event.currentTarget.checked)} disabled={isSaving} /> Wednesday
-        </label>
-        <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
-          <input type="checkbox" name="thursday" checked={isThursday} onChange={(event) => setIsThursday(event.currentTarget.checked)} disabled={isSaving} /> Thursday
-        </label>
-        <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
-          <input type="checkbox" name="friday" checked={isFriday} onChange={(event) => setIsFriday(event.currentTarget.checked)} disabled={isSaving} /> Friday
-        </label>
-      </div>
+          <div className="grid gap-2 text-sm md:grid-cols-5">
+            <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
+              <input type="checkbox" name="monday" checked={isMonday} onChange={(event) => setIsMonday(event.currentTarget.checked)} disabled={isSaving} /> Monday
+            </label>
+            <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
+              <input type="checkbox" name="tuesday" checked={isTuesday} onChange={(event) => setIsTuesday(event.currentTarget.checked)} disabled={isSaving} /> Tuesday
+            </label>
+            <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
+              <input type="checkbox" name="wednesday" checked={isWednesday} onChange={(event) => setIsWednesday(event.currentTarget.checked)} disabled={isSaving} /> Wednesday
+            </label>
+            <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
+              <input type="checkbox" name="thursday" checked={isThursday} onChange={(event) => setIsThursday(event.currentTarget.checked)} disabled={isSaving} /> Thursday
+            </label>
+            <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
+              <input type="checkbox" name="friday" checked={isFriday} onChange={(event) => setIsFriday(event.currentTarget.checked)} disabled={isSaving} /> Friday
+            </label>
+          </div>
 
-      <div className="rounded-lg border border-border bg-muted/30 p-3">
-        <p className="text-xs font-semibold text-muted">
-          Billing driver settings: these values are used by membership billing, monthly billing, extra day billing, and prorated custom invoices.
-        </p>
-        <div className="mt-2 grid gap-2 md:grid-cols-3">
           <label className="space-y-1 text-sm">
-            <span className="text-xs font-semibold text-muted">Billing Payor Contact</span>
-            <input value={billingPayorName} readOnly className="h-10 w-full rounded-lg border border-border bg-white px-3 text-muted" />
-            <p className="text-[11px] text-muted">{billingPayorStatus}</p>
+            <span className="text-xs font-semibold text-muted">Attendance Notes</span>
+            <textarea name="attendanceNotes" defaultValue={attendanceNotes ?? ""} className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" disabled={isSaving} />
           </label>
-          <label className="space-y-1 text-sm">
-            <span className="text-xs font-semibold text-muted">Billing Mode</span>
-            <select
-              name="billingMode"
-              defaultValue={billingMode ?? "Membership"}
-              className="h-10 w-full rounded-lg border border-border bg-white px-3"
-              disabled={isSaving}
-            >
-              <option value="Membership">Membership (Month Ahead)</option>
-              <option value="Monthly">Monthly (Month Behind)</option>
-              <option value="Custom">Custom / Ad Hoc</option>
-            </select>
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="text-xs font-semibold text-muted">Monthly Billing Basis</span>
-            <select
-              name="monthlyBillingBasis"
-              defaultValue={monthlyBillingBasis}
-              className="h-10 w-full rounded-lg border border-border bg-white px-3"
-              disabled={isSaving}
-            >
-              <option value="ScheduledMonthBehind">Scheduled Month Behind</option>
-              <option value="ActualAttendanceMonthBehind">Actual Attendance Month Behind</option>
-            </select>
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="text-xs font-semibold text-muted">Daily Rate</span>
-            <input
-              name="dailyRate"
-              type="number"
-              min="0.01"
-              step="0.01"
-              required
-              defaultValue={dailyRate != null ? dailyRate.toFixed(2) : ""}
-              className="h-10 w-full rounded-lg border border-border bg-white px-3"
-              disabled={isSaving}
-            />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="text-xs font-semibold text-muted">Transportation Billing Status</span>
-            <select
-              name="transportationBillingStatus"
-              defaultValue={transportationBillingStatus}
-              className="h-10 w-full rounded-lg border border-border bg-white px-3"
-              disabled={isSaving}
-            >
-              <option value="BillNormally">Bill Normally</option>
-              <option value="Waived">Waived</option>
-              <option value="IncludedInProgramRate">Included In Program Rate</option>
-            </select>
-          </label>
-          <label className="flex items-end gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm">
-            <input
-              type="checkbox"
-              name="useCenterDefaultBillingMode"
-              defaultChecked={useCenterDefaultBillingMode}
-              disabled={isSaving}
-            />
-            <span className="text-xs font-semibold text-muted">Use Center Default Billing Mode</span>
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="text-xs font-semibold text-muted">Billing Rate Effective Date</span>
-            <input
-              name="billingRateEffectiveDate"
-              type="date"
-              defaultValue={billingRateEffectiveDate?.slice(0, 10) ?? enrollmentDate?.slice(0, 10) ?? ""}
-              className="h-10 w-full rounded-lg border border-border bg-white px-3"
-              disabled={isSaving}
-            />
-          </label>
-          <label className="flex items-end gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm">
-            <input type="checkbox" name="billExtraDays" defaultChecked={billExtraDays} disabled={isSaving} />
-            <span className="text-xs font-semibold text-muted">Bill Extra Unscheduled Days</span>
-          </label>
-          <label className="flex items-end gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm">
-            <input type="checkbox" name="billAncillaryArrears" defaultChecked={billAncillaryArrears} disabled={isSaving} />
-            <span className="text-xs font-semibold text-muted">Bill Ancillary In Arrears</span>
-          </label>
-          <label className="space-y-1 text-sm md:col-span-3">
-            <span className="text-xs font-semibold text-muted">Billing Notes</span>
-            <textarea
-              name="billingNotes"
-              defaultValue={billingNotes ?? ""}
-              className="min-h-16 w-full rounded-lg border border-border bg-white p-3 text-sm"
-              disabled={isSaving}
-            />
-          </label>
+        </>
+      )}
+
+      {!showBillingFields ? (
+        <>
+          <input type="hidden" name="billingMode" value={billingMode ?? "Membership"} />
+          <input type="hidden" name="monthlyBillingBasis" value={monthlyBillingBasis} />
+          <input type="hidden" name="dailyRate" value={dailyRate != null ? dailyRate.toFixed(2) : ""} />
+          <input type="hidden" name="transportationBillingStatus" value={transportationBillingStatus} />
+          <input type="hidden" name="useCenterDefaultBillingMode" value={useCenterDefaultBillingMode ? "true" : "false"} />
+          <input
+            type="hidden"
+            name="billingRateEffectiveDate"
+            value={billingRateEffectiveDate?.slice(0, 10) ?? enrollmentDate?.slice(0, 10) ?? ""}
+          />
+          <input type="hidden" name="billExtraDays" value={billExtraDays ? "true" : "false"} />
+          <input type="hidden" name="billAncillaryArrears" value={billAncillaryArrears ? "true" : "false"} />
+          <input type="hidden" name="billingNotes" value={billingNotes ?? ""} />
+        </>
+      ) : (
+        <div className="rounded-lg border border-border bg-muted/30 p-3">
+          <p className="text-xs font-semibold text-muted">
+            Billing driver settings: these values are used by membership billing, monthly billing, extra day billing, and prorated custom invoices.
+          </p>
+          <div className="mt-2 grid gap-2 md:grid-cols-3">
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-semibold text-muted">Billing Payor Contact</span>
+              <input value={billingPayorName} readOnly className="h-10 w-full rounded-lg border border-border bg-white px-3 text-muted" />
+              <p className="text-[11px] text-muted">{billingPayorStatus}</p>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-semibold text-muted">Billing Mode</span>
+              <select
+                name="billingMode"
+                defaultValue={billingMode ?? "Membership"}
+                className="h-10 w-full rounded-lg border border-border bg-white px-3"
+                disabled={isSaving}
+              >
+                <option value="Membership">Membership (Month Ahead)</option>
+                <option value="Monthly">Monthly (Month Behind)</option>
+                <option value="Custom">Custom / Ad Hoc</option>
+              </select>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-semibold text-muted">Monthly Billing Basis</span>
+              <select
+                name="monthlyBillingBasis"
+                defaultValue={monthlyBillingBasis}
+                className="h-10 w-full rounded-lg border border-border bg-white px-3"
+                disabled={isSaving}
+              >
+                <option value="ScheduledMonthBehind">Scheduled Month Behind</option>
+                <option value="ActualAttendanceMonthBehind">Actual Attendance Month Behind</option>
+              </select>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-semibold text-muted">Daily Rate</span>
+              <input
+                name="dailyRate"
+                type="number"
+                min="0.01"
+                step="0.01"
+                required
+                defaultValue={dailyRate != null ? dailyRate.toFixed(2) : ""}
+                className="h-10 w-full rounded-lg border border-border bg-white px-3"
+                disabled={isSaving}
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-semibold text-muted">Transportation Billing Status</span>
+              <select
+                name="transportationBillingStatus"
+                defaultValue={transportationBillingStatus}
+                className="h-10 w-full rounded-lg border border-border bg-white px-3"
+                disabled={isSaving}
+              >
+                <option value="BillNormally">Bill Normally</option>
+                <option value="Waived">Waived</option>
+                <option value="IncludedInProgramRate">Included In Program Rate</option>
+              </select>
+            </label>
+            <label className="flex items-end gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                name="useCenterDefaultBillingMode"
+                defaultChecked={useCenterDefaultBillingMode}
+                disabled={isSaving}
+              />
+              <span className="text-xs font-semibold text-muted">Use Center Default Billing Mode</span>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-semibold text-muted">Billing Rate Effective Date</span>
+              <input
+                name="billingRateEffectiveDate"
+                type="date"
+                defaultValue={billingRateEffectiveDate?.slice(0, 10) ?? enrollmentDate?.slice(0, 10) ?? ""}
+                className="h-10 w-full rounded-lg border border-border bg-white px-3"
+                disabled={isSaving}
+              />
+            </label>
+            <label className="flex items-end gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm">
+              <input type="checkbox" name="billExtraDays" defaultChecked={billExtraDays} disabled={isSaving} />
+              <span className="text-xs font-semibold text-muted">Bill Extra Unscheduled Days</span>
+            </label>
+            <label className="flex items-end gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm">
+              <input type="checkbox" name="billAncillaryArrears" defaultChecked={billAncillaryArrears} disabled={isSaving} />
+              <span className="text-xs font-semibold text-muted">Bill Ancillary In Arrears</span>
+            </label>
+            <label className="space-y-1 text-sm md:col-span-3">
+              <span className="text-xs font-semibold text-muted">Billing Notes</span>
+              <textarea
+                name="billingNotes"
+                defaultValue={billingNotes ?? ""}
+                className="min-h-16 w-full rounded-lg border border-border bg-white p-3 text-sm"
+                disabled={isSaving}
+              />
+            </label>
+          </div>
         </div>
-      </div>
-
-      <label className="space-y-1 text-sm">
-        <span className="text-xs font-semibold text-muted">Attendance Notes</span>
-        <textarea name="attendanceNotes" defaultValue={attendanceNotes ?? ""} className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" disabled={isSaving} />
-      </label>
+      )}
 
       <button type="submit" disabled={isSaving} className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-70">
-        {isSaving ? "Saving..." : "Save Attendance / Billing"}
+        {isSaving
+          ? "Saving..."
+          : mode === "attendance"
+            ? "Save Attendance"
+            : mode === "pricing"
+              ? "Save Pricing"
+              : "Save Attendance / Billing"}
       </button>
       <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
     </form>

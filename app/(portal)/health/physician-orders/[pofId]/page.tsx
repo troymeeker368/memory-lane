@@ -65,7 +65,7 @@ export default async function PhysicianOrderDetailPage({
   if (!form) notFound();
 
   const [history, pofTimeline] = await Promise.all([
-    getPhysicianOrdersForMember(form.memberId),
+    getPhysicianOrdersForMember(form.memberId, { canonicalInput: true }),
     listPofTimelineForPhysicianOrder(form.id)
   ]);
   const latestRequest = pofTimeline.requests[0] ?? null;

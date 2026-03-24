@@ -119,10 +119,28 @@ async function loadCarePlanNurseEsignService() {
   return import("@/lib/services/care-plan-nurse-esign");
 }
 
-export async function getCarePlanParticipationSummary(memberId: string): Promise<CarePlanParticipationSummary> {
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
-    actionLabel: "getCarePlanParticipationSummary"
+type ResolveCarePlanMemberOptions = {
+  canonicalInput?: boolean;
+  serviceRole?: boolean;
+};
+
+async function resolveCarePlanMemberId(
+  memberId: string,
+  actionLabel: string,
+  options?: ResolveCarePlanMemberOptions
+) {
+  if (options?.canonicalInput) return memberId;
+  return resolveCanonicalMemberId(memberId, {
+    actionLabel,
+    serviceRole: options?.serviceRole
   });
+}
+
+export async function getCarePlanParticipationSummary(
+  memberId: string,
+  options?: ResolveCarePlanMemberOptions
+): Promise<CarePlanParticipationSummary> {
+  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getCarePlanParticipationSummary", options);
   const supabase = await createClient();
   const windowEndDate = toEasternDate();
   const windowStartDate = addDays(windowEndDate, -180);
@@ -152,10 +170,14 @@ export async function listCarePlanRows(filters?: {
   query?: string;
   carePlanId?: string;
   serviceRole?: boolean;
+  canonicalInput?: boolean;
 }) {
   const supabase = await createClient({ serviceRole: Boolean(filters?.serviceRole) });
   const canonicalMemberId = filters?.memberId
-    ? await resolveCanonicalMemberId(filters.memberId, { actionLabel: "listCarePlanRows" })
+    ? await resolveCarePlanMemberId(filters.memberId, "listCarePlanRows", {
+        canonicalInput: filters.canonicalInput,
+        serviceRole: filters.serviceRole
+      })
     : null;
   let query = supabase
     .from("care_plans")
@@ -208,13 +230,18 @@ export async function getCarePlans(filters?: {
   query?: string;
   page?: number;
   pageSize?: number;
+  canonicalInput?: boolean;
+  serviceRole?: boolean;
 }): Promise<CarePlanListResult> {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: Boolean(filters?.serviceRole) });
   const page = Number.isFinite(filters?.page) && Number(filters?.page) > 0 ? Math.floor(Number(filters?.page)) : 1;
   const pageSize =
     Number.isFinite(filters?.pageSize) && Number(filters?.pageSize) > 0 ? Math.floor(Number(filters?.pageSize)) : 25;
   const canonicalMemberId = filters?.memberId
-    ? await resolveCanonicalMemberId(filters.memberId, { actionLabel: "getCarePlans" })
+    ? await resolveCarePlanMemberId(filters.memberId, "getCarePlans", {
+        canonicalInput: filters.canonicalInput,
+        serviceRole: filters.serviceRole
+      })
     : null;
   const queryMemberIds = await resolveCarePlanQueryMemberIds(filters?.query);
   if (queryMemberIds && queryMemberIds.length === 0) {
@@ -325,7 +352,7 @@ export async function getCarePlanById(id: string, options?: { serviceRole?: bool
         }) satisfies CarePlanReviewHistory
     ),
     versions: ((versionRows ?? []) as DbCarePlanVersion[]).map((row) => toCarePlanVersion(row, carePlan.track)),
-    participationSummary: await getCarePlanParticipationSummary(carePlan.memberId)
+    participationSummary: await getCarePlanParticipationSummary(carePlan.memberId, { canonicalInput: true })
   };
 }
 
@@ -421,11 +448,12 @@ function buildMemberCarePlanOverviewFromLatest(
   };
 }
 
-export async function getMemberCarePlanOverview(memberId: string): Promise<MemberCarePlanOverview> {
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
-    actionLabel: "getMemberCarePlanOverview"
-  });
-  const supabase = await createClient();
+export async function getMemberCarePlanOverview(
+  memberId: string,
+  options?: ResolveCarePlanMemberOptions
+): Promise<MemberCarePlanOverview> {
+  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getMemberCarePlanOverview", options);
+  const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
   const [{ data: latestRows, error: latestError }, { count, error: countError }] = await Promise.all([
     supabase
       .from("care_plans")
@@ -446,11 +474,16 @@ export async function getMemberCarePlanOverview(memberId: string): Promise<Membe
   };
 }
 
-export async function getMemberCarePlanSnapshot(memberId: string): Promise<MemberCarePlanSnapshot> {
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
-    actionLabel: "getMemberCarePlanSnapshot"
+export async function getMemberCarePlanSnapshot(
+  memberId: string,
+  options?: ResolveCarePlanMemberOptions
+): Promise<MemberCarePlanSnapshot> {
+  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getMemberCarePlanSnapshot", options);
+  const rows = await listCarePlanRows({
+    memberId: canonicalMemberId,
+    canonicalInput: true,
+    serviceRole: options?.serviceRole
   });
-  const rows = await listCarePlanRows({ memberId: canonicalMemberId });
   const latest = getLatestCarePlanFromRows(rows);
 
   return {
@@ -460,11 +493,12 @@ export async function getMemberCarePlanSnapshot(memberId: string): Promise<Membe
   };
 }
 
-export async function getLatestCarePlanIdForMember(memberId: string): Promise<string | null> {
-  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
-    actionLabel: "getLatestCarePlanIdForMember"
-  });
-  const supabase = await createClient();
+export async function getLatestCarePlanIdForMember(
+  memberId: string,
+  options?: ResolveCarePlanMemberOptions
+): Promise<string | null> {
+  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getLatestCarePlanIdForMember", options);
+  const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
   const { data, error } = await supabase
     .from("care_plans")
     .select("id")
@@ -477,16 +511,19 @@ export async function getLatestCarePlanIdForMember(memberId: string): Promise<st
   return data?.id ? String(data.id) : null;
 }
 
-export async function getCarePlansForMember(memberId: string) {
-  return (await getMemberCarePlanSnapshot(memberId)).rows;
+export async function getCarePlansForMember(memberId: string, options?: ResolveCarePlanMemberOptions) {
+  return (await getMemberCarePlanSnapshot(memberId, options)).rows;
 }
 
-export async function getLatestCarePlanForMember(memberId: string) {
-  return (await getMemberCarePlanSnapshot(memberId)).latest;
+export async function getLatestCarePlanForMember(memberId: string, options?: ResolveCarePlanMemberOptions) {
+  return (await getMemberCarePlanSnapshot(memberId, options)).latest;
 }
 
-export async function getMemberCarePlanSummary(memberId: string): Promise<MemberCarePlanSummary> {
-  return (await getMemberCarePlanSnapshot(memberId)).summary;
+export async function getMemberCarePlanSummary(
+  memberId: string,
+  options?: ResolveCarePlanMemberOptions
+): Promise<MemberCarePlanSummary> {
+  return (await getMemberCarePlanSnapshot(memberId, options)).summary;
 }
 
 export async function getCarePlanVersionById(carePlanId: string, versionId: string) {

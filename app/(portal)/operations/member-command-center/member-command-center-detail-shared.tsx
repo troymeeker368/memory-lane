@@ -4,24 +4,44 @@ import type { getMemberCommandCenterDetailSupabase } from "@/lib/services/member
 
 export type MemberCommandCenterDetail = NonNullable<Awaited<ReturnType<typeof getMemberCommandCenterDetailSupabase>>>;
 
-export const MCC_TABS = [
-  "member-summary",
+export const MCC_PRIMARY_TABS = [
+  "overview",
+  "attendance",
+  "schedule-changes",
+  "pricing",
+  "additional-charges",
+  "holds",
+  "locker-assignments"
+] as const;
+
+export const MCC_SECONDARY_TABS = [
   "demographics-contacts",
-  "attendance-enrollment",
   "transportation",
   "legal",
   "diet-allergies"
 ] as const;
 
+export const MCC_TABS = [...MCC_PRIMARY_TABS, ...MCC_SECONDARY_TABS] as const;
+
 export type MccTab = (typeof MCC_TABS)[number];
 
 export const TAB_LABELS: Record<MccTab, string> = {
-  "member-summary": "Member Summary",
-  "attendance-enrollment": "Attendance / Enrollment",
+  overview: "Overview",
+  attendance: "Attendance",
+  "schedule-changes": "Schedule Changes",
+  pricing: "Pricing",
+  "additional-charges": "Additional Charges",
+  holds: "Holds",
+  "locker-assignments": "Locker Assignments",
   transportation: "Transportation",
   "demographics-contacts": "Demographics & Contacts",
   legal: "Legal",
   "diet-allergies": "Diet / Allergies"
+};
+
+const TAB_ALIASES: Record<string, MccTab> = {
+  "member-summary": "overview",
+  "attendance-enrollment": "attendance"
 };
 
 export function firstString(value: string | string[] | undefined) {
@@ -30,8 +50,9 @@ export function firstString(value: string | string[] | undefined) {
 }
 
 export function resolveTab(raw: string | undefined): MccTab {
-  if (raw && MCC_TABS.includes(raw as MccTab)) return raw as MccTab;
-  return "member-summary";
+  const normalized = raw ? TAB_ALIASES[raw] ?? raw : "";
+  if (normalized && MCC_TABS.includes(normalized as MccTab)) return normalized as MccTab;
+  return "overview";
 }
 
 export function boolLabel(value: boolean | null | undefined) {
