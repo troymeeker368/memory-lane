@@ -24,8 +24,8 @@ export interface LeadStageTransitionResult {
   businessStatus: CanonicalLeadBusinessStatus;
 }
 
-const TRANSITION_LEAD_STAGE_RPC = "rpc_transition_lead_stage";
-const TRANSITION_LEAD_STAGE_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
+const TRANSITION_LEAD_STAGE_RPC = "rpc_transition_lead_stage_v2";
+const TRANSITION_LEAD_STAGE_RPC_MIGRATION = "0139_rpc_transition_lead_stage_v2.sql";
 
 function isMissingRpcFunctionError(error: unknown, rpcName: string) {
   if (!error || typeof error !== "object") return false;
