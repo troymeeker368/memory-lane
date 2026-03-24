@@ -15,8 +15,11 @@ type LeadActivityRow = SalesActivitySnapshot["activities"][number];
 type PartnerActivityRow = SalesActivitySnapshot["partnerActivities"][number];
 
 export default async function SalesRecentActivityPage() {
-  await requireModuleAccess("sales");
-  const { activities, partnerActivities } = await getLeadActivitySnapshot();
+  const [ , snapshot] = await Promise.all([
+    requireModuleAccess("sales"),
+    getLeadActivitySnapshot()
+  ]);
+  const { activities, partnerActivities } = snapshot;
   const leadIds = new Set<string>();
   const partnerIds = new Set<string>();
   const referralSourceIds = new Set<string>();

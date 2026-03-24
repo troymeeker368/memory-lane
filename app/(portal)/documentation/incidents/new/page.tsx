@@ -5,9 +5,11 @@ import { normalizeRoleKey } from "@/lib/permissions";
 import { listIncidentLookups } from "@/lib/services/incidents";
 
 export default async function NewIncidentPage() {
-  await requireRoles(["nurse", "manager", "director", "admin"]);
-  const profile = await requireModuleAccess("documentation");
-  const lookups = await listIncidentLookups();
+  const [ , profile, lookups] = await Promise.all([
+    requireRoles(["nurse", "manager", "director", "admin"]),
+    requireModuleAccess("documentation"),
+    listIncidentLookups()
+  ]);
   const role = normalizeRoleKey(profile.role);
 
   return (

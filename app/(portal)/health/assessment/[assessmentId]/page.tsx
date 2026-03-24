@@ -55,9 +55,11 @@ export default async function HealthAssessmentDetailPage({
   params: Promise<{ assessmentId: string }>;
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireRoles(CLINICAL_DOCUMENTATION_ACCESS_ROLES);
-  const { assessmentId } = await params;
-  const query = (await searchParams) ?? {};
+  const [ , { assessmentId }, query] = await Promise.all([
+    requireRoles(CLINICAL_DOCUMENTATION_ACCESS_ROLES),
+    params,
+    searchParams ?? Promise.resolve<Record<string, string | string[] | undefined>>({})
+  ]);
   const detail = await getAssessmentDetail(assessmentId);
 
   if (!detail) notFound();

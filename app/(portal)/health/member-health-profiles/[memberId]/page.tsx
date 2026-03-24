@@ -180,10 +180,12 @@ export default async function MemberHealthProfileDetailPage({
   params: Promise<{ memberId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const currentProfile = await requireRoles(["admin", "nurse"]);
+  const [currentProfile, { memberId }, query] = await Promise.all([
+    requireRoles(["admin", "nurse"]),
+    params,
+    searchParams
+  ]);
   const canManageMemberStatus = currentProfile.role === "admin" || currentProfile.role === "manager";
-  const { memberId } = await params;
-  const query = await searchParams;
   const tab = resolveTab(firstString(query.tab));
 
   const detail = await getMemberHealthProfileDetailSupabase(memberId);
@@ -218,18 +220,20 @@ export default async function MemberHealthProfileDetailPage({
   const equipmentUpdatedBy = latestUpdatedBy(detail.equipment, (row) => row.updated_at, (row) => row.created_by_name);
   const notesUpdatedBy = latestUpdatedBy(detail.notes, (row) => row.updated_at, (row) => row.created_by_name);
   const assessmentsUpdatedBy = latestUpdatedBy(detail.assessments, (row) => row.created_at, (row) => row.completed_by);
-  const carePlanSnapshot = await getMemberCarePlanSnapshot(member.id);
+  const [carePlanSnapshot, billingPayor, relatedPhysicianOrders, progressNoteSummary] = await Promise.all([
+    getMemberCarePlanSnapshot(member.id),
+    getBillingPayorContact(member.id, {
+      source: "MemberHealthProfileDetailPage"
+    }),
+    getPhysicianOrdersForMember(member.id),
+    getMemberProgressNoteSummary(member.id)
+  ]);
   const relatedCarePlans = carePlanSnapshot.rows;
-  const billingPayor = await getBillingPayorContact(member.id, {
-    source: "MemberHealthProfileDetailPage"
-  });
   const carePlansUpdatedAt = latestTimestamp(relatedCarePlans.map((row) => row.updatedAt));
   const carePlansUpdatedBy = latestUpdatedBy(relatedCarePlans, (row) => row.updatedAt, (row) => row.completedBy);
-  const relatedPhysicianOrders = await getPhysicianOrdersForMember(member.id);
   const physicianOrdersUpdatedAt = latestTimestamp(relatedPhysicianOrders.map((row) => row.updatedAt));
   const physicianOrdersUpdatedBy = latestUpdatedBy(relatedPhysicianOrders, (row) => row.updatedAt, (row) => row.updatedByName);
   const carePlanSummary = carePlanSnapshot.summary;
-  const progressNoteSummary = await getMemberProgressNoteSummary(member.id);
   const latestIntakeAssessment = detail.assessments[0] ?? null;
   const trackFromRecord = member.latest_assessment_track ?? latestIntakeAssessment?.recommended_track ?? null;
   const trackSourceText = latestIntakeAssessment

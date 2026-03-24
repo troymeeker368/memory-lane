@@ -22,20 +22,24 @@ export default async function ManagedUserDetailPage({
   params: Promise<{ userId: string }>;
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireModuleAccess("user-management");
-
-  const { userId } = await params;
-  const query: Record<string, string | string[] | undefined> = (await searchParams) ?? {};
+  const [ , { userId }, resolvedSearchParams] = await Promise.all([
+    requireModuleAccess("user-management"),
+    params,
+    searchParams ?? Promise.resolve<Record<string, string | string[] | undefined>>({})
+  ]);
+  const query: Record<string, string | string[] | undefined> = resolvedSearchParams ?? {};
   const from = firstString(query.from);
   const to = firstString(query.to);
-  const user = await getManagedUserById(userId);
+  const [user, recentActivity] = await Promise.all([
+    getManagedUserById(userId),
+    getManagedUserRecentActivity(userId, { from, to, limit: 200 })
+  ]);
 
   if (!user) {
     notFound();
   }
 
   const permissionRows = summarizePermissionSet(user.permissions);
-  const recentActivity = await getManagedUserRecentActivity(user.id, { from, to, limit: 200 });
   const groupedRecentActivity = recentActivity.items.reduce<Array<{ activityType: string; items: typeof recentActivity.items }>>((groups, item) => {
     const existing = groups.find((group) => group.activityType === item.activityType);
     if (existing) {

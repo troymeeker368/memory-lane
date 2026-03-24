@@ -19,8 +19,10 @@ export default async function MemberCommandCenterIndexPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireModuleAccess("operations");
-  const params = await searchParams;
+  const [ , params] = await Promise.all([
+    requireModuleAccess("operations"),
+    searchParams
+  ]);
   const q = firstSearchParam(params.q) ?? "";
   const status = parseEnumSearchParam(firstSearchParam(params.status), ["all", "active", "inactive"] as const, "active");
   const page = parsePositivePageParam(firstSearchParam(params.page));

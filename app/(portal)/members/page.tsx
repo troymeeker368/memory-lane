@@ -10,8 +10,10 @@ export default async function MembersPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireModuleAccess("documentation");
-  const params = await searchParams;
+  const [ , params] = await Promise.all([
+    requireModuleAccess("documentation"),
+    searchParams
+  ]);
   const query = typeof params.q === "string" ? params.q.trim() : "";
   const statusFilter = typeof params.status === "string" ? params.status : "all";
 
