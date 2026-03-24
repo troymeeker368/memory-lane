@@ -21,8 +21,7 @@ const LEAD_DETAIL_SELECT = [
   "next_follow_up_date",
   "next_follow_up_type"
 ].join(", ");
-const PARTNER_DETAIL_SELECT =
-  "id, partner_id, organization_name, category, referral_source_category, contact_name, location, primary_phone, primary_email, notes, last_touched";
+const PARTNER_DETAIL_SELECT = "id, partner_id, organization_name, category, location, primary_phone, primary_email, notes, last_touched";
 const REFERRAL_SOURCE_DETAIL_SELECT =
   "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, last_touched";
 const LEAD_ACTIVITY_DETAIL_SELECT =
@@ -90,6 +89,24 @@ type LeadPartnerRow = {
   notes: string | null;
   last_touched: string | null;
 };
+
+function normalizeLeadPartnerRow(row: Record<string, unknown> | null): LeadPartnerRow | null {
+  if (!row) return null;
+  const category = typeof row.category === "string" ? row.category : null;
+  return {
+    id: String(row.id ?? ""),
+    partner_id: typeof row.partner_id === "string" ? row.partner_id : null,
+    organization_name: typeof row.organization_name === "string" ? row.organization_name : null,
+    category,
+    referral_source_category: category,
+    contact_name: null,
+    location: typeof row.location === "string" ? row.location : null,
+    primary_phone: typeof row.primary_phone === "string" ? row.primary_phone : null,
+    primary_email: typeof row.primary_email === "string" ? row.primary_email : null,
+    notes: typeof row.notes === "string" ? row.notes : null,
+    last_touched: typeof row.last_touched === "string" ? row.last_touched : null
+  };
+}
 
 type LeadReferralSourceRow = {
   id: string;
@@ -216,7 +233,7 @@ export async function getLeadDetail(leadId: string): Promise<{
     throw new Error(referralSourceResult.error.message);
   }
 
-  const partner = partnerResult.error ? null : ((partnerResult.data as unknown as LeadPartnerRow | null) ?? null);
+  const partner = partnerResult.error ? null : normalizeLeadPartnerRow((partnerResult.data as Record<string, unknown> | null) ?? null);
   const referralSource = referralSourceResult.error
     ? null
     : ((referralSourceResult.data as unknown as LeadReferralSourceRow | null) ?? null);

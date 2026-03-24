@@ -17,6 +17,13 @@ test("sales dashboard service reads stage counts and recent inquiries from the c
   assert.equal(source.includes("fetchSalesPipelineSummaryCountsSupabase"), false);
 });
 
+test("sales lead list open filter uses only valid lead_status enum values", () => {
+  const source = readWorkspaceFile("lib/services/sales-crm-read-model.ts");
+
+  assert.equal(source.includes('return query.eq("status", "open");'), true);
+  assert.equal(source.includes("status.eq.nurture"), false);
+});
+
 test("sales workflow helper no longer calls the thin pipeline summary RPC directly", () => {
   const source = readWorkspaceFile("lib/services/sales-workflows.ts");
 

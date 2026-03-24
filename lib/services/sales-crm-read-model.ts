@@ -172,8 +172,8 @@ const SALES_LEAD_LOOKUP_DEFAULT_LIMIT = 120;
 const SALES_LOOKUP_PARTNER_LIMIT = 250;
 const SALES_LOOKUP_REFERRAL_SOURCE_LIMIT = 250;
 
-function applyOpenLeadFilter<T extends { or: (filters: string) => T }>(query: T) {
-  return query.or("status.eq.open,status.eq.nurture");
+function applyOpenLeadFilter<T extends { eq: (column: string, value: string) => T }>(query: T) {
+  return query.eq("status", "open");
 }
 
 function toSalesLeadReadRow(row: Record<string, unknown>): SalesLeadReadRow {
