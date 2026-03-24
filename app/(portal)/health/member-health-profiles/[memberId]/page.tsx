@@ -188,7 +188,10 @@ export default async function MemberHealthProfileDetailPage({
   const canManageMemberStatus = currentProfile.role === "admin" || currentProfile.role === "manager";
   const tab = resolveTab(firstString(query.tab));
 
-  const detail = await getMemberHealthProfileDetailSupabase(memberId);
+  const detail = await getMemberHealthProfileDetailSupabase(memberId, {
+    includeProviderDirectory: tab === "medical",
+    includeHospitalPreferenceDirectory: tab === "legal"
+  });
   if (!detail) notFound();
 
   const { member, profile } = detail;

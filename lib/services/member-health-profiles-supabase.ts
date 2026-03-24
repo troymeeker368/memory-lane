@@ -107,6 +107,11 @@ const MEMBER_NOTE_SELECT =
 
 export type MhpTab = (typeof MHP_TABS)[number];
 
+type MemberHealthProfileDetailOptions = {
+  includeProviderDirectory?: boolean;
+  includeHospitalPreferenceDirectory?: boolean;
+};
+
 type MemberRow = {
   id: string;
   display_name: string;
@@ -619,9 +624,14 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   };
 }
 
-export async function getMemberHealthProfileDetailSupabase(memberId: string) {
+export async function getMemberHealthProfileDetailSupabase(
+  memberId: string,
+  options?: MemberHealthProfileDetailOptions
+) {
   const canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "getMemberHealthProfileDetailSupabase" });
   const supabase = await createClient();
+  const includeProviderDirectory = options?.includeProviderDirectory ?? true;
+  const includeHospitalPreferenceDirectory = options?.includeHospitalPreferenceDirectory ?? true;
   const { data: memberData, error: memberError } = await supabase
     .from("members")
     .select("id, display_name, status, dob, enrollment_date, city, code_status, latest_assessment_track")
@@ -650,8 +660,15 @@ export async function getMemberHealthProfileDetailSupabase(memberId: string) {
     supabase.from("member_medications").select(MEMBER_MEDICATION_SELECT).eq("member_id", canonicalMemberId),
     supabase.from("member_allergies").select(MEMBER_ALLERGY_SELECT).eq("member_id", canonicalMemberId),
     supabase.from("member_providers").select(MEMBER_PROVIDER_SELECT).eq("member_id", canonicalMemberId),
-    supabase.from("provider_directory").select(PROVIDER_DIRECTORY_SELECT).order("updated_at", { ascending: false }),
-    supabase.from("hospital_preference_directory").select(HOSPITAL_PREFERENCE_DIRECTORY_SELECT).order("updated_at", { ascending: false }),
+    includeProviderDirectory
+      ? supabase.from("provider_directory").select(PROVIDER_DIRECTORY_SELECT).order("updated_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
+    includeHospitalPreferenceDirectory
+      ? supabase
+          .from("hospital_preference_directory")
+          .select(HOSPITAL_PREFERENCE_DIRECTORY_SELECT)
+          .order("updated_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
     supabase.from("member_equipment").select(MEMBER_EQUIPMENT_SELECT).eq("member_id", canonicalMemberId),
     supabase.from("member_notes").select(MEMBER_NOTE_SELECT).eq("member_id", canonicalMemberId),
     supabase

@@ -1,7 +1,18 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
+import { invokeCreateCustomInvoiceRpc } from "@/lib/services/billing-rpc";
 import { createClient } from "@/lib/supabase/server";
-import { type CustomInvoiceManualLine, type CreateCustomInvoiceInput, type ScheduleTemplateRow } from "@/lib/services/billing-types";
+import type {
+  BillingBatchCoverageRpcPayload,
+  BillingBatchInvoiceLineRpcPayload,
+  BillingBatchInvoiceRpcPayload,
+  BillingBatchSourceUpdateRpcPayload,
+  CustomInvoiceManualLine,
+  CreateCustomInvoiceInput,
+  ScheduleTemplateRow
+} from "@/lib/services/billing-types";
 import { addDays, asNumber, buildCustomInvoiceNumber, endOfMonth, normalizeDateOnly, startOfMonth, toAmount, toDateRange } from "@/lib/services/billing-utils";
 import { collectBillingEligibleBaseDates } from "@/lib/services/billing-core";
 import {
@@ -241,51 +252,46 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       .eq("invoice_source", "Custom")
       .eq("invoice_month", startOfMonth(period.start));
     if (monthInvoiceError) throw new Error(monthInvoiceError.message);
+    const invoiceId = randomUUID();
     const invoiceNumber = buildCustomInvoiceNumber(period.start, Number(monthInvoiceCount ?? 0));
+    const invoicePayload: BillingBatchInvoiceRpcPayload = {
+      id: invoiceId,
+      member_id: input.memberId,
+      payor_id: null,
+      invoice_number: invoiceNumber,
+      invoice_month: startOfMonth(period.start),
+      invoice_source: "Custom",
+      invoice_status: "Draft",
+      export_status: "NotExported",
+      billing_mode_snapshot: "Custom",
+      monthly_billing_basis_snapshot: null,
+      transportation_billing_status_snapshot:
+        variableRows.some((line) => line.line_type === "Transportation") ? "BillNormally" : transportBillingStatus,
+      billing_method_snapshot: "InvoiceEmail",
+      base_period_start: period.start,
+      base_period_end: period.end,
+      variable_charge_period_start: period.start,
+      variable_charge_period_end: period.end,
+      invoice_date: normalizeDateOnly(input.invoiceDate, toEasternDate()),
+      due_date: normalizeDateOnly(input.dueDate, addDays(toEasternDate(), 30)),
+      base_program_billed_days: baseDates.size,
+      member_daily_rate_snapshot: dailyRate,
+      base_program_amount: baseProgramAmount,
+      transportation_amount: transportationAmount,
+      ancillary_amount: ancillaryAmount,
+      adjustment_amount: adjustmentAmount,
+      total_amount: totalAmount,
+      notes: input.notes ?? null,
+      created_by_user_id: input.runByUser,
+      created_by_name: input.runByName,
+      created_at: now,
+      updated_at: now
+    };
 
-    const { data: invoiceData, error: invoiceError } = await supabase
-      .from("billing_invoices")
-      .insert({
-        billing_batch_id: null,
-        member_id: input.memberId,
-        payor_id: null,
-        invoice_number: invoiceNumber,
-        invoice_month: startOfMonth(period.start),
-        invoice_source: "Custom",
-        invoice_status: "Draft",
-        export_status: "NotExported",
-        billing_mode_snapshot: "Custom",
-        monthly_billing_basis_snapshot: null,
-        transportation_billing_status_snapshot:
-          variableRows.some((line) => line.line_type === "Transportation") ? "BillNormally" : transportBillingStatus,
-        billing_method_snapshot: "InvoiceEmail",
-        base_period_start: period.start,
-        base_period_end: period.end,
-        variable_charge_period_start: period.start,
-        variable_charge_period_end: period.end,
-        invoice_date: normalizeDateOnly(input.invoiceDate, toEasternDate()),
-        due_date: normalizeDateOnly(input.dueDate, addDays(toEasternDate(), 30)),
-        base_program_billed_days: baseDates.size,
-        member_daily_rate_snapshot: dailyRate,
-        base_program_amount: baseProgramAmount,
-        transportation_amount: transportationAmount,
-        ancillary_amount: ancillaryAmount,
-        adjustment_amount: adjustmentAmount,
-        total_amount: totalAmount,
-        notes: input.notes ?? null,
-        created_by_user_id: input.runByUser,
-        created_by_name: input.runByName,
-        created_at: now,
-        updated_at: now
-      })
-      .select("id")
-      .single();
-    if (invoiceError) throw new Error(invoiceError.message);
-    const invoiceId = String(invoiceData.id);
-
-    const baseLines = baseLineItems.map((line) => {
+    const baseLines: BillingBatchInvoiceLineRpcPayload[] = baseLineItems.map((line) => {
       const lineType = line.lineType ?? "BaseProgram";
       return {
+        id: randomUUID(),
         invoice_id: invoiceId,
         member_id: input.memberId,
         payor_id: null,
@@ -297,14 +303,15 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
         quantity: asNumber(line.quantity || 1),
         unit_rate: toAmount(asNumber(line.unitRate)),
         amount: toAmount(line.amount ?? asNumber(line.quantity || 1) * asNumber(line.unitRate)),
-        source_table: "billing_invoices",
-        source_record_id: invoiceId,
+        source_table: null,
+        source_record_id: null,
         billing_status: "Billed",
         created_at: now,
         updated_at: now
       };
     });
-    const variableLines = variableRows.map((line) => ({
+    const variableLines: BillingBatchInvoiceLineRpcPayload[] = variableRows.map((line) => ({
+      id: randomUUID(),
       invoice_id: invoiceId,
       member_id: input.memberId,
       payor_id: null,
@@ -322,67 +329,31 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       created_at: now,
       updated_at: now
     }));
-    const { data: insertedLines, error: lineError } = await supabase
-      .from("billing_invoice_lines")
-      .insert([...baseLines, ...variableLines])
-      .select("id, line_type, source_table, source_record_id, service_period_start, service_period_end");
-    if (lineError) throw new Error(lineError.message);
-
-    const transportationSourceIds = Array.from(
-      new Set(variableRows.filter((line) => line.source_table === "transportation_logs").map((line) => line.source_record_id))
-    );
-    const ancillarySourceIds = Array.from(
-      new Set(variableRows.filter((line) => line.source_table === "ancillary_charge_logs").map((line) => line.source_record_id))
-    );
-    const adjustmentSourceIds = Array.from(
-      new Set(variableRows.filter((line) => line.source_table === "billing_adjustments").map((line) => line.source_record_id))
-    );
-    const [transportationUpdateResult, ancillaryUpdateResult, adjustmentUpdateResult] = await Promise.all([
-      transportationSourceIds.length > 0
-        ? supabase
-            .from("transportation_logs")
-            .update({ billing_status: "Billed", invoice_id: invoiceId, updated_at: now })
-            .in("id", transportationSourceIds)
-        : Promise.resolve({ error: null }),
-      ancillarySourceIds.length > 0
-        ? supabase
-            .from("ancillary_charge_logs")
-            .update({ billing_status: "Billed", invoice_id: invoiceId, updated_at: now })
-            .in("id", ancillarySourceIds)
-        : Promise.resolve({ error: null }),
-      adjustmentSourceIds.length > 0
-        ? supabase
-            .from("billing_adjustments")
-            .update({ billing_status: "Billed", invoice_id: invoiceId, updated_at: now })
-            .in("id", adjustmentSourceIds)
-        : Promise.resolve({ error: null })
-    ]);
-    if (transportationUpdateResult.error) throw new Error(transportationUpdateResult.error.message);
-    if (ancillaryUpdateResult.error) throw new Error(ancillaryUpdateResult.error.message);
-    if (adjustmentUpdateResult.error) throw new Error(adjustmentUpdateResult.error.message);
-
-    const coverageRows = ((insertedLines ?? []) as Array<{
-      id: string;
-      line_type: string;
-      source_table: string | null;
-      source_record_id: string | null;
-      service_period_start: string;
-      service_period_end: string;
-    }>).map((line) => ({
+    const invoiceLinePayloads = [...baseLines, ...variableLines];
+    const coveragePayloads: BillingBatchCoverageRpcPayload[] = invoiceLinePayloads.map((line) => ({
       member_id: input.memberId,
       coverage_type: line.line_type === "Transportation" ? "Transportation" : line.line_type === "Ancillary" ? "Ancillary" : "BaseProgram",
       coverage_start_date: normalizeDateOnly(line.service_period_start, period.start),
       coverage_end_date: normalizeDateOnly(line.service_period_end, period.end),
       source_invoice_id: invoiceId,
-      source_invoice_line_id: String(line.id),
+      source_invoice_line_id: line.id,
       source_table: line.source_table ?? null,
       source_record_id: line.source_record_id ?? null,
       created_at: now
     }));
-    if (coverageRows.length > 0) {
-      const { error: coverageError } = await supabase.from("billing_coverages").insert(coverageRows);
-      if (coverageError) throw new Error(coverageError.message);
-    }
+    const sourceUpdates: BillingBatchSourceUpdateRpcPayload[] = variableRows.map((line) => ({
+      source_table: line.source_table,
+      source_record_id: line.source_record_id,
+      invoice_id: invoiceId,
+      updated_at: now
+    }));
+
+    await invokeCreateCustomInvoiceRpc({
+      invoicePayload,
+      invoiceLinePayloads,
+      coveragePayloads,
+      sourceUpdates
+    });
 
     return { ok: true as const, invoiceId };
   } catch (error) {

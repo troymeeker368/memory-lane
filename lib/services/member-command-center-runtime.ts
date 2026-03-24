@@ -39,7 +39,6 @@ const MEMBER_FILE_LIST_SELECT =
 const MEMBER_COMMAND_CENTER_INDEX_PROFILE_SELECT = "member_id, profile_image_url";
 const MEMBER_COMMAND_CENTER_INDEX_SCHEDULE_SELECT =
   "member_id, enrollment_date, monday, tuesday, wednesday, thursday, friday, make_up_days_available";
-const MEMBER_LOCKER_AVAILABILITY_SELECT = "id, status, locker_number";
 const MEMBER_COMMAND_CENTER_ADD_RIDER_ADDRESS_SELECT = "member_id, street_address, city, state, zip";
 const LEGACY_INLINE_MEMBER_FILE_SENTINEL = "__legacy_inline_member_file__";
 
@@ -270,23 +269,30 @@ export async function listBusStopDirectorySupabase() {
 export async function getAvailableLockerNumbersForMemberSupabase(memberId: string) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getAvailableLockerNumbersForMemberSupabase");
   const supabase = await createClient();
-  const { data, error } = await supabase.from("members").select(MEMBER_LOCKER_AVAILABILITY_SELECT);
-  if (error) throw new Error(error.message);
-  const members = (data ?? []) as Array<{ id: string; status: "active" | "inactive"; locker_number: string | null }>;
-  const member = members.find((row) => row.id === canonicalMemberId) ?? null;
+  const [{ data: memberData, error: memberError }, { data: activeLockerData, error: activeLockerError }] = await Promise.all([
+    supabase
+      .from("members")
+      .select("id, locker_number")
+      .eq("id", canonicalMemberId)
+      .maybeSingle(),
+    supabase
+      .from("members")
+      .select("locker_number")
+      .eq("status", "active")
+      .neq("id", canonicalMemberId)
+      .not("locker_number", "is", null)
+  ]);
+  if (memberError) throw new Error(memberError.message);
+  if (activeLockerError) throw new Error(activeLockerError.message);
+  const member = (memberData as { id: string; locker_number: string | null } | null) ?? null;
   const currentLocker = normalizeLocker(member?.locker_number ?? null);
   const usedByOtherActive = new Set(
-    members
-      .filter((row) => row.status === "active" && row.id !== canonicalMemberId)
+    ((activeLockerData ?? []) as Array<{ locker_number: string | null }>)
       .map((row) => normalizeLocker(row.locker_number))
       .filter((value): value is string => Boolean(value))
   );
   const pool = new Set<string>();
   for (let locker = 1; locker <= 72; locker += 1) pool.add(String(locker));
-  members.forEach((row) => {
-    const locker = normalizeLocker(row.locker_number);
-    if (locker) pool.add(locker);
-  });
   if (currentLocker) pool.add(currentLocker);
   return [...pool]
     .filter((locker) => !usedByOtherActive.has(locker) || locker === currentLocker)

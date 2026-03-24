@@ -4,6 +4,9 @@ import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
 type DbRow = Record<string, unknown>;
+const PROVIDER_DIRECTORY_UPSERT_SELECT =
+  "id, specialty, specialty_other, practice_name, provider_phone, updated_at";
+const HOSPITAL_DIRECTORY_UPSERT_SELECT = "id, updated_at";
 
 export type MhpWriteActor = {
   actorUserId?: string | null;
@@ -368,12 +371,14 @@ export async function upsertProviderDirectoryFromMhpSupabase(input: {
 
   const now = input.atIso ?? toEasternISO();
   const supabase = await createClient();
-  const { data: providerRows, error: providerError } = await supabase.from("provider_directory").select("*");
+  const { data: existing, error: providerError } = await supabase
+    .from("provider_directory")
+    .select(PROVIDER_DIRECTORY_UPSERT_SELECT)
+    .ilike("provider_name", normalizedProviderName)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
   if (providerError) throw new Error(providerError.message);
-
-  const existing = (providerRows ?? []).find(
-      (row) => String(row.provider_name ?? "").trim().toLowerCase() === normalizedProviderName.toLowerCase()
-  );
 
   if (existing?.id) {
     const { error } = await supabase
@@ -415,14 +420,14 @@ export async function upsertHospitalPreferenceDirectoryFromMhpSupabase(input: {
 
   const now = input.atIso ?? toEasternISO();
   const supabase = await createClient();
-  const { data: hospitalRows, error: hospitalError } = await supabase
+  const { data: existing, error: hospitalError } = await supabase
     .from("hospital_preference_directory")
-    .select("*");
+    .select(HOSPITAL_DIRECTORY_UPSERT_SELECT)
+    .ilike("hospital_name", normalizedHospitalName)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
   if (hospitalError) throw new Error(hospitalError.message);
-
-  const existing = (hospitalRows ?? []).find(
-      (row) => String(row.hospital_name ?? "").trim().toLowerCase() === normalizedHospitalName.toLowerCase()
-  );
 
   if (existing?.id) {
     const { error } = await supabase

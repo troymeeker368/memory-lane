@@ -17,8 +17,10 @@ import { BILLING_BATCH_TYPE_OPTIONS } from "@/lib/services/billing-types";
 import { addMonths, buildInvoiceNumber, normalizeDateOnly, startOfMonth } from "@/lib/services/billing-utils";
 
 const BILLING_ATOMIC_WORKFLOW_MIGRATION = "0044_atomic_billing_and_completion_finalization.sql";
+const CUSTOM_INVOICE_ATOMIC_WORKFLOW_MIGRATION = "0126_custom_invoice_atomic_rpc.sql";
 const RPC_GENERATE_BILLING_BATCH = "rpc_generate_billing_batch";
 const RPC_CREATE_BILLING_EXPORT = "rpc_create_billing_export";
+const RPC_CREATE_CUSTOM_INVOICE = "rpc_create_custom_invoice";
 
 function mapCoverageTypeForLineType(
   lineType: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment" | "Credit" | "PriorBalance"
@@ -31,6 +33,10 @@ function mapCoverageTypeForLineType(
 
 export function buildMissingBillingAtomicWorkflowMessage(functionName: string) {
   return `Billing atomic workflow RPC ${functionName} is not available yet. Apply Supabase migration ${BILLING_ATOMIC_WORKFLOW_MIGRATION} first.`;
+}
+
+export function buildMissingCustomInvoiceAtomicWorkflowMessage(functionName: string) {
+  return `Billing custom invoice RPC ${functionName} is not available yet. Apply Supabase migration ${CUSTOM_INVOICE_ATOMIC_WORKFLOW_MIGRATION} first.`;
 }
 
 export function isMissingRpcFunctionError(error: unknown, functionName: string) {
@@ -244,6 +250,29 @@ export async function invokeCreateBillingExportRpc(input: {
   } catch (error) {
     if (isMissingRpcFunctionError(error, RPC_CREATE_BILLING_EXPORT)) {
       throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_CREATE_BILLING_EXPORT));
+    }
+    throw error;
+  }
+}
+
+export async function invokeCreateCustomInvoiceRpc(input: {
+  invoicePayload: BillingBatchInvoiceRpcPayload;
+  invoiceLinePayloads: BillingBatchInvoiceLineRpcPayload[];
+  coveragePayloads: BillingBatchCoverageRpcPayload[];
+  sourceUpdates: BillingBatchSourceUpdateRpcPayload[];
+}) {
+  const supabase = await createClient();
+  try {
+    const result = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_CREATE_CUSTOM_INVOICE, {
+      p_invoice: input.invoicePayload,
+      p_invoice_lines: input.invoiceLinePayloads,
+      p_coverages: input.coveragePayloads,
+      p_source_updates: input.sourceUpdates
+    });
+    return Array.isArray(result) ? String(result[0] ?? input.invoicePayload.id) : String(result ?? input.invoicePayload.id);
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, RPC_CREATE_CUSTOM_INVOICE)) {
+      throw new Error(buildMissingCustomInvoiceAtomicWorkflowMessage(RPC_CREATE_CUSTOM_INVOICE));
     }
     throw error;
   }
