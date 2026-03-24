@@ -264,6 +264,8 @@ test("lead stage transition service only rewrites true missing-rpc errors", () =
   const migrationSource = readWorkspaceFile("supabase/migrations/0073_delivery_and_member_file_rpc_hardening.sql");
 
   assert.equal(leadStageSource.includes('const TRANSITION_LEAD_STAGE_RPC = "rpc_transition_lead_stage";'), true);
+  assert.equal(leadStageSource.includes("function sanitizeAdditionalLeadPatch(additionalLeadPatch?: Record<string, unknown>)"), true);
+  assert.equal(leadStageSource.includes("delete patch.status;"), true);
   assert.equal(leadStageSource.includes("if (isMissingRpcFunctionError(error, TRANSITION_LEAD_STAGE_RPC)) {"), true);
   assert.equal(leadStageSource.includes("if (message.includes(TRANSITION_LEAD_STAGE_RPC)) {"), false);
   assert.equal(leadStageSource.includes("Lead stage transition RPC is not available."), true);

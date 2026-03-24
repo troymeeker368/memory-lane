@@ -46,6 +46,16 @@ export function resolveCanonicalLeadTransition(input: {
   };
 }
 
+function sanitizeAdditionalLeadPatch(additionalLeadPatch?: Record<string, unknown>) {
+  if (!additionalLeadPatch) return {};
+  const patch = { ...additionalLeadPatch };
+  delete patch.stage;
+  delete patch.status;
+  delete patch.stage_updated_at;
+  delete patch.updated_at;
+  return patch;
+}
+
 export async function applyLeadStageTransitionSupabase(input: {
   leadId: string;
   requestedStage: string;
@@ -64,11 +74,11 @@ export async function applyLeadStageTransitionSupabase(input: {
   const now = toEasternISO();
 
   const patch: Record<string, unknown> = {
+    ...sanitizeAdditionalLeadPatch(input.additionalLeadPatch),
     stage: resolved.stage,
     status: resolved.dbStatus,
     stage_updated_at: now,
-    updated_at: now,
-    ...(input.additionalLeadPatch ?? {})
+    updated_at: now
   };
 
   const hasClosedDate = Object.prototype.hasOwnProperty.call(patch, "closed_date");

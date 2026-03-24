@@ -37,6 +37,16 @@ function buildLeadConversionRpcUnavailableMessage(functionName: string) {
   return `Lead conversion RPC ${functionName} is not available. Apply Supabase migration ${LEAD_CONVERSION_RPC_MIGRATION} (and any earlier unapplied migrations), then refresh Supabase schema cache.`;
 }
 
+function sanitizeAdditionalLeadPatch(additionalLeadPatch?: Record<string, JsonValue>) {
+  if (!additionalLeadPatch) return {};
+  const patch = { ...additionalLeadPatch };
+  delete patch.stage;
+  delete patch.status;
+  delete patch.stage_updated_at;
+  delete patch.updated_at;
+  return patch;
+}
+
 async function invokeLeadConversionRpc(
   supabase: Awaited<ReturnType<typeof createClient>>,
   input: {
@@ -114,7 +124,7 @@ export async function applyLeadStageTransitionWithMemberUpsertSupabase(input: {
     p_member_dob: input.memberDob ?? null,
     p_member_enrollment_date: input.memberEnrollmentDate ?? null,
     p_existing_member_id: input.existingMemberId ?? null,
-    p_additional_lead_patch: (input.additionalLeadPatch ?? {}) as JsonValue,
+    p_additional_lead_patch: sanitizeAdditionalLeadPatch(input.additionalLeadPatch) as JsonValue,
     p_now: toEasternISO(),
     p_today: toEasternDate()
   };
