@@ -454,6 +454,27 @@ test("MHP child diagnosis, medication, allergy, and provider workflows now use 0
   assert.equal(migrationSource.includes("from public.rpc_reconcile_member_mar_state("), true);
 });
 
+test("MHP bundle RPC covers functional and cognitive tab persistence fields", () => {
+  const actionSource = readWorkspaceFile("app/(portal)/health/member-health-profiles/actions-impl.ts");
+  const migrationSource = readWorkspaceFile("supabase/migrations/0133_mhp_bundle_rpc_functional_and_cognitive_fields.sql");
+
+  assert.equal(actionSource.includes("toileting_needs: asNullableString(formData, \"toiletingNeeds\")"), true);
+  assert.equal(actionSource.includes("may_self_medicate: asNullableBool(formData, \"maySelfMedicate\")"), true);
+  assert.equal(actionSource.includes("orientation_dob: asNullableString(formData, \"orientationDob\")"), true);
+  assert.equal(actionSource.includes("self_harm_unsafe: asNullableBool(formData, \"selfHarmUnsafe\")"), true);
+
+  assert.equal(migrationSource.includes("create or replace function public.rpc_update_member_health_profile_bundle("), true);
+  assert.equal(migrationSource.includes("toileting_needs = case when p_mhp_patch ? 'toileting_needs'"), true);
+  assert.equal(migrationSource.includes("vision = case when p_mhp_patch ? 'vision'"), true);
+  assert.equal(migrationSource.includes("speech_verbal_status = case when p_mhp_patch ? 'speech_verbal_status'"), true);
+  assert.equal(migrationSource.includes("may_self_medicate = case when p_mhp_patch ? 'may_self_medicate'"), true);
+  assert.equal(migrationSource.includes("orientation_dob = case when p_mhp_patch ? 'orientation_dob'"), true);
+  assert.equal(migrationSource.includes("memory_impairment = case when p_mhp_patch ? 'memory_impairment'"), true);
+  assert.equal(migrationSource.includes("self_harm_unsafe = case when p_mhp_patch ? 'self_harm_unsafe'"), true);
+  assert.equal(migrationSource.includes("exit_seeking = case when p_mhp_patch ? 'exit_seeking'"), true);
+  assert.equal(migrationSource.includes("cognitive_behavior_comments = case when p_mhp_patch ? 'cognitive_behavior_comments'"), true);
+});
+
 test("MHP equipment and note workflows now use 0059 shared RPC boundaries", () => {
   const mhpActionsSource = readWorkspaceFile("app/(portal)/health/member-health-profiles/actions.ts");
   const memberHealthProfilesSource = readWorkspaceFile("lib/services/member-health-profiles.ts");

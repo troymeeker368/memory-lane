@@ -1,26 +1,29 @@
 "use server";
 
+import {
+  addMhpEquipmentAction as addMhpEquipmentActionImpl,
+  addMhpEquipmentInlineAction as addMhpEquipmentInlineActionImpl,
+  deleteMhpEquipmentInlineAction as deleteMhpEquipmentInlineActionImpl,
+  updateMhpEquipmentAction as updateMhpEquipmentActionImpl,
+  updateMhpEquipmentInlineAction as updateMhpEquipmentInlineActionImpl
+} from "./actions-impl";
+
 export async function addMhpEquipmentAction(formData: FormData) {
-  const { addMhpEquipmentAction } = await import("./actions-impl");
-  return addMhpEquipmentAction(formData);
+  return addMhpEquipmentActionImpl(formData);
 }
 
 export async function updateMhpEquipmentAction(formData: FormData) {
-  const { updateMhpEquipmentAction } = await import("./actions-impl");
-  return updateMhpEquipmentAction(formData);
+  return updateMhpEquipmentActionImpl(formData);
 }
 
 export async function addMhpEquipmentInlineAction(formData: FormData) {
-  const { addMhpEquipmentInlineAction } = await import("./actions-impl");
-  return addMhpEquipmentInlineAction(formData);
+  return addMhpEquipmentInlineActionImpl(formData);
 }
 
 export async function updateMhpEquipmentInlineAction(formData: FormData) {
-  const { updateMhpEquipmentInlineAction } = await import("./actions-impl");
-  return updateMhpEquipmentInlineAction(formData);
+  return updateMhpEquipmentInlineActionImpl(formData);
 }
 
 export async function deleteMhpEquipmentInlineAction(formData: FormData) {
-  const { deleteMhpEquipmentInlineAction } = await import("./actions-impl");
-  return deleteMhpEquipmentInlineAction(formData);
+  return deleteMhpEquipmentInlineActionImpl(formData);
 }

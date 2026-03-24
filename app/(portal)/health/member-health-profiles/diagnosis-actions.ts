@@ -1,26 +1,29 @@
 "use server";
 
+import {
+  addMhpDiagnosisAction as addMhpDiagnosisActionImpl,
+  addMhpDiagnosisInlineAction as addMhpDiagnosisInlineActionImpl,
+  deleteMhpDiagnosisInlineAction as deleteMhpDiagnosisInlineActionImpl,
+  updateMhpDiagnosisAction as updateMhpDiagnosisActionImpl,
+  updateMhpDiagnosisInlineAction as updateMhpDiagnosisInlineActionImpl
+} from "./actions-impl";
+
 export async function addMhpDiagnosisAction(formData: FormData) {
-  const { addMhpDiagnosisAction } = await import("./actions-impl");
-  return addMhpDiagnosisAction(formData);
+  return addMhpDiagnosisActionImpl(formData);
 }
 
 export async function updateMhpDiagnosisAction(formData: FormData) {
-  const { updateMhpDiagnosisAction } = await import("./actions-impl");
-  return updateMhpDiagnosisAction(formData);
+  return updateMhpDiagnosisActionImpl(formData);
 }
 
 export async function addMhpDiagnosisInlineAction(formData: FormData) {
-  const { addMhpDiagnosisInlineAction } = await import("./actions-impl");
-  return addMhpDiagnosisInlineAction(formData);
+  return addMhpDiagnosisInlineActionImpl(formData);
 }
 
 export async function updateMhpDiagnosisInlineAction(formData: FormData) {
-  const { updateMhpDiagnosisInlineAction } = await import("./actions-impl");
-  return updateMhpDiagnosisInlineAction(formData);
+  return updateMhpDiagnosisInlineActionImpl(formData);
 }
 
 export async function deleteMhpDiagnosisInlineAction(formData: FormData) {
-  const { deleteMhpDiagnosisInlineAction } = await import("./actions-impl");
-  return deleteMhpDiagnosisInlineAction(formData);
+  return deleteMhpDiagnosisInlineActionImpl(formData);
 }

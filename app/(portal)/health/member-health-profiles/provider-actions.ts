@@ -1,31 +1,34 @@
 "use server";
 
+import {
+  addMhpProviderAction as addMhpProviderActionImpl,
+  addMhpProviderInlineAction as addMhpProviderInlineActionImpl,
+  deleteMhpProviderAction as deleteMhpProviderActionImpl,
+  deleteMhpProviderInlineAction as deleteMhpProviderInlineActionImpl,
+  updateMhpProviderAction as updateMhpProviderActionImpl,
+  updateMhpProviderInlineAction as updateMhpProviderInlineActionImpl
+} from "./actions-impl";
+
 export async function addMhpProviderAction(formData: FormData) {
-  const { addMhpProviderAction } = await import("./actions-impl");
-  return addMhpProviderAction(formData);
+  return addMhpProviderActionImpl(formData);
 }
 
 export async function updateMhpProviderAction(formData: FormData) {
-  const { updateMhpProviderAction } = await import("./actions-impl");
-  return updateMhpProviderAction(formData);
+  return updateMhpProviderActionImpl(formData);
 }
 
 export async function deleteMhpProviderAction(formData: FormData) {
-  const { deleteMhpProviderAction } = await import("./actions-impl");
-  return deleteMhpProviderAction(formData);
+  return deleteMhpProviderActionImpl(formData);
 }
 
 export async function addMhpProviderInlineAction(formData: FormData) {
-  const { addMhpProviderInlineAction } = await import("./actions-impl");
-  return addMhpProviderInlineAction(formData);
+  return addMhpProviderInlineActionImpl(formData);
 }
 
 export async function deleteMhpProviderInlineAction(formData: FormData) {
-  const { deleteMhpProviderInlineAction } = await import("./actions-impl");
-  return deleteMhpProviderInlineAction(formData);
+  return deleteMhpProviderInlineActionImpl(formData);
 }
 
 export async function updateMhpProviderInlineAction(formData: FormData) {
-  const { updateMhpProviderInlineAction } = await import("./actions-impl");
-  return updateMhpProviderInlineAction(formData);
+  return updateMhpProviderInlineActionImpl(formData);
 }

@@ -24,7 +24,7 @@ const MUTATE_MEMBER_ALLERGY_WORKFLOW_RPC = "rpc_mutate_member_allergy_workflow";
 const MUTATE_MEMBER_PROVIDER_WORKFLOW_RPC = "rpc_mutate_member_provider_workflow";
 const MUTATE_MEMBER_EQUIPMENT_WORKFLOW_RPC = "rpc_mutate_member_equipment_workflow";
 const MUTATE_MEMBER_NOTE_WORKFLOW_RPC = "rpc_mutate_member_note_workflow";
-const MEMBER_HEALTH_PROFILE_WORKFLOW_RPC_MIGRATION = "0057_mcc_mhp_workflow_rpc_hardening.sql";
+const MEMBER_HEALTH_PROFILE_WORKFLOW_RPC_MIGRATION = "0133_mhp_bundle_rpc_functional_and_cognitive_fields.sql";
 
 export async function ensureMemberHealthProfile(memberId: string) {
   return ensureMemberHealthProfileSupabase(memberId);

@@ -1,26 +1,29 @@
 "use server";
 
+import {
+  addMhpAllergyAction as addMhpAllergyActionImpl,
+  addMhpAllergyInlineAction as addMhpAllergyInlineActionImpl,
+  deleteMhpAllergyInlineAction as deleteMhpAllergyInlineActionImpl,
+  updateMhpAllergyAction as updateMhpAllergyActionImpl,
+  updateMhpAllergyInlineAction as updateMhpAllergyInlineActionImpl
+} from "./actions-impl";
+
 export async function addMhpAllergyAction(formData: FormData) {
-  const { addMhpAllergyAction } = await import("./actions-impl");
-  return addMhpAllergyAction(formData);
+  return addMhpAllergyActionImpl(formData);
 }
 
 export async function updateMhpAllergyAction(formData: FormData) {
-  const { updateMhpAllergyAction } = await import("./actions-impl");
-  return updateMhpAllergyAction(formData);
+  return updateMhpAllergyActionImpl(formData);
 }
 
 export async function addMhpAllergyInlineAction(formData: FormData) {
-  const { addMhpAllergyInlineAction } = await import("./actions-impl");
-  return addMhpAllergyInlineAction(formData);
+  return addMhpAllergyInlineActionImpl(formData);
 }
 
 export async function deleteMhpAllergyInlineAction(formData: FormData) {
-  const { deleteMhpAllergyInlineAction } = await import("./actions-impl");
-  return deleteMhpAllergyInlineAction(formData);
+  return deleteMhpAllergyInlineActionImpl(formData);
 }
 
 export async function updateMhpAllergyInlineAction(formData: FormData) {
-  const { updateMhpAllergyInlineAction } = await import("./actions-impl");
-  return updateMhpAllergyInlineAction(formData);
+  return updateMhpAllergyInlineActionImpl(formData);
 }

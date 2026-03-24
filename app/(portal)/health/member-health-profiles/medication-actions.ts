@@ -1,36 +1,39 @@
 "use server";
 
+import {
+  addMhpMedicationAction as addMhpMedicationActionImpl,
+  addMhpMedicationInlineAction as addMhpMedicationInlineActionImpl,
+  deleteMhpMedicationInlineAction as deleteMhpMedicationInlineActionImpl,
+  inactivateMhpMedicationInlineAction as inactivateMhpMedicationInlineActionImpl,
+  reactivateMhpMedicationInlineAction as reactivateMhpMedicationInlineActionImpl,
+  updateMhpMedicationAction as updateMhpMedicationActionImpl,
+  updateMhpMedicationInlineAction as updateMhpMedicationInlineActionImpl
+} from "./actions-impl";
+
 export async function addMhpMedicationAction(formData: FormData) {
-  const { addMhpMedicationAction } = await import("./actions-impl");
-  return addMhpMedicationAction(formData);
+  return addMhpMedicationActionImpl(formData);
 }
 
 export async function updateMhpMedicationAction(formData: FormData) {
-  const { updateMhpMedicationAction } = await import("./actions-impl");
-  return updateMhpMedicationAction(formData);
+  return updateMhpMedicationActionImpl(formData);
 }
 
 export async function addMhpMedicationInlineAction(formData: FormData) {
-  const { addMhpMedicationInlineAction } = await import("./actions-impl");
-  return addMhpMedicationInlineAction(formData);
+  return addMhpMedicationInlineActionImpl(formData);
 }
 
 export async function updateMhpMedicationInlineAction(formData: FormData) {
-  const { updateMhpMedicationInlineAction } = await import("./actions-impl");
-  return updateMhpMedicationInlineAction(formData);
+  return updateMhpMedicationInlineActionImpl(formData);
 }
 
 export async function deleteMhpMedicationInlineAction(formData: FormData) {
-  const { deleteMhpMedicationInlineAction } = await import("./actions-impl");
-  return deleteMhpMedicationInlineAction(formData);
+  return deleteMhpMedicationInlineActionImpl(formData);
 }
 
 export async function inactivateMhpMedicationInlineAction(formData: FormData) {
-  const { inactivateMhpMedicationInlineAction } = await import("./actions-impl");
-  return inactivateMhpMedicationInlineAction(formData);
+  return inactivateMhpMedicationInlineActionImpl(formData);
 }
 
 export async function reactivateMhpMedicationInlineAction(formData: FormData) {
-  const { reactivateMhpMedicationInlineAction } = await import("./actions-impl");
-  return reactivateMhpMedicationInlineAction(formData);
+  return reactivateMhpMedicationInlineActionImpl(formData);
 }

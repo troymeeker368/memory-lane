@@ -1,26 +1,29 @@
 "use server";
 
+import {
+  addMhpNoteAction as addMhpNoteActionImpl,
+  addMhpNoteInlineAction as addMhpNoteInlineActionImpl,
+  deleteMhpNoteInlineAction as deleteMhpNoteInlineActionImpl,
+  updateMhpNoteAction as updateMhpNoteActionImpl,
+  updateMhpNoteInlineAction as updateMhpNoteInlineActionImpl
+} from "./actions-impl";
+
 export async function addMhpNoteAction(formData: FormData) {
-  const { addMhpNoteAction } = await import("./actions-impl");
-  return addMhpNoteAction(formData);
+  return addMhpNoteActionImpl(formData);
 }
 
 export async function updateMhpNoteAction(formData: FormData) {
-  const { updateMhpNoteAction } = await import("./actions-impl");
-  return updateMhpNoteAction(formData);
+  return updateMhpNoteActionImpl(formData);
 }
 
 export async function addMhpNoteInlineAction(formData: FormData) {
-  const { addMhpNoteInlineAction } = await import("./actions-impl");
-  return addMhpNoteInlineAction(formData);
+  return addMhpNoteInlineActionImpl(formData);
 }
 
 export async function updateMhpNoteInlineAction(formData: FormData) {
-  const { updateMhpNoteInlineAction } = await import("./actions-impl");
-  return updateMhpNoteInlineAction(formData);
+  return updateMhpNoteInlineActionImpl(formData);
 }
 
 export async function deleteMhpNoteInlineAction(formData: FormData) {
-  const { deleteMhpNoteInlineAction } = await import("./actions-impl");
-  return deleteMhpNoteInlineAction(formData);
+  return deleteMhpNoteInlineActionImpl(formData);
 }
