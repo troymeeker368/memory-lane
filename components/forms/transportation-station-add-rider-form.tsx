@@ -29,7 +29,7 @@ export function TransportationStationAddRiderForm({
 }: {
   action: (formData: FormData) => void | Promise<void>;
   selectedDate: string;
-  defaultShift: "AM" | "PM";
+  defaultShift: ShiftOption;
   members: MemberPrefillOption[];
   busNumberOptions: string[];
 }) {

@@ -32,12 +32,14 @@ type MemberLookupRowShape = {
   id: string;
   display_name: string;
   status: "active" | "inactive";
+  enrollment_date: string | null;
+  latest_assessment_track: string | null;
 };
 
 const MCC_MEMBER_BASE_SELECT =
   "id, display_name, status, locker_number, enrollment_date, discharge_date, discharge_reason, discharge_disposition, dob, city, code_status, latest_assessment_track, updated_at";
 const MCC_MEMBER_CURRENT_SELECT = `${MCC_MEMBER_BASE_SELECT}, preferred_name, first_name:legal_first_name, last_name:legal_last_name`;
-const MEMBER_LOOKUP_SELECT = "id, display_name, status";
+const MEMBER_LOOKUP_SELECT = "id, display_name, status, enrollment_date, latest_assessment_track";
 const MCC_MEMBER_SCHEMA_MIGRATION = "0011_member_command_center_aux_schema.sql";
 
 function buildMccMemberSchemaOutOfDateError(error: PostgrestErrorLike | null | undefined, fallbackMessage: string) {
@@ -89,7 +91,9 @@ function mapMemberLookupRow(row: Record<string, unknown>): MemberLookupRowShape 
   return {
     id: String(row.id ?? ""),
     display_name: String(row.display_name ?? ""),
-    status: row.status === "inactive" ? "inactive" : "active"
+    status: row.status === "inactive" ? "inactive" : "active",
+    enrollment_date: typeof row.enrollment_date === "string" ? row.enrollment_date : null,
+    latest_assessment_track: typeof row.latest_assessment_track === "string" ? row.latest_assessment_track : null
   };
 }
 

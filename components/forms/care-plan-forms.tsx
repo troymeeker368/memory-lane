@@ -17,11 +17,17 @@ import {
   CARE_PLAN_SHORT_TERM_LABEL,
   type CarePlanSectionType,
   type CarePlanTrack,
-  getCarePlanTrackDefinition
+  getCarePlanTrackDefinition,
+  isCarePlanTrack
 } from "@/lib/services/care-plan-track-definitions";
 import { toEasternDate } from "@/lib/timezone";
 
-type MemberOption = { id: string; display_name: string; enrollment_date?: string | null };
+type MemberOption = {
+  id: string;
+  display_name: string;
+  enrollment_date?: string | null;
+  latest_assessment_track?: string | null;
+};
 
 type CarePlanSectionDraft = {
   sectionType: CarePlanSectionType;
@@ -59,6 +65,10 @@ function normalizeSectionDrafts(sections: CarePlanSectionDraft[]) {
     shortTermGoals: toNumberedGoalText(toGoalLines(section.shortTermGoals)),
     longTermGoals: toNumberedGoalText(toGoalLines(section.longTermGoals))
   }));
+}
+
+function resolveMemberCarePlanTrack(member: MemberOption | undefined, fallbackTrack: CarePlanTrack) {
+  return isCarePlanTrack(member?.latest_assessment_track) ? member.latest_assessment_track : fallbackTrack;
 }
 
 function TrackSectionEditor({
@@ -129,8 +139,9 @@ export function NewCarePlanForm({
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
 
-  const initialTrack = tracks[0] ?? "Track 1";
+  const fallbackTrack = tracks[0] ?? "Track 1";
   const initialMember = (initialMemberId && members.find((member) => member.id === initialMemberId)) || members[0];
+  const initialTrack = resolveMemberCarePlanTrack(initialMember, fallbackTrack);
   const initialEnrollmentDate = initialMember?.enrollment_date || today;
 
   const [form, setForm] = useState({
@@ -163,7 +174,14 @@ export function NewCarePlanForm({
                 const nextMemberId = event.target.value;
                 const selectedMember = members.find((member) => member.id === nextMemberId);
                 const enrollmentDate = selectedMember?.enrollment_date || today;
-                setForm((current) => ({ ...current, memberId: nextMemberId, enrollmentDate }));
+                const nextTrack = resolveMemberCarePlanTrack(selectedMember, fallbackTrack);
+                setForm((current) => ({
+                  ...current,
+                  memberId: nextMemberId,
+                  track: nextTrack,
+                  sections: buildTrackSectionDrafts(nextTrack),
+                  enrollmentDate
+                }));
               }}
             >
               {members.map((member) => (

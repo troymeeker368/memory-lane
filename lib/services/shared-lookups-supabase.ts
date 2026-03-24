@@ -10,6 +10,8 @@ export type StaffLookupRow = {
 export type MemberLookupRow = {
   id: string;
   display_name: string;
+  enrollment_date?: string | null;
+  latest_assessment_track?: string | null;
 };
 
 export async function listMemberLookupSupabase(filters?: {
@@ -19,7 +21,9 @@ export async function listMemberLookupSupabase(filters?: {
   const members = await listMemberNameLookupSupabase(filters);
   return members.map((row) => ({
     id: row.id,
-    display_name: row.display_name
+    display_name: row.display_name,
+    enrollment_date: row.enrollment_date ?? null,
+    latest_assessment_track: row.latest_assessment_track ?? null
   }));
 }
 

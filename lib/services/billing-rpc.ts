@@ -32,11 +32,11 @@ function mapCoverageTypeForLineType(
 }
 
 export function buildMissingBillingAtomicWorkflowMessage(functionName: string) {
-  return `Billing atomic workflow RPC ${functionName} is not available yet. Apply Supabase migration ${BILLING_ATOMIC_WORKFLOW_MIGRATION} first.`;
+  return `Billing atomic workflow RPC ${functionName} is not available in the connected Supabase API. Apply Supabase migration ${BILLING_ATOMIC_WORKFLOW_MIGRATION} and refresh the PostgREST schema cache.`;
 }
 
 export function buildMissingCustomInvoiceAtomicWorkflowMessage(functionName: string) {
-  return `Billing custom invoice RPC ${functionName} is not available yet. Apply Supabase migration ${CUSTOM_INVOICE_ATOMIC_WORKFLOW_MIGRATION} first.`;
+  return `Billing custom invoice RPC ${functionName} is not available in the connected Supabase API. Apply Supabase migration ${CUSTOM_INVOICE_ATOMIC_WORKFLOW_MIGRATION} and refresh the PostgREST schema cache.`;
 }
 
 export function isMissingRpcFunctionError(error: unknown, functionName: string) {
@@ -220,7 +220,7 @@ export function buildBillingBatchWritePlan(input: {
 }
 
 export async function invokeGenerateBillingBatchRpc(plan: BillingBatchWritePlan) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   try {
     await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_GENERATE_BILLING_BATCH, {
       p_batch: plan.batchPayload,
@@ -241,7 +241,7 @@ export async function invokeCreateBillingExportRpc(input: {
   exportJobPayload: BillingExportRpcPayload;
   invoiceIds: string[];
 }) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   try {
     await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_CREATE_BILLING_EXPORT, {
       p_export_job: input.exportJobPayload,
@@ -261,7 +261,7 @@ export async function invokeCreateCustomInvoiceRpc(input: {
   coveragePayloads: BillingBatchCoverageRpcPayload[];
   sourceUpdates: BillingBatchSourceUpdateRpcPayload[];
 }) {
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: true });
   try {
     const result = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_CREATE_CUSTOM_INVOICE, {
       p_invoice: input.invoicePayload,
