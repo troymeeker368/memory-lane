@@ -54,3 +54,35 @@ test("0106 moves enrollment contact/payor writes into the conversion RPC and add
   assert.equal(source.includes("update public.member_contacts as mc"), true);
   assert.equal(source.includes("perform public.rpc_set_member_contact_payor(p_member_id, v_payor_contact_id);"), true);
 });
+
+test("0127 hardens intake, POF, and MAR lineage with mismatch preflight and composite foreign keys", () => {
+  const source = readWorkspaceFile("supabase/migrations/0127_clinical_lineage_enforcement.sql");
+
+  assert.equal(source.includes("Cannot enforce intake_assessment_signatures lineage"), true);
+  assert.equal(source.includes("Cannot enforce intake_post_sign_follow_up_queue lineage"), true);
+  assert.equal(source.includes("Cannot enforce pof_medications lineage"), true);
+  assert.equal(source.includes("Cannot enforce mar_schedules lineage"), true);
+  assert.equal(source.includes("Cannot enforce mar_administrations schedule lineage"), true);
+  assert.equal(source.includes("add constraint intake_assessments_id_member_unique unique (id, member_id)"), true);
+  assert.equal(source.includes("add constraint physician_orders_id_member_unique unique (id, member_id)"), true);
+  assert.equal(source.includes("add constraint pof_medications_id_member_unique unique (id, member_id)"), true);
+  assert.equal(source.includes("add constraint mar_schedules_id_medication_member_unique unique (id, pof_medication_id, member_id)"), true);
+  assert.equal(source.includes("foreign key (assessment_id, member_id)"), true);
+  assert.equal(source.includes("foreign key (physician_order_id, member_id)"), true);
+  assert.equal(source.includes("foreign key (pof_medication_id, member_id)"), true);
+  assert.equal(source.includes("foreign key (mar_schedule_id, pof_medication_id, member_id)"), true);
+});
+
+test("clinical lineage drift audit stays read-only and covers intake, POF, and MAR mismatch checks", () => {
+  const source = readWorkspaceFile("docs/audits/clinical-lineage-drift-audit.sql");
+
+  assert.equal(source.includes("intake_assessment_signatures_assessment_member"), true);
+  assert.equal(source.includes("intake_post_sign_follow_up_queue_assessment_member"), true);
+  assert.equal(source.includes("pof_medications_physician_order_member"), true);
+  assert.equal(source.includes("mar_schedules_pof_medication_member"), true);
+  assert.equal(source.includes("mar_administrations_pof_medication_member"), true);
+  assert.equal(source.includes("mar_administrations_schedule_member_lineage"), true);
+  assert.equal(source.toLowerCase().includes("update public."), false);
+  assert.equal(source.toLowerCase().includes("insert into public."), false);
+  assert.equal(source.toLowerCase().includes("alter table public."), false);
+});
