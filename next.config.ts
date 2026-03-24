@@ -4,9 +4,7 @@ import path from "node:path";
 import type { NextConfig } from "next";
 
 const shouldEmitBuildStats = process.env.NEXT_BUILD_STATS === "1";
-const isTurbopackBuild =
-  process.argv.some((arg) => arg === "--turbopack" || arg === "--turbo") ||
-  process.env.NEXT_USE_TURBOPACK === "1";
+const useWebpackConfig = process.env.NEXT_USE_WEBPACK === "1";
 const shouldDisableWebpackCache = process.env.NEXT_DISABLE_WEBPACK_CACHE === "1";
 
 class BuildStatsReportPlugin {
@@ -166,7 +164,7 @@ const nextConfig: NextConfig = {
   turbopack: {}
 };
 
-if (!isTurbopackBuild) {
+if (useWebpackConfig) {
   nextConfig.webpack = (config, { dev }) => {
     if (shouldEmitBuildStats && !dev) {
       config.plugins = [...(config.plugins ?? []), new BuildStatsReportPlugin()];

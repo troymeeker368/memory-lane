@@ -32,8 +32,10 @@ export default async function OperationsHoldsPage({
   const defaultHoldStartDate = getOperationsTodayDate();
   const defaultHoldEndDate = getFirstDayOfNextMonth(defaultHoldStartDate);
 
-  const members = await listMemberNameLookupSupabase({ status: "all" });
-  const holds = await listMemberHolds();
+  const [members, holds] = await Promise.all([
+    listMemberNameLookupSupabase({ status: "all" }),
+    listMemberHolds()
+  ]);
 
   const memberById = new Map(members.map((member) => [member.id, member] as const));
   const activeMembers = members

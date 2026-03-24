@@ -53,21 +53,26 @@ export default async function TransportationStationPage({
     role === "manager" ||
     role === "director" ||
     role === "coordinator";
-  const busNumberOptions = await getConfiguredBusNumbers();
+  const busNumberOptionsPromise = getConfiguredBusNumbers();
   const query = await searchParams;
   const selectedDate = firstString(query.date) ?? getOperationsTodayDate();
   const selectedShift = normalizeShift(firstString(query.shift));
-  const selectedBusNumber = normalizeBusNumber(firstString(query.bus), busNumberOptions);
-
-  const manifest = selectedBusNumber
-    ? await getTransportationRunManifest({
+  const selectedBusNumberPromise = busNumberOptionsPromise.then((busNumberOptions) =>
+    normalizeBusNumber(firstString(query.bus), busNumberOptions)
+  );
+  const addRiderMemberOptionsPromise = canManageManifest ? getTransportationAddRiderMembers() : Promise.resolve([]);
+  const [busNumberOptions, selectedBusNumber, manifest, addRiderMemberOptions] = await Promise.all([
+    busNumberOptionsPromise,
+    selectedBusNumberPromise,
+    selectedBusNumberPromise.then((bus) =>
+      bus ? getTransportationRunManifest({
         selectedDate,
         shift: selectedShift,
-        busNumber: selectedBusNumber
-      })
-    : null;
-
-  const addRiderMemberOptions = canManageManifest ? await getTransportationAddRiderMembers() : [];
+        busNumber: bus
+      }) : Promise.resolve(null)
+    ),
+    addRiderMemberOptionsPromise
+  ]);
 
   return (
     <div className="space-y-4">

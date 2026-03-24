@@ -187,18 +187,24 @@ export default async function MemberCommandCenterDetailPage({
   const detail = await getMemberCommandCenterDetailSupabase(memberId);
   if (!detail) notFound();
   const billingDate = toEasternDate();
-  const activeScheduleChangesForToday = await listScheduleChangesSupabase({
-    memberId: detail.member.id,
-    status: "active",
-    effectiveDate: billingDate,
-    limit: 25
-  });
-  const expectedAttendanceContext = await loadExpectedAttendanceSupabaseContext({
-    memberIds: [detail.member.id],
-    startDate: billingDate,
-    endDate: billingDate,
-    includeAttendanceRecords: false
-  });
+  const [activeScheduleChangesForToday, expectedAttendanceContext, memberBillingSettings, lockerOptions, busNumberOptions] =
+    await Promise.all([
+      listScheduleChangesSupabase({
+        memberId: detail.member.id,
+        status: "active",
+        effectiveDate: billingDate,
+        limit: 25
+      }),
+      loadExpectedAttendanceSupabaseContext({
+        memberIds: [detail.member.id],
+        startDate: billingDate,
+        endDate: billingDate,
+        includeAttendanceRecords: false
+      }),
+      listMemberBillingSettingsSupabase(detail.member.id),
+      getAvailableLockerNumbersForMemberSupabase(detail.member.id),
+      getConfiguredBusNumbers()
+    ]);
   const effectiveScheduleToday = resolveExpectedAttendanceFromSupabaseContext({
     context: expectedAttendanceContext,
     memberId: detail.member.id,
@@ -208,14 +214,11 @@ export default async function MemberCommandCenterDetailPage({
   });
   const effectiveScheduleTodayLabel = formatScheduleWeekdayShortLabels(effectiveScheduleToday.effectiveDays);
   const activeOverrideCount = activeScheduleChangesForToday.length;
-  const memberBillingSettings = await listMemberBillingSettingsSupabase(detail.member.id);
   const activeMemberBillingSetting = resolveActiveEffectiveMemberRowForDate(
     detail.member.id,
     billingDate,
     memberBillingSettings
   );
-  const lockerOptions = await getAvailableLockerNumbersForMemberSupabase(detail.member.id);
-  const busNumberOptions = await getConfiguredBusNumbers();
   const currentBillingPayor = detail.contacts.find((row) => row.is_payor) ?? null;
   const billingPayorName = currentBillingPayor?.contact_name ?? "No payor contact designated";
   const billingPayorStatus = currentBillingPayor
@@ -287,11 +290,13 @@ export default async function MemberCommandCenterDetailPage({
     ]);
 
     physicianOrders = await physicianOrdersModule.getPhysicianOrdersForMember(detail.member.id);
-    pofRequests = await pofReadModule.listPofRequestsByPhysicianOrderIds(
-      detail.member.id,
-      physicianOrders.map((row) => row.id)
-    );
-    defaultNurseName = await userManagementModule.getManagedUserSignoffLabel(profile.id, profile.full_name);
+    [pofRequests, defaultNurseName] = await Promise.all([
+      pofReadModule.listPofRequestsByPhysicianOrderIds(
+        detail.member.id,
+        physicianOrders.map((row) => row.id)
+      ),
+      userManagementModule.getManagedUserSignoffLabel(profile.id, profile.full_name)
+    ]);
     defaultFromEmail = pofReadModule.getConfiguredClinicalSenderEmail();
     physicianOrdersUpdatedAt = latestTimestamp(physicianOrders.map((row) => row.updatedAt));
     physicianOrdersUpdatedBy = latestUpdatedBy(

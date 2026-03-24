@@ -39,16 +39,18 @@ export default async function BillingBatchesPage({
   const selectedBatchId = (firstSearchParam(params.batchId) ?? "").trim();
   const errorMessage = firstSearchParam(params.error);
   const status = parseEnumSearchParam(firstSearchParam(params.status), ["generated"] as const, "" as "" | "generated");
-  const preview = await getBillingGenerationPreview({
-    billingMonth,
-    batchType
-  });
-  const batches = await getBillingBatches();
+  const [preview, batches, lookup, profile] = await Promise.all([
+    getBillingGenerationPreview({
+      billingMonth,
+      batchType
+    }),
+    getBillingBatches(),
+    getBillingMemberPayorLookups(),
+    getCurrentProfile()
+  ]);
   const selectedBatch = selectedBatchId ? batches.find((row) => row.id === selectedBatchId) ?? null : batches[0] ?? null;
   const reviewRows = selectedBatch ? await getBillingBatchReviewRows(selectedBatch.id) : [];
-  const lookup = await getBillingMemberPayorLookups();
   const activeMembers = lookup.members;
-  const profile = await getCurrentProfile();
   const role = normalizeRoleKey(profile.role);
   const canReopenBatch = role === "admin" || role === "manager";
   const today = toEasternDate();

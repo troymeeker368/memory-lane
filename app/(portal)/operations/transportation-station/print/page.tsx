@@ -49,15 +49,18 @@ export default async function TransportationManifestPrintPage({
   noStore();
   await requireModuleAccess("operations");
   const params = await searchParams;
-  const busNumberOptions = await getConfiguredBusNumbers();
   const date = firstString(params.date) ?? toEasternDate();
   const shift = normalizeShift(firstString(params.shift));
-  const bus = normalizeBusFilter(firstString(params.bus), busNumberOptions);
-  const manifest = await getTransportationManifest({
-    selectedDate: date,
-    shift,
-    busFilter: bus
-  });
+  const rawBus = firstString(params.bus);
+  const [busNumberOptions, manifest] = await Promise.all([
+    getConfiguredBusNumbers(),
+    getTransportationManifest({
+      selectedDate: date,
+      shift,
+      busFilter: rawBus ?? "all"
+    })
+  ]);
+  const bus = normalizeBusFilter(rawBus, busNumberOptions);
   const shiftDisplayOrder: Array<"AM" | "PM"> = shift === "Both" ? ["AM", "PM"] : [shift];
   const weekdayLabel = WEEKDAY_LABELS[manifest.weekday] ?? manifest.weekday;
   const busPages = manifest.groups

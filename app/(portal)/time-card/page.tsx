@@ -5,7 +5,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { PunchStatusBadge, PunchTypeBadge } from "@/components/ui/punch-type-badge";
 import { TimePunchControls } from "@/components/forms/time-punch-controls";
-import { getCurrentProfile, requireModuleAccess } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { normalizeRoleKey, PTO_EXTERNAL_URL } from "@/lib/permissions";
 import { getManagerTimeReview, getTimeCardOverview } from "@/lib/services/time";
 import { formatDate, formatDateTime } from "@/lib/utils";
@@ -24,13 +24,22 @@ function describePunchMeta(punch: { source?: string | null; status?: string | nu
 }
 
 export default async function TimeCardPage() {
-  await requireModuleAccess("time-card");
-  const profile = await getCurrentProfile();
+  const profile = await requireModuleAccess("time-card");
   const normalizedRole = normalizeRoleKey(profile.role);
   const canPunch = normalizedRole === "program-assistant";
   const canSeeAllEmployeeHistory = normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director";
-  const { punches, exceptions, currentStatus, dailyHours, payPeriodHours, payPeriodLabel, mealDeductionHours, adjustedPayPeriodHours } = await getTimeCardOverview(profile.id);
-  const managerRows = canSeeAllEmployeeHistory ? await getManagerTimeReview() : [];
+  const managerRowsPromise = canSeeAllEmployeeHistory ? getManagerTimeReview() : Promise.resolve([]);
+  const {
+    punches,
+    exceptions,
+    currentStatus,
+    dailyHours,
+    payPeriodHours,
+    payPeriodLabel,
+    mealDeductionHours,
+    adjustedPayPeriodHours
+  } = await getTimeCardOverview(profile.id);
+  const managerRows = await managerRowsPromise;
   type TimePunchRow = (typeof punches)[number];
   type ManagerReviewRow = (typeof managerRows)[number];
 

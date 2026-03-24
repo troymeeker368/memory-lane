@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { getCurrentProfile, requireModuleAccess } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getEmployeeForgottenPunchRequests } from "@/lib/services/director-timecards";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
@@ -16,11 +16,10 @@ export default async function ForgottenPunchPage({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireModuleAccess("time-card");
+  const profile = await requireModuleAccess("time-card");
   const query = searchParams ? await searchParams : {};
   const successMessage = firstString(query.success);
   const errorMessage = firstString(query.error);
-  const profile = await getCurrentProfile();
   const requests = await getEmployeeForgottenPunchRequests(profile.id);
 
   return (

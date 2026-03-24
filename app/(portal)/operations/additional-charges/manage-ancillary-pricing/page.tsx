@@ -10,8 +10,7 @@ import { getOperationalSettings } from "@/lib/services/operations-settings";
 
 export default async function ManageAncillaryPricingPage() {
   await requireRoles(["admin"]);
-  const summary = await getAncillarySummary();
-  const operationalSettings = await getOperationalSettings();
+  const [summary, operationalSettings] = await Promise.all([getAncillarySummary(), getOperationalSettings()]);
 
   return (
     <div className="space-y-4">

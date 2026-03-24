@@ -26,15 +26,17 @@ export default async function CarePlanDueReportPage({
   const track = typeof params.track === "string" ? params.track : "All";
   const memberId = typeof params.memberId === "string" ? params.memberId : "All";
   const page = parsePage(params.page);
-  const members = await getMembers();
-  const tracks = getCarePlanTracks();
-  const result = await getCarePlans({
-    status,
-    track: track === "All" ? undefined : track,
-    memberId: memberId === "All" ? undefined : memberId,
-    page,
-    pageSize: 25
-  });
+  const [tracks, members, result] = await Promise.all([
+    getCarePlanTracks(),
+    getMembers(),
+    getCarePlans({
+      status,
+      track: track === "All" ? undefined : track,
+      memberId: memberId === "All" ? undefined : memberId,
+      page,
+      pageSize: 25
+    })
+  ]);
   const pageHref = (targetPage: number) => {
     const search = new URLSearchParams();
     if (status !== "All") search.set("status", status);

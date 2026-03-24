@@ -64,8 +64,10 @@ export default async function PhysicianOrderDetailPage({
   const form = await getPhysicianOrderById(pofId);
   if (!form) notFound();
 
-  const history = await getPhysicianOrdersForMember(form.memberId);
-  const pofTimeline = await listPofTimelineForPhysicianOrder(form.id);
+  const [history, pofTimeline] = await Promise.all([
+    getPhysicianOrdersForMember(form.memberId),
+    listPofTimelineForPhysicianOrder(form.id)
+  ]);
   const latestRequest = pofTimeline.requests[0] ?? null;
   const currentNurseName = resolveNurseDefaultName(profile.full_name, profile.email);
   const defaultFromEmail = profile.email?.trim() || getConfiguredClinicalSenderEmail();

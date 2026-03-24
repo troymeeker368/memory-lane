@@ -32,21 +32,23 @@ export default async function PhysicianOrdersIndexPage({
   const memberId = firstString(query.memberId) ?? "";
   const status = firstString(query.status) ?? "all";
   const q = firstString(query.q) ?? "";
-
-  let canonicalMemberId = memberId;
-  if (memberId) {
-    canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "PhysicianOrdersIndexPage" });
-  }
-
-  const rows = await getPhysicianOrders({
-    memberId: canonicalMemberId || undefined,
-    status:
-      status === "Draft" || status === "Sent" || status === "Signed" || status === "Expired" || status === "Superseded"
-        ? status
-        : "all",
-    q
-  });
-  const members = await listActiveMemberLookupSupabase();
+  const canonicalMemberIdPromise = memberId
+    ? resolveCanonicalMemberId(memberId, { actionLabel: "PhysicianOrdersIndexPage" })
+    : Promise.resolve(memberId);
+  const [members, canonicalMemberId, rows] = await Promise.all([
+    listActiveMemberLookupSupabase(),
+    canonicalMemberIdPromise,
+    canonicalMemberIdPromise.then((resolvedMemberId) =>
+      getPhysicianOrders({
+        memberId: resolvedMemberId || undefined,
+        status:
+          status === "Draft" || status === "Sent" || status === "Signed" || status === "Expired" || status === "Superseded"
+            ? status
+            : "all",
+        q
+      })
+    )
+  ]);
 
   return (
     <div className="space-y-4">

@@ -4,8 +4,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { getBillingMemberPayorLookups, getFinalizedInvoices } from "@/lib/services/billing-read";
 
 export default async function FinalizedInvoicesPage() {
-  const invoices = await getFinalizedInvoices();
-  const lookups = await getBillingMemberPayorLookups();
+  const [invoices, lookups] = await Promise.all([getFinalizedInvoices(), getBillingMemberPayorLookups()]);
   const memberName = new Map(lookups.members.map((row) => [row.id, row.displayName] as const));
 
   return (

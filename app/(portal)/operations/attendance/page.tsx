@@ -157,17 +157,18 @@ export default async function OperationsAttendancePage({
   const isDailyCensusTab = selectedTab === "daily-census";
   const isDailyTracksTab = selectedTab === "daily-tracks";
   const isWeeklyCensusTab = selectedTab === "weekly-census";
+  const unscheduledMembersPromise = isDailyAttendanceTab
+    ? getUnscheduledAttendanceMemberOptions({ selectedDate })
+    : Promise.resolve([]);
 
-  const dailyAttendance = isDailyAttendanceTab ? await getDailyAttendanceView({ selectedDate }) : null;
-  const weeklyAttendance = isWeeklyAttendanceTab ? await getWeeklyAttendanceView({ anchorDate: selectedWeekAnchor }) : null;
-  const dailyCensus = isDailyCensusTab ? await getDailyCensusView({ selectedDate }) : null;
-  const dailyTracks = isDailyTracksTab ? await getDailyTrackSheetView({ selectedDate }) : null;
-  const weeklyCensus = isWeeklyCensusTab ? await getWeeklyCensusView({ anchorDate: selectedWeekAnchor }) : null;
-
-  const unscheduledMembers =
-    isDailyAttendanceTab && dailyAttendance
-      ? await getUnscheduledAttendanceMemberOptions({ selectedDate: dailyAttendance.selectedDate })
-      : [];
+  const [dailyAttendance, weeklyAttendance, dailyCensus, dailyTracks, weeklyCensus, unscheduledMembers] = await Promise.all([
+    isDailyAttendanceTab ? getDailyAttendanceView({ selectedDate }) : Promise.resolve(null),
+    isWeeklyAttendanceTab ? getWeeklyAttendanceView({ anchorDate: selectedWeekAnchor }) : Promise.resolve(null),
+    isDailyCensusTab ? getDailyCensusView({ selectedDate }) : Promise.resolve(null),
+    isDailyTracksTab ? getDailyTrackSheetView({ selectedDate }) : Promise.resolve(null),
+    isWeeklyCensusTab ? getWeeklyCensusView({ anchorDate: selectedWeekAnchor }) : Promise.resolve(null),
+    unscheduledMembersPromise
+  ]);
 
   const weeklyAttendanceDays =
     isWeeklyAttendanceTab && weeklyAttendance

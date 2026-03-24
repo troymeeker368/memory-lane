@@ -121,20 +121,12 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
   }
 
   const baseSelect =
-    "id, email, full_name, role, active, is_active, status, invited_at, password_set_at, last_sign_in_at, disabled_at, staff_id";
+    "id, email, full_name, role, active, is_active, status, invited_at, password_set_at, last_sign_in_at, disabled_at, staff_id, has_custom_permissions";
   const legacySelect = "id, email, full_name, role, active, staff_id";
 
   const profileLookupStartedAt = timingNow();
-  const permissionsStartedAt = timingNow();
-  const [profileLookup, permissionsLookup] = await Promise.all([
-    serviceSupabase.from("profiles").select(baseSelect).eq("id", user.id).maybeSingle(),
-    serviceSupabase
-      .from("user_permissions")
-      .select("module_key, can_view, can_create, can_edit, can_admin")
-      .eq("user_id", user.id)
-  ]);
+  const profileLookup = await serviceSupabase.from("profiles").select(baseSelect).eq("id", user.id).maybeSingle();
   logTiming(traceLabel, "profile-role-lookup", profileLookupStartedAt);
-  logTiming(traceLabel, "permission-row-lookup", permissionsStartedAt);
 
   const { data: enrichedData, error: enrichedError } = profileLookup;
 
@@ -155,6 +147,7 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
       }
     | null;
   let error = enrichedError;
+  let shouldLookupCustomPermissions = true;
 
   if (error) {
     const legacyLookupStartedAt = timingNow();
@@ -165,6 +158,9 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
     }
     data = fallback.data as typeof data;
     error = null;
+    shouldLookupCustomPermissions = true;
+  } else {
+    shouldLookupCustomPermissions = Boolean((data as { has_custom_permissions?: boolean | null }).has_custom_permissions);
   }
 
   if (!data) {
@@ -205,8 +201,29 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
   const role = forceDevAdminView ? "admin" : normalizeRoleKey(data.role as AppRole);
   let hasCustomPermissions = false;
   let customPermissions = null;
+  let permissionsRows: Array<{
+    module_key: string;
+    can_view: boolean;
+    can_create: boolean;
+    can_edit: boolean;
+    can_admin: boolean;
+  }> = [];
+  let permissionsError: unknown = null;
 
-  const { data: rows, error: permissionsError } = permissionsLookup;
+  const hasProfileLevelCustomPermissions = !forceDevAdminView && shouldLookupCustomPermissions;
+
+  if (hasProfileLevelCustomPermissions) {
+    const permissionsStartedAt = timingNow();
+    const permissionsLookup = await serviceSupabase
+      .from("user_permissions")
+      .select("module_key, can_view, can_create, can_edit, can_admin")
+      .eq("user_id", user.id);
+    logTiming(traceLabel, "permission-row-lookup", permissionsStartedAt);
+    permissionsRows = permissionsLookup.data as typeof permissionsRows;
+    permissionsError = permissionsLookup.error;
+  }
+
+  const rows = permissionsRows;
   if (permissionsError) {
     if (isMissingSchemaObjectError(permissionsError)) {
       throw new Error(

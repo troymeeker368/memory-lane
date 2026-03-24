@@ -99,11 +99,15 @@ export default async function NewPhysicianOrderPage({
 }) {
   await requireRoles(PHYSICIAN_ORDER_MODULE_ROLES);
   const profile = await getCurrentProfile();
-  const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";
   const pofId = firstString(query.pofId) ?? "";
   const saveError = firstString(query.saveError) ?? "";
+  const [actorDisplayName, members] = await Promise.all([
+    getManagedUserSignoffLabel(profile.id, profile.full_name),
+    listPhysicianOrderMemberLookup()
+  ]);
+  const editingPromise = pofId ? getPhysicianOrderById(pofId) : Promise.resolve(null);
   let canonicalMemberId = memberId;
   let identityError: string | null = null;
   if (memberId) {
@@ -116,7 +120,7 @@ export default async function NewPhysicianOrderPage({
   }
   const effectiveSaveError = identityError ?? saveError;
 
-  const members = await listPhysicianOrderMemberLookup();
+  const editing = await editingPromise;
 
   if (!canonicalMemberId && !pofId) {
     return (
@@ -150,7 +154,6 @@ export default async function NewPhysicianOrderPage({
     );
   }
 
-  const editing = pofId ? await getPhysicianOrderById(pofId) : null;
   const draft =
     editing ??
     (canonicalMemberId

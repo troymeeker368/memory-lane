@@ -27,16 +27,17 @@ export default async function CarePlansListPage({
   const memberId = typeof params.memberId === "string" ? params.memberId : "All";
   const query = typeof params.q === "string" ? params.q : "";
   const page = parsePage(params.page);
-  const members = await getMembers();
-  const tracks = getCarePlanTracks();
-  const result = await getCarePlans({
+  const [tracks, members, result] = await Promise.all([
+    getCarePlanTracks(),
+    getMembers(),
+    getCarePlans({
     status,
     track: track === "All" ? undefined : track,
     memberId: memberId === "All" ? undefined : memberId,
     query: query || undefined,
     page,
     pageSize: 25
-  });
+  })]);
   const sortedPlans = [...result.rows].sort((a, b) => {
     const aDate = a.lastCompletedDate || a.reviewDate || a.enrollmentDate;
     const bDate = b.lastCompletedDate || b.reviewDate || b.enrollmentDate;

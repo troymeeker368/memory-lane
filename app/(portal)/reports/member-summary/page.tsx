@@ -92,8 +92,10 @@ export default async function MemberSummaryPage({
   const resolvedRange = resolveMemberSummaryRange(rawRange, rawFrom, rawTo);
   const isCustomRange = resolvedRange.preset === "custom";
 
-  const members = await getMembers();
-  const snapshot = memberId ? await getMemberActivitySnapshot(memberId, resolvedRange.from, resolvedRange.to) : null;
+  const [members, snapshot] = await Promise.all([
+    getMembers(),
+    memberId ? getMemberActivitySnapshot(memberId, resolvedRange.from, resolvedRange.to) : Promise.resolve(null)
+  ]);
   const placeholderNotice = snapshot?.placeholderNotice;
   const timelineItems = snapshot
     ? [...snapshot.activities].sort((a, b) => {

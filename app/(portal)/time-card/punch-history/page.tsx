@@ -1,7 +1,7 @@
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { PunchTypeBadge } from "@/components/ui/punch-type-badge";
-import { getCurrentProfile, requireModuleAccess } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { getPunchHistory } from "@/lib/services/time";
 import { formatDateTime } from "@/lib/utils";
@@ -22,8 +22,7 @@ function describePunchMeta(punch: { source?: string | null; status?: string | nu
 }
 
 export default async function PunchHistoryPage() {
-  await requireModuleAccess("time-card");
-  const profile = await getCurrentProfile();
+  const profile = await requireModuleAccess("time-card");
   const normalizedRole = normalizeRoleKey(profile.role);
   const showStaffColumn = normalizedRole !== "program-assistant";
   const punches = await getPunchHistory(profile.id, profile.role);

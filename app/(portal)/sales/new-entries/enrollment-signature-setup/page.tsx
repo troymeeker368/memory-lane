@@ -1,13 +1,12 @@
 import { EnrollmentPacketSignatureSetup } from "@/components/sales/enrollment-packet-signature-setup";
 import { Card, CardTitle } from "@/components/ui/card";
-import { getCurrentProfile, requireModuleAccess } from "@/lib/auth";
+import { requireModuleAccess } from "@/lib/auth";
 import { getEnrollmentPacketSenderSignatureProfile } from "@/lib/services/enrollment-packets-sender";
 
 export const dynamic = "force-dynamic";
 
 export default async function EnrollmentSignatureSetupPage() {
-  await requireModuleAccess("sales");
-  const profile = await getCurrentProfile();
+  const profile = await requireModuleAccess("sales");
   const existing = await getEnrollmentPacketSenderSignatureProfile(profile.id);
   return (
     <div className="space-y-4">

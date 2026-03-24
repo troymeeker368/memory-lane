@@ -11,8 +11,8 @@ function todayDate() {
 }
 
 export default async function BillingAgreementsPage() {
-  const centerBillingSettings = await listCenterBillingSettingsSupabase();
-  const [payors, memberBilling, members] = await Promise.all([
+  const [centerBillingSettings, payors, memberBilling, members] = await Promise.all([
+    listCenterBillingSettingsSupabase(),
     listPayors(),
     listMemberBillingSettings(),
     listMemberNameLookupSupabase({ status: "active" })

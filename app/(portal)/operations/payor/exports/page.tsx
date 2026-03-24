@@ -10,8 +10,7 @@ export default async function BillingExportsPage({
 }) {
   const query = await searchParams;
   const errorMessage = Array.isArray(query.error) ? query.error[0] : query.error;
-  const batches = await getBillingBatches();
-  const jobs = await getBillingExports();
+  const [batches, jobs] = await Promise.all([getBillingBatches(), getBillingExports()]);
   const finalizedBatches = batches.filter(
     (row) => row.batch_status === "Finalized" || row.batch_status === "Exported" || row.batch_status === "Closed"
   );

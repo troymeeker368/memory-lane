@@ -85,19 +85,20 @@ export default async function DirectorTimecardsPage({
   const successMessage = firstString(query.success);
   const errorMessage = firstString(query.error);
 
-  const workspace = await getDirectorTimecardsWorkspace({
+  const workspacePromise = getDirectorTimecardsWorkspace({
     payPeriodId,
     employeeId,
     status,
     exceptionOnly
   });
-  const payrollWorkspace =
+  const payrollWorkspacePromise =
     activeTab === "export"
-      ? await getDirectorPayrollExportWorkspace({
+      ? getDirectorPayrollExportWorkspace({
           employeeId,
           overridePayPeriodStart
         })
-      : null;
+      : Promise.resolve(null);
+  const [workspace, payrollWorkspace] = await Promise.all([workspacePromise, payrollWorkspacePromise]);
 
   const buildTabHref = (tabKey: DirectorTabKey) => {
     const params = new URLSearchParams();
