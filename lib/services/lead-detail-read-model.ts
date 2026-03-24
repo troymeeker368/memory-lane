@@ -32,6 +32,87 @@ const LEAD_STAGE_HISTORY_SELECT =
 const PARTNER_ACTIVITY_DETAIL_SELECT =
   "id, activity_at, activity_type, organization_name, contact_name, notes";
 
+type LeadDetailRow = {
+  id: string;
+  stage: string | null;
+  status: string | null;
+  inquiry_date: string | null;
+  member_name: string | null;
+  caregiver_name: string | null;
+  caregiver_relationship: string | null;
+  caregiver_phone: string | null;
+  caregiver_email: string | null;
+  member_start_date: string | null;
+  lead_source: string | null;
+  partner_id: string | null;
+  referral_source_id: string | null;
+  referral_name: string | null;
+  likelihood: string | null;
+  next_follow_up_date: string | null;
+  next_follow_up_type: string | null;
+};
+
+type LeadDetailActivityRow = {
+  id: string;
+  lead_id: string | null;
+  activity_at: string;
+  activity_type: string | null;
+  outcome: string | null;
+  next_follow_up_date: string | null;
+  next_follow_up_type: string | null;
+  notes: string | null;
+  member_name: string | null;
+};
+
+type LeadStageHistoryRow = {
+  id: string;
+  lead_id: string | null;
+  changed_at: string;
+  from_stage: string | null;
+  to_stage: string | null;
+  from_status: string | null;
+  to_status: string | null;
+  changed_by_name: string | null;
+  source: string | null;
+  reason: string | null;
+};
+
+type LeadPartnerRow = {
+  id: string;
+  partner_id: string | null;
+  organization_name: string | null;
+  category: string | null;
+  referral_source_category: string | null;
+  contact_name: string | null;
+  location: string | null;
+  primary_phone: string | null;
+  primary_email: string | null;
+  notes: string | null;
+  last_touched: string | null;
+};
+
+type LeadReferralSourceRow = {
+  id: string;
+  referral_source_id: string | null;
+  partner_id: string | null;
+  contact_name: string | null;
+  organization_name: string | null;
+  job_title: string | null;
+  primary_phone: string | null;
+  primary_email: string | null;
+  preferred_contact_method: string | null;
+  last_touched: string | null;
+};
+
+type LeadPartnerActivityRow = {
+  id: string;
+  activity_at: string;
+  activity_type: string | null;
+  organization_name: string | null;
+  contact_name: string | null;
+  notes: string | null;
+};
+
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -40,7 +121,15 @@ function isInvalidUuidFilterError(message: string) {
   return message.toLowerCase().includes("invalid input syntax for type uuid");
 }
 
-export async function getLeadDetail(leadId: string) {
+export async function getLeadDetail(leadId: string): Promise<{
+  lead: LeadDetailRow;
+  activities: LeadDetailActivityRow[];
+  stageHistory: LeadStageHistoryRow[];
+  canonicalMemberId: string | null;
+  partner: LeadPartnerRow | null;
+  referralSource: LeadReferralSourceRow | null;
+  partnerActivities: LeadPartnerActivityRow[];
+} | null> {
   const canonical = await resolveCanonicalLeadRef(
     {
       sourceType: "lead",
@@ -57,12 +146,13 @@ export async function getLeadDetail(leadId: string) {
   const canonicalLeadId = canonical.leadId;
 
   const supabase = await createClient();
-  const { data: lead, error: leadError } = await supabase
+  const leadResult = await supabase
     .from("leads")
     .select(LEAD_DETAIL_SELECT)
     .eq("id", canonicalLeadId)
     .maybeSingle();
-  if (leadError) throw new Error(leadError.message);
+  if (leadResult.error) throw new Error(leadResult.error.message);
+  const lead = (leadResult.data as unknown as LeadDetailRow | null) ?? null;
   if (!lead) return null;
 
   const partnerId = String(lead.partner_id ?? "").trim();
@@ -119,8 +209,10 @@ export async function getLeadDetail(leadId: string) {
     throw new Error(referralSourceResult.error.message);
   }
 
-  const partner = partnerResult.error ? null : partnerResult.data ?? null;
-  const referralSource = referralSourceResult.error ? null : referralSourceResult.data ?? null;
+  const partner = partnerResult.error ? null : ((partnerResult.data as unknown as LeadPartnerRow | null) ?? null);
+  const referralSource = referralSourceResult.error
+    ? null
+    : ((referralSourceResult.data as unknown as LeadReferralSourceRow | null) ?? null);
 
   let partnerActivitiesQuery = supabase
     .from("partner_activities")
@@ -143,11 +235,11 @@ export async function getLeadDetail(leadId: string) {
 
   return {
     lead,
-    activities: activitiesResult.data ?? [],
-    stageHistory: stageHistoryResult.data ?? [],
+    activities: ((activitiesResult.data ?? []) as unknown) as LeadDetailActivityRow[],
+    stageHistory: ((stageHistoryResult.data ?? []) as unknown) as LeadStageHistoryRow[],
     canonicalMemberId: canonical.memberId ?? null,
     partner,
     referralSource,
-    partnerActivities: partnerActivities ?? []
+    partnerActivities: ((partnerActivities ?? []) as unknown) as LeadPartnerActivityRow[]
   };
 }

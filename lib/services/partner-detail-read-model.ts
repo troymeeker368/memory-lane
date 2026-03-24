@@ -24,18 +24,79 @@ const PARTNER_ACTIVITY_SELECT =
 const REFERRAL_SOURCE_DETAIL_SELECT =
   "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, last_touched";
 
+type PartnerDetailRow = {
+  id: string;
+  partner_id: string | null;
+  organization_name: string | null;
+  category: string | null;
+  referral_source_category: string | null;
+  contact_name: string | null;
+  location: string | null;
+  primary_phone: string | null;
+  primary_email: string | null;
+  notes: string | null;
+  last_touched: string | null;
+};
+
+type ReferralSourceListRow = {
+  id: string;
+  referral_source_id: string | null;
+  partner_id: string | null;
+  contact_name: string | null;
+  organization_name: string | null;
+  job_title: string | null;
+  primary_phone: string | null;
+  primary_email: string | null;
+  preferred_contact_method: string | null;
+  last_touched: string | null;
+};
+
+type PartnerLeadRow = {
+  id: string;
+  member_name: string | null;
+  stage: string | null;
+  caregiver_name: string | null;
+  lead_source: string | null;
+  inquiry_date: string | null;
+  created_at: string;
+};
+
+type PartnerLeadActivityRow = {
+  id: string;
+  lead_id: string | null;
+  referral_source_id: string | null;
+  activity_at: string;
+  activity_type: string | null;
+  outcome: string | null;
+  notes: string | null;
+  member_name: string | null;
+};
+
+type PartnerActivityRow = {
+  id: string;
+  partner_id: string | null;
+  referral_source_id: string | null;
+  activity_at: string;
+  activity_type: string | null;
+  contact_name: string | null;
+  next_follow_up_date: string | null;
+  next_follow_up_type: string | null;
+  notes: string | null;
+};
+
 export async function getPartnerDetail(partnerId: string) {
   const supabase = await createClient();
   const partnerFilters = [
     isUuid(partnerId) ? `id.eq.${partnerId}` : null,
     `partner_id.eq.${partnerId}`
   ].filter(Boolean) as string[];
-  const { data: partner, error: partnerError } = await supabase
+  const partnerResult = await supabase
     .from("community_partner_organizations")
     .select(PARTNER_DETAIL_SELECT)
     .or(partnerFilters.join(","))
     .maybeSingle();
-  if (partnerError) throw new Error(partnerError.message);
+  if (partnerResult.error) throw new Error(partnerResult.error.message);
+  const partner = (partnerResult.data as unknown as PartnerDetailRow | null) ?? null;
   if (!partner) return null;
 
   const partnerKey = String(partner.partner_id ?? partner.id);
@@ -104,10 +165,10 @@ export async function getPartnerDetail(partnerId: string) {
 
   return {
     partner,
-    referralSources: referralSources ?? [],
-    leads: leads ?? [],
-    leadActivities: leadActivities ?? [],
-    partnerActivities: partnerActivities ?? []
+    referralSources: ((referralSources ?? []) as unknown) as ReferralSourceListRow[],
+    leads: ((leads ?? []) as unknown) as PartnerLeadRow[],
+    leadActivities: ((leadActivities ?? []) as unknown) as PartnerLeadActivityRow[],
+    partnerActivities: ((partnerActivities ?? []) as unknown) as PartnerActivityRow[]
   };
 }
 
@@ -117,12 +178,13 @@ export async function getReferralSourceDetail(sourceId: string) {
     isUuid(sourceId) ? `id.eq.${sourceId}` : null,
     `referral_source_id.eq.${sourceId}`
   ].filter(Boolean) as string[];
-  const { data: referralSource, error: referralError } = await supabase
+  const referralSourceResult = await supabase
     .from("referral_sources")
     .select(REFERRAL_SOURCE_DETAIL_SELECT)
     .or(referralSourceFilters.join(","))
     .maybeSingle();
-  if (referralError) throw new Error(referralError.message);
+  if (referralSourceResult.error) throw new Error(referralSourceResult.error.message);
+  const referralSource = (referralSourceResult.data as unknown as ReferralSourceListRow | null) ?? null;
   if (!referralSource) return null;
 
   const sourceKey = String(referralSource.referral_source_id ?? referralSource.id);
@@ -190,10 +252,10 @@ export async function getReferralSourceDetail(sourceId: string) {
     if (fallback.error) throw new Error(fallback.error.message);
     return {
       referralSource,
-      partner: partnerResult.data ?? null,
-      leads: fallback.data ?? [],
-      leadActivities: leadActivitiesResult.data ?? [],
-      partnerActivities: partnerActivitiesResult.data ?? []
+      partner: ((partnerResult.data as unknown as PartnerDetailRow | null) ?? null),
+      leads: ((fallback.data ?? []) as unknown) as PartnerLeadRow[],
+      leadActivities: ((leadActivitiesResult.data ?? []) as unknown) as PartnerLeadActivityRow[],
+      partnerActivities: ((partnerActivitiesResult.data ?? []) as unknown) as PartnerActivityRow[]
     };
   }
   if (leadsResult.error) throw new Error(leadsResult.error.message);
@@ -202,9 +264,9 @@ export async function getReferralSourceDetail(sourceId: string) {
 
   return {
     referralSource,
-    partner: partnerResult.data ?? null,
-    leads: leadsResult.data ?? [],
-    leadActivities: leadActivitiesResult.data ?? [],
-    partnerActivities: partnerActivitiesResult.data ?? []
+    partner: ((partnerResult.data as unknown as PartnerDetailRow | null) ?? null),
+    leads: ((leadsResult.data ?? []) as unknown) as PartnerLeadRow[],
+    leadActivities: ((leadActivitiesResult.data ?? []) as unknown) as PartnerLeadActivityRow[],
+    partnerActivities: ((partnerActivitiesResult.data ?? []) as unknown) as PartnerActivityRow[]
   };
 }

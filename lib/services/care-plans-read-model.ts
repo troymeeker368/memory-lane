@@ -143,7 +143,7 @@ export async function listCarePlanRows(filters?: {
   if (filters?.track && filters.track !== "All") query = query.eq("track", filters.track);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  const plans = (data ?? []) as DbCarePlan[];
+  const plans = ((data ?? []) as unknown) as DbCarePlan[];
   const mapped = plans.map((row) => toCarePlan(row));
   return mapped
     .filter((row) => (filters?.status && filters.status !== "All" ? row.status === filters.status : true))

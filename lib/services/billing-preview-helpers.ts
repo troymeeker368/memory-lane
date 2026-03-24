@@ -51,7 +51,13 @@ import {
 } from "@/lib/services/billing-configuration";
 import { loadExpectedAttendanceSupabaseContext } from "@/lib/services/expected-attendance-supabase";
 
-type BillingPreviewAttendanceScheduleRow = AttendanceSettingWeekdays & { member_id: string };
+type BillingPreviewAttendanceScheduleRow = AttendanceSettingWeekdays & {
+  member_id: string;
+  daily_rate?: number | null;
+  custom_daily_rate?: number | null;
+  default_daily_rate?: number | null;
+  transportation_billing_status?: string | null;
+};
 type BillingPreviewTransportationRow = {
   id: string;
   member_id: string;
