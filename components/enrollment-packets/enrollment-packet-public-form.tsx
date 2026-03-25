@@ -36,6 +36,12 @@ import {
   validateEnrollmentPacketSubmission
 } from "@/lib/services/enrollment-packet-public-validation";
 import {
+  ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS,
+  setEnrollmentPacketAcknowledgment,
+  setEnrollmentPacketPaymentAuthorizationAcknowledgment,
+  setEnrollmentPacketPaymentMethod
+} from "@/lib/services/enrollment-packet-payment-consent";
+import {
   ENROLLMENT_PACKET_RECREATION_CATEGORIES,
   ENROLLMENT_PACKET_RECREATION_OPTIONS,
   type EnrollmentPacketRecreationCategory
@@ -140,8 +146,6 @@ function toInitialPayload(fields: PublicEnrollmentPacketFields): EnrollmentPacke
     membershipGuarantorSignatureName: defaultResponsiblePartyName ?? null,
     membershipGuarantorSignatureDate:
       fields.intakePayload.membershipGuarantorSignatureDate ?? todayDateString(),
-    exhibitAGuarantorSignatureName:
-      fields.intakePayload.exhibitAGuarantorSignatureName ?? defaultResponsiblePartyName ?? null,
     additionalNotes: fields.intakePayload.additionalNotes ?? fields.notes
   });
 }
@@ -153,18 +157,7 @@ function applySignatureDefaults(payload: EnrollmentPacketIntakePayload, typedNam
 
   const patch: Partial<Record<EnrollmentPacketIntakeFieldKey, unknown>> = {
     guarantorSignatureName: payload.guarantorSignatureName ?? normalizedName,
-    guarantorSignatureDate: payload.guarantorSignatureDate ?? signatureDate,
-    privacyAcknowledgmentSignatureName: payload.privacyAcknowledgmentSignatureName ?? normalizedName,
-    privacyAcknowledgmentSignatureDate: payload.privacyAcknowledgmentSignatureDate ?? signatureDate,
-    rightsAcknowledgmentSignatureName: payload.rightsAcknowledgmentSignatureName ?? normalizedName,
-    rightsAcknowledgmentSignatureDate: payload.rightsAcknowledgmentSignatureDate ?? signatureDate,
-    ancillaryChargesAcknowledgmentSignatureName:
-      payload.ancillaryChargesAcknowledgmentSignatureName ?? normalizedName,
-    ancillaryChargesAcknowledgmentSignatureDate:
-      payload.ancillaryChargesAcknowledgmentSignatureDate ?? signatureDate,
-    membershipGuarantorSignatureName: payload.membershipGuarantorSignatureName ?? normalizedName,
-    exhibitAGuarantorSignatureName: payload.exhibitAGuarantorSignatureName ?? normalizedName,
-    membershipGuarantorSignatureDate: payload.membershipGuarantorSignatureDate ?? signatureDate
+    guarantorSignatureDate: payload.guarantorSignatureDate ?? signatureDate
   };
 
   return normalizeEnrollmentPacketIntakePayload({ ...payload, ...patch });
@@ -222,6 +215,8 @@ const MISSING_ITEM_FIELD_KEY: Record<string, EnrollmentPacketIntakeFieldKey> = {
   "Requested start date": "requestedStartDate",
   "Total initial enrollment amount": "totalInitialEnrollmentAmount",
   "Payment method selection": "paymentMethodSelection",
+  "ACH authorization acknowledgement": "exhibitAGuarantorSignatureName",
+  "Credit card authorization acknowledgement": "exhibitAGuarantorSignatureName",
   "Branch of service": "branchOfService",
   "Tricare number": "tricareNumber",
   "Medication names": "medicationNamesDuringDay",
@@ -231,8 +226,11 @@ const MISSING_ITEM_FIELD_KEY: Record<string, EnrollmentPacketIntakeFieldKey> = {
   "Pet names": "petNames",
   "Dentures selection (upper/lower)": "dentureTypes",
   "Bank name": "bankName",
+  "Bank city/state/ZIP": "bankCityStateZip",
   "Routing number": "bankAba",
   "Account number": "bankAccountNumber",
+  "Cardholder name": "cardholderName",
+  "Card type": "cardType",
   "Card number": "cardNumber",
   "Card expiration": "cardExpiration",
   "Card CVV": "cardCvv",
@@ -242,7 +240,9 @@ const MISSING_ITEM_FIELD_KEY: Record<string, EnrollmentPacketIntakeFieldKey> = {
   "Card billing ZIP code": "cardBillingZip",
   "Membership responsible party / guarantor signature name": "membershipGuarantorSignatureName",
   "Membership responsible party / guarantor signature date": "membershipGuarantorSignatureDate",
-  "Exhibit A responsible party / guarantor acknowledgement name": "exhibitAGuarantorSignatureName",
+  "Privacy practices acknowledgement": "privacyAcknowledgmentSignatureName",
+  "Statement of rights acknowledgement": "rightsAcknowledgmentSignatureName",
+  "Ancillary charges acknowledgement": "ancillaryChargesAcknowledgmentSignatureName",
   "Photo consent selection": "photoConsentChoice",
   "Recreation interests": "recreationInterests"
 };
@@ -307,7 +307,21 @@ export function EnrollmentPacketPublicForm({
     const contactsDone = !hasAny([/^Primary contact /, /^Secondary contact /]);
     const medicalDone = !hasAny([/^PCP /, /^Pharmacy /, /^Branch of service$/, /^Tricare number$/, /^Medication names$/, /^Oxygen flow rate$/, /^History of falls$/, /^Falls within last 3 months$/]);
     const functionalDone = !hasAny([/^Dentures selection/, /^Pet names$/, /^Recreation interests$/]);
-    const legalDone = !hasAny([/Photo consent selection/, /Payment method selection/, /Card /, /Routing number/, /Account number/, /Bank name/, /Membership /, /^Exhibit A /]);
+    const legalDone = !hasAny([
+      /Photo consent selection/,
+      /Payment method selection/,
+      /ACH authorization acknowledgement/,
+      /Credit card authorization acknowledgement/,
+      /Privacy practices acknowledgement/,
+      /Statement of rights acknowledgement/,
+      /Ancillary charges acknowledgement/,
+      /Card /,
+      /Routing number/,
+      /Account number/,
+      /Bank name/,
+      /Bank city\/state\/ZIP/,
+      /Membership /
+    ]);
     const signatureDone = completion.isComplete && caregiverTypedName.trim().length > 0 && hasSignature && attested;
     return [
       { id: "member", label: "Member Information", complete: memberInfoDone },
@@ -412,7 +426,42 @@ export function EnrollmentPacketPublicForm({
   ]);
 
   const setText = (key: EnrollmentPacketIntakeTextKey, value: string) => {
-    setPayload((current) => normalizeEnrollmentPacketIntakePayload({ ...current, [key]: value }));
+    setPayload((current) => {
+      if (key === "paymentMethodSelection") {
+        return setEnrollmentPacketPaymentMethod(current, value);
+      }
+      return normalizeEnrollmentPacketIntakePayload({ ...current, [key]: value });
+    });
+  };
+
+  const setNoticeAcknowledgment = (
+    acknowledgementId: (typeof ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS)[number]["id"],
+    checked: boolean
+  ) => {
+    const definition = ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS.find((item) => item.id === acknowledgementId);
+    if (!definition) return;
+
+    setPayload((current) =>
+      setEnrollmentPacketAcknowledgment(
+        current,
+        definition,
+        checked,
+        current.membershipGuarantorSignatureName ?? current.primaryContactName,
+        todayDateString()
+      )
+    );
+    markTouched(definition.nameKey);
+  };
+
+  const setPaymentAuthorizationAcknowledgment = (checked: boolean) => {
+    setPayload((current) =>
+      setEnrollmentPacketPaymentAuthorizationAcknowledgment(
+        current,
+        checked,
+        current.membershipGuarantorSignatureName ?? current.primaryContactName
+      )
+    );
+    markTouched("exhibitAGuarantorSignatureName");
   };
 
   const setExpandedLegalSection = (section: "privacy" | "rights" | "photo" | "ancillary", open: boolean) => {
@@ -816,6 +865,7 @@ export function EnrollmentPacketPublicForm({
         fieldError={fieldError}
         controlClassName={controlClassName}
         setText={setText}
+        setPaymentAuthorizationAcknowledgment={setPaymentAuthorizationAcknowledgment}
       />
 
       <EnrollmentPacketPublicFormLegal
@@ -831,6 +881,7 @@ export function EnrollmentPacketPublicForm({
         expandedLegalSections={expandedLegalSections}
         setExpandedLegalSection={setExpandedLegalSection}
         setText={setText}
+        setNoticeAcknowledgment={setNoticeAcknowledgment}
         markTouched={markTouched}
         fieldError={fieldError}
         scrollToFirstMissingField={scrollToFirstMissingField}

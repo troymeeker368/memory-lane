@@ -7,6 +7,10 @@ import {
   isMissingSchemaObjectError
 } from "@/lib/services/billing-schema-errors";
 import {
+  repairEnrollmentPacketCompletionCascade,
+  runEnrollmentPacketCompletionCascade
+} from "@/lib/services/enrollment-packet-completion-cascade";
+import {
   buildPublicEnrollmentPacketSubmitResult,
   enforcePublicEnrollmentPacketSubmissionGuards,
   insertPacketEvent,
@@ -28,14 +32,11 @@ import {
   toSummary
 } from "@/lib/services/enrollment-packet-core";
 import {
-  getLeadById,
   loadEnrollmentPacketArtifactOps,
   getMemberById,
   loadPacketFields,
   loadRequestById,
   recordEnrollmentPacketActionRequired,
-  runEnrollmentPacketDownstreamMapping,
-  syncEnrollmentPacketLeadActivityOrQueue
 } from "@/lib/services/enrollment-packet-mapping-runtime";
 import { markEnrollmentPacketDeliveryState } from "@/lib/services/enrollment-packet-delivery-runtime";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
@@ -126,6 +127,45 @@ export async function recordPublicEnrollmentPacketGuardFailure(input: {
   return recordPublicEnrollmentPacketGuardFailureRuntime({
     ...input,
     resolveRequestByToken: loadRequestByToken
+  });
+}
+
+async function buildCommittedEnrollmentPacketReplayResult(input: {
+  request: EnrollmentPacketRequestRow;
+}) {
+  let repairedRequest = input.request;
+
+  try {
+    await repairEnrollmentPacketCompletionCascade({
+      packetId: input.request.id,
+      actorType: "system"
+    });
+    repairedRequest = (await loadRequestById(input.request.id)) ?? input.request;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown enrollment packet replay repair failure.";
+    console.error("[enrollment-packets] unable to self-heal already-filed enrollment packet replay", {
+      packetId: input.request.id,
+      message
+    });
+    await recordImmediateSystemAlert({
+      entityType: "enrollment_packet_request",
+      entityId: input.request.id,
+      actorUserId: input.request.sender_user_id,
+      severity: "medium",
+      alertKey: "enrollment_packet_replay_repair_failed",
+      metadata: {
+        member_id: input.request.member_id,
+        lead_id: input.request.lead_id,
+        error: message
+      }
+    });
+  }
+
+  return buildPublicEnrollmentPacketSubmitResult({
+    packetId: input.request.id,
+    memberId: input.request.member_id,
+    mappingSyncStatus: repairedRequest.mapping_sync_status ?? "pending",
+    wasAlreadyFiled: true
   });
 }
 
@@ -502,12 +542,7 @@ export async function submitPublicEnrollmentPacket(input: {
   const request = matchedRequest.request;
   const status = toStatus(request.status);
   if (matchedRequest.tokenMatch === "consumed" && (status === "completed" || status === "filed")) {
-    return buildPublicEnrollmentPacketSubmitResult({
-      packetId: request.id,
-      memberId: request.member_id,
-      mappingSyncStatus: request.mapping_sync_status ?? "pending",
-      wasAlreadyFiled: true
-    });
+    return buildCommittedEnrollmentPacketReplayResult({ request });
   }
   if (status === "completed" || status === "filed") {
     throw new Error("This enrollment packet has already been submitted.");
@@ -549,9 +584,7 @@ export async function submitPublicEnrollmentPacket(input: {
   let mappingSummary:
     | {
         mappingRunId: string | null;
-        downstreamSystemsUpdated: string[];
-        conflictsRequiringReview: number;
-        status: "pending" | "completed" | "failed";
+        status: "completed" | "failed";
         error?: string | null;
       }
     | null = null;
@@ -751,14 +784,11 @@ export async function submitPublicEnrollmentPacket(input: {
         batchId: uploadBatchId,
         uploads: stagedUploads
       });
-      const replayedRequest = await loadRequestById(request.id);
-      return buildPublicEnrollmentPacketSubmitResult({
-        packetId: request.id,
-        memberId: member.id,
-        mappingSyncStatus: replayedRequest?.mapping_sync_status ?? finalizedSubmission.mappingSyncStatus ?? "pending",
-        wasAlreadyFiled: true
+      return buildCommittedEnrollmentPacketReplayResult({
+        request: (await loadRequestById(request.id)) ?? request
       });
     }
+
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete enrollment packet.";
     if (stagedUploads.length > 0) {
@@ -822,11 +852,12 @@ export async function submitPublicEnrollmentPacket(input: {
     throw error;
   }
 
+  const refreshedRequest = await loadRequestById(request.id);
   const refreshedFields = await loadPacketFields(request.id);
 
-  if (refreshedFields) {
-    mappingSummary = await runEnrollmentPacketDownstreamMapping({
-      request,
+  if (refreshedRequest && refreshedFields) {
+    const cascadeSummary = await runEnrollmentPacketCompletionCascade({
+      request: refreshedRequest,
       member,
       fields: refreshedFields,
       senderSignatureName,
@@ -835,14 +866,17 @@ export async function submitPublicEnrollmentPacket(input: {
         uploadCategory: artifact.uploadCategory,
         memberFileId: artifact.memberFileId
       })),
-      actorType: "user"
+      actorType: "user",
+      ensureCompletedPacketArtifact: false
     });
-    failedMappingRunId = mappingSummary.mappingRunId;
+    mappingSummary = {
+      mappingRunId: cascadeSummary.mappingRunId,
+      status: cascadeSummary.mappingStatus
+    };
+    failedMappingRunId = cascadeSummary.mappingRunId;
   } else {
     mappingSummary = {
       mappingRunId: null,
-      downstreamSystemsUpdated: [],
-      conflictsRequiringReview: 0,
       status: "failed",
       error: "Enrollment packet fields are missing after filing."
     };
@@ -880,50 +914,6 @@ export async function submitPublicEnrollmentPacket(input: {
       actionUrl: `/sales/new-entries/completed-enrollment-packets`,
       eventKeySuffix: "mapping-missing-fields"
     });
-  }
-
-  if (request.lead_id) {
-    try {
-      const lead = await getLeadById(request.lead_id);
-      await syncEnrollmentPacketLeadActivityOrQueue({
-        packetId: request.id,
-        memberId: member.id,
-        leadId: request.lead_id,
-        memberName: lead?.member_name ?? member.display_name,
-        activityType: "Email",
-        outcome: "Enrollment Packet Completed",
-        notes: `Enrollment packet request ${request.id} completed by caregiver and filed to member records.`,
-        completedByUserId: request.sender_user_id,
-        completedByName: senderSignatureName,
-        activityAt: finalizedAt ?? toEasternISO(),
-        actionUrl: request.lead_id ? `/sales/leads/${request.lead_id}` : "/sales/new-entries/completed-enrollment-packets"
-      });
-    } catch (error) {
-      console.error("[enrollment-packets] unable to record lead activity after packet filing", error);
-      await recordImmediateSystemAlert({
-        entityType: "enrollment_packet_request",
-        entityId: request.id,
-        actorUserId: request.sender_user_id,
-        severity: "medium",
-        alertKey: "enrollment_packet_lead_activity_failed",
-        metadata: {
-          member_id: member.id,
-          lead_id: request.lead_id,
-          error: error instanceof Error ? error.message : "Unable to record lead activity after packet filing."
-        }
-      });
-      await recordEnrollmentPacketActionRequired({
-        packetId: request.id,
-        memberId: member.id,
-        leadId: request.lead_id,
-        actorUserId: request.sender_user_id,
-        title: "Enrollment Packet Lead Activity Missing",
-        message:
-          "The enrollment packet was filed, but the sales lead activity log did not save. Open the lead and add the missing completion activity so sales follow-up stays aligned.",
-        actionUrl: request.lead_id ? `/sales/leads/${request.lead_id}` : "/sales/new-entries/completed-enrollment-packets",
-        eventKeySuffix: "lead-activity-failed"
-      });
-    }
   }
 
   const reviewableUploads = uploadedArtifacts.filter(

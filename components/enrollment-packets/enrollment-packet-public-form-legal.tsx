@@ -3,8 +3,11 @@
 import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 
 import { buildEnrollmentPacketLegalText } from "@/lib/services/enrollment-packet-legal-text";
+import {
+  ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS,
+  hasEnrollmentPacketAcknowledgment
+} from "@/lib/services/enrollment-packet-payment-consent";
 import { ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS } from "@/lib/services/enrollment-packet-public-options";
-import { formatEnrollmentPacketValue } from "@/lib/services/enrollment-packet-public-validation";
 import type {
   EnrollmentPacketIntakeFieldKey,
   EnrollmentPacketIntakePayload,
@@ -40,6 +43,10 @@ type EnrollmentPacketPublicFormLegalProps = {
   expandedLegalSections: Record<"privacy" | "rights" | "photo" | "ancillary", boolean>;
   setExpandedLegalSection: (section: "privacy" | "rights" | "photo" | "ancillary", open: boolean) => void;
   setText: (key: EnrollmentPacketIntakeTextKey, value: string) => void;
+  setNoticeAcknowledgment: (
+    acknowledgementId: (typeof ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS)[number]["id"],
+    checked: boolean
+  ) => void;
   markTouched: (key: EnrollmentPacketIntakeFieldKey) => void;
   fieldError: (key: EnrollmentPacketIntakeFieldKey, fallbackLabel: string) => string | null;
   scrollToFirstMissingField: () => void;
@@ -63,6 +70,7 @@ export function EnrollmentPacketPublicFormLegal({
   expandedLegalSections,
   setExpandedLegalSection,
   setText,
+  setNoticeAcknowledgment,
   markTouched,
   fieldError,
   scrollToFirstMissingField,
@@ -76,6 +84,18 @@ export function EnrollmentPacketPublicFormLegal({
     caregiverName: payload.membershipGuarantorSignatureName ?? payload.primaryContactName,
     memberName: [payload.memberLegalFirstName, payload.memberLegalLastName].filter(Boolean).join(" ")
   });
+  const privacyAcknowledged = hasEnrollmentPacketAcknowledgment(
+    payload,
+    ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS[0]
+  );
+  const rightsAcknowledged = hasEnrollmentPacketAcknowledgment(
+    payload,
+    ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS[1]
+  );
+  const ancillaryAcknowledged = hasEnrollmentPacketAcknowledgment(
+    payload,
+    ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS[2]
+  );
 
   return (
     <>
@@ -90,6 +110,17 @@ export function EnrollmentPacketPublicFormLegal({
             {legalText.privacyPractices.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
           </div>
         </details>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            id="field-privacyAcknowledgmentSignatureName"
+            type="checkbox"
+            checked={privacyAcknowledged}
+            onChange={(event) => setNoticeAcknowledgment("privacy", event.target.checked)}
+            disabled={isPending}
+          />
+          <span>I acknowledge the Notice of Privacy Practices above. <span className="text-red-600">*</span></span>
+        </label>
+        {fieldError("privacyAcknowledgmentSignatureName", "Privacy practices acknowledgement") ? <p className="text-xs text-red-600">{fieldError("privacyAcknowledgmentSignatureName", "Privacy practices acknowledgement")}</p> : null}
       </Section>
 
       <Section title="15. Statement of Rights">
@@ -103,6 +134,17 @@ export function EnrollmentPacketPublicFormLegal({
             {legalText.statementOfRights.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
           </div>
         </details>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            id="field-rightsAcknowledgmentSignatureName"
+            type="checkbox"
+            checked={rightsAcknowledged}
+            onChange={(event) => setNoticeAcknowledgment("rights", event.target.checked)}
+            disabled={isPending}
+          />
+          <span>I acknowledge the Statement of Rights above. <span className="text-red-600">*</span></span>
+        </label>
+        {fieldError("rightsAcknowledgmentSignatureName", "Statement of rights acknowledgement") ? <p className="text-xs text-red-600">{fieldError("rightsAcknowledgmentSignatureName", "Statement of rights acknowledgement")}</p> : null}
       </Section>
 
       <Section title="16. Photo Consent">
@@ -151,27 +193,31 @@ export function EnrollmentPacketPublicFormLegal({
             {legalText.ancillaryCharges.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
           </div>
         </details>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            id="field-ancillaryChargesAcknowledgmentSignatureName"
+            type="checkbox"
+            checked={ancillaryAcknowledged}
+            onChange={(event) => setNoticeAcknowledgment("ancillary", event.target.checked)}
+            disabled={isPending}
+          />
+          <span>I acknowledge the Ancillary Charges Notice above. <span className="text-red-600">*</span></span>
+        </label>
+        {fieldError("ancillaryChargesAcknowledgmentSignatureName", "Ancillary charges acknowledgement") ? <p className="text-xs text-red-600">{fieldError("ancillaryChargesAcknowledgmentSignatureName", "Ancillary charges acknowledgement")}</p> : null}
       </Section>
 
-      <Section title="18. Final Review">
-        <div className="space-y-2 rounded-lg border border-border bg-slate-50 p-3 text-sm">
-          <p><span className="font-semibold">Member:</span> {formatEnrollmentPacketValue(`${payload.memberLegalFirstName ?? ""} ${payload.memberLegalLastName ?? ""}`)}</p>
-          <p><span className="font-semibold">Primary contact:</span> {formatEnrollmentPacketValue(payload.primaryContactName)}</p>
-          <p><span className="font-semibold">Photo consent:</span> {formatEnrollmentPacketValue(payload.photoConsentChoice)}</p>
+      {!completion.isComplete ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <p className="font-semibold">Complete these required items before signing:</p>
+          <ul className="mt-1 list-disc pl-5">{completion.missingItems.map((item) => <li key={item}>{item}</li>)}</ul>
+          <button type="button" className="mt-2 rounded-lg border border-amber-300 px-3 py-1 text-xs font-semibold text-amber-900" onClick={scrollToFirstMissingField}>
+            Go to first missing field
+          </button>
         </div>
-        {!completion.isComplete ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            <p className="font-semibold">Complete these items before signature:</p>
-            <ul className="mt-1 list-disc pl-5">{completion.missingItems.map((item) => <li key={item}>{item}</li>)}</ul>
-            <button type="button" className="mt-2 rounded-lg border border-amber-300 px-3 py-1 text-xs font-semibold text-amber-900" onClick={scrollToFirstMissingField}>
-              Go to first missing field
-            </button>
-          </div>
-        ) : <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">All required fields are complete. Signature is now available.</p>}
-      </Section>
+      ) : null}
 
       {completion.isComplete ? (
-        <Section title="19. Signature">
+        <Section title="18. Signature">
           <p className="text-sm text-muted">Sign to complete and submit all packet sections.</p>
           <label className="block space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Typed signature name <span className="text-red-600">*</span></span><input id="field-guarantorSignatureName" className={`h-11 w-full rounded-lg border px-3 ${submitAttempted && !caregiverTypedName.trim() ? "border-red-500 bg-red-50" : "border-border"}`} value={caregiverTypedName} onChange={(event) => setCaregiverTypedName(event.target.value)} disabled={isPending} />{submitAttempted && !caregiverTypedName.trim() ? <p className="text-xs text-red-600">Typed signature name is required.</p> : null}</label>
           <div className="rounded-lg border border-border p-3">

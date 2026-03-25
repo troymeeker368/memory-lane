@@ -9,11 +9,16 @@ import {
   buildCanonicalMembershipAgreementParagraphs,
   buildRenderedMembershipAgreementParagraphs
 } from "@/lib/services/enrollment-packet-membership-document";
+import { buildEnrollmentPacketLegalText } from "@/lib/services/enrollment-packet-legal-text";
 import {
   ENROLLMENT_PACKET_INTAKE_TEXT_KEYS,
   normalizeEnrollmentPacketIntakePayload,
   type EnrollmentPacketIntakePayload
 } from "@/lib/services/enrollment-packet-intake-payload";
+import {
+  ENROLLMENT_PACKET_PAYMENT_METHOD_OPTIONS,
+  ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS
+} from "@/lib/services/enrollment-packet-payment-consent";
 import { ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS } from "@/lib/services/enrollment-packet-public-options";
 import { ENROLLMENT_PACKET_SECTIONS } from "@/lib/services/enrollment-packet-public-sections";
 import { validateEnrollmentPacketCompletion } from "@/lib/services/enrollment-packet-public-validation";
@@ -61,11 +66,18 @@ function buildValidPayload(
     paymentMethodSelection: "ACH",
     fallsHistory: "No",
     bankName: "First National Bank",
+    bankCityStateZip: "Fort Mill, SC 29715",
     bankAba: "123456789",
     bankAccountNumber: "1234567890",
     membershipGuarantorSignatureName: "Jane Caregiver",
     membershipGuarantorSignatureDate: "2026-03-25",
     exhibitAGuarantorSignatureName: "Jane Caregiver",
+    privacyAcknowledgmentSignatureName: "Jane Caregiver",
+    privacyAcknowledgmentSignatureDate: "2026-03-25",
+    rightsAcknowledgmentSignatureName: "Jane Caregiver",
+    rightsAcknowledgmentSignatureDate: "2026-03-25",
+    ancillaryChargesAcknowledgmentSignatureName: "Jane Caregiver",
+    ancillaryChargesAcknowledgmentSignatureDate: "2026-03-25",
     photoConsentChoice: "Do Permit",
     recreationInterests: {
       Social: ["Current Events"],
@@ -137,6 +149,106 @@ test("photo consent stays canonical, required, and mutually exclusive", () => {
   assert.equal(ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS.length, 2);
 });
 
+test("payment authorization renders one canonical method block at a time with staff-set amounts", () => {
+  const achText = buildEnrollmentPacketLegalText({
+    caregiverName: "Jane Caregiver",
+    memberName: "James Walker",
+    paymentMethodSelection: "ACH",
+    communityFee: "250",
+    totalInitialEnrollmentAmount: "1450",
+    exhibitAAuthorizationAcknowledged: true
+  });
+  const creditText = buildEnrollmentPacketLegalText({
+    caregiverName: "Jane Caregiver",
+    memberName: "James Walker",
+    paymentMethodSelection: "Credit Card",
+    communityFee: "250",
+    totalInitialEnrollmentAmount: "1450",
+    exhibitAAuthorizationAcknowledged: false
+  });
+
+  assert.equal(
+    achText.exhibitAPaymentAuthorization.some((paragraph) => paragraph.includes("Community Fee: $250.00")),
+    true
+  );
+  assert.equal(
+    achText.exhibitAPaymentAuthorization.some((paragraph) => paragraph.includes("Total Amount Due for Initial Enrollment: $1450.00")),
+    true
+  );
+  assert.equal(
+    achText.exhibitAPaymentAuthorization.some((paragraph) => paragraph.includes("ACH AUTHORIZATION")),
+    true
+  );
+  assert.equal(
+    achText.exhibitAPaymentAuthorization.some((paragraph) => paragraph.includes("CREDIT CARD AUTHORIZATION")),
+    false
+  );
+  assert.equal(
+    creditText.exhibitAPaymentAuthorization.some((paragraph) => paragraph.includes("CREDIT CARD AUTHORIZATION")),
+    true
+  );
+  assert.equal(
+    creditText.exhibitAPaymentAuthorization.some((paragraph) => paragraph.includes("ACH AUTHORIZATION")),
+    false
+  );
+});
+
+test("payment method requirements and notice acknowledgements are enforced canonically", () => {
+  const achMissing = validateEnrollmentPacketCompletion({
+    payload: buildValidPayload({
+      bankName: null,
+      bankCityStateZip: null,
+      bankAba: null,
+      bankAccountNumber: null,
+      exhibitAGuarantorSignatureName: null
+    })
+  });
+  assert.equal(achMissing.missingItems.includes("Bank name"), true);
+  assert.equal(achMissing.missingItems.includes("Bank city/state/ZIP"), true);
+  assert.equal(achMissing.missingItems.includes("Routing number"), true);
+  assert.equal(achMissing.missingItems.includes("Account number"), true);
+  assert.equal(achMissing.missingItems.includes("ACH authorization acknowledgement"), true);
+
+  const creditMissing = validateEnrollmentPacketCompletion({
+    payload: buildValidPayload({
+      paymentMethodSelection: "Credit Card",
+      bankName: null,
+      bankCityStateZip: null,
+      bankAba: null,
+      bankAccountNumber: null,
+      exhibitAGuarantorSignatureName: null,
+      cardholderName: null,
+      cardType: null,
+      cardNumber: null,
+      cardExpiration: null,
+      cardCvv: null,
+      cardBillingAddressLine1: null,
+      cardBillingCity: null,
+      cardBillingState: null,
+      cardBillingZip: null
+    })
+  });
+  assert.equal(creditMissing.missingItems.includes("Bank name"), false);
+  assert.equal(creditMissing.missingItems.includes("Bank city/state/ZIP"), false);
+  assert.equal(creditMissing.missingItems.includes("Cardholder name"), true);
+  assert.equal(creditMissing.missingItems.includes("Card type"), true);
+  assert.equal(creditMissing.missingItems.includes("Credit card authorization acknowledgement"), true);
+
+  const noticeMissing = validateEnrollmentPacketCompletion({
+    payload: buildValidPayload({
+      privacyAcknowledgmentSignatureName: null,
+      privacyAcknowledgmentSignatureDate: null,
+      rightsAcknowledgmentSignatureName: null,
+      rightsAcknowledgmentSignatureDate: null,
+      ancillaryChargesAcknowledgmentSignatureName: null,
+      ancillaryChargesAcknowledgmentSignatureDate: null
+    })
+  });
+  ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS.forEach((definition) => {
+    assert.equal(noticeMissing.missingItems.includes(definition.label), true);
+  });
+});
+
 test("membership agreement template stays locked and injects caregiver name into the canonical intro", () => {
   const templateHash = crypto
     .createHash("sha256")
@@ -170,6 +282,23 @@ test("member signature fields are removed from the canonical enrollment packet p
   assert.equal(intakeKeys.has("exhibitAMemberSignatureDate"), false);
 });
 
+test("canonical section schema removes final review and keeps payment/notice inputs aligned", () => {
+  assert.equal(ENROLLMENT_PACKET_SECTIONS.some((section) => section.id === "final-review"), false);
+
+  const paymentMethodField = ENROLLMENT_PACKET_SECTIONS.flatMap((section) => section.fields).find(
+    (field) => field.key === "paymentMethodSelection"
+  );
+  assert.equal(paymentMethodField?.type, "radio");
+  assert.deepEqual(paymentMethodField?.options, [...ENROLLMENT_PACKET_PAYMENT_METHOD_OPTIONS]);
+
+  const privacySection = ENROLLMENT_PACKET_SECTIONS.find((section) => section.id === "privacy-practices");
+  const rightsSection = ENROLLMENT_PACKET_SECTIONS.find((section) => section.id === "statement-of-rights");
+  const ancillarySection = ENROLLMENT_PACKET_SECTIONS.find((section) => section.id === "ancillary-charges");
+  assert.equal((privacySection?.fields.length ?? 0) > 0, true);
+  assert.equal((rightsSection?.fields.length ?? 0) > 0, true);
+  assert.equal((ancillarySection?.fields.length ?? 0) > 0, true);
+});
+
 test("public enrollment packet submission redirects to confirmation where the welcome letter is rendered", () => {
   const actionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
   const confirmationSource = readWorkspaceFile(
@@ -182,4 +311,103 @@ test("public enrollment packet submission redirects to confirmation where the we
   );
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
   assert.equal(confirmationSource.includes("legalText.firstDayWelcome.map"), true);
+});
+
+test("completion cascade centralizes submitted notification and downstream repair-safe sync", () => {
+  const cascadeSource = readWorkspaceFile("lib/services/enrollment-packet-completion-cascade.ts");
+  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const mappingRuntimeSource = readWorkspaceFile("lib/services/enrollment-packet-mapping-runtime.ts");
+
+  assert.equal(cascadeSource.includes("repairCommittedEnrollmentPacketCompletions"), true);
+  assert.equal(cascadeSource.includes("runEnrollmentPacketDownstreamMapping({"), true);
+  assert.equal(cascadeSource.includes("recordEnrollmentPacketSubmittedMilestone({"), true);
+  assert.equal(cascadeSource.includes("syncEnrollmentPacketLeadActivityOrQueue({"), true);
+  assert.equal(runtimeSource.includes("runEnrollmentPacketCompletionCascade({"), true);
+  assert.equal(
+    mappingRuntimeSource.includes('.eq("event_type", "enrollment_packet_submitted")'),
+    true
+  );
+});
+
+test("lead conversion canonical SQL restores member health profile shell creation", () => {
+  const migrationSource = readWorkspaceFile(
+    "supabase/migrations/0148_restore_lead_conversion_mhp_and_member_shell_backfill.sql"
+  );
+
+  assert.equal(migrationSource.includes("insert into public.member_health_profiles"), true);
+  assert.equal(
+    migrationSource.includes("on conflict on constraint member_health_profiles_member_id_key do nothing;"),
+    true
+  );
+});
+
+test("canonical enrollment packet submit path emits the submitted workflow milestone and lead conversion repairs shell rows", () => {
+  const publicRuntimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const completionCascadeSource = readWorkspaceFile("lib/services/enrollment-packet-completion-cascade.ts");
+  const leadConversionSource = readWorkspaceFile("lib/services/sales-lead-conversion-supabase.ts");
+  const mappingRuntimeSource = readWorkspaceFile("lib/services/enrollment-packet-mapping-runtime.ts");
+
+  assert.equal(publicRuntimeSource.includes("runEnrollmentPacketCompletionCascade"), true);
+  assert.equal(completionCascadeSource.includes("recordEnrollmentPacketSubmittedMilestone"), true);
+  assert.equal(mappingRuntimeSource.includes('eventType: "enrollment_packet_submitted"'), true);
+  assert.equal(leadConversionSource.includes("ensureLeadConversionMemberShellRows"), true);
+});
+
+test("canonical submit runtime emits enrollment packet submitted workflow notifications", () => {
+  const completionCascadeSource = readWorkspaceFile("lib/services/enrollment-packet-completion-cascade.ts");
+  const mappingRuntimeSource = readWorkspaceFile("lib/services/enrollment-packet-mapping-runtime.ts");
+
+  assert.equal(completionCascadeSource.includes("recordEnrollmentPacketSubmittedMilestone"), true);
+  assert.equal(mappingRuntimeSource.includes('eventType: "enrollment_packet_submitted"'), true);
+  assert.equal(mappingRuntimeSource.includes('eventKeySuffix: "submitted"'), true);
+  assert.equal(mappingRuntimeSource.includes("requireRecipients: true"), true);
+});
+
+test("historical enrollment packet repair is exposed only through the canonical service and safe CLI runner", () => {
+  const completionCascadeSource = readWorkspaceFile("lib/services/enrollment-packet-completion-cascade.ts");
+  const scriptSource = readWorkspaceFile("scripts/repair-enrollment-packet-completions.ts");
+  const publicRuntimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const packageSource = readWorkspaceFile("package.json");
+  const replayMigrationSource = readWorkspaceFile(
+    "supabase/migrations/0149_enrollment_packet_contact_replay_idempotency.sql"
+  );
+
+  assert.equal(
+    completionCascadeSource.includes("listCommittedEnrollmentPacketCompletionRepairCandidates"),
+    true
+  );
+  assert.equal(
+    completionCascadeSource.includes('.eq("event_type", "enrollment_packet_submitted")'),
+    true
+  );
+  assert.equal(
+    completionCascadeSource.includes('.eq("upload_category", "completed_packet")'),
+    true
+  );
+  assert.equal(scriptSource.includes("Use --apply to replay the canonical enrollment packet completion cascade."), true);
+  assert.equal(
+    scriptSource.includes("ALLOW_REMOTE_ENROLLMENT_PACKET_REPAIR"),
+    true
+  );
+  assert.equal(
+    scriptSource.includes("listCommittedEnrollmentPacketCompletionRepairCandidates"),
+    true
+  );
+  assert.equal(scriptSource.includes("repairCommittedEnrollmentPacketCompletions"), true);
+  assert.equal(
+    publicRuntimeSource.includes("buildCommittedEnrollmentPacketReplayResult"),
+    true
+  );
+  assert.equal(
+    publicRuntimeSource.includes("repairEnrollmentPacketCompletionCascade"),
+    true
+  );
+  assert.equal(
+    packageSource.includes("\"repair:enrollment-packet-completions\""),
+    true
+  );
+  assert.equal(
+    replayMigrationSource.includes("and mc.id = nullif(trim(coalesce(v_contact ->> 'id', '')), '')"),
+    true
+  );
 });

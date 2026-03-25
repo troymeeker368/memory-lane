@@ -208,7 +208,11 @@ export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnr
 
   const legalText = buildEnrollmentPacketLegalText({
     caregiverName: input.intakePayload.membershipGuarantorSignatureName ?? input.caregiverSignatureName,
-    memberName: input.memberName
+    memberName: input.memberName,
+    paymentMethodSelection: input.intakePayload.paymentMethodSelection,
+    communityFee: input.intakePayload.communityFee,
+    totalInitialEnrollmentAmount: input.intakePayload.totalInitialEnrollmentAmount,
+    exhibitAAuthorizationAcknowledged: Boolean(input.intakePayload.exhibitAGuarantorSignatureName)
   });
   [
     { title: "Membership Agreement", paragraphs: legalText.membershipAgreement },

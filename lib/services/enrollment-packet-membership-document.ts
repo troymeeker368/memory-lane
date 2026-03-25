@@ -1,3 +1,8 @@
+import {
+  getEnrollmentPacketPaymentMethod,
+  type EnrollmentPacketPaymentMethod
+} from "@/lib/services/enrollment-packet-payment-consent";
+
 function clean(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
@@ -101,6 +106,43 @@ export const FIRST_DAY_WELCOME_LETTER_TEMPLATE = [
   "Warmly, The Town Square Fort Mill Team"
 ] as const;
 
+type RenderedExhibitAContent = {
+  commonParagraphs: string[];
+  authorizationParagraphs: string[];
+  allParagraphs: string[];
+};
+
+function resolveSelectionMarker(selected: boolean) {
+  return selected ? "\u2611" : "\u2610";
+}
+
+function formatCurrencyValue(value: string | null | undefined, fallback: string) {
+  const normalized = clean(value);
+  if (!normalized) return fallback;
+
+  const numeric = Number(normalized.replace(/[$,\s]/g, ""));
+  if (Number.isFinite(numeric)) {
+    return `$${numeric.toFixed(2)}`;
+  }
+
+  return normalized.startsWith("$") ? normalized : `$${normalized}`;
+}
+
+function buildPaymentMethodSelectionLine(paymentMethod: EnrollmentPacketPaymentMethod | null) {
+  return `${resolveSelectionMarker(paymentMethod === "ACH")} ACH (Bank Draft)   ${resolveSelectionMarker(paymentMethod === "Credit Card")} Credit Card (Auto Charge)`;
+}
+
+function buildAuthorizationLine(input: {
+  paragraph: string;
+  checked: boolean;
+}) {
+  const trimmed = input.paragraph.trimStart();
+  const withoutMarker = trimmed.startsWith("\u2610") || trimmed.startsWith("\u2611")
+    ? trimmed.slice(1).trimStart()
+    : trimmed;
+  return `${resolveSelectionMarker(input.checked)} ${withoutMarker}`;
+}
+
 function renderMembershipAgreementIntro(input: {
   paragraph: string;
   caregiverName: string | null | undefined;
@@ -138,4 +180,73 @@ export function buildRenderedMembershipAgreementParagraphs(
   const truncationIndex = canonicalParagraphs.indexOf(MEMBERSHIP_AGREEMENT_RENDER_TRUNCATION_MARKER);
   if (truncationIndex < 0) return canonicalParagraphs;
   return canonicalParagraphs.slice(0, truncationIndex);
+}
+
+export function buildRenderedMembershipExhibitAContent(input?: {
+  paymentMethodSelection?: string | null;
+  communityFee?: string | null;
+  totalInitialEnrollmentAmount?: string | null;
+  authorizationAcknowledged?: boolean;
+}) : RenderedExhibitAContent {
+  const paymentMethod = getEnrollmentPacketPaymentMethod(input?.paymentMethodSelection);
+  const commonParagraphs = [
+    CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[0],
+    CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[1],
+    CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[2],
+    CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[3].replace(
+      "$_____________",
+      formatCurrencyValue(input?.communityFee, "$_____________")
+    ),
+    CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[4].replace(
+      "$____________________",
+      formatCurrencyValue(input?.totalInitialEnrollmentAmount, "$____________________")
+    ),
+    CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[5],
+    CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[6],
+    CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[7],
+    buildPaymentMethodSelectionLine(paymentMethod)
+  ];
+
+  if (paymentMethod === "ACH") {
+    const authorizationParagraphs = [
+      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[9],
+      buildAuthorizationLine({
+        paragraph: CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[10],
+        checked: Boolean(input?.authorizationAcknowledged)
+      }),
+      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[11],
+      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[12]
+    ];
+    return {
+      commonParagraphs,
+      authorizationParagraphs,
+      allParagraphs: [...commonParagraphs, ...authorizationParagraphs]
+    };
+  }
+
+  if (paymentMethod === "Credit Card") {
+    const authorizationParagraphs = [
+      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[13],
+      buildAuthorizationLine({
+        paragraph: CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[14],
+        checked: Boolean(input?.authorizationAcknowledged)
+      }),
+      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[15],
+      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[16],
+      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[17],
+      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[18],
+      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[19]
+    ];
+    return {
+      commonParagraphs,
+      authorizationParagraphs,
+      allParagraphs: [...commonParagraphs, ...authorizationParagraphs]
+    };
+  }
+
+  return {
+    commonParagraphs,
+    authorizationParagraphs: [],
+    allParagraphs: commonParagraphs
+  };
 }

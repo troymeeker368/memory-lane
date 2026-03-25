@@ -369,15 +369,13 @@ async function main() {
     pharmacyPhone: "8135550104",
     paymentMethodSelection: "ACH",
     bankName: "Enrollment E2E Credit Union",
+    bankCityStateZip: "Tampa, FL 33601",
     bankAba: "021000021",
     bankAccountNumber: "1234567890",
     fallsHistory: "No",
-    membershipMemberSignatureName: created.memberName,
-    membershipMemberSignatureDate: signatureDate,
     membershipGuarantorSignatureName: caregiverTypedName,
     membershipGuarantorSignatureDate: signatureDate,
     exhibitAGuarantorSignatureName: caregiverTypedName,
-    exhibitAGuarantorSignatureDate: signatureDate,
     guarantorSignatureName: caregiverTypedName,
     guarantorSignatureDate: signatureDate,
     privacyAcknowledgmentSignatureName: caregiverTypedName,
@@ -386,12 +384,7 @@ async function main() {
     rightsAcknowledgmentSignatureDate: signatureDate,
     ancillaryChargesAcknowledgmentSignatureName: caregiverTypedName,
     ancillaryChargesAcknowledgmentSignatureDate: signatureDate,
-    photoConsentAcknowledgmentName: caregiverTypedName,
-    privacyPracticesAcknowledged: "Acknowledged",
-    statementOfRightsAcknowledged: "Acknowledged",
-    photoConsentAcknowledged: "Acknowledged",
-    ancillaryChargesAcknowledged: "Acknowledged",
-    photoConsentChoice: "I do permit"
+    photoConsentChoice: "Do Permit"
   };
 
   await submitPublicEnrollmentPacket({

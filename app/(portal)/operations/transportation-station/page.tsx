@@ -3,6 +3,7 @@ import { unstable_noStore as noStore } from "next/cache";
 
 import { addTransportationManifestRiderAction } from "@/app/(portal)/operations/transportation-station/actions";
 import { TransportationRunPostingPanel } from "@/components/transportation-station/run-posting-panel";
+import { UnassignedRiderAssignmentForm } from "@/components/transportation-station/unassigned-rider-assignment-form";
 import { TransportationStationAddRiderForm } from "@/components/forms/transportation-station-add-rider-form";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
@@ -89,6 +90,8 @@ export default async function TransportationStationPage({
   const selectedDate = firstString(query.date) ?? getOperationsTodayDate();
   const selectedShift = normalizeShift(firstString(query.shift));
   const memberSearch = firstString(query.memberSearch)?.trim() ?? "";
+  const successMessage = firstString(query.success)?.trim() ?? "";
+  const errorMessage = firstString(query.error)?.trim() ?? "";
   const selectedBusFilterPromise = busNumberOptionsPromise.then((busNumberOptions) =>
     normalizeBusFilter(firstString(query.bus), busNumberOptions)
   );
@@ -203,6 +206,17 @@ export default async function TransportationStationPage({
             >
               {selectedBusFilter === "all" && selectedShift === "Both" ? "Print Center Driver Packet" : "Print Expected Manifest"}
             </a>
+          </div>
+        ) : null}
+
+        {successMessage ? (
+          <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            {successMessage}
+          </div>
+        ) : null}
+        {errorMessage ? (
+          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {errorMessage}
           </div>
         ) : null}
       </Card>
@@ -335,6 +349,7 @@ export default async function TransportationStationPage({
           <div className="mt-4 space-y-4">
             {manifestOverview.groups.map((group) => {
               const availableShifts = Array.from(new Set(group.riders.map((row) => row.shift)));
+              const showAssignColumn = canManageManifest && group.busNumber == null && busNumberOptions.length > 0;
               return (
                 <div key={group.label} className="rounded-xl border border-border bg-white p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
@@ -356,30 +371,85 @@ export default async function TransportationStationPage({
                         : null}
                     </div>
                   </div>
-                  <table className="mt-3">
-                    <thead>
-                      <tr>
-                        <th>Member</th>
-                        <th>Shift</th>
-                        <th>Type</th>
-                        <th>Location</th>
-                        <th>Contact</th>
-                        <th>Source</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                  {showAssignColumn ? (
+                    <div className="mt-3 space-y-3">
                       {group.riders.map((row) => (
-                        <tr key={row.key}>
-                          <td>{row.memberName}</td>
-                          <td>{row.shift}</td>
-                          <td>{row.transportType}</td>
-                          <td>{row.locationLabel}</td>
-                          <td>{row.caregiverContactName ?? "-"}</td>
-                          <td>{row.source === "manual-add" ? "Manual Add" : "Schedule"}</td>
-                        </tr>
+                        <div key={row.key} className="rounded-xl border border-border bg-slate-50 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <p className="font-semibold text-primary-text">{row.memberName}</p>
+                              <p className="text-xs text-muted">
+                                {row.source === "manual-add" ? "Manual add" : "Recurring assignment"}
+                              </p>
+                            </div>
+                            <span className="rounded-full border border-border bg-white px-2 py-1 text-xs font-semibold text-primary-text">
+                              {row.shift}
+                            </span>
+                          </div>
+                          <div className="mt-3 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-muted">Type</p>
+                              <p>{row.transportType}</p>
+                            </div>
+                            <div className="xl:col-span-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-muted">Location</p>
+                              <p>{row.locationLabel}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-muted">Contact</p>
+                              <p>{row.caregiverContactName ?? "-"}</p>
+                            </div>
+                          </div>
+                          <div className="mt-3 flex flex-col gap-2 rounded-lg border border-dashed border-border bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-muted">Assign This Rider</p>
+                              <p className="text-xs text-muted">Creates a same-day transportation override without changing the recurring MCC route.</p>
+                            </div>
+                            <UnassignedRiderAssignmentForm
+                              selectedDate={manifestOverview.selectedDate}
+                              busFilter={selectedBusFilter}
+                              memberId={row.memberId}
+                              shift={row.shift}
+                              transportType={row.transportType}
+                              busStopName={row.busStopName}
+                              doorToDoorAddress={row.doorToDoorAddress}
+                              caregiverContactId={row.caregiverContactId}
+                              caregiverContactName={row.caregiverContactName}
+                              caregiverContactPhone={row.caregiverContactPhone}
+                              caregiverContactAddress={row.caregiverContactAddress}
+                              notes={row.notes}
+                              busNumberOptions={busNumberOptions}
+                            />
+                          </div>
+                        </div>
                       ))}
-                    </tbody>
-                  </table>
+                    </div>
+                  ) : (
+                    <table className="mt-3">
+                      <thead>
+                        <tr>
+                          <th>Member</th>
+                          <th>Shift</th>
+                          <th>Type</th>
+                          <th>Location</th>
+                          <th>Contact</th>
+                          <th>Source</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.riders.map((row) => (
+                          <tr key={row.key}>
+                            <td>{row.memberName}</td>
+                            <td>{row.shift}</td>
+                            <td>{row.transportType}</td>
+                            <td>{row.locationLabel}</td>
+                            <td>{row.caregiverContactName ?? "-"}</td>
+                            <td>{row.source === "manual-add" ? "Manual Add" : "Schedule"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               );
             })}

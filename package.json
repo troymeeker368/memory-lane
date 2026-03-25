@@ -43,6 +43,7 @@
     "seed:attendance": "tsx scripts/seed-supabase.ts --module attendance",
     "seed:health": "tsx scripts/seed-supabase.ts --module intake --module attendance",
     "backfill:member-files": "node -r ./scripts/shim-server-only.cjs ./node_modules/tsx/dist/cli.mjs scripts/backfill-member-file-storage.ts",
+    "repair:enrollment-packet-completions": "node --loader ./scripts/server-only-loader.mjs -r ./scripts/shim-server-only.cjs ./node_modules/tsx/dist/cli.mjs scripts/repair-enrollment-packet-completions.ts",
     "e2e:pof-sign:live": "node --loader ./scripts/server-only-loader.mjs -r ./scripts/shim-server-only.cjs ./node_modules/tsx/dist/cli.mjs scripts/e2e-pof-signing-live.ts",
     "e2e:enrollment-packet:live": "node --loader ./scripts/server-only-loader.mjs -r ./scripts/shim-server-only.cjs ./node_modules/tsx/dist/cli.mjs scripts/e2e-enrollment-packet-live.ts",
     "migrate:mock-to-supabase": "tsx scripts/seed-supabase.ts --legacy-only",

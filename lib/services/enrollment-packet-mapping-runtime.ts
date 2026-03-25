@@ -7,6 +7,7 @@ import {
   throwEnrollmentPacketSchemaError
 } from "@/lib/services/enrollment-packet-core";
 import { mapEnrollmentPacketToDownstream } from "@/lib/services/enrollment-packet-intake-mapping";
+import { resolveEnrollmentPacketOperationalReadiness } from "@/lib/services/enrollment-packet-readiness";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import {
   recordImmediateSystemAlert,
@@ -287,6 +288,83 @@ export async function recordEnrollmentPacketActionRequired(input: {
       emitMilestone: false
     });
   }
+}
+
+export async function recordEnrollmentPacketSubmittedMilestone(input: {
+  request: EnrollmentPacketRequestRow;
+  member: MemberRow;
+  mappingSummary:
+    | {
+        mappingRunId: string | null;
+        status: "pending" | "completed" | "failed";
+        conflictsRequiringReview: number;
+      }
+    | null
+    | undefined;
+  completedAt: string;
+  actionUrl: string;
+}) {
+  const mappingSyncStatus =
+    input.mappingSummary?.status === "completed"
+      ? "completed"
+      : input.mappingSummary?.status === "failed"
+        ? "failed"
+        : "pending";
+  const operationalReadinessStatus = resolveEnrollmentPacketOperationalReadiness({
+    status: "filed",
+    mappingSyncStatus
+  });
+  const metadata = {
+    member_id: input.member.id,
+    lead_id: input.request.lead_id,
+    completed_at: input.completedAt,
+    mapping_sync_status: mappingSyncStatus,
+    mapping_run_id: input.mappingSummary?.mappingRunId ?? null,
+    conflicts_requiring_review: input.mappingSummary?.conflictsRequiringReview ?? 0,
+    operational_readiness_status: operationalReadinessStatus,
+    action_url: input.actionUrl
+  };
+
+  const admin = createSupabaseAdminClient();
+  const { data: existingSubmittedEvent, error: existingSubmittedEventError } = await admin
+    .from("system_events")
+    .select("id")
+    .eq("event_type", "enrollment_packet_submitted")
+    .eq("entity_type", "enrollment_packet_request")
+    .eq("entity_id", input.request.id)
+    .limit(1)
+    .maybeSingle();
+  if (existingSubmittedEventError) {
+    throw new Error(existingSubmittedEventError.message);
+  }
+
+  if (!existingSubmittedEvent?.id) {
+    await recordWorkflowEvent({
+      eventType: "enrollment_packet_submitted",
+      entityType: "enrollment_packet_request",
+      entityId: input.request.id,
+      actorType: "user",
+      actorUserId: input.request.sender_user_id,
+      status: "completed",
+      severity: mappingSyncStatus === "failed" ? "high" : "medium",
+      metadata
+    });
+  }
+
+  return recordWorkflowMilestone({
+    event: {
+      eventType: "enrollment_packet_submitted",
+      entityType: "enrollment_packet_request",
+      entityId: input.request.id,
+      actorType: "user",
+      actorUserId: input.request.sender_user_id,
+      status: "completed",
+      severity: mappingSyncStatus === "failed" ? "high" : "medium",
+      eventKeySuffix: "submitted",
+      requireRecipients: true,
+      metadata
+    }
+  });
 }
 
 export async function listEnrollmentPacketMemberFileArtifacts(packetId: string): Promise<EnrollmentPacketMemberFileArtifact[]> {

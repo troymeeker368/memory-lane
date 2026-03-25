@@ -1,6 +1,6 @@
 import {
   buildRenderedMembershipAgreementParagraphs,
-  CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE,
+  buildRenderedMembershipExhibitAContent,
   FIRST_DAY_WELCOME_LETTER_TEMPLATE
 } from "@/lib/services/enrollment-packet-membership-document";
 import {
@@ -13,13 +13,26 @@ import {
 export function buildEnrollmentPacketLegalText(input?: {
   caregiverName?: string | null;
   memberName?: string | null;
+  paymentMethodSelection?: string | null;
+  communityFee?: string | null;
+  totalInitialEnrollmentAmount?: string | null;
+  exhibitAAuthorizationAcknowledged?: boolean;
 }) {
+  const exhibitAContent = buildRenderedMembershipExhibitAContent({
+    paymentMethodSelection: input?.paymentMethodSelection,
+    communityFee: input?.communityFee,
+    totalInitialEnrollmentAmount: input?.totalInitialEnrollmentAmount,
+    authorizationAcknowledged: input?.exhibitAAuthorizationAcknowledged
+  });
+
   return {
     membershipAgreement: buildRenderedMembershipAgreementParagraphs(
       input?.caregiverName,
       input?.memberName
     ),
-    exhibitAPaymentAuthorization: [...CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE],
+    exhibitAPaymentAuthorization: [...exhibitAContent.allParagraphs],
+    exhibitAPaymentAuthorizationCommon: [...exhibitAContent.commonParagraphs],
+    exhibitAPaymentAuthorizationSelected: [...exhibitAContent.authorizationParagraphs],
     privacyPractices: [...CANONICAL_PRIVACY_PRACTICES_NOTICE],
     statementOfRights: [...CANONICAL_STATEMENT_OF_RIGHTS_NOTICE],
     photoConsent: [...CANONICAL_PHOTO_CONSENT_NOTICE],

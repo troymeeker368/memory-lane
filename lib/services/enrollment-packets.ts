@@ -9,6 +9,7 @@ export type {
   PublicEnrollmentPacketContext
 } from "@/lib/services/enrollment-packet-types";
 export { retryFailedEnrollmentPacketMappings } from "@/lib/services/enrollment-packet-mapping-runtime";
+export { repairCommittedEnrollmentPacketCompletions } from "@/lib/services/enrollment-packet-completion-cascade";
 export {
   listCompletedEnrollmentPacketRequests,
   listEnrollmentPacketRequestsForLead,

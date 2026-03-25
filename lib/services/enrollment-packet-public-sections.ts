@@ -17,6 +17,11 @@ import {
   YES_NO_OPTIONS
 } from "@/lib/services/enrollment-packet-public-options";
 import {
+  ENROLLMENT_PACKET_CARD_TYPE_OPTIONS,
+  ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS,
+  ENROLLMENT_PACKET_PAYMENT_METHOD_OPTIONS
+} from "@/lib/services/enrollment-packet-payment-consent";
+import {
   ENROLLMENT_PACKET_RECREATION_CATEGORIES
 } from "@/lib/services/enrollment-packet-recreation";
 import type { EnrollmentPacketSectionDefinition } from "@/lib/services/enrollment-packet-public-types";
@@ -194,10 +199,13 @@ export const ENROLLMENT_PACKET_SECTIONS: EnrollmentPacketSectionDefinition[] = [
     description: "ACH or credit card authorization.",
     sourceDocuments: ["Membership Agreement Exhibit A"],
     fields: [
-      { key: "paymentMethodSelection", label: "Payment method", type: "select", sourceDocument: "Membership Agreement Exhibit A", options: ["ACH", "Credit Card"], required: true },
+      { key: "paymentMethodSelection", label: "Payment method", type: "radio", sourceDocument: "Membership Agreement Exhibit A", options: [...ENROLLMENT_PACKET_PAYMENT_METHOD_OPTIONS], required: true },
       { key: "bankName", label: "Bank name", type: "text", sourceDocument: "Membership Agreement Exhibit A" },
+      { key: "bankCityStateZip", label: "Bank city / state / ZIP", type: "text", sourceDocument: "Membership Agreement Exhibit A", columns: 2 },
       { key: "bankAba", label: "Routing number", type: "text", sourceDocument: "Membership Agreement Exhibit A" },
       { key: "bankAccountNumber", label: "Account number", type: "text", sourceDocument: "Membership Agreement Exhibit A" },
+      { key: "cardholderName", label: "Cardholder name", type: "text", sourceDocument: "Membership Agreement Exhibit A", columns: 2 },
+      { key: "cardType", label: "Card type", type: "radio", sourceDocument: "Membership Agreement Exhibit A", options: [...ENROLLMENT_PACKET_CARD_TYPE_OPTIONS] },
       { key: "cardNumber", label: "Card number", type: "text", sourceDocument: "Membership Agreement Exhibit A" },
       { key: "cardExpiration", label: "Expiration", type: "text", sourceDocument: "Membership Agreement Exhibit A" },
       { key: "cardCvv", label: "CVV", type: "text", sourceDocument: "Membership Agreement Exhibit A" },
@@ -214,14 +222,44 @@ export const ENROLLMENT_PACKET_SECTIONS: EnrollmentPacketSectionDefinition[] = [
     title: "Privacy Practices Acknowledgement",
     description: "Notice of privacy practices acknowledgement.",
     sourceDocuments: ["Notice of Privacy Practices"],
-    fields: []
+    fields: [
+      {
+        key: ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS[0].nameKey,
+        label: "Privacy practices acknowledgement name",
+        type: "text",
+        sourceDocument: "Notice of Privacy Practices",
+        required: true
+      },
+      {
+        key: ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS[0].dateKey,
+        label: "Privacy practices acknowledgement date",
+        type: "date",
+        sourceDocument: "Notice of Privacy Practices",
+        required: true
+      }
+    ]
   },
   {
     id: "statement-of-rights",
     title: "Statement of Rights",
     description: "Participant rights acknowledgement.",
     sourceDocuments: ["Statement of Rights of Adult Day Care Participants"],
-    fields: []
+    fields: [
+      {
+        key: ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS[1].nameKey,
+        label: "Statement of rights acknowledgement name",
+        type: "text",
+        sourceDocument: "Statement of Rights of Adult Day Care Participants",
+        required: true
+      },
+      {
+        key: ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS[1].dateKey,
+        label: "Statement of rights acknowledgement date",
+        type: "date",
+        sourceDocument: "Statement of Rights of Adult Day Care Participants",
+        required: true
+      }
+    ]
   },
   {
     id: "photo-consent",
@@ -237,13 +275,21 @@ export const ENROLLMENT_PACKET_SECTIONS: EnrollmentPacketSectionDefinition[] = [
     title: "Ancillary Charges Notice",
     description: "Acknowledgement of ancillary charge policy.",
     sourceDocuments: ["Ancillary Charges Notice"],
-    fields: []
-  },
-  {
-    id: "final-review",
-    title: "Final Review",
-    description: "Review all sections before signature.",
-    sourceDocuments: ["Membership Agreement", "Membership Agreement Exhibit A"],
-    fields: [{ key: "additionalNotes", label: "Additional notes", type: "textarea", sourceDocument: "Membership Agreement", columns: 2 }]
+    fields: [
+      {
+        key: ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS[2].nameKey,
+        label: "Ancillary charges acknowledgement name",
+        type: "text",
+        sourceDocument: "Ancillary Charges Notice",
+        required: true
+      },
+      {
+        key: ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS[2].dateKey,
+        label: "Ancillary charges acknowledgement date",
+        type: "date",
+        sourceDocument: "Ancillary Charges Notice",
+        required: true
+      }
+    ]
   }
 ];

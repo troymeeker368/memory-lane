@@ -1,6 +1,11 @@
 import type { EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 import { ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS } from "@/lib/services/enrollment-packet-public-options";
 import {
+  ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS,
+  isEnrollmentPacketAchPaymentMethod,
+  isEnrollmentPacketCreditCardPaymentMethod
+} from "@/lib/services/enrollment-packet-payment-consent";
+import {
   formatEnrollmentPacketRecreationInterests,
   hasEnrollmentPacketRecreationSelections
 } from "@/lib/services/enrollment-packet-recreation";
@@ -28,14 +33,6 @@ function hasValue(value: string | null | undefined) {
 function isYes(value: string | null | undefined) {
   const normalized = clean(value)?.toLowerCase();
   return normalized === "yes" || normalized === "true" || normalized === "1";
-}
-
-function isSelectedCreditCard(value: string | null | undefined) {
-  return clean(value)?.toLowerCase() === "credit card";
-}
-
-function isSelectedAch(value: string | null | undefined) {
-  return clean(value)?.toLowerCase() === "ach";
 }
 
 function isValidPhotoConsentChoice(value: string | null | undefined) {
@@ -119,14 +116,19 @@ export function validateEnrollmentPacketCompletion(input: {
     missingItems.push("Dentures selection (upper/lower)");
   }
 
-  if (!hasValue(payload.bankName)) missingItems.push("Bank name");
-
-  if (isSelectedAch(payload.paymentMethodSelection)) {
+  if (isEnrollmentPacketAchPaymentMethod(payload.paymentMethodSelection)) {
+    if (!hasValue(payload.bankName)) missingItems.push("Bank name");
+    if (!hasValue(payload.bankCityStateZip)) missingItems.push("Bank city/state/ZIP");
     if (!hasValue(payload.bankAba)) missingItems.push("Routing number");
     if (!hasValue(payload.bankAccountNumber)) missingItems.push("Account number");
+    if (!hasValue(payload.exhibitAGuarantorSignatureName)) {
+      missingItems.push("ACH authorization acknowledgement");
+    }
   }
 
-  if (isSelectedCreditCard(payload.paymentMethodSelection)) {
+  if (isEnrollmentPacketCreditCardPaymentMethod(payload.paymentMethodSelection)) {
+    if (!hasValue(payload.cardholderName)) missingItems.push("Cardholder name");
+    if (!hasValue(payload.cardType)) missingItems.push("Card type");
     if (!hasValue(payload.cardNumber)) missingItems.push("Card number");
     if (!hasValue(payload.cardExpiration)) missingItems.push("Card expiration");
     if (!hasValue(payload.cardCvv)) missingItems.push("Card CVV");
@@ -134,6 +136,9 @@ export function validateEnrollmentPacketCompletion(input: {
     if (!hasValue(payload.cardBillingCity)) missingItems.push("Card billing city/town");
     if (!hasValue(payload.cardBillingState)) missingItems.push("Card billing state");
     if (!hasValue(payload.cardBillingZip)) missingItems.push("Card billing ZIP code");
+    if (!hasValue(payload.exhibitAGuarantorSignatureName)) {
+      missingItems.push("Credit card authorization acknowledgement");
+    }
   }
 
   if (!hasValue(payload.membershipGuarantorSignatureName)) {
@@ -142,9 +147,12 @@ export function validateEnrollmentPacketCompletion(input: {
   if (!hasValue(payload.membershipGuarantorSignatureDate)) {
     missingItems.push("Membership responsible party / guarantor signature date");
   }
-  if (!hasValue(payload.exhibitAGuarantorSignatureName)) {
-    missingItems.push("Exhibit A responsible party / guarantor acknowledgement name");
-  }
+
+  ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS.forEach((definition) => {
+    if (!hasValue(payload[definition.nameKey]) || !hasValue(payload[definition.dateKey])) {
+      missingItems.push(definition.label);
+    }
+  });
 
   if (!isValidPhotoConsentChoice(payload.photoConsentChoice)) {
     missingItems.push("Photo consent selection");

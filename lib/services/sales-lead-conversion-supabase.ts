@@ -91,6 +91,11 @@ function toLeadConversionResult(data: unknown) {
   } satisfies LeadStageTransitionMemberUpsertResult;
 }
 
+async function ensureLeadConversionMemberShellRows(memberId: string) {
+  const { ensureCanonicalMemberOperationalShellRows } = await import("@/lib/services/member-operational-shell");
+  await ensureCanonicalMemberOperationalShellRows(memberId);
+}
+
 export async function applyLeadStageTransitionWithMemberUpsertSupabase(input: {
   leadId: string;
   requestedStage: string;
@@ -134,6 +139,7 @@ export async function applyLeadStageTransitionWithMemberUpsertSupabase(input: {
   });
 
   const result = toLeadConversionResult(data);
+  await ensureLeadConversionMemberShellRows(result.memberId);
   await logSystemEvent({
     event_type: "lead_member_conversion_completed",
     entity_type: "lead",
@@ -192,6 +198,7 @@ export async function createLeadWithMemberConversionSupabase(input: {
   });
 
   const result = toLeadConversionResult(data);
+  await ensureLeadConversionMemberShellRows(result.memberId);
   await logSystemEvent({
     event_type: "lead_member_conversion_completed",
     entity_type: "lead",
