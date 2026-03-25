@@ -16,6 +16,7 @@ export type {
   PayorRow
 } from "@/lib/services/member-command-center-types";
 export {
+  findActiveMemberByLockerNumberSupabase,
   getAvailableLockerNumbersForMemberSupabase,
   getMemberCommandCenterDetailSupabase,
   getMemberCommandCenterIndexSupabase,
@@ -26,6 +27,7 @@ export {
   listMemberContactsSupabase,
   listMemberFilesSupabase,
   listMemberNameLookupSupabase,
+  listMembersPageSupabase,
   listMembersSupabase
 } from "@/lib/services/member-command-center-runtime";
 export {

@@ -34,12 +34,21 @@ export interface SalesPipelineSummaryCounts {
   stageCounts: LeadPipelineStageCountRow[];
 }
 
-type SalesDashboardSummaryCountsRpcRow = {
+export type SalesDashboardSummaryRpcRow = {
   open_lead_count: number | string | null;
   won_lead_count: number | string | null;
   lost_lead_count: number | string | null;
   unresolved_inquiry_lead_count: number | string | null;
+  eip_lead_count: number | string | null;
+  total_lead_count: number | string | null;
+  converted_or_enrolled_count: number | string | null;
+  recent_inquiry_activity_count: number | string | null;
+  lead_activity_count: number | string | null;
+  partner_count: number | string | null;
+  referral_source_count: number | string | null;
+  partner_activity_count: number | string | null;
   stage_counts: unknown;
+  recent_inquiries: unknown;
 };
 
 type SalesDashboardStageCountRow = {
@@ -57,6 +66,7 @@ const PIPELINE_STAGE_ORDER = [
   "Closed - Lost"
 ] as const;
 const SALES_DASHBOARD_SUMMARY_RPC = "rpc_get_sales_dashboard_summary";
+const SALES_DASHBOARD_SUMMARY_MIGRATION = "0129_sales_dashboard_rpc_consolidation.sql";
 
 function resolveCanonicalLeadStageStatus(lead: Pick<LeadSummaryLike, "stage" | "status">) {
   return resolveCanonicalLeadState({
@@ -138,12 +148,28 @@ export function normalizeSalesPipelineStageCounts(payload: unknown): LeadPipelin
   }));
 }
 
+export async function fetchSalesDashboardSummarySupabase(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  input?: { recentInquiryStartDate?: string | null }
+) {
+  try {
+    const rows = await invokeSupabaseRpcOrThrow<SalesDashboardSummaryRpcRow[]>(supabase, SALES_DASHBOARD_SUMMARY_RPC, {
+      p_recent_inquiry_start_date: input?.recentInquiryStartDate ?? null
+    });
+    return rows?.[0] ?? null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to load sales dashboard summary.";
+    if (message.includes(SALES_DASHBOARD_SUMMARY_RPC)) {
+      throw new Error(
+        `Sales dashboard summary RPC is not available. Apply Supabase migration ${SALES_DASHBOARD_SUMMARY_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
+}
+
 export async function fetchSalesPipelineSummaryCountsSupabase(supabase: Awaited<ReturnType<typeof createClient>>) {
-  const rows = await invokeSupabaseRpcOrThrow<SalesDashboardSummaryCountsRpcRow[]>(
-    supabase,
-    SALES_DASHBOARD_SUMMARY_RPC
-  );
-  const row = rows?.[0];
+  const row = await fetchSalesDashboardSummarySupabase(supabase);
   if (!row) {
     throw new Error("Unable to load sales pipeline summary counts: dashboard RPC returned no rows.");
   }

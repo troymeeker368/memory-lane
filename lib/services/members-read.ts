@@ -2,6 +2,7 @@ import type { AppRole } from "@/types/app";
 
 import { getMemberDetail } from "@/lib/services/member-detail-read-model";
 import {
+  findActiveMemberByLockerNumberSupabase,
   getMemberSupabase,
   getTransportationAddRiderMemberOptionsSupabase,
   listMembersSupabase
@@ -56,12 +57,9 @@ export async function getMemberLockerConflict(input: {
     };
   }
 
-  const members = await listMembersSupabase({ status: "active" });
-  const conflict =
-    members.find((candidate) => {
-      if (candidate.id === member.id) return false;
-      return cleanLockerNumber(candidate.locker_number) === normalizedLocker;
-    }) ?? null;
+  const conflict = await findActiveMemberByLockerNumberSupabase(normalizedLocker, {
+    excludeMemberId: member.id
+  });
 
   return {
     member,

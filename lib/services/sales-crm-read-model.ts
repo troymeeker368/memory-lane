@@ -1,7 +1,6 @@
 import { resolveCanonicalLeadState } from "@/lib/canonical";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
-import { normalizeSalesPipelineStageCounts } from "@/lib/services/sales-workflows";
-import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import { fetchSalesDashboardSummarySupabase, normalizeSalesPipelineStageCounts } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate } from "@/lib/timezone";
 
@@ -114,23 +113,6 @@ export interface SalesSummarySnapshot {
   stageCounts: SalesStageCountRow[];
 }
 
-type SalesDashboardSummaryRpcRow = {
-  open_lead_count: number | string | null;
-  won_lead_count: number | string | null;
-  lost_lead_count: number | string | null;
-  unresolved_inquiry_lead_count: number | string | null;
-  eip_lead_count: number | string | null;
-  total_lead_count: number | string | null;
-  converted_or_enrolled_count: number | string | null;
-  recent_inquiry_activity_count: number | string | null;
-  lead_activity_count: number | string | null;
-  partner_count: number | string | null;
-  referral_source_count: number | string | null;
-  partner_activity_count: number | string | null;
-  stage_counts: unknown;
-  recent_inquiries: unknown;
-};
-
 const SALES_LEAD_READ_SELECT = [
   "id",
   "stage",
@@ -166,8 +148,6 @@ const SALES_PARTNER_LOOKUP_SELECT =
   "id, partner_id, organization_name, category, location, primary_phone, primary_email, active, last_touched";
 const SALES_REFERRAL_SOURCE_LOOKUP_SELECT =
   "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, active, last_touched";
-const SALES_DASHBOARD_SUMMARY_RPC = "rpc_get_sales_dashboard_summary";
-const SALES_DASHBOARD_SUMMARY_MIGRATION = "0129_sales_dashboard_rpc_consolidation.sql";
 const SALES_LEAD_LOOKUP_DEFAULT_LIMIT = 120;
 const SALES_LOOKUP_PARTNER_LIMIT = 250;
 const SALES_LOOKUP_REFERRAL_SOURCE_LIMIT = 250;
@@ -243,20 +223,7 @@ function normalizeDashboardRecentInquiries(payload: unknown) {
 
 async function getSalesDashboardSummarySupabase(input?: { recentInquiryStartDate?: string | null }) {
   const supabase = await createClient();
-  try {
-    const rows = await invokeSupabaseRpcOrThrow<SalesDashboardSummaryRpcRow[]>(supabase, SALES_DASHBOARD_SUMMARY_RPC, {
-      p_recent_inquiry_start_date: input?.recentInquiryStartDate ?? null
-    });
-    return rows?.[0] ?? null;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to load sales dashboard summary.";
-    if (message.includes(SALES_DASHBOARD_SUMMARY_RPC)) {
-      throw new Error(
-        `Sales dashboard summary RPC is not available. Apply Supabase migration ${SALES_DASHBOARD_SUMMARY_MIGRATION} and refresh PostgREST schema cache.`
-      );
-    }
-    throw error;
-  }
+  return fetchSalesDashboardSummarySupabase(supabase, input);
 }
 
 export async function getSalesLeadByIdSupabase(leadId: string) {

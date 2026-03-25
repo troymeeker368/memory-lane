@@ -111,7 +111,7 @@ export async function listMemberNameLookupSupabase(filters?: {
   );
 }
 
-async function listMembersPageSupabase(filters?: {
+export async function listMembersPageSupabase(filters?: {
   q?: string;
   status?: "all" | "active" | "inactive";
   page?: number;
@@ -148,6 +148,40 @@ async function listMembersPageSupabase(filters?: {
     pageSize,
     totalRows,
     totalPages: Math.max(1, Math.ceil(totalRows / pageSize))
+  };
+}
+
+export async function findActiveMemberByLockerNumberSupabase(
+  lockerNumber: string,
+  options?: { excludeMemberId?: string | null }
+) {
+  const normalizedLocker = normalizeLocker(lockerNumber);
+  if (!normalizedLocker) return null;
+
+  const excludeMemberId = String(options?.excludeMemberId ?? "").trim();
+  const supabase = await createClient();
+  let query = supabase
+    .from("members")
+    .select("id, display_name, locker_number")
+    .eq("status", "active")
+    .eq("locker_number", normalizedLocker)
+    .order("display_name", { ascending: true })
+    .limit(1);
+
+  if (excludeMemberId) {
+    query = query.neq("id", excludeMemberId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const row = ((data ?? []) as Array<{ id: string; display_name: string; locker_number: string | null }>)[0] ?? null;
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    display_name: row.display_name,
+    locker_number: normalizeLocker(row.locker_number)
   };
 }
 
