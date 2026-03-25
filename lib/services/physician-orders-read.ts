@@ -2,7 +2,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
-import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
+import { listAllActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import {
   PHYSICIAN_ORDER_INDEX_SELECT,
   PHYSICIAN_ORDER_MEMBER_HISTORY_SELECT,
@@ -73,7 +73,7 @@ type PhysicianOrderMemberHistorySelectRow = {
 };
 
 export async function listPhysicianOrderMemberLookup() {
-  return listActiveMemberLookupSupabase();
+  return listAllActiveMemberLookupSupabase();
 }
 
 export async function getPhysicianOrders(filters?: {

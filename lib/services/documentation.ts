@@ -1,6 +1,6 @@
 import { listCanonicalMemberLinksForLeadIds } from "@/lib/services/canonical-person-ref";
 import { getProgressNoteReminderRows } from "@/lib/services/progress-notes";
-import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
+import { listAllActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import { createClient } from "@/lib/supabase/server";
 import type { CanonicalPersonRef } from "@/types/identity";
 
@@ -106,7 +106,7 @@ function normalizeTimelyRows(rows: unknown[]) {
 }
 
 export async function getMembers() {
-  return listActiveMemberLookupSupabase();
+  return listAllActiveMemberLookupSupabase();
 }
 export async function getAssessmentMembers() {
   const supabase = await createClient();

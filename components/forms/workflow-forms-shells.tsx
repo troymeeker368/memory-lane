@@ -3,16 +3,11 @@
 import dynamic from "next/dynamic";
 import type { CanonicalPersonRef } from "@/types/identity";
 
-type MemberOption = {
-  id: string;
-  display_name: string;
-};
-
-type ToiletLogFormProps = { members: MemberOption[] };
-type ShowerLogFormProps = { members: MemberOption[] };
-type TransportationLogFormProps = { members: MemberOption[] };
+type ToiletLogFormProps = Record<string, never>;
+type ShowerLogFormProps = Record<string, never>;
+type TransportationLogFormProps = Record<string, never>;
 type PhotoUploadFormProps = Record<string, never>;
-type BloodSugarFormProps = { members: MemberOption[] };
+type BloodSugarFormProps = Record<string, never>;
 type AssessmentFormProps = {
   members: CanonicalPersonRef[];
   initialMemberId?: string;

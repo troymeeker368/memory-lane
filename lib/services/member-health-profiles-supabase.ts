@@ -2,6 +2,9 @@ import { createClient } from "@/lib/supabase/server";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
+import { toIntakeDraftPofStatus } from "@/lib/services/intake-draft-pof-readiness";
+import { listIntakePostSignFollowUpTasksByAssessmentIds } from "@/lib/services/intake-post-sign-follow-up";
+import { resolveIntakePostSignReadiness, type IntakePostSignReadinessStatus } from "@/lib/services/intake-post-sign-readiness";
 import { toEasternISO } from "@/lib/timezone";
 
 export const MHP_TABS = [
@@ -315,6 +318,9 @@ type IntakeAssessmentRow = {
   total_score: number | null;
   recommended_track: string | null;
   completed_by: string | null;
+  signature_status: "unsigned" | "signed" | "voided" | null;
+  draft_pof_status: string | null;
+  post_sign_readiness_status?: IntakePostSignReadinessStatus;
   admission_review_required: boolean | null;
   created_at: string;
 };
@@ -673,7 +679,7 @@ export async function getMemberHealthProfileDetailSupabase(
     supabase.from("member_notes").select(MEMBER_NOTE_SELECT).eq("member_id", canonicalMemberId),
     supabase
       .from("intake_assessments")
-      .select("id, member_id, assessment_date, total_score, recommended_track, completed_by, created_at")
+      .select("id, member_id, assessment_date, total_score, recommended_track, completed_by, signature_status, draft_pof_status, created_at")
       .eq("member_id", canonicalMemberId)
       .order("assessment_date", { ascending: false })
       .order("created_at", { ascending: false }),
@@ -706,7 +712,23 @@ export async function getMemberHealthProfileDetailSupabase(
   );
   const equipment = sortDesc((equipmentResult.data ?? []) as MemberEquipmentRow[], (row) => row.updated_at);
   const notes = sortDesc((notesResult.data ?? []) as MemberNoteRow[], (row) => row.created_at);
-  const assessments = sortDesc((assessmentsResult.data ?? []) as IntakeAssessmentRow[], (row) => row.created_at);
+  const rawAssessments = sortDesc((assessmentsResult.data ?? []) as IntakeAssessmentRow[], (row) => row.created_at);
+  const openFollowUpTasksByAssessmentId = await listIntakePostSignFollowUpTasksByAssessmentIds({
+    assessmentIds: rawAssessments.map((row) => row.id)
+  });
+  const assessments = rawAssessments.map((row) => {
+    const openFollowUpTaskTypes = (openFollowUpTasksByAssessmentId.get(row.id) ?? [])
+      .filter((task) => task.status === "action_required")
+      .map((task) => task.taskType);
+    return {
+      ...row,
+      post_sign_readiness_status: resolveIntakePostSignReadiness({
+        signatureStatus: row.signature_status,
+        draftPofStatus: toIntakeDraftPofStatus(row.draft_pof_status),
+        openFollowUpTaskTypes
+      })
+    };
+  });
   const storedProfile = (profileResult.data as MemberHealthProfileRow | null) ?? null;
   const profileNeedsBackfill = !storedProfile;
   const profile = storedProfile ?? buildEmptyMemberHealthProfileRow(canonicalMemberId);

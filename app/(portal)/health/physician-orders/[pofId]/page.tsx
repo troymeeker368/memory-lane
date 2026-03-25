@@ -166,6 +166,7 @@ export default async function PhysicianOrderDetailPage({
           <thead>
             <tr>
               <th>Status</th>
+              <th>Clinical Sync</th>
               <th>Provider</th>
               <th>Sent</th>
               <th>Signed</th>
@@ -177,6 +178,12 @@ export default async function PhysicianOrderDetailPage({
             {history.map((row) => (
               <tr key={row.id}>
                 <td>{row.status}</td>
+                <td>
+                  <div className="space-y-1">
+                    <p>{row.clinicalSyncDetail?.label ?? clinicalSyncLabel(row.clinicalSyncStatus)}</p>
+                    {row.clinicalSyncDetail?.message ? <p className="max-w-xs text-xs text-muted">{row.clinicalSyncDetail.message}</p> : null}
+                  </div>
+                </td>
                 <td>{row.providerName ?? "-"}</td>
                 <td>{row.completedDate ? formatDate(row.completedDate) : "-"}</td>
                 <td>{row.signedDate ? formatDate(row.signedDate) : "-"}</td>

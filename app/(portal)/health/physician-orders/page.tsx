@@ -5,7 +5,7 @@ import { requireRoles } from "@/lib/auth";
 import { canCreatePhysicianOrdersModuleForRole, PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { getPhysicianOrders } from "@/lib/services/physician-orders-read";
-import { listActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
+import { listAllActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
@@ -36,7 +36,7 @@ export default async function PhysicianOrdersIndexPage({
     ? resolveCanonicalMemberId(memberId, { actionLabel: "PhysicianOrdersIndexPage" })
     : Promise.resolve(memberId);
   const [members, canonicalMemberId, rows] = await Promise.all([
-    listActiveMemberLookupSupabase(),
+    listAllActiveMemberLookupSupabase(),
     canonicalMemberIdPromise,
     canonicalMemberIdPromise.then((resolvedMemberId) =>
       getPhysicianOrders({

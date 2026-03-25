@@ -377,6 +377,10 @@ export function NewCarePlanForm({
               signatureImageDataUrl: form.signatureImageDataUrl
             });
             if (response.error) {
+              if (response.id) {
+                router.push(`/health/care-plans/${response.id}?followUp=required&sourceAction=create`);
+                return;
+              }
               setStatus(`Error: ${response.error}`);
               return;
             }
@@ -586,6 +590,10 @@ export function CarePlanReviewForm({
               signatureImageDataUrl: form.signatureImageDataUrl
             });
             if (response.error) {
+              if (response.id) {
+                router.push(`/health/care-plans/${response.id}?followUp=required&sourceAction=review`);
+                return;
+              }
               setStatus(`Error: ${response.error}`);
               return;
             }

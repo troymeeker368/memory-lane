@@ -68,7 +68,6 @@ export default async function HealthPage() {
   const carePlans = dashboard.carePlans;
   const incidents = dashboard.incidents;
   const progressNotes = dashboard.progressNotes;
-  const members = dashboard.members;
   const now = new Date();
 
   return (
@@ -319,7 +318,7 @@ export default async function HealthPage() {
       <Card>
         <CardTitle>Blood Sugar Testing Entry</CardTitle>
         <div className="mt-3">
-          <BloodSugarFormShell members={members} />
+          <BloodSugarFormShell />
         </div>
       </Card>
 

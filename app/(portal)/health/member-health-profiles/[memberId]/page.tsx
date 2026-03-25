@@ -90,6 +90,23 @@ function clinicalSyncLabel(status: "not_signed" | "pending" | "queued" | "failed
   if (status === "pending") return "Pending";
   return "-";
 }
+
+function postSignReadinessLabel(status: "not_started" | "signed_pending_snapshot" | "signed_pending_caregiver_dispatch" | "ready") {
+  if (status === "ready") return "Operationally Ready";
+  if (status === "signed_pending_snapshot") return "Snapshot Follow-up Needed";
+  if (status === "signed_pending_caregiver_dispatch") return "Caregiver Dispatch Follow-up Needed";
+  return "Post-Sign Work Not Started";
+}
+
+function intakeReadinessLabel(
+  status: "not_signed" | "signed_pending_draft_pof" | "draft_pof_failed" | "signed_pending_member_file_pdf" | "post_sign_ready"
+) {
+  if (status === "post_sign_ready") return "Operationally Ready";
+  if (status === "signed_pending_draft_pof") return "Draft POF Pending";
+  if (status === "draft_pof_failed") return "Draft POF Failed";
+  if (status === "signed_pending_member_file_pdf") return "PDF Save Pending";
+  return "Not Signed";
+}
 const EQUIPMENT_STATUS_OPTIONS = ["Active", "Inactive"] as const;
 const MEDICATION_ROUTE_OPTIONS = ["PO", "SQ", "IM", "TD", "INH", "Topical", "Ophthalmic", "Otic"] as const;
 
@@ -311,6 +328,9 @@ export default async function MemberHealthProfileDetailPage({
             <p className="text-xs text-muted">Next Care Plan Due</p>
             <p className="font-semibold">{carePlanSummary.nextDueDate ? formatDate(carePlanSummary.nextDueDate) : "-"}</p>
             <p className="text-xs text-muted">{carePlanSummary.status ?? "No enrollment date"}</p>
+            {carePlanSummary.postSignReadinessStatus ? (
+              <p className="text-xs text-muted">{postSignReadinessLabel(carePlanSummary.postSignReadinessStatus)}</p>
+            ) : null}
           </div>
           <div className="rounded-lg border border-border p-3 text-center">
             <p className="text-xs text-muted">Next Progress Note Due</p>
@@ -364,11 +384,11 @@ export default async function MemberHealthProfileDetailPage({
           <Card className="table-wrap">
             <SectionHeading title="Related Care Plans" lastUpdatedAt={carePlansUpdatedAt} lastUpdatedBy={carePlansUpdatedBy} />
             <table className="mt-3">
-              <thead><tr><th>Track</th><th>Review Date</th><th>Next Due</th><th>Status</th><th>Completed By</th><th>Open</th></tr></thead>
+              <thead><tr><th>Track</th><th>Review Date</th><th>Next Due</th><th>Status</th><th>Post-Sign Readiness</th><th>Completed By</th><th>Open</th></tr></thead>
               <tbody>
                 {relatedCarePlans.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-sm text-muted">No care plans found for this member yet.</td>
+                    <td colSpan={7} className="text-sm text-muted">No care plans found for this member yet.</td>
                   </tr>
                 ) : (
                   relatedCarePlans.slice(0, 25).map((row) => (
@@ -377,6 +397,7 @@ export default async function MemberHealthProfileDetailPage({
                       <td>{formatDate(row.reviewDate)}</td>
                       <td>{formatDate(row.nextDueDate)}</td>
                       <td>{row.status}</td>
+                      <td>{postSignReadinessLabel(row.postSignReadinessStatus)}</td>
                       <td>{row.completedBy ?? "-"}</td>
                       <td><Link className="font-semibold text-brand" href={`/health/care-plans/${row.id}`}>Open</Link></td>
                     </tr>
@@ -389,11 +410,11 @@ export default async function MemberHealthProfileDetailPage({
           <Card className="table-wrap">
             <SectionHeading title="Related Intake Assessments" lastUpdatedAt={assessmentsUpdatedAt} lastUpdatedBy={assessmentsUpdatedBy} />
             <table className="mt-3">
-              <thead><tr><th>Date</th><th>Score</th><th>Track</th><th>Completed By</th><th>Open</th></tr></thead>
+              <thead><tr><th>Date</th><th>Score</th><th>Track</th><th>Post-Sign Readiness</th><th>Completed By</th><th>Open</th></tr></thead>
               <tbody>
                 {detail.assessments.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="text-sm text-muted">No intake assessments found for this member yet.</td>
+                    <td colSpan={6} className="text-sm text-muted">No intake assessments found for this member yet.</td>
                   </tr>
                 ) : (
                   detail.assessments.slice(0, 25).map((row) => (
@@ -401,6 +422,7 @@ export default async function MemberHealthProfileDetailPage({
                       <td>{formatDate(row.assessment_date)}</td>
                       <td>{row.total_score}</td>
                       <td>{row.recommended_track}</td>
+                      <td>{intakeReadinessLabel(row.post_sign_readiness_status ?? "not_signed")}</td>
                       <td>{row.completed_by}</td>
                       <td><Link className="font-semibold text-brand" href={`/health/assessment/${row.id}`}>Open</Link></td>
                     </tr>
@@ -431,7 +453,12 @@ export default async function MemberHealthProfileDetailPage({
                   relatedPhysicianOrders.slice(0, 25).map((row) => (
                     <tr key={row.id}>
                       <td>{row.status}</td>
-                      <td>{clinicalSyncLabel(row.clinicalSyncStatus)}</td>
+                      <td>
+                        <div className="space-y-1">
+                          <p>{row.clinicalSyncDetail?.label ?? clinicalSyncLabel(row.clinicalSyncStatus)}</p>
+                          {row.clinicalSyncDetail?.message ? <p className="max-w-xs text-xs text-muted">{row.clinicalSyncDetail.message}</p> : null}
+                        </div>
+                      </td>
                       <td>{row.providerName ?? "-"}</td>
                       <td>{row.completedDate ? formatDate(row.completedDate) : "-"}</td>
                       <td>{row.signedDate ? formatDate(row.signedDate) : "-"}</td>

@@ -7,7 +7,6 @@ import { canAccessIncidentReportsForRole } from "@/lib/permissions/core";
 import {
   getDocumentationSummary,
   getDocumentationTracker,
-  getMembers,
   getRecentDocumentationWorkflowCounts
 } from "@/lib/services/documentation";
 import { getProgressNoteComplianceLabel } from "@/lib/services/progress-note-model";
@@ -194,8 +193,7 @@ export async function DocumentationDashboardHome({ normalizedRole }: Documentati
     item.href === "/documentation/incidents" ? canAccessIncidentReportsForRole(normalizedRole) : true
   );
 
-  const [members, summary, tracker, workflowCounts] = await Promise.all([
-    getMembers(),
+  const [summary, tracker, workflowCounts] = await Promise.all([
     getDocumentationSummary(),
     getDocumentationTracker(),
     getRecentDocumentationWorkflowCounts()
@@ -231,7 +229,7 @@ export async function DocumentationDashboardHome({ normalizedRole }: Documentati
       <Card>
         <CardTitle>Quick Participation Log Entry</CardTitle>
         <div className="mt-3">
-          <DailyActivityFormShell members={members} />
+          <DailyActivityFormShell />
         </div>
       </Card>
 

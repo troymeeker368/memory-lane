@@ -14,6 +14,19 @@ function parsePage(value: string | string[] | undefined) {
   return Math.floor(parsed);
 }
 
+function postSignReadinessLabel(status: "not_started" | "signed_pending_snapshot" | "signed_pending_caregiver_dispatch" | "ready") {
+  if (status === "ready") return "Operationally Ready";
+  if (status === "signed_pending_snapshot") return "Snapshot Follow-up Needed";
+  if (status === "signed_pending_caregiver_dispatch") return "Caregiver Dispatch Follow-up Needed";
+  return "Post-Sign Work Not Started";
+}
+
+function postSignReadinessClassName(status: "not_started" | "signed_pending_snapshot" | "signed_pending_caregiver_dispatch" | "ready") {
+  if (status === "ready") return "bg-emerald-100 text-emerald-800";
+  if (status === "not_started") return "bg-slate-100 text-slate-700";
+  return "bg-amber-100 text-amber-800";
+}
+
 export default async function CarePlansListPage({
   searchParams
 }: {
@@ -86,7 +99,7 @@ export default async function CarePlansListPage({
 
       <Card className="table-wrap">
         <table>
-          <thead><tr><th>Member</th><th>Track</th><th>Enrollment</th><th>Last Review</th><th>Next Due</th><th>Status</th><th>Completed By</th><th>Open</th></tr></thead>
+          <thead><tr><th>Member</th><th>Track</th><th>Enrollment</th><th>Last Review</th><th>Next Due</th><th>Status</th><th>Post-Sign Readiness</th><th>Completed By</th><th>Open</th></tr></thead>
           <tbody>
             {sortedPlans.map((plan) => (
               <tr key={plan.id}>
@@ -96,6 +109,14 @@ export default async function CarePlansListPage({
                 <td>{formatOptionalDate(plan.lastCompletedDate)}</td>
                 <td>{formatDate(plan.nextDueDate)}</td>
                 <td><CarePlanStatusLink status={plan.status} href={plan.actionHref} /></td>
+                <td>
+                  <div className="space-y-1">
+                    <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${postSignReadinessClassName(plan.postSignReadinessStatus)}`}>
+                      {postSignReadinessLabel(plan.postSignReadinessStatus)}
+                    </span>
+                    {plan.postSignReadinessReason ? <p className="max-w-xs text-xs text-muted">{plan.postSignReadinessReason}</p> : null}
+                  </div>
+                </td>
                 <td>{plan.completedBy ?? "-"}</td>
                 <td>
                   <Link

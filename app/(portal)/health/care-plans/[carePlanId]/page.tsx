@@ -61,6 +61,8 @@ export default async function CarePlanDetailPage({
 
   const detailMode = typeof query.view === "string" && query.view === "detail";
   const reviewMode = typeof query.view === "string" && query.view === "review";
+  const followUpRequired = typeof query.followUp === "string" && query.followUp === "required";
+  const sourceAction = typeof query.sourceAction === "string" ? query.sourceAction : null;
   const requestedReturnTo = typeof query.returnTo === "string" ? query.returnTo : null;
   const returnTo = requestedReturnTo && requestedReturnTo.startsWith("/") ? requestedReturnTo : null;
 
@@ -109,6 +111,15 @@ export default async function CarePlanDetailPage({
         {detail.carePlan.designeeCleanupRequired ? (
           <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             Legacy designee/user linkage is invalid and requires cleanup before this record is fully compliant.
+          </p>
+        ) : null}
+        {followUpRequired ? (
+          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            {sourceAction === "create"
+              ? "The care plan record was created, but post-sign follow-up still needs attention. Use the Post-sign readiness state below as the source of truth before retrying anything."
+              : sourceAction === "review"
+                ? "The care plan review was saved, but post-sign follow-up still needs attention. Use the Post-sign readiness state below as the source of truth before retrying anything."
+                : "This care plan was saved, but post-sign follow-up still needs attention. Use the Post-sign readiness state below as the source of truth before retrying anything."}
           </p>
         ) : null}
       </Card>
@@ -171,6 +182,7 @@ export default async function CarePlanDetailPage({
         <Card>
           <CarePlanCaregiverEsignActions
             carePlanId={detail.carePlan.id}
+            postSignReadinessStatus={detail.carePlan.postSignReadinessStatus}
             nurseSignatureStatus={detail.carePlan.nurseSignatureStatus}
             nurseSignedAt={detail.carePlan.nurseSignedAt}
             caregiverName={detail.carePlan.caregiverName}

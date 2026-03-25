@@ -15,6 +15,7 @@ import type { CaregiverSignatureStatus } from "@/lib/services/care-plans";
 
 export function CarePlanCaregiverEsignActions({
   carePlanId,
+  postSignReadinessStatus,
   nurseSignatureStatus,
   nurseSignedAt,
   caregiverName,
@@ -26,6 +27,7 @@ export function CarePlanCaregiverEsignActions({
   finalMemberFileId
 }: {
   carePlanId: string;
+  postSignReadinessStatus: string;
   nurseSignatureStatus: string;
   nurseSignedAt: string | null;
   caregiverName: string | null;
@@ -53,6 +55,7 @@ export function CarePlanCaregiverEsignActions({
     caregiverSignatureStatus as CaregiverSignatureStatus
   );
   const caregiverSigned = caregiverSignatureStatus === "signed" && Boolean(caregiverSignedAt);
+  const workflowOperationallyReady = postSignReadinessStatus === "ready" && Boolean(finalMemberFileId);
   const sendInProgressState = caregiverSignatureStatus === "sent" || caregiverSignatureStatus === "viewed";
   const sendButtonLabel =
     caregiverSignatureStatus === "send_failed" || caregiverSignatureStatus === "expired"
@@ -73,9 +76,15 @@ export function CarePlanCaregiverEsignActions({
         <p>Filed to Member Files: {finalMemberFileId ?? "-"}</p>
       </div>
 
-      {caregiverSigned ? (
+      {caregiverSigned && workflowOperationallyReady ? (
         <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-sm font-semibold text-emerald-700">
           Care plan signature workflow is complete and filed.
+        </p>
+      ) : null}
+
+      {caregiverSigned && !workflowOperationallyReady ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-sm font-semibold text-amber-800">
+          Caregiver signature was captured, but post-sign follow-up is still incomplete. Use the post-sign readiness status above as the source of truth.
         </p>
       ) : null}
 
@@ -101,6 +110,10 @@ export function CarePlanCaregiverEsignActions({
                   signatureImageDataUrl: nurseSignatureImageDataUrl ?? ""
                 });
                 if (!result.ok) {
+                  if (result.id === carePlanId) {
+                    setStatus("Nurse/Admin signature was saved, but post-sign follow-up still needs attention. Review the post-sign readiness status below.");
+                    return;
+                  }
                   setStatus(result.error);
                   return;
                 }

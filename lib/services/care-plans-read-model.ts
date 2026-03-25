@@ -8,7 +8,7 @@ import {
   toCarePlan,
   toCarePlanVersion
 } from "@/lib/services/care-plan-model";
-import { listMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
+import { listMemberSearchLookupSupabase } from "@/lib/services/shared-lookups-supabase";
 import type {
   CarePlan,
   CarePlanListResult,
@@ -102,11 +102,27 @@ type CarePlanListPageRow = {
   next_due_date?: unknown;
   status?: unknown;
   completed_by?: unknown;
+  post_sign_readiness_status?: unknown;
+  post_sign_readiness_reason?: unknown;
 };
 
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function toListPostSignReadinessStatus(
+  value: string | null | undefined
+): "not_started" | "signed_pending_snapshot" | "signed_pending_caregiver_dispatch" | "ready" {
+  if (
+    value === "not_started" ||
+    value === "signed_pending_snapshot" ||
+    value === "signed_pending_caregiver_dispatch" ||
+    value === "ready"
+  ) {
+    return value;
+  }
+  return "not_started";
 }
 
 function addDays(date: string, days: number) {
@@ -200,7 +216,12 @@ export async function listCarePlanRows(filters?: {
 async function resolveCarePlanQueryMemberIds(queryText?: string | null) {
   const query = clean(queryText);
   if (!query) return null;
-  const members = await listMemberLookupSupabase({ q: query });
+  const members = await listMemberSearchLookupSupabase({
+    q: query,
+    status: "all",
+    limit: 25,
+    minQueryLength: 1
+  });
   return members.map((row) => row.id);
 }
 
@@ -217,6 +238,10 @@ function mapCarePlanListRows(payload: unknown) {
     nextDueDate: String(plan.next_due_date ?? ""),
     status: String(plan.status ?? "Completed") as CarePlanStatus,
     completedBy: clean(typeof plan.completed_by === "string" ? plan.completed_by : null),
+    postSignReadinessStatus: toListPostSignReadinessStatus(
+      typeof plan.post_sign_readiness_status === "string" ? plan.post_sign_readiness_status : null
+    ),
+    postSignReadinessReason: clean(typeof plan.post_sign_readiness_reason === "string" ? plan.post_sign_readiness_reason : null),
     hasExistingPlan: true,
     actionHref: `/health/care-plans/${String(plan.id ?? "")}?view=review`,
     openHref: `/health/care-plans/${String(plan.id ?? "")}`
@@ -408,6 +433,8 @@ function buildMemberCarePlanSummary(canonicalMemberId: string, latest: CarePlan 
       hasExistingPlan: true,
       nextDueDate: latest.nextDueDate,
       status: latest.status,
+      postSignReadinessStatus: latest.postSignReadinessStatus,
+      postSignReadinessReason: latest.postSignReadinessReason,
       actionHref: `/health/care-plans/${latest.id}?view=review`,
       actionLabel: "Review Care Plan",
       planId: latest.id
@@ -418,6 +445,8 @@ function buildMemberCarePlanSummary(canonicalMemberId: string, latest: CarePlan 
     hasExistingPlan: false,
     nextDueDate: null,
     status: null,
+    postSignReadinessStatus: null,
+    postSignReadinessReason: null,
     actionHref: `/health/care-plans/new?memberId=${canonicalMemberId}`,
     actionLabel: "New Care Plan",
     planId: null
@@ -441,6 +470,8 @@ function buildMemberCarePlanOverviewFromLatest(
       hasExistingPlan: true,
       nextDueDate: latest.next_due_date,
       status: latest.next_due_date ? computeCarePlanStatus(latest.next_due_date) : null,
+      postSignReadinessStatus: null,
+      postSignReadinessReason: null,
       actionHref: `/health/care-plans/${latest.id}?view=review`,
       actionLabel: "Review Care Plan",
       planId: latest.id

@@ -130,6 +130,8 @@ export interface CarePlanListRow {
   nextDueDate: string;
   status: CarePlanStatus;
   completedBy: string | null;
+  postSignReadinessStatus: CarePlanPostSignReadinessStatus;
+  postSignReadinessReason: string | null;
   hasExistingPlan: boolean;
   actionHref: string;
   openHref: string;
@@ -154,6 +156,8 @@ export interface MemberCarePlanSummary {
   hasExistingPlan: boolean;
   nextDueDate: string | null;
   status: CarePlanStatus | null;
+  postSignReadinessStatus: CarePlanPostSignReadinessStatus | null;
+  postSignReadinessReason: string | null;
   actionHref: string;
   actionLabel: "New Care Plan" | "Review Care Plan";
   planId: string | null;

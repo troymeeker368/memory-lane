@@ -40,7 +40,7 @@ export default async function MemberCommandCenterAdditionalChargesTab({
         </p>
         <div className="mt-3">
           <AncillaryChargeForm
-            members={[{ id: memberId, display_name: memberName }]}
+            fixedMember={{ id: memberId, display_name: memberName }}
             categories={summary.categories}
           />
         </div>

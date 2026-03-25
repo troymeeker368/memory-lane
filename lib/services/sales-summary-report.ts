@@ -1,56 +1,8 @@
 import "server-only";
 
-import { resolveCanonicalLeadState } from "@/lib/canonical";
-import { listCanonicalMemberLinksForLeadIds } from "@/lib/services/canonical-person-ref";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate } from "@/lib/timezone";
-
-type SalesSummaryLeadRow = {
-  id: string;
-  stage: string;
-  status: string;
-  created_at: string;
-  inquiry_date: string | null;
-  discovery_date: string | null;
-  tour_date: string | null;
-  tour_completed: boolean | null;
-  member_start_date: string | null;
-  lost_reason: string | null;
-  closed_date: string | null;
-  likelihood: string | null;
-};
-
-type MemberLocationRow = {
-  member_id: string;
-  location: string | null;
-};
-
-type MemberDischargeRow = {
-  id: string;
-  source_lead_id: string | null;
-  discharge_date: string | null;
-};
-
-type NormalizedLeadRow = {
-  id: string;
-  location: string;
-  createdAtDate: string;
-  inquiryDate: string | null;
-  discoveryDate: string | null;
-  tourDate: string | null;
-  tourCompleted: boolean | null;
-  memberStartDate: string | null;
-  lostReason: string | null;
-  closedDate: string | null;
-  likelihood: string | null;
-  canonicalStage: string;
-  canonicalStatus: "Open" | "Won" | "Lost" | "Nurture";
-};
-
-type DischargeRecord = {
-  location: string;
-  dischargeDate: string;
-};
 
 type SummarySalesMetricsRow = {
   location: string;
@@ -90,6 +42,16 @@ type ClosedLeadDispositionRow = {
   totalClosedLeads: number;
 };
 
+type SalesSummaryReportRpcRow = {
+  available_locations: unknown;
+  summary_sales_metrics_rows: unknown;
+  summary_sales_metrics_totals: unknown;
+  total_leads_status_rows: unknown;
+  total_leads_status_totals: unknown;
+  closed_lead_disposition_rows: unknown;
+  closed_lead_disposition_totals: unknown;
+};
+
 export type SalesSummaryReportInput = {
   location: string | null;
   startDate: string;
@@ -116,6 +78,9 @@ export interface SalesSummaryReportResult {
     totalsRow: ClosedLeadDispositionRow;
   };
 }
+
+const SALES_SUMMARY_REPORT_RPC = "rpc_get_sales_summary_report";
+const SALES_SUMMARY_REPORT_MIGRATION = "0144_sales_summary_report_rpc.sql";
 
 function clean(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
@@ -158,92 +123,88 @@ function buildCsv(lines: Array<Array<string | number | null | undefined>>) {
   return lines.map((line) => line.map((cell) => escapeCsv(cell)).join(",")).join("\n");
 }
 
-function matchesDateRange(value: string | null, startDate: string, endDate: string) {
-  if (!value) return false;
-  return value >= startDate && value <= endDate;
-}
-
-function matchesAsOfDate(value: string, asOfDate: string) {
-  return value <= asOfDate;
-}
-
-function percent(part: number, total: number) {
-  if (!total) return 0;
-  return Number(((part / total) * 100).toFixed(2));
-}
-
-function parseDateOnly(value: string) {
-  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
-  return Date.UTC(year, (month ?? 1) - 1, day ?? 1);
-}
-
-function daysBetween(startDate: string, endDate: string) {
-  return Math.max(0, Math.round((parseDateOnly(endDate) - parseDateOnly(startDate)) / 86_400_000));
-}
-
-function averageDays(rows: Array<{ inquiryDate: string | null; memberStartDate: string | null }>) {
-  const eligible = rows.filter((row) => row.inquiryDate && row.memberStartDate);
-  if (eligible.length === 0) return null;
-  const totalDays = eligible.reduce(
-    (sum, row) => sum + daysBetween(row.inquiryDate as string, row.memberStartDate as string),
-    0
-  );
-  return Number((totalDays / eligible.length).toFixed(0));
-}
-
-function createDispositionSeed(location: string): ClosedLeadDispositionRow {
-  return {
-    location,
-    cost: 0,
-    deceased: 0,
-    declinedEnrollment: 0,
-    didNotRespond: 0,
-    distanceToCenter: 0,
-    highAcuity: 0,
-    optedForHomeCare: 0,
-    placed: 0,
-    transportationIssues: 0,
-    spam: 0,
-    totalClosedLeads: 0
-  };
-}
-
-function normalizeLostReasonBucket(rawLostReason: string | null | undefined): keyof Omit<ClosedLeadDispositionRow, "location" | "totalClosedLeads"> {
-  const value = clean(rawLostReason)?.toLowerCase() ?? "";
-  if (!value) return "declinedEnrollment";
-  if (value.includes("spam") || value.includes("wrong number") || value.includes("test")) return "spam";
-  if (value.includes("deceas") || value.includes("passed")) return "deceased";
-  if (value.includes("price") || value.includes("cost") || value.includes("financial") || value.includes("afford")) return "cost";
-  if (value.includes("respond") || value.includes("reach") || value.includes("voicemail") || value.includes("ghost")) return "didNotRespond";
-  if (value.includes("distance") || value.includes("too far") || value.includes("service area") || value.includes("out of area")) return "distanceToCenter";
-  if (
-    value.includes("high acuity") ||
-    value.includes("acuity") ||
-    value.includes("not eligible") ||
-    value.includes("care needs") ||
-    value.includes("medical")
-  ) {
-    return "highAcuity";
-  }
-  if (value.includes("home care") || value.includes("home health")) return "optedForHomeCare";
-  if (
-    value.includes("placed") ||
-    value.includes("assisted living") ||
-    value.includes("memory care") ||
-    value.includes("skilled nursing") ||
-    value.includes("facility") ||
-    value.includes("hospice")
-  ) {
-    return "placed";
-  }
-  if (value.includes("transport")) return "transportationIssues";
-  return "declinedEnrollment";
-}
-
 function sortLocations(left: string, right: string) {
   if (left === "Unassigned" && right !== "Unassigned") return 1;
   if (right === "Unassigned" && left !== "Unassigned") return -1;
   return left.localeCompare(right, undefined, { sensitivity: "base" });
+}
+
+function toNumber(value: unknown) {
+  const numeric = Number(value ?? 0);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function toNullableNumber(value: unknown) {
+  if (value == null || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function parseLocationList(payload: unknown) {
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows.map((value) => clean(String(value ?? ""))).filter((value): value is string => Boolean(value));
+}
+
+function parseSummarySalesMetricsRow(payload: unknown, fallbackLocation = "Unknown"): SummarySalesMetricsRow {
+  const row = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
+  return {
+    location: clean(typeof row.location === "string" ? row.location : null) ?? fallbackLocation,
+    osa: toNumber(row.osa),
+    inquiries: toNumber(row.inquiries),
+    osaInquiryRate: toNumber(row.osa_inquiry_rate ?? row.osaInquiryRate),
+    tours: toNumber(row.tours),
+    inquiryTourRate: toNumber(row.inquiry_tour_rate ?? row.inquiryTourRate),
+    enrollments: toNumber(row.enrollments),
+    tourEnrollmentRate: toNumber(row.tour_enrollment_rate ?? row.tourEnrollmentRate),
+    discharges: toNumber(row.discharges),
+    netGrowth: toNumber(row.net_growth ?? row.netGrowth)
+  };
+}
+
+function parseSummarySalesMetricsRows(payload: unknown) {
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows.map((row) => parseSummarySalesMetricsRow(row));
+}
+
+function parseTotalLeadsStatusRow(payload: unknown, fallbackLocation = "Unknown"): TotalLeadsStatusRow {
+  const row = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
+  return {
+    location: clean(typeof row.location === "string" ? row.location : null) ?? fallbackLocation,
+    eip: toNumber(row.eip),
+    hot: toNumber(row.hot),
+    warm: toNumber(row.warm),
+    cold: toNumber(row.cold),
+    enrolled: toNumber(row.enrolled),
+    avgSalesCycle: toNullableNumber(row.avg_sales_cycle ?? row.avgSalesCycle)
+  };
+}
+
+function parseTotalLeadsStatusRows(payload: unknown) {
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows.map((row) => parseTotalLeadsStatusRow(row));
+}
+
+function parseClosedLeadDispositionRow(payload: unknown, fallbackLocation = "Unknown"): ClosedLeadDispositionRow {
+  const row = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
+  return {
+    location: clean(typeof row.location === "string" ? row.location : null) ?? fallbackLocation,
+    cost: toNumber(row.cost),
+    deceased: toNumber(row.deceased),
+    declinedEnrollment: toNumber(row.declined_enrollment ?? row.declinedEnrollment),
+    didNotRespond: toNumber(row.did_not_respond ?? row.didNotRespond),
+    distanceToCenter: toNumber(row.distance_to_center ?? row.distanceToCenter),
+    highAcuity: toNumber(row.high_acuity ?? row.highAcuity),
+    optedForHomeCare: toNumber(row.opted_for_home_care ?? row.optedForHomeCare),
+    placed: toNumber(row.placed),
+    transportationIssues: toNumber(row.transportation_issues ?? row.transportationIssues),
+    spam: toNumber(row.spam),
+    totalClosedLeads: toNumber(row.total_closed_leads ?? row.totalClosedLeads)
+  };
+}
+
+function parseClosedLeadDispositionRows(payload: unknown) {
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows.map((row) => parseClosedLeadDispositionRow(row));
 }
 
 export function resolveSalesSummaryReportInput(raw: Partial<Record<string, string | null | undefined>>) {
@@ -256,226 +217,33 @@ export function resolveSalesSummaryReportInput(raw: Partial<Record<string, strin
   } satisfies SalesSummaryReportInput;
 }
 
-async function loadSalesSummaryDataset() {
+export async function getSalesSummaryReportData(input: SalesSummaryReportInput): Promise<SalesSummaryReportResult> {
   const supabase = await createClient();
-  const [{ data: leadData, error: leadError }, { data: dischargeMembers, error: dischargeMembersError }] = await Promise.all([
-    supabase
-      .from("leads")
-      .select("id, stage, status, created_at, inquiry_date, discovery_date, tour_date, tour_completed, member_start_date, lost_reason, closed_date, likelihood")
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("members")
-      .select("id, source_lead_id, discharge_date")
-      .not("source_lead_id", "is", null)
-      .not("discharge_date", "is", null)
-  ]);
-
-  if (leadError) throw new Error(`Unable to load leads for sales summary: ${leadError.message}`);
-  if (dischargeMembersError) throw new Error(`Unable to load discharges for sales summary: ${dischargeMembersError.message}`);
-
-  const leadRows = (leadData ?? []) as SalesSummaryLeadRow[];
-  const leadIds = leadRows.map((row) => row.id);
-  const canonicalLinks = await listCanonicalMemberLinksForLeadIds(leadIds, {
-    actionLabel: "sales summary report"
-  });
-
-  const dischargeRows = (dischargeMembers ?? []) as MemberDischargeRow[];
-  const memberIds = Array.from(
-    new Set([
-      ...Array.from(canonicalLinks.values()).map((link) => link.memberId),
-      ...dischargeRows.map((row) => row.id)
-    ])
-  );
-
-  let memberLocations = [] as MemberLocationRow[];
-  if (memberIds.length > 0) {
-    const { data, error } = await supabase
-      .from("member_command_centers")
-      .select("member_id, location")
-      .in("member_id", memberIds);
-    if (error) throw new Error(`Unable to load member locations for sales summary: ${error.message}`);
-    memberLocations = (data ?? []) as MemberLocationRow[];
+  let rpcRows: SalesSummaryReportRpcRow[];
+  try {
+    rpcRows = await invokeSupabaseRpcOrThrow<SalesSummaryReportRpcRow[]>(supabase, SALES_SUMMARY_REPORT_RPC, {
+      p_start_date: input.startDate,
+      p_end_date: input.endDate,
+      p_location: input.location
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to load sales summary report.";
+    if (message.includes(SALES_SUMMARY_REPORT_RPC)) {
+      throw new Error(
+        `Sales summary report RPC is not available. Apply Supabase migration ${SALES_SUMMARY_REPORT_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
   }
 
-  const locationByMemberId = new Map(
-    memberLocations.map((row) => [row.member_id, clean(row.location) ?? "Unassigned"] as const)
-  );
+  const row = rpcRows?.[0];
+  if (!row) {
+    throw new Error("Sales summary report RPC returned no rows.");
+  }
 
-  const normalizedLeads = leadRows.map((row) => {
-    const canonical = resolveCanonicalLeadState({
-      requestedStage: row.stage ?? "Inquiry",
-      requestedStatus: row.status ?? "open"
-    });
-    const linkedMember = canonicalLinks.get(row.id) ?? null;
-    const location = linkedMember ? locationByMemberId.get(linkedMember.memberId) ?? "Unassigned" : "Unassigned";
-    return {
-      id: row.id,
-      location,
-      createdAtDate: normalizeDateOnly(row.created_at) ?? toEasternDate(),
-      inquiryDate: normalizeDateOnly(row.inquiry_date),
-      discoveryDate: normalizeDateOnly(row.discovery_date),
-      tourDate: normalizeDateOnly(row.tour_date),
-      tourCompleted: row.tour_completed,
-      memberStartDate: normalizeDateOnly(row.member_start_date),
-      lostReason: clean(row.lost_reason),
-      closedDate: normalizeDateOnly(row.closed_date),
-      likelihood: clean(row.likelihood),
-      canonicalStage: canonical.stage,
-      canonicalStatus: canonical.status
-    } satisfies NormalizedLeadRow;
-  });
-
-  const dischargeRecords = dischargeRows
-    .map((row) => ({
-      location: locationByMemberId.get(row.id) ?? "Unassigned",
-      dischargeDate: normalizeDateOnly(row.discharge_date)
-    }))
-    .filter((row): row is DischargeRecord => Boolean(row.dischargeDate));
-
-  return {
-    leads: normalizedLeads,
-    discharges: dischargeRecords
-  };
-}
-
-export async function getSalesSummaryReportData(input: SalesSummaryReportInput): Promise<SalesSummaryReportResult> {
-  const dataset = await loadSalesSummaryDataset();
   const availableLocations = Array.from(
-    new Set([
-      ...dataset.leads.map((row) => row.location),
-      ...dataset.discharges.map((row) => row.location),
-      ...(input.location ? [input.location] : [])
-    ])
+    new Set([...(parseLocationList(row.available_locations) ?? []), ...(input.location ? [input.location] : [])])
   ).sort(sortLocations);
-  const visibleLocations = input.location ? [input.location] : availableLocations;
-
-  const summaryRows = visibleLocations.map((location) => {
-    const leads = dataset.leads.filter((row) => row.location === location);
-    const inquiries = leads.filter((row) => matchesDateRange(row.inquiryDate ?? row.createdAtDate, input.startDate, input.endDate)).length;
-    const osa = leads.filter((row) => matchesDateRange(row.discoveryDate, input.startDate, input.endDate)).length;
-    const tours = leads.filter(
-      (row) =>
-        matchesDateRange(row.tourDate, input.startDate, input.endDate) &&
-        row.tourCompleted !== false
-    ).length;
-    const enrollments = leads.filter((row) => matchesDateRange(row.memberStartDate, input.startDate, input.endDate)).length;
-    const discharges = dataset.discharges.filter(
-      (row) => row.location === location && matchesDateRange(row.dischargeDate, input.startDate, input.endDate)
-    ).length;
-    return {
-      location,
-      osa,
-      inquiries,
-      osaInquiryRate: percent(osa, inquiries),
-      tours,
-      inquiryTourRate: percent(tours, inquiries),
-      enrollments,
-      tourEnrollmentRate: percent(enrollments, tours),
-      discharges,
-      netGrowth: enrollments - discharges
-    } satisfies SummarySalesMetricsRow;
-  });
-
-  const summaryTotals = {
-    location: "Totals",
-    osa: summaryRows.reduce((sum, row) => sum + row.osa, 0),
-    inquiries: summaryRows.reduce((sum, row) => sum + row.inquiries, 0),
-    osaInquiryRate: 0,
-    tours: summaryRows.reduce((sum, row) => sum + row.tours, 0),
-    inquiryTourRate: 0,
-    enrollments: summaryRows.reduce((sum, row) => sum + row.enrollments, 0),
-    tourEnrollmentRate: 0,
-    discharges: summaryRows.reduce((sum, row) => sum + row.discharges, 0),
-    netGrowth: summaryRows.reduce((sum, row) => sum + row.netGrowth, 0)
-  } satisfies SummarySalesMetricsRow;
-  summaryTotals.osaInquiryRate = percent(summaryTotals.osa, summaryTotals.inquiries);
-  summaryTotals.inquiryTourRate = percent(summaryTotals.tours, summaryTotals.inquiries);
-  summaryTotals.tourEnrollmentRate = percent(summaryTotals.enrollments, summaryTotals.tours);
-
-  const statusRows = visibleLocations.map((location) => {
-    const leads = dataset.leads.filter(
-      (row) =>
-        row.location === location &&
-        matchesAsOfDate(row.inquiryDate ?? row.createdAtDate, input.endDate)
-    );
-    const openLeads = leads.filter((row) => row.canonicalStatus === "Open" || row.canonicalStatus === "Nurture");
-    const enrolledRows = leads.filter(
-      (row) =>
-        (row.memberStartDate && matchesAsOfDate(row.memberStartDate, input.endDate)) ||
-        row.canonicalStatus === "Won"
-    );
-    return {
-      location,
-      eip: openLeads.filter((row) => row.canonicalStage === "Enrollment in Progress").length,
-      hot: openLeads.filter((row) => (row.likelihood ?? "").toLowerCase() === "hot").length,
-      warm: openLeads.filter((row) => (row.likelihood ?? "").toLowerCase() === "warm").length,
-      cold: openLeads.filter((row) => (row.likelihood ?? "").toLowerCase() === "cold").length,
-      enrolled: enrolledRows.length,
-      avgSalesCycle: averageDays(
-        enrolledRows.map((row) => ({
-          inquiryDate: row.inquiryDate ?? row.createdAtDate,
-          memberStartDate: row.memberStartDate
-        }))
-      )
-    } satisfies TotalLeadsStatusRow;
-  });
-
-  const totalStatusSnapshotRows = dataset.leads.filter((row) => matchesAsOfDate(row.inquiryDate ?? row.createdAtDate, input.endDate));
-  const totalStatusOpenRows = totalStatusSnapshotRows.filter(
-    (row) =>
-      visibleLocations.includes(row.location) &&
-      (row.canonicalStatus === "Open" || row.canonicalStatus === "Nurture")
-  );
-  const totalStatusEnrolledRows = totalStatusSnapshotRows.filter(
-    (row) =>
-      visibleLocations.includes(row.location) &&
-      ((row.memberStartDate && matchesAsOfDate(row.memberStartDate, input.endDate)) || row.canonicalStatus === "Won")
-  );
-  const statusTotals = {
-    location: "Totals",
-    eip: statusRows.reduce((sum, row) => sum + row.eip, 0),
-    hot: statusRows.reduce((sum, row) => sum + row.hot, 0),
-    warm: statusRows.reduce((sum, row) => sum + row.warm, 0),
-    cold: statusRows.reduce((sum, row) => sum + row.cold, 0),
-    enrolled: statusRows.reduce((sum, row) => sum + row.enrolled, 0),
-    avgSalesCycle: averageDays(
-      totalStatusEnrolledRows.map((row) => ({
-        inquiryDate: row.inquiryDate ?? row.createdAtDate,
-        memberStartDate: row.memberStartDate
-      }))
-    )
-  } satisfies TotalLeadsStatusRow;
-  void totalStatusOpenRows;
-
-  const closedDispositionRows = visibleLocations.map((location) => {
-    const row = createDispositionSeed(location);
-    const leads = dataset.leads.filter(
-      (lead) =>
-        lead.location === location &&
-        lead.canonicalStatus === "Lost" &&
-        matchesDateRange(lead.closedDate, input.startDate, input.endDate)
-    );
-    leads.forEach((lead) => {
-      row.totalClosedLeads += 1;
-      row[normalizeLostReasonBucket(lead.lostReason)] += 1;
-    });
-    return row;
-  });
-
-  const closedDispositionTotals = createDispositionSeed("Totals");
-  closedDispositionRows.forEach((row) => {
-    closedDispositionTotals.cost += row.cost;
-    closedDispositionTotals.deceased += row.deceased;
-    closedDispositionTotals.declinedEnrollment += row.declinedEnrollment;
-    closedDispositionTotals.didNotRespond += row.didNotRespond;
-    closedDispositionTotals.distanceToCenter += row.distanceToCenter;
-    closedDispositionTotals.highAcuity += row.highAcuity;
-    closedDispositionTotals.optedForHomeCare += row.optedForHomeCare;
-    closedDispositionTotals.placed += row.placed;
-    closedDispositionTotals.transportationIssues += row.transportationIssues;
-    closedDispositionTotals.spam += row.spam;
-    closedDispositionTotals.totalClosedLeads += row.totalClosedLeads;
-  });
 
   return {
     filters: {
@@ -485,16 +253,16 @@ export async function getSalesSummaryReportData(input: SalesSummaryReportInput):
     },
     availableLocations,
     summarySalesMetrics: {
-      rows: summaryRows,
-      totalsRow: summaryTotals
+      rows: parseSummarySalesMetricsRows(row.summary_sales_metrics_rows),
+      totalsRow: parseSummarySalesMetricsRow(row.summary_sales_metrics_totals, "Totals")
     },
     totalLeadsStatus: {
-      rows: statusRows,
-      totalsRow: statusTotals
+      rows: parseTotalLeadsStatusRows(row.total_leads_status_rows),
+      totalsRow: parseTotalLeadsStatusRow(row.total_leads_status_totals, "Totals")
     },
     closedLeadDisposition: {
-      rows: closedDispositionRows,
-      totalsRow: closedDispositionTotals
+      rows: parseClosedLeadDispositionRows(row.closed_lead_disposition_rows),
+      totalsRow: parseClosedLeadDispositionRow(row.closed_lead_disposition_totals, "Totals")
     }
   };
 }
