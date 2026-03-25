@@ -148,3 +148,58 @@ export const CANONICAL_ANCILLARY_CHARGES_NOTICE = [
   "Responsible Party/Guarantor: ____________________________ Date ____________",
   "Member Name: ______________________________________"
 ] as const;
+
+function clean(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isPaperPlaceholderParagraph(paragraph: string) {
+  const normalized = clean(paragraph);
+  if (!normalized) return false;
+  return (
+    normalized.includes("________________") ||
+    normalized.startsWith("Responsible Party/Guarantor") ||
+    normalized.startsWith("Member Name:") ||
+    normalized.toLowerCase().includes("acknowledgement date")
+  );
+}
+
+function stripPaperPlaceholderParagraphs(paragraphs: readonly string[]) {
+  return paragraphs.filter((paragraph) => !isPaperPlaceholderParagraph(paragraph));
+}
+
+function renderPhotoConsentLeadSentence(choice: string | null | undefined) {
+  const normalizedChoice = clean(choice);
+  if (normalizedChoice === "Do Permit") {
+    return "I do permit and authorize Town Square Franchising, LLC. and its affiliates and its employees, agents, and personnel who are acting on behalf of the Town Square Franchising, LLC (collectively the \"Company\") to use my name, photograph, video, sound/voice recording or other likeness for publicity, marketing, training, and promotion of the Company without compensation to me.";
+  }
+
+  if (normalizedChoice === "Do Not Permit") {
+    return "I do not permit and authorize Town Square Franchising, LLC. and its affiliates and its employees, agents, and personnel who are acting on behalf of the Town Square Franchising, LLC (collectively the \"Company\") to use my name, photograph, video, sound/voice recording or other likeness for publicity, marketing, training, and promotion of the Company without compensation to me.";
+  }
+
+  return "I do / do not permit and authorize Town Square Franchising, LLC. and its affiliates and its employees, agents, and personnel who are acting on behalf of the Town Square Franchising, LLC (collectively the \"Company\") to use my name, photograph, video, sound/voice recording or other likeness for publicity, marketing, training, and promotion of the Company without compensation to me.";
+}
+
+export function buildRenderedPrivacyPracticesNotice() {
+  return stripPaperPlaceholderParagraphs(CANONICAL_PRIVACY_PRACTICES_NOTICE);
+}
+
+export function buildRenderedStatementOfRightsNotice() {
+  return stripPaperPlaceholderParagraphs(CANONICAL_STATEMENT_OF_RIGHTS_NOTICE);
+}
+
+export function buildRenderedPhotoConsentNotice(input?: {
+  photoConsentChoice?: string | null;
+}) {
+  return [
+    CANONICAL_PHOTO_CONSENT_NOTICE[0],
+    renderPhotoConsentLeadSentence(input?.photoConsentChoice),
+    ...stripPaperPlaceholderParagraphs(CANONICAL_PHOTO_CONSENT_NOTICE.slice(2))
+  ];
+}
+
+export function buildRenderedAncillaryChargesNotice() {
+  return stripPaperPlaceholderParagraphs(CANONICAL_ANCILLARY_CHARGES_NOTICE);
+}

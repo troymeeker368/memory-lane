@@ -57,6 +57,37 @@ function toCompletedStatus(value: string | null | undefined) {
   return normalized === "completed" || normalized === "filed";
 }
 
+async function listMembersMissingEnrollmentPacketOperationalShells(memberIds: string[]) {
+  const normalizedMemberIds = Array.from(
+    new Set(memberIds.map((value) => String(value ?? "").trim()).filter(Boolean))
+  );
+  if (normalizedMemberIds.length === 0) return new Set<string>();
+
+  const admin = createSupabaseAdminClient();
+  const [{ data: mccRows, error: mccError }, { data: attendanceRows, error: attendanceError }, { data: mhpRows, error: mhpError }] =
+    await Promise.all([
+      admin.from("member_command_centers").select("member_id").in("member_id", normalizedMemberIds),
+      admin.from("member_attendance_schedules").select("member_id").in("member_id", normalizedMemberIds),
+      admin.from("member_health_profiles").select("member_id").in("member_id", normalizedMemberIds)
+    ]);
+  if (mccError) throw new Error(mccError.message);
+  if (attendanceError) throw new Error(attendanceError.message);
+  if (mhpError) throw new Error(mhpError.message);
+
+  const mccMemberIds = new Set(((mccRows ?? []) as Array<{ member_id: string | null }>).map((row) => String(row.member_id ?? "").trim()).filter(Boolean));
+  const attendanceMemberIds = new Set(((attendanceRows ?? []) as Array<{ member_id: string | null }>).map((row) => String(row.member_id ?? "").trim()).filter(Boolean));
+  const mhpMemberIds = new Set(((mhpRows ?? []) as Array<{ member_id: string | null }>).map((row) => String(row.member_id ?? "").trim()).filter(Boolean));
+  const missingMemberIds = new Set<string>();
+
+  for (const memberId of normalizedMemberIds) {
+    if (!mccMemberIds.has(memberId) || !attendanceMemberIds.has(memberId) || !mhpMemberIds.has(memberId)) {
+      missingMemberIds.add(memberId);
+    }
+  }
+
+  return missingMemberIds;
+}
+
 async function hasLeadCompletionActivity(input: {
   leadId: string;
   packetId: string;
@@ -71,6 +102,129 @@ async function hasLeadCompletionActivity(input: {
     .maybeSingle();
   if (error) throw new Error(error.message);
   return Boolean(data?.id);
+}
+
+async function listPacketsMissingSubmittedSenderNotifications(input: {
+  packetIds: string[];
+  senderByPacketId: Map<string, string>;
+}) {
+  const normalizedPacketIds = Array.from(
+    new Set(input.packetIds.map((value) => String(value ?? "").trim()).filter(Boolean))
+  );
+  if (normalizedPacketIds.length === 0) return new Set<string>();
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("user_notifications")
+    .select("entity_id, recipient_user_id")
+    .eq("entity_type", "enrollment_packet_request")
+    .eq("event_type", "enrollment_packet_submitted")
+    .in("entity_id", normalizedPacketIds);
+  if (error) throw new Error(error.message);
+
+  const deliveredKeys = new Set(
+    ((data ?? []) as Array<{ entity_id: string | null; recipient_user_id: string | null }>)
+      .map((row) => `${String(row.entity_id ?? "").trim()}:${String(row.recipient_user_id ?? "").trim()}`)
+      .filter((value) => !value.endsWith(":"))
+  );
+  const missingPacketIds = new Set<string>();
+
+  for (const packetId of normalizedPacketIds) {
+    const senderUserId = input.senderByPacketId.get(packetId);
+    if (!senderUserId) continue;
+    if (!deliveredKeys.has(`${packetId}:${senderUserId}`)) {
+      missingPacketIds.add(packetId);
+    }
+  }
+
+  return missingPacketIds;
+}
+
+async function listPacketsMissingLeadCompletionActivity(input: {
+  packetIdsByLeadId: Map<string, string[]>;
+}) {
+  const leadIds = Array.from(input.packetIdsByLeadId.keys());
+  if (leadIds.length === 0) return new Set<string>();
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("lead_activities")
+    .select("lead_id, notes")
+    .eq("outcome", "Enrollment Packet Completed")
+    .in("lead_id", leadIds);
+  if (error) throw new Error(error.message);
+
+  const completedPacketIds = new Set<string>();
+  for (const row of (data ?? []) as Array<{ lead_id: string | null; notes: string | null }>) {
+    const leadId = String(row.lead_id ?? "").trim();
+    if (!leadId) continue;
+    const notes = String(row.notes ?? "");
+    for (const packetId of input.packetIdsByLeadId.get(leadId) ?? []) {
+      if (notes.includes(packetId)) {
+        completedPacketIds.add(packetId);
+      }
+    }
+  }
+
+  const missingPacketIds = new Set<string>();
+  for (const packetIds of input.packetIdsByLeadId.values()) {
+    for (const packetId of packetIds) {
+      if (!completedPacketIds.has(packetId)) {
+        missingPacketIds.add(packetId);
+      }
+    }
+  }
+
+  return missingPacketIds;
+}
+
+async function listPacketsMissingEnrollmentPacketMemberFileLinks(input: {
+  packetIds: string[];
+}) {
+  const normalizedPacketIds = Array.from(
+    new Set(input.packetIds.map((value) => String(value ?? "").trim()).filter(Boolean))
+  );
+  if (normalizedPacketIds.length === 0) return new Set<string>();
+
+  const admin = createSupabaseAdminClient();
+  const { data: uploadRows, error: uploadError } = await admin
+    .from("enrollment_packet_uploads")
+    .select("packet_id, member_file_id")
+    .eq("upload_category", "completed_packet")
+    .in("packet_id", normalizedPacketIds);
+  if (uploadError) throw new Error(uploadError.message);
+
+  const packetByMemberFileId = new Map<string, string>();
+  for (const row of (uploadRows ?? []) as Array<{ packet_id: string; member_file_id: string | null }>) {
+    const memberFileId = String(row.member_file_id ?? "").trim();
+    if (!memberFileId) continue;
+    packetByMemberFileId.set(memberFileId, row.packet_id);
+  }
+  if (packetByMemberFileId.size === 0) return new Set<string>();
+
+  const { data: memberFileRows, error: memberFileError } = await admin
+    .from("member_files")
+    .select("id, enrollment_packet_request_id")
+    .in("id", Array.from(packetByMemberFileId.keys()));
+  if (memberFileError) throw new Error(memberFileError.message);
+
+  const linkedPacketIds = new Set(
+    ((memberFileRows ?? []) as Array<{ id: string; enrollment_packet_request_id: string | null }>)
+      .filter((row) => {
+        const packetId = packetByMemberFileId.get(String(row.id ?? "").trim());
+        return Boolean(packetId) && packetId === String(row.enrollment_packet_request_id ?? "").trim();
+      })
+      .map((row) => packetByMemberFileId.get(String(row.id ?? "").trim())!)
+  );
+
+  const missingPacketIds = new Set<string>();
+  for (const packetId of packetByMemberFileId.values()) {
+    if (!linkedPacketIds.has(packetId)) {
+      missingPacketIds.add(packetId);
+    }
+  }
+
+  return missingPacketIds;
 }
 
 async function resolveCaregiverSignatureName(input: {
@@ -191,7 +345,10 @@ export async function runEnrollmentPacketCompletionCascade(
     input.memberFileArtifacts && input.memberFileArtifacts.length > 0
       ? input.memberFileArtifacts
       : await listEnrollmentPacketMemberFileArtifacts(input.request.id);
+  const artifactOps = await loadEnrollmentPacketArtifactOps();
+  await artifactOps.repairEnrollmentPacketUploadMemberFileLinks(input.request.id);
   let completedPacketArtifactCreated = false;
+  const missingOperationalShells = await listMembersMissingEnrollmentPacketOperationalShells([input.member.id]);
 
   if (input.ensureCompletedPacketArtifact !== false) {
     const artifactRepair = await ensureCompletedPacketArtifact({
@@ -206,7 +363,8 @@ export async function runEnrollmentPacketCompletionCascade(
   }
 
   const mappingSummary =
-    String(input.request.mapping_sync_status ?? "").trim().toLowerCase() === "completed"
+    String(input.request.mapping_sync_status ?? "").trim().toLowerCase() === "completed" &&
+    !missingOperationalShells.has(input.member.id)
       ? {
           mappingRunId: input.request.latest_mapping_run_id ?? null,
           status: "completed" as const
@@ -337,7 +495,7 @@ export async function listCommittedEnrollmentPacketCompletionRepairCandidates(in
   while (candidateIds.size < limit) {
     const { data, error } = await admin
       .from("enrollment_packet_requests")
-      .select("id, mapping_sync_status")
+      .select("id, member_id, lead_id, sender_user_id, mapping_sync_status")
       .in("status", ["completed", "filed"])
       .order("updated_at", { ascending: true })
       .range(offset, offset + pageSize - 1);
@@ -345,12 +503,29 @@ export async function listCommittedEnrollmentPacketCompletionRepairCandidates(in
 
     const rows = ((data ?? []) as Array<{
       id: string;
+      member_id: string | null;
+      lead_id: string | null;
+      sender_user_id: string | null;
       mapping_sync_status: string | null;
     }>).filter((row) => String(row.id ?? "").trim().length > 0);
     if (rows.length === 0) break;
 
     const packetIds = rows.map((row) => row.id);
-    const [{ data: eventRows, error: eventError }, { data: uploadRows, error: uploadError }] = await Promise.all([
+    const senderByPacketId = new Map(
+      rows
+        .map((row) => [row.id, String(row.sender_user_id ?? "").trim()] as const)
+        .filter(([, senderUserId]) => Boolean(senderUserId))
+    );
+    const packetIdsByLeadId = new Map<string, string[]>();
+    for (const row of rows) {
+      const leadId = String(row.lead_id ?? "").trim();
+      if (!leadId) continue;
+      const existing = packetIdsByLeadId.get(leadId) ?? [];
+      existing.push(row.id);
+      packetIdsByLeadId.set(leadId, existing);
+    }
+
+    const [{ data: eventRows, error: eventError }, { data: uploadRows, error: uploadError }, missingSenderNotificationPacketIds, missingLeadActivityPacketIds, missingMemberFileLinkPacketIds] = await Promise.all([
       admin
         .from("system_events")
         .select("entity_id")
@@ -361,10 +536,23 @@ export async function listCommittedEnrollmentPacketCompletionRepairCandidates(in
         .from("enrollment_packet_uploads")
         .select("packet_id, member_file_id")
         .eq("upload_category", "completed_packet")
-        .in("packet_id", packetIds)
+        .in("packet_id", packetIds),
+      listPacketsMissingSubmittedSenderNotifications({
+        packetIds,
+        senderByPacketId
+      }),
+      listPacketsMissingLeadCompletionActivity({
+        packetIdsByLeadId
+      }),
+      listPacketsMissingEnrollmentPacketMemberFileLinks({
+        packetIds
+      })
     ]);
     if (eventError) throw new Error(eventError.message);
     if (uploadError) throw new Error(uploadError.message);
+    const missingOperationalShellMemberIds = await listMembersMissingEnrollmentPacketOperationalShells(
+      rows.map((row) => String(row.member_id ?? "").trim()).filter(Boolean)
+    );
 
     const submittedEventPacketIds = new Set(
       ((eventRows ?? []) as Array<{ entity_id: string | null }>).map((row) => String(row.entity_id ?? "").trim()).filter(Boolean)
@@ -383,9 +571,21 @@ export async function listCommittedEnrollmentPacketCompletionRepairCandidates(in
         mappingStatus === "pending" ||
         mappingStatus === "failed";
       const missingSubmittedMilestone = !submittedEventPacketIds.has(row.id);
+      const missingSenderNotification = missingSenderNotificationPacketIds.has(row.id);
+      const missingLeadActivity = missingLeadActivityPacketIds.has(row.id);
       const missingCompletedArtifact = !completedArtifactPacketIds.has(row.id);
+      const missingCompletedArtifactLink = missingMemberFileLinkPacketIds.has(row.id);
+      const missingOperationalShells = missingOperationalShellMemberIds.has(String(row.member_id ?? "").trim());
 
-      if (needsMappingRepair || missingSubmittedMilestone || missingCompletedArtifact) {
+      if (
+        needsMappingRepair ||
+        missingSubmittedMilestone ||
+        missingSenderNotification ||
+        missingLeadActivity ||
+        missingCompletedArtifact ||
+        missingCompletedArtifactLink ||
+        missingOperationalShells
+      ) {
         candidateIds.add(row.id);
         if (candidateIds.size >= limit) break;
       }

@@ -112,10 +112,6 @@ type RenderedExhibitAContent = {
   allParagraphs: string[];
 };
 
-function resolveSelectionMarker(selected: boolean) {
-  return selected ? "\u2611" : "\u2610";
-}
-
 function formatCurrencyValue(value: string | null | undefined, fallback: string) {
   const normalized = clean(value);
   if (!normalized) return fallback;
@@ -128,19 +124,12 @@ function formatCurrencyValue(value: string | null | undefined, fallback: string)
   return normalized.startsWith("$") ? normalized : `$${normalized}`;
 }
 
-function buildPaymentMethodSelectionLine(paymentMethod: EnrollmentPacketPaymentMethod | null) {
-  return `${resolveSelectionMarker(paymentMethod === "ACH")} ACH (Bank Draft)   ${resolveSelectionMarker(paymentMethod === "Credit Card")} Credit Card (Auto Charge)`;
-}
-
-function buildAuthorizationLine(input: {
-  paragraph: string;
-  checked: boolean;
-}) {
-  const trimmed = input.paragraph.trimStart();
+function stripDecorativeSelectionMarker(paragraph: string) {
+  const trimmed = paragraph.trimStart();
   const withoutMarker = trimmed.startsWith("\u2610") || trimmed.startsWith("\u2611")
     ? trimmed.slice(1).trimStart()
     : trimmed;
-  return `${resolveSelectionMarker(input.checked)} ${withoutMarker}`;
+  return withoutMarker;
 }
 
 function renderMembershipAgreementIntro(input: {
@@ -182,11 +171,29 @@ export function buildRenderedMembershipAgreementParagraphs(
   return canonicalParagraphs.slice(0, truncationIndex);
 }
 
+export function buildRenderedMembershipAgreementExecutionLines(input?: {
+  signatureName?: string | null;
+  signatureDate?: string | null;
+}) {
+  const signatureName = clean(input?.signatureName);
+  const signatureDate = clean(input?.signatureDate);
+  if (!signatureName && !signatureDate) return [] as string[];
+
+  return [
+    `Responsible Party / Guarantor Signature: ${signatureName ?? "Pending"}`,
+    `Signature Date: ${signatureDate ?? "Pending"}`
+  ];
+}
+
+function buildSelectedPaymentMethodLine(paymentMethod: EnrollmentPacketPaymentMethod | null) {
+  if (!paymentMethod) return null;
+  return `Selected payment method: ${paymentMethod}`;
+}
+
 export function buildRenderedMembershipExhibitAContent(input?: {
   paymentMethodSelection?: string | null;
   communityFee?: string | null;
   totalInitialEnrollmentAmount?: string | null;
-  authorizationAcknowledged?: boolean;
 }) : RenderedExhibitAContent {
   const paymentMethod = getEnrollmentPacketPaymentMethod(input?.paymentMethodSelection);
   const commonParagraphs = [
@@ -203,19 +210,17 @@ export function buildRenderedMembershipExhibitAContent(input?: {
     ),
     CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[5],
     CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[6],
-    CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[7],
-    buildPaymentMethodSelectionLine(paymentMethod)
+    CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[7]
   ];
+  const selectedPaymentMethodLine = buildSelectedPaymentMethodLine(paymentMethod);
+  if (selectedPaymentMethodLine) {
+    commonParagraphs.push(selectedPaymentMethodLine);
+  }
 
   if (paymentMethod === "ACH") {
     const authorizationParagraphs = [
       CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[9],
-      buildAuthorizationLine({
-        paragraph: CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[10],
-        checked: Boolean(input?.authorizationAcknowledged)
-      }),
-      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[11],
-      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[12]
+      stripDecorativeSelectionMarker(CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[10])
     ];
     return {
       commonParagraphs,
@@ -227,15 +232,8 @@ export function buildRenderedMembershipExhibitAContent(input?: {
   if (paymentMethod === "Credit Card") {
     const authorizationParagraphs = [
       CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[13],
-      buildAuthorizationLine({
-        paragraph: CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[14],
-        checked: Boolean(input?.authorizationAcknowledged)
-      }),
-      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[15],
-      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[16],
-      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[17],
-      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[18],
-      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[19]
+      stripDecorativeSelectionMarker(CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[14]),
+      CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE[15]
     ];
     return {
       commonParagraphs,

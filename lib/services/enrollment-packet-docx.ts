@@ -1,9 +1,17 @@
 import "server-only";
 
 import { Buffer } from "node:buffer";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 
+import {
+  DOCUMENT_CENTER_ADDRESS,
+  DOCUMENT_CENTER_LOGO_PUBLIC_PATH,
+  DOCUMENT_CENTER_NAME,
+  DOCUMENT_CENTER_PHONE
+} from "@/lib/services/document-branding";
 import { formatPhoneDisplay } from "@/lib/phone";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import { buildEnrollmentPacketLegalText } from "@/lib/services/enrollment-packet-legal-text";
@@ -54,6 +62,20 @@ function moneyValue(value: number | null | undefined) {
 
 function safeFileName(value: string) {
   return value.replace(/[<>:"/\\|?*]/g, "").trim();
+}
+
+function publicAssetPath(publicPath: string) {
+  const normalized = publicPath.startsWith("/") ? publicPath.slice(1) : publicPath;
+  return path.join(process.cwd(), "public", normalized);
+}
+
+async function loadCenterLogoImage(pdf: PDFDocument) {
+  try {
+    const bytes = await readFile(publicAssetPath(DOCUMENT_CENTER_LOGO_PUBLIC_PATH));
+    return await pdf.embedPng(bytes);
+  } catch {
+    return null;
+  }
 }
 
 function wrapText(text: string, maxChars = 105) {
@@ -112,52 +134,184 @@ function displayPacketFieldValue(
   return normalized;
 }
 
+function drawWrappedText(input: {
+  page: PDFPage;
+  text: string;
+  x: number;
+  y: number;
+  maxWidth: number;
+  lineHeight: number;
+  font: PDFFont;
+  size: number;
+  color?: ReturnType<typeof rgb>;
+}) {
+  const words = input.text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+
+  words.forEach((word) => {
+    const next = current ? `${current} ${word}` : word;
+    if (input.font.widthOfTextAtSize(next, input.size) <= input.maxWidth) {
+      current = next;
+      return;
+    }
+    if (current) lines.push(current);
+    current = word;
+  });
+  if (current) lines.push(current);
+
+  let y = input.y;
+  lines.forEach((line) => {
+    input.page.drawText(line, {
+      x: input.x,
+      y,
+      size: input.size,
+      font: input.font,
+      color: input.color ?? rgb(0.1, 0.1, 0.1)
+    });
+    y -= input.lineHeight;
+  });
+  return y;
+}
+
+function drawDocumentHeader(input: {
+  page: PDFPage;
+  font: PDFFont;
+  fontBold: PDFFont;
+  textColor: ReturnType<typeof rgb>;
+  brandColor: ReturnType<typeof rgb>;
+  logo: PDFImage | null;
+  generatedAt: string;
+}) {
+  const { page, font, fontBold, textColor, brandColor, logo, generatedAt } = input;
+  const pageWidth = page.getWidth();
+  let y = 760;
+
+  if (logo) {
+    const logoHeight = 38;
+    const scaled = logo.scale(logoHeight / logo.height);
+    const logoWidth = Math.min(scaled.width, 160);
+    page.drawImage(logo, {
+      x: 36,
+      y: y - logoHeight + 4,
+      width: logoWidth,
+      height: logoHeight
+    });
+  }
+
+  const centerX = pageWidth / 2;
+  page.drawText(DOCUMENT_CENTER_NAME, {
+    x: centerX - fontBold.widthOfTextAtSize(DOCUMENT_CENTER_NAME, 14) / 2,
+    y,
+    size: 14,
+    font: fontBold,
+    color: brandColor
+  });
+  y -= 14;
+  page.drawText(DOCUMENT_CENTER_ADDRESS, {
+    x: centerX - font.widthOfTextAtSize(DOCUMENT_CENTER_ADDRESS, 9.5) / 2,
+    y,
+    size: 9.5,
+    font,
+    color: textColor
+  });
+  y -= 12;
+  page.drawText(DOCUMENT_CENTER_PHONE, {
+    x: centerX - font.widthOfTextAtSize(DOCUMENT_CENTER_PHONE, 9.5) / 2,
+    y,
+    size: 9.5,
+    font,
+    color: textColor
+  });
+
+  const generated = `Generated: ${generatedAt} (ET)`;
+  page.drawText(generated, {
+    x: pageWidth - font.widthOfTextAtSize(generated, 8.5) - 36,
+    y: 760,
+    size: 8.5,
+    font,
+    color: textColor
+  });
+  page.drawLine({
+    start: { x: 36, y: 712 },
+    end: { x: pageWidth - 36, y: 712 },
+    color: rgb(0.75, 0.78, 0.84),
+    thickness: 1
+  });
+
+  return 694;
+}
+
 export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnrollmentPacketDocxInput) {
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const now = toEasternISO();
+  const textColor = rgb(0.1, 0.1, 0.1);
+  const blue = rgb(0.09, 0.24, 0.55);
+  const logo = await loadCenterLogoImage(pdf);
 
-  let page = pdf.addPage([612, 792]);
-  let y = 756;
+  const newPage = () => {
+    const page = pdf.addPage([612, 792]);
+    const y = drawDocumentHeader({
+      page,
+      font: regular,
+      fontBold: bold,
+      textColor,
+      brandColor: blue,
+      logo,
+      generatedAt: now
+    });
+    return { page, y };
+  };
+
+  let { page, y } = newPage();
 
   const drawTitle = (text: string) => {
     if (y < 70) {
-      page = pdf.addPage([612, 792]);
-      y = 756;
+      const next = newPage();
+      page = next.page;
+      y = next.y;
     }
-    page.drawText(text, { x: 36, y, size: 14, font: bold, color: rgb(0.1, 0.22, 0.49) });
+    page.drawText(text, { x: 36, y, size: 14, font: bold, color: blue });
     y -= 20;
   };
 
   const drawRow = (label: string, value: string) => {
     if (y < 70) {
-      page = pdf.addPage([612, 792]);
-      y = 756;
+      const next = newPage();
+      page = next.page;
+      y = next.y;
     }
     const lines = wrapText(value, 90);
-    page.drawText(`${label}:`, { x: 36, y, size: 9, font: bold, color: rgb(0.1, 0.1, 0.1) });
+    page.drawText(`${label}:`, { x: 36, y, size: 9, font: bold, color: textColor });
     lines.forEach((line, index) => {
-      page.drawText(line, { x: 200, y: y - index * 12, size: 9, font: regular, color: rgb(0.1, 0.1, 0.1) });
+      page.drawText(line, { x: 200, y: y - index * 12, size: 9, font: regular, color: textColor });
     });
     y -= Math.max(14, lines.length * 12 + 2);
   };
 
   const drawParagraph = (text: string) => {
-    const lines = wrapText(text, 105);
-    let currentY = y;
-    lines.forEach((line) => {
-      if (currentY < 70) {
-        page = pdf.addPage([612, 792]);
-        currentY = 756;
-      }
-      page.drawText(line, { x: 36, y: currentY, size: 9, font: regular, color: rgb(0.1, 0.1, 0.1) });
-      currentY -= 12;
-    });
-    y = currentY - 4;
+    if (y < 70) {
+      const next = newPage();
+      page = next.page;
+      y = next.y;
+    }
+    y =
+      drawWrappedText({
+        page,
+        text,
+        x: 36,
+        y,
+        maxWidth: 540,
+        lineHeight: 12,
+        font: regular,
+        size: 9,
+        color: textColor
+      }) - 4;
   };
 
-  drawTitle("Town Square Fort Mill Enrollment Packet");
+  drawTitle(`${DOCUMENT_CENTER_NAME} Enrollment Packet`);
   drawRow("Member", clean(input.memberName));
   drawRow("Packet ID", clean(input.packetId));
   drawRow("Completed At (ET)", `${toEasternDate(now)} ${now.slice(11, 19)}`);
@@ -209,13 +363,18 @@ export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnr
   const legalText = buildEnrollmentPacketLegalText({
     caregiverName: input.intakePayload.membershipGuarantorSignatureName ?? input.caregiverSignatureName,
     memberName: input.memberName,
+    membershipSignatureName: input.intakePayload.membershipGuarantorSignatureName,
+    membershipSignatureDate: input.intakePayload.membershipGuarantorSignatureDate,
     paymentMethodSelection: input.intakePayload.paymentMethodSelection,
     communityFee: input.intakePayload.communityFee,
     totalInitialEnrollmentAmount: input.intakePayload.totalInitialEnrollmentAmount,
-    exhibitAAuthorizationAcknowledged: Boolean(input.intakePayload.exhibitAGuarantorSignatureName)
+    photoConsentChoice: input.intakePayload.photoConsentChoice
   });
   [
-    { title: "Membership Agreement", paragraphs: legalText.membershipAgreement },
+    {
+      title: "Membership Agreement",
+      paragraphs: [...legalText.membershipAgreement, ...legalText.membershipAgreementExecution]
+    },
     { title: "Exhibit A - Payment Authorization", paragraphs: legalText.exhibitAPaymentAuthorization },
     { title: "Notice of Privacy Practices", paragraphs: legalText.privacyPractices },
     { title: "Statement of Rights", paragraphs: legalText.statementOfRights },
@@ -227,6 +386,8 @@ export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnr
   });
 
   drawTitle("Signatures");
+  drawRow("Membership Agreement Signature", clean(input.intakePayload.membershipGuarantorSignatureName));
+  drawRow("Membership Agreement Signature Date", clean(input.intakePayload.membershipGuarantorSignatureDate));
   drawRow("Sender Signature Applied", clean(input.senderSignatureName));
   drawRow("Caregiver Signature Applied", clean(input.caregiverSignatureName));
 

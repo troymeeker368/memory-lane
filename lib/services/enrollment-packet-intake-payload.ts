@@ -216,7 +216,7 @@ const ENROLLMENT_PACKET_PHONE_KEYS: EnrollmentPacketIntakeTextKey[] = [
   "pharmacyPhone"
 ];
 
-function clean(value: unknown) {
+export function normalizeEnrollmentPacketTextInput(value: unknown) {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
@@ -260,16 +260,18 @@ function deriveLast4(ssn: string | null) {
 }
 
 function joinParts(parts: Array<string | null | undefined>, separator = " | ") {
-  const values = parts.map((part) => clean(part)).filter((part): part is string => Boolean(part));
+  const values = parts
+    .map((part) => normalizeEnrollmentPacketTextInput(part))
+    .filter((part): part is string => Boolean(part));
   return values.length > 0 ? values.join(separator) : null;
 }
 
 function toYesNoLike(value: string | null | undefined) {
-  const normalized = clean(value)?.toLowerCase();
+  const normalized = normalizeEnrollmentPacketTextInput(value)?.toLowerCase();
   if (!normalized) return null;
   if (["yes", "y", "true", "1"].includes(normalized)) return "Yes";
   if (["no", "n", "false", "0"].includes(normalized)) return "No";
-  return clean(value);
+  return normalizeEnrollmentPacketTextInput(value);
 }
 
 export function getDefaultEnrollmentPacketIntakePayload(): EnrollmentPacketIntakePayload {
@@ -289,7 +291,7 @@ export function normalizeEnrollmentPacketIntakePayload(raw: RawPayload | null | 
   const source = raw ?? {};
 
   ENROLLMENT_PACKET_INTAKE_TEXT_KEYS.forEach((key) => {
-    normalized[key] = clean(source[key]);
+    normalized[key] = normalizeEnrollmentPacketTextInput(source[key]);
   });
 
   ENROLLMENT_PACKET_PHONE_KEYS.forEach((key) => {

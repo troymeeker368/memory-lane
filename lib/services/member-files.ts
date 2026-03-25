@@ -18,6 +18,7 @@ export type MemberFileCategory =
   | "Health Unit"
   | "Legal"
   | "Admin"
+  | "Enrollment Packet"
   | "Assessment"
   | "Care Plan"
   | "Orders / POF"

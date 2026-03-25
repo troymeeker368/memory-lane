@@ -3,9 +3,14 @@
 import { Buffer } from "node:buffer";
 
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 
 import { normalizePhoneForStorage } from "@/lib/phone";
-import { normalizeEnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
+import {
+  normalizeEnrollmentPacketIntakePayload,
+  normalizeEnrollmentPacketTextInput
+} from "@/lib/services/enrollment-packet-intake-payload";
 
 type PublicEnrollmentPacketUploadCategory =
   | "medicare_card"
@@ -75,7 +80,7 @@ async function recordUploadGuardFailure(input: {
 }
 
 function asString(formData: FormData, key: string) {
-  return String(formData.get(key) ?? "").trim();
+  return normalizeEnrollmentPacketTextInput(formData.get(key)) ?? "";
 }
 
 function asPhone(formData: FormData, key: string) {
@@ -312,7 +317,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       throw error;
     }
 
-    const submitted = await submitPublicEnrollmentPacket({
+    await submitPublicEnrollmentPacket({
       token,
       caregiverTypedName: asString(formData, "caregiverTypedName"),
       caregiverSignatureImageDataUrl: asString(formData, "caregiverSignatureImageDataUrl"),
@@ -352,16 +357,11 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
         ...advanceDirectiveUploads
       ]
     });
-    return {
-      ok: true,
-      packetId: submitted.packetId,
-      status: submitted.status,
-      mappingSyncStatus: submitted.mappingSyncStatus,
-      operationalReadinessStatus: submitted.operationalReadinessStatus,
-      actionNeededMessage: submitted.actionNeededMessage,
-      redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`
-    } as const;
+    redirect(`/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`);
   } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to complete enrollment packet."

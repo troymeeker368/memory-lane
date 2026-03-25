@@ -105,6 +105,24 @@ test("enrollment packet intake normalization preserves internal spaces for human
   assert.equal(payload.bankName, "First National Bank");
 });
 
+test("enrollment packet progress merge and public action parsing trim edges without collapsing internal spaces", () => {
+  const coreSource = readWorkspaceFile("lib/services/enrollment-packet-core.ts");
+  const actionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
+
+  assert.equal(
+    coreSource.includes("const normalized = (value ?? \"\").trim();"),
+    true
+  );
+  assert.equal(
+    actionSource.includes("return normalizeEnrollmentPacketTextInput(formData.get(key)) ?? \"\";"),
+    true
+  );
+  assert.equal(
+    actionSource.includes(".replace(/\\s+/g"),
+    false
+  );
+});
+
 test("legacy flat recreation interests normalize into canonical structured categories", () => {
   const payload = normalizeEnrollmentPacketIntakePayload({
     recreationalInterests: [
@@ -155,16 +173,14 @@ test("payment authorization renders one canonical method block at a time with st
     memberName: "James Walker",
     paymentMethodSelection: "ACH",
     communityFee: "250",
-    totalInitialEnrollmentAmount: "1450",
-    exhibitAAuthorizationAcknowledged: true
+    totalInitialEnrollmentAmount: "1450"
   });
   const creditText = buildEnrollmentPacketLegalText({
     caregiverName: "Jane Caregiver",
     memberName: "James Walker",
     paymentMethodSelection: "Credit Card",
     communityFee: "250",
-    totalInitialEnrollmentAmount: "1450",
-    exhibitAAuthorizationAcknowledged: false
+    totalInitialEnrollmentAmount: "1450"
   });
 
   assert.equal(
@@ -180,6 +196,14 @@ test("payment authorization renders one canonical method block at a time with st
     true
   );
   assert.equal(
+    achText.exhibitAPaymentAuthorization.some((paragraph) => paragraph.includes("☐ ACH (Bank Draft)")),
+    false
+  );
+  assert.equal(
+    achText.exhibitAPaymentAuthorization.some((paragraph) => paragraph.includes("Bank Information")),
+    false
+  );
+  assert.equal(
     achText.exhibitAPaymentAuthorization.some((paragraph) => paragraph.includes("CREDIT CARD AUTHORIZATION")),
     false
   );
@@ -189,6 +213,36 @@ test("payment authorization renders one canonical method block at a time with st
   );
   assert.equal(
     creditText.exhibitAPaymentAuthorization.some((paragraph) => paragraph.includes("ACH AUTHORIZATION")),
+    false
+  );
+  assert.equal(
+    creditText.exhibitAPaymentAuthorization.some((paragraph) => paragraph.includes("Credit Card Information")),
+    false
+  );
+});
+
+test("photo consent notice sentence updates from the selected radio option", () => {
+  const permitText = buildEnrollmentPacketLegalText({
+    caregiverName: "Jane Caregiver",
+    memberName: "James Walker",
+    photoConsentChoice: "Do Permit"
+  });
+  const denyText = buildEnrollmentPacketLegalText({
+    caregiverName: "Jane Caregiver",
+    memberName: "James Walker",
+    photoConsentChoice: "Do Not Permit"
+  });
+
+  assert.equal(
+    permitText.photoConsent.some((paragraph) => paragraph.includes("I do permit and authorize")),
+    true
+  );
+  assert.equal(
+    denyText.photoConsent.some((paragraph) => paragraph.includes("I do not permit and authorize")),
+    true
+  );
+  assert.equal(
+    permitText.photoConsent.some((paragraph) => paragraph.includes("Responsible Party/Guarantor: __________________")),
     false
   );
 });
@@ -273,6 +327,25 @@ test("rendered membership agreement hides the trailing fill-in boilerplate block
   assert.equal(renderedParagraphs.includes("REQUESTED SCHEDULED DAYS:"), false);
 });
 
+test("membership agreement execution lines come only from the canonical agreement signature fields", () => {
+  const unsignedText = buildEnrollmentPacketLegalText({
+    caregiverName: "Jane Caregiver",
+    memberName: "James Walker"
+  });
+  const signedText = buildEnrollmentPacketLegalText({
+    caregiverName: "Jane Caregiver",
+    memberName: "James Walker",
+    membershipSignatureName: "Jane Caregiver",
+    membershipSignatureDate: "2026-03-25"
+  });
+
+  assert.deepEqual(unsignedText.membershipAgreementExecution, []);
+  assert.deepEqual(signedText.membershipAgreementExecution, [
+    "Responsible Party / Guarantor Signature: Jane Caregiver",
+    "Signature Date: 2026-03-25"
+  ]);
+});
+
 test("member signature fields are removed from the canonical enrollment packet payload model", () => {
   const intakeKeys = new Set<string>(ENROLLMENT_PACKET_INTAKE_TEXT_KEYS);
 
@@ -299,18 +372,51 @@ test("canonical section schema removes final review and keeps payment/notice inp
   assert.equal((ancillarySection?.fields.length ?? 0) > 0, true);
 });
 
+test("membership agreement signature is not auto-prefilled from the primary contact anymore", () => {
+  const formSource = readWorkspaceFile("components/enrollment-packets/enrollment-packet-public-form.tsx");
+
+  assert.equal(
+    formSource.includes("membershipGuarantorSignatureName: defaultResponsiblePartyName ?? null"),
+    false
+  );
+  assert.equal(
+    formSource.includes("fields.intakePayload.membershipGuarantorSignatureDate ?? todayDateString()"),
+    false
+  );
+});
+
 test("public enrollment packet submission redirects to confirmation where the welcome letter is rendered", () => {
   const actionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
   const confirmationSource = readWorkspaceFile(
     "app/sign/enrollment-packet/[token]/confirmation/page.tsx"
   );
+  const formSource = readWorkspaceFile("components/enrollment-packets/enrollment-packet-public-form.tsx");
 
   assert.equal(
-    actionSource.includes("redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`"),
+    actionSource.includes("redirect(`/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`);"),
     true
   );
+  assert.equal(formSource.includes("window.location.assign(result.redirectUrl);"), false);
+  assert.equal(formSource.includes("router.replace(result.redirectUrl);"), false);
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
   assert.equal(confirmationSource.includes("legalText.firstDayWelcome.map"), true);
+});
+
+test("already-filed public enrollment packet submissions use the replay-safe confirmation path", () => {
+  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+
+  assert.equal(
+    runtimeSource.includes('throw new Error("This enrollment packet has already been submitted.");'),
+    false
+  );
+  assert.equal(
+    runtimeSource.includes("return buildCommittedEnrollmentPacketReplayResult({ request });"),
+    true
+  );
+  assert.equal(
+    runtimeSource.includes('submitResult.operationalReadinessStatus !== "operationally_ready"'),
+    true
+  );
 });
 
 test("completion cascade centralizes submitted notification and downstream repair-safe sync", () => {
@@ -325,6 +431,27 @@ test("completion cascade centralizes submitted notification and downstream repai
   assert.equal(runtimeSource.includes("runEnrollmentPacketCompletionCascade({"), true);
   assert.equal(
     mappingRuntimeSource.includes('.eq("event_type", "enrollment_packet_submitted")'),
+    true
+  );
+});
+
+test("completed enrollment packet pdf uses the shared branded document header", () => {
+  const pdfSource = readWorkspaceFile("lib/services/enrollment-packet-docx.ts");
+
+  assert.equal(
+    pdfSource.includes('DOCUMENT_CENTER_LOGO_PUBLIC_PATH'),
+    true
+  );
+  assert.equal(
+    pdfSource.includes("async function loadCenterLogoImage(pdf: PDFDocument)"),
+    true
+  );
+  assert.equal(
+    pdfSource.includes("drawDocumentHeader({"),
+    true
+  );
+  assert.equal(
+    pdfSource.includes('drawTitle(`${DOCUMENT_CENTER_NAME} Enrollment Packet`);'),
     true
   );
 });
@@ -365,11 +492,16 @@ test("canonical submit runtime emits enrollment packet submitted workflow notifi
 
 test("historical enrollment packet repair is exposed only through the canonical service and safe CLI runner", () => {
   const completionCascadeSource = readWorkspaceFile("lib/services/enrollment-packet-completion-cascade.ts");
+  const artifactSource = readWorkspaceFile("lib/services/enrollment-packet-artifacts.ts");
+  const memberFileSource = readWorkspaceFile("lib/services/member-files.ts");
   const scriptSource = readWorkspaceFile("scripts/repair-enrollment-packet-completions.ts");
   const publicRuntimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
   const packageSource = readWorkspaceFile("package.json");
   const replayMigrationSource = readWorkspaceFile(
     "supabase/migrations/0149_enrollment_packet_contact_replay_idempotency.sql"
+  );
+  const refreshMigrationSource = readWorkspaceFile(
+    "supabase/migrations/0151_refresh_enrollment_packet_conversion_rpc_contact_replay_fix.sql"
   );
 
   assert.equal(
@@ -381,7 +513,31 @@ test("historical enrollment packet repair is exposed only through the canonical 
     true
   );
   assert.equal(
+    completionCascadeSource.includes('.eq("event_type", "enrollment_packet_submitted")\n    .in("entity_id", normalizedPacketIds)'),
+    true
+  );
+  assert.equal(
+    completionCascadeSource.includes('.eq("outcome", "Enrollment Packet Completed")'),
+    true
+  );
+  assert.equal(
     completionCascadeSource.includes('.eq("upload_category", "completed_packet")'),
+    true
+  );
+  assert.equal(
+    completionCascadeSource.includes('select("id, enrollment_packet_request_id")'),
+    true
+  );
+  assert.equal(
+    completionCascadeSource.includes('admin.from("member_command_centers").select("member_id").in("member_id", normalizedMemberIds)'),
+    true
+  );
+  assert.equal(
+    completionCascadeSource.includes('admin.from("member_attendance_schedules").select("member_id").in("member_id", normalizedMemberIds)'),
+    true
+  );
+  assert.equal(
+    completionCascadeSource.includes('admin.from("member_health_profiles").select("member_id").in("member_id", normalizedMemberIds)'),
     true
   );
   assert.equal(scriptSource.includes("Use --apply to replay the canonical enrollment packet completion cascade."), true);
@@ -403,11 +559,31 @@ test("historical enrollment packet repair is exposed only through the canonical 
     true
   );
   assert.equal(
+    artifactSource.includes('return `enrollment-packet:${input.packetId}:completed`;'),
+    true
+  );
+  assert.equal(
+    artifactSource.includes('if (uploadCategory === "completed_packet") return "Enrollment Packet";'),
+    true
+  );
+  assert.equal(
+    artifactSource.includes("repairEnrollmentPacketUploadMemberFileLinks"),
+    true
+  );
+  assert.equal(
+    memberFileSource.includes('| \"Enrollment Packet\"'),
+    true
+  );
+  assert.equal(
     packageSource.includes("\"repair:enrollment-packet-completions\""),
     true
   );
   assert.equal(
     replayMigrationSource.includes("and mc.id = nullif(trim(coalesce(v_contact ->> 'id', '')), '')"),
+    true
+  );
+  assert.equal(
+    refreshMigrationSource.includes("mc.id = nullif(trim(coalesce(v_contact ->> 'id', '')), '')"),
     true
   );
 });

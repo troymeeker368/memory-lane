@@ -43,7 +43,10 @@ export default async function EnrollmentPacketConfirmationPage({
     intakePayload?.primaryContactName ??
     fields?.caregiver_name ??
     "Caregiver";
-  const legalText = buildEnrollmentPacketLegalText({ caregiverName });
+  const legalText = buildEnrollmentPacketLegalText({
+    caregiverName,
+    photoConsentChoice: intakePayload?.photoConsentChoice ?? null
+  });
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 p-4">

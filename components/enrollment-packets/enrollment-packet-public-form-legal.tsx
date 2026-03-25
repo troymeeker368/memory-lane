@@ -82,7 +82,8 @@ export function EnrollmentPacketPublicFormLegal({
 }: EnrollmentPacketPublicFormLegalProps) {
   const legalText = buildEnrollmentPacketLegalText({
     caregiverName: payload.membershipGuarantorSignatureName ?? payload.primaryContactName,
-    memberName: [payload.memberLegalFirstName, payload.memberLegalLastName].filter(Boolean).join(" ")
+    memberName: [payload.memberLegalFirstName, payload.memberLegalLastName].filter(Boolean).join(" "),
+    photoConsentChoice: payload.photoConsentChoice
   });
   const privacyAcknowledged = hasEnrollmentPacketAcknowledgment(
     payload,

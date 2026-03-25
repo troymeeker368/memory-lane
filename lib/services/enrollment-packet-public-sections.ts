@@ -189,8 +189,8 @@ export const ENROLLMENT_PACKET_SECTIONS: EnrollmentPacketSectionDefinition[] = [
       { key: "membershipDailyAmount", label: "Daily amount", type: "number", sourceDocument: "Membership Agreement", staffPrepared: true },
       { key: "communityFee", label: "Community fee", type: "number", sourceDocument: "Membership Agreement", staffPrepared: true },
       { key: "totalInitialEnrollmentAmount", label: "Total initial enrollment amount", type: "number", sourceDocument: "Membership Agreement", required: true, staffPrepared: true },
-      { key: "membershipGuarantorSignatureName", label: "Responsible Party / Guarantor signature name", type: "text", sourceDocument: "Membership Agreement", required: true },
-      { key: "membershipGuarantorSignatureDate", label: "Responsible Party / Guarantor signature date", type: "date", sourceDocument: "Membership Agreement", required: true }
+      { key: "membershipGuarantorSignatureName", label: "Membership Agreement signature", type: "text", sourceDocument: "Membership Agreement", required: true },
+      { key: "membershipGuarantorSignatureDate", label: "Membership Agreement signature date", type: "date", sourceDocument: "Membership Agreement", required: true }
     ]
   },
   {

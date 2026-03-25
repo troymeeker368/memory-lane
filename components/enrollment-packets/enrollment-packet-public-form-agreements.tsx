@@ -64,16 +64,25 @@ export function EnrollmentPacketPublicFormAgreements({
   const legalText = buildEnrollmentPacketLegalText({
     caregiverName: payload.membershipGuarantorSignatureName ?? payload.primaryContactName,
     memberName: [payload.memberLegalFirstName, payload.memberLegalLastName].filter(Boolean).join(" "),
+    membershipSignatureName: payload.membershipGuarantorSignatureName,
+    membershipSignatureDate: payload.membershipGuarantorSignatureDate,
     paymentMethodSelection,
     communityFee: payload.communityFee,
     totalInitialEnrollmentAmount: payload.totalInitialEnrollmentAmount,
-    exhibitAAuthorizationAcknowledged: paymentAuthorizationAcknowledged
+    photoConsentChoice: payload.photoConsentChoice
   });
 
   return (
     <>
       <Section title="11. Payment & Membership Agreement">
         <div className="space-y-2 rounded-lg border border-border bg-slate-50 p-3 text-sm">{legalText.membershipAgreement.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>
+        {legalText.membershipAgreementExecution.length > 0 ? (
+          <div className="space-y-1 rounded-lg border border-border bg-slate-50 p-3 text-sm">
+            {legalText.membershipAgreementExecution.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </div>
+        ) : null}
         <p className="text-sm">
           <span className="font-semibold">Member:</span> {formatEnrollmentPacketValue(`${payload.memberLegalFirstName ?? ""} ${payload.memberLegalLastName ?? ""}`)}{" "}
           <span className="font-semibold">Responsible Party:</span> {formatEnrollmentPacketValue(payload.membershipGuarantorSignatureName)}
@@ -82,8 +91,8 @@ export function EnrollmentPacketPublicFormAgreements({
           <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Requested start date (staff set)</span><input className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "requestedStartDate")} disabled /></label>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Responsible Party / Guarantor Name <span className="text-red-600">*</span></span><input id="field-membershipGuarantorSignatureName" className={controlClassName("membershipGuarantorSignatureName", "Responsible party / guarantor name")} value={textValue(payload, "membershipGuarantorSignatureName")} onChange={(event) => setText("membershipGuarantorSignatureName", event.target.value)} onBlur={() => markTouched("membershipGuarantorSignatureName")} disabled={isPending} />{fieldError("membershipGuarantorSignatureName", "Responsible party / guarantor name") ? <p className="text-xs text-red-600">{fieldError("membershipGuarantorSignatureName", "Responsible party / guarantor name")}</p> : null}</label>
-          <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Responsible Party / Guarantor Signature Date <span className="text-red-600">*</span></span><input id="field-membershipGuarantorSignatureDate" type="date" className={controlClassName("membershipGuarantorSignatureDate", "Responsible party / guarantor signature date")} value={textValue(payload, "membershipGuarantorSignatureDate")} onChange={(event) => setText("membershipGuarantorSignatureDate", event.target.value)} onBlur={() => markTouched("membershipGuarantorSignatureDate")} disabled={isPending} />{fieldError("membershipGuarantorSignatureDate", "Responsible party / guarantor signature date") ? <p className="text-xs text-red-600">{fieldError("membershipGuarantorSignatureDate", "Responsible party / guarantor signature date")}</p> : null}</label>
+          <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Responsible Party / Guarantor Signature <span className="text-red-600">*</span></span><input id="field-membershipGuarantorSignatureName" className={controlClassName("membershipGuarantorSignatureName", "Responsible party / guarantor signature")} value={textValue(payload, "membershipGuarantorSignatureName")} onChange={(event) => setText("membershipGuarantorSignatureName", event.target.value)} onBlur={() => markTouched("membershipGuarantorSignatureName")} placeholder="Type full legal name to sign the Membership Agreement" disabled={isPending} />{fieldError("membershipGuarantorSignatureName", "Responsible party / guarantor signature") ? <p className="text-xs text-red-600">{fieldError("membershipGuarantorSignatureName", "Responsible party / guarantor signature")}</p> : null}</label>
+          <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Membership Agreement Signature Date <span className="text-red-600">*</span></span><input id="field-membershipGuarantorSignatureDate" type="date" className={controlClassName("membershipGuarantorSignatureDate", "Membership Agreement signature date")} value={textValue(payload, "membershipGuarantorSignatureDate")} onChange={(event) => setText("membershipGuarantorSignatureDate", event.target.value)} onBlur={() => markTouched("membershipGuarantorSignatureDate")} disabled={isPending} />{fieldError("membershipGuarantorSignatureDate", "Membership Agreement signature date") ? <p className="text-xs text-red-600">{fieldError("membershipGuarantorSignatureDate", "Membership Agreement signature date")}</p> : null}</label>
         </div>
       </Section>
 

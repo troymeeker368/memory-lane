@@ -6,6 +6,7 @@ import { type EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-pa
 import {
   deleteMemberDocumentObject,
   deleteMemberFileRecordAndStorage,
+  type MemberFileCategory,
   parseMemberDocumentStorageUri,
   safeFileName,
   uploadMemberDocumentObject,
@@ -64,6 +65,43 @@ function slugify(value: string) {
 
 function safeNumber(value: number | null | undefined, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function buildEnrollmentPacketDocumentSource(input: {
+  packetId: string;
+  uploadCategory: EnrollmentPacketUploadCategory;
+  fileName: string;
+}) {
+  if (input.uploadCategory === "completed_packet") {
+    return `enrollment-packet:${input.packetId}:completed`;
+  }
+  if (input.uploadCategory === "signature_artifact") {
+    return `enrollment-packet:${input.packetId}:signature`;
+  }
+  const slug = slugify(input.fileName) || "file";
+  return `enrollment-packet:${input.packetId}:${input.uploadCategory}:${slug}`;
+}
+
+function resolveEnrollmentPacketMemberFileCategory(
+  uploadCategory: EnrollmentPacketUploadCategory
+): MemberFileCategory {
+  if (uploadCategory === "completed_packet") return "Enrollment Packet";
+  if (
+    [
+      "insurance",
+      "poa",
+      "medicare_card",
+      "private_insurance",
+      "supplemental_insurance",
+      "poa_guardianship",
+      "dnr_dni_advance_directive",
+      "signed_membership_agreement",
+      "signed_exhibit_a_payment_authorization"
+    ].includes(uploadCategory)
+  ) {
+    return "Legal";
+  }
+  return "Admin";
 }
 
 export async function buildCompletedPacketArtifactData(input: {
@@ -130,6 +168,58 @@ async function upsertMemberFileBySource(input: {
   });
 }
 
+export async function repairEnrollmentPacketUploadMemberFileLinks(packetId: string) {
+  const normalizedPacketId = String(packetId ?? "").trim();
+  if (!normalizedPacketId) return 0;
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("enrollment_packet_uploads")
+    .select("packet_id, member_id, member_file_id, file_name, file_type, file_path, upload_category")
+    .eq("packet_id", normalizedPacketId)
+    .not("member_file_id", "is", null);
+  if (error) throw new Error(error.message);
+
+  const rows = (data ??
+    []) as Array<{
+    packet_id: string;
+    member_id: string;
+    member_file_id: string | null;
+    file_name: string | null;
+    file_type: string | null;
+    file_path: string | null;
+    upload_category: EnrollmentPacketUploadCategory;
+  }>;
+  if (rows.length === 0) return 0;
+
+  const now = toEasternISO();
+  for (const row of rows) {
+    const memberFileId = String(row.member_file_id ?? "").trim();
+    if (!memberFileId) continue;
+    const fileName = safeFileName(String(row.file_name ?? "").trim()) || `${memberFileId}.pdf`;
+    await upsertMemberFileByDocumentSource({
+      memberId: row.member_id,
+      documentSource: buildEnrollmentPacketDocumentSource({
+        packetId: row.packet_id,
+        uploadCategory: row.upload_category,
+        fileName
+      }),
+      memberFileId,
+      fileName,
+      fileType: String(row.file_type ?? "").trim() || "application/octet-stream",
+      dataUrl: null,
+      storageObjectPath: parseMemberDocumentStorageUri(row.file_path),
+      category: resolveEnrollmentPacketMemberFileCategory(row.upload_category),
+      updatedAtIso: now,
+      additionalColumns: {
+        enrollment_packet_request_id: row.packet_id
+      }
+    });
+  }
+
+  return rows.length;
+}
+
 export async function insertUploadAndFile(input: {
   packetId: string;
   memberId: string;
@@ -154,24 +244,16 @@ export async function insertUploadAndFile(input: {
   try {
     memberFile = await upsertMemberFileBySource({
       memberId: input.memberId,
-      documentSource: `Enrollment Packet ${input.uploadCategory}:${input.packetId}:${input.batchId}:${safeName}`,
+      documentSource: buildEnrollmentPacketDocumentSource({
+        packetId: input.packetId,
+        uploadCategory: input.uploadCategory,
+        fileName: safeName
+      }),
       fileName: safeName,
       fileType: input.contentType,
       dataUrl: input.dataUrl ?? null,
       storageUri,
-      category: [
-        "insurance",
-        "poa",
-        "medicare_card",
-        "private_insurance",
-        "supplemental_insurance",
-        "poa_guardianship",
-        "dnr_dni_advance_directive",
-        "signed_membership_agreement",
-        "signed_exhibit_a_payment_authorization"
-      ].includes(input.uploadCategory)
-        ? "Legal"
-        : "Admin",
+      category: resolveEnrollmentPacketMemberFileCategory(input.uploadCategory),
       uploadedByUserId: input.uploadedByUserId,
       uploadedByName: input.uploadedByName,
       packetId: input.packetId

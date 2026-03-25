@@ -9,7 +9,6 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode
 } from "react";
-import { useRouter } from "next/navigation";
 
 import {
   savePublicEnrollmentPacketProgressAction,
@@ -108,11 +107,6 @@ function todayDateString() {
 }
 
 function toInitialPayload(fields: PublicEnrollmentPacketFields): EnrollmentPacketIntakePayload {
-  const defaultResponsiblePartyName =
-    fields.intakePayload.membershipGuarantorSignatureName ??
-    fields.intakePayload.primaryContactName ??
-    fields.caregiverName;
-
   return normalizeEnrollmentPacketIntakePayload({
     ...fields.intakePayload,
     requestedAttendanceDays: fields.requestedDays,
@@ -143,9 +137,6 @@ function toInitialPayload(fields: PublicEnrollmentPacketFields): EnrollmentPacke
     membershipDailyAmount:
       fields.intakePayload.membershipDailyAmount ?? (fields.dailyRate > 0 ? fields.dailyRate.toFixed(2) : null),
     communityFee: fields.intakePayload.communityFee ?? (fields.communityFee > 0 ? fields.communityFee.toFixed(2) : null),
-    membershipGuarantorSignatureName: defaultResponsiblePartyName ?? null,
-    membershipGuarantorSignatureDate:
-      fields.intakePayload.membershipGuarantorSignatureDate ?? todayDateString(),
     additionalNotes: fields.intakePayload.additionalNotes ?? fields.notes
   });
 }
@@ -238,8 +229,8 @@ const MISSING_ITEM_FIELD_KEY: Record<string, EnrollmentPacketIntakeFieldKey> = {
   "Card billing city/town": "cardBillingCity",
   "Card billing state": "cardBillingState",
   "Card billing ZIP code": "cardBillingZip",
-  "Membership responsible party / guarantor signature name": "membershipGuarantorSignatureName",
-  "Membership responsible party / guarantor signature date": "membershipGuarantorSignatureDate",
+  "Membership Agreement signature": "membershipGuarantorSignatureName",
+  "Membership Agreement signature date": "membershipGuarantorSignatureDate",
   "Privacy practices acknowledgement": "privacyAcknowledgmentSignatureName",
   "Statement of rights acknowledgement": "rightsAcknowledgmentSignatureName",
   "Ancillary charges acknowledgement": "ancillaryChargesAcknowledgmentSignatureName",
@@ -254,7 +245,6 @@ export function EnrollmentPacketPublicForm({
   token: string;
   fields: PublicEnrollmentPacketFields;
 }) {
-  const router = useRouter();
   const [payload, setPayload] = useState<EnrollmentPacketIntakePayload>(() => toInitialPayload(fields));
   const [status, setStatus] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -533,7 +523,10 @@ export function EnrollmentPacketPublicForm({
 
   const submitPacket = () => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) {
+      setStatus("Signature pad is not ready yet. Refresh the page and try again.");
+      return;
+    }
     setSubmitAttempted(true);
     const submissionValidation = validateEnrollmentPacketSubmission({
       payload,
@@ -573,7 +566,6 @@ export function EnrollmentPacketPublicForm({
       }
 
       setPayload(payloadToSubmit);
-      router.push(result.redirectUrl);
     });
   };
 

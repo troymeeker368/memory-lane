@@ -142,10 +142,10 @@ export function validateEnrollmentPacketCompletion(input: {
   }
 
   if (!hasValue(payload.membershipGuarantorSignatureName)) {
-    missingItems.push("Membership responsible party / guarantor signature name");
+    missingItems.push("Membership Agreement signature");
   }
   if (!hasValue(payload.membershipGuarantorSignatureDate)) {
-    missingItems.push("Membership responsible party / guarantor signature date");
+    missingItems.push("Membership Agreement signature date");
   }
 
   ENROLLMENT_PACKET_NOTICE_ACKNOWLEDGMENTS.forEach((definition) => {

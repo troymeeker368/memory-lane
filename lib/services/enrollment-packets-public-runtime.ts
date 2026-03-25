@@ -161,12 +161,19 @@ async function buildCommittedEnrollmentPacketReplayResult(input: {
     });
   }
 
-  return buildPublicEnrollmentPacketSubmitResult({
+  const submitResult = buildPublicEnrollmentPacketSubmitResult({
     packetId: input.request.id,
     memberId: input.request.member_id,
     mappingSyncStatus: repairedRequest.mapping_sync_status ?? "pending",
     wasAlreadyFiled: true
   });
+  if (submitResult.operationalReadinessStatus !== "operationally_ready") {
+    throw new Error(
+      submitResult.actionNeededMessage ??
+        "Enrollment packet was signed, but downstream sync to MCC/MHP/member files still needs staff follow-up."
+    );
+  }
+  return submitResult;
 }
 
 async function invokeFinalizeEnrollmentPacketCompletionRpc(input: {
@@ -545,7 +552,7 @@ export async function submitPublicEnrollmentPacket(input: {
     return buildCommittedEnrollmentPacketReplayResult({ request });
   }
   if (status === "completed" || status === "filed") {
-    throw new Error("This enrollment packet has already been submitted.");
+    return buildCommittedEnrollmentPacketReplayResult({ request });
   }
   if (isExpired(request.token_expires_at)) {
     await recordEnrollmentPacketExpiredIfNeeded(request);
@@ -958,10 +965,17 @@ export async function submitPublicEnrollmentPacket(input: {
     });
   }
 
-  return buildPublicEnrollmentPacketSubmitResult({
+  const submitResult = buildPublicEnrollmentPacketSubmitResult({
     packetId: request.id,
     memberId: member.id,
     mappingSyncStatus: mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending",
     wasAlreadyFiled: false
   });
+  if (submitResult.operationalReadinessStatus !== "operationally_ready") {
+    throw new Error(
+      submitResult.actionNeededMessage ??
+        "Enrollment packet was signed, but downstream sync to MCC/MHP/member files still needs staff follow-up."
+    );
+  }
+  return submitResult;
 }
