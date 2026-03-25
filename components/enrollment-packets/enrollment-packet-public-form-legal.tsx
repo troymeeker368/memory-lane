@@ -73,7 +73,8 @@ export function EnrollmentPacketPublicFormLegal({
   clearSignature
 }: EnrollmentPacketPublicFormLegalProps) {
   const legalText = buildEnrollmentPacketLegalText({
-    caregiverName: payload.membershipGuarantorSignatureName ?? payload.primaryContactName
+    caregiverName: payload.membershipGuarantorSignatureName ?? payload.primaryContactName,
+    memberName: [payload.memberLegalFirstName, payload.memberLegalLastName].filter(Boolean).join(" ")
   });
 
   return (

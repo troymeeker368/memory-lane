@@ -5,7 +5,6 @@ import { requireModuleAccess } from "@/lib/auth";
 import { firstSearchParam, parseEnumSearchParam, parsePositivePageParam } from "@/lib/search-params";
 import { getScheduledDayAbbreviations } from "@/lib/services/member-schedule-selectors";
 import { getMemberCommandCenterIndexSupabase } from "@/lib/services/member-command-center-read";
-import { formatOptionalDate } from "@/lib/utils";
 
 function initials(name: string) {
   const parts = name.split(/\s+/).filter(Boolean);
@@ -71,16 +70,13 @@ export default async function MemberCommandCenterIndexPage({
               <th>Member</th>
               <th>Locker #</th>
               <th>Status</th>
-              <th>DOB</th>
-              <th>Enrollment</th>
-              <th>Months Enrolled</th>
               <th>Attendance Days</th>
             </tr>
           </thead>
           <tbody>
             {result.rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="text-sm text-muted">No members match this filter.</td>
+                <td colSpan={4} className="text-sm text-muted">No members match this filter.</td>
               </tr>
             ) : (
               result.rows.map((row) => {
@@ -116,9 +112,6 @@ export default async function MemberCommandCenterIndexPage({
                     </td>
                     <td>{row.member.locker_number ?? "-"}</td>
                     <td className="capitalize">{row.member.status}</td>
-                    <td>{formatOptionalDate(row.member.dob)}</td>
-                    <td>{formatOptionalDate(row.schedule.enrollment_date ?? row.member.enrollment_date)}</td>
-                    <td>{row.monthsEnrolled ?? "-"}</td>
                     <td>
                       {attendanceDays}
                       {row.profileNeedsBackfill || row.scheduleNeedsBackfill ? (

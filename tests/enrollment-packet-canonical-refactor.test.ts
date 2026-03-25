@@ -6,7 +6,8 @@ import test from "node:test";
 
 import {
   CANONICAL_MEMBERSHIP_AGREEMENT_TEMPLATE,
-  buildCanonicalMembershipAgreementParagraphs
+  buildCanonicalMembershipAgreementParagraphs,
+  buildRenderedMembershipAgreementParagraphs
 } from "@/lib/services/enrollment-packet-membership-document";
 import {
   ENROLLMENT_PACKET_INTAKE_TEXT_KEYS,
@@ -147,9 +148,17 @@ test("membership agreement template stays locked and injects caregiver name into
     "c86982161f02806988a092ba1931594d15c75dd9f2fc9a0dff98ea9bf170e5a5"
   );
 
-  const paragraphs = buildCanonicalMembershipAgreementParagraphs("Jane Caregiver");
+  const paragraphs = buildCanonicalMembershipAgreementParagraphs("Jane Caregiver", "James Walker");
   assert.equal(paragraphs[1]?.includes("Jane Caregiver (Responsible Party)."), true);
+  assert.equal(paragraphs[1]?.includes("James Walker (Member)"), true);
   assert.equal(paragraphs.some((paragraph) => paragraph.includes("{{caregiverName}}")), false);
+});
+
+test("rendered membership agreement hides the trailing fill-in boilerplate block", () => {
+  const renderedParagraphs = buildRenderedMembershipAgreementParagraphs("Jane Caregiver", "James Walker");
+
+  assert.equal(renderedParagraphs.includes("RESPONSIBLE PARTY/GUARANTOR INFORMATION:"), false);
+  assert.equal(renderedParagraphs.includes("REQUESTED SCHEDULED DAYS:"), false);
 });
 
 test("member signature fields are removed from the canonical enrollment packet payload model", () => {

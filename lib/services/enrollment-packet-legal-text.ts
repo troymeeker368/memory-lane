@@ -1,5 +1,5 @@
 import {
-  buildCanonicalMembershipAgreementParagraphs,
+  buildRenderedMembershipAgreementParagraphs,
   CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE,
   FIRST_DAY_WELCOME_LETTER_TEMPLATE
 } from "@/lib/services/enrollment-packet-membership-document";
@@ -10,9 +10,15 @@ import {
   CANONICAL_STATEMENT_OF_RIGHTS_NOTICE
 } from "@/lib/services/enrollment-packet-notices";
 
-export function buildEnrollmentPacketLegalText(input?: { caregiverName?: string | null }) {
+export function buildEnrollmentPacketLegalText(input?: {
+  caregiverName?: string | null;
+  memberName?: string | null;
+}) {
   return {
-    membershipAgreement: buildCanonicalMembershipAgreementParagraphs(input?.caregiverName),
+    membershipAgreement: buildRenderedMembershipAgreementParagraphs(
+      input?.caregiverName,
+      input?.memberName
+    ),
     exhibitAPaymentAuthorization: [...CANONICAL_MEMBERSHIP_EXHIBIT_A_TEMPLATE],
     privacyPractices: [...CANONICAL_PRIVACY_PRACTICES_NOTICE],
     statementOfRights: [...CANONICAL_STATEMENT_OF_RIGHTS_NOTICE],

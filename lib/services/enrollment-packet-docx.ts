@@ -207,7 +207,8 @@ export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnr
   }
 
   const legalText = buildEnrollmentPacketLegalText({
-    caregiverName: input.intakePayload.membershipGuarantorSignatureName ?? input.caregiverSignatureName
+    caregiverName: input.intakePayload.membershipGuarantorSignatureName ?? input.caregiverSignatureName,
+    memberName: input.memberName
   });
   [
     { title: "Membership Agreement", paragraphs: legalText.membershipAgreement },

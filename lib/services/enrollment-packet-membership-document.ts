@@ -3,6 +3,9 @@ function clean(value: string | null | undefined) {
   return normalized.length > 0 ? normalized : null;
 }
 
+const MEMBERSHIP_AGREEMENT_RENDER_TRUNCATION_MARKER = "RESPONSIBLE PARTY/GUARANTOR INFORMATION:";
+const MEMBERSHIP_AGREEMENT_MEMBER_PLACEHOLDER = "__________________";
+
 const MEMBERSHIP_AGREEMENT_INTRO_TEMPLATE =
   "This Membership Agreement (the “Agreement’) is entered into by and between Town Square Fort Mill (“Town Square”) located at 368 Fort Mill Parkway, Suite 106, Fort Mill, SC 29715 and __________________ (Member) and {{caregiverName}} (Responsible Party).";
 
@@ -98,9 +101,41 @@ export const FIRST_DAY_WELCOME_LETTER_TEMPLATE = [
   "Warmly, The Town Square Fort Mill Team"
 ] as const;
 
-export function buildCanonicalMembershipAgreementParagraphs(caregiverName: string | null | undefined) {
+function renderMembershipAgreementIntro(input: {
+  paragraph: string;
+  caregiverName: string | null | undefined;
+  memberName?: string | null | undefined;
+}) {
+  const safeCaregiverName = clean(input.caregiverName) ?? MEMBERSHIP_AGREEMENT_MEMBER_PLACEHOLDER;
+  const safeMemberName = clean(input.memberName) ?? MEMBERSHIP_AGREEMENT_MEMBER_PLACEHOLDER;
+  return input.paragraph
+    .replace(MEMBERSHIP_AGREEMENT_MEMBER_PLACEHOLDER, safeMemberName)
+    .replace("{{caregiverName}}", safeCaregiverName);
+}
+
+export function buildCanonicalMembershipAgreementParagraphs(
+  caregiverName: string | null | undefined,
+  memberName?: string | null | undefined
+) {
   const safeCaregiverName = clean(caregiverName) ?? "_________________";
-  return CANONICAL_MEMBERSHIP_AGREEMENT_TEMPLATE.map((paragraph) =>
-    paragraph.replace("{{caregiverName}}", safeCaregiverName)
-  );
+  return CANONICAL_MEMBERSHIP_AGREEMENT_TEMPLATE.map((paragraph, index) => {
+    if (index === 1) {
+      return renderMembershipAgreementIntro({
+        paragraph,
+        caregiverName: safeCaregiverName,
+        memberName
+      });
+    }
+    return paragraph.replace("{{caregiverName}}", safeCaregiverName);
+  });
+}
+
+export function buildRenderedMembershipAgreementParagraphs(
+  caregiverName: string | null | undefined,
+  memberName?: string | null | undefined
+) {
+  const canonicalParagraphs = buildCanonicalMembershipAgreementParagraphs(caregiverName, memberName);
+  const truncationIndex = canonicalParagraphs.indexOf(MEMBERSHIP_AGREEMENT_RENDER_TRUNCATION_MARKER);
+  if (truncationIndex < 0) return canonicalParagraphs;
+  return canonicalParagraphs.slice(0, truncationIndex);
 }
