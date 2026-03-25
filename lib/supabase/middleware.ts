@@ -48,12 +48,13 @@ export async function updateSession(request: NextRequest) {
   const isLoginRoute = pathname === "/login";
   const isDevAuthRoute = pathname.startsWith("/dev/auth");
   const isApiRoute = pathname.startsWith("/api/");
-  const shouldResolveSession = isApiRoute || isLoginRoute || isDevAuthRoute;
+  const hasAuthCookie = hasSupabaseAuthCookie(request);
+  const shouldResolveSession = hasAuthCookie || isApiRoute || isLoginRoute || isDevAuthRoute;
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-memory-lane-pathname", pathname);
   requestHeaders.set("x-memory-lane-requested-path", getRequestedPathname(request));
 
-  if (!publicRoute && !hasSupabaseAuthCookie(request) && !isApiRoute) {
+  if (!publicRoute && !hasAuthCookie && !isApiRoute) {
     return buildLoginRedirect(request);
   }
 
@@ -73,6 +74,10 @@ export async function updateSession(request: NextRequest) {
     }
   });
 
+  // Resolve the session once in middleware for any request that already carries
+  // a Supabase auth cookie. That keeps token refresh in the canonical place
+  // where cookies can be persisted, instead of letting many downstream server
+  // component clients race to refresh independently and trip GoTrue rate limits.
   const supabase = createServerClient(url, anonKey, {
     cookies: {
       getAll() {
