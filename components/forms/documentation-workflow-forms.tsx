@@ -6,7 +6,6 @@ import {
   runDocumentationCreateAction
 } from "@/app/documentation-create-actions";
 import { Button } from "@/components/ui/button";
-import { MemberSearchPicker } from "@/components/ui/member-search-picker";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternDateTimeLocal } from "@/lib/timezone";
 import {
   TOILET_USE_TYPE_OPTIONS,
@@ -17,6 +16,11 @@ const TOILET_OPTIONS = TOILET_USE_TYPE_OPTIONS;
 const TRANSPORT_OPTIONS = TRANSPORT_TYPE_OPTIONS;
 const MAX_PHOTO_UPLOAD_BYTES = 5 * 1024 * 1024;
 
+type MemberOption = {
+  id: string;
+  display_name: string;
+};
+
 function useNowIso() {
   return useMemo(() => toEasternDateTimeLocal(), []);
 }
@@ -25,12 +29,12 @@ function useToday() {
   return useMemo(() => toEasternDate(), []);
 }
 
-export function ToiletLogForm() {
+export function ToiletLogForm({ members }: { members: MemberOption[] }) {
   const now = useNowIso();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
   const [form, setForm] = useState({
-    memberId: "",
+    memberId: members[0]?.id ?? "",
     eventAt: now,
     briefs: false,
     memberSupplied: true,
@@ -46,7 +50,11 @@ export function ToiletLogForm() {
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-3">
-        <MemberSearchPicker value={form.memberId} onChange={(memberId) => setForm((f) => ({ ...f, memberId }))} />
+        <select className="h-11 rounded-lg border border-border px-3" value={form.memberId} onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}>
+          {members.map((m) => (
+            <option key={m.id} value={m.id}>{m.display_name}</option>
+          ))}
+        </select>
         <input type="datetime-local" className="h-11 rounded-lg border border-border px-3" value={form.eventAt} onChange={(e) => setForm((f) => ({ ...f, eventAt: e.target.value }))} />
         <select
           className="h-11 rounded-lg border border-border px-3"
@@ -91,16 +99,20 @@ export function ToiletLogForm() {
   );
 }
 
-export function ShowerLogForm() {
+export function ShowerLogForm({ members }: { members: MemberOption[] }) {
   const now = useNowIso();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
-  const [form, setForm] = useState({ memberId: "", eventAt: now, laundry: false, briefs: false, notes: "" });
+  const [form, setForm] = useState({ memberId: members[0]?.id ?? "", eventAt: now, laundry: false, briefs: false, notes: "" });
 
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-2">
-        <MemberSearchPicker value={form.memberId} onChange={(memberId) => setForm((f) => ({ ...f, memberId }))} />
+        <select className="h-11 rounded-lg border border-border px-3" value={form.memberId} onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}>
+          {members.map((m) => (
+            <option key={m.id} value={m.id}>{m.display_name}</option>
+          ))}
+        </select>
         <input type="datetime-local" className="h-11 rounded-lg border border-border px-3" value={form.eventAt} onChange={(e) => setForm((f) => ({ ...f, eventAt: e.target.value }))} />
       </div>
       <div className="flex gap-4 text-sm">
@@ -126,16 +138,20 @@ export function ShowerLogForm() {
   );
 }
 
-export function TransportationLogForm() {
+export function TransportationLogForm({ members }: { members: MemberOption[] }) {
   const today = useToday();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
-  const [form, setForm] = useState({ memberId: "", period: "AM" as "AM" | "PM", transportType: "Door to door" as (typeof TRANSPORT_OPTIONS)[number], serviceDate: today });
+  const [form, setForm] = useState({ memberId: members[0]?.id ?? "", period: "AM" as "AM" | "PM", transportType: "Door to door" as (typeof TRANSPORT_OPTIONS)[number], serviceDate: today });
 
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-4">
-        <MemberSearchPicker value={form.memberId} onChange={(memberId) => setForm((f) => ({ ...f, memberId }))} />
+        <select className="h-11 rounded-lg border border-border px-3" value={form.memberId} onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}>
+          {members.map((m) => (
+            <option key={m.id} value={m.id}>{m.display_name}</option>
+          ))}
+        </select>
 
         <select className="h-11 rounded-lg border border-border px-3" value={form.period} onChange={(e) => setForm((f) => ({ ...f, period: e.target.value as "AM" | "PM" }))}>
           <option value="AM">AM</option>
@@ -299,16 +315,20 @@ export function PhotoUploadForm() {
   );
 }
 
-export function BloodSugarForm() {
+export function BloodSugarForm({ members }: { members: MemberOption[] }) {
   const now = useNowIso();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
-  const [form, setForm] = useState({ memberId: "", checkedAt: now, readingMgDl: 110, notes: "" });
+  const [form, setForm] = useState({ memberId: members[0]?.id ?? "", checkedAt: now, readingMgDl: 110, notes: "" });
 
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-3">
-        <MemberSearchPicker value={form.memberId} onChange={(memberId) => setForm((f) => ({ ...f, memberId }))} />
+        <select className="h-11 rounded-lg border border-border px-3" value={form.memberId} onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}>
+          {members.map((m) => (
+            <option key={m.id} value={m.id}>{m.display_name}</option>
+          ))}
+        </select>
         <input type="datetime-local" className="h-11 rounded-lg border border-border px-3" value={form.checkedAt} onChange={(e) => setForm((f) => ({ ...f, checkedAt: e.target.value }))} />
         <input type="number" className="h-11 rounded-lg border border-border px-3" value={form.readingMgDl} onChange={(e) => setForm((f) => ({ ...f, readingMgDl: Number(e.target.value) }))} />
       </div>

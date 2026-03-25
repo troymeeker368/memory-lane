@@ -1,8 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import type { ComponentProps } from "react";
 
-type DailyActivityFormProps = Record<string, never>;
+import type { DailyActivityForm as DailyActivityFormComponent } from "@/components/forms/daily-activity-form";
+
+type DailyActivityFormProps = ComponentProps<typeof DailyActivityFormComponent>;
 
 const DailyActivityFormInner = dynamic<DailyActivityFormProps>(
   () => import("@/components/forms/daily-activity-form").then((module) => module.DailyActivityForm),

@@ -5,14 +5,15 @@ import { useMemo, useState, useTransition } from "react";
 
 import { runDocumentationCreateAction } from "@/app/documentation-create-actions";
 import { Button } from "@/components/ui/button";
-import { MemberSearchPicker } from "@/components/ui/member-search-picker";
-import type { SelectCategory } from "@/types/data";
+import type { SelectCategory, SelectMember } from "@/types/data";
 import { toEasternDate } from "@/lib/timezone";
 
 export function AncillaryChargeForm({
+  members,
   fixedMember,
   categories
 }: {
+  members?: SelectMember[];
   fixedMember?: { id: string; display_name: string } | null;
   categories: SelectCategory[];
 }) {
@@ -25,8 +26,9 @@ export function AncillaryChargeForm({
   const today = useMemo(() => toEasternDate(), []);
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
+  const availableMembers = fixedMember ? [fixedMember] : members ?? [];
   const [form, setForm] = useState({
-    memberId: fixedMember?.id ?? "",
+    memberId: fixedMember?.id ?? availableMembers[0]?.id ?? "",
     categoryId: categories[0]?.id ?? "",
     serviceDate: today,
     latePickupTime: "",
@@ -39,16 +41,20 @@ export function AncillaryChargeForm({
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-2">
-        {fixedMember ? (
-          <div className="space-y-2">
-            <label className="space-y-1 text-sm">
-              <span className="font-semibold">Member</span>
-              <input className="h-11 w-full rounded-lg border border-border bg-slate-50 px-3" value={fixedMember.display_name} readOnly />
-            </label>
-          </div>
-        ) : (
-          <MemberSearchPicker value={form.memberId} onChange={(memberId) => setForm((f) => ({ ...f, memberId }))} />
-        )}
+        <label className="space-y-1 text-sm">
+          <span className="font-semibold">Member</span>
+          <select
+            className="h-11 w-full rounded-lg border border-border bg-white px-3"
+            value={form.memberId}
+            onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}
+          >
+            {availableMembers.map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.display_name}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <label className="space-y-1 text-sm">
           <span className="font-semibold">Category</span>

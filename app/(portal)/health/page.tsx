@@ -318,7 +318,7 @@ export default async function HealthPage() {
       <Card>
         <CardTitle>Blood Sugar Testing Entry</CardTitle>
         <div className="mt-3">
-          <BloodSugarFormShell />
+          <BloodSugarFormShell members={dashboard.members} />
         </div>
       </Card>
 

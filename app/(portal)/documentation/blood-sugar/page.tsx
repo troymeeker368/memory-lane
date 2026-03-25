@@ -3,6 +3,7 @@ import { BloodSugarFormShell } from "@/components/forms/workflow-forms-shells";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
+import { getMembers } from "@/lib/services/documentation";
 import { getBloodSugarSnapshot } from "@/lib/services/health-workflows";
 import { formatDateTime } from "@/lib/utils";
 
@@ -12,14 +13,14 @@ type BloodSugarHistoryRow = Awaited<ReturnType<typeof getBloodSugarSnapshot>>["b
 export default async function BloodSugarPage() {
   const profile = await requireModuleAccess("health");
   const canEdit = profile.role === "admin" || profile.role === "manager";
-  const snapshot = await getBloodSugarSnapshot();
+  const [members, snapshot] = await Promise.all([getMembers(), getBloodSugarSnapshot()]);
 
   return (
     <div className="space-y-4">
       <Card>
         <CardTitle>Blood Sugar Testing</CardTitle>
         <p className="mt-1 text-sm text-muted">Nurse-focused entry workflow with member lookup and timestamped clinical logs.</p>
-        <div className="mt-3"><BloodSugarFormShell /></div>
+        <div className="mt-3"><BloodSugarFormShell members={members} /></div>
       </Card>
 
       <MobileList items={snapshot.bloodSugarHistory.map((row: BloodSugarHistoryRow) => ({ id: row.id, title: row.member_name, fields: [{ label: "Checked", value: formatDateTime(row.checked_at) }, { label: "Reading", value: row.reading_mg_dl }, { label: "Nurse", value: row.nurse_name }] }))} />

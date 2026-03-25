@@ -7,6 +7,7 @@ import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { getAncillarySummary } from "@/lib/services/ancillary";
+import { getMembers } from "@/lib/services/documentation";
 import { formatDate } from "@/lib/utils";
 
 type AncillarySummaryRow = Awaited<ReturnType<typeof getAncillarySummary>>["logs"][number];
@@ -16,7 +17,7 @@ export default async function AncillaryPage() {
   const normalizedRole = normalizeRoleKey(profile.role);
   const canManageEntries = normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director";
   const showStaffColumn = normalizedRole !== "program-assistant";
-  const summary = await getAncillarySummary(undefined, { role: profile.role, staffUserId: profile.id });
+  const [summary, members] = await Promise.all([getAncillarySummary(undefined, { role: profile.role, staffUserId: profile.id }), getMembers()]);
 
   const currentMonthRows = summary.logs.filter((row: AncillarySummaryRow) => {
     const d = new Date(row.service_date);
@@ -29,7 +30,7 @@ export default async function AncillaryPage() {
       <Card>
         <CardTitle>Ancillary Charge Entry</CardTitle>
         <div className="mt-3">
-          <AncillaryChargeForm categories={summary.categories} />
+          <AncillaryChargeForm members={members} categories={summary.categories} />
         </div>
       </Card>
 
