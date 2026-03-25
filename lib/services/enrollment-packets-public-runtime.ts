@@ -70,10 +70,13 @@ const PUBLIC_ENROLLMENT_PACKET_TOKEN_SUBMIT_ATTEMPT_LIMIT = 5;
 const PUBLIC_ENROLLMENT_PACKET_IP_SUBMIT_ATTEMPT_LIMIT = 10;
 
 async function loadEnrollmentPacketCompletionValidator() {
-  const { validateEnrollmentPacketCompletion } = await import(
+  const { validateEnrollmentPacketCompletion, validateEnrollmentPacketSubmission } = await import(
     "@/lib/services/enrollment-packet-public-validation"
   );
-  return validateEnrollmentPacketCompletion;
+  return {
+    validateEnrollmentPacketCompletion,
+    validateEnrollmentPacketSubmission
+  };
 }
 
 function toPublicContext(
@@ -595,13 +598,17 @@ export async function submitPublicEnrollmentPacket(input: {
     const fieldsForValidation = await loadPacketFields(request.id);
     if (!fieldsForValidation) throw new Error("Enrollment packet fields were not found.");
     const validationPayload = normalizeStoredIntakePayload(fieldsForValidation);
-    const validateEnrollmentPacketCompletion = await loadEnrollmentPacketCompletionValidator();
-    const completionValidation = validateEnrollmentPacketCompletion({
-      payload: validationPayload
+    const { validateEnrollmentPacketSubmission } = await loadEnrollmentPacketCompletionValidator();
+    const completionValidation = validateEnrollmentPacketSubmission({
+      payload: validationPayload,
+      caregiverTypedName,
+      hasSignature: true,
+      attested: input.attested
     });
     if (!completionValidation.isComplete) {
+      const issues = [...completionValidation.missingItems, ...completionValidation.signatureErrors];
       throw new Error(
-        `Complete all required packet fields before signing. Missing: ${completionValidation.missingItems.join(", ")}.`
+        `Complete all required packet fields before signing. Missing: ${issues.join(", ")}.`
       );
     }
 

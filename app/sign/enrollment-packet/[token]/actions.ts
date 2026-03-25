@@ -358,7 +358,8 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       status: submitted.status,
       mappingSyncStatus: submitted.mappingSyncStatus,
       operationalReadinessStatus: submitted.operationalReadinessStatus,
-      actionNeededMessage: submitted.actionNeededMessage
+      actionNeededMessage: submitted.actionNeededMessage,
+      redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`
     } as const;
   } catch (error) {
     return {

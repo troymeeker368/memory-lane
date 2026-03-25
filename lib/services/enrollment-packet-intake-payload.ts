@@ -1,4 +1,9 @@
 import { normalizePhoneForStorage } from "@/lib/phone";
+import {
+  getDefaultEnrollmentPacketRecreationInterests,
+  normalizeEnrollmentPacketRecreationInterests,
+  type EnrollmentPacketRecreationInterests
+} from "@/lib/services/enrollment-packet-recreation";
 
 export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "memberLegalFirstName",
@@ -152,18 +157,9 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "cardUsePrimaryContactAddress",
   "communityFee",
   "totalInitialEnrollmentAmount",
-  "membershipMemberSignatureName",
-  "membershipMemberSignatureDate",
-  "membershipMemberSignatureRole",
   "membershipGuarantorSignatureName",
   "membershipGuarantorSignatureDate",
-  "membershipGuarantorSignatureRole",
-  "exhibitAMemberSignatureName",
-  "exhibitAMemberSignatureDate",
-  "exhibitAMemberSignatureRole",
   "exhibitAGuarantorSignatureName",
-  "exhibitAGuarantorSignatureDate",
-  "exhibitAGuarantorSignatureRole",
   "guarantorSignatureName",
   "guarantorSignatureDate",
   "privacyAcknowledgmentSignatureName",
@@ -171,16 +167,8 @@ export const ENROLLMENT_PACKET_INTAKE_TEXT_KEYS = [
   "rightsAcknowledgmentSignatureName",
   "rightsAcknowledgmentSignatureDate",
   "photoConsentChoice",
-  "photoConsentAcknowledgmentName",
-  "photoConsentMemberName",
   "ancillaryChargesAcknowledgmentSignatureName",
   "ancillaryChargesAcknowledgmentSignatureDate",
-  "privacyPracticesAcknowledged",
-  "statementOfRightsAcknowledged",
-  "photoConsentAcknowledged",
-  "ancillaryChargesAcknowledged",
-  "welcomeChecklistAcknowledgedName",
-  "welcomeChecklistAcknowledgedDate",
   "diagnosisPlaceholders",
   "allergiesSummary",
   "additionalNotes"
@@ -190,7 +178,6 @@ export const ENROLLMENT_PACKET_INTAKE_ARRAY_KEYS = [
   "requestedAttendanceDays",
   "membershipRequestedWeekdays",
   "personalityPreferencePairs",
-  "recreationalInterests",
   "livingSituationOptions",
   "petTypes",
   "behavioralObservations",
@@ -198,17 +185,26 @@ export const ENROLLMENT_PACKET_INTAKE_ARRAY_KEYS = [
   "continenceSelections"
 ] as const;
 
+export const ENROLLMENT_PACKET_INTAKE_STRUCTURED_KEYS = ["recreationInterests"] as const;
+
 export type EnrollmentPacketIntakeTextKey = (typeof ENROLLMENT_PACKET_INTAKE_TEXT_KEYS)[number];
 export type EnrollmentPacketIntakeArrayKey = (typeof ENROLLMENT_PACKET_INTAKE_ARRAY_KEYS)[number];
-export type EnrollmentPacketIntakeFieldKey = EnrollmentPacketIntakeTextKey | EnrollmentPacketIntakeArrayKey;
+export type EnrollmentPacketIntakeStructuredKey =
+  (typeof ENROLLMENT_PACKET_INTAKE_STRUCTURED_KEYS)[number];
+export type EnrollmentPacketIntakeFieldKey =
+  | EnrollmentPacketIntakeTextKey
+  | EnrollmentPacketIntakeArrayKey
+  | EnrollmentPacketIntakeStructuredKey;
 
 export type EnrollmentPacketIntakePayload = {
   [K in EnrollmentPacketIntakeTextKey]: string | null;
 } & {
   [K in EnrollmentPacketIntakeArrayKey]: string[];
+} & {
+  recreationInterests: EnrollmentPacketRecreationInterests;
 };
 
-type RawPayload = Partial<Record<EnrollmentPacketIntakeFieldKey, unknown>>;
+type RawPayload = Record<string, unknown> | null | undefined;
 
 const ENROLLMENT_PACKET_PHONE_KEYS: EnrollmentPacketIntakeTextKey[] = [
   "primaryContactPhone",
@@ -279,7 +275,13 @@ function toYesNoLike(value: string | null | undefined) {
 export function getDefaultEnrollmentPacketIntakePayload(): EnrollmentPacketIntakePayload {
   const textEntries = ENROLLMENT_PACKET_INTAKE_TEXT_KEYS.map((key) => [key, null] as const);
   const arrayEntries = ENROLLMENT_PACKET_INTAKE_ARRAY_KEYS.map((key) => [key, [] as string[]] as const);
-  return Object.fromEntries([...textEntries, ...arrayEntries]) as EnrollmentPacketIntakePayload;
+  return {
+    ...(Object.fromEntries([...textEntries, ...arrayEntries]) as Omit<
+      EnrollmentPacketIntakePayload,
+      "recreationInterests"
+    >),
+    recreationInterests: getDefaultEnrollmentPacketRecreationInterests()
+  };
 }
 
 export function normalizeEnrollmentPacketIntakePayload(raw: RawPayload | null | undefined): EnrollmentPacketIntakePayload {
@@ -301,6 +303,10 @@ export function normalizeEnrollmentPacketIntakePayload(raw: RawPayload | null | 
     }
     normalized[key] = normalizeArray(source[key]);
   });
+
+  normalized.recreationInterests = normalizeEnrollmentPacketRecreationInterests(
+    source.recreationInterests ?? source.recreationalInterests
+  );
 
   if (!normalized.memberSsnLast4) {
     normalized.memberSsnLast4 = deriveLast4(normalized.memberSsn);

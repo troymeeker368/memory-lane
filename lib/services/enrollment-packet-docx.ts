@@ -6,6 +6,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 import { formatPhoneDisplay } from "@/lib/phone";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
+import { buildEnrollmentPacketLegalText } from "@/lib/services/enrollment-packet-legal-text";
 import {
   ENROLLMENT_PACKET_INTAKE_ARRAY_KEYS,
   ENROLLMENT_PACKET_INTAKE_TEXT_KEYS,
@@ -15,6 +16,7 @@ import {
   ENROLLMENT_PACKET_SECTIONS,
   formatEnrollmentPacketValue
 } from "@/lib/services/enrollment-packet-public-schema";
+import { formatEnrollmentPacketRecreationInterests } from "@/lib/services/enrollment-packet-recreation";
 
 type CompletedEnrollmentPacketDocxInput = {
   memberName: string;
@@ -141,6 +143,20 @@ export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnr
     y -= Math.max(14, lines.length * 12 + 2);
   };
 
+  const drawParagraph = (text: string) => {
+    const lines = wrapText(text, 105);
+    let currentY = y;
+    lines.forEach((line) => {
+      if (currentY < 70) {
+        page = pdf.addPage([612, 792]);
+        currentY = 756;
+      }
+      page.drawText(line, { x: 36, y: currentY, size: 9, font: regular, color: rgb(0.1, 0.1, 0.1) });
+      currentY -= 12;
+    });
+    y = currentY - 4;
+  };
+
   drawTitle("Town Square Fort Mill Enrollment Packet");
   drawRow("Member", clean(input.memberName));
   drawRow("Packet ID", clean(input.packetId));
@@ -162,6 +178,10 @@ export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnr
   drawRow("Secondary Contact Relationship", clean(input.secondaryContactRelationship));
   drawRow("Secondary Contact Phone", clean(formatPhoneDisplay(input.secondaryContactPhone)));
   drawRow("Secondary Contact Email", clean(input.secondaryContactEmail));
+  drawRow(
+    "Recreation Interests",
+    formatEnrollmentPacketRecreationInterests(input.intakePayload.recreationInterests)
+  );
 
   drawTitle("Enrollment Form Data Record");
   drawRow("Record Scope", "All captured enrollment form fields at time of caregiver submission.");
@@ -185,6 +205,21 @@ export async function buildCompletedEnrollmentPacketDocxData(input: CompletedEnr
       drawRow(toTitleCaseFromKey(key), displayPacketFieldValue(input.intakePayload, key));
     });
   }
+
+  const legalText = buildEnrollmentPacketLegalText({
+    caregiverName: input.intakePayload.membershipGuarantorSignatureName ?? input.caregiverSignatureName
+  });
+  [
+    { title: "Membership Agreement", paragraphs: legalText.membershipAgreement },
+    { title: "Exhibit A - Payment Authorization", paragraphs: legalText.exhibitAPaymentAuthorization },
+    { title: "Notice of Privacy Practices", paragraphs: legalText.privacyPractices },
+    { title: "Statement of Rights", paragraphs: legalText.statementOfRights },
+    { title: "Photo Consent", paragraphs: legalText.photoConsent },
+    { title: "Ancillary Charges Notice", paragraphs: legalText.ancillaryCharges }
+  ].forEach((section) => {
+    drawTitle(section.title);
+    section.paragraphs.forEach((paragraph) => drawParagraph(paragraph));
+  });
 
   drawTitle("Signatures");
   drawRow("Sender Signature Applied", clean(input.senderSignatureName));

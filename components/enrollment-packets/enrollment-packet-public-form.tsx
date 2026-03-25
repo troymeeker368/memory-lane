@@ -9,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode
 } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   savePublicEnrollmentPacketProgressAction,
@@ -27,13 +28,18 @@ import {
   ENROLLMENT_PACKET_BEHAVIORAL_OPTIONS,
   ENROLLMENT_PACKET_CONTINENCE_OPTIONS,
   ENROLLMENT_PACKET_LIVING_SITUATION_OPTIONS,
-  ENROLLMENT_PACKET_RECREATIONAL_INTEREST_OPTIONS,
   ENROLLMENT_PACKET_VETERAN_BRANCH_OPTIONS
 } from "@/lib/services/enrollment-packet-public-options";
 import { ENROLLMENT_PACKET_UPLOAD_FIELDS } from "@/lib/services/enrollment-packet-public-uploads";
 import {
-  validateEnrollmentPacketCompletion
+  validateEnrollmentPacketCompletion,
+  validateEnrollmentPacketSubmission
 } from "@/lib/services/enrollment-packet-public-validation";
+import {
+  ENROLLMENT_PACKET_RECREATION_CATEGORIES,
+  ENROLLMENT_PACKET_RECREATION_OPTIONS,
+  type EnrollmentPacketRecreationCategory
+} from "@/lib/services/enrollment-packet-recreation";
 import {
   normalizeEnrollmentPacketIntakePayload,
   type EnrollmentPacketIntakeArrayKey,
@@ -66,58 +72,6 @@ type PublicEnrollmentPacketFields = {
 type UploadKey = (typeof ENROLLMENT_PACKET_UPLOAD_FIELDS)[number]["key"];
 type UploadState = Record<UploadKey, File[]>;
 
-type EnrollmentPacketSubmitResult = {
-  packetId: string;
-  status: "filed";
-  mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
-  operationalReadinessStatus: "not_filed" | "filed_pending_mapping" | "mapping_failed" | "operationally_ready";
-  actionNeededMessage: string | null;
-};
-
-function mappingSyncLabel(value: EnrollmentPacketSubmitResult["mappingSyncStatus"]) {
-  if (value === "completed") return "Completed";
-  if (value === "failed") return "Needs follow-up";
-  if (value === "not_started") return "Not started";
-  return "Pending";
-}
-
-function getSubmitResultPresentation(result: EnrollmentPacketSubmitResult | null) {
-  if (!result || result.operationalReadinessStatus === "operationally_ready") {
-    return {
-      panelClassName: "border border-emerald-300 bg-emerald-50",
-      headingClassName: "text-emerald-900",
-      bodyClassName: "text-emerald-800",
-      metaClassName: "text-emerald-700",
-      heading: "Enrollment Packet Submitted",
-      message: result?.actionNeededMessage ?? "Thank you for completing the enrollment packet. Your information was submitted successfully."
-    } as const;
-  }
-
-  if (result.operationalReadinessStatus === "mapping_failed") {
-    return {
-      panelClassName: "border border-rose-300 bg-rose-50",
-      headingClassName: "text-rose-900",
-      bodyClassName: "text-rose-800",
-      metaClassName: "text-rose-700",
-      heading: "Enrollment Packet Filed, Staff Follow-up Required",
-      message:
-        result.actionNeededMessage ??
-        "Enrollment packet was filed, but downstream setup still needs staff follow-up before the member is operationally ready."
-    } as const;
-  }
-
-  return {
-    panelClassName: "border border-amber-300 bg-amber-50",
-    headingClassName: "text-amber-900",
-    bodyClassName: "text-amber-800",
-    metaClassName: "text-amber-700",
-    heading: "Enrollment Packet Filed, Setup Still Pending",
-    message:
-      result.actionNeededMessage ??
-      "Enrollment packet was filed, but downstream setup is still pending. Staff should wait for mapping completion before treating the member as operationally ready."
-  } as const;
-}
-
 const ADL_FIELD_LABELS: Record<string, string> = {
   adlMobilityLevel: "Ambulation",
   adlTransferLevel: "Transfers",
@@ -148,10 +102,6 @@ function todayDateString() {
 }
 
 function toInitialPayload(fields: PublicEnrollmentPacketFields): EnrollmentPacketIntakePayload {
-  const memberName = [fields.intakePayload.memberLegalFirstName, fields.intakePayload.memberLegalLastName]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
   const defaultResponsiblePartyName =
     fields.intakePayload.membershipGuarantorSignatureName ??
     fields.intakePayload.primaryContactName ??
@@ -187,8 +137,9 @@ function toInitialPayload(fields: PublicEnrollmentPacketFields): EnrollmentPacke
     membershipDailyAmount:
       fields.intakePayload.membershipDailyAmount ?? (fields.dailyRate > 0 ? fields.dailyRate.toFixed(2) : null),
     communityFee: fields.intakePayload.communityFee ?? (fields.communityFee > 0 ? fields.communityFee.toFixed(2) : null),
-    membershipMemberSignatureName: fields.intakePayload.membershipMemberSignatureName ?? (memberName || null),
     membershipGuarantorSignatureName: defaultResponsiblePartyName ?? null,
+    membershipGuarantorSignatureDate:
+      fields.intakePayload.membershipGuarantorSignatureDate ?? todayDateString(),
     exhibitAGuarantorSignatureName:
       fields.intakePayload.exhibitAGuarantorSignatureName ?? defaultResponsiblePartyName ?? null,
     additionalNotes: fields.intakePayload.additionalNotes ?? fields.notes
@@ -198,10 +149,9 @@ function toInitialPayload(fields: PublicEnrollmentPacketFields): EnrollmentPacke
 function applySignatureDefaults(payload: EnrollmentPacketIntakePayload, typedName: string) {
   const signatureDate = todayDateString();
   const normalizedName = typedName.trim();
-  const memberName = [payload.memberLegalFirstName, payload.memberLegalLastName].filter(Boolean).join(" ").trim();
   if (!normalizedName) return payload;
 
-  const patch: Partial<Record<EnrollmentPacketIntakeFieldKey, string | string[] | null>> = {
+  const patch: Partial<Record<EnrollmentPacketIntakeFieldKey, unknown>> = {
     guarantorSignatureName: payload.guarantorSignatureName ?? normalizedName,
     guarantorSignatureDate: payload.guarantorSignatureDate ?? signatureDate,
     privacyAcknowledgmentSignatureName: payload.privacyAcknowledgmentSignatureName ?? normalizedName,
@@ -212,10 +162,7 @@ function applySignatureDefaults(payload: EnrollmentPacketIntakePayload, typedNam
       payload.ancillaryChargesAcknowledgmentSignatureName ?? normalizedName,
     ancillaryChargesAcknowledgmentSignatureDate:
       payload.ancillaryChargesAcknowledgmentSignatureDate ?? signatureDate,
-    photoConsentAcknowledgmentName: payload.photoConsentAcknowledgmentName ?? normalizedName,
-    membershipMemberSignatureName: payload.membershipMemberSignatureName ?? memberName,
     membershipGuarantorSignatureName: payload.membershipGuarantorSignatureName ?? normalizedName,
-    membershipMemberSignatureDate: payload.membershipMemberSignatureDate ?? signatureDate,
     exhibitAGuarantorSignatureName: payload.exhibitAGuarantorSignatureName ?? normalizedName,
     membershipGuarantorSignatureDate: payload.membershipGuarantorSignatureDate ?? signatureDate
   };
@@ -293,15 +240,11 @@ const MISSING_ITEM_FIELD_KEY: Record<string, EnrollmentPacketIntakeFieldKey> = {
   "Card billing city/town": "cardBillingCity",
   "Card billing state": "cardBillingState",
   "Card billing ZIP code": "cardBillingZip",
-  "Membership member signature name": "membershipMemberSignatureName",
-  "Membership member signature date": "membershipMemberSignatureDate",
   "Membership responsible party / guarantor signature name": "membershipGuarantorSignatureName",
+  "Membership responsible party / guarantor signature date": "membershipGuarantorSignatureDate",
   "Exhibit A responsible party / guarantor acknowledgement name": "exhibitAGuarantorSignatureName",
-  "Privacy Practices acknowledgement": "privacyPracticesAcknowledged",
-  "Statement of Rights acknowledgement": "statementOfRightsAcknowledged",
-  "Photo Consent acknowledgement": "photoConsentAcknowledged",
-  "Ancillary Charges acknowledgement": "ancillaryChargesAcknowledged",
-  "Photo consent selection": "photoConsentChoice"
+  "Photo consent selection": "photoConsentChoice",
+  "Recreation interests": "recreationInterests"
 };
 
 export function EnrollmentPacketPublicForm({
@@ -311,11 +254,10 @@ export function EnrollmentPacketPublicForm({
   token: string;
   fields: PublicEnrollmentPacketFields;
 }) {
+  const router = useRouter();
   const [payload, setPayload] = useState<EnrollmentPacketIntakePayload>(() => toInitialPayload(fields));
   const [status, setStatus] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const [isSubmitted, setIsSubmitted] = useState(false);
-  const [submitResult, setSubmitResult] = useState<EnrollmentPacketSubmitResult | null>(null);
   const [attested, setAttested] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
   const [caregiverTypedName, setCaregiverTypedName] = useState(payload.primaryContactName ?? "");
@@ -364,8 +306,8 @@ export function EnrollmentPacketPublicForm({
     const memberInfoDone = !hasAny([/^Member /]);
     const contactsDone = !hasAny([/^Primary contact /, /^Secondary contact /]);
     const medicalDone = !hasAny([/^PCP /, /^Pharmacy /, /^Branch of service$/, /^Tricare number$/, /^Medication names$/, /^Oxygen flow rate$/, /^History of falls$/, /^Falls within last 3 months$/]);
-    const functionalDone = !hasAny([/^Dentures selection/, /^Pet names$/]);
-    const legalDone = !hasAny([/acknowledgement/i, /Photo consent selection/, /Payment method selection/, /Card /, /Routing number/, /Account number/, /Bank name/, /Membership /, /^Exhibit A /]);
+    const functionalDone = !hasAny([/^Dentures selection/, /^Pet names$/, /^Recreation interests$/]);
+    const legalDone = !hasAny([/Photo consent selection/, /Payment method selection/, /Card /, /Routing number/, /Account number/, /Bank name/, /Membership /, /^Exhibit A /]);
     const signatureDone = completion.isComplete && caregiverTypedName.trim().length > 0 && hasSignature && attested;
     return [
       { id: "member", label: "Member Information", complete: memberInfoDone },
@@ -473,10 +415,6 @@ export function EnrollmentPacketPublicForm({
     setPayload((current) => normalizeEnrollmentPacketIntakePayload({ ...current, [key]: value }));
   };
 
-  const setAck = (key: EnrollmentPacketIntakeTextKey, checked: boolean) => {
-    setText(key, checked ? "Acknowledged" : "");
-  };
-
   const setExpandedLegalSection = (section: "privacy" | "rights" | "photo" | "ancillary", open: boolean) => {
     setExpandedLegalSections((current) => ({ ...current, [section]: open }));
   };
@@ -488,6 +426,26 @@ export function EnrollmentPacketPublicForm({
       else selected.delete(option);
       return normalizeEnrollmentPacketIntakePayload({ ...current, [key]: Array.from(selected) });
     });
+  };
+
+  const toggleRecreationInterest = (
+    category: EnrollmentPacketRecreationCategory,
+    option: string,
+    checked: boolean
+  ) => {
+    setPayload((current) => {
+      const nextCategorySelections = new Set(current.recreationInterests[category]);
+      if (checked) nextCategorySelections.add(option);
+      else nextCategorySelections.delete(option);
+      return normalizeEnrollmentPacketIntakePayload({
+        ...current,
+        recreationInterests: {
+          ...current.recreationInterests,
+          [category]: Array.from(nextCategorySelections)
+        }
+      });
+    });
+    markTouched("recreationInterests");
   };
 
   const appendCommonFields = (formData: FormData, sourcePayload: EnrollmentPacketIntakePayload) => {
@@ -528,21 +486,19 @@ export function EnrollmentPacketPublicForm({
     const canvas = canvasRef.current;
     if (!canvas) return;
     setSubmitAttempted(true);
-    if (!completion.isComplete) {
-      setStatus(`Complete required fields before signing: ${completion.missingItems.join(", ")}.`);
+    const submissionValidation = validateEnrollmentPacketSubmission({
+      payload,
+      caregiverTypedName,
+      hasSignature,
+      attested
+    });
+    if (submissionValidation.missingItems.length > 0) {
+      setStatus(`Complete required fields before signing: ${submissionValidation.missingItems.join(", ")}.`);
       scrollToFirstMissingField();
       return;
     }
-    if (!caregiverTypedName.trim()) {
-      setStatus("Typed caregiver signature name is required.");
-      return;
-    }
-    if (!hasSignature) {
-      setStatus("Please draw your signature before submitting.");
-      return;
-    }
-    if (!attested) {
-      setStatus("Please confirm signature attestation before submitting.");
+    if (submissionValidation.signatureErrors.length > 0) {
+      setStatus(submissionValidation.signatureErrors[0] ?? "Caregiver signature is required.");
       return;
     }
 
@@ -568,15 +524,7 @@ export function EnrollmentPacketPublicForm({
       }
 
       setPayload(payloadToSubmit);
-      setSubmitResult({
-        packetId: result.packetId,
-        status: result.status,
-        mappingSyncStatus: result.mappingSyncStatus,
-        operationalReadinessStatus: result.operationalReadinessStatus,
-        actionNeededMessage: result.actionNeededMessage
-      });
-      setIsSubmitted(true);
-      setStatus(getSubmitResultPresentation(result).message);
+      router.push(result.redirectUrl);
     });
   };
 
@@ -585,7 +533,6 @@ export function EnrollmentPacketPublicForm({
       shouldAutoSaveRef.current = true;
       return;
     }
-    if (isSubmitted) return;
     if (autosaveTimeoutRef.current) clearTimeout(autosaveTimeoutRef.current);
     setAutosaveStatus("saving");
     autosaveTimeoutRef.current = setTimeout(() => {
@@ -595,7 +542,7 @@ export function EnrollmentPacketPublicForm({
     return () => {
       if (autosaveTimeoutRef.current) clearTimeout(autosaveTimeoutRef.current);
     };
-  }, [isSubmitted, payload]);
+  }, [payload]);
 
   const getCanvasPoint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -648,21 +595,6 @@ export function EnrollmentPacketPublicForm({
     context.fillRect(0, 0, canvas.width, canvas.height);
     setHasSignature(false);
   };
-
-  if (isSubmitted) {
-    const submitPresentation = getSubmitResultPresentation(submitResult);
-    return (
-      <div className={`space-y-3 rounded-lg p-4 ${submitPresentation.panelClassName}`}>
-        <h3 className={`text-base font-semibold ${submitPresentation.headingClassName}`}>{submitPresentation.heading}</h3>
-        <p className={`text-sm ${submitPresentation.bodyClassName}`}>{submitPresentation.message}</p>
-        {submitResult ? (
-          <p className={`text-xs ${submitPresentation.metaClassName}`}>
-            Mapping sync: {mappingSyncLabel(submitResult.mappingSyncStatus)}
-          </p>
-        ) : null}
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-5">
@@ -822,14 +754,38 @@ export function EnrollmentPacketPublicForm({
         <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Memory stage</span><select className="h-11 w-full rounded-lg border border-border px-3" value={textValue(payload, "memoryStage")} onChange={(event) => setText("memoryStage", event.target.value)} disabled={isPending}><option value="">Select</option><option>No Cognitive Impairment</option><option>Mild</option><option>Moderate</option><option>Severe</option></select></label>
       </Section>
       <Section title="8. Recreation Interests">
-        <div className="grid gap-2 rounded-lg border border-border bg-slate-50 p-3 sm:grid-cols-2">
-          {ENROLLMENT_PACKET_RECREATIONAL_INTEREST_OPTIONS.map((option) => (
-            <label key={option} className="inline-flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={arrayValue(payload, "recreationalInterests").includes(option)} onChange={(event) => toggleArray("recreationalInterests", option, event.target.checked)} disabled={isPending} />
-              <span>{option}</span>
-            </label>
+        <div
+          id="field-recreationInterests"
+          className={`space-y-3 rounded-lg border p-3 ${
+            fieldError("recreationInterests", "Recreation interests")
+              ? "border-red-500 bg-red-50"
+              : "border-border bg-slate-50"
+          }`}
+        >
+          {ENROLLMENT_PACKET_RECREATION_CATEGORIES.map((category) => (
+            <div key={category} className="space-y-2 rounded-lg border border-border bg-white p-3">
+              <p className="text-sm font-semibold">{category}</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {ENROLLMENT_PACKET_RECREATION_OPTIONS[category].map((option) => (
+                  <label key={option} className="inline-flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={payload.recreationInterests[category].includes(option)}
+                      onChange={(event) =>
+                        toggleRecreationInterest(category, option, event.target.checked)
+                      }
+                      disabled={isPending}
+                    />
+                    <span>{option}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
+        {fieldError("recreationInterests", "Recreation interests") ? (
+          <p className="text-xs text-red-600">{fieldError("recreationInterests", "Recreation interests")}</p>
+        ) : null}
       </Section>
 
       <Section title="9. Veteran Status">
@@ -875,10 +831,8 @@ export function EnrollmentPacketPublicForm({
         expandedLegalSections={expandedLegalSections}
         setExpandedLegalSection={setExpandedLegalSection}
         setText={setText}
-        setAck={setAck}
         markTouched={markTouched}
         fieldError={fieldError}
-        controlClassName={controlClassName}
         scrollToFirstMissingField={scrollToFirstMissingField}
         canvasRef={canvasRef}
         onPointerDown={onPointerDown}

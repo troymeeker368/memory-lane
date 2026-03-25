@@ -12,10 +12,13 @@ import {
   ENROLLMENT_PACKET_LIVING_SITUATION_OPTIONS,
   ENROLLMENT_PACKET_MEMORY_STAGE_OPTIONS,
   ENROLLMENT_PACKET_PET_OPTIONS,
-  ENROLLMENT_PACKET_RECREATIONAL_INTEREST_OPTIONS,
+  ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS,
   ENROLLMENT_PACKET_VETERAN_BRANCH_OPTIONS,
   YES_NO_OPTIONS
 } from "@/lib/services/enrollment-packet-public-options";
+import {
+  ENROLLMENT_PACKET_RECREATION_CATEGORIES
+} from "@/lib/services/enrollment-packet-recreation";
 import type { EnrollmentPacketSectionDefinition } from "@/lib/services/enrollment-packet-public-types";
 
 export const ENROLLMENT_PACKET_SECTIONS: EnrollmentPacketSectionDefinition[] = [
@@ -135,7 +138,15 @@ export const ENROLLMENT_PACKET_SECTIONS: EnrollmentPacketSectionDefinition[] = [
     description: "Interests used to personalize member programming.",
     sourceDocuments: ["Face Sheet and Biography"],
     fields: [
-      { key: "recreationalInterests", label: "Recreation interests", type: "checkbox-group", sourceDocument: "Face Sheet and Biography", options: ENROLLMENT_PACKET_RECREATIONAL_INTEREST_OPTIONS, columns: 2 }
+      {
+        key: "recreationInterests",
+        label: "Recreation interests",
+        type: "categorized-checkbox-group",
+        sourceDocument: "Face Sheet and Biography",
+        options: [...ENROLLMENT_PACKET_RECREATION_CATEGORIES],
+        required: true,
+        columns: 2
+      }
     ]
   },
   {
@@ -173,9 +184,8 @@ export const ENROLLMENT_PACKET_SECTIONS: EnrollmentPacketSectionDefinition[] = [
       { key: "membershipDailyAmount", label: "Daily amount", type: "number", sourceDocument: "Membership Agreement", staffPrepared: true },
       { key: "communityFee", label: "Community fee", type: "number", sourceDocument: "Membership Agreement", staffPrepared: true },
       { key: "totalInitialEnrollmentAmount", label: "Total initial enrollment amount", type: "number", sourceDocument: "Membership Agreement", required: true, staffPrepared: true },
-      { key: "membershipMemberSignatureName", label: "Member signature name", type: "text", sourceDocument: "Membership Agreement", required: true },
-      { key: "membershipMemberSignatureDate", label: "Member signature date", type: "date", sourceDocument: "Membership Agreement", required: true },
-      { key: "membershipGuarantorSignatureName", label: "Responsible Party / Guarantor signature name", type: "text", sourceDocument: "Membership Agreement", required: true }
+      { key: "membershipGuarantorSignatureName", label: "Responsible Party / Guarantor signature name", type: "text", sourceDocument: "Membership Agreement", required: true },
+      { key: "membershipGuarantorSignatureDate", label: "Responsible Party / Guarantor signature date", type: "date", sourceDocument: "Membership Agreement", required: true }
     ]
   },
   {
@@ -204,14 +214,14 @@ export const ENROLLMENT_PACKET_SECTIONS: EnrollmentPacketSectionDefinition[] = [
     title: "Privacy Practices Acknowledgement",
     description: "Notice of privacy practices acknowledgement.",
     sourceDocuments: ["Notice of Privacy Practices"],
-    fields: [{ key: "privacyPracticesAcknowledged", label: "I acknowledge the Notice of Privacy Practices", type: "radio", sourceDocument: "Notice of Privacy Practices", options: ["Acknowledged"] }]
+    fields: []
   },
   {
     id: "statement-of-rights",
     title: "Statement of Rights",
     description: "Participant rights acknowledgement.",
     sourceDocuments: ["Statement of Rights of Adult Day Care Participants"],
-    fields: [{ key: "statementOfRightsAcknowledged", label: "I acknowledge the Statement of Rights", type: "radio", sourceDocument: "Statement of Rights of Adult Day Care Participants", options: ["Acknowledged"] }]
+    fields: []
   },
   {
     id: "photo-consent",
@@ -219,8 +229,7 @@ export const ENROLLMENT_PACKET_SECTIONS: EnrollmentPacketSectionDefinition[] = [
     description: "Photo, voice, and likeness consent.",
     sourceDocuments: ["Photo Consent"],
     fields: [
-      { key: "photoConsentChoice", label: "Photo consent", type: "radio", sourceDocument: "Photo Consent", options: ["I do permit", "I do not permit"], required: true },
-      { key: "photoConsentAcknowledged", label: "I acknowledge the photo consent terms", type: "radio", sourceDocument: "Photo Consent", options: ["Acknowledged"] }
+      { key: "photoConsentChoice", label: "Photo consent", type: "radio", sourceDocument: "Photo Consent", options: [...ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS], required: true }
     ]
   },
   {
@@ -228,7 +237,7 @@ export const ENROLLMENT_PACKET_SECTIONS: EnrollmentPacketSectionDefinition[] = [
     title: "Ancillary Charges Notice",
     description: "Acknowledgement of ancillary charge policy.",
     sourceDocuments: ["Ancillary Charges Notice"],
-    fields: [{ key: "ancillaryChargesAcknowledged", label: "I acknowledge the ancillary charges notice", type: "radio", sourceDocument: "Ancillary Charges Notice", options: ["Acknowledged"] }]
+    fields: []
   },
   {
     id: "final-review",

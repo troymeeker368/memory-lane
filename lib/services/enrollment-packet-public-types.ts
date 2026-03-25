@@ -19,7 +19,8 @@ export type EnrollmentPacketFieldType =
   | "textarea"
   | "select"
   | "radio"
-  | "checkbox-group";
+  | "checkbox-group"
+  | "categorized-checkbox-group";
 
 export type EnrollmentPacketFieldDefinition = {
   key: EnrollmentPacketIntakeFieldKey;

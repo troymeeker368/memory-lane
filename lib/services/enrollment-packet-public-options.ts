@@ -1,4 +1,5 @@
 export const YES_NO_OPTIONS = ["Yes", "No"];
+export const ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS = ["Do Permit", "Do Not Permit"] as const;
 
 export const ENROLLMENT_PACKET_LIVING_SITUATION_OPTIONS = [
   "Independent",
@@ -85,44 +86,3 @@ export const ENROLLMENT_PACKET_VETERAN_BRANCH_OPTIONS = [
 ];
 
 export const ENROLLMENT_PACKET_PET_OPTIONS = ["Dogs", "Cats", "Other"];
-
-export const ENROLLMENT_PACKET_RECREATIONAL_INTEREST_OPTIONS = [
-  "Social - Current Events",
-  "Social - Pictionary",
-  "Social - Charades",
-  "Social - Name That Tune",
-  "Social - Group Discussions",
-  "Social - Board Games",
-  "Social - Card Games",
-  "Social - Chess / Checkers",
-  "Cognitive - Trivia",
-  "Cognitive - Spelling Bee",
-  "Cognitive - Jeopardy",
-  "Cognitive - Word Games",
-  "Cognitive - Crosswords",
-  "Cognitive - Sudoku",
-  "Cognitive - Jigsaw Puzzles",
-  "Physical - Yoga / Tai Chi",
-  "Physical - Playing Pool",
-  "Physical - Fitness / Exercise",
-  "Physical - Dancing",
-  "Physical - Walking Club",
-  "Physical - Volleyball",
-  "Physical - Cornhole",
-  "Physical - Mini Golf",
-  "Physical - Bowling",
-  "Physical - Frisbee Toss",
-  "Expressive - Painting",
-  "Expressive - Drawing",
-  "Expressive - Arts & Crafts",
-  "Expressive - Poetry",
-  "Expressive - Sewing / Knitting",
-  "Expressive - Woodworking",
-  "Expressive - Drama Club",
-  "Expressive - Photography",
-  "Expressive - Baking / Cooking",
-  "Expressive - Singing",
-  "Expressive - Gardening",
-  "Expressive - Meditation",
-  "Expressive - Flower Arranging"
-];

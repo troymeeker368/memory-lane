@@ -2,7 +2,8 @@
 
 import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 
-import { ENROLLMENT_PACKET_LEGAL_TEXT } from "@/lib/services/enrollment-packet-legal-text";
+import { buildEnrollmentPacketLegalText } from "@/lib/services/enrollment-packet-legal-text";
+import { ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS } from "@/lib/services/enrollment-packet-public-options";
 import { formatEnrollmentPacketValue } from "@/lib/services/enrollment-packet-public-validation";
 import type {
   EnrollmentPacketIntakeFieldKey,
@@ -39,10 +40,8 @@ type EnrollmentPacketPublicFormLegalProps = {
   expandedLegalSections: Record<"privacy" | "rights" | "photo" | "ancillary", boolean>;
   setExpandedLegalSection: (section: "privacy" | "rights" | "photo" | "ancillary", open: boolean) => void;
   setText: (key: EnrollmentPacketIntakeTextKey, value: string) => void;
-  setAck: (key: EnrollmentPacketIntakeTextKey, checked: boolean) => void;
   markTouched: (key: EnrollmentPacketIntakeFieldKey) => void;
   fieldError: (key: EnrollmentPacketIntakeFieldKey, fallbackLabel: string) => string | null;
-  controlClassName: (key: EnrollmentPacketIntakeFieldKey, fallbackLabel: string) => string;
   scrollToFirstMissingField: () => void;
   canvasRef: RefObject<HTMLCanvasElement | null>;
   onPointerDown: (event: ReactPointerEvent<HTMLCanvasElement>) => void;
@@ -64,10 +63,8 @@ export function EnrollmentPacketPublicFormLegal({
   expandedLegalSections,
   setExpandedLegalSection,
   setText,
-  setAck,
   markTouched,
   fieldError,
-  controlClassName,
   scrollToFirstMissingField,
   canvasRef,
   onPointerDown,
@@ -75,6 +72,10 @@ export function EnrollmentPacketPublicFormLegal({
   onPointerUp,
   clearSignature
 }: EnrollmentPacketPublicFormLegalProps) {
+  const legalText = buildEnrollmentPacketLegalText({
+    caregiverName: payload.membershipGuarantorSignatureName ?? payload.primaryContactName
+  });
+
   return (
     <>
       <Section title="14. Privacy Practices Acknowledgement">
@@ -85,14 +86,9 @@ export function EnrollmentPacketPublicFormLegal({
         >
           <summary className="cursor-pointer font-semibold">Expand to read full notice</summary>
           <div className="mt-2 space-y-2">
-            {ENROLLMENT_PACKET_LEGAL_TEXT.privacyPractices.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+            {legalText.privacyPractices.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
           </div>
         </details>
-        <label className="flex items-start gap-2 text-sm">
-          <input id="field-privacyPracticesAcknowledged" type="checkbox" checked={textValue(payload, "privacyPracticesAcknowledged") === "Acknowledged"} onChange={(event) => { setAck("privacyPracticesAcknowledged", event.target.checked); markTouched("privacyPracticesAcknowledged"); }} disabled={isPending} />
-          <span>I acknowledge that I have read and received the Privacy Practices notice. <span className="text-red-600">*</span></span>
-        </label>
-        {fieldError("privacyPracticesAcknowledged", "Privacy Practices acknowledgement") ? <p className="text-xs text-red-600">{fieldError("privacyPracticesAcknowledged", "Privacy Practices acknowledgement")}</p> : null}
       </Section>
 
       <Section title="15. Statement of Rights">
@@ -103,14 +99,9 @@ export function EnrollmentPacketPublicFormLegal({
         >
           <summary className="cursor-pointer font-semibold">Expand to read full notice</summary>
           <div className="mt-2 space-y-2">
-            {ENROLLMENT_PACKET_LEGAL_TEXT.statementOfRights.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+            {legalText.statementOfRights.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
           </div>
         </details>
-        <label className="flex items-start gap-2 text-sm">
-          <input id="field-statementOfRightsAcknowledged" type="checkbox" checked={textValue(payload, "statementOfRightsAcknowledged") === "Acknowledged"} onChange={(event) => { setAck("statementOfRightsAcknowledged", event.target.checked); markTouched("statementOfRightsAcknowledged"); }} disabled={isPending} />
-          <span>I acknowledge that I have read and received the Statement of Rights notice. <span className="text-red-600">*</span></span>
-        </label>
-        {fieldError("statementOfRightsAcknowledged", "Statement of Rights acknowledgement") ? <p className="text-xs text-red-600">{fieldError("statementOfRightsAcknowledged", "Statement of Rights acknowledgement")}</p> : null}
       </Section>
 
       <Section title="16. Photo Consent">
@@ -121,12 +112,31 @@ export function EnrollmentPacketPublicFormLegal({
         >
           <summary className="cursor-pointer font-semibold">Expand to read full notice</summary>
           <div className="mt-2 space-y-2">
-            {ENROLLMENT_PACKET_LEGAL_TEXT.photoConsent.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+            {legalText.photoConsent.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
           </div>
         </details>
-        <label className="space-y-1 text-sm"><span className="text-xs font-semibold text-muted">Photo consent <span className="text-red-600">*</span></span><select id="field-photoConsentChoice" className={controlClassName("photoConsentChoice", "Photo consent")} value={textValue(payload, "photoConsentChoice")} onChange={(event) => setText("photoConsentChoice", event.target.value)} onBlur={() => markTouched("photoConsentChoice")} disabled={isPending}><option value="">Select</option><option>I do permit</option><option>I do not permit</option></select>{fieldError("photoConsentChoice", "Photo consent") ? <p className="text-xs text-red-600">{fieldError("photoConsentChoice", "Photo consent")}</p> : null}</label>
-        <label className="flex items-start gap-2 text-sm"><input id="field-photoConsentAcknowledged" type="checkbox" checked={textValue(payload, "photoConsentAcknowledged") === "Acknowledged"} onChange={(event) => { setAck("photoConsentAcknowledged", event.target.checked); markTouched("photoConsentAcknowledged"); }} disabled={isPending} /><span>I acknowledge that I have read and received the Photo Consent notice. <span className="text-red-600">*</span></span></label>
-        {fieldError("photoConsentAcknowledged", "Photo consent acknowledgement") ? <p className="text-xs text-red-600">{fieldError("photoConsentAcknowledged", "Photo consent acknowledgement")}</p> : null}
+        <fieldset id="field-photoConsentChoice" className="space-y-2">
+          <legend className="text-xs font-semibold text-muted">Photo consent <span className="text-red-600">*</span></legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS.map((option) => (
+              <label key={option} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${textValue(payload, "photoConsentChoice") === option ? "border-brand bg-brand/5" : "border-border"}`}>
+                <input
+                  type="radio"
+                  name="photoConsentChoice"
+                  value={option}
+                  checked={textValue(payload, "photoConsentChoice") === option}
+                  onChange={(event) => {
+                    setText("photoConsentChoice", event.target.value);
+                    markTouched("photoConsentChoice");
+                  }}
+                  disabled={isPending}
+                />
+                <span>{option}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {fieldError("photoConsentChoice", "Photo consent") ? <p className="text-xs text-red-600">{fieldError("photoConsentChoice", "Photo consent")}</p> : null}
       </Section>
 
       <Section title="17. Ancillary Charges Notice">
@@ -137,11 +147,9 @@ export function EnrollmentPacketPublicFormLegal({
         >
           <summary className="cursor-pointer font-semibold">Expand to read full notice</summary>
           <div className="mt-2 space-y-2">
-            {ENROLLMENT_PACKET_LEGAL_TEXT.ancillaryCharges.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+            {legalText.ancillaryCharges.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
           </div>
         </details>
-        <label className="flex items-start gap-2 text-sm"><input id="field-ancillaryChargesAcknowledged" type="checkbox" checked={textValue(payload, "ancillaryChargesAcknowledged") === "Acknowledged"} onChange={(event) => { setAck("ancillaryChargesAcknowledged", event.target.checked); markTouched("ancillaryChargesAcknowledged"); }} disabled={isPending} /><span>I acknowledge that I have read and received the Ancillary Charges notice. <span className="text-red-600">*</span></span></label>
-        {fieldError("ancillaryChargesAcknowledged", "Ancillary Charges acknowledgement") ? <p className="text-xs text-red-600">{fieldError("ancillaryChargesAcknowledged", "Ancillary Charges acknowledgement")}</p> : null}
       </Section>
 
       <Section title="18. Final Review">

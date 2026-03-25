@@ -1,10 +1,19 @@
 import type { EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
+import { ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS } from "@/lib/services/enrollment-packet-public-options";
+import {
+  formatEnrollmentPacketRecreationInterests,
+  hasEnrollmentPacketRecreationSelections
+} from "@/lib/services/enrollment-packet-recreation";
 
 import type { EnrollmentPacketFieldDefinition } from "@/lib/services/enrollment-packet-public-schema";
 
 export type EnrollmentPacketCompletionValidationResult = {
   isComplete: boolean;
   missingItems: string[];
+};
+
+export type EnrollmentPacketSubmissionValidationResult = EnrollmentPacketCompletionValidationResult & {
+  signatureErrors: string[];
 };
 
 function clean(value: string | null | undefined) {
@@ -14,12 +23,6 @@ function clean(value: string | null | undefined) {
 
 function hasValue(value: string | null | undefined) {
   return clean(value) != null;
-}
-
-function hasAcknowledged(value: string | null | undefined) {
-  const normalized = clean(value)?.toLowerCase();
-  if (!normalized) return false;
-  return ["acknowledged", "yes", "true", "1", "checked"].includes(normalized);
 }
 
 function isYes(value: string | null | undefined) {
@@ -33,6 +36,11 @@ function isSelectedCreditCard(value: string | null | undefined) {
 
 function isSelectedAch(value: string | null | undefined) {
   return clean(value)?.toLowerCase() === "ach";
+}
+
+function isValidPhotoConsentChoice(value: string | null | undefined) {
+  const normalized = clean(value);
+  return normalized != null && ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS.includes(normalized as never);
 }
 
 export function validateEnrollmentPacketCompletion(input: {
@@ -111,8 +119,9 @@ export function validateEnrollmentPacketCompletion(input: {
     missingItems.push("Dentures selection (upper/lower)");
   }
 
+  if (!hasValue(payload.bankName)) missingItems.push("Bank name");
+
   if (isSelectedAch(payload.paymentMethodSelection)) {
-    if (!hasValue(payload.bankName)) missingItems.push("Bank name");
     if (!hasValue(payload.bankAba)) missingItems.push("Routing number");
     if (!hasValue(payload.bankAccountNumber)) missingItems.push("Account number");
   }
@@ -127,30 +136,21 @@ export function validateEnrollmentPacketCompletion(input: {
     if (!hasValue(payload.cardBillingZip)) missingItems.push("Card billing ZIP code");
   }
 
-  if (!hasValue(payload.membershipMemberSignatureName)) missingItems.push("Membership member signature name");
-  if (!hasValue(payload.membershipMemberSignatureDate)) missingItems.push("Membership member signature date");
   if (!hasValue(payload.membershipGuarantorSignatureName)) {
     missingItems.push("Membership responsible party / guarantor signature name");
+  }
+  if (!hasValue(payload.membershipGuarantorSignatureDate)) {
+    missingItems.push("Membership responsible party / guarantor signature date");
   }
   if (!hasValue(payload.exhibitAGuarantorSignatureName)) {
     missingItems.push("Exhibit A responsible party / guarantor acknowledgement name");
   }
 
-  if (!hasAcknowledged(payload.privacyPracticesAcknowledged)) {
-    missingItems.push("Privacy Practices acknowledgement");
-  }
-  if (!hasAcknowledged(payload.statementOfRightsAcknowledged)) {
-    missingItems.push("Statement of Rights acknowledgement");
-  }
-  if (!hasAcknowledged(payload.photoConsentAcknowledged)) {
-    missingItems.push("Photo Consent acknowledgement");
-  }
-  if (!hasAcknowledged(payload.ancillaryChargesAcknowledged)) {
-    missingItems.push("Ancillary Charges acknowledgement");
-  }
-
-  if (!hasValue(payload.photoConsentChoice)) {
+  if (!isValidPhotoConsentChoice(payload.photoConsentChoice)) {
     missingItems.push("Photo consent selection");
+  }
+  if (!hasEnrollmentPacketRecreationSelections(payload.recreationInterests)) {
+    missingItems.push("Recreation interests");
   }
 
   return {
@@ -159,9 +159,45 @@ export function validateEnrollmentPacketCompletion(input: {
   };
 }
 
-export function formatEnrollmentPacketValue(value: string | string[] | null | undefined) {
+export function validateEnrollmentPacketSubmission(input: {
+  payload: EnrollmentPacketIntakePayload;
+  caregiverTypedName: string | null | undefined;
+  hasSignature: boolean;
+  attested: boolean;
+}): EnrollmentPacketSubmissionValidationResult {
+  const completion = validateEnrollmentPacketCompletion({ payload: input.payload });
+  const signatureErrors: string[] = [];
+
+  if (!hasValue(input.caregiverTypedName)) {
+    signatureErrors.push("Caregiver signature name is required.");
+  }
+  if (!input.hasSignature) {
+    signatureErrors.push("Caregiver signature is required.");
+  }
+  if (!input.attested) {
+    signatureErrors.push("Caregiver signature attestation is required.");
+  }
+
+  return {
+    isComplete: completion.isComplete && signatureErrors.length === 0,
+    missingItems: completion.missingItems,
+    signatureErrors
+  };
+}
+
+export function formatEnrollmentPacketValue(
+  value:
+    | string
+    | string[]
+    | EnrollmentPacketIntakePayload["recreationInterests"]
+    | null
+    | undefined
+) {
   if (Array.isArray(value)) {
     return value.length > 0 ? value.join(", ") : "-";
+  }
+  if (value && typeof value === "object") {
+    return formatEnrollmentPacketRecreationInterests(value);
   }
   if (typeof value === "string") {
     const normalized = value.trim();

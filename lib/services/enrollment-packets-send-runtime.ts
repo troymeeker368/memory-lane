@@ -413,8 +413,7 @@ export async function sendEnrollmentPacketRequest(input: {
     membershipNumberOfDays: String(resolvedPricing.requestedDays.length),
     membershipDailyAmount: effectiveDailyRate.toFixed(2),
     communityFee: effectiveCommunityFee.toFixed(2),
-    totalInitialEnrollmentAmount: effectiveInitialEnrollmentAmount.toFixed(2),
-    photoConsentMemberName: clean(lead?.member_name) ?? clean(member.display_name)
+    totalInitialEnrollmentAmount: effectiveInitialEnrollmentAmount.toFixed(2)
   });
 
   const requestId = await prepareEnrollmentPacketRequestForDelivery({

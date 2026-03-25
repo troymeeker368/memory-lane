@@ -1,6 +1,6 @@
 import { resolveCanonicalLeadState } from "@/lib/canonical";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
-import { fetchSalesDashboardSummarySupabase, normalizeSalesPipelineStageCounts } from "@/lib/services/sales-workflows";
+import { getSalesDashboardSummarySupabase, normalizeSalesPipelineStageCounts } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate } from "@/lib/timezone";
 
@@ -219,11 +219,6 @@ function normalizeDashboardRecentInquiries(payload: unknown) {
   return rows
     .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
     .map((row) => toSalesLeadReadRow(row));
-}
-
-async function getSalesDashboardSummarySupabase(input?: { recentInquiryStartDate?: string | null }) {
-  const supabase = await createClient();
-  return fetchSalesDashboardSummarySupabase(supabase, input);
 }
 
 export async function getSalesLeadByIdSupabase(leadId: string) {

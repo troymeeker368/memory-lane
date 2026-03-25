@@ -168,6 +168,11 @@ export async function fetchSalesDashboardSummarySupabase(
   }
 }
 
+export async function getSalesDashboardSummarySupabase(input?: { recentInquiryStartDate?: string | null }) {
+  const supabase = await createClient();
+  return fetchSalesDashboardSummarySupabase(supabase, input);
+}
+
 export async function fetchSalesPipelineSummaryCountsSupabase(supabase: Awaited<ReturnType<typeof createClient>>) {
   const row = await fetchSalesDashboardSummarySupabase(supabase);
   if (!row) {
