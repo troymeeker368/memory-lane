@@ -3,8 +3,6 @@
 import { Buffer } from "node:buffer";
 
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { isRedirectError } from "next/dist/client/components/redirect-error";
 
 import { normalizePhoneForStorage } from "@/lib/phone";
 import {
@@ -357,11 +355,11 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
         ...advanceDirectiveUploads
       ]
     });
-    redirect(`/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`);
+    return {
+      ok: true,
+      redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`
+    } as const;
   } catch (error) {
-    if (isRedirectError(error)) {
-      throw error;
-    }
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to complete enrollment packet."

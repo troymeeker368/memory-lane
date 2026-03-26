@@ -13,6 +13,7 @@ import { buildEnrollmentPacketLegalText } from "@/lib/services/enrollment-packet
 import {
   ENROLLMENT_PACKET_INTAKE_TEXT_KEYS,
   normalizeEnrollmentPacketIntakePayload,
+  normalizeEnrollmentPacketTextInput,
   type EnrollmentPacketIntakePayload
 } from "@/lib/services/enrollment-packet-intake-payload";
 import {
@@ -91,18 +92,61 @@ function buildValidPayload(
   });
 }
 
-test("enrollment packet intake normalization preserves internal spaces for human-readable text fields", () => {
-  const payload = normalizeEnrollmentPacketIntakePayload({
-    pcpName: "  Dr. Jane Smith  ",
-    pharmacy: "  Town Square Pharmacy  ",
-    pharmacyAddress: "  321 Pharmacy Blvd, Suite A  ",
-    bankName: "  First National Bank  "
+test("enrollment packet free-text normalization trims edges while preserving internal spaces across text fields", () => {
+  assert.equal(
+    normalizeEnrollmentPacketTextInput("  Keeps  internal   spacing  "),
+    "Keeps  internal   spacing"
+  );
+
+  const explicitFreeTextCases = [
+    { key: "pcpName", input: "  Dr.  Jane   Smith  ", expected: "Dr.  Jane   Smith" },
+    { key: "pharmacy", input: "  Town   Square Pharmacy  ", expected: "Town   Square Pharmacy" },
+    {
+      key: "pharmacyAddress",
+      input: "  321  Pharmacy Blvd,  Suite A  ",
+      expected: "321  Pharmacy Blvd,  Suite A"
+    },
+    { key: "bankName", input: "  First   National  Bank  ", expected: "First   National  Bank" },
+    { key: "memberAddressLine1", input: "  123  Main   St  ", expected: "123  Main   St" },
+    {
+      key: "additionalNotes",
+      input: "  Daughter notes:  eats   slowly  ",
+      expected: "Daughter notes:  eats   slowly"
+    }
+  ] as const;
+
+  explicitFreeTextCases.forEach((entry) => {
+    const payload = normalizeEnrollmentPacketIntakePayload({
+      [entry.key]: entry.input
+    });
+    assert.equal(payload[entry.key], entry.expected);
   });
 
-  assert.equal(payload.pcpName, "Dr. Jane Smith");
-  assert.equal(payload.pharmacy, "Town Square Pharmacy");
-  assert.equal(payload.pharmacyAddress, "321 Pharmacy Blvd, Suite A");
-  assert.equal(payload.bankName, "First National Bank");
+  const phoneTextKeys = new Set([
+    "primaryContactPhone",
+    "secondaryContactPhone",
+    "pcpPhone",
+    "physicianPhone",
+    "pcpFax",
+    "physicianFax",
+    "pharmacyPhone"
+  ]);
+  const bulkPayload: Record<string, string> = {};
+
+  ENROLLMENT_PACKET_INTAKE_TEXT_KEYS.forEach((key) => {
+    if (phoneTextKeys.has(key)) return;
+    bulkPayload[key] = `  ${key}  value   with   spacing  `;
+  });
+
+  const normalizedPayload = normalizeEnrollmentPacketIntakePayload(bulkPayload);
+  ENROLLMENT_PACKET_INTAKE_TEXT_KEYS.forEach((key) => {
+    if (phoneTextKeys.has(key)) return;
+
+    assert.equal(
+      normalizedPayload[key],
+      `${key}  value   with   spacing`
+    );
+  });
 });
 
 test("enrollment packet progress merge and public action parsing trim edges without collapsing internal spaces", () => {
@@ -385,7 +429,7 @@ test("membership agreement signature is not auto-prefilled from the primary cont
   );
 });
 
-test("public enrollment packet submission redirects to confirmation where the welcome letter is rendered", () => {
+test("successful public sign submit redirects to the welcome/thank-you confirmation experience", () => {
   const actionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
   const confirmationSource = readWorkspaceFile(
     "app/sign/enrollment-packet/[token]/confirmation/page.tsx"
@@ -393,13 +437,22 @@ test("public enrollment packet submission redirects to confirmation where the we
   const formSource = readWorkspaceFile("components/enrollment-packets/enrollment-packet-public-form.tsx");
 
   assert.equal(
-    actionSource.includes("redirect(`/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`);"),
+    actionSource.includes("ok: true"),
     true
   );
-  assert.equal(formSource.includes("window.location.assign(result.redirectUrl);"), false);
-  assert.equal(formSource.includes("router.replace(result.redirectUrl);"), false);
+  assert.equal(actionSource.includes("redirect("), false);
+  assert.equal(formSource.includes("const router = useRouter();"), true);
+  assert.equal(formSource.includes("window.location.assign"), false);
+  assert.equal(formSource.includes("window.location.replace"), false);
+  assert.equal(formSource.includes("router.push(result.redirectUrl);"), true);
+  assert.equal(formSource.includes("result.redirectUrl"), true);
+  assert.equal(confirmationSource.includes("Enrollment Packet Submitted"), true);
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
   assert.equal(confirmationSource.includes("legalText.firstDayWelcome.map"), true);
+  assert.equal(
+    actionSource.includes("redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`,"),
+    true
+  );
 });
 
 test("already-filed public enrollment packet submissions use the replay-safe confirmation path", () => {

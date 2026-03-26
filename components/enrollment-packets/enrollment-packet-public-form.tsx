@@ -11,6 +11,8 @@ import {
   type ReactNode
 } from "react";
 
+import { useRouter } from "next/navigation";
+
 import {
   savePublicEnrollmentPacketProgressAction,
   submitPublicEnrollmentPacketAction
@@ -263,6 +265,7 @@ export function EnrollmentPacketPublicForm({
     photo: false,
     ancillary: false
   });
+  const router = useRouter();
 
   const completion = useMemo(
     () =>
@@ -387,7 +390,7 @@ export function EnrollmentPacketPublicForm({
         if (key === "primaryContactZip") nextPayload.cardBillingZip = value;
       }
 
-      return normalizeEnrollmentPacketIntakePayload(nextPayload);
+      return nextPayload;
     });
   };
 
@@ -547,23 +550,33 @@ export function EnrollmentPacketPublicForm({
     setStatus(null);
 
     startTransition(async () => {
-      const formData = new FormData();
-      appendCommonFields(formData, payloadToSubmit);
-      formData.set("caregiverTypedName", caregiverTypedName);
-      formData.set("caregiverSignatureImageDataUrl", signatureImageDataUrl);
-      formData.set("attested", "true");
+      try {
+        const formData = new FormData();
+        appendCommonFields(formData, payloadToSubmit);
+        formData.set("caregiverTypedName", caregiverTypedName);
+        formData.set("caregiverSignatureImageDataUrl", signatureImageDataUrl);
+        formData.set("attested", "true");
 
-      ENROLLMENT_PACKET_UPLOAD_FIELDS.forEach((uploadField) => {
-        uploads[uploadField.key].forEach((file) => formData.append(uploadField.key, file));
-      });
+        ENROLLMENT_PACKET_UPLOAD_FIELDS.forEach((uploadField) => {
+          uploads[uploadField.key].forEach((file) => formData.append(uploadField.key, file));
+        });
 
-      const result = await submitPublicEnrollmentPacketAction(formData);
-      if (!result.ok) {
-        setStatus(result.error);
-        return;
+        const result = await submitPublicEnrollmentPacketAction(formData);
+        if (!result.ok) {
+          setStatus(result.error);
+          return;
+        }
+
+        if (result.redirectUrl) {
+          router.push(result.redirectUrl);
+          return;
+        }
+
+        setStatus("Enrollment packet submitted, but confirmation redirect was unavailable. Please refresh.");
+        setPayload(payloadToSubmit);
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Unable to complete enrollment packet.");
       }
-
-      setPayload(payloadToSubmit);
     });
   };
 
