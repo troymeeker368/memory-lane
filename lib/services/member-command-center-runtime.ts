@@ -42,6 +42,7 @@ const MEMBER_COMMAND_CENTER_ADD_RIDER_ADDRESS_SELECT = "member_id, street_addres
 const LEGACY_INLINE_MEMBER_FILE_SENTINEL = "__legacy_inline_member_file__";
 const MEMBER_FILE_LIST_RPC = "rpc_list_member_files";
 const MEMBER_FILE_LIST_MIGRATION = "0145_reports_and_member_files_read_rpcs.sql";
+const DEFAULT_MEMBER_LOOKUP_LIMIT = 200;
 
 type MemberFileRpcRow = {
   id: string;
@@ -87,9 +88,19 @@ function toMemberCommandCenterIndexScheduleRow(
   };
 }
 
-export async function listMembersSupabase(filters?: { q?: string; status?: "all" | "active" | "inactive" }) {
+export async function listMembersSupabase(filters?: {
+  q?: string;
+  status?: "all" | "active" | "inactive";
+  limit?: number;
+  allowUnbounded?: boolean;
+}) {
   const supabase = await createClient();
   const q = (filters?.q ?? "").trim();
+  const requestedLimit = filters?.limit;
+  const normalizedLimit =
+    Number.isFinite(requestedLimit) && Number(requestedLimit) > 0 ? Math.floor(Number(requestedLimit)) : null;
+  const effectiveLimit = filters?.allowUnbounded ? normalizedLimit : normalizedLimit ?? DEFAULT_MEMBER_LOOKUP_LIMIT;
+
   return selectMembersWithFallback(
     async (selectClause) => {
       let query = supabase.from("members").select(selectClause);
@@ -99,6 +110,9 @@ export async function listMembersSupabase(filters?: { q?: string; status?: "all"
       if (q) {
         const pattern = buildSupabaseIlikePattern(q);
         query = query.or(`display_name.ilike.${pattern},locker_number.ilike.${pattern}`);
+      }
+      if (effectiveLimit !== null) {
+        query = query.limit(effectiveLimit);
       }
       return query.order("display_name", { ascending: true });
     },

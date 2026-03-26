@@ -120,21 +120,21 @@ export function SalesLeadActivityForm({
   const selectedLead = uniqueLeads.find((lead) => lead.id === form.leadId) ?? null;
   const isLeadLocked = Boolean(lockedLeadId && selectedLead && selectedLead.id === lockedLeadId);
 
-  const linkedPartnerOptionId = useMemo(() => {
+  const linkedPartnerOptionId = (() => {
     if (!selectedLead?.partner_id) return "";
     const match = uniquePartners.find(
       (partner) => partner.id === selectedLead.partner_id || (partner.partner_id && partner.partner_id === selectedLead.partner_id)
     );
     return match?.id ?? "";
-  }, [selectedLead?.partner_id, uniquePartners]);
+  })();
 
-  const linkedReferralOptionId = useMemo(() => {
+  const linkedReferralOptionId = (() => {
     if (!selectedLead?.referral_source_id) return "";
     const match = uniqueReferralSources.find(
       (source) => source.id === selectedLead.referral_source_id || (source.referral_source_id && source.referral_source_id === selectedLead.referral_source_id)
     );
     return match?.id ?? "";
-  }, [selectedLead?.referral_source_id, uniqueReferralSources]);
+  })();
 
   useEffect(() => {
     if (!selectedLead) {

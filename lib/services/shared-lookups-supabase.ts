@@ -14,13 +14,36 @@ export type MemberLookupRow = {
   latest_assessment_track?: string | null;
 };
 
+const DEFAULT_MEMBER_LOOKUP_LIMIT = 200;
+
+function normalizeMemberLookupLimit(input?: {
+  limit?: number;
+  allowUnbounded?: boolean;
+}): number | undefined {
+  const requestedLimit = input?.limit;
+  const explicitLimit =
+    Number.isFinite(requestedLimit) && Number(requestedLimit) > 0 ? Math.floor(Number(requestedLimit)) : undefined;
+  if (input?.allowUnbounded) {
+    return explicitLimit;
+  }
+  return explicitLimit ?? DEFAULT_MEMBER_LOOKUP_LIMIT;
+}
+
 export async function listMemberLookupSupabase(filters?: {
   q?: string;
   status?: "all" | "active" | "inactive";
   limit?: number;
   requireQuery?: boolean;
+  allowUnbounded?: boolean;
 }): Promise<MemberLookupRow[]> {
-  const members = await listMemberNameLookupSupabase(filters);
+  const safeLimit = normalizeMemberLookupLimit({
+    limit: filters?.limit,
+    allowUnbounded: filters?.allowUnbounded
+  });
+  const members = await listMemberNameLookupSupabase({
+    ...filters,
+    limit: safeLimit
+  });
   return members.map((row) => ({
     id: row.id,
     display_name: row.display_name,
@@ -31,9 +54,13 @@ export async function listMemberLookupSupabase(filters?: {
 
 export async function listAllMemberLookupSupabase(filters?: {
   status?: "all" | "active" | "inactive";
+  limit?: number;
+  allowUnbounded?: boolean;
 }): Promise<MemberLookupRow[]> {
   return listMemberLookupSupabase({
-    status: filters?.status ?? "all"
+    status: filters?.status ?? "all",
+    limit: filters?.limit,
+    allowUnbounded: filters?.allowUnbounded
   });
 }
 
@@ -42,6 +69,7 @@ export async function listMemberSearchLookupSupabase(filters?: {
   status?: "all" | "active" | "inactive";
   limit?: number;
   minQueryLength?: number;
+  allowUnbounded?: boolean;
 }): Promise<MemberLookupRow[]> {
   const q = String(filters?.q ?? "").trim();
   const minQueryLength =
@@ -51,12 +79,16 @@ export async function listMemberSearchLookupSupabase(filters?: {
   if (q.length < minQueryLength) {
     return [];
   }
+  const safeLimit = normalizeMemberLookupLimit({
+    limit: filters?.limit,
+    allowUnbounded: filters?.allowUnbounded
+  });
 
   return listMemberLookupSupabase({
     q,
     status: filters?.status ?? "active",
-    limit:
-      Number.isFinite(filters?.limit) && Number(filters?.limit) > 0 ? Math.floor(Number(filters?.limit)) : 25,
+    limit: safeLimit,
+    allowUnbounded: filters?.allowUnbounded,
     requireQuery: true
   });
 }

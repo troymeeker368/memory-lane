@@ -1,8 +1,9 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent } from "react";
 
 import { saveMemberCommandCenterDietAction } from "@/app/(portal)/operations/member-command-center/summary-actions";
+import { usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { MhpMedicalDietFields } from "@/components/forms/mhp-medical-diet-fields";
 import { MutationNotice } from "@/components/ui/mutation-notice";
@@ -36,12 +37,8 @@ export function MccDietForm({
   foodsToOmit: string;
   commandCenterNotes: string;
 }) {
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = usePropSyncedStatus([memberId], "");
   const { isSaving, run } = useScopedMutation();
-
-  useEffect(() => {
-    setStatus("");
-  }, [memberId]);
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

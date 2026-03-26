@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -364,63 +365,29 @@ export function EnrollmentPacketPublicForm({
     }
   };
 
-  const persistProgressRef = useRef<(
-    sourcePayload: EnrollmentPacketIntakePayload,
-    mode: "auto" | "manual"
-  ) => Promise<void>>(async () => {});
-  persistProgressRef.current = async (sourcePayload: EnrollmentPacketIntakePayload, mode: "auto" | "manual") => {
-    const formData = new FormData();
-    appendCommonFields(formData, sourcePayload);
-    const result = await savePublicEnrollmentPacketProgressAction(formData);
-    if (!result.ok) {
-      setAutosaveStatus("error");
-      if (mode === "manual") setStatus(result.error);
-      return;
-    }
-    const now = new Date();
-    setAutosaveStatus("saved");
-    setLastSavedAt(now.toLocaleString());
-    if (mode === "manual") setStatus("Progress saved.");
-  };
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.strokeStyle = "#1f2937";
-    context.lineWidth = 2;
-    context.lineCap = "round";
-    context.lineJoin = "round";
-  }, []);
-
-  useEffect(() => {
-    if (payload.cardUsePrimaryContactAddress !== "Yes") return;
-    setPayload((current) =>
-      normalizeEnrollmentPacketIntakePayload({
-        ...current,
-        cardBillingAddressLine1: current.primaryContactAddressLine1,
-        cardBillingCity: current.primaryContactCity,
-        cardBillingState: current.primaryContactState,
-        cardBillingZip: current.primaryContactZip
-      })
-    );
-  }, [
-    payload.cardUsePrimaryContactAddress,
-    payload.primaryContactAddressLine1,
-    payload.primaryContactCity,
-    payload.primaryContactState,
-    payload.primaryContactZip
-  ]);
-
   const setText = (key: EnrollmentPacketIntakeTextKey, value: string) => {
     setPayload((current) => {
       if (key === "paymentMethodSelection") {
         return setEnrollmentPacketPaymentMethod(current, value);
       }
-      return normalizeEnrollmentPacketIntakePayload({ ...current, [key]: value });
+
+      const nextPayload = { ...current, [key]: value } as EnrollmentPacketIntakePayload;
+
+      if (key === "cardUsePrimaryContactAddress" && value === "Yes") {
+        nextPayload.cardBillingAddressLine1 = current.primaryContactAddressLine1;
+        nextPayload.cardBillingCity = current.primaryContactCity;
+        nextPayload.cardBillingState = current.primaryContactState;
+        nextPayload.cardBillingZip = current.primaryContactZip;
+      }
+
+      if (current.cardUsePrimaryContactAddress === "Yes") {
+        if (key === "primaryContactAddressLine1") nextPayload.cardBillingAddressLine1 = value;
+        if (key === "primaryContactCity") nextPayload.cardBillingCity = value;
+        if (key === "primaryContactState") nextPayload.cardBillingState = value;
+        if (key === "primaryContactZip") nextPayload.cardBillingZip = value;
+      }
+
+      return normalizeEnrollmentPacketIntakePayload(nextPayload);
     });
   };
 
@@ -487,7 +454,7 @@ export function EnrollmentPacketPublicForm({
     markTouched("recreationInterests");
   };
 
-  const appendCommonFields = (formData: FormData, sourcePayload: EnrollmentPacketIntakePayload) => {
+  function appendCommonFields(formData: FormData, sourcePayload: EnrollmentPacketIntakePayload) {
     formData.set("token", token);
     formData.set("intakePayload", JSON.stringify(sourcePayload));
     formData.set("caregiverName", sourcePayload.primaryContactName ?? "");
@@ -513,12 +480,43 @@ export function EnrollmentPacketPublicForm({
     formData.set("secondaryContactState", sourcePayload.secondaryContactState ?? "");
     formData.set("secondaryContactZip", sourcePayload.secondaryContactZip ?? "");
     formData.set("notes", sourcePayload.additionalNotes ?? "");
-  };
+  }
+
+  async function persistProgressNow(sourcePayload: EnrollmentPacketIntakePayload, mode: "auto" | "manual") {
+    const formData = new FormData();
+    appendCommonFields(formData, sourcePayload);
+    const result = await savePublicEnrollmentPacketProgressAction(formData);
+    if (!result.ok) {
+      setAutosaveStatus("error");
+      if (mode === "manual") setStatus(result.error);
+      return;
+    }
+    const now = new Date();
+    setAutosaveStatus("saved");
+    setLastSavedAt(now.toLocaleString());
+    if (mode === "manual") setStatus("Progress saved.");
+  }
+  const persistProgress = useEffectEvent((sourcePayload: EnrollmentPacketIntakePayload, mode: "auto" | "manual") => {
+    void persistProgressNow(sourcePayload, mode);
+  });
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = "#1f2937";
+    context.lineWidth = 2;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+  }, []);
 
   const saveProgress = () => {
     setStatus(null);
     setAutosaveStatus("saving");
-    void persistProgressRef.current(payload, "manual");
+    void persistProgressNow(payload, "manual");
   };
 
   const submitPacket = () => {
@@ -575,9 +573,9 @@ export function EnrollmentPacketPublicForm({
       return;
     }
     if (autosaveTimeoutRef.current) clearTimeout(autosaveTimeoutRef.current);
-    setAutosaveStatus("saving");
     autosaveTimeoutRef.current = setTimeout(() => {
-      void persistProgressRef.current(payload, "auto");
+      setAutosaveStatus("saving");
+      void persistProgress(payload, "auto");
     }, 2500);
 
     return () => {

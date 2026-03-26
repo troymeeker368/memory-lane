@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   createPrnOrderAndAdministrationAction,
   recordPrnMarAdministrationAction
 } from "@/app/(portal)/health/mar/administration-actions";
 import { MhpEditModal } from "@/components/forms/mhp-edit-modal";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import type { MarPrnOption, MarPrnStatus } from "@/lib/services/mar-shared";
 import { MAR_PRN_STATUS_OPTIONS } from "@/lib/services/mar-shared";
@@ -57,16 +58,21 @@ export function MarPrnRecordModal({
   const { isSaving, run } = useScopedMutation();
   const [tab, setTab] = useState<"standing" | "new">("standing");
   const [search, setSearch] = useState("");
-  const [selectedOrderId, setSelectedOrderId] = useState("");
-  const [memberId, setMemberId] = useState(defaultMemberId ?? memberOptions[0]?.memberId ?? "");
+  const memberOptionsKey = useMemo(
+    () => memberOptions.map((option) => `${option.memberId}:${option.memberName}`).join("|"),
+    [memberOptions]
+  );
+  const [memberId, setMemberId] = usePropSyncedState(defaultMemberId ?? memberOptions[0]?.memberId ?? "", [
+    open,
+    defaultMemberId ?? "",
+    memberOptionsKey
+  ]);
+  const [selectedOrderId, setSelectedOrderId] = usePropSyncedState("", [open, memberId, search]);
 
   const [adminDateTime, setAdminDateTime] = useState(() => toEasternDateTimeLocal());
   const [adminStatus, setAdminStatus] = useState<MarPrnStatus>("Given");
-  const [doseGiven, setDoseGiven] = useState("");
-  const [routeGiven, setRouteGiven] = useState("");
   const [indication, setIndication] = useState("");
   const [symptomScoreBefore, setSymptomScoreBefore] = useState("");
-  const [followupDueAt, setFollowupDueAt] = useState(() => addMinutes(toEasternDateTimeLocal(), 60));
   const [notes, setNotes] = useState("");
 
   const [newMedicationName, setNewMedicationName] = useState("");
@@ -84,11 +90,6 @@ export function MarPrnRecordModal({
   const [newProviderName, setNewProviderName] = useState("");
   const [requiresReview, setRequiresReview] = useState(true);
   const [requiresEffectivenessFollowup, setRequiresEffectivenessFollowup] = useState(true);
-
-  useEffect(() => {
-    if (!open) return;
-    setMemberId(defaultMemberId ?? memberOptions[0]?.memberId ?? "");
-  }, [defaultMemberId, memberOptions, open]);
 
   const filteredOrders = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -108,28 +109,20 @@ export function MarPrnRecordModal({
     });
   }, [memberId, orderOptions, search]);
 
-  const selectedOrder = filteredOrders.find((option) => option.medicationOrderId === selectedOrderId) ?? filteredOrders[0] ?? null;
-
-  useEffect(() => {
-    if (!selectedOrder) {
-      setSelectedOrderId("");
-      return;
-    }
-    setSelectedOrderId(selectedOrder.medicationOrderId);
-    setDoseGiven((current) => current || selectedOrder.strength || "");
-    setRouteGiven((current) => current || selectedOrder.route || "");
-    if (selectedOrder.requiresEffectivenessFollowup) {
-      setFollowupDueAt(addMinutes(adminDateTime, 60));
-    }
-  }, [adminDateTime, selectedOrder]);
-
-  useEffect(() => {
-    if (adminStatus !== "Given") {
-      setFollowupDueAt("");
-    } else if (selectedOrder?.requiresEffectivenessFollowup && !followupDueAt) {
-      setFollowupDueAt(addMinutes(adminDateTime, 60));
-    }
-  }, [adminDateTime, adminStatus, followupDueAt, selectedOrder]);
+  const activeSelectedOrderId =
+    filteredOrders.find((option) => option.medicationOrderId === selectedOrderId)?.medicationOrderId ??
+    filteredOrders[0]?.medicationOrderId ??
+    "";
+  const selectedOrder = filteredOrders.find((option) => option.medicationOrderId === activeSelectedOrderId) ?? null;
+  const [doseGiven, setDoseGiven] = usePropSyncedState(selectedOrder?.strength ?? "", [activeSelectedOrderId]);
+  const [routeGiven, setRouteGiven] = usePropSyncedState(selectedOrder?.route ?? "", [activeSelectedOrderId]);
+  const [followupDueAt, setFollowupDueAt] = usePropSyncedState(
+    () =>
+      adminStatus === "Given" && selectedOrder?.requiresEffectivenessFollowup
+        ? addMinutes(adminDateTime, 60)
+        : "",
+    [adminDateTime, adminStatus, activeSelectedOrderId, selectedOrder?.requiresEffectivenessFollowup ? "1" : "0"]
+  );
 
   function resetAdministrationFields() {
     setAdminDateTime(toEasternDateTimeLocal());
@@ -200,11 +193,9 @@ export function MarPrnRecordModal({
                   <button
                     key={option.medicationOrderId}
                     type="button"
-                    className={`w-full rounded-lg border p-3 text-left ${selectedOrder?.medicationOrderId === option.medicationOrderId ? "border-brand bg-brand/5" : "border-border"}`}
+                    className={`w-full rounded-lg border p-3 text-left ${activeSelectedOrderId === option.medicationOrderId ? "border-brand bg-brand/5" : "border-border"}`}
                     onClick={() => {
                       setSelectedOrderId(option.medicationOrderId);
-                      setDoseGiven(option.strength ?? "");
-                      setRouteGiven(option.route ?? "");
                     }}
                   >
                     <p className="text-sm font-semibold">{option.medicationName}</p>

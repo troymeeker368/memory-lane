@@ -6,6 +6,8 @@ import test from "node:test";
 import { buildPofDocumentSections, isMeaningfulDocumentValue } from "../lib/services/pof-document-content";
 import { buildPofDocumentPdfBytes } from "../lib/services/pof-document-pdf";
 
+type PofDocumentInput = Parameters<typeof buildPofDocumentSections>[0];
+
 function readWorkspaceFile(relativePath: string) {
   return fs.readFileSync(path.join(process.cwd(), relativePath), "utf8");
 }
@@ -96,7 +98,7 @@ function createPofFixture() {
       }
     },
     operationalFlags: {}
-  } as any;
+  } as unknown as PofDocumentInput;
 }
 
 function flattenFieldRows(sections: ReturnType<typeof buildPofDocumentSections>) {
@@ -115,7 +117,7 @@ test("isMeaningfulDocumentValue hides default negative and empty values", () => 
 
 test("POF non-table sections suppress No/- rows while retaining meaningful values", () => {
   const form = createPofFixture();
-  form.careInformation.ambulatoryStatus = "Occasionally unsteady";
+  form.careInformation.ambulatoryStatus = "Semi";
   form.careInformation.adlProfile.toileting = "Needs help";
   form.careInformation.adlProfile.hearing = "Hard of hearing";
   form.careInformation.adlProfile.dental = "Dentures";
@@ -130,7 +132,7 @@ test("POF non-table sections suppress No/- rows while retaining meaningful value
   assert.equal(sections.some((section) => section.title === "Diagnoses"), false);
   assert.equal(sections.some((section) => section.title === "Allergies"), false);
   assert.equal(allRows.some((row) => row.value === "Needs help"), true);
-  assert.equal(allRows.some((row) => row.value === "Occasionally unsteady"), true);
+  assert.equal(allRows.some((row) => row.value === "Semi"), true);
   assert.equal(allRows.some((row) => row.value === "Hard of hearing"), true);
   assert.equal(allRows.some((row) => row.value === "Dentures"), true);
   assert.equal(allRows.some((row) => row.value === "Limited verbal"), true);

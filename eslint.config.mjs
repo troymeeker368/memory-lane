@@ -6,11 +6,6 @@ const config = [
   ...nextTypescript,
   {
     ignores: ["scripts/**/*.cjs"]
-  },
-  {
-    rules: {
-      "@typescript-eslint/no-explicit-any": "warn"
-    }
   }
 ];
 

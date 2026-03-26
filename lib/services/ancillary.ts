@@ -39,7 +39,10 @@ export async function getAncillarySummary(monthKey?: string, scope?: AncillarySc
     .limit(100);
 
   // TODO(backend): ensure staff_user_id is exposed in view for strict staff-level filtering in real backend mode.
-  if (scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && scope.staffUserId) {
+  if (scope?.role && normalizeRoleKey(scope.role) === "program-assistant") {
+    if (!scope.staffUserId) {
+      throw new Error("Program assistant users must include staffUserId for ancillary summary access.");
+    }
     logsQuery = logsQuery.eq("staff_user_id", scope.staffUserId);
   }
 
@@ -123,7 +126,10 @@ export async function listMemberAncillaryChargeLogs(
     .order("service_date", { ascending: false })
     .order("created_at", { ascending: false });
 
-  if (scope?.role && normalizeRoleKey(scope.role) === "program-assistant" && scope.staffUserId) {
+  if (scope?.role && normalizeRoleKey(scope.role) === "program-assistant") {
+    if (!scope.staffUserId) {
+      throw new Error("Program assistant users must include staffUserId for ancillary member log access.");
+    }
     query = query.eq("staff_user_id", scope.staffUserId);
   }
   if (typeof input.limit === "number" && input.limit > 0) {
@@ -148,14 +154,26 @@ export async function listMemberAncillaryChargeLogs(
 
 export async function getAncillaryEntryCountLastDays(days = 30) {
   const supabase = await createClient();
+  const safeDays = Number.isFinite(days) && days > 0 ? Math.floor(days) : 30;
   const since = new Date();
-  since.setDate(since.getDate() - (days - 1));
+  since.setDate(since.getDate() - (safeDays - 1));
   const sinceDate = since.toISOString().slice(0, 10);
 
-  const { count } = await supabase
+  const { count, error } = await supabase
     .from("v_ancillary_charge_logs_detailed")
     .select("id", { head: true, count: "exact" })
     .gte("service_date", sinceDate);
+  if (error) {
+    if (isMissingSchemaObjectError(error)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "v_ancillary_charge_logs_detailed",
+          migration: "0018_runtime_mock_dependency_cleanup.sql"
+        })
+      );
+    }
+    throw new Error(error.message);
+  }
 
   return count ?? 0;
 }

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { updateAncillaryCategoryPriceAction } from "@/app/operations-admin-actions";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { Button } from "@/components/ui/button";
 import { MutationNotice } from "@/components/ui/mutation-notice";
@@ -18,17 +19,17 @@ function centsToDollars(cents: number) {
 }
 
 export function AncillaryPricingManager({ categories }: { categories: PricingCategory[] }) {
-  const [localCategories, setLocalCategories] = useState(categories);
+  const categoriesSyncKey = useMemo(
+    () => categories.map((category) => `${category.id}:${category.price_cents}:${category.name}`).join("|"),
+    [categories]
+  );
+  const [localCategories, setLocalCategories] = usePropSyncedState(categories, [categoriesSyncKey]);
   const [statusByCategoryId, setStatusByCategoryId] = useState<Record<string, string>>({});
-  const [priceInputs, setPriceInputs] = useState<Record<string, string>>(() =>
-    Object.fromEntries(categories.map((category) => [category.id, centsToDollars(category.price_cents)]))
+  const [priceInputs, setPriceInputs] = usePropSyncedState<Record<string, string>>(
+    () => Object.fromEntries(categories.map((category) => [category.id, centsToDollars(category.price_cents)])),
+    [categoriesSyncKey]
   );
   const { isSaving, run } = useScopedMutation();
-
-  useEffect(() => {
-    setLocalCategories(categories);
-    setPriceInputs(Object.fromEntries(categories.map((category) => [category.id, centsToDollars(category.price_cents)])));
-  }, [categories]);
 
   const orderedCategories = useMemo(
     () => [...localCategories].sort((a, b) => a.name.localeCompare(b.name)),

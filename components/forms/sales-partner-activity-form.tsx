@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import {
   createCommunityPartnerAction,
@@ -8,6 +8,7 @@ import {
   createReferralSourceAction
 } from "@/app/sales-partner-actions";
 import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
+import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
 import { COMMUNITY_PARTNER_CATEGORY_OPTIONS, LEAD_ACTIVITY_TYPES, LEAD_FOLLOW_UP_TYPES } from "@/lib/canonical";
 import { formatPhoneInput } from "@/lib/phone";
@@ -50,23 +51,36 @@ export function SalesPartnerActivityForm({
 }) {
   const now = useMemo(() => toEasternDateTimeLocal(), []);
   const [isPending, startTransition] = useTransition();
-  const [status, setStatus] = useState<string | null>(null);
-
-  const [partnerOptions, setPartnerOptions] = useState(() =>
-    [...partners].sort((a, b) => a.organization_name.localeCompare(b.organization_name))
+  const [status, setStatus] = usePropSyncedStatus([initialLeadId, initialPartnerId, initialReferralSourceId], "");
+  const [createdPartners, setCreatedPartners] = useState<PartnerLookup[]>([]);
+  const [createdReferralSources, setCreatedReferralSources] = useState<ReferralSourceLookup[]>([]);
+  const partnerOptions = useMemo(
+    () =>
+      [...partners, ...createdPartners]
+        .filter((partner, index, all) => all.findIndex((candidate) => candidate.id === partner.id) === index)
+        .sort((a, b) => a.organization_name.localeCompare(b.organization_name)),
+    [createdPartners, partners]
   );
-  const [referralOptions, setReferralOptions] = useState(() => [...referralSources]);
-
-  const [form, setForm] = useState({
-    partnerId: initialPartnerId ?? "",
-    referralSourceId: initialReferralSourceId ?? "",
-    leadId: initialLeadId ?? "",
-    activityAt: now,
-    activityType: "Email" as (typeof LEAD_ACTIVITY_TYPES)[number],
-    nextFollowUpDate: "",
-    nextFollowUpType: "Call" as (typeof LEAD_FOLLOW_UP_TYPES)[number],
-    notes: ""
-  });
+  const referralOptions = useMemo(
+    () =>
+      [...referralSources, ...createdReferralSources].filter(
+        (source, index, all) => all.findIndex((candidate) => candidate.id === source.id) === index
+      ),
+    [createdReferralSources, referralSources]
+  );
+  const [form, setForm] = usePropSyncedState(
+    () => ({
+      partnerId: initialPartnerId ?? "",
+      referralSourceId: initialReferralSourceId ?? "",
+      leadId: initialLeadId ?? "",
+      activityAt: now,
+      activityType: "Email" as (typeof LEAD_ACTIVITY_TYPES)[number],
+      nextFollowUpDate: "",
+      nextFollowUpType: "Call" as (typeof LEAD_FOLLOW_UP_TYPES)[number],
+      notes: ""
+    }),
+    [initialLeadId, initialPartnerId, initialReferralSourceId, now]
+  );
 
   const [showCreateOrgInline, setShowCreateOrgInline] = useState(false);
   const [orgForm, setOrgForm] = useState<{
@@ -92,24 +106,6 @@ export function SalesPartnerActivityForm({
     : [];
 
   const selectedReferral = filteredReferralSources.find((source) => source.id === form.referralSourceId) ?? null;
-
-  useEffect(() => {
-    setPartnerOptions([...partners].sort((a, b) => a.organization_name.localeCompare(b.organization_name)));
-  }, [partners]);
-
-  useEffect(() => {
-    setReferralOptions([...referralSources]);
-  }, [referralSources]);
-
-  useEffect(() => {
-    setForm((current) => ({
-      ...current,
-      partnerId: initialPartnerId ?? "",
-      referralSourceId: initialReferralSourceId ?? "",
-      leadId: initialLeadId ?? ""
-    }));
-    setStatus(null);
-  }, [initialLeadId, initialPartnerId, initialReferralSourceId]);
 
   useConstrainedSelection({
     selectedId: form.partnerId,
@@ -194,11 +190,7 @@ export function SalesPartnerActivityForm({
                   return;
                 }
 
-                setPartnerOptions((current) => {
-                  const next = [...current, response.partner];
-                  next.sort((a, b) => a.organization_name.localeCompare(b.organization_name));
-                  return next;
-                });
+                setCreatedPartners((current) => [...current, response.partner]);
                 setForm((current) => ({ ...current, partnerId: response.partner.id }));
                 setShowCreateOrgInline(false);
                 setStatus(`Organization created and selected: ${response.partner.organization_name}`);
@@ -253,7 +245,7 @@ export function SalesPartnerActivityForm({
                       return;
                     }
 
-                    setReferralOptions((current) => [...current, response.source]);
+                    setCreatedReferralSources((current) => [...current, response.source]);
                     setForm((current) => ({ ...current, referralSourceId: response.source.id }));
                     setNewReferralName("");
                     setShowCreateReferralInline(false);

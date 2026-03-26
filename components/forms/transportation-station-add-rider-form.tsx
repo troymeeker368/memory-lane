@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { copyForwardTransportationDetailsAction } from "@/app/(portal)/operations/transportation-station/actions";
-import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
+import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { formatPhoneInput } from "@/lib/phone";
 
 type ShiftOption = "AM" | "PM" | "Both";
@@ -50,22 +50,10 @@ export function TransportationStationAddRiderForm({
   const [caregiverContactName, setCaregiverContactName] = useState("");
   const [caregiverContactPhone, setCaregiverContactPhone] = useState("");
   const [caregiverContactAddress, setCaregiverContactAddress] = useState("");
-  const [copyStatus, setCopyStatus] = useState("");
+  const [copyStatus, setCopyStatus] = usePropSyncedStatus([selectedDate, defaultShift], "");
 
-  const selectedMember = useMemo(
-    () => members.find((row) => row.id === memberId) ?? null,
-    [members, memberId]
-  );
-
-  useEffect(() => {
-    if (!memberId) return;
-    if (members.some((row) => row.id === memberId)) return;
-    setMemberId("");
-  }, [memberId, members]);
-
-  useEffect(() => {
-    setCopyStatus("");
-  }, [selectedDate, defaultShift]);
+  const selectedMember = useMemo(() => members.find((row) => row.id === memberId) ?? null, [members, memberId]);
+  const activeMemberId = selectedMember?.id ?? "";
 
   const setMemberWithPrefills = (nextMemberId: string) => {
     setMemberId(nextMemberId);
@@ -98,7 +86,7 @@ export function TransportationStationAddRiderForm({
     startCopyTransition(async () => {
       setCopyStatus("");
       const payload = new FormData();
-      payload.set("memberId", memberId);
+      payload.set("memberId", activeMemberId);
       payload.set("sourceDate", copySourceDate);
       payload.set("targetDate", selectedDate);
       payload.set("shift", effectiveShift);
@@ -130,7 +118,7 @@ export function TransportationStationAddRiderForm({
         <select
           name="memberId"
           required
-          value={memberId}
+          value={activeMemberId}
           onChange={(event) => setMemberWithPrefills(event.target.value)}
           className="h-10 w-full rounded-lg border border-border px-3"
         >

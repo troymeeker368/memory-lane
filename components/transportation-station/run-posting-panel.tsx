@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { postTransportationRunAction } from "@/app/(portal)/operations/transportation-station/actions";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 import {
   getTransportationExclusionReasonLabel,
   TRANSPORTATION_DRIVER_EXCLUSION_REASONS,
@@ -98,25 +99,27 @@ function statusLabel(status: TransportationOperationalStatus) {
 export function TransportationRunPostingPanel(props: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [postSummary, setPostSummary] = useState<PostSummary | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [manualExclusions, setManualExclusions] = useState<Record<string, ExclusionState>>({});
-
-  useEffect(() => {
-    const nextState: Record<string, ExclusionState> = {};
-    props.rows
-      .filter((row) => row.operationalStatus === "eligible")
-      .forEach((row) => {
-        nextState[row.memberId] = {
-          excluded: false,
-          reason: DEFAULT_REASON,
-          notes: ""
-        };
-      });
-    setManualExclusions(nextState);
-    setPostSummary(null);
-    setError(null);
-  }, [props.rows, props.selectedDate, props.shift, props.busNumber]);
+  const resetKey = useMemo(
+    () =>
+      [
+        props.selectedDate,
+        props.shift,
+        props.busNumber,
+        props.rows.map((row) => `${row.memberId}:${row.operationalStatus}`).join("|")
+      ].join("::"),
+    [props.busNumber, props.rows, props.selectedDate, props.shift]
+  );
+  const [postSummary, setPostSummary] = usePropSyncedState<PostSummary | null>(null, [resetKey]);
+  const [error, setError] = usePropSyncedState<string | null>(null, [resetKey]);
+  const [manualExclusions, setManualExclusions] = usePropSyncedState<Record<string, ExclusionState>>(
+    () =>
+      Object.fromEntries(
+        props.rows
+          .filter((row) => row.operationalStatus === "eligible")
+          .map((row) => [row.memberId, { excluded: false, reason: DEFAULT_REASON, notes: "" }])
+      ),
+    [resetKey]
+  );
 
   const includedCount = useMemo(
     () =>

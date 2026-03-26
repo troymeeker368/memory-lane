@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { saveAttendanceStatusAction } from "@/app/(portal)/operations/attendance/actions";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
@@ -71,23 +71,17 @@ export function AttendanceMemberCell({
   defaultAbsentReasonOther?: string | null;
   onSaved?: (record: AttendanceMutationRecord) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<ActionMode>(null);
   const syncDeps = [attendanceDate, defaultAbsentReason, defaultAbsentReasonOther, defaultCheckInTime, defaultCheckOutTime, memberId];
+  const [open, setOpen] = usePropSyncedState(false, syncDeps);
+  const [mode, setMode] = usePropSyncedState<ActionMode>(null, syncDeps);
   const [checkInTime, setCheckInTime] = usePropSyncedState(defaultCheckInTime ?? currentTimeString(), syncDeps);
   const [checkOutTime, setCheckOutTime] = usePropSyncedState(defaultCheckOutTime ?? currentTimeString(), syncDeps);
   const [absentReason, setAbsentReason] = usePropSyncedState(defaultAbsentReason ?? "", syncDeps);
   const [absentReasonOther, setAbsentReasonOther] = usePropSyncedState(defaultAbsentReasonOther ?? "", syncDeps);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = usePropSyncedState<string | null>(null, syncDeps);
   const { isSaving, run } = useScopedMutation();
 
   const profileHref = useMemo(() => `/operations/member-command-center/${memberId}`, [memberId]);
-
-  useEffect(() => {
-    setOpen(false);
-    setMode(null);
-    setError(null);
-  }, [attendanceDate, defaultAbsentReason, defaultAbsentReasonOther, defaultCheckInTime, defaultCheckOutTime, memberId]);
 
   function runAction() {
     if (!mode) return;

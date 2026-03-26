@@ -1,6 +1,6 @@
 "use client";
 
-import { type DependencyList, useEffect, useRef, useState } from "react";
+import { useCallback, type DependencyList, type Dispatch, type SetStateAction, useState } from "react";
 
 function resolveInitial<T>(initialState: T | (() => T)) {
   if (typeof initialState === "function") {
@@ -10,14 +10,26 @@ function resolveInitial<T>(initialState: T | (() => T)) {
 }
 
 export function usePropSyncedState<T>(initialState: T | (() => T), deps: DependencyList) {
-  const [state, setState] = useState<T>(() => resolveInitial(initialState));
-  const latestInitialStateRef = useRef(initialState);
-  latestInitialStateRef.current = initialState;
+  const [snapshot, setSnapshot] = useState<{ key: string; value: T }>(() => ({
+    key: JSON.stringify(deps),
+    value: resolveInitial(initialState)
+  }));
   const syncKey = JSON.stringify(deps);
-
-  useEffect(() => {
-    setState(resolveInitial(latestInitialStateRef.current));
-  }, [syncKey]);
+  const state = snapshot.key === syncKey ? snapshot.value : resolveInitial(initialState);
+  const setState = useCallback<Dispatch<SetStateAction<T>>>(
+    (nextState) => {
+      setSnapshot((current) => {
+        const baseState = current.key === syncKey ? current.value : resolveInitial(initialState);
+        const resolvedState =
+          typeof nextState === "function" ? (nextState as (previousState: T) => T)(baseState) : nextState;
+        return {
+          key: syncKey,
+          value: resolvedState
+        };
+      });
+    },
+    [initialState, syncKey]
+  );
 
   return [state, setState] as const;
 }

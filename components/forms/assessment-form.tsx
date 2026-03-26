@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { createAssessmentAction } from "@/app/intake-actions";
@@ -129,14 +129,6 @@ export function AssessmentForm({
 
     notes: ""
   });
-
-  useEffect(() => {
-    if (!initialStaffName?.trim()) return;
-    setForm((current) => ({
-      ...current,
-      completedBy: initialStaffName
-    }));
-  }, [initialStaffName]);
 
   const toggleWithNone = (current: string[], option: string) => {
     if (option === "None") {
@@ -268,6 +260,7 @@ export function AssessmentForm({
   const transportBehaviorConcernValue = asCsv(form.transportBehaviorConcernSelected, form.transportBehaviorConcernOther);
   const onSiteMedicationUseValue = form.onSiteMedicationUse ? "Yes" : "No";
   const onSiteMedicationListValue = form.onSiteMedicationUse ? form.onSiteMedicationList.trim() : "";
+  const completedBy = initialStaffName?.trim() || form.completedBy.trim();
 
   const totalScore = useMemo(
     () =>
@@ -303,7 +296,7 @@ export function AssessmentForm({
     const errors: string[] = [];
     if (!form.memberId) errors.push("Linked Supabase Member");
     if (!form.leadId) errors.push("Linked Lead (Tour/EIP)");
-    if (!form.completedBy.trim()) errors.push("Completed By");
+    if (!completedBy) errors.push("Completed By");
     if (!form.signatureAttested) errors.push("Nurse E-Sign Attestation");
     if (!form.signatureImageDataUrl) errors.push("Nurse E-Sign Capture");
     if (!form.assessmentDate.trim()) errors.push("Assessment Date");
@@ -371,7 +364,7 @@ export function AssessmentForm({
         </label>
         <label className="space-y-1 text-sm">
           <span className="text-xs font-semibold text-muted">Completed By</span>
-          <input className="h-11 rounded-lg border border-border bg-slate-50 px-3" value={form.completedBy} readOnly />
+          <input className="h-11 rounded-lg border border-border bg-slate-50 px-3" value={completedBy} readOnly />
         </label>
       </div>
       {selectableMembers.length === 0 ? (
@@ -699,7 +692,7 @@ export function AssessmentForm({
               leadStage: form.leadStage,
               leadStatus: form.leadStatus,
               assessmentDate: form.assessmentDate,
-              completedBy: form.completedBy,
+              completedBy,
               signatureAttested: form.signatureAttested,
               signatureImageDataUrl: form.signatureImageDataUrl,
               complete: form.complete,

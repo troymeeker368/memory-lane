@@ -531,6 +531,38 @@ export async function createCarePlan(input: {
     );
   }
 
+  let finalizedCarePlan: CarePlanWriteResult;
+  try {
+    finalizedCarePlan = await finalizeCaregiverDispatchAfterNurseSignature({
+      carePlanId: createdCarePlanId,
+      actor: {
+        id: input.actor.id,
+        fullName: input.actor.fullName,
+        signatureName: input.actor.signatureName
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
+    await recordCarePlanActionRequired({
+      carePlanId: createdCarePlanId,
+      memberId: canonicalMemberId,
+      actorUserId: input.actor.id,
+      alertKey: "care_plan_caregiver_dispatch_follow_up_required",
+      title: "Care Plan Caregiver Send Retry Needed",
+      message: "The care plan was created and signed, but caregiver dispatch still needs follow-up.",
+      metadata: {
+        phase: "create_caregiver_dispatch",
+        review_date: input.reviewDate,
+        next_due_date: nextDueDate,
+        error: message
+      }
+    });
+    throw buildCarePlanWorkflowError(
+      `Care Plan was created and signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry sending the caregiver link.`,
+      createdCarePlanId
+    );
+  }
+
   await recordWorkflowEvent({
     eventType: "care_plan_created",
     entityType: "care_plan",
@@ -565,36 +597,7 @@ export async function createCarePlan(input: {
     }
   });
 
-  try {
-    return await finalizeCaregiverDispatchAfterNurseSignature({
-      carePlanId: createdCarePlanId,
-      actor: {
-        id: input.actor.id,
-        fullName: input.actor.fullName,
-        signatureName: input.actor.signatureName
-      }
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
-    await recordCarePlanActionRequired({
-      carePlanId: createdCarePlanId,
-      memberId: canonicalMemberId,
-      actorUserId: input.actor.id,
-      alertKey: "care_plan_caregiver_dispatch_follow_up_required",
-      title: "Care Plan Caregiver Send Retry Needed",
-      message: "The care plan was created and signed, but caregiver dispatch still needs follow-up.",
-      metadata: {
-        phase: "create_caregiver_dispatch",
-        review_date: input.reviewDate,
-        next_due_date: nextDueDate,
-        error: message
-      }
-    });
-    throw buildCarePlanWorkflowError(
-      `Care Plan was created and signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry sending the caregiver link.`,
-      createdCarePlanId
-    );
-  }
+  return finalizedCarePlan;
 }
 
 export async function reviewCarePlan(input: {
@@ -722,6 +725,38 @@ export async function reviewCarePlan(input: {
     );
   }
 
+  let finalizedCarePlan: CarePlanWriteResult;
+  try {
+    finalizedCarePlan = await finalizeCaregiverDispatchAfterNurseSignature({
+      carePlanId: input.carePlanId,
+      actor: {
+        id: input.actor.id,
+        fullName: input.actor.fullName,
+        signatureName: input.actor.signatureName
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
+    await recordCarePlanActionRequired({
+      carePlanId: input.carePlanId,
+      memberId: String(existing.member_id),
+      actorUserId: input.actor.id,
+      alertKey: "care_plan_review_dispatch_follow_up_required",
+      title: "Care Plan Caregiver Send Retry Needed",
+      message: "The care plan review was signed, but caregiver dispatch still needs follow-up.",
+      metadata: {
+        phase: "review_caregiver_dispatch",
+        review_date: input.reviewDate,
+        next_due_date: nextDueDate,
+        error: message
+      }
+    });
+    throw buildCarePlanWorkflowError(
+      `Care Plan review was saved and signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry the caregiver link.`,
+      input.carePlanId
+    );
+  }
+
   await recordWorkflowEvent({
     eventType: "care_plan_reviewed",
     entityType: "care_plan",
@@ -756,36 +791,7 @@ export async function reviewCarePlan(input: {
     }
   });
 
-  try {
-    return await finalizeCaregiverDispatchAfterNurseSignature({
-      carePlanId: input.carePlanId,
-      actor: {
-        id: input.actor.id,
-        fullName: input.actor.fullName,
-        signatureName: input.actor.signatureName
-      }
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
-    await recordCarePlanActionRequired({
-      carePlanId: input.carePlanId,
-      memberId: String(existing.member_id),
-      actorUserId: input.actor.id,
-      alertKey: "care_plan_review_dispatch_follow_up_required",
-      title: "Care Plan Caregiver Send Retry Needed",
-      message: "The care plan review was signed, but caregiver dispatch still needs follow-up.",
-      metadata: {
-        phase: "review_caregiver_dispatch",
-        review_date: input.reviewDate,
-        next_due_date: nextDueDate,
-        error: message
-      }
-    });
-    throw buildCarePlanWorkflowError(
-      `Care Plan review was saved and signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry sending the caregiver link.`,
-      input.carePlanId
-    );
-  }
+  return finalizedCarePlan;
 }
 
 export async function signCarePlanAsNurseAdmin(input: {

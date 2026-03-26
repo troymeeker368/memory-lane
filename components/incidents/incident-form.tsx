@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useMemo, useRef, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -10,6 +10,7 @@ import {
   saveIncidentDraftAction,
   submitIncidentAction
 } from "@/app/(portal)/documentation/incidents/actions";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 import { IncidentPdfActions } from "@/components/incidents/incident-pdf-actions";
 import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { EsignaturePad } from "@/components/signature/esignature-pad";
@@ -72,24 +73,24 @@ export function IncidentForm(props: IncidentFormProps) {
   const reviewFormRef = useRef<HTMLFormElement | null>(null);
   const { isSaving: isPending, run: runEditorMutation } = useScopedMutation();
   const { isSaving: isReviewPending, run: runReviewMutation } = useScopedMutation();
-  const [statusMessage, setStatusMessage] = useState("");
-  const [currentDetail, setCurrentDetail] = useState<IncidentDetail | null>(props.detail);
-  const [unsafeConditionsPresent, setUnsafeConditionsPresent] = useState(props.detail?.unsafeConditionsPresent ?? false);
-  const [editorEnabled, setEditorEnabled] = useState(props.canEditInitial);
-  const [submitterSignatureAttested, setSubmitterSignatureAttested] = useState(false);
-  const [submitterSignatureDraftDataUrl, setSubmitterSignatureDraftDataUrl] = useState("");
-  const [submitterSignatureImageDataUrl, setSubmitterSignatureImageDataUrl] = useState("");
-  const [pendingEsignAppliedAt, setPendingEsignAppliedAt] = useState<string | null>(null);
-
-  useEffect(() => {
-    setCurrentDetail(props.detail);
-    setUnsafeConditionsPresent(props.detail?.unsafeConditionsPresent ?? false);
-    setEditorEnabled(props.canEditInitial);
-    setSubmitterSignatureAttested(Boolean(props.detail?.submitterSignatureAttested && props.detail?.submitterSignedAt));
-    setSubmitterSignatureDraftDataUrl("");
-    setSubmitterSignatureImageDataUrl("");
-    setPendingEsignAppliedAt(null);
-  }, [props.canEditInitial, props.detail]);
+  const syncKey = useMemo(
+    () => [props.detail?.id ?? "", props.detail?.status ?? "", props.canEditInitial ? "1" : "0"].join("::"),
+    [props.canEditInitial, props.detail?.id, props.detail?.status]
+  );
+  const [statusMessage, setStatusMessage] = usePropSyncedState("", [syncKey]);
+  const [currentDetail, setCurrentDetail] = usePropSyncedState<IncidentDetail | null>(props.detail, [syncKey]);
+  const [unsafeConditionsPresent, setUnsafeConditionsPresent] = usePropSyncedState(
+    props.detail?.unsafeConditionsPresent ?? false,
+    [syncKey]
+  );
+  const [editorEnabled, setEditorEnabled] = usePropSyncedState(props.canEditInitial, [syncKey]);
+  const [submitterSignatureAttested, setSubmitterSignatureAttested] = usePropSyncedState(
+    Boolean(props.detail?.submitterSignatureAttested && props.detail?.submitterSignedAt),
+    [syncKey]
+  );
+  const [submitterSignatureDraftDataUrl, setSubmitterSignatureDraftDataUrl] = usePropSyncedState("", [syncKey]);
+  const [submitterSignatureImageDataUrl, setSubmitterSignatureImageDataUrl] = usePropSyncedState("", [syncKey]);
+  const [pendingEsignAppliedAt, setPendingEsignAppliedAt] = usePropSyncedState<string | null>(null, [syncKey]);
 
   const detail = currentDetail;
   const status = detail?.status ?? "draft";

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { createCommunityPartnerAction, createReferralSourceAction } from "@/app/sales-partner-actions";
 import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
+import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
 import { COMMUNITY_PARTNER_CATEGORY_OPTIONS } from "@/lib/canonical";
 import { formatPhoneInput } from "@/lib/phone";
@@ -90,22 +91,29 @@ export function NewCommunityPartnerForm() {
 export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] }) {
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
-
-  const [partnerOptions, setPartnerOptions] = useState(() =>
-    [...partners].sort((a, b) => a.organization_name.localeCompare(b.organization_name))
+  const [createdPartners, setCreatedPartners] = useState<PartnerLookup[]>([]);
+  const partnerOptions = useMemo(
+    () =>
+      [...partners, ...createdPartners]
+        .filter((partner, index, all) => all.findIndex((candidate) => candidate.id === partner.id) === index)
+        .sort((a, b) => a.organization_name.localeCompare(b.organization_name)),
+    [createdPartners, partners]
   );
 
-  const [form, setForm] = useState({
-    partnerId: "",
-    contactName: "",
-    jobTitle: "",
-    primaryPhone: "",
-    secondaryPhone: "",
-    primaryEmail: "",
-    preferredContactMethod: "",
-    notes: "",
-    active: true
-  });
+  const [form, setForm] = usePropSyncedState(
+    () => ({
+      partnerId: "",
+      contactName: "",
+      jobTitle: "",
+      primaryPhone: "",
+      secondaryPhone: "",
+      primaryEmail: "",
+      preferredContactMethod: "",
+      notes: "",
+      active: true
+    }),
+    [partnerOptions.length]
+  );
 
   const [showCreateOrgInline, setShowCreateOrgInline] = useState(false);
   const [orgForm, setOrgForm] = useState<{
@@ -126,10 +134,6 @@ export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] 
     () => partnerOptions.find((partner) => partner.id === form.partnerId) ?? null,
     [partnerOptions, form.partnerId]
   );
-
-  useEffect(() => {
-    setPartnerOptions([...partners].sort((a, b) => a.organization_name.localeCompare(b.organization_name)));
-  }, [partners]);
 
   useConstrainedSelection({
     selectedId: form.partnerId,
@@ -193,11 +197,7 @@ export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] 
                   return;
                 }
 
-                setPartnerOptions((current) => {
-                  const next = [...current, response.partner];
-                  next.sort((a, b) => a.organization_name.localeCompare(b.organization_name));
-                  return next;
-                });
+                setCreatedPartners((current) => [...current, response.partner]);
                 setForm((current) => ({ ...current, partnerId: response.partner.id }));
                 setShowCreateOrgInline(false);
                 setStatus(`Organization created and selected: ${response.partner.organization_name}`);

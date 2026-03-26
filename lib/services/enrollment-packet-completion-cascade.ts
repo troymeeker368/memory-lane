@@ -362,8 +362,13 @@ export async function runEnrollmentPacketCompletionCascade(
     completedPacketArtifactCreated = artifactRepair.created;
   }
 
+  const hasCompletedPacketArtifact = memberFileArtifacts.some(
+    (artifact) => artifact.uploadCategory === "completed_packet" && Boolean(artifact.memberFileId)
+  );
   const mappingSummary =
     String(input.request.mapping_sync_status ?? "").trim().toLowerCase() === "completed" &&
+    Boolean(input.request.latest_mapping_run_id) &&
+    hasCompletedPacketArtifact &&
     !missingOperationalShells.has(input.member.id)
       ? {
           mappingRunId: input.request.latest_mapping_run_id ?? null,
