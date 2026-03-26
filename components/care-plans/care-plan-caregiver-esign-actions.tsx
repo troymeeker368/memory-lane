@@ -110,15 +110,18 @@ export function CarePlanCaregiverEsignActions({
                   signatureImageDataUrl: nurseSignatureImageDataUrl ?? ""
                 });
                 if (!result.ok) {
-                  if (result.id === carePlanId) {
-                    setStatus("Nurse/Admin signature was saved, but post-sign follow-up still needs attention. Review the post-sign readiness status below.");
-                    return;
-                  }
                   setStatus(result.error);
                   return;
                 }
+                if (result.actionNeeded) {
+                  setStatus(
+                    result.actionNeededMessage ??
+                      "Nurse/Admin signature was saved, but post-sign follow-up still needs attention. Review the post-sign readiness status below."
+                  );
+                  return;
+                }
                 const statusLabel = getCaregiverSignatureStatusLabel(
-                  result.status as CaregiverSignatureStatus
+                  ("status" in result ? result.status : caregiverSignatureStatus) as CaregiverSignatureStatus
                 );
                 setStatus(`Nurse/Admin signature saved. Caregiver workflow status: ${statusLabel}.`);
               })

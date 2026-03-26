@@ -9,6 +9,7 @@ import {
   normalizeEnrollmentPacketIntakePayload,
   normalizeEnrollmentPacketTextInput
 } from "@/lib/services/enrollment-packet-intake-payload";
+import { buildCommittedWorkflowActionState } from "@/lib/services/committed-workflow-state";
 
 type PublicEnrollmentPacketUploadCategory =
   | "medicare_card"
@@ -365,6 +366,11 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
     const redirectSuffix = redirectParams.size > 0 ? `?${redirectParams.toString()}` : "";
     return {
       ok: true,
+      ...buildCommittedWorkflowActionState({
+        operationalStatus: result.operationalReadinessStatus,
+        operationallyReady: result.operationalReadinessStatus === "operationally_ready",
+        actionNeededMessage: result.actionNeededMessage
+      }),
       redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation${redirectSuffix}`
     } as const;
   } catch (error) {

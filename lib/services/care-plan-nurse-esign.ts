@@ -12,8 +12,7 @@ import {
 } from "@/lib/services/care-plan-nurse-esign-core";
 import { captureClinicalEsignArtifact } from "@/lib/services/clinical-esign-artifacts";
 import {
-  deleteMemberDocumentObject,
-  deleteMemberFileRecord
+  deleteMemberFileRecordAndStorage
 } from "@/lib/services/member-files";
 import {
   recordImmediateSystemAlert,
@@ -99,10 +98,18 @@ async function cleanupCarePlanNurseSignatureArtifactAfterFinalizeFailure(input: 
 
   try {
     if (input.artifact.signatureArtifactMemberFileId) {
-      await deleteMemberFileRecord(input.artifact.signatureArtifactMemberFileId);
-    }
-    if (input.artifact.signatureArtifactStoragePath) {
-      await deleteMemberDocumentObject(input.artifact.signatureArtifactStoragePath);
+      await deleteMemberFileRecordAndStorage({
+        memberFileId: input.artifact.signatureArtifactMemberFileId,
+        storageObjectPath: input.artifact.signatureArtifactStoragePath,
+        actorUserId: input.actorUserId,
+        entityType: "care_plan",
+        entityId: input.carePlanId,
+        alertKey: "care_plan_nurse_signature_finalize_storage_cleanup_failed",
+        metadata: {
+          member_id: input.memberId,
+          reason: input.reason
+        }
+      });
     }
   } catch (cleanupError) {
     await recordImmediateSystemAlert({

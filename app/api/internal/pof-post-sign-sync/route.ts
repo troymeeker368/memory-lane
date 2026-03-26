@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { retryQueuedPhysicianOrderPostSignSync } from "@/lib/services/physician-orders-supabase";
+import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
 function readBearerToken(request: NextRequest) {
@@ -26,10 +27,26 @@ function parseLimitValue(value: string | number | null | undefined) {
 async function handleRunnerRequest(request: NextRequest) {
   const acceptedSecrets = getAcceptedRunnerSecrets();
   if (acceptedSecrets.length === 0) {
+    try {
+      await recordImmediateSystemAlert({
+        entityType: "physician_order",
+        entityId: null,
+        actorUserId: null,
+        severity: "high",
+        alertKey: "pof_post_sign_sync_runner_not_configured",
+        metadata: {
+          route: "/api/internal/pof-post-sign-sync",
+          message: getDefaultConfigError()
+        }
+      });
+    } catch (alertError) {
+      console.error("[pof-post-sign-sync-route] unable to persist missing-config alert", alertError);
+    }
     return NextResponse.json(
       {
         ok: false,
-        error: getDefaultConfigError()
+        error: getDefaultConfigError(),
+        runnerConfigured: false
       },
       { status: 503 }
     );
@@ -60,6 +77,7 @@ async function handleRunnerRequest(request: NextRequest) {
   return NextResponse.json({
     ok: true,
     timestamp: toEasternISO(),
+    runnerConfigured: true,
     ...result
   });
 }

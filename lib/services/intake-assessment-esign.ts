@@ -17,8 +17,7 @@ import {
   recordWorkflowEvent
 } from "@/lib/services/workflow-observability";
 import {
-  deleteMemberDocumentObject,
-  deleteMemberFileRecord
+  deleteMemberFileRecordAndStorage
 } from "@/lib/services/member-files";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
@@ -99,10 +98,18 @@ async function cleanupIntakeSignatureArtifactAfterFinalizeFailure(input: {
 
   try {
     if (input.artifact.signatureArtifactMemberFileId) {
-      await deleteMemberFileRecord(input.artifact.signatureArtifactMemberFileId);
-    }
-    if (input.artifact.signatureArtifactStoragePath) {
-      await deleteMemberDocumentObject(input.artifact.signatureArtifactStoragePath);
+      await deleteMemberFileRecordAndStorage({
+        memberFileId: input.artifact.signatureArtifactMemberFileId,
+        storageObjectPath: input.artifact.signatureArtifactStoragePath,
+        actorUserId: input.actorUserId,
+        entityType: "intake_assessment",
+        entityId: input.assessmentId,
+        alertKey: "intake_assessment_signature_finalize_storage_cleanup_failed",
+        metadata: {
+          member_id: input.memberId,
+          reason: input.reason
+        }
+      });
     }
   } catch (cleanupError) {
     await recordImmediateSystemAlert({

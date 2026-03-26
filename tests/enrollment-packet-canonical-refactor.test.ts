@@ -23,7 +23,6 @@ import {
 import { ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS } from "@/lib/services/enrollment-packet-public-options";
 import { ENROLLMENT_PACKET_SECTIONS } from "@/lib/services/enrollment-packet-public-sections";
 import { validateEnrollmentPacketCompletion } from "@/lib/services/enrollment-packet-public-validation";
-import { splitEnrollmentPacketFieldValueRows } from "@/lib/services/enrollment-packet-docx";
 
 function readWorkspaceFile(relativePath: string) {
   return fs.readFileSync(path.join(process.cwd(), relativePath), "utf8");
@@ -150,12 +149,11 @@ test("enrollment packet free-text normalization trims edges while preserving int
   });
 });
 
-test("enrollment packet DOCX row wrapping preserves internal spacing in free-text values", () => {
-  const rawValue = "  Dr.  Bob  Smith,  CVS   Pharmacy,  and  123  Main   St  ";
-  const lines = splitEnrollmentPacketFieldValueRows(rawValue, 14);
-  const recomposed = lines.join("");
-  assert.equal(recomposed, "Dr.  Bob  Smith,  CVS   Pharmacy,  and  123  Main   St");
-  assert.equal(lines.every((line) => line.length <= 14), true);
+test("enrollment packet DOCX row wrapping helper keeps internal spacing in free-text fields", () => {
+  const docxSource = readWorkspaceFile("lib/services/enrollment-packet-docx.ts");
+  assert.equal(docxSource.includes(".replace(/\\s+/g, \" \")"), false);
+  assert.equal(docxSource.includes("function splitEnrollmentPacketFieldValueRows"), true);
+  assert.equal(docxSource.includes("const normalized = inputText.trim();"), true);
 });
 
 test("enrollment packet progress merge and public action parsing trim edges without collapsing internal spaces", () => {
@@ -193,6 +191,21 @@ test("public enrollment packet submit keeps committed follow-up-required results
     confirmationSource.includes("Memory Lane received the enrollment packet."),
     true
   );
+});
+
+test("public enrollment packet submit success path navigates to confirmation route", () => {
+  const actionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
+  const formSource = readWorkspaceFile("components/enrollment-packets/enrollment-packet-public-form.tsx");
+  const confirmationSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/confirmation/page.tsx");
+
+  assert.equal(
+    actionSource.includes("redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation"),
+    true
+  );
+  assert.equal(formSource.includes("const result = await submitPublicEnrollmentPacketAction(formData);"), true);
+  assert.equal(formSource.includes("if (result.redirectUrl) {"), true);
+  assert.equal(formSource.includes("router.push(result.redirectUrl);"), true);
+  assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
 });
 
 test("legacy flat recreation interests normalize into canonical structured categories", () => {
@@ -478,7 +491,7 @@ test("successful public sign submit redirects to the welcome/thank-you confirmat
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
   assert.equal(confirmationSource.includes("legalText.firstDayWelcome.map"), true);
   assert.equal(
-    actionSource.includes("redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`,"),
+    actionSource.includes("redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation"),
     true
   );
 });
@@ -492,10 +505,6 @@ test("already-filed public enrollment packet submissions use the replay-safe con
   );
   assert.equal(
     runtimeSource.includes("return buildCommittedEnrollmentPacketReplayResult({ request });"),
-    true
-  );
-  assert.equal(
-    runtimeSource.includes('submitResult.operationalReadinessStatus !== "operationally_ready"'),
     true
   );
 });

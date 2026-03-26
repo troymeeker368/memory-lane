@@ -26,6 +26,7 @@ import {
   resolveIntakePostSignReadiness,
   type IntakePostSignReadinessStatus
 } from "@/lib/services/intake-post-sign-readiness";
+import { buildCommittedWorkflowActionState } from "@/lib/services/committed-workflow-state";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -154,12 +155,12 @@ const assessmentSchema = z
 export async function createAssessmentAction(raw: z.infer<typeof assessmentSchema>) {
   const payload = assessmentSchema.safeParse(raw);
   if (!payload.success) {
-    return { error: "Invalid assessment." };
+    return { ok: false as const, error: "Invalid assessment." };
   }
 
   const profile = await getCurrentProfile();
   if (!isAuthorizedIntakeAssessmentSignerRole(profile.role)) {
-    return { error: "Only nurse or admin users may electronically sign Intake Assessments." };
+    return { ok: false as const, error: "Only nurse or admin users may electronically sign Intake Assessments." };
   }
 
   const signerName = await getManagedUserSignatureName(profile.id, profile.full_name);
@@ -173,14 +174,15 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       leadId: payload.data.leadId
     });
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Unable to resolve canonical intake identity." };
+    return { ok: false as const, error: error instanceof Error ? error.message : "Unable to resolve canonical intake identity." };
   }
 
   if (!canonicalIdentity.memberId) {
-    return { error: "createAssessmentAction expected member.id but canonical member resolution returned empty memberId." };
+    return { ok: false as const, error: "createAssessmentAction expected member.id but canonical member resolution returned empty memberId." };
   }
   if (!canonicalIdentity.leadId) {
     return {
+      ok: false as const,
       error: "createAssessmentAction expected lead.id but selected intake record is not linked to a canonical lead."
     };
   }
@@ -192,11 +194,12 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     leadRow = await getLeadRecordById(leadId);
   } catch (error) {
     return {
+      ok: false as const,
       error: `Unable to resolve canonical lead.id for intake assessment. ${error instanceof Error ? error.message : "Unknown error"}`
     };
   }
   if (!leadRow) {
-    return { error: "createAssessmentAction expected lead.id, but canonical lead lookup returned no row." };
+    return { ok: false as const, error: "createAssessmentAction expected lead.id, but canonical lead lookup returned no row." };
   }
 
   const leadStage = leadRow.stage ?? payload.data.leadStage ?? null;
@@ -270,7 +273,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       serviceRole: true
     });
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Unable to save intake assessment." };
+    return { ok: false as const, error: error instanceof Error ? error.message : "Unable to save intake assessment." };
   }
 
   try {
@@ -299,12 +302,17 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     revalidatePath(`/health/assessment/${created.id}`);
     revalidatePath(`/reports/assessments/${created.id}`);
     return {
-      error:
-        error instanceof Error
-          ? `Intake Assessment was created, but nurse/admin e-signature finalization failed (${error.message}). Open the saved assessment and retry the signature.`
-          : "Intake Assessment was created, but nurse/admin e-signature finalization failed.",
+      ok: true as const,
       assessmentId: created.id,
-      ...readiness
+      ...readiness,
+      ...buildCommittedWorkflowActionState({
+        operationalStatus: readiness.postSignReadinessStatus,
+        operationallyReady: readiness.postSignReady,
+        actionNeededMessage:
+          error instanceof Error
+            ? `Intake Assessment was created, but nurse/admin e-signature finalization failed (${error.message}). Open the saved assessment and retry the signature.`
+            : "Intake Assessment was created, but nurse/admin e-signature finalization failed."
+      })
     };
   }
 
@@ -345,12 +353,17 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       openFollowUpTaskTypes: ["draft_pof_creation"]
     });
     return {
-      error: followUpQueueError
-        ? `Intake Assessment was signed and draft POF creation failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
-        : `Intake Assessment was signed, but draft POF creation failed (${message}).`,
+      ok: true as const,
       assessmentId: created.id,
       followUpTaskType: followUpQueueError ? undefined : ("draft_pof_creation" as const),
-      ...readiness
+      ...readiness,
+      ...buildCommittedWorkflowActionState({
+        operationalStatus: readiness.postSignReadinessStatus,
+        operationallyReady: readiness.postSignReady,
+        actionNeededMessage: followUpQueueError
+          ? `Intake Assessment was signed and draft POF creation failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
+          : `Intake Assessment was signed, but draft POF creation failed (${message}).`
+      })
     };
   }
 
@@ -387,11 +400,16 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
         queueError instanceof Error ? queueError.message : "Unable to queue intake post-sign follow-up task.";
     }
     return {
-      error: followUpQueueError
-        ? `Intake Assessment PDF save to Member Files failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
-        : `Intake Assessment was created, but saving its PDF to member files failed (${message}).`,
+      ok: true as const,
       assessmentId: created.id,
       followUpTaskType: followUpQueueError ? undefined : ("member_file_pdf_persistence" as const),
+      ...buildCommittedWorkflowActionState({
+        operationalStatus: followUpQueueError ? "signed_pending_member_file_pdf" : "signed_pending_member_file_pdf",
+        operationallyReady: false,
+        actionNeededMessage: followUpQueueError
+          ? `Intake Assessment PDF save to Member Files failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
+          : `Intake Assessment was created, but saving its PDF to member files failed (${message}).`
+      }),
       ...(followUpQueueError
         ? {}
         : buildIntakePostSignState({
@@ -415,9 +433,18 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
   return {
     ok: true,
     assessmentId: created.id,
-    ...buildIntakePostSignState({
-      signatureStatus: "signed",
-      draftPofStatus: "created"
-    })
+    ...(() => {
+      const readiness = buildIntakePostSignState({
+        signatureStatus: "signed",
+        draftPofStatus: "created"
+      });
+      return {
+        ...readiness,
+        ...buildCommittedWorkflowActionState({
+          operationalStatus: readiness.postSignReadinessStatus,
+          operationallyReady: readiness.postSignReady
+        })
+      };
+    })()
   };
 }

@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { buildCommittedWorkflowActionState } from "@/lib/services/committed-workflow-state";
 
 async function loadPublicPofSignatureService() {
   return import("@/lib/services/pof-esign-public");
@@ -33,6 +34,11 @@ export async function submitPublicPofSignatureAction(formData: FormData) {
     return {
       ok: true,
       signedPdfUrl: signed.signedPdfUrl,
+      ...buildCommittedWorkflowActionState({
+        operationalStatus: signed.postSignStatus,
+        operationallyReady: signed.postSignStatus === "synced",
+        actionNeededMessage: signed.actionNeededMessage
+      }),
       postSignStatus: signed.postSignStatus,
       retry: signed.retry,
       actionNeeded: signed.actionNeeded,

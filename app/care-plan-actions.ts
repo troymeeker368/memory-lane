@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
+import { buildCommittedWorkflowActionState } from "@/lib/services/committed-workflow-state";
 import { CARE_PLAN_SECTION_TYPES } from "@/lib/services/care-plan-track-definitions";
 
 async function loadCarePlanWriteService() {
@@ -12,6 +13,17 @@ async function loadCarePlanWriteService() {
 
 async function loadCarePlanEsignService() {
   return import("@/lib/services/care-plan-esign");
+}
+
+function buildCommittedCarePlanActionState(input: {
+  operationallyReady: boolean;
+  actionNeededMessage?: string | null;
+}) {
+  return buildCommittedWorkflowActionState({
+    operationalStatus: input.operationallyReady ? "ready" : "follow_up_required",
+    operationallyReady: input.operationallyReady,
+    actionNeededMessage: input.actionNeededMessage
+  });
 }
 
 const carePlanSectionSchema = z.object({
@@ -103,8 +115,14 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
       revalidatePath(`/health/care-plans/${carePlanId}`);
     }
     return {
-      ok: false as const,
-      error: error instanceof Error ? error.message : "Unable to create care plan.",
+      ok: Boolean(carePlanId) as true | false,
+      ...(carePlanId
+        ? buildCommittedCarePlanActionState({
+            operationallyReady: false,
+            actionNeededMessage: error instanceof Error ? error.message : "Unable to create care plan."
+          })
+        : {}),
+      ...(carePlanId ? { error: null } : { error: error instanceof Error ? error.message : "Unable to create care plan." }),
       ...(carePlanId ? { id: carePlanId } : {})
     };
   }
@@ -116,7 +134,14 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
   revalidatePath(`/health/care-plans/${createdCarePlan.id}`);
   revalidatePath(`/health/member-health-profiles/${createdCarePlan.memberId}`);
   revalidatePath(`/members/${createdCarePlan.memberId}`);
-  return { ok: true as const, error: null, id: createdCarePlan.id };
+  return {
+    ok: true as const,
+    error: null,
+    id: createdCarePlan.id,
+    ...buildCommittedCarePlanActionState({
+      operationallyReady: true
+    })
+  };
 }
 
 const reviewCarePlanSchema = z
@@ -198,9 +223,13 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
         : payload.data.carePlanId;
     revalidatePath(`/health/care-plans/${carePlanId}`);
     return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Unable to review care plan.",
-      id: carePlanId
+      ok: true as const,
+      error: null,
+      id: carePlanId,
+      ...buildCommittedCarePlanActionState({
+        operationallyReady: false,
+        actionNeededMessage: error instanceof Error ? error.message : "Unable to review care plan."
+      })
     } as const;
   }
 
@@ -212,7 +241,13 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
   revalidatePath(`/health/care-plans/${reviewedCarePlan.id}`);
   revalidatePath(`/health/member-health-profiles/${reviewedCarePlan.memberId}`);
   revalidatePath(`/members/${reviewedCarePlan.memberId}`);
-  return { ok: true as const, error: null };
+  return {
+    ok: true as const,
+    error: null,
+    ...buildCommittedCarePlanActionState({
+      operationallyReady: true
+    })
+  };
 }
 
 const signCarePlanSchema = z.object({
@@ -237,7 +272,7 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
     if (!signatureImageDataUrl) {
       return { ok: false, error: "Draw nurse/admin signature before signing." } as const;
     }
-    return { ok: false, error: "Care plan is required." } as const;
+     return { ok: false, error: "Care plan is required." } as const;
   }
   if (!payload.data.signatureImageDataUrl.trim().startsWith("data:image/")) {
     return { ok: false, error: "A valid drawn nurse/admin signature image is required." } as const;
@@ -263,16 +298,27 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
         : payload.data.carePlanId;
     revalidatePath(`/health/care-plans/${carePlanId}`);
     return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Unable to sign care plan.",
-      id: carePlanId
+      ok: true as const,
+      error: null,
+      id: carePlanId,
+      ...buildCommittedCarePlanActionState({
+        operationallyReady: false,
+        actionNeededMessage: error instanceof Error ? error.message : "Unable to sign care plan."
+      })
     } as const;
   }
   const signedCarePlan = updated as { id: string; memberId: string; caregiverSignatureStatus: string };
   revalidatePath(`/health/care-plans/${signedCarePlan.id}`);
   revalidatePath(`/health/member-health-profiles/${signedCarePlan.memberId}`);
   revalidatePath(`/members/${signedCarePlan.memberId}`);
-  return { ok: true as const, error: null, status: signedCarePlan.caregiverSignatureStatus };
+  return {
+    ok: true as const,
+    error: null,
+    status: signedCarePlan.caregiverSignatureStatus,
+    ...buildCommittedCarePlanActionState({
+      operationallyReady: true
+    })
+  };
 }
 
 const sendCaregiverSignatureSchema = z.object({

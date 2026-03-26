@@ -360,40 +360,59 @@ export async function deleteMemberFileRecordAndStorage(input: {
   if (!memberFileId) return { recordDeleted: false, storageDeleted: false };
 
   const storageObjectPath = String(input.storageObjectPath ?? "").trim() || null;
-  await deleteMemberFileRecord(memberFileId);
-
-  if (!storageObjectPath) {
-    return {
-      recordDeleted: true,
-      storageDeleted: false
-    };
+  if (storageObjectPath) {
+    try {
+      await deleteMemberDocumentObject(storageObjectPath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to delete member file storage object.";
+      await recordImmediateSystemAlert({
+        entityType: input.entityType,
+        entityId: input.entityId ?? memberFileId,
+        actorUserId: input.actorUserId ?? null,
+        severity: "high",
+        alertKey: input.alertKey,
+        metadata: {
+          member_file_id: memberFileId,
+          storage_object_path: storageObjectPath,
+          delete_phase: "storage_cleanup",
+          error: message,
+          ...(input.metadata ?? {})
+        }
+      });
+      throw new Error(
+        "Member file delete stopped before removing the database row because storage cleanup failed. Review operational alerts before retrying."
+      );
+    }
   }
 
   try {
-    await deleteMemberDocumentObject(storageObjectPath);
+    await deleteMemberFileRecord(memberFileId);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to delete member file storage object.";
+    const message = error instanceof Error ? error.message : "Unable to delete member file record.";
     await recordImmediateSystemAlert({
       entityType: input.entityType,
       entityId: input.entityId ?? memberFileId,
       actorUserId: input.actorUserId ?? null,
       severity: "high",
-      alertKey: input.alertKey,
+      alertKey: `${input.alertKey}_record_delete_failed`,
       metadata: {
         member_file_id: memberFileId,
         storage_object_path: storageObjectPath,
+        delete_phase: "record_delete",
         error: message,
         ...(input.metadata ?? {})
       }
     });
     throw new Error(
-      "Member file row was deleted, but storage cleanup failed. Review operational alerts before considering the delete complete."
+      storageObjectPath
+        ? "Member file storage was deleted, but the database row could not be removed. Review operational alerts before considering the delete complete."
+        : "Member file database row could not be removed."
     );
   }
 
   return {
     recordDeleted: true,
-    storageDeleted: true
+    storageDeleted: Boolean(storageObjectPath)
   };
 }
 

@@ -743,8 +743,13 @@ export function AssessmentForm({
               notes: form.notes
             });
 
-            if (res.error) {
+            if (!res.ok) {
               setStatus(`Error: ${res.error}`);
+              return;
+            }
+
+            if (res.actionNeeded) {
+              setStatus(res.actionNeededMessage ?? "Assessment was committed, but follow-up is still required.");
               if ("assessmentId" in res && res.assessmentId) {
                 const retryPath =
                   "followUpTaskType" in res && res.followUpTaskType === "member_file_pdf_persistence"

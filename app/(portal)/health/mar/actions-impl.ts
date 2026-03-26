@@ -21,6 +21,7 @@ import {
   MAR_PRN_STATUS_OPTIONS,
   type MarPrnOutcome
 } from "@/lib/services/mar-shared";
+import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
 const scheduledAdministrationSchema = z
@@ -117,16 +118,52 @@ const monthlyMarReportSchema = z.object({
 });
 
 async function insertAudit(action: string, entityType: string, entityId: string | null, details: Record<string, unknown>) {
-  const profile = await getCurrentProfile();
-  await insertAuditLogEntry({
-    actorUserId: profile.id,
-    actorRole: profile.role,
-    action,
-    entityType,
-    entityId,
-    details,
-    serviceRole: true
-  });
+  let actorUserId: string | null = null;
+  let actorRole: string | null = null;
+  try {
+    const profile = await getCurrentProfile();
+    actorUserId = profile.id;
+    actorRole = profile.role;
+    await insertAuditLogEntry({
+      actorUserId,
+      actorRole,
+      action,
+      entityType,
+      entityId,
+      details,
+      serviceRole: true
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown audit log error.";
+    console.error("[mar-actions] audit log insert failed after committed write", {
+      action,
+      entityType,
+      entityId,
+      message
+    });
+    try {
+      await recordImmediateSystemAlert({
+        entityType,
+        entityId,
+        actorUserId,
+        severity: "medium",
+        alertKey: "audit_log_insert_failed",
+        metadata: {
+          audit_action: action,
+          actor_role: actorRole,
+          error: message
+        }
+      });
+    } catch (alertError) {
+      const alertMessage = alertError instanceof Error ? alertError.message : "Unknown system alert error.";
+      console.error("[mar-actions] system alert insert failed after audit log failure", {
+        action,
+        entityType,
+        entityId,
+        message: alertMessage
+      });
+    }
+  }
 }
 
 function revalidateMarRoutes(memberId: string) {

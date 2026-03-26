@@ -376,16 +376,20 @@ export function NewCarePlanForm({
               signatureAttested: form.signatureAttested,
               signatureImageDataUrl: form.signatureImageDataUrl
             });
-            if (response.error) {
+            if (!response.ok) {
+              setStatus(`Error: ${response.error}`);
+              return;
+            }
+            if (response.actionNeeded) {
               if (response.id) {
                 router.push(`/health/care-plans/${response.id}?followUp=required&sourceAction=create`);
                 return;
               }
-              setStatus(`Error: ${response.error}`);
+              setStatus(response.actionNeededMessage ?? "Care plan was saved, but follow-up is still required.");
               return;
             }
             setStatus("Care plan created.");
-            if (response.id) router.push(`/health/care-plans/${response.id}`);
+            if ("id" in response && response.id) router.push(`/health/care-plans/${response.id}`);
           })
         }
       >
@@ -589,12 +593,16 @@ export function CarePlanReviewForm({
               signatureAttested: form.signatureAttested,
               signatureImageDataUrl: form.signatureImageDataUrl
             });
-            if (response.error) {
-              if (response.id) {
+            if (!response.ok) {
+              setStatus(`Error: ${response.error}`);
+              return;
+            }
+            if (response.actionNeeded) {
+              if ("id" in response && response.id) {
                 router.push(`/health/care-plans/${response.id}?followUp=required&sourceAction=review`);
                 return;
               }
-              setStatus(`Error: ${response.error}`);
+              setStatus(response.actionNeededMessage ?? "Care plan review was saved, but follow-up is still required.");
               return;
             }
             setStatus("Care plan review saved.");
@@ -602,7 +610,7 @@ export function CarePlanReviewForm({
               router.push(returnTo);
               return;
             }
-            router.push(`/health/care-plans/${carePlanId}`);
+            router.push(`/health/care-plans/${"id" in response && response.id ? response.id : carePlanId}`);
           })
         }
       >
