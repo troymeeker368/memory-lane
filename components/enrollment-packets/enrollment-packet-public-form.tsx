@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useTransition,
   type PointerEvent as ReactPointerEvent,
   type ReactNode
 } from "react";
@@ -252,7 +251,7 @@ export function EnrollmentPacketPublicForm({
 }) {
   const [payload, setPayload] = useState<EnrollmentPacketIntakePayload>(() => toInitialPayload(fields));
   const [status, setStatus] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
   const [attested, setAttested] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
   const [caregiverTypedName, setCaregiverTypedName] = useState(payload.primaryContactName ?? "");
@@ -285,10 +284,8 @@ export function EnrollmentPacketPublicForm({
   const navigateToConfirmation = (rawRedirectUrl: string) => {
     const redirectUrl = resolveRedirectUrl(rawRedirectUrl);
     setStatus("Submission complete. Redirecting to confirmation page...");
-    window.location.assign(redirectUrl);
-    window.setTimeout(() => {
-      window.location.replace(redirectUrl);
-    }, 150);
+    console.info("[enrollment-packet] submit succeeded; redirecting to confirmation", { redirectUrl });
+    window.location.href = redirectUrl;
   };
 
   const missingFieldKeys = useMemo(() => {
@@ -559,7 +556,8 @@ export function EnrollmentPacketPublicForm({
     const payloadToSubmit = applySignatureDefaults(payload, caregiverTypedName);
     setStatus(null);
 
-    startTransition(async () => {
+    setIsPending(true);
+    void (async () => {
       try {
         const formData = new FormData();
         appendCommonFields(formData, payloadToSubmit);
@@ -572,6 +570,7 @@ export function EnrollmentPacketPublicForm({
         });
 
         const result = await submitPublicEnrollmentPacketAction(formData);
+        console.info("[enrollment-packet] submit action completed", result);
         if (!result.ok) {
           setStatus(result.error);
           return;
@@ -580,8 +579,10 @@ export function EnrollmentPacketPublicForm({
         navigateToConfirmation(result.redirectUrl);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Unable to complete enrollment packet.");
+      } finally {
+        setIsPending(false);
       }
-    });
+    })();
   };
 
   useEffect(() => {

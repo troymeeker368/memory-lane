@@ -1,8 +1,54 @@
+import type { ReactNode } from "react";
+
 import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { Card, CardTitle } from "@/components/ui/card";
 import { buildEnrollmentPacketLegalText } from "@/lib/services/enrollment-packet-legal-text";
 import { normalizeStoredIntakePayload } from "@/lib/services/enrollment-packet-core";
 import { formatEnrollmentPacketRecreationInterests } from "@/lib/services/enrollment-packet-recreation";
+
+const FIRST_DAY_WELCOME_BULLET_SECTIONS = [
+  {
+    heading: "Items to Submit Before the First Day",
+    intro: "Please make sure the following documents are completed and submitted to the Enrollment Manager or Center Nurse:",
+    itemCount: 4
+  },
+  {
+    heading: "What to Bring on Your First Day",
+    intro: "To help us provide the best care possible, please send the following items:",
+    itemCount: 4
+  }
+] as const;
+
+function renderFirstDayWelcomeLetter(paragraphs: readonly string[]) {
+  const rendered: ReactNode[] = [];
+  let index = 0;
+
+  while (index < paragraphs.length) {
+    const section = FIRST_DAY_WELCOME_BULLET_SECTIONS.find((candidate) => candidate.heading === paragraphs[index]);
+    if (!section) {
+      rendered.push(<p key={`${index}-${paragraphs[index]}`}>{paragraphs[index]}</p>);
+      index += 1;
+      continue;
+    }
+
+    const intro = paragraphs[index + 1] ?? section.intro;
+    const items = paragraphs.slice(index + 2, index + 2 + section.itemCount);
+    rendered.push(
+      <section key={`${index}-${section.heading}`} className="space-y-3">
+        <h3 className="font-semibold text-slate-900">{section.heading}</h3>
+        <p>{intro}</p>
+        <ul className="list-disc space-y-2 pl-5">
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </section>
+    );
+    index += 2 + section.itemCount;
+  }
+
+  return rendered;
+}
 
 export default async function EnrollmentPacketConfirmationPage({
   params,
@@ -81,9 +127,7 @@ export default async function EnrollmentPacketConfirmationPage({
       <Card>
         <CardTitle>First Day Welcome Letter</CardTitle>
         <div className="mt-3 space-y-3 text-sm text-slate-700">
-          {legalText.firstDayWelcome.map((paragraph) => (
-            <p key={paragraph}>{paragraph}</p>
-          ))}
+          {renderFirstDayWelcomeLetter(legalText.firstDayWelcome)}
         </div>
       </Card>
     </div>

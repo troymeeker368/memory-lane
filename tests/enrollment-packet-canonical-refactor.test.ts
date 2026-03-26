@@ -224,7 +224,7 @@ test("public enrollment packet submit success path navigates to confirmation rou
   assert.equal(formSource.includes("const result = await submitPublicEnrollmentPacketAction(formData);"), true);
   assert.equal(formSource.includes("if (!result.ok) {"), true);
   assert.equal(formSource.includes("navigateToConfirmation(result.redirectUrl);"), true);
-  assert.equal(formSource.includes("window.location.replace(redirectUrl);"), true);
+  assert.equal(formSource.includes("window.location.href = redirectUrl;"), true);
   assert.equal(pageSource.includes("redirect(`/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`);"), true);
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
 });
@@ -501,12 +501,13 @@ test("successful public sign submit redirects to the welcome/thank-you confirmat
   assert.equal(actionSource.includes("redirect("), false);
   assert.equal(actionSource.includes("redirectUrl:"), true);
   assert.equal(formSource.includes("const router = useRouter();"), false);
-  assert.equal(formSource.includes("window.location.replace"), true);
+  assert.equal(formSource.includes("window.location.href = redirectUrl;"), true);
   assert.equal(formSource.includes("const navigateToConfirmation = (rawRedirectUrl: string) =>"), true);
   assert.equal(formSource.includes("const result = await submitPublicEnrollmentPacketAction(formData);"), true);
   assert.equal(confirmationSource.includes("Enrollment Packet Submitted"), true);
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
-  assert.equal(confirmationSource.includes("legalText.firstDayWelcome.map"), true);
+  assert.equal(confirmationSource.includes("renderFirstDayWelcomeLetter(legalText.firstDayWelcome)"), true);
+  assert.equal(confirmationSource.includes('className="list-disc space-y-2 pl-5"'), true);
   assert.equal(
     actionSource.includes("redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation"),
     true
@@ -519,8 +520,8 @@ test("sign/submit client flow includes a hard confirmation redirect fallback", (
 
   assert.equal(formSource.includes('const result = await submitPublicEnrollmentPacketAction(formData);'), true);
   assert.equal(formSource.includes("setStatus(result.error);"), true);
-  assert.equal(formSource.includes("window.location.assign(redirectUrl);"), true);
-  assert.equal(formSource.includes("window.setTimeout(() => {"), true);
+  assert.equal(formSource.includes("window.location.href = redirectUrl;"), true);
+  assert.equal(formSource.includes("setIsPending(true);"), true);
   assert.equal(actionSource.includes("redirectUrl:"), true);
 });
 
@@ -543,6 +544,16 @@ test("already-filed public enrollment packet submissions use the replay-safe con
     runtimeSource.includes("return buildCommittedEnrollmentPacketReplayResult({ request });"),
     true
   );
+});
+
+test("public submit guard uses a uuid-safe entity id for ip-scoped system events", () => {
+  const helperSource = readWorkspaceFile("lib/services/enrollment-packet-public-helpers.ts");
+
+  assert.equal(helperSource.includes("function buildDeterministicUuidFromHash("), true);
+  assert.equal(helperSource.includes('characters[12] = "5";'), true);
+  assert.equal(helperSource.includes("function buildEnrollmentPacketPublicIpEntityId("), true);
+  assert.equal(helperSource.includes("entityId: ipEntityId"), true);
+  assert.equal(helperSource.includes("entityId: ipFingerprint"), false);
 });
 
 test("completion cascade centralizes submitted notification and downstream repair-safe sync", () => {

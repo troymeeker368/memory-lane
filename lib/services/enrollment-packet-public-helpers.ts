@@ -48,6 +48,28 @@ function buildEnrollmentPacketPublicIpFingerprint(ipAddress: string | null | und
   return normalized ? hashToken(`enrollment-packet-ip:${normalized}`) : null;
 }
 
+function buildDeterministicUuidFromHash(hash: string | null | undefined) {
+  const normalized = clean(hash)?.replace(/[^a-f0-9]/gi, "").toLowerCase() ?? null;
+  if (!normalized || normalized.length < 32) return null;
+
+  const characters = normalized.slice(0, 32).split("");
+  characters[12] = "5";
+  const variantNibble = Number.parseInt(characters[16] ?? "0", 16);
+  characters[16] = ((variantNibble & 0x3) | 0x8).toString(16);
+
+  return [
+    characters.slice(0, 8).join(""),
+    characters.slice(8, 12).join(""),
+    characters.slice(12, 16).join(""),
+    characters.slice(16, 20).join(""),
+    characters.slice(20, 32).join("")
+  ].join("-");
+}
+
+function buildEnrollmentPacketPublicIpEntityId(ipAddress: string | null | undefined) {
+  return buildDeterministicUuidFromHash(buildEnrollmentPacketPublicIpFingerprint(ipAddress));
+}
+
 function sumEnrollmentPacketUploadBytes(uploads: PacketFileUpload[] | null | undefined) {
   return (uploads ?? []).reduce((total, upload) => total + (upload.bytes?.length ?? 0), 0);
 }
@@ -85,6 +107,7 @@ async function logPublicEnrollmentPacketGuardFailure(input: PublicEnrollmentPack
     input.request ??
     (normalizedToken ? (await input.resolveRequestByToken(normalizedToken))?.request ?? null : null);
   const ipFingerprint = buildEnrollmentPacketPublicIpFingerprint(input.caregiverIp);
+  const ipEntityId = buildEnrollmentPacketPublicIpEntityId(input.caregiverIp);
   const baseMetadata = {
     failure_type: input.failureType,
     message: input.message,
@@ -127,11 +150,11 @@ async function logPublicEnrollmentPacketGuardFailure(input: PublicEnrollmentPack
     });
   }
 
-  if (ipFingerprint) {
+  if (ipFingerprint && ipEntityId) {
     await recordWorkflowEvent({
       eventType: "enrollment_packet_public_guard_rejected",
       entityType: "enrollment_packet_public_ip",
-      entityId: ipFingerprint,
+      entityId: ipEntityId,
       actorType: "system",
       actorUserId: request?.sender_user_id ?? null,
       status: "failed",
@@ -146,7 +169,7 @@ async function logPublicEnrollmentPacketGuardFailure(input: PublicEnrollmentPack
     await maybeRecordRepeatedFailureAlert({
       workflowEventType: "enrollment_packet_public_guard_rejected",
       entityType: "enrollment_packet_public_ip",
-      entityId: ipFingerprint,
+      entityId: ipEntityId,
       actorUserId: request?.sender_user_id ?? null,
       threshold: 3,
       metadata: {
@@ -177,6 +200,7 @@ export async function enforcePublicEnrollmentPacketSubmissionGuards(input: {
   const uploadCount = input.uploads.length;
   const uploadBytes = sumEnrollmentPacketUploadBytes(input.uploads);
   const ipFingerprint = buildEnrollmentPacketPublicIpFingerprint(input.caregiverIp);
+  const ipEntityId = buildEnrollmentPacketPublicIpEntityId(input.caregiverIp);
   const rateWindowStart = new Date(
     Date.now() - input.limits.submitLookbackMinutes * 60 * 1000
   ).toISOString();
@@ -239,11 +263,11 @@ export async function enforcePublicEnrollmentPacketSubmissionGuards(input: {
     );
   }
 
-  if (ipFingerprint) {
+  if (ipFingerprint && ipEntityId) {
     const ipAttemptCount = await countRecentSystemEvents({
       eventType: "enrollment_packet_public_submit_attempt",
       entityType: "enrollment_packet_public_ip",
-      entityId: ipFingerprint,
+      entityId: ipEntityId,
       status: "started",
       sinceIso: rateWindowStart
     });
@@ -283,11 +307,11 @@ export async function enforcePublicEnrollmentPacketSubmissionGuards(input: {
     }
   });
 
-  if (ipFingerprint) {
+  if (ipFingerprint && ipEntityId) {
     await recordWorkflowEvent({
       eventType: "enrollment_packet_public_submit_attempt",
       entityType: "enrollment_packet_public_ip",
-      entityId: ipFingerprint,
+      entityId: ipEntityId,
       actorType: "system",
       actorUserId: input.request.sender_user_id,
       status: "started",

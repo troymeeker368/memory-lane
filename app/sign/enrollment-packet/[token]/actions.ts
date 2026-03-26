@@ -374,6 +374,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation${redirectSuffix}`
     } as const;
   } catch (error) {
+    console.error("[enrollment-packet] public submit action failed", error);
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to complete enrollment packet."
