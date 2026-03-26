@@ -222,11 +222,8 @@ test("public enrollment packet submit success path navigates to confirmation rou
     true
   );
   assert.equal(formSource.includes("const result = await submitPublicEnrollmentPacketAction(formData);"), true);
-  assert.equal(
-    formSource.includes("const redirectUrl = result.redirectUrl ?? buildConfirmationRedirectUrl(result.operationallyReady);"),
-    true
-  );
-  assert.equal(formSource.includes("const navigateToConfirmation = (rawRedirectUrl: string) =>"), true);
+  assert.equal(formSource.includes("if (!result.ok) {"), true);
+  assert.equal(formSource.includes("navigateToConfirmation(result.redirectUrl);"), true);
   assert.equal(formSource.includes("window.location.replace(redirectUrl);"), true);
   assert.equal(pageSource.includes("redirect(`/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`);"), true);
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
@@ -501,15 +498,12 @@ test("successful public sign submit redirects to the welcome/thank-you confirmat
   );
   const formSource = readWorkspaceFile("components/enrollment-packets/enrollment-packet-public-form.tsx");
 
-  assert.equal(
-    actionSource.includes("ok: true"),
-    true
-  );
   assert.equal(actionSource.includes("redirect("), false);
+  assert.equal(actionSource.includes("redirectUrl:"), true);
   assert.equal(formSource.includes("const router = useRouter();"), false);
   assert.equal(formSource.includes("window.location.replace"), true);
   assert.equal(formSource.includes("const navigateToConfirmation = (rawRedirectUrl: string) =>"), true);
-  assert.equal(formSource.includes("result.redirectUrl"), true);
+  assert.equal(formSource.includes("const result = await submitPublicEnrollmentPacketAction(formData);"), true);
   assert.equal(confirmationSource.includes("Enrollment Packet Submitted"), true);
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
   assert.equal(confirmationSource.includes("legalText.firstDayWelcome.map"), true);
@@ -523,28 +517,19 @@ test("sign/submit client flow includes a hard confirmation redirect fallback", (
   const formSource = readWorkspaceFile("components/enrollment-packets/enrollment-packet-public-form.tsx");
   const actionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
 
-  assert.equal(formSource.includes("const buildConfirmationRedirectUrl = (operationallyReady: boolean) =>"), true);
-  assert.equal(formSource.includes('const redirectUrl = result.redirectUrl ?? buildConfirmationRedirectUrl(result.operationallyReady);'), true);
-  assert.equal(formSource.includes("window.location.replace(redirectUrl);"), true);
-  assert.equal(formSource.includes("const navigateToConfirmation = (rawRedirectUrl: string) =>"), true);
-  assert.equal(actionSource.includes("return { ok: true"), true);
+  assert.equal(formSource.includes('const result = await submitPublicEnrollmentPacketAction(formData);'), true);
+  assert.equal(formSource.includes("setStatus(result.error);"), true);
+  assert.equal(formSource.includes("window.location.assign(redirectUrl);"), true);
+  assert.equal(formSource.includes("window.setTimeout(() => {"), true);
+  assert.equal(actionSource.includes("redirectUrl:"), true);
 });
 
 test("successful public submit redirects with absolute URL normalization", () => {
   const formSource = readWorkspaceFile("components/enrollment-packets/enrollment-packet-public-form.tsx");
 
-  assert.equal(
-    formSource.includes("const resolveRedirectUrl = (rawRedirectUrl: string) =>"),
-    true
-  );
-  assert.equal(
-    formSource.includes("new URL(rawRedirectUrl, window.location.origin).toString()"),
-    true
-  );
-  assert.equal(
-    formSource.includes("setStatus(\"Submission complete. Redirecting to confirmation page...\")"),
-    true
-  );
+  assert.equal(formSource.includes("function resolveRedirectUrl(rawRedirectUrl: string)"), true);
+  assert.equal(formSource.includes("new URL(rawRedirectUrl, window.location.origin).toString()"), true);
+  assert.equal(formSource.includes('setStatus("Submission complete. Redirecting to confirmation page...")'), true);
 });
 
 test("already-filed public enrollment packet submissions use the replay-safe confirmation path", () => {

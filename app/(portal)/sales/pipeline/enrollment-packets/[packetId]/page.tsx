@@ -34,19 +34,11 @@ export default async function EnrollmentPacketDetailPage({
           </div>
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted">Lead</p>
-            <p className="font-semibold">{packet.leadMemberName ?? packet.leadId ?? "-"}</p>
-          </div>
-          <div className="rounded-lg border border-border p-3">
-            <p className="text-xs text-muted">Member</p>
-            <p className="font-semibold">{packet.memberName}</p>
+            <p className="font-semibold">{packet.leadMemberName ?? packet.memberName}</p>
           </div>
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted">Sent</p>
             <p className="font-semibold">{formatOptionalDateTime(packet.sentAt)}</p>
-          </div>
-          <div className="rounded-lg border border-border p-3">
-            <p className="text-xs text-muted">Opened</p>
-            <p className="font-semibold">{formatOptionalDateTime(packet.openedAt)}</p>
           </div>
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted">Last Activity</p>
@@ -54,7 +46,12 @@ export default async function EnrollmentPacketDetailPage({
           </div>
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted">Completed</p>
-            <p className="font-semibold">{formatOptionalDateTime(packet.completedAt)}</p>
+            <p className="font-semibold">
+              {formatOptionalDateTime(
+                packet.completedAt ??
+                  (packet.status === "completed" ? packet.lastFamilyActivityAt ?? packet.updatedAt : null)
+              )}
+            </p>
           </div>
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted">Voided</p>

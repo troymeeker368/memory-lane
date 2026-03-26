@@ -1,19 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { MhpAllergiesSection } from "@/components/forms/mhp-allergies-section";
+import { MhpDiagnosesSection } from "@/components/forms/mhp-diagnoses-section";
+import { MhpEquipmentSection } from "@/components/forms/mhp-equipment-section";
+import { MhpLegalForm } from "@/components/forms/mhp-legal-form";
 import { MhpMedicalDietFields } from "@/components/forms/mhp-medical-diet-fields";
-import {
-  MhpAllergiesSection,
-  MhpDiagnosesSection,
-  MhpEquipmentSection,
-  MhpLegalForm,
-  MhpMedicationsSection,
-  MhpNotesSection,
-  MhpOverviewForm,
-  MhpPhotoUploader,
-  MhpProvidersSection,
-  MhpTrackBannerEditor
-} from "@/components/forms/mhp-shells";
+import { MhpMedicationsSection } from "@/components/forms/mhp-medications-section";
+import { MhpNotesSection } from "@/components/forms/mhp-notes-section";
+import { MhpOverviewForm } from "@/components/forms/mhp-overview-form";
+import { MhpPhotoUploader } from "@/components/forms/mhp-photo-uploader";
+import { MhpProvidersSection } from "@/components/forms/mhp-providers-section";
+import { MhpTrackBannerEditor } from "@/components/forms/mhp-track-banner-editor";
 import { SegmentedChoiceGroup } from "@/components/forms/segmented-choice-group";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";

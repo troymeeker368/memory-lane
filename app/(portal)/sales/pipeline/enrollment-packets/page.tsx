@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { EnrollmentPacketListActions } from "@/components/sales/enrollment-packet-list-actions";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { listOperationalEnrollmentPackets } from "@/lib/services/enrollment-packets";
@@ -46,7 +47,7 @@ export default async function SalesEnrollmentPacketsPage({
           <input
             name="q"
             defaultValue={q}
-            placeholder="Search lead, member, caregiver"
+            placeholder="Search lead or caregiver"
             className="h-10 min-w-[240px] rounded-lg border border-border px-3"
           />
           <select name="status" defaultValue={status} className="h-10 rounded-lg border border-border px-3">
@@ -73,10 +74,8 @@ export default async function SalesEnrollmentPacketsPage({
           <thead>
             <tr>
               <th>Lead</th>
-              <th>Member</th>
               <th>Status</th>
               <th>Sent</th>
-              <th>Opened</th>
               <th>Last Activity</th>
               <th>Completed</th>
               <th>Voided</th>
@@ -87,20 +86,23 @@ export default async function SalesEnrollmentPacketsPage({
           <tbody>
             {packets.length === 0 ? (
               <tr>
-                <td colSpan={10} className="text-center text-sm text-muted">
+                <td colSpan={8} className="text-center text-sm text-muted">
                   No enrollment packets found for the current filters.
                 </td>
               </tr>
             ) : (
               packets.map((packet) => (
                 <tr key={packet.id}>
-                  <td>{packet.leadId ? packet.leadMemberName ?? packet.leadId : "-"}</td>
-                  <td>{packet.memberName}</td>
+                  <td>{packet.leadMemberName ?? packet.memberName}</td>
                   <td className="capitalize">{packet.status.replaceAll("_", " ")}</td>
                   <td>{formatOptionalDateTime(packet.sentAt)}</td>
-                  <td>{formatOptionalDateTime(packet.openedAt)}</td>
                   <td>{formatOptionalDateTime(packet.lastFamilyActivityAt ?? packet.updatedAt)}</td>
-                  <td>{formatOptionalDateTime(packet.completedAt)}</td>
+                  <td>
+                    {formatOptionalDateTime(
+                      packet.completedAt ??
+                        (packet.status === "completed" ? packet.lastFamilyActivityAt ?? packet.updatedAt : null)
+                    )}
+                  </td>
                   <td>
                     <div className="space-y-1">
                       <p>{formatOptionalDateTime(packet.voidedAt)}</p>
@@ -109,16 +111,7 @@ export default async function SalesEnrollmentPacketsPage({
                   </td>
                   <td>{packet.senderName ?? packet.senderUserId}</td>
                   <td>
-                    <div className="flex flex-wrap gap-2">
-                      <Link className="font-semibold text-brand" href={`/sales/pipeline/enrollment-packets/${packet.id}`}>
-                        Open
-                      </Link>
-                      {packet.leadId ? (
-                        <Link className="font-semibold text-brand" href={`/sales/leads/${packet.leadId}`}>
-                          Lead
-                        </Link>
-                      ) : null}
-                    </div>
+                    <EnrollmentPacketListActions packetId={packet.id} leadId={packet.leadId} status={packet.status} />
                   </td>
                 </tr>
               ))

@@ -12,7 +12,7 @@ import { formatPhoneDisplay } from "@/lib/phone";
 import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
 import { listOperationalEnrollmentPackets } from "@/lib/services/enrollment-packets";
 import { getLeadById } from "@/lib/services/leads-read";
-import { formatDate, formatDateTime } from "@/lib/utils";
+import { formatDate, formatDateTime, formatOptionalDateTime } from "@/lib/utils";
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ leadId: string }> }) {
   await requireModuleAccess("sales");
@@ -93,7 +93,6 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
             <tr>
               <th>Status</th>
               <th>Sent</th>
-              <th>Opened</th>
               <th>Last Activity</th>
               <th>Completed</th>
               <th>Voided</th>
@@ -103,7 +102,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
           <tbody>
             {packets.length === 0 ? (
               <tr>
-                <td colSpan={7} className="text-sm text-muted">
+                <td colSpan={6} className="text-sm text-muted">
                   No enrollment packets issued for this lead yet.
                 </td>
               </tr>
@@ -112,9 +111,13 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
                 <tr key={packet.id}>
                   <td className="capitalize">{packet.status.replaceAll("_", " ")}</td>
                   <td>{packet.sentAt ? formatDateTime(packet.sentAt) : "-"}</td>
-                  <td>{packet.openedAt ? formatDateTime(packet.openedAt) : "-"}</td>
                   <td>{formatDateTime(packet.lastFamilyActivityAt ?? packet.updatedAt)}</td>
-                  <td>{packet.completedAt ? formatDateTime(packet.completedAt) : "-"}</td>
+                  <td>
+                    {formatOptionalDateTime(
+                      packet.completedAt ??
+                        (packet.status === "completed" ? packet.lastFamilyActivityAt ?? packet.updatedAt : null)
+                    )}
+                  </td>
                   <td>{packet.voidedAt ? formatDateTime(packet.voidedAt) : "-"}</td>
                   <td>
                     <div className="flex flex-wrap gap-2">

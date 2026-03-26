@@ -107,6 +107,10 @@ function todayDateString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function resolveRedirectUrl(rawRedirectUrl: string) {
+  return new URL(rawRedirectUrl, window.location.origin).toString();
+}
+
 function toInitialPayload(fields: PublicEnrollmentPacketFields): EnrollmentPacketIntakePayload {
   return normalizeEnrollmentPacketIntakePayload({
     ...fields.intakePayload,
@@ -278,6 +282,15 @@ export function EnrollmentPacketPublicForm({
   const autosaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shouldAutoSaveRef = useRef(false);
 
+  const navigateToConfirmation = (rawRedirectUrl: string) => {
+    const redirectUrl = resolveRedirectUrl(rawRedirectUrl);
+    setStatus("Submission complete. Redirecting to confirmation page...");
+    window.location.assign(redirectUrl);
+    window.setTimeout(() => {
+      window.location.replace(redirectUrl);
+    }, 150);
+  };
+
   const missingFieldKeys = useMemo(() => {
     const keys = new Set<string>();
     completion.missingItems.forEach((item) => {
@@ -354,28 +367,6 @@ export function EnrollmentPacketPublicForm({
     if ("focus" in element && typeof (element as HTMLInputElement).focus === "function") {
       (element as HTMLInputElement).focus();
     }
-  };
-
-  const resolveRedirectUrl = (rawRedirectUrl: string) => {
-    try {
-      return new URL(rawRedirectUrl, window.location.origin).toString();
-    } catch {
-      return rawRedirectUrl;
-    }
-  };
-
-  const buildConfirmationRedirectUrl = (operationallyReady: boolean) => {
-    const redirectParams = new URLSearchParams();
-    if (!operationallyReady) {
-      redirectParams.set("status", "follow-up-required");
-    }
-    const redirectSuffix = redirectParams.size > 0 ? `?${redirectParams.toString()}` : "";
-    return `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation${redirectSuffix}`;
-  };
-
-  const navigateToConfirmation = (rawRedirectUrl: string) => {
-    const redirectUrl = resolveRedirectUrl(rawRedirectUrl);
-    window.location.replace(redirectUrl);
   };
 
   const scrollToFirstMissingField = () => {
@@ -586,9 +577,7 @@ export function EnrollmentPacketPublicForm({
           return;
         }
 
-        const redirectUrl = result.redirectUrl ?? buildConfirmationRedirectUrl(result.operationallyReady);
-        setStatus("Submission complete. Redirecting to confirmation page...");
-        navigateToConfirmation(redirectUrl);
+        navigateToConfirmation(result.redirectUrl);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Unable to complete enrollment packet.");
       }
