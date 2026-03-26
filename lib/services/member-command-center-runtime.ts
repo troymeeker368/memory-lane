@@ -384,8 +384,9 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
       totalPages: membersPage.totalPages
     };
   }
-  const supabase = await createClient();
   const memberIds = members.map((row) => row.id);
+  await backfillMissingMemberCommandCenterRowsSupabase(memberIds);
+  const supabase = await createClient();
   const [{ data: profilesData, error: profilesError }, { data: schedulesData, error: schedulesError }] = await Promise.all([
     supabase.from("member_command_centers").select(MEMBER_COMMAND_CENTER_INDEX_PROFILE_SELECT).in("member_id", memberIds),
     supabase.from("member_attendance_schedules").select(MEMBER_COMMAND_CENTER_INDEX_SCHEDULE_SELECT).in("member_id", memberIds)
@@ -427,11 +428,14 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
 
   const rows = members
     .map((member) => {
-      const profileNeedsBackfill = !profileByMember.has(member.id);
-      const scheduleNeedsBackfill = !scheduleByMember.has(member.id);
-      const profile = profileByMember.get(member.id) ?? toMemberCommandCenterIndexProfileRow(defaultCommandCenter(member.id));
-      const schedule =
-        scheduleByMember.get(member.id) ?? toMemberCommandCenterIndexScheduleRow(defaultAttendanceSchedule(member));
+      const profile = profileByMember.get(member.id);
+      const schedule = scheduleByMember.get(member.id);
+      if (!profile) {
+        throw new Error(`Missing canonical member_command_centers row for member ${member.id} after backfill.`);
+      }
+      if (!schedule) {
+        throw new Error(`Missing canonical member_attendance_schedules row for member ${member.id} after backfill.`);
+      }
       return {
         member,
         profile,
@@ -439,8 +443,8 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
         makeupBalance: schedule.make_up_days_available ?? 0,
         age: calculateAgeYears(member.dob),
         monthsEnrolled: calculateMonthsEnrolled(schedule.enrollment_date ?? member.enrollment_date),
-        profileNeedsBackfill,
-        scheduleNeedsBackfill
+        profileNeedsBackfill: false,
+        scheduleNeedsBackfill: false
       };
     })
     .sort((a, b) => sortByLastName(a.member.display_name, b.member.display_name));
@@ -458,6 +462,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string, opt
   const canonicalOptions = { ...options, canonicalInput: true } satisfies EnsureCanonicalMemberOptions;
   const member = await getMemberSupabase(canonicalMemberId, canonicalOptions);
   if (!member) return null;
+  await backfillMissingMemberCommandCenterRowsSupabase([canonicalMemberId]);
   const [{ getMemberCarePlanOverview }, { getLatestEnrollmentPacketPofStagingSummary }] =
     await Promise.all([
       import("@/lib/services/care-plans-read"),
@@ -482,8 +487,17 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string, opt
     getMemberCarePlanOverview(canonicalMemberId, { canonicalInput: true }),
     getLatestEnrollmentPacketPofStagingSummary(canonicalMemberId, { canonicalInput: true })
   ]);
-  const profile = storedProfile ?? defaultCommandCenter(canonicalMemberId);
-  const schedule = storedSchedule ?? defaultAttendanceSchedule(member);
+  if (!storedProfile) {
+    throw new Error(`Missing canonical member_command_centers row for member ${canonicalMemberId} after backfill.`);
+  }
+  if (!storedSchedule) {
+    throw new Error(`Missing canonical member_attendance_schedules row for member ${canonicalMemberId} after backfill.`);
+  }
+  const profile = storedProfile;
+  const schedule = {
+    ...storedSchedule,
+    make_up_days_available: storedSchedule.make_up_days_available ?? 0
+  };
   const supabase = await createClient();
   const { count, error } = await supabase
     .from("intake_assessments")
@@ -503,26 +517,21 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string, opt
   return {
     member,
     profile,
-    profileNeedsBackfill: !storedProfile,
-    schedule: schedule
-      ? {
-          ...schedule,
-          make_up_days_available: schedule.make_up_days_available ?? 0
-        }
-      : null,
-    scheduleNeedsBackfill: !storedSchedule,
+    profileNeedsBackfill: false,
+    schedule,
+    scheduleNeedsBackfill: false,
     contacts,
     files,
     busStopDirectory,
     mhpAllergies,
-    makeupBalance: schedule?.make_up_days_available ?? 0,
+    makeupBalance: schedule.make_up_days_available ?? 0,
     makeupLedger: [] as MakeupLedgerRow[],
     assessmentsCount: safeAssessmentsCount,
     carePlansCount: carePlanOverview.carePlanCount,
     carePlanSummary: carePlanOverview.carePlanSummary,
     enrollmentPacketIntakeAlert,
     age: calculateAgeYears(member.dob),
-    monthsEnrolled: calculateMonthsEnrolled(schedule?.enrollment_date ?? member.enrollment_date)
+    monthsEnrolled: calculateMonthsEnrolled(schedule.enrollment_date ?? member.enrollment_date)
   };
 }
 

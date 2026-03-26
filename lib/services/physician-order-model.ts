@@ -211,6 +211,14 @@ export interface PhysicianOrderIndexRow {
   updatedAt: string;
 }
 
+export interface PhysicianOrderIndexResult {
+  rows: PhysicianOrderIndexRow[];
+  page: number;
+  pageSize: number;
+  totalRows: number;
+  totalPages: number;
+}
+
 export interface PhysicianOrderMemberHistoryRow {
   id: string;
   memberId: string;

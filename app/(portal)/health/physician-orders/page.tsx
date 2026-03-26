@@ -4,13 +4,33 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
 import { canCreatePhysicianOrdersModuleForRole, PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
-import { getPhysicianOrders } from "@/lib/services/physician-orders-read";
-import { listAllActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
+import { listPhysicianOrderMemberLookup, listPhysicianOrdersPage } from "@/lib/services/physician-orders-read";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0];
   return value;
+}
+
+function parsePageNumber(value: string | string[] | undefined) {
+  const normalized = firstString(value)?.trim() ?? "";
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function buildPhysicianOrdersHref(input: {
+  memberId: string;
+  status: string;
+  q: string;
+  page: number;
+}) {
+  const params = new URLSearchParams();
+  if (input.memberId) params.set("memberId", input.memberId);
+  if (input.status && input.status !== "all") params.set("status", input.status);
+  if (input.q) params.set("q", input.q);
+  if (input.page > 1) params.set("page", String(input.page));
+  const query = params.toString();
+  return query ? `/health/physician-orders?${query}` : "/health/physician-orders";
 }
 
 function clinicalSyncLabel(status: "not_signed" | "pending" | "queued" | "failed" | "synced") {
@@ -32,23 +52,31 @@ export default async function PhysicianOrdersIndexPage({
   const memberId = firstString(query.memberId) ?? "";
   const status = firstString(query.status) ?? "all";
   const q = firstString(query.q) ?? "";
+  const page = parsePageNumber(query.page);
   const canonicalMemberIdPromise = memberId
     ? resolveCanonicalMemberId(memberId, { actionLabel: "PhysicianOrdersIndexPage" })
     : Promise.resolve(memberId);
-  const [members, canonicalMemberId, rows] = await Promise.all([
-    listAllActiveMemberLookupSupabase(),
+  const [members, canonicalMemberId, result] = await Promise.all([
+    listPhysicianOrderMemberLookup(),
     canonicalMemberIdPromise,
     canonicalMemberIdPromise.then((resolvedMemberId) =>
-      getPhysicianOrders({
+      listPhysicianOrdersPage({
         memberId: resolvedMemberId || undefined,
         status:
           status === "Draft" || status === "Sent" || status === "Signed" || status === "Expired" || status === "Superseded"
             ? status
             : "all",
-        q
+        q,
+        page,
+        pageSize: 50
       })
     )
   ]);
+  const { rows, page: currentPage, pageSize, totalRows, totalPages } = result;
+  const hasPreviousPage = currentPage > 1;
+  const hasNextPage = currentPage < totalPages;
+  const rangeStart = rows.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const rangeEnd = rows.length === 0 ? 0 : rangeStart + rows.length - 1;
 
   return (
     <div className="space-y-4">
@@ -98,7 +126,7 @@ export default async function PhysicianOrdersIndexPage({
           <input
             name="q"
             defaultValue={q}
-            placeholder="Search member/provider"
+            placeholder="Search member, provider, or status"
             className="h-10 rounded-lg border border-border px-3 text-sm md:col-span-2"
           />
           <div className="flex gap-2">
@@ -113,7 +141,9 @@ export default async function PhysicianOrdersIndexPage({
             </Link>
           </div>
         </form>
-        <p className="mt-2 text-xs text-muted">Total: {rows.length}</p>
+        <p className="mt-2 text-xs text-muted">
+          Showing {rangeStart}-{rangeEnd} of {totalRows} physician orders
+        </p>
       </Card>
 
       <Card className="table-wrap">
@@ -169,6 +199,29 @@ export default async function PhysicianOrdersIndexPage({
             )}
           </tbody>
         </table>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
+          <span>
+            Page {currentPage} of {totalPages}
+          </span>
+          <div className="flex items-center gap-2">
+            {hasPreviousPage ? (
+              <Link
+                href={buildPhysicianOrdersHref({ memberId: canonicalMemberId, status, q, page: currentPage - 1 })}
+                className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
+              >
+                Previous Page
+              </Link>
+            ) : null}
+            {hasNextPage ? (
+              <Link
+                href={buildPhysicianOrdersHref({ memberId: canonicalMemberId, status, q, page: currentPage + 1 })}
+                className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
+              >
+                Next Page
+              </Link>
+            ) : null}
+          </div>
+        </div>
       </Card>
     </div>
   );

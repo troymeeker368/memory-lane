@@ -23,6 +23,7 @@ import {
 import { ENROLLMENT_PACKET_PHOTO_CONSENT_OPTIONS } from "@/lib/services/enrollment-packet-public-options";
 import { ENROLLMENT_PACKET_SECTIONS } from "@/lib/services/enrollment-packet-public-sections";
 import { validateEnrollmentPacketCompletion } from "@/lib/services/enrollment-packet-public-validation";
+import { splitEnrollmentPacketFieldValueRows } from "@/lib/services/enrollment-packet-docx";
 
 function readWorkspaceFile(relativePath: string) {
   return fs.readFileSync(path.join(process.cwd(), relativePath), "utf8");
@@ -147,6 +148,14 @@ test("enrollment packet free-text normalization trims edges while preserving int
       `${key}  value   with   spacing`
     );
   });
+});
+
+test("enrollment packet DOCX row wrapping preserves internal spacing in free-text values", () => {
+  const rawValue = "  Dr.  Bob  Smith,  CVS   Pharmacy,  and  123  Main   St  ";
+  const lines = splitEnrollmentPacketFieldValueRows(rawValue, 14);
+  const recomposed = lines.join("");
+  assert.equal(recomposed, "Dr.  Bob  Smith,  CVS   Pharmacy,  and  123  Main   St");
+  assert.equal(lines.every((line) => line.length <= 14), true);
 });
 
 test("enrollment packet progress merge and public action parsing trim edges without collapsing internal spaces", () => {

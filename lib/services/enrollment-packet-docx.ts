@@ -78,23 +78,29 @@ async function loadCenterLogoImage(pdf: PDFDocument) {
   }
 }
 
-function wrapText(text: string, maxChars = 105) {
-  const normalized = text.trim();
+export function splitEnrollmentPacketFieldValueRows(inputText: string, maxChars = 105) {
+  const normalized = inputText.trim();
   if (!normalized) return ["-"];
-  const words = normalized.split(/\s+/);
   const lines: string[] = [];
   let current = "";
-  words.forEach((word) => {
-    const next = current ? `${current} ${word}` : word;
-    if (next.length <= maxChars) {
+
+  for (const char of normalized) {
+    const next = `${current}${char}`;
+    if (!current || next.length <= maxChars) {
       current = next;
-      return;
+      continue;
     }
-    if (current) lines.push(current);
-    current = word;
-  });
+
+    lines.push(current);
+    current = char;
+  }
+
   if (current) lines.push(current);
   return lines.length > 0 ? lines : ["-"];
+}
+
+function wrapText(text: string, maxChars = 105) {
+  return splitEnrollmentPacketFieldValueRows(text, maxChars);
 }
 
 function toTitleCaseFromKey(key: string) {
@@ -145,19 +151,21 @@ function drawWrappedText(input: {
   size: number;
   color?: ReturnType<typeof rgb>;
 }) {
-  const words = input.text.split(/\s+/).filter(Boolean);
+  const normalized = input.text.trim();
+  if (!normalized) return input.y;
+
   const lines: string[] = [];
   let current = "";
 
-  words.forEach((word) => {
-    const next = current ? `${current} ${word}` : word;
-    if (input.font.widthOfTextAtSize(next, input.size) <= input.maxWidth) {
+  for (const char of normalized) {
+    const next = `${current}${char}`;
+    if (!current || input.font.widthOfTextAtSize(next, input.size) <= input.maxWidth) {
       current = next;
-      return;
+      continue;
     }
-    if (current) lines.push(current);
-    current = word;
-  });
+    lines.push(current);
+    current = char;
+  }
   if (current) lines.push(current);
 
   let y = input.y;

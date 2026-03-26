@@ -2,7 +2,8 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
-import { listAllActiveMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
+import { listAllActiveMemberLookupSupabase, listMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
+import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import {
   PHYSICIAN_ORDER_INDEX_SELECT,
   PHYSICIAN_ORDER_MEMBER_HISTORY_SELECT,
@@ -11,7 +12,8 @@ import {
 import {
   buildPhysicianOrderClinicalSyncDetail,
   resolvePhysicianOrderClinicalSyncStatus,
-  type PhysicianOrderClinicalSyncStatus
+  type PhysicianOrderClinicalSyncStatus,
+  type PhysicianOrderPostSignQueueStatus
 } from "@/lib/services/physician-order-clinical-sync";
 import {
   clean,
@@ -24,6 +26,7 @@ import {
 } from "@/lib/services/physician-order-core";
 import { loadPostSignQueueStatusByPofIds } from "@/lib/services/physician-order-post-sign-runtime";
 import type {
+  PhysicianOrderIndexResult,
   PhysicianOrderIndexRow,
   PhysicianOrderMemberHistoryRow,
   PhysicianOrderStatus
@@ -72,17 +75,153 @@ type PhysicianOrderMemberHistorySelectRow = {
   updated_at: string;
 };
 
-export async function listPhysicianOrderMemberLookup() {
-  return listAllActiveMemberLookupSupabase();
-}
+const DEFAULT_PHYSICIAN_ORDER_PAGE_SIZE = 50;
+const MAX_PHYSICIAN_ORDER_SEARCH_MEMBER_MATCHES = 500;
 
-export async function getPhysicianOrders(filters?: {
+type PhysicianOrderIndexFilters = {
   memberId?: string | null;
   status?: PhysicianOrderStatus | "all";
   q?: string;
   canonicalInput?: boolean;
   serviceRole?: boolean;
-}): Promise<PhysicianOrderIndexRow[]> {
+};
+
+type PhysicianOrderQueueStatusRow = {
+  status: PhysicianOrderPostSignQueueStatus;
+  attemptCount: number | null;
+  nextRetryAt: string | null;
+  lastError: string | null;
+  lastFailedStep: string | null;
+};
+
+function normalizePage(value?: number | null) {
+  if (!Number.isFinite(value) || !value || value < 1) return 1;
+  return Math.floor(value);
+}
+
+function normalizePageSize(value?: number | null) {
+  if (!Number.isFinite(value) || !value || value < 1) return DEFAULT_PHYSICIAN_ORDER_PAGE_SIZE;
+  return Math.floor(value);
+}
+
+async function buildPhysicianOrderSearchClauses(filters?: PhysicianOrderIndexFilters) {
+  const queryText = clean(filters?.q);
+  if (!queryText) return [];
+
+  const pattern = buildSupabaseIlikePattern(queryText);
+  const searchClauses = [`provider_name.ilike.${pattern}`, `status.ilike.${pattern}`];
+
+  if (!filters?.memberId) {
+    const matchingMembers = await listMemberLookupSupabase({
+      q: queryText,
+      status: "all",
+      limit: MAX_PHYSICIAN_ORDER_SEARCH_MEMBER_MATCHES
+    });
+    const matchingMemberIds = Array.from(new Set(matchingMembers.map((member) => member.id).filter(Boolean)));
+    if (matchingMemberIds.length > 0) {
+      searchClauses.push(`member_id.in.(${matchingMemberIds.join(",")})`);
+    }
+  }
+
+  return searchClauses;
+}
+
+function mapPhysicianOrderIndexRows(
+  rows: PhysicianOrderIndexSelectRow[],
+  queueStatuses: Map<string, PhysicianOrderQueueStatusRow>
+) {
+  return rows.map((row) => {
+    const memberRelation = Array.isArray(row.members) ? row.members[0] ?? null : row.members;
+    const status = toStatus(row.status);
+    const queueStatus = queueStatuses.get(String(row.id)) ?? null;
+    const clinicalSyncStatus = resolvePhysicianOrderClinicalSyncStatus({
+      status,
+      queueStatus: queueStatus?.status ?? null,
+      lastError: queueStatus?.lastError ?? null,
+      lastFailedStep: queueStatus?.lastFailedStep ?? null
+    });
+    return {
+      id: row.id,
+      memberId: row.member_id,
+      memberName: memberRelation?.display_name ?? "Unknown Member",
+      status,
+      levelOfCare: row.level_of_care,
+      providerName: row.provider_name,
+      completedDate: row.sent_at ? String(row.sent_at).slice(0, 10) : null,
+      nextRenewalDueDate: row.next_renewal_due_date,
+      renewalStatus: resolveRenewalStatus(row.next_renewal_due_date),
+      signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
+      clinicalSyncStatus,
+      clinicalSyncDetail: buildPhysicianOrderClinicalSyncDetail({
+        status,
+        queueStatus: queueStatus?.status ?? null,
+        attemptCount: queueStatus?.attemptCount ?? null,
+        nextRetryAt: queueStatus?.nextRetryAt ?? null,
+        lastError: queueStatus?.lastError ?? null,
+        lastFailedStep: queueStatus?.lastFailedStep ?? null
+      }),
+      updatedAt: row.updated_at
+    } satisfies PhysicianOrderIndexRow;
+  });
+}
+
+export async function listPhysicianOrderMemberLookup() {
+  return listAllActiveMemberLookupSupabase();
+}
+
+export async function listPhysicianOrdersPage(
+  filters?: PhysicianOrderIndexFilters & {
+    page?: number;
+    pageSize?: number;
+  }
+): Promise<PhysicianOrderIndexResult> {
+  const supabase = await createClient({ serviceRole: Boolean(filters?.serviceRole) });
+  const page = normalizePage(filters?.page);
+  const pageSize = normalizePageSize(filters?.pageSize);
+  let query = supabase
+    .from("physician_orders")
+    .select(PHYSICIAN_ORDER_INDEX_SELECT, { count: "exact" })
+    .order("updated_at", { ascending: false })
+    .range((page - 1) * pageSize, page * pageSize - 1);
+
+  if (filters?.memberId) {
+    const canonicalMemberId = await resolvePhysicianOrderMemberId(filters.memberId, "listPhysicianOrdersPage", {
+      canonicalInput: filters.canonicalInput,
+      serviceRole: filters.serviceRole
+    });
+    query = query.eq("member_id", canonicalMemberId);
+  }
+  if (filters?.status && filters.status !== "all") query = query.eq("status", fromStatus(filters.status));
+  const searchClauses = await buildPhysicianOrderSearchClauses(filters);
+  if (searchClauses.length > 0) {
+    query = query.or(searchClauses.join(","));
+  }
+
+  const { data, error, count } = await query;
+  if (error) {
+    if (isMissingPhysicianOrdersTableError(error)) {
+      throw physicianOrdersTableRequiredError();
+    }
+    throw new Error(error.message);
+  }
+
+  const queueStatuses = await loadPostSignQueueStatusByPofIds(
+    ((data ?? []) as Array<{ id: string }>).map((row) => String(row.id)),
+    { serviceRole: true }
+  );
+  const rows = mapPhysicianOrderIndexRows((data ?? []) as unknown as PhysicianOrderIndexSelectRow[], queueStatuses);
+  const totalRows = count ?? rows.length;
+
+  return {
+    rows,
+    page,
+    pageSize,
+    totalRows,
+    totalPages: Math.max(1, Math.ceil(totalRows / pageSize))
+  };
+}
+
+export async function getPhysicianOrders(filters?: PhysicianOrderIndexFilters): Promise<PhysicianOrderIndexRow[]> {
   const supabase = await createClient({ serviceRole: Boolean(filters?.serviceRole) });
   let query = supabase
     .from("physician_orders")
@@ -97,6 +236,10 @@ export async function getPhysicianOrders(filters?: {
     query = query.eq("member_id", canonicalMemberId);
   }
   if (filters?.status && filters.status !== "all") query = query.eq("status", fromStatus(filters.status));
+  const searchClauses = await buildPhysicianOrderSearchClauses(filters);
+  if (searchClauses.length > 0) {
+    query = query.or(searchClauses.join(","));
+  }
 
   const { data, error } = await query;
   if (error) {
@@ -111,49 +254,7 @@ export async function getPhysicianOrders(filters?: {
     { serviceRole: true }
   );
 
-  return ((data ?? []) as unknown as PhysicianOrderIndexSelectRow[])
-    .map((row) => {
-      const memberRelation = Array.isArray(row.members) ? row.members[0] ?? null : row.members;
-      const status = toStatus(row.status);
-      const queueStatus = queueStatuses.get(String(row.id)) ?? null;
-      const clinicalSyncStatus = resolvePhysicianOrderClinicalSyncStatus({
-        status,
-        queueStatus: queueStatus?.status ?? null,
-        lastError: queueStatus?.lastError ?? null,
-        lastFailedStep: queueStatus?.lastFailedStep ?? null
-      });
-      return {
-        id: row.id,
-        memberId: row.member_id,
-        memberName: memberRelation?.display_name ?? "Unknown Member",
-        status,
-        levelOfCare: row.level_of_care,
-        providerName: row.provider_name,
-        completedDate: row.sent_at ? String(row.sent_at).slice(0, 10) : null,
-        nextRenewalDueDate: row.next_renewal_due_date,
-        renewalStatus: resolveRenewalStatus(row.next_renewal_due_date),
-        signedDate: row.signed_at ? String(row.signed_at).slice(0, 10) : null,
-        clinicalSyncStatus,
-        clinicalSyncDetail: buildPhysicianOrderClinicalSyncDetail({
-          status,
-          queueStatus: queueStatus?.status ?? null,
-          attemptCount: queueStatus?.attemptCount ?? null,
-          nextRetryAt: queueStatus?.nextRetryAt ?? null,
-          lastError: queueStatus?.lastError ?? null,
-          lastFailedStep: queueStatus?.lastFailedStep ?? null
-        }),
-        updatedAt: row.updated_at
-      };
-    })
-    .filter((row) => {
-      const q = (filters?.q ?? "").trim().toLowerCase();
-      if (!q) return true;
-      return (
-        row.memberName.toLowerCase().includes(q) ||
-        String(row.providerName ?? "").toLowerCase().includes(q) ||
-        row.status.toLowerCase().includes(q)
-      );
-    });
+  return mapPhysicianOrderIndexRows((data ?? []) as unknown as PhysicianOrderIndexSelectRow[], queueStatuses);
 }
 
 export async function getPhysicianOrdersForMember(
