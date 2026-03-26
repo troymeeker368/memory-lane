@@ -20,6 +20,40 @@ import type {
 
 import type { UploadState } from "@/components/enrollment-packets/enrollment-packet-public-form-types";
 
+function formatMembershipAgreementParagraph(line: string) {
+  const text = line.trim();
+  if (!text) return <p>{"\u00A0"}</p>;
+
+  const isAllCaps =
+    text === text.toUpperCase() &&
+    /[A-Z]{2,}/.test(text) &&
+    !/[a-z]/.test(text) &&
+    !/^\d/.test(text);
+  const colonIndex = text.indexOf(":");
+  const looksLikeTitle = isAllCaps || /^[A-Z][A-Z0-9 ,&/.'’()_-]{2,}:?$/.test(text);
+
+  if (looksLikeTitle) {
+    return (
+      <p className="font-semibold tracking-wide text-slate-900">
+        {text}
+      </p>
+    );
+  }
+
+  if (colonIndex > 0) {
+    const label = text.slice(0, colonIndex).trim();
+    return (
+      <p className="leading-relaxed text-slate-700">
+        <span className="font-semibold text-slate-900">{label}:</span>
+        {" "}
+        {text.slice(colonIndex + 1).trimStart()}
+      </p>
+    );
+  }
+
+  return <p className="leading-relaxed text-slate-700">{text}</p>;
+}
+
 function textValue(payload: EnrollmentPacketIntakePayload, key: EnrollmentPacketIntakeTextKey) {
   const value = payload[key];
   return typeof value === "string" ? value : "";
@@ -75,7 +109,11 @@ export function EnrollmentPacketPublicFormAgreements({
   return (
     <>
       <Section title="11. Payment & Membership Agreement">
-        <div className="space-y-2 rounded-lg border border-border bg-slate-50 p-3 text-sm">{legalText.membershipAgreement.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>
+        <div className="space-y-2 rounded-lg border border-border bg-slate-50 p-3 text-sm">
+          {legalText.membershipAgreement.map((paragraph, index) => (
+            <div key={`${paragraph}-${index}`}>{formatMembershipAgreementParagraph(paragraph)}</div>
+          ))}
+        </div>
         {legalText.membershipAgreementExecution.length > 0 ? (
           <div className="space-y-1 rounded-lg border border-border bg-slate-50 p-3 text-sm">
             {legalText.membershipAgreementExecution.map((line) => (

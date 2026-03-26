@@ -359,6 +359,58 @@ export function EnrollmentPacketPublicForm({
     }
   };
 
+  const resolveRedirectUrl = (rawRedirectUrl: string) => {
+    try {
+      return new URL(rawRedirectUrl, window.location.origin).toString();
+    } catch {
+      return rawRedirectUrl;
+    }
+  };
+
+  const buildConfirmationRedirectUrl = (operationallyReady: boolean) => {
+    const redirectParams = new URLSearchParams();
+    if (!operationallyReady) {
+      redirectParams.set("status", "follow-up-required");
+    }
+    const redirectSuffix = redirectParams.size > 0 ? `?${redirectParams.toString()}` : "";
+    return `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation${redirectSuffix}`;
+  };
+
+  const navigateToConfirmation = (rawRedirectUrl: string) => {
+    const redirectUrl = resolveRedirectUrl(rawRedirectUrl);
+    let confirmationPath = redirectUrl;
+    try {
+      const parsed = new URL(redirectUrl, window.location.origin);
+      confirmationPath = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    } catch {
+      confirmationPath = redirectUrl;
+    }
+
+    try {
+      router.replace(confirmationPath);
+    } catch {
+      // Continue to hard navigation fallback.
+    }
+
+    try {
+      window.location.assign(redirectUrl);
+      return;
+    } catch {
+      // Continue to alternate redirect methods below.
+    }
+
+    window.setTimeout(() => {
+      try {
+        window.location.replace(redirectUrl);
+        return;
+      } catch {
+        // Continue to final hard navigation fallback.
+      }
+
+      window.location.href = redirectUrl;
+    }, 250);
+  };
+
   const scrollToFirstMissingField = () => {
     for (const item of completion.missingItems) {
       const key = MISSING_ITEM_FIELD_KEY[item];
@@ -567,13 +619,9 @@ export function EnrollmentPacketPublicForm({
           return;
         }
 
-        if (result.redirectUrl) {
-          router.push(result.redirectUrl);
-          return;
-        }
-
-        setStatus("Enrollment packet submitted, but confirmation redirect was unavailable. Please refresh.");
-        setPayload(payloadToSubmit);
+        const redirectUrl = result.redirectUrl ?? buildConfirmationRedirectUrl(result.operationallyReady);
+        setStatus("Submission complete. Redirecting to confirmation page...");
+        navigateToConfirmation(redirectUrl);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Unable to complete enrollment packet.");
       }

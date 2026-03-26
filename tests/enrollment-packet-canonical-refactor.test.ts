@@ -149,6 +149,24 @@ test("enrollment packet free-text normalization trims edges while preserving int
   });
 });
 
+test("canonical text normalize path preserves spaces in common identity fields used in enrollment packet intake", () => {
+  const normalized = normalizeEnrollmentPacketIntakePayload({
+    pcpName: "  Dr.  Bob   Smith  ",
+    pharmacy: "  CVS   Pharmacy  ",
+    pharmacyAddress: "  123  Main   Street  ",
+    primaryContactAddressLine1: "  456  Oak   Ave  ",
+    additionalNotes: "  Keeps   internal   spaces  ",
+    membershipGuarantorSignatureName: "  Jane   Doe  "
+  });
+
+  assert.equal(normalized.pcpName, "Dr.  Bob   Smith");
+  assert.equal(normalized.pharmacy, "CVS   Pharmacy");
+  assert.equal(normalized.pharmacyAddress, "123  Main   Street");
+  assert.equal(normalized.primaryContactAddressLine1, "456  Oak   Ave");
+  assert.equal(normalized.additionalNotes, "Keeps   internal   spaces");
+  assert.equal(normalized.membershipGuarantorSignatureName, "Jane   Doe");
+});
+
 test("enrollment packet DOCX row wrapping helper keeps internal spacing in free-text fields", () => {
   const docxSource = readWorkspaceFile("lib/services/enrollment-packet-docx.ts");
   assert.equal(docxSource.includes(".replace(/\\s+/g, \" \")"), false);
@@ -203,8 +221,12 @@ test("public enrollment packet submit success path navigates to confirmation rou
     true
   );
   assert.equal(formSource.includes("const result = await submitPublicEnrollmentPacketAction(formData);"), true);
-  assert.equal(formSource.includes("if (result.redirectUrl) {"), true);
-  assert.equal(formSource.includes("router.push(result.redirectUrl);"), true);
+  assert.equal(
+    formSource.includes("const redirectUrl = result.redirectUrl ?? buildConfirmationRedirectUrl(result.operationallyReady);"),
+    true
+  );
+  assert.equal(formSource.includes("const navigateToConfirmation = (rawRedirectUrl: string) =>"), true);
+  assert.equal(formSource.includes("router.replace(confirmationPath);"), true);
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
 });
 
@@ -483,15 +505,45 @@ test("successful public sign submit redirects to the welcome/thank-you confirmat
   );
   assert.equal(actionSource.includes("redirect("), false);
   assert.equal(formSource.includes("const router = useRouter();"), true);
-  assert.equal(formSource.includes("window.location.assign"), false);
-  assert.equal(formSource.includes("window.location.replace"), false);
-  assert.equal(formSource.includes("router.push(result.redirectUrl);"), true);
+  assert.equal(formSource.includes("window.location.assign"), true);
+  assert.equal(formSource.includes("window.location.replace"), true);
+  assert.equal(formSource.includes("router.replace(confirmationPath);"), true);
   assert.equal(formSource.includes("result.redirectUrl"), true);
   assert.equal(confirmationSource.includes("Enrollment Packet Submitted"), true);
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
   assert.equal(confirmationSource.includes("legalText.firstDayWelcome.map"), true);
   assert.equal(
     actionSource.includes("redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation"),
+    true
+  );
+});
+
+test("sign/submit client flow includes a hard confirmation redirect fallback", () => {
+  const formSource = readWorkspaceFile("components/enrollment-packets/enrollment-packet-public-form.tsx");
+  const actionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
+
+  assert.equal(formSource.includes("const buildConfirmationRedirectUrl = (operationallyReady: boolean) =>"), true);
+  assert.equal(formSource.includes('const redirectUrl = result.redirectUrl ?? buildConfirmationRedirectUrl(result.operationallyReady);'), true);
+  assert.equal(formSource.includes("window.location.assign(redirectUrl);"), true);
+  assert.equal(formSource.includes("window.setTimeout(() =>"), true);
+  assert.equal(formSource.includes("window.location.replace(redirectUrl);"), true);
+  assert.equal(formSource.includes("router.replace(confirmationPath);"), true);
+  assert.equal(actionSource.includes("return { ok: true"), true);
+});
+
+test("successful public submit redirects with absolute URL normalization", () => {
+  const formSource = readWorkspaceFile("components/enrollment-packets/enrollment-packet-public-form.tsx");
+
+  assert.equal(
+    formSource.includes("const resolveRedirectUrl = (rawRedirectUrl: string) =>"),
+    true
+  );
+  assert.equal(
+    formSource.includes("new URL(rawRedirectUrl, window.location.origin).toString()"),
+    true
+  );
+  assert.equal(
+    formSource.includes("setStatus(\"Submission complete. Redirecting to confirmation page...\")"),
     true
   );
 });

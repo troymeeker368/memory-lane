@@ -789,7 +789,6 @@ export async function submitPublicEnrollmentPacket(input: {
         request: (await loadRequestById(request.id)) ?? request
       });
     }
-
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete enrollment packet.";
     if (stagedUploads.length > 0) {
@@ -857,24 +856,69 @@ export async function submitPublicEnrollmentPacket(input: {
   const refreshedFields = await loadPacketFields(request.id);
 
   if (refreshedRequest && refreshedFields) {
-    const cascadeSummary = await runEnrollmentPacketCompletionCascade({
-      request: refreshedRequest,
-      member,
-      fields: refreshedFields,
-      senderSignatureName,
-      caregiverEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
-      memberFileArtifacts: uploadedArtifacts.map((artifact) => ({
-        uploadCategory: artifact.uploadCategory,
-        memberFileId: artifact.memberFileId
-      })),
-      actorType: "user",
-      ensureCompletedPacketArtifact: false
-    });
-    mappingSummary = {
-      mappingRunId: cascadeSummary.mappingRunId,
-      status: cascadeSummary.mappingStatus
-    };
-    failedMappingRunId = cascadeSummary.mappingRunId;
+    try {
+      const cascadeSummary = await runEnrollmentPacketCompletionCascade({
+        request: refreshedRequest,
+        member,
+        fields: refreshedFields,
+        senderSignatureName,
+        caregiverEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
+        memberFileArtifacts: uploadedArtifacts.map((artifact) => ({
+          uploadCategory: artifact.uploadCategory,
+          memberFileId: artifact.memberFileId
+        })),
+        actorType: "user",
+        ensureCompletedPacketArtifact: false
+      });
+      mappingSummary = {
+        mappingRunId: cascadeSummary.mappingRunId,
+        status: cascadeSummary.mappingStatus
+      };
+      failedMappingRunId = cascadeSummary.mappingRunId;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Unable to run enrollment packet completion cascade.";
+      mappingSummary = {
+        mappingRunId: null,
+        status: "failed",
+        error: reason
+      };
+      failedMappingRunId = null;
+      try {
+        await artifactOps.updateEnrollmentPacketMappingSyncState({
+          packetId: request.id,
+          status: "failed",
+          attemptedAt: toEasternISO(),
+          error: reason,
+          mappingRunId: null
+        });
+      } catch (syncStateError) {
+        console.error("[enrollment-packets] unable to persist cascade failure mapping state", syncStateError);
+      }
+      await recordImmediateSystemAlert({
+        entityType: "enrollment_packet_request",
+        entityId: request.id,
+        actorUserId: request.sender_user_id,
+        severity: "medium",
+        alertKey: "enrollment_packet_completion_cascade_failed",
+        metadata: {
+          member_id: member.id,
+          lead_id: request.lead_id,
+          error: reason,
+          upload_batch_id: uploadBatchId
+        }
+      });
+      await recordEnrollmentPacketActionRequired({
+        packetId: request.id,
+        memberId: member.id,
+        leadId: request.lead_id,
+        actorUserId: request.sender_user_id,
+        title: "Enrollment Packet Sync Blocked",
+        message:
+          "The enrollment packet was filed, but downstream sync could not start. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.",
+        actionUrl: `/sales/new-entries/completed-enrollment-packets`,
+        eventKeySuffix: "mapping-cascade-failed"
+      });
+    }
   } else {
     mappingSummary = {
       mappingRunId: null,
