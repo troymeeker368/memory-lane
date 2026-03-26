@@ -5,6 +5,9 @@ alter table public.enrollment_packet_requests
   add column if not exists voided_by_user_id uuid references public.profiles(id) on delete set null,
   add column if not exists void_reason text;
 
+alter table public.enrollment_packet_requests
+  drop constraint if exists enrollment_packet_requests_status_check;
+
 update public.enrollment_packet_requests
 set
   status = case
@@ -29,9 +32,6 @@ set
   updated_at = coalesce(updated_at, created_at)
 where status in ('prepared', 'opened', 'partially_completed', 'filed')
    or opened_at is null;
-
-alter table public.enrollment_packet_requests
-  drop constraint if exists enrollment_packet_requests_status_check;
 
 alter table public.enrollment_packet_requests
   add constraint enrollment_packet_requests_status_check
