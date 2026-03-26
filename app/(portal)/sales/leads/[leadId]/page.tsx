@@ -10,6 +10,7 @@ import { requireModuleAccess } from "@/lib/auth";
 import { canonicalLeadStage } from "@/lib/canonical";
 import { formatPhoneDisplay } from "@/lib/phone";
 import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
+import { listOperationalEnrollmentPackets } from "@/lib/services/enrollment-packets";
 import { getLeadById } from "@/lib/services/leads-read";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
@@ -25,6 +26,11 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
 
   const lead = detail.lead;
   const showEnrollMemberAction = canonicalLeadStage(lead.stage) === "Enrollment in Progress";
+  const packets = await listOperationalEnrollmentPackets({
+    leadId: lead.id,
+    includeCompleted: true,
+    limit: 20
+  });
 
   return (
     <div className="space-y-4">
@@ -77,6 +83,53 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
         <table>
           <thead><tr><th>Caregiver</th><th>Relationship</th><th>Email</th><th>Phone</th><th>Referral Name</th><th>Likelihood</th><th>Next Follow-Up</th></tr></thead>
           <tbody><tr><td>{lead.caregiver_name}</td><td>{lead.caregiver_relationship ?? "-"}</td><td>{lead.caregiver_email ?? "-"}</td><td>{formatPhoneDisplay(lead.caregiver_phone)}</td><td>{lead.referral_name ?? "-"}</td><td>{lead.likelihood ?? "-"}</td><td>{lead.next_follow_up_date ? `${formatDate(lead.next_follow_up_date)} (${lead.next_follow_up_type ?? "-"})` : "-"}</td></tr></tbody>
+        </table>
+      </Card>
+
+      <Card className="table-wrap">
+        <CardTitle>Enrollment Packets</CardTitle>
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Sent</th>
+              <th>Opened</th>
+              <th>Last Activity</th>
+              <th>Completed</th>
+              <th>Voided</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {packets.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="text-sm text-muted">
+                  No enrollment packets issued for this lead yet.
+                </td>
+              </tr>
+            ) : (
+              packets.map((packet) => (
+                <tr key={packet.id}>
+                  <td className="capitalize">{packet.status.replaceAll("_", " ")}</td>
+                  <td>{packet.sentAt ? formatDateTime(packet.sentAt) : "-"}</td>
+                  <td>{packet.openedAt ? formatDateTime(packet.openedAt) : "-"}</td>
+                  <td>{formatDateTime(packet.lastFamilyActivityAt ?? packet.updatedAt)}</td>
+                  <td>{packet.completedAt ? formatDateTime(packet.completedAt) : "-"}</td>
+                  <td>{packet.voidedAt ? formatDateTime(packet.voidedAt) : "-"}</td>
+                  <td>
+                    <div className="flex flex-wrap gap-2">
+                      <Link className="font-semibold text-brand" href={`/sales/pipeline/enrollment-packets/${packet.id}`}>
+                        Open
+                      </Link>
+                      <Link className="font-semibold text-brand" href="/sales/pipeline/enrollment-packets">
+                        All Packets
+                      </Link>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
         </table>
       </Card>
 

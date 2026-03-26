@@ -7,7 +7,7 @@ export type EnrollmentPacketOperationalReadinessStatus =
 
 function normalizeEnrollmentPacketStatus(value: string | null | undefined) {
   const normalized = String(value ?? "").trim().toLowerCase();
-  if (normalized === "completed" || normalized === "filed") return normalized;
+  if (normalized === "completed" || normalized === "filed") return "completed";
   return "not_filed";
 }
 

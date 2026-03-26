@@ -12,6 +12,9 @@ export {
   createReferralSourceAction
 } from "@/app/sales-partner-actions";
 export {
+  replaceEnrollmentPacketAction,
+  resendEnrollmentPacketAction,
   saveEnrollmentPacketSenderSignatureProfileAction,
-  sendEnrollmentPacketAction
+  sendEnrollmentPacketAction,
+  voidEnrollmentPacketAction
 } from "@/app/sales-enrollment-actions";

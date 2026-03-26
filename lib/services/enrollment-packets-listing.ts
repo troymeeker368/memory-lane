@@ -49,14 +49,32 @@ export async function listActivePacketRows(memberId: string) {
   return rows.filter((row) => {
     if (isExpired(row.token_expires_at)) return false;
     const status = toStatus(row.status);
-    return status === "draft" || status === "prepared" || status === "sent" || status === "opened" || status === "partially_completed";
+    return status === "draft" || status === "sent" || status === "in_progress";
   });
 }
 
-export function isReusablePreparedEnrollmentPacket(row: EnrollmentPacketRequestRow) {
+export async function listActivePacketRowsForLead(leadId: string) {
+  const normalizedLeadId = clean(leadId);
+  if (!normalizedLeadId) return [];
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("enrollment_packet_requests")
+    .select("*")
+    .eq("lead_id", normalizedLeadId)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as EnrollmentPacketRequestRow[];
+  return rows.filter((row) => {
+    if (isExpired(row.token_expires_at)) return false;
+    const status = toStatus(row.status);
+    return status === "draft" || status === "sent" || status === "in_progress";
+  });
+}
+
+export function isReusableDraftEnrollmentPacket(row: EnrollmentPacketRequestRow) {
   const status = toStatus(row.status);
   const deliveryStatus = toDeliveryStatus(row);
-  return status === "prepared" && (deliveryStatus === "ready_to_send" || deliveryStatus === "send_failed");
+  return status === "draft" && (deliveryStatus === "ready_to_send" || deliveryStatus === "send_failed");
 }
 
 export async function listEnrollmentPacketRequestsForLead(leadId: string) {
@@ -90,7 +108,7 @@ export async function listCompletedEnrollmentPacketRequests(
   filters: CompletedEnrollmentPacketFilters = {}
 ): Promise<CompletedEnrollmentPacketListItem[]> {
   const safeLimit = Math.max(1, Math.min(500, Math.trunc(filters.limit ?? 200)));
-  const normalizedStatus = filters.status === "completed" || filters.status === "filed" ? filters.status : "all";
+  const normalizedStatus = filters.status === "completed" ? filters.status : "all";
   const normalizedOperationalReadiness =
     filters.operationalReadiness === "operationally_ready" ||
     filters.operationalReadiness === "filed_pending_mapping" ||
@@ -109,11 +127,9 @@ export async function listCompletedEnrollmentPacketRequests(
     .order("completed_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
     .limit(safeLimit);
-  if (normalizedStatus === "all") {
-    query = query.in("status", ["completed", "filed"]);
-  } else {
-    query = query.eq("status", normalizedStatus);
-  }
+
+  query = query.eq("status", "completed");
+
   if (fromDate) {
     query = query.gte("completed_at", `${fromDate}T00:00:00`);
   }
@@ -178,9 +194,10 @@ export async function listCompletedEnrollmentPacketRequests(
     };
   });
 
-  const readinessFilteredItems = normalizedOperationalReadiness === "all"
-    ? items
-    : items.filter((item) => item.operationalReadinessStatus === normalizedOperationalReadiness);
+  const readinessFilteredItems =
+    normalizedOperationalReadiness === "all"
+      ? items
+      : items.filter((item) => item.operationalReadinessStatus === normalizedOperationalReadiness);
 
   if (!searchNeedle) return readinessFilteredItems;
 

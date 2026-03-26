@@ -38,6 +38,7 @@ import { recordImmediateSystemAlert } from "@/lib/services/workflow-observabilit
 const salesLeadSchema = z
   .object({
     leadId: optionalString,
+    submissionMode: z.enum(["create", "edit"]).optional(),
     stage: z.enum(LEAD_STAGE_OPTIONS),
     status: z.enum(LEAD_STATUS_OPTIONS),
     inquiryDate: z.string().min(1),
@@ -170,11 +171,20 @@ const salesLeadSchema = z
     }
   });
 
+function resolveLeadSubmissionMode(raw: unknown) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "create";
+  const submissionMode = (raw as { submissionMode?: unknown }).submissionMode;
+  return submissionMode === "edit" ? "edit" : "create";
+}
+
 export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) {
   await requireSalesRoles();
+  const submissionMode = resolveLeadSubmissionMode(raw);
   const payload = salesLeadSchema.safeParse(raw);
   if (!payload.success) {
-    return { error: "Invalid inquiry submission." };
+    return {
+      error: submissionMode === "edit" ? "Invalid lead update." : "Invalid inquiry submission."
+    };
   }
 
   const profile = await getCurrentProfile();

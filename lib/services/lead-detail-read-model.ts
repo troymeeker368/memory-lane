@@ -1,4 +1,11 @@
 import { resolveCanonicalLeadRef } from "@/lib/services/canonical-person-ref";
+import {
+  normalizeLeadFormFollowUpType,
+  normalizeLeadFormLeadSource,
+  normalizeLeadFormLikelihood,
+  normalizeLeadFormStage,
+  normalizeLeadFormStatus
+} from "@/lib/services/lead-form-normalization";
 import { createClient } from "@/lib/supabase/server";
 
 const NEVER_MATCH_UUID = "00000000-0000-0000-0000-000000000000";
@@ -14,12 +21,19 @@ const LEAD_DETAIL_SELECT = [
   "caregiver_email",
   "member_start_date",
   "lead_source",
+  "lead_source_other",
   "partner_id",
   "referral_source_id",
   "referral_name",
   "likelihood",
   "next_follow_up_date",
-  "next_follow_up_type"
+  "next_follow_up_type",
+  "tour_date",
+  "tour_completed",
+  "discovery_date",
+  "notes_summary",
+  "lost_reason",
+  "closed_date"
 ].join(", ");
 const PARTNER_DETAIL_SELECT = "id, partner_id, organization_name, category, location, primary_phone, primary_email, notes, last_touched";
 const REFERRAL_SOURCE_DETAIL_SELECT =
@@ -43,12 +57,19 @@ type LeadDetailRow = {
   caregiver_email: string | null;
   member_start_date: string | null;
   lead_source: string | null;
+  lead_source_other: string | null;
   partner_id: string | null;
   referral_source_id: string | null;
   referral_name: string | null;
   likelihood: string | null;
   next_follow_up_date: string | null;
   next_follow_up_type: string | null;
+  tour_date: string | null;
+  tour_completed: boolean | null;
+  discovery_date: string | null;
+  notes_summary: string | null;
+  lost_reason: string | null;
+  closed_date: string | null;
 };
 
 type LeadDetailActivityRow = {
@@ -171,12 +192,23 @@ export async function getLeadDetail(leadId: string): Promise<{
   if (leadResult.error) throw new Error(leadResult.error.message);
   const rawLead = (leadResult.data as unknown as LeadDetailRow | null) ?? null;
   if (!rawLead) return null;
+  const stage = normalizeLeadFormStage(rawLead.stage);
   const lead: LeadDetailRow = {
     ...rawLead,
-    stage: String(rawLead.stage ?? ""),
-    status: String(rawLead.status ?? ""),
+    stage,
+    status: normalizeLeadFormStatus(stage, rawLead.status),
     inquiry_date: String(rawLead.inquiry_date ?? ""),
-    member_name: String(rawLead.member_name ?? "")
+    member_name: String(rawLead.member_name ?? ""),
+    lead_source: normalizeLeadFormLeadSource(rawLead.lead_source),
+    likelihood: normalizeLeadFormLikelihood(rawLead.likelihood),
+    next_follow_up_type: normalizeLeadFormFollowUpType(rawLead.next_follow_up_type),
+    lead_source_other: String(rawLead.lead_source_other ?? "").trim() || null,
+    tour_date: String(rawLead.tour_date ?? "").trim() || null,
+    tour_completed: typeof rawLead.tour_completed === "boolean" ? rawLead.tour_completed : null,
+    discovery_date: String(rawLead.discovery_date ?? "").trim() || null,
+    notes_summary: String(rawLead.notes_summary ?? "").trim() || null,
+    lost_reason: String(rawLead.lost_reason ?? "").trim() || null,
+    closed_date: String(rawLead.closed_date ?? "").trim() || null
   };
 
   const partnerId = String(lead.partner_id ?? "").trim();

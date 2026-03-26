@@ -315,7 +315,7 @@ export function PhotoUploadForm() {
   );
 }
 
-export function BloodSugarForm({ members }: { members: MemberOption[] }) {
+export function BloodSugarForm({ compact = false, members }: { members: MemberOption[]; compact?: boolean }) {
   const now = useNowIso();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
@@ -323,7 +323,7 @@ export function BloodSugarForm({ members }: { members: MemberOption[] }) {
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className={`grid gap-3 ${compact ? "xl:grid-cols-[minmax(0,1.6fr)_190px_160px]" : "md:grid-cols-3"}`}>
         <select className="h-11 rounded-lg border border-border px-3" value={form.memberId} onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}>
           {members.map((m) => (
             <option key={m.id} value={m.id}>{m.display_name}</option>
@@ -332,14 +332,21 @@ export function BloodSugarForm({ members }: { members: MemberOption[] }) {
         <input type="datetime-local" className="h-11 rounded-lg border border-border px-3" value={form.checkedAt} onChange={(e) => setForm((f) => ({ ...f, checkedAt: e.target.value }))} />
         <input type="number" className="h-11 rounded-lg border border-border px-3" value={form.readingMgDl} onChange={(e) => setForm((f) => ({ ...f, readingMgDl: Number(e.target.value) }))} />
       </div>
-      <textarea className="min-h-20 w-full rounded-lg border border-border p-3 text-sm" placeholder="Notes" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
-      <Button type="button" disabled={isPending || !form.memberId} onClick={() => startTransition(async () => {
-        const res = await runDocumentationCreateAction({
-          kind: "createBloodSugarLog",
-          payload: { ...form, checkedAt: easternDateTimeLocalToISO(form.checkedAt) }
-        });
-        setStatus(res.error ? `Error: ${res.error}` : "Blood sugar log saved.");
-      })}>Save Blood Sugar</Button>
+      <div className={`grid gap-3 ${compact ? "xl:grid-cols-[minmax(0,1fr)_160px]" : ""}`}>
+        <textarea
+          className={`w-full rounded-lg border border-border p-3 text-sm ${compact ? "min-h-16" : "min-h-20"}`}
+          placeholder={compact ? "Brief note (optional)" : "Notes"}
+          value={form.notes}
+          onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+        />
+        <Button type="button" disabled={isPending || !form.memberId} onClick={() => startTransition(async () => {
+          const res = await runDocumentationCreateAction({
+            kind: "createBloodSugarLog",
+            payload: { ...form, checkedAt: easternDateTimeLocalToISO(form.checkedAt) }
+          });
+          setStatus(res.error ? `Error: ${res.error}` : "Blood sugar log saved.");
+        })}>Save Blood Sugar</Button>
+      </div>
       {status ? <p className="text-sm text-muted">{status}</p> : null}
     </div>
   );

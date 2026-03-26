@@ -13,6 +13,7 @@ export async function markEnrollmentPacketDeliveryState(input: {
   deliveryStatus: SendWorkflowDeliveryStatus;
   deliveryError?: string | null;
   sentAt?: string | null;
+  openedAt?: string | null;
   attemptAt: string;
   expectedCurrentStatus?: EnrollmentPacketStatus | null;
 }) {
@@ -30,6 +31,7 @@ export async function markEnrollmentPacketDeliveryState(input: {
       p_attempt_at: input.attemptAt,
       p_status: input.status ?? null,
       p_sent_at: input.sentAt ?? null,
+      p_opened_at: input.openedAt ?? null,
       p_delivery_error: clean(input.deliveryError),
       p_expected_current_status: input.expectedCurrentStatus ?? null
     });

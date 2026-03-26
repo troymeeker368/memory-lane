@@ -74,7 +74,7 @@ export default async function EnrollmentPacketConfirmationPage({
         ) : null}
         {wasReplayed ? (
           <p className="mt-3 text-xs text-muted">
-            This confirmation reflects an already-filed enrollment packet, so the original submission was not duplicated.
+            This confirmation reflects an already-completed enrollment packet, so the original submission was not duplicated.
           </p>
         ) : null}
       </Card>

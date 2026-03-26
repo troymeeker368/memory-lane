@@ -11,8 +11,6 @@ import {
   type ReactNode
 } from "react";
 
-import { useRouter } from "next/navigation";
-
 import {
   savePublicEnrollmentPacketProgressAction,
   submitPublicEnrollmentPacketAction
@@ -265,7 +263,6 @@ export function EnrollmentPacketPublicForm({
     photo: false,
     ancillary: false
   });
-  const router = useRouter();
 
   const completion = useMemo(
     () =>
@@ -378,37 +375,7 @@ export function EnrollmentPacketPublicForm({
 
   const navigateToConfirmation = (rawRedirectUrl: string) => {
     const redirectUrl = resolveRedirectUrl(rawRedirectUrl);
-    let confirmationPath = redirectUrl;
-    try {
-      const parsed = new URL(redirectUrl, window.location.origin);
-      confirmationPath = `${parsed.pathname}${parsed.search}${parsed.hash}`;
-    } catch {
-      confirmationPath = redirectUrl;
-    }
-
-    try {
-      router.replace(confirmationPath);
-    } catch {
-      // Continue to hard navigation fallback.
-    }
-
-    try {
-      window.location.assign(redirectUrl);
-      return;
-    } catch {
-      // Continue to alternate redirect methods below.
-    }
-
-    window.setTimeout(() => {
-      try {
-        window.location.replace(redirectUrl);
-        return;
-      } catch {
-        // Continue to final hard navigation fallback.
-      }
-
-      window.location.href = redirectUrl;
-    }, 250);
+    window.location.replace(redirectUrl);
   };
 
   const scrollToFirstMissingField = () => {

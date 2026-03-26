@@ -12,7 +12,7 @@ type ToiletLogFormProps = { members: MemberOption[] };
 type ShowerLogFormProps = { members: MemberOption[] };
 type TransportationLogFormProps = { members: MemberOption[] };
 type PhotoUploadFormProps = Record<string, never>;
-type BloodSugarFormProps = { members: MemberOption[] };
+type BloodSugarFormProps = { members: MemberOption[]; compact?: boolean };
 type AssessmentFormProps = {
   members: CanonicalPersonRef[];
   initialMemberId?: string;

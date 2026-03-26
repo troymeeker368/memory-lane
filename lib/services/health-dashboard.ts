@@ -1,12 +1,17 @@
 import { getCarePlanDashboard } from "@/lib/services/care-plans";
+import { getMembers } from "@/lib/services/documentation";
 import { listIncidentDashboard } from "@/lib/services/incidents";
-import { getHealthDashboardMarTodayRows } from "@/lib/services/mar-dashboard-read-model";
+import {
+  getHealthDashboardMarActionRows,
+  getHealthDashboardMarRecentRows
+} from "@/lib/services/mar-dashboard-read-model";
 import { getProgressNoteDashboard } from "@/lib/services/progress-notes";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 
 type DashboardMarRow = {
   id: string;
+  member_id: string;
   member_name: string;
   medication_name: string;
   due_at: string;
@@ -18,6 +23,7 @@ type DashboardMarRow = {
 type DashboardBloodSugarRow = {
   id: string;
   checked_at: string;
+  member_id: string | null;
   member_name: string;
   reading_mg_dl: number | string;
   nurse_name: string | null;
@@ -31,10 +37,44 @@ type HealthDashboardCareAlertRpcRow = {
   summary: string | null;
 };
 
+type CareAlertRiskLevel = "high" | "standard";
+
 function parseDate(value: string | null | undefined) {
   if (!value) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizeDashboardMarRow(
+  row: Awaited<ReturnType<typeof getHealthDashboardMarActionRows>>[number] | Awaited<ReturnType<typeof getHealthDashboardMarRecentRows>>[number]
+) {
+  return {
+    id: row.marScheduleId,
+    member_id: row.memberId,
+    member_name: row.memberName,
+    medication_name: row.medicationName,
+    due_at: row.scheduledTime,
+    administered_at: row.administeredAt,
+    nurse_name: row.administeredBy,
+    status: row.status === "Given" ? "administered" : row.status === "Not Given" ? "not_given" : "scheduled"
+  } satisfies DashboardMarRow;
+}
+
+function getCareAlertRiskLevel(flags: string[], summary: string | null | undefined): CareAlertRiskLevel {
+  const normalized = [...flags, summary ?? ""].join(" ").toLowerCase();
+  if (
+    normalized.includes("allerg") ||
+    normalized.includes("dnr") ||
+    normalized.includes("code status") ||
+    normalized.includes("fall risk") ||
+    normalized.includes("elopement") ||
+    normalized.includes("seizure") ||
+    normalized.includes("diabet") ||
+    normalized.includes("blood sugar")
+  ) {
+    return "high";
+  }
+  return "standard";
 }
 
 export async function getHealthDashboardData(options?: {
@@ -51,7 +91,7 @@ export async function getHealthDashboardData(options?: {
     recentlyCompleted: [],
     plans: [],
     page: 1,
-    pageSize: 25,
+    pageSize: 12,
     totalRows: 0,
     totalPages: 1
   };
@@ -67,98 +107,107 @@ export async function getHealthDashboardData(options?: {
     dueSoon: [],
     dataIssues: [],
     page: 1,
-    pageSize: 25,
+    pageSize: 12,
     totalRows: 0,
     totalPages: 1
   };
-  const [marTodayRows, bloodSugarResult, membersResult, carePlans, incidents, progressNotes, careAlertRows] = await Promise.all([
-    getHealthDashboardMarTodayRows({ serviceRole: true }),
-    supabase
-      .from("v_blood_sugar_logs_detailed")
-      .select("id, checked_at, member_id, member_name, reading_mg_dl, nurse_name, notes")
-      .order("checked_at", { ascending: false })
-      .limit(100),
-    supabase
-      .from("members")
-      .select("id, display_name")
-      .eq("status", "active")
-      .order("display_name", { ascending: true }),
-    options?.includeCarePlans ? getCarePlanDashboard({ page: 1, pageSize: 25 }) : Promise.resolve(emptyCarePlanDashboard),
-    options?.includeIncidents ? listIncidentDashboard({ limit: 6 }) : Promise.resolve(emptyIncidentDashboard),
-    options?.includeProgressNotes
-      ? getProgressNoteDashboard({ page: 1, pageSize: 25, serviceRole: true })
-      : Promise.resolve(emptyProgressNoteDashboard),
-    invokeSupabaseRpcOrThrow<HealthDashboardCareAlertRpcRow[]>(supabase, "rpc_get_health_dashboard_care_alerts", {
-      p_limit: 12
-    })
-  ]);
+
+  const [marActionRows, marRecentRows, bloodSugarResult, members, carePlans, incidents, progressNotes, careAlertRows] =
+    await Promise.all([
+      getHealthDashboardMarActionRows({ serviceRole: true, hoursAhead: 12 }),
+      getHealthDashboardMarRecentRows({ serviceRole: true, limit: 8 }),
+      supabase
+        .from("v_blood_sugar_logs_detailed")
+        .select("id, checked_at, member_id, member_name, reading_mg_dl, nurse_name, notes")
+        .order("checked_at", { ascending: false })
+        .limit(16),
+      getMembers(),
+      options?.includeCarePlans ? getCarePlanDashboard({ page: 1, pageSize: 12 }) : Promise.resolve(emptyCarePlanDashboard),
+      options?.includeIncidents ? listIncidentDashboard({ limit: 12 }) : Promise.resolve(emptyIncidentDashboard),
+      options?.includeProgressNotes
+        ? getProgressNoteDashboard({ page: 1, pageSize: 12, serviceRole: true })
+        : Promise.resolve(emptyProgressNoteDashboard),
+      invokeSupabaseRpcOrThrow<HealthDashboardCareAlertRpcRow[]>(supabase, "rpc_get_health_dashboard_care_alerts", {
+        p_limit: 12
+      })
+    ]);
+
   if (bloodSugarResult.error) throw new Error(`Unable to load v_blood_sugar_logs_detailed: ${bloodSugarResult.error.message}`);
-  if (membersResult.error) throw new Error(`Unable to load active members for health dashboard: ${membersResult.error.message}`);
 
-  const members = (membersResult.data ?? []) as Array<{ id: string; display_name: string }>;
-
-  const marRows = marTodayRows.map((row) => ({
-    id: row.marScheduleId,
-    member_name: row.memberName,
-    medication_name: row.medicationName,
-    due_at: row.scheduledTime,
-    administered_at: row.administeredAt,
-    nurse_name: row.administeredBy,
-    status: row.status === "Given" ? "administered" : row.status === "Not Given" ? "not_given" : "scheduled"
-  })) satisfies DashboardMarRow[];
+  const marRows = marActionRows.map(normalizeDashboardMarRow);
+  const recentMarRows = marRecentRows.map(normalizeDashboardMarRow);
   const bloodSugarRows = (bloodSugarResult.data ?? []) as DashboardBloodSugarRow[];
 
   const now = new Date();
+  const ninetyMinutesAhead = new Date(now.getTime() + 90 * 60 * 1000);
   const fourHoursAhead = new Date(now.getTime() + 4 * 60 * 60 * 1000);
-  const dueMedicationRows = marRows
-    .filter((row) => row.status === "scheduled")
-    .filter((row) => {
-      const dueAt = parseDate(row.due_at);
-      return Boolean(dueAt && dueAt <= fourHoursAhead);
-    })
-    .sort((left, right) => left.due_at.localeCompare(right.due_at));
-  const overdueMedicationRows = dueMedicationRows.filter((row) => {
+
+  const overdueMedicationRows = marRows.filter((row) => {
     const dueAt = parseDate(row.due_at);
     return Boolean(dueAt && dueAt < now);
+  });
+  const dueMedicationRows = marRows.filter((row) => {
+    const dueAt = parseDate(row.due_at);
+    return Boolean(dueAt && dueAt <= fourHoursAhead);
+  });
+  const dueNowMedicationRows = marRows.filter((row) => {
+    const dueAt = parseDate(row.due_at);
+    return Boolean(dueAt && dueAt >= now && dueAt <= ninetyMinutesAhead);
+  });
+  const dueSoonMedicationRows = marRows.filter((row) => {
+    const dueAt = parseDate(row.due_at);
+    return Boolean(dueAt && dueAt > ninetyMinutesAhead && dueAt <= fourHoursAhead);
   });
 
   const recentHealthDocs = [
     ...bloodSugarRows.slice(0, 8).map((row) => ({
       id: `bg-${row.id}`,
       when: row.checked_at,
+      memberId: row.member_id,
       memberName: row.member_name,
       source: "Blood Sugar",
       detail: `${row.reading_mg_dl} mg/dL`
     })),
-    ...marRows
-      .filter((row) => Boolean(row.administered_at))
-      .slice(0, 8)
-      .map((row) => ({
-        id: `mar-${row.id}`,
-        when: row.administered_at as string,
-        memberName: row.member_name,
-        source: "MAR",
-        detail: row.medication_name
-      }))
+    ...recentMarRows.map((row) => ({
+      id: `mar-${row.id}`,
+      when: row.administered_at as string,
+      memberId: row.member_id,
+      memberName: row.member_name,
+      source: "MAR",
+      detail: row.medication_name
+    }))
   ].sort((left, right) => (left.when < right.when ? 1 : -1));
 
-  const careAlerts = (careAlertRows ?? []).map((row) => ({
-    memberId: row.member_id,
-    memberName: row.member_name,
-    flags: Array.isArray(row.flags) ? row.flags.filter((flag): flag is string => typeof flag === "string" && flag.length > 0) : [],
-    summary: row.summary ?? "-"
-  }));
+  const careAlerts = (careAlertRows ?? []).map((row) => {
+    const flags = Array.isArray(row.flags)
+      ? row.flags.filter((flag): flag is string => typeof flag === "string" && flag.length > 0)
+      : [];
+    return {
+      memberId: row.member_id,
+      memberName: row.member_name,
+      flags,
+      summary: row.summary ?? "-",
+      riskLevel: getCareAlertRiskLevel(flags, row.summary)
+    };
+  });
+
+  const actionableIncidents = incidents.recent.filter((row) => row.status !== "closed");
 
   return {
     marRows,
-    bloodSugarRows,
     dueMedicationRows,
+    dueNowMedicationRows,
+    dueSoonMedicationRows,
     overdueMedicationRows,
+    bloodSugarRows,
     recentHealthDocs,
     careAlerts,
     members: members.map((member) => ({ id: member.id, display_name: member.display_name })),
     carePlans,
-    incidents,
+    incidents: {
+      ...incidents,
+      actionable: actionableIncidents
+    },
     progressNotes
   };
 }

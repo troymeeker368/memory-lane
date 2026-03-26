@@ -448,7 +448,13 @@ export async function listIncidentDashboard(options?: { limit?: number }) {
   const supabase = await getServiceClient();
   const limit = Math.max(5, Math.min(options?.limit ?? 25, 100));
   const [recentResult, totalCount, submittedCount, returnedCount, approvedCount, reportableOpenCount] = await Promise.all([
-    supabase.from("incidents").select("*").order("incident_datetime", { ascending: false }).limit(limit),
+    supabase
+      .from("incidents")
+      .select(
+        "id, incident_number, incident_category, reportable, participant_name_snapshot, staff_member_name_snapshot, reporter_name_snapshot, incident_datetime, location, status, updated_at"
+      )
+      .order("incident_datetime", { ascending: false })
+      .limit(limit),
     supabase.from("incidents").select("id", { count: "exact", head: true }),
     supabase.from("incidents").select("id", { count: "exact", head: true }).eq("status", "submitted"),
     supabase.from("incidents").select("id", { count: "exact", head: true }).eq("status", "returned"),

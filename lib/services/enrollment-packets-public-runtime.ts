@@ -143,7 +143,7 @@ async function buildCommittedEnrollmentPacketReplayResult(input: {
     repairedRequest = (await loadRequestById(input.request.id)) ?? input.request;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown enrollment packet replay repair failure.";
-    console.error("[enrollment-packets] unable to self-heal already-filed enrollment packet replay", {
+    console.error("[enrollment-packets] unable to self-heal already-completed enrollment packet replay", {
       packetId: input.request.id,
       message
     });
@@ -253,14 +253,49 @@ async function loadRequestByToken(rawToken: string): Promise<EnrollmentPacketTok
   };
 }
 
+async function markEnrollmentPacketOpened(input: {
+  request: EnrollmentPacketRequestRow;
+  metadata?: { ip?: string | null; userAgent?: string | null };
+}) {
+  if (input.request.opened_at) return false;
+  const now = toEasternISO();
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("enrollment_packet_requests")
+    .update({
+      opened_at: now,
+      last_family_activity_at: now,
+      updated_at: now
+    })
+    .eq("id", input.request.id)
+    .eq("status", input.request.status)
+    .is("opened_at", null)
+    .select("id")
+    .maybeSingle();
+  if (error) {
+    console.error("[enrollment-packets] unable to persist opened timestamp", error);
+    return false;
+  }
+  if (!data?.id) return false;
+
+  await insertPacketEvent({
+    packetId: input.request.id,
+    eventType: "opened",
+    actorEmail: input.request.caregiver_email,
+    metadata: {
+      ip: clean(input.metadata?.ip),
+      userAgent: clean(input.metadata?.userAgent)
+    }
+  });
+  return true;
+}
+
 async function recordEnrollmentPacketExpiredIfNeeded(request: EnrollmentPacketRequestRow) {
   const requestStatus = toStatus(request.status);
   const shouldExpireStatus =
     requestStatus === "draft" ||
-    requestStatus === "prepared" ||
     requestStatus === "sent" ||
-    requestStatus === "opened" ||
-    requestStatus === "partially_completed";
+    requestStatus === "in_progress";
 
   if (shouldExpireStatus) {
     try {
@@ -333,7 +368,10 @@ export async function getPublicEnrollmentPacketContext(
   if (!matched) return { state: "invalid" };
   const request = matched.request;
 
-  if (toStatus(request.status) === "completed" || toStatus(request.status) === "filed") {
+  if (toStatus(request.status) === "voided") {
+    return { state: "voided" };
+  }
+  if (toStatus(request.status) === "completed") {
     return {
       state: "completed",
       request: toSummary(request)
@@ -345,25 +383,7 @@ export async function getPublicEnrollmentPacketContext(
   }
 
   if (toStatus(request.status) === "sent") {
-    const now = toEasternISO();
-    const transition = await markEnrollmentPacketDeliveryState({
-      packetId: request.id,
-      status: "opened",
-      deliveryStatus: "sent",
-      attemptAt: now,
-      expectedCurrentStatus: "sent"
-    });
-    if (transition.didTransition) {
-      await insertPacketEvent({
-        packetId: request.id,
-        eventType: "opened",
-        actorEmail: request.caregiver_email,
-        metadata: {
-          ip: clean(metadata?.ip),
-          userAgent: clean(metadata?.userAgent)
-        }
-      });
-    }
+    await markEnrollmentPacketOpened({ request, metadata });
   }
 
   const [reloaded, fields, member] = await Promise.all([
@@ -491,7 +511,7 @@ export async function savePublicEnrollmentPacketProgress(input: {
 
   await insertPacketEvent({
     packetId: context.request.id,
-    eventType: "partially_completed",
+    eventType: "in_progress",
     actorEmail: cleanEmail(mergedPayload.primaryContactEmail) ?? context.request.caregiverEmail
   });
   return { ok: true as const };
@@ -542,10 +562,10 @@ export async function submitPublicEnrollmentPacket(input: {
   if (!matchedRequest) throw new Error("This enrollment packet link is invalid.");
   const request = matchedRequest.request;
   const status = toStatus(request.status);
-  if (matchedRequest.tokenMatch === "consumed" && (status === "completed" || status === "filed")) {
+  if (matchedRequest.tokenMatch === "consumed" && status === "completed") {
     return buildCommittedEnrollmentPacketReplayResult({ request });
   }
-  if (status === "completed" || status === "filed") {
+  if (status === "completed") {
     return buildCommittedEnrollmentPacketReplayResult({ request });
   }
   if (isExpired(request.token_expires_at)) {
@@ -781,7 +801,7 @@ export async function submitPublicEnrollmentPacket(input: {
         packetId: request.id,
         memberId: member.id,
         actorUserId: request.sender_user_id,
-        reason: "Replay-safe enrollment packet finalization reused committed filed state.",
+        reason: "Replay-safe enrollment packet finalization reused committed completed state.",
         batchId: uploadBatchId,
         uploads: stagedUploads
       });
@@ -914,8 +934,8 @@ export async function submitPublicEnrollmentPacket(input: {
         actorUserId: request.sender_user_id,
         title: "Enrollment Packet Sync Blocked",
         message:
-          "The enrollment packet was filed, but downstream sync could not start. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.",
-        actionUrl: `/sales/new-entries/completed-enrollment-packets`,
+          "The enrollment packet was completed, but downstream sync could not start. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.",
+        actionUrl: `/sales/pipeline/enrollment-packets`,
         eventKeySuffix: "mapping-cascade-failed"
       });
     }
@@ -955,8 +975,8 @@ export async function submitPublicEnrollmentPacket(input: {
       actorUserId: request.sender_user_id,
       title: "Enrollment Packet Sync Blocked",
       message:
-        "The enrollment packet was filed, but downstream sync could not start because the packet fields could not be reloaded. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.",
-      actionUrl: `/sales/new-entries/completed-enrollment-packets`,
+        "The enrollment packet was completed, but downstream sync could not start because the packet fields could not be reloaded. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.",
+      actionUrl: `/sales/pipeline/enrollment-packets`,
       eventKeySuffix: "mapping-missing-fields"
     });
   }

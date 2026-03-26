@@ -214,6 +214,7 @@ test("public enrollment packet submit keeps committed follow-up-required results
 test("public enrollment packet submit success path navigates to confirmation route", () => {
   const actionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
   const formSource = readWorkspaceFile("components/enrollment-packets/enrollment-packet-public-form.tsx");
+  const pageSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/page.tsx");
   const confirmationSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/confirmation/page.tsx");
 
   assert.equal(
@@ -226,7 +227,8 @@ test("public enrollment packet submit success path navigates to confirmation rou
     true
   );
   assert.equal(formSource.includes("const navigateToConfirmation = (rawRedirectUrl: string) =>"), true);
-  assert.equal(formSource.includes("router.replace(confirmationPath);"), true);
+  assert.equal(formSource.includes("window.location.replace(redirectUrl);"), true);
+  assert.equal(pageSource.includes("redirect(`/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`);"), true);
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
 });
 
@@ -504,10 +506,9 @@ test("successful public sign submit redirects to the welcome/thank-you confirmat
     true
   );
   assert.equal(actionSource.includes("redirect("), false);
-  assert.equal(formSource.includes("const router = useRouter();"), true);
-  assert.equal(formSource.includes("window.location.assign"), true);
+  assert.equal(formSource.includes("const router = useRouter();"), false);
   assert.equal(formSource.includes("window.location.replace"), true);
-  assert.equal(formSource.includes("router.replace(confirmationPath);"), true);
+  assert.equal(formSource.includes("const navigateToConfirmation = (rawRedirectUrl: string) =>"), true);
   assert.equal(formSource.includes("result.redirectUrl"), true);
   assert.equal(confirmationSource.includes("Enrollment Packet Submitted"), true);
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
@@ -524,10 +525,8 @@ test("sign/submit client flow includes a hard confirmation redirect fallback", (
 
   assert.equal(formSource.includes("const buildConfirmationRedirectUrl = (operationallyReady: boolean) =>"), true);
   assert.equal(formSource.includes('const redirectUrl = result.redirectUrl ?? buildConfirmationRedirectUrl(result.operationallyReady);'), true);
-  assert.equal(formSource.includes("window.location.assign(redirectUrl);"), true);
-  assert.equal(formSource.includes("window.setTimeout(() =>"), true);
   assert.equal(formSource.includes("window.location.replace(redirectUrl);"), true);
-  assert.equal(formSource.includes("router.replace(confirmationPath);"), true);
+  assert.equal(formSource.includes("const navigateToConfirmation = (rawRedirectUrl: string) =>"), true);
   assert.equal(actionSource.includes("return { ok: true"), true);
 });
 

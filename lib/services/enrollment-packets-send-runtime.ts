@@ -27,6 +27,7 @@ import {
   getEnrollmentPacketSenderSignatureProfile,
   getLeadById,
   getMemberById,
+  loadRequestById,
   recordEnrollmentPacketActionRequired,
   syncEnrollmentPacketLeadActivityOrQueue
 } from "@/lib/services/enrollment-packet-mapping-runtime";
@@ -36,8 +37,9 @@ import {
 } from "@/lib/services/enrollment-packet-proration";
 import { markEnrollmentPacketDeliveryState } from "@/lib/services/enrollment-packet-delivery-runtime";
 import {
-  isReusablePreparedEnrollmentPacket,
-  listActivePacketRows
+  isReusableDraftEnrollmentPacket,
+  listActivePacketRows,
+  listActivePacketRowsForLead
 } from "@/lib/services/enrollment-packets-listing";
 import {
   type EnrollmentPacketRequestRow,
@@ -62,6 +64,16 @@ import { insertPacketEvent } from "@/lib/services/enrollment-packet-public-helpe
 
 const PREPARE_ENROLLMENT_PACKET_REQUEST_RPC = "rpc_prepare_enrollment_packet_request";
 const ENROLLMENT_PACKET_DELIVERY_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
+
+export class ActiveEnrollmentPacketConflictError extends Error {
+  code = "active_enrollment_packet_exists" as const;
+  activePacket: ReturnType<typeof toSummary>;
+
+  constructor(request: EnrollmentPacketRequestRow) {
+    super("An active enrollment packet already exists for this lead.");
+    this.activePacket = toSummary(request);
+  }
+}
 
 async function loadEnrollmentPacketTemplateBuilder() {
   const { buildEnrollmentPacketTemplate } = await import("@/lib/email/templates/enrollment-packet");
@@ -294,6 +306,28 @@ async function resolveSendContext(input: {
   return { member: refreshedMember, lead };
 }
 
+async function loadEditableExistingPacket(input: {
+  packetId: string;
+  memberId: string;
+  leadId: string | null;
+}) {
+  const request = await loadRequestById(input.packetId);
+  if (!request) {
+    throw new Error("Enrollment packet was not found.");
+  }
+  if (request.member_id !== input.memberId) {
+    throw new Error("Enrollment packet/member mismatch.");
+  }
+  if ((request.lead_id ?? null) !== (input.leadId ?? null)) {
+    throw new Error("Enrollment packet/lead mismatch.");
+  }
+  const status = toStatus(request.status);
+  if (status === "completed" || status === "expired" || status === "voided") {
+    throw new Error("Only active enrollment packets can be resent.");
+  }
+  return request;
+}
+
 export async function sendEnrollmentPacketRequest(input: {
   memberId?: string | null;
   leadId: string;
@@ -309,6 +343,7 @@ export async function sendEnrollmentPacketRequest(input: {
   totalInitialEnrollmentAmountOverride?: number | null;
   optionalMessage?: string | null;
   appBaseUrl?: string | null;
+  existingPacketId?: string | null;
 }) {
   const senderUserId = clean(input.senderUserId);
   const senderFullName = clean(input.senderFullName);
@@ -376,16 +411,31 @@ export async function sendEnrollmentPacketRequest(input: {
   if (!caregiverEmail || !isEmail(caregiverEmail)) throw new Error("Caregiver email is required.");
   const requiredCaregiverEmail = caregiverEmail;
   const memberNameParts = splitMemberName(lead?.member_name ?? member.display_name);
+  const requestedExistingPacketId = clean(input.existingPacketId);
 
-  const active = await listActivePacketRows(member.id);
-  const reusablePreparedActive = active.find((row) => isReusablePreparedEnrollmentPacket(row)) ?? null;
+  const [memberActive, leadActive] = await Promise.all([
+    listActivePacketRows(member.id),
+    lead?.id ? listActivePacketRowsForLead(lead.id) : Promise.resolve([])
+  ]);
+  const active = [...memberActive, ...leadActive].filter(
+    (row, index, rows) => rows.findIndex((candidate) => candidate.id === row.id) === index
+  );
+  const explicitExistingRequest = requestedExistingPacketId
+    ? await loadEditableExistingPacket({
+        packetId: requestedExistingPacketId,
+        memberId: member.id,
+        leadId: lead?.id ?? null
+      })
+    : null;
+  const reusablePreparedActive =
+    explicitExistingRequest ?? active.find((row) => isReusableDraftEnrollmentPacket(row)) ?? null;
   const blockingActive = active.find((row) => {
     if (reusablePreparedActive && row.id === reusablePreparedActive.id) return false;
     const status = toStatus(row.status);
-    return status === "draft" || status === "prepared" || status === "sent" || status === "opened" || status === "partially_completed";
+    return status === "draft" || status === "sent" || status === "in_progress";
   });
   if (blockingActive) {
-    throw new Error("An active enrollment packet already exists for this member.");
+    throw new ActiveEnrollmentPacketConflictError(blockingActive);
   }
 
   const now = toEasternISO();
@@ -451,7 +501,8 @@ export async function sendEnrollmentPacketRequest(input: {
       dailyRateOverride,
       totalInitialEnrollmentAmountOverride,
       retryAttempt: Boolean(reusablePreparedActive),
-      reusedPreparedRequest: Boolean(reusablePreparedActive)
+      reusedPreparedRequest: Boolean(reusablePreparedActive && isReusableDraftEnrollmentPacket(reusablePreparedActive)),
+      resendAttempt: Boolean(explicitExistingRequest)
     }
   });
 
@@ -468,7 +519,7 @@ export async function sendEnrollmentPacketRequest(input: {
     const failedAt = toEasternISO();
     await markEnrollmentPacketDeliveryState({
       packetId: requestId,
-      status: "prepared",
+      status: "draft",
       deliveryStatus: "send_failed",
       deliveryError: reason,
       sentAt: null,
@@ -707,7 +758,13 @@ export async function sendEnrollmentPacketRequest(input: {
       token_expires_at: expiresAt,
       created_at: reusablePreparedActive?.created_at ?? now,
       sent_at: sentAt,
+      opened_at: reusablePreparedActive?.opened_at ?? null,
       completed_at: reusablePreparedActive?.completed_at ?? null,
+      last_family_activity_at: reusablePreparedActive?.last_family_activity_at ?? reusablePreparedActive?.updated_at ?? null,
+      voided_at: null,
+      voided_by_user_id: null,
+      void_reason: null,
+      updated_at: sentAt,
       mapping_sync_status: reusablePreparedActive?.mapping_sync_status ?? null,
       mapping_sync_error: reusablePreparedActive?.mapping_sync_error ?? null,
       mapping_sync_attempted_at: reusablePreparedActive?.mapping_sync_attempted_at ?? null,

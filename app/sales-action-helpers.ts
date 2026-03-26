@@ -22,6 +22,7 @@ export function revalidateSalesLeadViews(leadId?: string) {
     "/sales",
     "/sales/activities",
     "/sales/pipeline",
+    "/sales/pipeline/enrollment-packets",
     "/sales/pipeline/leads-table",
     "/sales/pipeline/by-stage",
     "/sales/pipeline/follow-up-dashboard",

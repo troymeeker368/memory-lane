@@ -7,6 +7,7 @@ const pipelineLinks = [
   { label: "Pipeline by Stage", href: "/sales/pipeline/by-stage" },
   { label: "Leads Pipeline Table", href: "/sales/pipeline/leads-table" },
   { label: "Follow Up Dashboard", href: "/sales/pipeline/follow-up-dashboard" },
+  { label: "Enrollment Packets", href: "/sales/pipeline/enrollment-packets" },
   { label: "Leads - Inquiry", href: "/sales/pipeline/inquiry" },
   { label: "Leads - Tour", href: "/sales/pipeline/tour" },
   { label: "Leads - Enrollment in Progress", href: "/sales/pipeline/eip" },

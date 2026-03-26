@@ -205,22 +205,22 @@ export function safeNumber(value: number | null | undefined, fallback = 0) {
 
 export function toStatus(value: string | null | undefined): EnrollmentPacketStatus {
   const normalized = clean(value)?.toLowerCase() ?? "draft";
-  if (normalized === "prepared") return "prepared";
   if (normalized === "sent") return "sent";
-  if (normalized === "opened") return "opened";
-  if (normalized === "partially_completed") return "partially_completed";
+  if (normalized === "opened" || normalized === "partially_completed" || normalized === "in_progress") {
+    return "in_progress";
+  }
   if (normalized === "expired") return "expired";
-  if (normalized === "completed") return "completed";
-  if (normalized === "filed") return "filed";
+  if (normalized === "completed" || normalized === "filed") return "completed";
+  if (normalized === "voided") return "voided";
   return "draft";
 }
 
 export function toDeliveryStatus(row: Pick<EnrollmentPacketRequestRow, "status" | "delivery_status">) {
   const status = toStatus(row.status);
   const fallback =
-    status === "sent" || status === "opened" || status === "partially_completed" || status === "completed" || status === "filed"
+    status === "sent" || status === "in_progress" || status === "completed"
       ? "sent"
-      : status === "prepared"
+      : status === "draft"
         ? "ready_to_send"
         : "pending_preparation";
   return toSendWorkflowDeliveryStatus(row.delivery_status, fallback);
@@ -241,7 +241,13 @@ export function toSummary(row: EnrollmentPacketRequestRow): EnrollmentPacketRequ
     tokenExpiresAt: row.token_expires_at,
     createdAt: row.created_at,
     sentAt: row.sent_at,
-    completedAt: row.completed_at
+    openedAt: row.opened_at ?? null,
+    completedAt: row.completed_at,
+    lastFamilyActivityAt: row.last_family_activity_at ?? null,
+    updatedAt: row.updated_at,
+    voidedAt: row.voided_at ?? null,
+    voidedByUserId: clean(row.voided_by_user_id),
+    voidReason: clean(row.void_reason)
   };
 }
 

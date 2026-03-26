@@ -31,3 +31,5 @@ export async function sendEnrollmentPacketRequest(input: SendEnrollmentPacketReq
   const { sendEnrollmentPacketRequest } = await import("@/lib/services/enrollment-packets-send-runtime");
   return sendEnrollmentPacketRequest(input);
 }
+
+export { ActiveEnrollmentPacketConflictError } from "@/lib/services/enrollment-packets-send-runtime";

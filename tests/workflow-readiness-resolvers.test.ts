@@ -9,25 +9,25 @@ import { resolveIntakeDraftPofReadiness } from "@/lib/services/intake-draft-pof-
 import { resolveIntakePostSignReadiness } from "@/lib/services/intake-post-sign-readiness";
 import { resolvePhysicianOrderClinicalSyncStatus } from "@/lib/services/physician-order-clinical-sync";
 
-test("enrollment packet readiness distinguishes filed from operationally ready", () => {
+test("enrollment packet readiness distinguishes completed from operationally ready", () => {
   assert.equal(toEnrollmentPacketMappingSyncStatus("not_started"), "not_started");
   assert.equal(
     resolveEnrollmentPacketOperationalReadiness({
-      status: "filed",
+      status: "completed",
       mappingSyncStatus: "pending"
     }),
     "filed_pending_mapping"
   );
   assert.equal(
     resolveEnrollmentPacketOperationalReadiness({
-      status: "filed",
+      status: "completed",
       mappingSyncStatus: "failed"
     }),
     "mapping_failed"
   );
   assert.equal(
     resolveEnrollmentPacketOperationalReadiness({
-      status: "filed",
+      status: "completed",
       mappingSyncStatus: "completed"
     }),
     "operationally_ready"
@@ -40,7 +40,7 @@ test("enrollment packet readiness keeps pending and failed mapping out of operat
     mappingSyncStatus: "pending"
   });
   const failedReadiness = resolveEnrollmentPacketOperationalReadiness({
-    status: "filed",
+    status: "completed",
     mappingSyncStatus: "failed"
   });
 

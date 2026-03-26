@@ -9,13 +9,11 @@ export type StaffTransportationOption = (typeof STAFF_TRANSPORTATION_OPTIONS)[nu
 
 export const ENROLLMENT_PACKET_STATUS_VALUES = [
   "draft",
-  "prepared",
   "sent",
-  "opened",
-  "partially_completed",
+  "in_progress",
   "expired",
   "completed",
-  "filed"
+  "voided"
 ] as const;
 
 export type EnrollmentPacketStatus = (typeof ENROLLMENT_PACKET_STATUS_VALUES)[number];
@@ -34,7 +32,13 @@ export type EnrollmentPacketRequestSummary = {
   tokenExpiresAt: string;
   createdAt: string;
   sentAt: string | null;
+  openedAt: string | null;
   completedAt: string | null;
+  lastFamilyActivityAt: string | null;
+  updatedAt: string;
+  voidedAt: string | null;
+  voidedByUserId: string | null;
+  voidReason: string | null;
 };
 
 export type CompletedEnrollmentPacketListItem = EnrollmentPacketRequestSummary & {
@@ -72,7 +76,13 @@ export type EnrollmentPacketRequestRow = {
   token_expires_at: string;
   created_at: string;
   sent_at: string | null;
+  opened_at: string | null;
   completed_at: string | null;
+  last_family_activity_at: string | null;
+  voided_at: string | null;
+  voided_by_user_id: string | null;
+  void_reason: string | null;
+  updated_at: string;
   mapping_sync_status: string | null;
   mapping_sync_error: string | null;
   mapping_sync_attempted_at: string | null;
@@ -162,9 +172,39 @@ export type FinalizedEnrollmentPacketSubmissionRpcRow = {
   was_already_filed: boolean;
 };
 
+export type EnrollmentPacketAuditEvent = {
+  id: string;
+  packetId: string;
+  eventType: string;
+  actorName?: string | null;
+  actorUserId: string | null;
+  actorEmail: string | null;
+  timestamp: string;
+  metadata: Record<string, unknown>;
+};
+
+export type OperationalEnrollmentPacketListItem = EnrollmentPacketRequestSummary & {
+  memberName: string;
+  leadMemberName: string | null;
+  senderName: string | null;
+  mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
+  operationalReadinessStatus: EnrollmentPacketOperationalReadinessStatus;
+  operationallyReady: boolean;
+  mappingSyncError: string | null;
+};
+
+export type OperationalEnrollmentPacketFilters = {
+  limit?: number;
+  status?: EnrollmentPacketStatus | "active" | "all";
+  leadId?: string | null;
+  search?: string | null;
+  includeCompleted?: boolean;
+};
+
 export type PublicEnrollmentPacketContext =
   | { state: "invalid" }
   | { state: "expired" }
+  | { state: "voided" }
   | { state: "completed"; request: EnrollmentPacketRequestSummary }
   | {
       state: "ready";

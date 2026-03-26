@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { sendEnrollmentPacketAction } from "@/app/sales-enrollment-actions";
+import {
+  replaceEnrollmentPacketAction,
+  sendEnrollmentPacketAction,
+  voidEnrollmentPacketAction
+} from "@/app/sales-enrollment-actions";
 import { Button } from "@/components/ui/button";
 import {
   calculateInitialEnrollmentAmount,
@@ -29,6 +33,23 @@ type PricingPreview = {
     dailyRate: number;
   }>;
   issues: string[];
+};
+
+type ActivePacketConflict = {
+  id: string;
+  leadId: string | null;
+  status: string;
+  sentAt: string | null;
+  openedAt: string | null;
+  updatedAt: string;
+};
+
+type SendEnrollmentPacketFailure = {
+  ok: false;
+  error: string;
+  code?: string;
+  redirectTo?: string;
+  activePacket?: ActivePacketConflict;
 };
 
 export function SendEnrollmentPacketAction({
@@ -60,6 +81,8 @@ export function SendEnrollmentPacketAction({
   const [dailyRateEdited, setDailyRateEdited] = useState(false);
   const [initialAmountEdited, setInitialAmountEdited] = useState(false);
   const [sentResult, setSentResult] = useState(false);
+  const [activeConflict, setActiveConflict] = useState<ActivePacketConflict | null>(null);
+  const [voidReason, setVoidReason] = useState("");
   const submitGuardRef = useRef(false);
   const router = useRouter();
   const isWorking = isPending || isSubmitting;
@@ -134,6 +157,28 @@ export function SendEnrollmentPacketAction({
     setInitialAmountEdited(false);
   };
 
+  const buildActionPayload = () => {
+    const parsedCommunityFee = Number(communityFee);
+    const parsedDailyRate = Number(dailyRate);
+    const parsedInitialEnrollmentAmount = Number(totalInitialEnrollmentAmount);
+    return {
+      parsedCommunityFee,
+      parsedDailyRate,
+      parsedInitialEnrollmentAmount,
+      actionPayload: {
+        leadId,
+        caregiverEmail,
+        requestedStartDate,
+        requestedDays,
+        transportation,
+        communityFee: parsedCommunityFee,
+        dailyRate: parsedDailyRate,
+        totalInitialEnrollmentAmount: parsedInitialEnrollmentAmount,
+        optionalMessage
+      }
+    };
+  };
+
   const onSend = () => {
     if (submitGuardRef.current) return;
     if (!requestedStartDate) {
@@ -144,9 +189,7 @@ export function SendEnrollmentPacketAction({
       setStatus("Select at least one requested day.");
       return;
     }
-    const parsedCommunityFee = Number(communityFee);
-    const parsedDailyRate = Number(dailyRate);
-    const parsedInitialEnrollmentAmount = Number(totalInitialEnrollmentAmount);
+    const { parsedCommunityFee, parsedDailyRate, parsedInitialEnrollmentAmount, actionPayload } = buildActionPayload();
     if (!Number.isFinite(parsedCommunityFee) || parsedCommunityFee < 0) {
       setStatus("Community fee must be a valid non-negative amount.");
       return;
@@ -161,24 +204,20 @@ export function SendEnrollmentPacketAction({
     }
 
     setStatus(null);
+    setActiveConflict(null);
     submitGuardRef.current = true;
     setIsSubmitting(true);
     startTransition(async () => {
       try {
-        const result = await sendEnrollmentPacketAction({
-          leadId,
-          caregiverEmail,
-          requestedStartDate,
-          requestedDays,
-          transportation,
-          communityFee: parsedCommunityFee,
-          dailyRate: parsedDailyRate,
-          totalInitialEnrollmentAmount: parsedInitialEnrollmentAmount,
-          optionalMessage
-        });
+        const result = (await sendEnrollmentPacketAction(actionPayload)) as
+          | { ok: true; requestId: string; requestUrl: string }
+          | SendEnrollmentPacketFailure;
         if (!result.ok) {
+          if (result.code === "active_enrollment_packet_exists" && result.activePacket) {
+            setActiveConflict(result.activePacket);
+          }
           setStatus(result.error);
-          if ("redirectTo" in result && result.redirectTo) {
+          if (result.redirectTo) {
             router.push(result.redirectTo);
           }
           return;
@@ -189,6 +228,60 @@ export function SendEnrollmentPacketAction({
         setStatus(null);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Unable to send enrollment packet.");
+      } finally {
+        setIsSubmitting(false);
+        submitGuardRef.current = false;
+      }
+    });
+  };
+
+  const onVoidExisting = () => {
+    if (!activeConflict || !voidReason.trim()) {
+      setStatus("Enter a void reason before voiding the active packet.");
+      return;
+    }
+    setStatus(null);
+    startTransition(async () => {
+      const result = await voidEnrollmentPacketAction({
+        packetId: activeConflict.id,
+        reason: voidReason.trim()
+      });
+      if (!result.ok) {
+        setStatus(result.error);
+        return;
+      }
+      setActiveConflict(null);
+      setVoidReason("");
+      router.refresh();
+      setStatus("Existing packet voided. Review the updated terms and send the new packet.");
+    });
+  };
+
+  const onReplaceExisting = () => {
+    if (!activeConflict || !voidReason.trim()) {
+      setStatus("Enter a void reason before replacing the active packet.");
+      return;
+    }
+    const { actionPayload } = buildActionPayload();
+    setStatus(null);
+    submitGuardRef.current = true;
+    setIsSubmitting(true);
+    startTransition(async () => {
+      try {
+        const result = await replaceEnrollmentPacketAction({
+          packetId: activeConflict.id,
+          voidReason: voidReason.trim(),
+          ...actionPayload
+        });
+        if (!result.ok) {
+          setStatus(result.error);
+          return;
+        }
+        setActiveConflict(null);
+        setVoidReason("");
+        router.refresh();
+        setSentResult(true);
+        setStatus(null);
       } finally {
         setIsSubmitting(false);
         submitGuardRef.current = false;
@@ -218,6 +311,8 @@ export function SendEnrollmentPacketAction({
                     onClick={() => {
                       setIsOpen(false);
                       setSentResult(false);
+                      setActiveConflict(null);
+                      setVoidReason("");
                     }}
                     disabled={isWorking}
                   >
@@ -231,6 +326,53 @@ export function SendEnrollmentPacketAction({
                 <p className="mt-1 text-sm text-muted">Complete required packet values, then send the secure caregiver link.</p>
                 {status ? (
                   <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{status}</p>
+                ) : null}
+                {activeConflict ? (
+                  <div className="mt-3 space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
+                    <div>
+                      <p className="font-semibold text-amber-900">An active enrollment packet already exists.</p>
+                      <p className="mt-1 text-amber-800">
+                        Status: {activeConflict.status.replaceAll("_", " ")} | Sent: {activeConflict.sentAt || "-"} | Opened: {activeConflict.openedAt || "-"}
+                      </p>
+                      <p className="text-amber-800">Last activity: {activeConflict.updatedAt}</p>
+                    </div>
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-amber-900">Void / Replace Reason</span>
+                      <textarea
+                        className="min-h-[84px] w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-fg"
+                        value={voidReason}
+                        onChange={(event) => setVoidReason(event.target.value)}
+                        placeholder="Explain why the active packet must be voided or replaced."
+                        disabled={isWorking}
+                      />
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="rounded-lg border border-amber-400 bg-white px-3 py-2 text-sm font-semibold text-amber-900"
+                        onClick={() => router.push(`/sales/pipeline/enrollment-packets/${activeConflict.id}`)}
+                        disabled={isWorking}
+                      >
+                        Open Existing Packet
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-amber-400 bg-white px-3 py-2 text-sm font-semibold text-amber-900"
+                        onClick={onVoidExisting}
+                        disabled={isWorking || !voidReason.trim()}
+                      >
+                        Void Existing Packet
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-lg bg-amber-700 px-3 py-2 text-sm font-semibold text-white"
+                        onClick={onReplaceExisting}
+                        disabled={isWorking || !voidReason.trim()}
+                      >
+                        Replace With New Packet
+                      </button>
+                    </div>
+                  </div>
                 ) : null}
 
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -402,7 +544,11 @@ export function SendEnrollmentPacketAction({
                   <button
                     type="button"
                     className="rounded-lg border border-border px-4 py-2 text-sm font-semibold"
-                    onClick={() => setIsOpen(false)}
+                    onClick={() => {
+                      setIsOpen(false);
+                      setActiveConflict(null);
+                      setVoidReason("");
+                    }}
                     disabled={isWorking}
                   >
                     Cancel

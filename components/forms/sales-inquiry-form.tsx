@@ -17,6 +17,10 @@ import {
   resolveCanonicalLeadState
 } from "@/lib/canonical";
 import { formatPhoneDisplay, formatPhoneInput } from "@/lib/phone";
+import {
+  normalizeLeadFormInquiryDate,
+  normalizeLeadFormSummary
+} from "@/lib/services/lead-form-normalization";
 import { toEasternDate } from "@/lib/timezone";
 
 export type PartnerLookup = {
@@ -126,19 +130,6 @@ function FieldLabel({ children }: { children: string }) {
   return <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">{children}</span>;
 }
 
-function splitLostReason(initialLostReason: string | null | undefined) {
-  const value = (initialLostReason ?? "").trim();
-  if (!value) {
-    return { lostReason: "", lostReasonOther: "" };
-  }
-
-  if (LEAD_LOST_REASON_OPTIONS.includes(value as (typeof LEAD_LOST_REASON_OPTIONS)[number])) {
-    return { lostReason: value, lostReasonOther: "" };
-  }
-
-  return { lostReason: "Other", lostReasonOther: value };
-}
-
 export function SalesInquiryForm({
   partners,
   referralSources,
@@ -159,6 +150,7 @@ export function SalesInquiryForm({
   const [status, setStatus] = usePropSyncedStatus(syncDeps, "");
   const [duplicateReview, setDuplicateReview] = usePropSyncedState<DuplicateReviewState | null>(null, syncDeps);
   const [mergeTargetLeadId, setMergeTargetLeadId] = usePropSyncedState("", syncDeps);
+  const normalizedInitialLead = normalizeLeadFormSummary(initialLead);
 
   const defaultPartnerId =
     partners.find((partner) => partner.partner_id === (initialLead?.partner_id ?? initialPartnerId))?.id ?? "";
@@ -172,38 +164,52 @@ export function SalesInquiryForm({
         })?.id ?? ""
       : "";
 
-  const initialLost = splitLostReason(initialLead?.lost_reason);
-
   const [form, setForm] = usePropSyncedState<SalesLeadFormState>(
     () => ({
       leadId: initialLead?.id ?? "",
-      stage: (initialLead?.stage as (typeof LEAD_STAGE_OPTIONS)[number]) ?? "Inquiry",
-      status: (initialLead?.status as (typeof LEAD_STATUS_OPTIONS)[number]) ?? "Open",
-      inquiryDate: initialLead?.inquiry_date ?? today,
+      stage: normalizedInitialLead.stage,
+      status: normalizedInitialLead.status,
+      inquiryDate: normalizeLeadFormInquiryDate(initialLead?.inquiry_date, today),
       caregiverName: initialLead?.caregiver_name ?? "",
       caregiverRelationship: initialLead?.caregiver_relationship ?? "",
       caregiverEmail: initialLead?.caregiver_email ?? "",
       caregiverPhone: formatPhoneInput(initialLead?.caregiver_phone ?? ""),
       memberName: initialLead?.member_name ?? "",
       memberDob: initialLead?.member_dob ?? "",
-      leadSource: (initialLead?.lead_source as (typeof LEAD_SOURCE_OPTIONS)[number]) ?? "Referral",
-      leadSourceOther: initialLead?.lead_source_other ?? "",
+      leadSource: normalizedInitialLead.leadSource,
+      leadSourceOther: normalizedInitialLead.leadSourceOther ?? "",
       partnerId: defaultPartnerId || fallbackPartnerFromReferralId,
       referralSourceId: defaultReferralId,
       referralName: initialLead?.referral_name ?? "",
-      likelihood: (initialLead?.likelihood as (typeof LEAD_LIKELIHOOD_OPTIONS)[number]) ?? "Warm",
+      likelihood: normalizedInitialLead.likelihood,
       nextFollowUpDate: initialLead?.next_follow_up_date ?? "",
-      nextFollowUpType: (initialLead?.next_follow_up_type as (typeof LEAD_FOLLOW_UP_TYPES)[number]) ?? "Call",
+      nextFollowUpType: normalizedInitialLead.nextFollowUpType,
       tourDate: initialLead?.tour_date ?? "",
-      tourCompleted: typeof initialLead?.tour_completed === "boolean" ? (initialLead.tour_completed ? "yes" : "no") : "",
+      tourCompleted: normalizedInitialLead.tourCompleted,
       discoveryDate: initialLead?.discovery_date ?? "",
       memberStartDate: initialLead?.member_start_date ?? "",
       notesSummary: initialLead?.notes_summary ?? "",
-      lostReason: initialLost.lostReason,
-      lostReasonOther: initialLost.lostReasonOther,
-      closedDate: initialLead?.closed_date ?? ""
+      lostReason: normalizedInitialLead.lostReason,
+      lostReasonOther: normalizedInitialLead.lostReasonOther,
+      closedDate: normalizedInitialLead.closedDate
     }),
-    [today, ...syncDeps, defaultPartnerId, defaultReferralId, fallbackPartnerFromReferralId, initialLost.lostReason, initialLost.lostReasonOther]
+    [
+      today,
+      ...syncDeps,
+      defaultPartnerId,
+      defaultReferralId,
+      fallbackPartnerFromReferralId,
+      normalizedInitialLead.closedDate,
+      normalizedInitialLead.leadSource,
+      normalizedInitialLead.leadSourceOther,
+      normalizedInitialLead.likelihood,
+      normalizedInitialLead.lostReason,
+      normalizedInitialLead.lostReasonOther,
+      normalizedInitialLead.nextFollowUpType,
+      normalizedInitialLead.stage,
+      normalizedInitialLead.status,
+      normalizedInitialLead.tourCompleted
+    ]
   );
 
   function clearDuplicateReview() {
@@ -223,7 +229,8 @@ export function SalesInquiryForm({
       tourCompleted: showTourCompleted ? form.tourCompleted === "yes" : undefined,
       closedDate: showLostFields ? form.closedDate : "",
       duplicateDecision: options?.duplicateDecision ?? "",
-      mergeTargetLeadId: options?.mergeTargetLeadId ?? ""
+      mergeTargetLeadId: options?.mergeTargetLeadId ?? "",
+      submissionMode: initialLead ? "edit" : "create"
     })) as SalesLeadSaveResponse;
 
     if (result.duplicateRequiresDecision) {

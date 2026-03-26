@@ -351,7 +351,7 @@ export async function insertPacketEvent(input: {
 }
 
 function buildEnrollmentPacketActionNeededMessage(input: {
-  status: "filed";
+  status: "completed";
   mappingSyncStatus: string | null | undefined;
 }) {
   const operationalReadinessStatus = resolveEnrollmentPacketOperationalReadiness({
@@ -363,7 +363,7 @@ function buildEnrollmentPacketActionNeededMessage(input: {
     return {
       operationalReadinessStatus,
       actionNeededMessage:
-        "Enrollment packet was filed, but downstream setup is still pending. Staff should wait for mapping completion before treating the member as operationally ready."
+        "Enrollment packet was completed, but downstream setup is still pending. Staff should wait for mapping completion before treating the member as operationally ready."
     } as const;
   }
 
@@ -371,7 +371,7 @@ function buildEnrollmentPacketActionNeededMessage(input: {
     return {
       operationalReadinessStatus,
       actionNeededMessage:
-        "Enrollment packet was filed, but downstream sync still needs staff follow-up before the member is operationally ready."
+        "Enrollment packet was completed, but downstream sync still needs staff follow-up before the member is operationally ready."
     } as const;
   }
 
@@ -389,14 +389,14 @@ export function buildPublicEnrollmentPacketSubmitResult(input: {
 }) {
   const mappingSyncStatus = toEnrollmentPacketMappingSyncStatus(input.mappingSyncStatus);
   const readiness = buildEnrollmentPacketActionNeededMessage({
-    status: "filed",
+    status: "completed",
     mappingSyncStatus
   });
 
   return {
     packetId: input.packetId,
     memberId: input.memberId,
-    status: "filed" as const,
+    status: "completed" as const,
     mappingSyncStatus,
     operationalReadinessStatus: readiness.operationalReadinessStatus,
     actionNeededMessage: readiness.actionNeededMessage,

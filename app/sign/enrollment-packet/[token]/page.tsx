@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 
 import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { EnrollmentPacketPublicFormShell } from "@/components/enrollment-packets/enrollment-packet-public-form-shell";
@@ -41,16 +42,22 @@ export default async function PublicEnrollmentPacketPage({
     );
   }
 
-  if (context.state === "completed") {
+  if (context.state === "voided") {
     return (
       <div className="mx-auto max-w-3xl space-y-4 p-4">
         <DocumentBrandHeader title="Enrollment Packet Signature" />
         <Card>
-          <CardTitle>Enrollment Packet Already Submitted</CardTitle>
-          <p className="mt-2 text-sm text-muted">This enrollment packet has already been completed. You may close this page.</p>
+          <CardTitle>Enrollment Packet Voided</CardTitle>
+          <p className="mt-2 text-sm text-muted">
+            This enrollment packet is no longer active. Contact your Memory Lane team for the updated packet.
+          </p>
         </Card>
       </div>
     );
+  }
+
+  if (context.state === "completed") {
+    redirect(`/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`);
   }
 
   return (
