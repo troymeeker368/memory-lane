@@ -315,7 +315,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       throw error;
     }
 
-    await submitPublicEnrollmentPacket({
+    const result = await submitPublicEnrollmentPacket({
       token,
       caregiverTypedName: asString(formData, "caregiverTypedName"),
       caregiverSignatureImageDataUrl: asString(formData, "caregiverSignatureImageDataUrl"),
@@ -355,9 +355,17 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
         ...advanceDirectiveUploads
       ]
     });
+    const redirectParams = new URLSearchParams();
+    if (result.operationalReadinessStatus !== "operationally_ready") {
+      redirectParams.set("status", "follow-up-required");
+    }
+    if (result.wasAlreadyFiled) {
+      redirectParams.set("replayed", "1");
+    }
+    const redirectSuffix = redirectParams.size > 0 ? `?${redirectParams.toString()}` : "";
     return {
       ok: true,
-      redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation`
+      redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation${redirectSuffix}`
     } as const;
   } catch (error) {
     return {

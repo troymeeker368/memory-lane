@@ -176,6 +176,25 @@ test("enrollment packet progress merge and public action parsing trim edges with
   );
 });
 
+test("public enrollment packet submit keeps committed follow-up-required results on the success path", () => {
+  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const actionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
+  const confirmationSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/confirmation/page.tsx");
+
+  assert.equal(
+    runtimeSource.includes('if (submitResult.operationalReadinessStatus !== "operationally_ready") {\n    throw new Error('),
+    false
+  );
+  assert.equal(
+    actionSource.includes('redirectParams.set("status", "follow-up-required")'),
+    true
+  );
+  assert.equal(
+    confirmationSource.includes("Memory Lane received the enrollment packet."),
+    true
+  );
+});
+
 test("legacy flat recreation interests normalize into canonical structured categories", () => {
   const payload = normalizeEnrollmentPacketIntakePayload({
     recreationalInterests: [

@@ -167,12 +167,6 @@ async function buildCommittedEnrollmentPacketReplayResult(input: {
     mappingSyncStatus: repairedRequest.mapping_sync_status ?? "pending",
     wasAlreadyFiled: true
   });
-  if (submitResult.operationalReadinessStatus !== "operationally_ready") {
-    throw new Error(
-      submitResult.actionNeededMessage ??
-        "Enrollment packet was signed, but downstream sync to MCC/MHP/member files still needs staff follow-up."
-    );
-  }
   return submitResult;
 }
 
@@ -971,11 +965,5 @@ export async function submitPublicEnrollmentPacket(input: {
     mappingSyncStatus: mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending",
     wasAlreadyFiled: false
   });
-  if (submitResult.operationalReadinessStatus !== "operationally_ready") {
-    throw new Error(
-      submitResult.actionNeededMessage ??
-        "Enrollment packet was signed, but downstream sync to MCC/MHP/member files still needs staff follow-up."
-    );
-  }
   return submitResult;
 }
