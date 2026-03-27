@@ -270,6 +270,8 @@ export async function queueIntakePostSignFollowUpTask(input: {
   actorUserId?: string | null;
   actorName?: string | null;
   errorMessage: string;
+  titleOverride?: string | null;
+  messageOverride?: string | null;
 }) {
   const admin = createSupabaseAdminClient();
   const now = toEasternISO();
@@ -281,7 +283,12 @@ export async function queueIntakePostSignFollowUpTask(input: {
   const actorUserId = clean(input.actorUserId);
   const actorName = clean(input.actorName);
   const errorMessage = clean(input.errorMessage) ?? "Unknown follow-up failure.";
-  const presentation = buildTaskPresentation(input.taskType, input.assessmentId);
+  const defaultPresentation = buildTaskPresentation(input.taskType, input.assessmentId);
+  const presentation = {
+    ...defaultPresentation,
+    title: clean(input.titleOverride) ?? defaultPresentation.title,
+    message: clean(input.messageOverride) ?? defaultPresentation.message
+  };
   let attemptCount = 1;
 
   const rowPatch = {

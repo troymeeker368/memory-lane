@@ -106,6 +106,7 @@ export type AssessmentWorkflowRow = {
   post_sign_readiness_status:
     | "not_signed"
     | "signed_pending_draft_pof"
+    | "signed_pending_draft_pof_readback"
     | "draft_pof_failed"
     | "signed_pending_member_file_pdf"
     | "post_sign_ready";

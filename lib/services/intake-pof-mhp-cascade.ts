@@ -4,6 +4,7 @@ import { calculateAssessmentTotal, getAssessmentTrack } from "@/lib/assessment";
 
 import { type IntakeAssessmentForPofPrefill } from "@/lib/services/intake-to-pof-mapping";
 import {
+  CommittedDraftPhysicianOrderReloadError,
   createDraftPhysicianOrderFromAssessment,
   signPhysicianOrder,
   syncMemberHealthProfileFromSignedPhysicianOrder,
@@ -376,4 +377,11 @@ export async function autoCreateDraftPhysicianOrderFromIntake(input: {
   });
 }
 
-export { updatePhysicianOrder, signPhysicianOrder, syncMemberHealthProfileFromSignedPhysicianOrder, getActivePhysicianOrderForMember, getMemberHealthProfile };
+export {
+  CommittedDraftPhysicianOrderReloadError,
+  updatePhysicianOrder,
+  signPhysicianOrder,
+  syncMemberHealthProfileFromSignedPhysicianOrder,
+  getActivePhysicianOrderForMember,
+  getMemberHealthProfile
+};

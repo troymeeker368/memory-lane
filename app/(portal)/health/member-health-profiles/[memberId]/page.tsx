@@ -97,10 +97,17 @@ function postSignReadinessLabel(status: "not_started" | "signed_pending_snapshot
 }
 
 function intakeReadinessLabel(
-  status: "not_signed" | "signed_pending_draft_pof" | "draft_pof_failed" | "signed_pending_member_file_pdf" | "post_sign_ready"
+  status:
+    | "not_signed"
+    | "signed_pending_draft_pof"
+    | "signed_pending_draft_pof_readback"
+    | "draft_pof_failed"
+    | "signed_pending_member_file_pdf"
+    | "post_sign_ready"
 ) {
   if (status === "post_sign_ready") return "Operationally Ready";
   if (status === "signed_pending_draft_pof") return "Draft POF Pending";
+  if (status === "signed_pending_draft_pof_readback") return "Draft POF Verification Needed";
   if (status === "draft_pof_failed") return "Draft POF Failed";
   if (status === "signed_pending_member_file_pdf") return "PDF Save Pending";
   return "Not Signed";

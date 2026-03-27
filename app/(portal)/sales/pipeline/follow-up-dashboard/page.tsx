@@ -2,10 +2,14 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
+import {
+  buildSalesPipelinePageHref,
+  parsePageNumber,
+  SALES_PIPELINE_PAGE_SIZE
+} from "@/app/(portal)/sales/pipeline/_stage-page";
 import { requireModuleAccess } from "@/lib/auth";
 import { formatPhoneDisplay } from "@/lib/phone";
-import { getLeadList } from "@/lib/services/leads-read";
-import { toEasternDate } from "@/lib/timezone";
+import { getLeadFollowUpDashboard } from "@/lib/services/leads-read";
 import { formatDate } from "@/lib/utils";
 
 type LeadRow = {
@@ -19,58 +23,47 @@ type LeadRow = {
   next_follow_up_type: string | null;
 };
 
-function asFollowUpDateValue(date: string | null): string {
-  return date ?? "9999-12-31";
-}
-
-export default async function FollowUpDashboardPage() {
-  await requireModuleAccess("sales");
-  const { rows: openLeads } = await getLeadList({
-    status: "open",
-    sort: "next_follow_up",
-    dir: "asc"
+export default async function FollowUpDashboardPage({
+  searchParams
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const [, params] = await Promise.all([requireModuleAccess("sales"), searchParams]);
+  const page = parsePageNumber(params.page);
+  const dashboard = await getLeadFollowUpDashboard({
+    page,
+    pageSize: SALES_PIPELINE_PAGE_SIZE
   });
-
-  const seenLeadIds = new Set<string>();
-  const dedupedLeads = (openLeads as LeadRow[]).filter((lead) => {
-    if (!lead.id || seenLeadIds.has(lead.id)) return false;
-    seenLeadIds.add(lead.id);
-    return true;
-  });
-
-  const leads = [...dedupedLeads].sort((a, b) => {
-    const dateCompare = asFollowUpDateValue(a.next_follow_up_date).localeCompare(asFollowUpDateValue(b.next_follow_up_date));
-    if (dateCompare !== 0) return dateCompare;
-    return (a.member_name || "").localeCompare(b.member_name || "");
-  });
-
-  const today = toEasternDate();
-  const overdue = leads.filter((lead) => Boolean(lead.next_follow_up_date && lead.next_follow_up_date < today));
-  const dueToday = leads.filter((lead) => lead.next_follow_up_date === today);
-  const upcoming = leads.filter((lead) => Boolean(lead.next_follow_up_date && lead.next_follow_up_date > today));
-  const missingDate = leads.filter((lead) => !lead.next_follow_up_date);
+  const leads = dashboard.rows as LeadRow[];
+  const rangeStart = leads.length === 0 ? 0 : (dashboard.page - 1) * dashboard.pageSize + 1;
+  const rangeEnd = leads.length === 0 ? 0 : rangeStart + leads.length - 1;
+  const hasPreviousPage = dashboard.page > 1;
+  const hasNextPage = dashboard.page < dashboard.totalPages;
 
   return (
     <div className="space-y-4">
       <Card>
         <CardTitle>Follow Up Dashboard</CardTitle>
         <p className="mt-1 text-sm text-muted">Leads sorted by next follow-up date with quick access to lead detail and activity logging.</p>
+        <p className="mt-2 text-xs text-muted">
+          Showing {rangeStart}-{rangeEnd} of {dashboard.totalRows} open leads
+        </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-lg border border-border bg-white p-3">
             <p className="text-xs uppercase tracking-wide text-muted">Overdue</p>
-            <p className="mt-1 text-2xl font-bold text-rose-700">{overdue.length}</p>
+            <p className="mt-1 text-2xl font-bold text-rose-700">{dashboard.summary.overdue}</p>
           </div>
           <div className="rounded-lg border border-border bg-white p-3">
             <p className="text-xs uppercase tracking-wide text-muted">Due Today</p>
-            <p className="mt-1 text-2xl font-bold text-amber-700">{dueToday.length}</p>
+            <p className="mt-1 text-2xl font-bold text-amber-700">{dashboard.summary.dueToday}</p>
           </div>
           <div className="rounded-lg border border-border bg-white p-3">
             <p className="text-xs uppercase tracking-wide text-muted">Upcoming</p>
-            <p className="mt-1 text-2xl font-bold text-brand">{upcoming.length}</p>
+            <p className="mt-1 text-2xl font-bold text-brand">{dashboard.summary.upcoming}</p>
           </div>
           <div className="rounded-lg border border-border bg-white p-3">
             <p className="text-xs uppercase tracking-wide text-muted">Missing Follow-Up Date</p>
-            <p className="mt-1 text-2xl font-bold text-slate-700">{missingDate.length}</p>
+            <p className="mt-1 text-2xl font-bold text-slate-700">{dashboard.summary.missingDate}</p>
           </div>
         </div>
       </Card>
@@ -133,6 +126,29 @@ export default async function FollowUpDashboardPage() {
             )}
           </tbody>
         </table>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
+          <span>
+            Page {dashboard.page} of {dashboard.totalPages}
+          </span>
+          <div className="flex items-center gap-2">
+            {hasPreviousPage ? (
+              <Link
+                href={buildSalesPipelinePageHref("/sales/pipeline/follow-up-dashboard", params, dashboard.page - 1)}
+                className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
+              >
+                Previous Page
+              </Link>
+            ) : null}
+            {hasNextPage ? (
+              <Link
+                href={buildSalesPipelinePageHref("/sales/pipeline/follow-up-dashboard", params, dashboard.page + 1)}
+                className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
+              >
+                Next Page
+              </Link>
+            ) : null}
+          </div>
+        </div>
       </Card>
     </div>
   );

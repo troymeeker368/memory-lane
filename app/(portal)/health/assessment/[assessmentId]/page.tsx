@@ -37,11 +37,13 @@ function postSignReadinessLabel(
   status:
     | "not_signed"
     | "signed_pending_draft_pof"
+    | "signed_pending_draft_pof_readback"
     | "draft_pof_failed"
     | "signed_pending_member_file_pdf"
     | "post_sign_ready"
 ) {
   if (status === "post_sign_ready") return "Operationally Ready";
+  if (status === "signed_pending_draft_pof_readback") return "Draft POF Verification Needed";
   if (status === "signed_pending_member_file_pdf") return "PDF Follow-up Needed";
   if (status === "draft_pof_failed") return "Draft POF Failed";
   if (status === "signed_pending_draft_pof") return "Draft POF Pending";
@@ -131,6 +133,11 @@ export default async function HealthAssessmentDetailPage({
         {assessment.post_sign_readiness_status === "signed_pending_member_file_pdf" ? (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             Intake Assessment is signed and draft POF is ready, but the branded PDF still needs to be saved to Member Files before this intake is operationally complete.
+          </div>
+        ) : null}
+        {assessment.post_sign_readiness_status === "signed_pending_draft_pof_readback" ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            Intake Assessment is signed and the draft POF was committed, but staff still need to verify the saved draft from Physician Orders before treating this intake as operationally complete.
           </div>
         ) : null}
         {assessment.draft_pof_readiness_status === "draft_pof_failed" ? (

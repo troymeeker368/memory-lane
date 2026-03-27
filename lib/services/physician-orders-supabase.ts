@@ -72,6 +72,26 @@ type CreateDraftPofFromIntakeRpcRow = {
   was_existing: boolean;
 };
 
+export class CommittedDraftPhysicianOrderReloadError extends Error {
+  physicianOrderId: string;
+  draftPofStatus: string;
+  wasExisting: boolean;
+
+  constructor(input: {
+    physicianOrderId: string;
+    draftPofStatus: string;
+    wasExisting: boolean;
+  }) {
+    super(
+      `Draft physician order ${input.physicianOrderId} was created, but the canonical reload failed immediately afterward. Reopen the draft from the physician orders list after verifying the saved record.`
+    );
+    this.name = "CommittedDraftPhysicianOrderReloadError";
+    this.physicianOrderId = input.physicianOrderId;
+    this.draftPofStatus = input.draftPofStatus;
+    this.wasExisting = input.wasExisting;
+  }
+}
+
 export type SignPhysicianOrderResult = {
   postSignStatus: "synced" | "queued";
   queueId: string;
@@ -388,9 +408,11 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
     console.error("[physician-orders] unable to persist post-commit draft POF reload alert", alertError);
   }
 
-  throw new Error(
-    `Draft physician order ${row.physician_order_id} was created, but the canonical reload failed immediately afterward. Reopen the draft from the physician orders list after verifying the saved record.`
-  );
+  throw new CommittedDraftPhysicianOrderReloadError({
+    physicianOrderId: row.physician_order_id,
+    draftPofStatus: row.draft_pof_status,
+    wasExisting: row.was_existing
+  });
 }
 
 export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {

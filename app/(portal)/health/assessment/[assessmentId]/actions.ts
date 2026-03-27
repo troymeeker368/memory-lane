@@ -4,7 +4,11 @@ import { revalidatePath } from "next/cache";
 
 import { requireRoles } from "@/lib/auth";
 import { CLINICAL_DOCUMENTATION_ACCESS_ROLES } from "@/lib/permissions";
-import { autoCreateDraftPhysicianOrderFromIntake } from "@/lib/services/intake-pof-mhp-cascade";
+import {
+  autoCreateDraftPhysicianOrderFromIntake,
+  CommittedDraftPhysicianOrderReloadError,
+  updateIntakeAssessmentDraftPofStatus
+} from "@/lib/services/intake-pof-mhp-cascade";
 import {
   claimIntakePostSignFollowUpTask,
   queueIntakePostSignFollowUpTask,
@@ -238,8 +242,53 @@ export async function retryAssessmentDraftPofAction(input: { assessmentId: strin
       physicianOrderId: created.id
     } as const;
   } catch (error) {
+    const committedReloadMiss = error instanceof CommittedDraftPhysicianOrderReloadError;
     const errorMessage =
       error instanceof Error ? error.message : "Unable to retry draft POF creation.";
+    if (committedReloadMiss) {
+      await updateIntakeAssessmentDraftPofStatus({
+        assessmentId,
+        status: "created",
+        attemptedAt: toEasternISO(),
+        error: null
+      });
+      try {
+        await queueIntakePostSignFollowUpTask({
+          assessmentId,
+          memberId: detail.assessment.member_id,
+          taskType: "draft_pof_creation",
+          actorUserId: profile.id,
+          actorName: profile.full_name,
+          errorMessage,
+          titleOverride: "Draft POF Verification Follow-up Needed",
+          messageOverride:
+            "The draft POF was committed in Supabase, but the immediate readback could not verify it. Confirm the saved draft from Physician Orders before treating intake follow-up as complete."
+        });
+      } catch (queueError) {
+        await releaseIntakePostSignFollowUpTaskClaim({
+          assessmentId,
+          taskType: "draft_pof_creation"
+        }).catch(() => null);
+        const queueErrorMessage =
+          queueError instanceof Error ? queueError.message : "Unable to update intake post-sign follow-up queue.";
+        return {
+          ok: false,
+          error: `${errorMessage} Follow-up queue update also failed (${queueErrorMessage}).`
+        } as const;
+      }
+
+      revalidatePath(`/health/assessment/${assessmentId}`);
+      revalidatePath("/health/assessment");
+      revalidatePath("/health/physician-orders");
+      revalidatePath(`/health/physician-orders?memberId=${detail.assessment.member_id}`);
+      revalidatePath(`/health/member-health-profiles/${detail.assessment.member_id}`);
+      revalidatePath(`/operations/member-command-center/${detail.assessment.member_id}`);
+      return {
+        ok: true,
+        warning:
+          "Draft POF was committed, but immediate verification still needs follow-up. Refreshing the assessment so staff can verify the saved draft."
+      } as const;
+    }
     if (createdPhysicianOrderId) {
       return {
         ok: false,

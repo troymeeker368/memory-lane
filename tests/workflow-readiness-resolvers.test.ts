@@ -86,6 +86,14 @@ test("intake post-sign readiness requires member-file follow-up completion too",
     resolveIntakePostSignReadiness({
       signatureStatus: "signed",
       draftPofStatus: "created",
+      openFollowUpTaskTypes: ["draft_pof_creation"]
+    }),
+    "signed_pending_draft_pof_readback"
+  );
+  assert.equal(
+    resolveIntakePostSignReadiness({
+      signatureStatus: "signed",
+      draftPofStatus: "created",
       openFollowUpTaskTypes: ["member_file_pdf_persistence"]
     }),
     "signed_pending_member_file_pdf"

@@ -7,6 +7,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import {
   autoCreateDraftPhysicianOrderFromIntake,
+  CommittedDraftPhysicianOrderReloadError,
   createIntakeAssessmentWithResponses,
   updateIntakeAssessmentDraftPofStatus
 } from "@/lib/services/intake-pof-mhp-cascade";
@@ -323,12 +324,17 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       actor: { id: profile.id, fullName: profile.full_name, signoffName: signerName }
     });
   } catch (error) {
+    const committedReloadMiss = error instanceof CommittedDraftPhysicianOrderReloadError;
     const message = error instanceof Error ? error.message : "Unable to create draft physician order from intake.";
+    const queueTitleOverride = committedReloadMiss ? "Draft POF Verification Follow-up Needed" : null;
+    const queueMessageOverride = committedReloadMiss
+      ? "The intake assessment signed successfully and a draft POF was committed in Supabase, but the immediate readback could not verify it. Confirm the saved draft from Physician Orders before treating intake follow-up as complete."
+      : null;
     await updateIntakeAssessmentDraftPofStatus({
       assessmentId: created.id,
-      status: "failed",
+      status: committedReloadMiss ? "created" : "failed",
       attemptedAt: draftPofAttemptedAt,
-      error: message
+      error: committedReloadMiss ? null : message
     });
     let followUpQueueError: string | null = null;
     try {
@@ -338,7 +344,9 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
         taskType: "draft_pof_creation",
         actorUserId: profile.id,
         actorName: profile.full_name,
-        errorMessage: message
+        errorMessage: message,
+        titleOverride: queueTitleOverride,
+        messageOverride: queueMessageOverride
       });
     } catch (queueError) {
       followUpQueueError =
@@ -349,7 +357,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     revalidatePath(`/reports/assessments/${created.id}`);
     const readiness = buildIntakePostSignState({
       signatureStatus: "signed",
-      draftPofStatus: "failed",
+      draftPofStatus: committedReloadMiss ? "created" : "failed",
       openFollowUpTaskTypes: ["draft_pof_creation"]
     });
     return {
@@ -360,9 +368,13 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       ...buildCommittedWorkflowActionState({
         operationalStatus: readiness.postSignReadinessStatus,
         operationallyReady: readiness.postSignReady,
-        actionNeededMessage: followUpQueueError
-          ? `Intake Assessment was signed and draft POF creation failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
-          : `Intake Assessment was signed, but draft POF creation failed (${message}).`
+        actionNeededMessage: committedReloadMiss
+          ? followUpQueueError
+            ? `Intake Assessment was signed and the draft POF was committed, but immediate readback verification failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
+            : `Intake Assessment was signed and the draft POF was committed, but immediate readback verification still needs follow-up (${message}).`
+          : followUpQueueError
+            ? `Intake Assessment was signed and draft POF creation failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
+            : `Intake Assessment was signed, but draft POF creation failed (${message}).`
       })
     };
   }

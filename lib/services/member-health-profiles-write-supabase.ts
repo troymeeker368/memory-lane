@@ -5,8 +5,8 @@ import { toEasternISO } from "@/lib/timezone";
 
 type DbRow = Record<string, unknown>;
 const PROVIDER_DIRECTORY_UPSERT_SELECT =
-  "id, specialty, specialty_other, practice_name, provider_phone, updated_at";
-const HOSPITAL_DIRECTORY_UPSERT_SELECT = "id, updated_at";
+  "id, specialty, specialty_other, practice_name, provider_phone";
+const HOSPITAL_DIRECTORY_UPSERT_SELECT = "id";
 
 export type MhpWriteActor = {
   actorUserId?: string | null;
@@ -19,6 +19,42 @@ function isUuid(value: string | null | undefined) {
 
 function toNullableUuid(value: string | null | undefined) {
   return isUuid(value) ? String(value) : null;
+}
+
+function normalizeDirectoryText(value: string | null | undefined) {
+  return String(value ?? "").trim();
+}
+
+async function loadProviderDirectoryRow(input: {
+  providerName: string;
+  practiceName: string;
+}) {
+  const supabase = await createClient();
+  let query = supabase
+    .from("provider_directory")
+    .select(PROVIDER_DIRECTORY_UPSERT_SELECT)
+    .ilike("provider_name", input.providerName);
+
+  if (input.practiceName) {
+    query = query.ilike("practice_name", input.practiceName);
+  } else {
+    query = query.or("practice_name.is.null,practice_name.eq.");
+  }
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as Record<string, unknown> | null) ?? null;
+}
+
+async function loadHospitalDirectoryRow(hospitalName: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("hospital_preference_directory")
+    .select(HOSPITAL_DIRECTORY_UPSERT_SELECT)
+    .ilike("hospital_name", hospitalName)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as Record<string, unknown> | null) ?? null;
 }
 
 async function recordMhpWriteEvent(input: {
@@ -366,19 +402,16 @@ export async function upsertProviderDirectoryFromMhpSupabase(input: {
   actor: MhpWriteActor;
   atIso?: string | null;
 }) {
-  const normalizedProviderName = input.providerName.trim();
+  const normalizedProviderName = normalizeDirectoryText(input.providerName);
+  const normalizedPracticeName = normalizeDirectoryText(input.practiceName);
   if (!normalizedProviderName) return;
 
   const now = input.atIso ?? toEasternISO();
   const supabase = await createClient();
-  const { data: existing, error: providerError } = await supabase
-    .from("provider_directory")
-    .select(PROVIDER_DIRECTORY_UPSERT_SELECT)
-    .ilike("provider_name", normalizedProviderName)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (providerError) throw new Error(providerError.message);
+  const existing = await loadProviderDirectoryRow({
+    providerName: normalizedProviderName,
+    practiceName: normalizedPracticeName
+  });
 
   if (existing?.id) {
     const { error } = await supabase
@@ -387,7 +420,7 @@ export async function upsertProviderDirectoryFromMhpSupabase(input: {
         provider_name: normalizedProviderName,
         specialty: input.specialty ?? (existing.specialty as string | null) ?? null,
         specialty_other: input.specialtyOther ?? (existing.specialty_other as string | null) ?? null,
-        practice_name: input.practiceName ?? (existing.practice_name as string | null) ?? null,
+        practice_name: normalizedPracticeName || (existing.practice_name as string | null) || null,
         provider_phone: input.providerPhone ?? (existing.provider_phone as string | null) ?? null,
         updated_at: now
       })
@@ -400,7 +433,7 @@ export async function upsertProviderDirectoryFromMhpSupabase(input: {
     provider_name: normalizedProviderName,
     specialty: input.specialty,
     specialty_other: input.specialtyOther,
-    practice_name: input.practiceName,
+    practice_name: normalizedPracticeName || null,
     provider_phone: input.providerPhone,
     created_by_user_id: toNullableUuid(input.actor.actorUserId),
     created_by_name: input.actor.actorName ?? null,
@@ -415,19 +448,12 @@ export async function upsertHospitalPreferenceDirectoryFromMhpSupabase(input: {
   actor: MhpWriteActor;
   atIso?: string | null;
 }) {
-  const normalizedHospitalName = (input.hospitalName ?? "").trim();
+  const normalizedHospitalName = normalizeDirectoryText(input.hospitalName);
   if (!normalizedHospitalName) return;
 
   const now = input.atIso ?? toEasternISO();
   const supabase = await createClient();
-  const { data: existing, error: hospitalError } = await supabase
-    .from("hospital_preference_directory")
-    .select(HOSPITAL_DIRECTORY_UPSERT_SELECT)
-    .ilike("hospital_name", normalizedHospitalName)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (hospitalError) throw new Error(hospitalError.message);
+  const existing = await loadHospitalDirectoryRow(normalizedHospitalName);
 
   if (existing?.id) {
     const { error } = await supabase

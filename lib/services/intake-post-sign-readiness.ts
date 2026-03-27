@@ -4,6 +4,7 @@ import { resolveIntakeDraftPofReadiness, type IntakeDraftPofReadinessStatus } fr
 export type IntakePostSignReadinessStatus =
   | "not_signed"
   | "signed_pending_draft_pof"
+  | "signed_pending_draft_pof_readback"
   | "draft_pof_failed"
   | "signed_pending_member_file_pdf"
   | "post_sign_ready";
@@ -23,6 +24,9 @@ export function resolveIntakePostSignReadiness(input: {
   if (draftPofReadiness === "draft_pof_failed") return "draft_pof_failed";
 
   const openFollowUpTaskTypes = new Set(input.openFollowUpTaskTypes ?? []);
+  if (openFollowUpTaskTypes.has("draft_pof_creation")) {
+    return "signed_pending_draft_pof_readback";
+  }
   if (openFollowUpTaskTypes.has("member_file_pdf_persistence")) {
     return "signed_pending_member_file_pdf";
   }

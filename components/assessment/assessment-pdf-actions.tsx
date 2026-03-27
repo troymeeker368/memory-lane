@@ -72,7 +72,7 @@ export function AssessmentPdfActions({
                 return;
               }
               router.refresh();
-              setStatus("Draft POF retry succeeded.");
+              setStatus(result.warning ?? "Draft POF retry succeeded.");
             })
           }
           disabled={isPending}
