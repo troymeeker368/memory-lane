@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
+import { EnrollmentPacketConfirmationActions } from "@/components/enrollment-packets/enrollment-packet-confirmation-actions";
 import { Card, CardTitle } from "@/components/ui/card";
 import { buildEnrollmentPacketLegalText } from "@/lib/services/enrollment-packet-legal-text";
 import { normalizeStoredIntakePayload } from "@/lib/services/enrollment-packet-core";
@@ -97,15 +98,16 @@ export default async function EnrollmentPacketConfirmationPage({
     intakePayload?.primaryContactName ??
     fields?.caregiver_name ??
     "Caregiver";
+  const completedPacketDownloadHref = `/sign/enrollment-packet/${encodeURIComponent(token)}/completed-packet`;
   const legalText = buildEnrollmentPacketLegalText({
     caregiverName,
     photoConsentChoice: intakePayload?.photoConsentChoice ?? null
   });
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 p-4">
+    <div className="enrollment-confirmation-shell mx-auto max-w-4xl space-y-4 p-4">
       <DocumentBrandHeader title="Enrollment Packet Confirmation" />
-      <Card>
+      <Card className="enrollment-confirmation-summary">
         <CardTitle>Enrollment Packet Submitted</CardTitle>
         <div className="mt-3 space-y-2 text-sm">
           <p><span className="font-semibold">Member:</span> {memberName}</p>
@@ -124,8 +126,9 @@ export default async function EnrollmentPacketConfirmationPage({
           </p>
         ) : null}
       </Card>
-      <Card>
+      <Card className="enrollment-confirmation-welcome">
         <CardTitle>First Day Welcome Letter</CardTitle>
+        <EnrollmentPacketConfirmationActions downloadHref={completedPacketDownloadHref} />
         <div className="mt-3 space-y-3 text-sm text-slate-700">
           {renderFirstDayWelcomeLetter(legalText.firstDayWelcome)}
         </div>

@@ -27,6 +27,7 @@ import {
   normalizeStoredIntakePayload,
   payloadMemberDisplayName,
   safeNumber,
+  throwEnrollmentPacketSchemaError,
   toDeliveryStatus,
   toStatus,
   toSummary
@@ -41,6 +42,7 @@ import {
 import { markEnrollmentPacketDeliveryState } from "@/lib/services/enrollment-packet-delivery-runtime";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import { parseDataUrlPayload } from "@/lib/services/member-files";
+import { parseMemberDocumentStorageUri } from "@/lib/services/member-files";
 import {
   recordImmediateSystemAlert,
   recordWorkflowEvent
@@ -517,6 +519,41 @@ export async function savePublicEnrollmentPacketProgress(input: {
   return { ok: true as const };
 }
 
+export async function getPublicCompletedEnrollmentPacketArtifact(input: {
+  token: string;
+}) {
+  const context = await getPublicEnrollmentPacketContext(input.token);
+  if (context.state !== "completed") {
+    throw new Error("Completed enrollment packet is not available.");
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("enrollment_packet_uploads")
+    .select("file_path, file_name, file_type, uploaded_at")
+    .eq("packet_id", context.request.id)
+    .eq("upload_category", "completed_packet")
+    .order("uploaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throwEnrollmentPacketSchemaError(error, "enrollment_packet_uploads");
+  if (!data) {
+    throw new Error("Completed enrollment packet PDF could not be found.");
+  }
+
+  const objectPath = parseMemberDocumentStorageUri(data.file_path);
+  if (!objectPath) {
+    throw new Error("Completed enrollment packet PDF storage path is invalid.");
+  }
+
+  return {
+    packetId: context.request.id,
+    fileName: clean(data.file_name) ?? `Enrollment Packet Completed - ${context.request.id}.pdf`,
+    fileType: clean(data.file_type) ?? "application/pdf",
+    objectPath
+  };
+}
+
 export async function submitPublicEnrollmentPacket(input: {
   token: string;
   caregiverTypedName: string;
@@ -741,7 +778,11 @@ export async function submitPublicEnrollmentPacket(input: {
       fields: refreshedFields,
       intakePayload: normalizeStoredIntakePayload(refreshedFields),
       caregiverSignatureName: caregiverTypedName,
-      senderSignatureName
+      senderSignatureName,
+      uploadedDocuments: (input.uploads ?? []).map((upload) => ({
+        category: upload.category,
+        fileName: upload.fileName
+      }))
     });
     const finalPacketArtifact = await artifactOps.insertUploadAndFile({
       packetId: request.id,

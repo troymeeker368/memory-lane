@@ -111,6 +111,10 @@ export async function buildCompletedPacketArtifactData(input: {
   intakePayload: EnrollmentPacketIntakePayload;
   caregiverSignatureName: string;
   senderSignatureName: string;
+  uploadedDocuments?: Array<{
+    category: EnrollmentPacketUploadCategory;
+    fileName: string;
+  }>;
 }) {
   return buildCompletedEnrollmentPacketDocxData({
     memberName: input.memberName,
@@ -133,7 +137,8 @@ export async function buildCompletedPacketArtifactData(input: {
     secondaryContactRelationship: input.fields.secondary_contact_relationship,
     intakePayload: input.intakePayload,
     caregiverSignatureName: input.caregiverSignatureName,
-    senderSignatureName: input.senderSignatureName
+    senderSignatureName: input.senderSignatureName,
+    uploadedDocuments: input.uploadedDocuments ?? []
   });
 }
 

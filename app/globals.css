@@ -370,6 +370,25 @@ th {
     background: #ffffff !important;
   }
 
+  body.print-enrollment-welcome-letter .enrollment-confirmation-shell {
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  body.print-enrollment-welcome-letter .enrollment-confirmation-shell > :not(.enrollment-confirmation-welcome) {
+    display: none !important;
+  }
+
+  body.print-enrollment-welcome-letter .enrollment-confirmation-welcome {
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+  }
+
   .portal-shell {
     display: block !important;
     max-width: none !important;

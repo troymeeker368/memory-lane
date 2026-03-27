@@ -229,6 +229,19 @@ test("public enrollment packet submit success path navigates to confirmation rou
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
 });
 
+test("completed enrollment packet pdf mirrors the current packet document structure instead of a flat data export", () => {
+  const pdfSource = readWorkspaceFile("lib/services/enrollment-packet-docx.ts");
+
+  assert.equal(pdfSource.includes('"1. Welcome Checklist"'), true);
+  assert.equal(pdfSource.includes('"2. New Member Face Sheet & Biography"'), true);
+  assert.equal(pdfSource.includes('"3. Membership Agreement"'), true);
+  assert.equal(pdfSource.includes('"3A. Membership Agreement Exhibit A"'), true);
+  assert.equal(pdfSource.includes('"8. Insurance and POA Upload"'), true);
+  assert.equal(pdfSource.includes('"9. Memory Lane Completion Summary"'), true);
+  assert.equal(pdfSource.includes("Enrollment Form Data Record"), false);
+  assert.equal(pdfSource.includes("Additional Captured Fields"), false);
+});
+
 test("legacy flat recreation interests normalize into canonical structured categories", () => {
   const payload = normalizeEnrollmentPacketIntakePayload({
     recreationalInterests: [
@@ -496,6 +509,9 @@ test("successful public sign submit redirects to the welcome/thank-you confirmat
   const confirmationSource = readWorkspaceFile(
     "app/sign/enrollment-packet/[token]/confirmation/page.tsx"
   );
+  const downloadRouteSource = readWorkspaceFile(
+    "app/sign/enrollment-packet/[token]/completed-packet/route.ts"
+  );
   const formSource = readWorkspaceFile("components/enrollment-packets/enrollment-packet-public-form.tsx");
 
   assert.equal(actionSource.includes("redirect("), false);
@@ -508,6 +524,12 @@ test("successful public sign submit redirects to the welcome/thank-you confirmat
   assert.equal(confirmationSource.includes("First Day Welcome Letter"), true);
   assert.equal(confirmationSource.includes("renderFirstDayWelcomeLetter(legalText.firstDayWelcome)"), true);
   assert.equal(confirmationSource.includes('className="list-disc space-y-2 pl-5"'), true);
+  assert.equal(
+    confirmationSource.includes("EnrollmentPacketConfirmationActions downloadHref={completedPacketDownloadHref}"),
+    true
+  );
+  assert.equal(downloadRouteSource.includes("getPublicCompletedEnrollmentPacketArtifact"), true);
+  assert.equal(downloadRouteSource.includes("\"Content-Disposition\""), true);
   assert.equal(
     actionSource.includes("redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation"),
     true
@@ -556,6 +578,18 @@ test("public submit guard uses a uuid-safe entity id for ip-scoped system events
   assert.equal(helperSource.includes("entityId: ipFingerprint"), false);
 });
 
+test("completed enrollment packet artifact can be downloaded from the public confirmation flow", () => {
+  const publicServiceSource = readWorkspaceFile("lib/services/enrollment-packets-public.ts");
+  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const routeSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/completed-packet/route.ts");
+
+  assert.equal(publicServiceSource.includes("getPublicCompletedEnrollmentPacketArtifact"), true);
+  assert.equal(runtimeSource.includes("export async function getPublicCompletedEnrollmentPacketArtifact"), true);
+  assert.equal(runtimeSource.includes('.eq("upload_category", "completed_packet")'), true);
+  assert.equal(routeSource.includes(".download(artifact.objectPath)"), true);
+  assert.equal(routeSource.includes("attachment; filename="), true);
+});
+
 test("completion cascade centralizes submitted notification and downstream repair-safe sync", () => {
   const cascadeSource = readWorkspaceFile("lib/services/enrollment-packet-completion-cascade.ts");
   const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
@@ -588,7 +622,15 @@ test("completed enrollment packet pdf uses the shared branded document header", 
     true
   );
   assert.equal(
-    pdfSource.includes('drawTitle(`${DOCUMENT_CENTER_NAME} Enrollment Packet`);'),
+    pdfSource.includes("page.drawText(DOCUMENT_CENTER_NAME.toUpperCase()"),
+    true
+  );
+  assert.equal(
+    pdfSource.includes('page.drawText("Fort Mill"'),
+    true
+  );
+  assert.equal(
+    pdfSource.includes("const centerDetailLine ="),
     true
   );
 });
