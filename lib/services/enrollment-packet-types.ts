@@ -123,6 +123,8 @@ export type MemberRow = {
 
 export type LeadRow = {
   id: string;
+  stage: string | null;
+  status: string | null;
   member_name: string | null;
   member_dob: string | null;
   member_start_date: string | null;

@@ -2,7 +2,7 @@ import { SalesEnrollmentPacketStandaloneAction } from "@/components/sales/sales-
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
-import { getLeadList } from "@/lib/services/leads-read";
+import { listEnrollmentPacketEligibleLeads } from "@/lib/services/leads-read";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +10,9 @@ export default async function SendEnrollmentPacketStandalonePage() {
   await requireModuleAccess("sales");
   const [pricingOverview, leadResult] = await Promise.all([
     getEnrollmentPricingOverview(),
-    getLeadList({ status: "open", pageSize: 500 })
+    listEnrollmentPacketEligibleLeads({ limit: 500 })
   ]);
-  const leads = leadResult.rows.map((row) => ({
+  const leads = leadResult.map((row) => ({
     id: String(row.id),
     memberName: String(row.member_name ?? ""),
     caregiverEmail: typeof row.caregiver_email === "string" ? row.caregiver_email : null,

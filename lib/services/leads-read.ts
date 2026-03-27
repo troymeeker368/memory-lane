@@ -9,6 +9,7 @@ import {
   getSalesLeadListSupabase,
   getSalesRecentActivitySnapshotSupabase,
   getSalesSummarySnapshotSupabase,
+  listEnrollmentPacketEligibleLeadsSupabase,
   resolveSalesPartnerAndReferralSupabase,
   type SalesLeadEnrollmentRow,
   type SalesPartnerRow,
@@ -55,6 +56,10 @@ export async function getLeadReferralLinkage(...args: Parameters<typeof resolveS
 
 export async function getLeadEnrollmentSnapshot(...args: Parameters<typeof getSalesLeadForEnrollmentSupabase>) {
   return getSalesLeadForEnrollmentSupabase(...args);
+}
+
+export async function listEnrollmentPacketEligibleLeads(...args: Parameters<typeof listEnrollmentPacketEligibleLeadsSupabase>) {
+  return listEnrollmentPacketEligibleLeadsSupabase(...args);
 }
 
 export async function getLeadHomeSnapshot(...args: Parameters<typeof getSalesHomeSnapshotSupabase>) {

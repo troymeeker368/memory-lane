@@ -18,6 +18,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { requireRoles } from "@/lib/auth";
 import { formatBillingPayorDisplayName, getBillingPayorContact } from "@/lib/services/billing-payor-contacts";
+import { getCarePlanPostSignReadinessLabel } from "@/lib/services/care-plans";
 import { getMemberCarePlanSnapshot } from "@/lib/services/care-plans-read";
 import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-read";
 import { getMemberProgressNoteSummary } from "@/lib/services/notes-read";
@@ -87,13 +88,6 @@ function clinicalSyncLabel(status: "not_signed" | "pending" | "queued" | "failed
   if (status === "queued") return "Queued";
   if (status === "pending") return "Pending";
   return "-";
-}
-
-function postSignReadinessLabel(status: "not_started" | "signed_pending_snapshot" | "signed_pending_caregiver_dispatch" | "ready") {
-  if (status === "ready") return "Operationally Ready";
-  if (status === "signed_pending_snapshot") return "Snapshot Follow-up Needed";
-  if (status === "signed_pending_caregiver_dispatch") return "Caregiver Dispatch Follow-up Needed";
-  return "Post-Sign Work Not Started";
 }
 
 function intakeReadinessLabel(
@@ -334,7 +328,7 @@ export default async function MemberHealthProfileDetailPage({
             <p className="font-semibold">{carePlanSummary.nextDueDate ? formatDate(carePlanSummary.nextDueDate) : "-"}</p>
             <p className="text-xs text-muted">{carePlanSummary.status ?? "No enrollment date"}</p>
             {carePlanSummary.postSignReadinessStatus ? (
-              <p className="text-xs text-muted">{postSignReadinessLabel(carePlanSummary.postSignReadinessStatus)}</p>
+              <p className="text-xs text-muted">{getCarePlanPostSignReadinessLabel(carePlanSummary.postSignReadinessStatus)}</p>
             ) : null}
           </div>
           <div className="rounded-lg border border-border p-3 text-center">
@@ -402,7 +396,7 @@ export default async function MemberHealthProfileDetailPage({
                       <td>{formatDate(row.reviewDate)}</td>
                       <td>{formatDate(row.nextDueDate)}</td>
                       <td>{row.status}</td>
-                      <td>{postSignReadinessLabel(row.postSignReadinessStatus)}</td>
+                      <td>{getCarePlanPostSignReadinessLabel(row.postSignReadinessStatus)}</td>
                       <td>{row.completedBy ?? "-"}</td>
                       <td><Link className="font-semibold text-brand" href={`/health/care-plans/${row.id}`}>Open</Link></td>
                     </tr>

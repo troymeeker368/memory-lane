@@ -3,7 +3,12 @@
 import { CarePlanStatusLink } from "@/components/care-plans/care-plan-status-link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
-import { getCarePlanTracks, getCarePlans } from "@/lib/services/care-plans";
+import {
+  getCarePlanPostSignReadinessDetail,
+  getCarePlanPostSignReadinessLabel,
+  getCarePlanTracks,
+  getCarePlans
+} from "@/lib/services/care-plans";
 import { getMembers } from "@/lib/services/documentation";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
 
@@ -12,13 +17,6 @@ function parsePage(value: string | string[] | undefined) {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 1) return 1;
   return Math.floor(parsed);
-}
-
-function postSignReadinessLabel(status: "not_started" | "signed_pending_snapshot" | "signed_pending_caregiver_dispatch" | "ready") {
-  if (status === "ready") return "Operationally Ready";
-  if (status === "signed_pending_snapshot") return "Snapshot Follow-up Needed";
-  if (status === "signed_pending_caregiver_dispatch") return "Caregiver Dispatch Follow-up Needed";
-  return "Post-Sign Work Not Started";
 }
 
 function postSignReadinessClassName(status: "not_started" | "signed_pending_snapshot" | "signed_pending_caregiver_dispatch" | "ready") {
@@ -112,9 +110,11 @@ export default async function CarePlansListPage({
                 <td>
                   <div className="space-y-1">
                     <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${postSignReadinessClassName(plan.postSignReadinessStatus)}`}>
-                      {postSignReadinessLabel(plan.postSignReadinessStatus)}
+                      {getCarePlanPostSignReadinessLabel(plan.postSignReadinessStatus)}
                     </span>
-                    {plan.postSignReadinessReason ? <p className="max-w-xs text-xs text-muted">{plan.postSignReadinessReason}</p> : null}
+                    {getCarePlanPostSignReadinessDetail(plan.postSignReadinessStatus) ? (
+                      <p className="max-w-xs text-xs text-muted">{getCarePlanPostSignReadinessDetail(plan.postSignReadinessStatus)}</p>
+                    ) : null}
                   </div>
                 </td>
                 <td>{plan.completedBy ?? "-"}</td>

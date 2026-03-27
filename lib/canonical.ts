@@ -191,6 +191,7 @@ export const ANCILLARY_CHARGE_CATALOG = [
 // Leads Pipeline (1).xlsx - Lists tab
 export const LEAD_STAGE_OPTIONS = ["Inquiry", "Tour", "Enrollment in Progress", "Nurture", "Closed - Won", "Closed - Lost"] as const;
 export const LEAD_STATUS_OPTIONS = ["Open", "Won", "Lost", "Nurture"] as const;
+export const ENROLLMENT_PACKET_ELIGIBLE_LEAD_STAGES = ["Tour", "Enrollment in Progress", "Nurture"] as const;
 export const LEAD_FOLLOW_UP_TYPES = ["Call", "Text", "Email", "Tour", "Discovery", "Other"] as const;
 export const LEAD_ACTIVITY_TYPES = ["Call", "Text", "Email", "Tour", "Discovery", "Voicemail", "Follow-up", "Other"] as const;
 export const LEAD_ACTIVITY_OUTCOMES = [
@@ -233,6 +234,7 @@ export const LEAD_LOST_REASON_OPTIONS = [
 
 export type LeadStatus = (typeof LEAD_STATUS_OPTIONS)[number];
 export type LeadStage = (typeof LEAD_STAGE_OPTIONS)[number];
+export type EnrollmentPacketEligibleLeadStage = (typeof ENROLLMENT_PACKET_ELIGIBLE_LEAD_STAGES)[number];
 export type LeadDbStatus = "open" | "won" | "lost";
 export type TransportType = (typeof TRANSPORT_TYPE_OPTIONS)[number];
 export type ToiletUseType = (typeof TOILET_USE_TYPE_OPTIONS)[number];
@@ -293,4 +295,12 @@ export function resolveCanonicalLeadState(input: {
 export function isOpenLeadStatus(status: string): boolean {
   const canonical = canonicalLeadStatus(status);
   return canonical === "Open" || canonical === "Nurture";
+}
+
+export function isEnrollmentPacketEligibleLeadState(input: {
+  requestedStage: string;
+  requestedStatus: string;
+}): boolean {
+  const resolved = resolveCanonicalLeadState(input);
+  return ENROLLMENT_PACKET_ELIGIBLE_LEAD_STAGES.includes(resolved.stage as EnrollmentPacketEligibleLeadStage);
 }

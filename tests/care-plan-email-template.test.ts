@@ -16,6 +16,7 @@ test("care plan signature emails use facility branding like other caregiver/prov
 
   assert.equal(template.subject, `Care Plan Signature Request - ${facilityBranding.facilityName}`);
   assert.equal(template.fromDisplayName, facilityBranding.facilityName);
+  assert.equal(template.html.includes("<img src="), true);
   assert.equal(template.html.includes("Open Secure Care Plan"), true);
   assert.equal(template.html.includes("Howard Brown"), true);
   assert.equal(template.html.includes(`from ${facilityBranding.facilityName}`), true);

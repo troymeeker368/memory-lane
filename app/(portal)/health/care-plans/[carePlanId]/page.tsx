@@ -10,12 +10,14 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import {
   CARE_PLAN_LONG_TERM_LABEL,
+  getCarePlanPostSignReadinessDetail,
+  getCarePlanPostSignReadinessLabel,
   CARE_PLAN_REVIEW_OPTIONS,
   CARE_PLAN_REVIEW_UPDATES_LABEL,
   CARE_PLAN_SHORT_TERM_LABEL,
   getCarePlanById,
   getGoalListItems
-} from "@/lib/services/care-plans-read";
+} from "@/lib/services/care-plans";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
 
 function GoalList({ value }: { value: string }) {
@@ -39,13 +41,6 @@ function postSignReadinessTone(status: string) {
   return "border-amber-200 bg-amber-50 text-amber-800";
 }
 
-function postSignReadinessLabel(status: string) {
-  if (status === "signed_pending_snapshot") return "Signed, but version history repair is still needed";
-  if (status === "signed_pending_caregiver_dispatch") return "Signed, but caregiver dispatch still needs follow-up";
-  if (status === "ready") return "Operationally ready";
-  return "Post-sign work has not started";
-}
-
 export default async function CarePlanDetailPage({
   params,
   searchParams
@@ -67,7 +62,7 @@ export default async function CarePlanDetailPage({
   const returnTo = requestedReturnTo && requestedReturnTo.startsWith("/") ? requestedReturnTo : null;
 
   const reviewForm = (
-    <Card id="review-update">
+    <Card id="review-update" className="print-hide">
       <CardTitle>{reviewMode ? "New Care Plan Review" : "Review / Update Care Plan"}</CardTitle>
       <CarePlanReviewFormShell
         carePlanId={detail.carePlan.id}
@@ -105,16 +100,16 @@ export default async function CarePlanDetailPage({
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Last Completed</p><p className="font-semibold">{formatOptionalDate(detail.carePlan.lastCompletedDate)}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Next Due</p><p className="font-semibold">{formatDate(detail.carePlan.nextDueDate)}</p></div>
         </div>
-        <div className="mt-3 text-sm">
+        <div className="print-hide mt-3 text-sm">
           <Link href={`/members/${detail.carePlan.memberId}`} className="font-semibold text-brand">Open Member Detail</Link>
         </div>
         {detail.carePlan.designeeCleanupRequired ? (
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <p className="print-hide mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             Legacy designee/user linkage is invalid and requires cleanup before this record is fully compliant.
           </p>
         ) : null}
         {followUpRequired ? (
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <p className="print-hide mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             {sourceAction === "create"
               ? "The care plan record was created, but post-sign follow-up still needs attention. Use the Post-sign readiness state below as the source of truth before retrying anything."
               : sourceAction === "review"
@@ -155,10 +150,10 @@ export default async function CarePlanDetailPage({
 
       <Card className="space-y-1">
         <CardTitle>Signoff</CardTitle>
-        <p className={`rounded-lg border p-3 text-sm ${postSignReadinessTone(detail.carePlan.postSignReadinessStatus)}`}>
-          <span className="font-semibold">Post-sign readiness:</span> {postSignReadinessLabel(detail.carePlan.postSignReadinessStatus)}
-          {detail.carePlan.postSignReadinessReason ? (
-            <span className="block mt-1 text-xs">{detail.carePlan.postSignReadinessReason}</span>
+        <p className={`print-hide rounded-lg border p-3 text-sm ${postSignReadinessTone(detail.carePlan.postSignReadinessStatus)}`}>
+          <span className="font-semibold">Post-sign readiness:</span> {getCarePlanPostSignReadinessLabel(detail.carePlan.postSignReadinessStatus)}
+          {getCarePlanPostSignReadinessDetail(detail.carePlan.postSignReadinessStatus) ? (
+            <span className="block mt-1 text-xs">{getCarePlanPostSignReadinessDetail(detail.carePlan.postSignReadinessStatus)}</span>
           ) : null}
         </p>
         <CarePlanSignatureBlock
@@ -179,7 +174,7 @@ export default async function CarePlanDetailPage({
       </Card>
 
       {!detailMode ? (
-        <Card>
+        <Card className="print-hide">
           <CarePlanCaregiverEsignActions
             carePlanId={detail.carePlan.id}
             postSignReadinessStatus={detail.carePlan.postSignReadinessStatus}
@@ -196,7 +191,7 @@ export default async function CarePlanDetailPage({
         </Card>
       ) : null}
 
-      <Card className="table-wrap">
+      <Card className="print-hide table-wrap">
         <CardTitle>Review History</CardTitle>
         <table>
           <thead><tr><th>Care Plan Review Date</th><th>Completed By (Nurse Name)</th><th>Summary</th><th>Changes Made</th><th>Next Due</th></tr></thead>
@@ -228,7 +223,7 @@ export default async function CarePlanDetailPage({
         </table>
       </Card>
 
-      <Card>
+      <Card className="print-hide">
         <CardTitle>Participation Summary (Last 180 Days)</CardTitle>
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           <div className="rounded-lg border border-border p-3">

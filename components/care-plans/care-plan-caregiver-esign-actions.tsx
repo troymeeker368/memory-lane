@@ -82,12 +82,6 @@ export function CarePlanCaregiverEsignActions({
         </p>
       ) : null}
 
-      {caregiverSigned && !workflowOperationallyReady ? (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-sm font-semibold text-amber-800">
-          Caregiver signature was captured, but post-sign follow-up is still incomplete. Use the post-sign readiness status above as the source of truth.
-        </p>
-      ) : null}
-
       {!nurseSignatureReady ? (
         <div className="space-y-2">
           <label className="flex items-start gap-2 text-sm">

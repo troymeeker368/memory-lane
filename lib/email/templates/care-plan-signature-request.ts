@@ -46,23 +46,22 @@ export function buildCarePlanSignatureRequestTemplate(input: BuildCarePlanSignat
   const caregiverName = escapeHtml(input.caregiverName);
   const nurseName = escapeHtml(input.nurseName);
   const memberName = escapeHtml(input.memberName);
-  const requestUrl = escapeHtml(input.requestUrl);
-  const facilityName = escapeHtml(facilityBranding.facilityName);
-  const logoUrl = resolveFacilityLogoUrl();
+  const requestUrlEscaped = escapeHtml(input.requestUrl);
+  const facilityNameEscaped = escapeHtml(facilityBranding.facilityName);
+  const titleEscaped = escapeHtml(subject);
+  const logoUrlEscaped = escapeHtml(resolveFacilityLogoUrl());
 
   const html = `
     <div style="background:#f3f8fc;padding:24px;font-family:Arial,sans-serif;color:#0f172a;">
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #d9e4ef;border-radius:14px;overflow:hidden;">
-        ${logoUrl ? `
         <tr>
           <td style="padding:24px 24px 12px;">
-            <img src="${escapeHtml(logoUrl)}" alt="${facilityName}" width="180" style="display:block;width:180px;max-width:100%;height:auto;"/>
+            <img src="${logoUrlEscaped}" alt="Town Square Fort Mill" width="180" style="display:block;width:180px;max-width:100%;height:auto;"/>
           </td>
         </tr>
-        ` : ""}
         <tr>
           <td style="padding:0 24px 0;">
-            <h1 style="margin:0;font-size:24px;line-height:1.3;font-weight:700;color:#0f2943;">Care Plan Signature Request</h1>
+            <h1 style="margin:0;font-size:24px;line-height:1.3;font-weight:700;color:#0f2943;">${titleEscaped}</h1>
           </td>
         </tr>
         <tr>
@@ -81,13 +80,13 @@ export function buildCarePlanSignatureRequestTemplate(input: BuildCarePlanSignat
         </tr>
         <tr>
           <td style="padding:18px 24px 0;">
-            <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">This request was sent by ${nurseName} from ${facilityName}.</p>
+            <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">This request was sent by ${nurseName} from ${facilityNameEscaped}.</p>
             <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Please review and sign the care plan securely using the link below.</p>
           </td>
         </tr>
         <tr>
           <td style="padding:8px 24px 0;">
-            <a href="${requestUrl}" style="display:inline-block;background:#005f9f;color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:12px 18px;border-radius:8px;">Open Secure Care Plan</a>
+            <a href="${requestUrlEscaped}" style="display:inline-block;background:#005f9f;color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:12px 18px;border-radius:8px;">Open Secure Care Plan</a>
           </td>
         </tr>
         <tr>
@@ -106,7 +105,7 @@ export function buildCarePlanSignatureRequestTemplate(input: BuildCarePlanSignat
       </table>
       <p style="max-width:640px;margin:12px auto 0;font-size:12px;line-height:1.6;color:#64748b;word-break:break-all;">
         If the button does not open, copy and paste this secure link into your browser:<br/>
-        ${requestUrl}
+        ${requestUrlEscaped}
       </p>
     </div>
   `.trim();

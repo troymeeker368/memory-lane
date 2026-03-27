@@ -1,4 +1,4 @@
-import { resolveCanonicalLeadState } from "@/lib/canonical";
+import { isEnrollmentPacketEligibleLeadState, resolveCanonicalLeadState } from "@/lib/canonical";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import { getSalesDashboardSummarySupabase, normalizeSalesPipelineStageCounts } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
@@ -160,6 +160,7 @@ const SALES_REFERRAL_SOURCE_LOOKUP_SELECT =
 const SALES_LEAD_LOOKUP_DEFAULT_LIMIT = 120;
 const SALES_LOOKUP_PARTNER_LIMIT = 250;
 const SALES_LOOKUP_REFERRAL_SOURCE_LIMIT = 250;
+const ENROLLMENT_PACKET_ELIGIBLE_QUERY_STAGES = ["Tour", "Enrollment in Progress", "EIP", "Nurture"] as const;
 
 function applyOpenLeadFilter<T extends { eq: (column: string, value: string) => T }>(query: T) {
   return query.eq("status", "open");
@@ -328,6 +329,30 @@ export async function getSalesLeadForEnrollmentSupabase(leadId: string) {
     .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as SalesLeadEnrollmentRow | null) ?? null;
+}
+
+export async function listEnrollmentPacketEligibleLeadsSupabase(input?: {
+  limit?: number;
+}) {
+  const limit = normalizePageSize(input?.limit ?? 500, 500);
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("leads")
+    .select(SALES_LEAD_READ_SELECT)
+    .eq("status", "open")
+    .in("stage", [...ENROLLMENT_PACKET_ELIGIBLE_QUERY_STAGES])
+    .order("inquiry_date", { ascending: false, nullsFirst: false })
+    .order("member_name", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as unknown as Record<string, unknown>[])
+    .map((row) => toSalesLeadReadRow(row))
+    .filter((row) =>
+      isEnrollmentPacketEligibleLeadState({
+        requestedStage: row.stage,
+        requestedStatus: row.status
+      })
+    );
 }
 
 export async function getSalesFormLookupsSupabase(options?: {

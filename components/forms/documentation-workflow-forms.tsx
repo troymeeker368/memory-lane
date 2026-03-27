@@ -319,13 +319,41 @@ export function BloodSugarForm({ compact = false, members }: { members: MemberOp
   const now = useNowIso();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
-  const [form, setForm] = useState({ memberId: members[0]?.id ?? "", checkedAt: now, readingMgDl: 110, notes: "" });
+  const [form, setForm] = useState({ memberId: "", checkedAt: now, readingMgDl: "", notes: "" });
+
+  const parsedReadingMgDl = form.readingMgDl.trim() === "" ? null : Number(form.readingMgDl);
+  const canSaveBloodSugar =
+    !!form.memberId &&
+    parsedReadingMgDl !== null &&
+    Number.isFinite(parsedReadingMgDl) &&
+    parsedReadingMgDl >= 20 &&
+    parsedReadingMgDl <= 600;
+
+  const saveBloodSugar = () =>
+    startTransition(async () => {
+      if (!canSaveBloodSugar || parsedReadingMgDl === null) {
+        setStatus("Select a member and enter a blood sugar reading between 20 and 600 mg/dL.");
+        return;
+      }
+
+      const res = await runDocumentationCreateAction({
+        kind: "createBloodSugarLog",
+        payload: {
+          memberId: form.memberId,
+          checkedAt: easternDateTimeLocalToISO(form.checkedAt),
+          readingMgDl: parsedReadingMgDl,
+          notes: form.notes
+        }
+      });
+      setStatus(res.error ? `Error: ${res.error}` : "Blood sugar log saved.");
+    });
 
   return (
     <div className="space-y-3">
       {compact ? (
         <>
           <select className="h-11 w-full rounded-lg border border-border px-3" value={form.memberId} onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}>
+            <option value="">Select member</option>
             {members.map((m) => (
               <option key={m.id} value={m.id}>{m.display_name}</option>
             ))}
@@ -341,7 +369,10 @@ export function BloodSugarForm({ compact = false, members }: { members: MemberOp
               type="number"
               className="h-11 w-full rounded-lg border border-border px-3"
               value={form.readingMgDl}
-              onChange={(e) => setForm((f) => ({ ...f, readingMgDl: Number(e.target.value) }))}
+              min={20}
+              max={600}
+              placeholder="Blood sugar (mg/dL)"
+              onChange={(e) => setForm((f) => ({ ...f, readingMgDl: e.target.value }))}
             />
           </div>
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_170px]">
@@ -351,25 +382,28 @@ export function BloodSugarForm({ compact = false, members }: { members: MemberOp
               value={form.notes}
               onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
             />
-            <Button type="button" className="w-full" disabled={isPending || !form.memberId} onClick={() => startTransition(async () => {
-              const res = await runDocumentationCreateAction({
-                kind: "createBloodSugarLog",
-                payload: { ...form, checkedAt: easternDateTimeLocalToISO(form.checkedAt) }
-              });
-              setStatus(res.error ? `Error: ${res.error}` : "Blood sugar log saved.");
-            })}>Save Blood Sugar</Button>
+            <Button type="button" className="w-full" disabled={isPending || !canSaveBloodSugar} onClick={saveBloodSugar}>Save Blood Sugar</Button>
           </div>
         </>
       ) : (
         <>
           <div className="grid gap-3 md:grid-cols-3">
             <select className="h-11 rounded-lg border border-border px-3" value={form.memberId} onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}>
+              <option value="">Select member</option>
               {members.map((m) => (
                 <option key={m.id} value={m.id}>{m.display_name}</option>
               ))}
             </select>
             <input type="datetime-local" className="h-11 rounded-lg border border-border px-3" value={form.checkedAt} onChange={(e) => setForm((f) => ({ ...f, checkedAt: e.target.value }))} />
-            <input type="number" className="h-11 rounded-lg border border-border px-3" value={form.readingMgDl} onChange={(e) => setForm((f) => ({ ...f, readingMgDl: Number(e.target.value) }))} />
+            <input
+              type="number"
+              className="h-11 rounded-lg border border-border px-3"
+              value={form.readingMgDl}
+              min={20}
+              max={600}
+              placeholder="Blood sugar (mg/dL)"
+              onChange={(e) => setForm((f) => ({ ...f, readingMgDl: e.target.value }))}
+            />
           </div>
           <textarea
             className="min-h-20 w-full rounded-lg border border-border p-3 text-sm"
@@ -377,13 +411,7 @@ export function BloodSugarForm({ compact = false, members }: { members: MemberOp
             value={form.notes}
             onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
           />
-          <Button type="button" disabled={isPending || !form.memberId} onClick={() => startTransition(async () => {
-            const res = await runDocumentationCreateAction({
-              kind: "createBloodSugarLog",
-              payload: { ...form, checkedAt: easternDateTimeLocalToISO(form.checkedAt) }
-            });
-            setStatus(res.error ? `Error: ${res.error}` : "Blood sugar log saved.");
-          })}>Save Blood Sugar</Button>
+          <Button type="button" disabled={isPending || !canSaveBloodSugar} onClick={saveBloodSugar}>Save Blood Sugar</Button>
         </>
       )}
       {status ? <p className="text-sm text-muted">{status}</p> : null}

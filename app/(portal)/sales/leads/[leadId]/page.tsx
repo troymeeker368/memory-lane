@@ -7,7 +7,7 @@ import { SendEnrollmentPacketAction } from "@/components/sales/send-enrollment-p
 import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
 import { requireModuleAccess } from "@/lib/auth";
-import { canonicalLeadStage } from "@/lib/canonical";
+import { canonicalLeadStage, isEnrollmentPacketEligibleLeadState } from "@/lib/canonical";
 import { formatPhoneDisplay } from "@/lib/phone";
 import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
 import { listOperationalEnrollmentPackets } from "@/lib/services/enrollment-packets";
@@ -26,6 +26,10 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
 
   const lead = detail.lead;
   const showEnrollMemberAction = canonicalLeadStage(lead.stage) === "Enrollment in Progress";
+  const showSendEnrollmentPacketAction = isEnrollmentPacketEligibleLeadState({
+    requestedStage: lead.stage,
+    requestedStatus: lead.status
+  });
   const packets = await listOperationalEnrollmentPackets({
     leadId: lead.id,
     includeCompleted: true,
@@ -47,25 +51,27 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
           {detail.partner ? <Link className="font-semibold text-brand" href={`/sales/community-partners/organizations/${detail.partner.id}`}>View Community Partner</Link> : null}
           {detail.referralSource ? <Link className="font-semibold text-brand" href={`/sales/community-partners/referral-sources/${detail.referralSource.id}`}>View Referral Source</Link> : null}
         </div>
-        {showEnrollMemberAction ? (
+        {showEnrollMemberAction || showSendEnrollmentPacketAction ? (
           <div className="mt-3 flex flex-wrap gap-2">
-            <EnrollMemberAction leadId={lead.id} />
-            <SendEnrollmentPacketAction
-              leadId={lead.id}
-              defaultCaregiverEmail={lead.caregiver_email}
-              defaultRequestedStartDate={lead.member_start_date}
-              pricingPreview={{
-                communityFeeAmount: pricingOverview.activeCommunityFee?.amount ?? null,
-                dailyRates: pricingOverview.activeDailyRates.map((tier) => ({
-                  id: tier.id,
-                  label: tier.label,
-                  minDaysPerWeek: tier.minDaysPerWeek,
-                  maxDaysPerWeek: tier.maxDaysPerWeek,
-                  dailyRate: tier.dailyRate
-                })),
-                issues: pricingOverview.issues
-              }}
-            />
+            {showEnrollMemberAction ? <EnrollMemberAction leadId={lead.id} /> : null}
+            {showSendEnrollmentPacketAction ? (
+              <SendEnrollmentPacketAction
+                leadId={lead.id}
+                defaultCaregiverEmail={lead.caregiver_email}
+                defaultRequestedStartDate={lead.member_start_date}
+                pricingPreview={{
+                  communityFeeAmount: pricingOverview.activeCommunityFee?.amount ?? null,
+                  dailyRates: pricingOverview.activeDailyRates.map((tier) => ({
+                    id: tier.id,
+                    label: tier.label,
+                    minDaysPerWeek: tier.minDaysPerWeek,
+                    maxDaysPerWeek: tier.maxDaysPerWeek,
+                    dailyRate: tier.dailyRate
+                  })),
+                  issues: pricingOverview.issues
+                }}
+              />
+            ) : null}
           </div>
         ) : null}
         <div className="mt-3">

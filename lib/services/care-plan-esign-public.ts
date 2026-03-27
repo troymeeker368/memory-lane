@@ -291,6 +291,19 @@ async function cleanupFailedCarePlanCaregiverArtifacts(input: {
   }
 }
 
+async function markCarePlanPostSignReady(carePlanId: string) {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
+    .from("care_plans")
+    .update({
+      post_sign_readiness_status: "ready",
+      post_sign_readiness_reason: null,
+      updated_at: toEasternISO()
+    })
+    .eq("id", carePlanId);
+  if (error) throw new Error(error.message);
+}
+
 export async function getPublicCarePlanSigningContext(
   token: string,
   metadata?: { ip?: string | null; userAgent?: string | null }
@@ -475,6 +488,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         caregiver_email: detail.carePlan.caregiverEmail
       }
     });
+    await markCarePlanPostSignReady(detail.carePlan.id);
 
     return {
       carePlanId: detail.carePlan.id,

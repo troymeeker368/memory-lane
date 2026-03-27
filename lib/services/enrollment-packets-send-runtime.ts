@@ -1,5 +1,6 @@
 import "server-only";
 
+import { isEnrollmentPacketEligibleLeadState } from "@/lib/canonical";
 import {
   ensureCanonicalMemberForLead,
   resolveCanonicalLeadRef,
@@ -300,6 +301,14 @@ async function resolveSendContext(input: {
 
   const lead = await getLeadById(canonicalLead.leadId);
   if (!lead) throw new Error("Lead was not found.");
+  if (
+    !isEnrollmentPacketEligibleLeadState({
+      requestedStage: String(lead.stage ?? ""),
+      requestedStatus: String(lead.status ?? "")
+    })
+  ) {
+    throw new Error("Enrollment packet can only be sent for leads in Tour, Enrollment in Progress, or Nurture.");
+  }
   const refreshedMember = await getMemberById(member.id);
   if (!refreshedMember) throw new Error("Member was not found.");
 

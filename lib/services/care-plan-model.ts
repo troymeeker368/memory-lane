@@ -79,6 +79,31 @@ function toPostSignReadinessStatus(value: string | null | undefined): CarePlanPo
   return "not_started";
 }
 
+export function resolveCarePlanPostSignReadiness(input: {
+  status: string | null | undefined;
+  reason: string | null | undefined;
+  caregiverSignatureStatus: string | null | undefined;
+  finalMemberFileId: string | null | undefined;
+}) {
+  const storedStatus = toPostSignReadinessStatus(input.status);
+  const storedReason = clean(input.reason);
+  const caregiverSigned = toCaregiverSignatureStatus(input.caregiverSignatureStatus) === "signed";
+  const hasFinalMemberFile = Boolean(clean(input.finalMemberFileId));
+
+  // Signed + filed is the canonical terminal state for care-plan caregiver follow-up.
+  if (caregiverSigned && hasFinalMemberFile) {
+    return {
+      status: "ready" as const,
+      reason: null
+    };
+  }
+
+  return {
+    status: storedStatus,
+    reason: storedReason
+  };
+}
+
 export function toCarePlan(row: DbCarePlan): CarePlan {
   const track = assertCarePlanTrack(row.track);
   if (!row.member?.display_name) {
@@ -100,6 +125,12 @@ export function toCarePlan(row: DbCarePlan): CarePlan {
       ? (row.nurse_signature_metadata as Record<string, unknown>)
       : {};
   const designeeLinkValid = nurseSignatureStatus !== "signed" || Boolean(nurseSignedByUserId);
+  const postSignReadiness = resolveCarePlanPostSignReadiness({
+    status: row.post_sign_readiness_status,
+    reason: row.post_sign_readiness_reason,
+    caregiverSignatureStatus: row.caregiver_signature_status,
+    finalMemberFileId: row.final_member_file_id
+  });
   return {
     id: row.id,
     memberId: row.member_id,
@@ -141,8 +172,8 @@ export function toCarePlan(row: DbCarePlan): CarePlan {
     caregiverSignatureRequestUrl: clean(row.caregiver_signature_request_url),
     caregiverSignedName: clean(row.caregiver_signed_name),
     finalMemberFileId: row.final_member_file_id,
-    postSignReadinessStatus: toPostSignReadinessStatus(row.post_sign_readiness_status),
-    postSignReadinessReason: clean(row.post_sign_readiness_reason),
+    postSignReadinessStatus: postSignReadiness.status,
+    postSignReadinessReason: postSignReadiness.reason,
     designeeCleanupRequired: Boolean(row.legacy_cleanup_flag) || !designeeLinkValid,
     createdAt: row.created_at,
     updatedAt: row.updated_at
