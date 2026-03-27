@@ -330,7 +330,7 @@ async function sendSignatureEmail(input: {
   const apiKey = clean(process.env.RESEND_API_KEY);
   if (!apiKey) throw new Error("Care plan e-sign email delivery is not configured. Set RESEND_API_KEY.");
   const buildCarePlanSignatureRequestTemplate = await loadCarePlanSignatureRequestTemplateBuilder();
-  const { subject, html, text } = buildCarePlanSignatureRequestTemplate({
+  const { subject, html, text, fromDisplayName } = buildCarePlanSignatureRequestTemplate({
     caregiverName: input.caregiverName,
     nurseName: input.nurseName,
     memberName: input.memberName,
@@ -346,7 +346,7 @@ async function sendSignatureEmail(input: {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      from: input.fromEmail,
+      from: `${fromDisplayName} <${input.fromEmail}>`,
       to: [input.toEmail],
       subject,
       html,
