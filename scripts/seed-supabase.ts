@@ -12,8 +12,9 @@ type SeedModule = "sales" | "intake" | "attendance";
 const VALID_MODULES: SeedModule[] = ["sales", "intake", "attendance"];
 const SITE_ID = "11111111-1111-4111-8111-111111111111";
 const BATCH_SIZE = 250;
-const TARGET_MEMBER_COUNT = 30;
-const TARGET_LEAD_COUNT = 20;
+const TARGET_MEMBER_COUNT = 40;
+const TARGET_LEAD_COUNT = 40;
+const MATERIALIZE_PIPELINE_LEAD_MEMBER_SHELLS = false;
 const WEEKDAY_OPTIONS = ["monday", "tuesday", "wednesday", "thursday", "friday"] as const;
 const LEGACY_DEPENDENCY_TABLES = new Set(["pay_periods", "time_punches"]);
 const FINALIZE_INTAKE_SIGNATURE_RPC = "rpc_finalize_intake_assessment_signature";
@@ -262,16 +263,7 @@ function toObject(value: unknown) {
 
 function resolveEnrollmentPacketSeedDeliveryState(status: string | null | undefined) {
   const normalized = cleanText(status)?.toLowerCase() ?? "draft";
-  if (normalized === "prepared") {
-    return { status: "prepared", deliveryStatus: "ready_to_send", sentAt: null };
-  }
-  if (
-    normalized === "sent" ||
-    normalized === "opened" ||
-    normalized === "partially_completed" ||
-    normalized === "completed" ||
-    normalized === "filed"
-  ) {
+  if (normalized === "sent" || normalized === "in_progress" || normalized === "completed" || normalized === "expired" || normalized === "voided") {
     return { status: normalized, deliveryStatus: "sent", sentAt: true };
   }
   return { status: "draft", deliveryStatus: "pending_preparation", sentAt: null };
@@ -384,6 +376,13 @@ async function applySeedRpcPass(
                 cleanText((request as { updated_at?: unknown }).updated_at) ??
                 cleanText((request as { created_at?: unknown }).created_at) ??
                 now
+              : null,
+          p_opened_at:
+            delivery.status === "in_progress" || delivery.status === "completed"
+              ? cleanText((request as { opened_at?: unknown }).opened_at) ??
+                cleanText((request as { completed_at?: unknown }).completed_at) ??
+                cleanText((request as { updated_at?: unknown }).updated_at) ??
+                null
               : null,
           p_delivery_error: null,
           p_expected_current_status: null
@@ -672,10 +671,27 @@ async function ensureAuthProfiles(supabase: ReturnType<typeof createSupabaseAdmi
   const { data: usersData, error: listError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
   if (listError) throw new Error(listError.message);
   const byEmail = new Map((usersData.users ?? []).filter((u) => u.email).map((u) => [String(u.email).toLowerCase(), u.id] as const));
+  const seedStaffIds = db.staff.map((staff) => staff.staff_id).filter((value): value is string => value.trim().length > 0);
+  const existingProfileIdByStaffId = new Map<string, string>();
+  if (seedStaffIds.length > 0) {
+    const { data: existingProfiles, error: existingProfilesError } = await supabase
+      .from("profiles")
+      .select("id, staff_id")
+      .in("staff_id", seedStaffIds);
+    if (existingProfilesError) {
+      throw new Error(`Inspect profiles for seeded staff failed: ${existingProfilesError.message}`);
+    }
+    (existingProfiles ?? []).forEach((profile) => {
+      const existingProfileId = cleanText((profile as { id?: unknown }).id);
+      const staffId = cleanText((profile as { staff_id?: unknown }).staff_id);
+      if (!existingProfileId || !staffId) return;
+      existingProfileIdByStaffId.set(staffId, existingProfileId);
+    });
+  }
 
   for (const staff of db.staff) {
     const email = staff.email.toLowerCase();
-    let userId = byEmail.get(email) ?? null;
+    let userId = existingProfileIdByStaffId.get(staff.staff_id) ?? byEmail.get(email) ?? null;
     if (!userId) {
       const { data, error } = await supabase.auth.admin.createUser({
         email,
@@ -704,6 +720,7 @@ async function ensureAuthProfiles(supabase: ReturnType<typeof createSupabaseAdmi
       active: staff.active
     });
   });
+
   await upsertRows(supabase, "profiles", profileRows);
   return map;
 }
@@ -1071,12 +1088,11 @@ function buildIntakeCascade(db: SeededDb, staffMap: Map<string, string>) {
 
 function withMemberCohort(db: SeededDb) {
   const today = asDateOnly(new Date().toISOString(), "2026-01-01") as string;
-  const activeMembers = db.members.filter((row) => row.status === "active");
-  const inactiveMembers = db.members.filter((row) => row.status !== "active");
-  const selectedBaseMembers = [...activeMembers, ...inactiveMembers].slice(0, TARGET_MEMBER_COUNT);
-  const selectedMembers = selectedBaseMembers.map((member, idx) => {
-    const normalizedEnrollment = member.enrollment_date ?? addDays(today, -(90 + idx * 6));
-    if (idx < Math.max(0, TARGET_MEMBER_COUNT - 3)) {
+  const selectedMembers = db.members
+    .filter((row) => row.status === "active")
+    .slice(0, TARGET_MEMBER_COUNT)
+    .map((member, idx) => {
+      const normalizedEnrollment = member.enrollment_date ?? addDays(today, -(90 + idx * 6));
       return {
         ...member,
         status: "active" as const,
@@ -1086,18 +1102,7 @@ function withMemberCohort(db: SeededDb) {
         discharge_disposition: null,
         discharged_by: null
       };
-    }
-    const dischargeDate = addDays(today, -(12 + idx * 3));
-    return {
-      ...member,
-      status: "inactive" as const,
-      enrollment_date: normalizedEnrollment,
-      discharge_date: dischargeDate,
-      discharge_reason: idx % 2 === 0 ? "Higher Level of Care" : "Family Choice",
-      discharge_disposition: idx % 2 === 0 ? "Skilled Nursing Transition" : "Home With Family",
-      discharged_by: "Seed Workflow"
-    };
-  });
+    });
   const memberIdSet = new Set(selectedMembers.map((row) => row.id));
   const hasMember = (id: string | null | undefined) => Boolean(id && memberIdSet.has(id));
 
@@ -1195,7 +1200,7 @@ type SeedLeadStageStep = {
   reason: string;
 };
 
-const SEED_LEAD_SCENARIOS: SeedLeadScenario[] = [
+const SEED_PENDING_LEAD_TEMPLATES: SeedLeadScenario[] = [
   {
     key: "lead-01-new-inquiry",
     flow: "new-inquiry",
@@ -1208,19 +1213,6 @@ const SEED_LEAD_SCENARIOS: SeedLeadScenario[] = [
     transportationInterest: "Interested in door-to-door transportation.",
     payerInterest: "Private pay, may apply for VA aid.",
     summary: "Initial web intake request from caregiver."
-  },
-  {
-    key: "lead-02-follow-up-pending",
-    flow: "follow-up-pending",
-    stage: "Inquiry",
-    status: "Open",
-    leadSource: "Phone",
-    likelihood: "Warm",
-    caregiverRelationship: "Son",
-    preferredSchedule: "Tue/Thu mornings",
-    transportationInterest: "Family transport for now.",
-    payerInterest: "Long-term care policy review pending.",
-    summary: "Requested call-back after physician visit."
   },
   {
     key: "lead-03-tour-scheduled",
@@ -1236,19 +1228,6 @@ const SEED_LEAD_SCENARIOS: SeedLeadScenario[] = [
     summary: "Tour booked with spouse and daughter."
   },
   {
-    key: "lead-04-toured",
-    flow: "toured",
-    stage: "Tour",
-    status: "Open",
-    leadSource: "Hospital/Provider",
-    likelihood: "Hot",
-    caregiverRelationship: "Daughter",
-    preferredSchedule: "Mon/Tue/Thu",
-    transportationInterest: "Transportation needed both ways.",
-    payerInterest: "Family support with supplemental benefits.",
-    summary: "Tour completed and clinical fit appears strong."
-  },
-  {
     key: "lead-05-packet-sent",
     flow: "packet-sent",
     stage: "Enrollment in Progress",
@@ -1260,19 +1239,6 @@ const SEED_LEAD_SCENARIOS: SeedLeadScenario[] = [
     transportationInterest: "Door-to-door requested due mobility concerns.",
     payerInterest: "Private pay with respite grant inquiry.",
     summary: "Enrollment packet sent after successful tour."
-  },
-  {
-    key: "lead-06-packet-completed",
-    flow: "packet-completed",
-    stage: "Enrollment in Progress",
-    status: "Open",
-    leadSource: "Referral",
-    likelihood: "Hot",
-    caregiverRelationship: "Daughter",
-    preferredSchedule: "Tue/Thu/Fri",
-    transportationInterest: "Caregiver requests PM return only.",
-    payerInterest: "Long-term care insurance in progress.",
-    summary: "Packet completed and pending final intake review."
   },
   {
     key: "lead-07-nurture-1",
@@ -1288,6 +1254,45 @@ const SEED_LEAD_SCENARIOS: SeedLeadScenario[] = [
     summary: "Family not ready yet, requested monthly follow-up."
   },
   {
+    key: "lead-02-follow-up-pending",
+    flow: "follow-up-pending",
+    stage: "Inquiry",
+    status: "Open",
+    leadSource: "Phone",
+    likelihood: "Warm",
+    caregiverRelationship: "Son",
+    preferredSchedule: "Tue/Thu mornings",
+    transportationInterest: "Family transport for now.",
+    payerInterest: "Long-term care policy review pending.",
+    summary: "Requested call-back after physician visit."
+  },
+  {
+    key: "lead-04-toured",
+    flow: "toured",
+    stage: "Tour",
+    status: "Open",
+    leadSource: "Hospital/Provider",
+    likelihood: "Hot",
+    caregiverRelationship: "Daughter",
+    preferredSchedule: "Mon/Tue/Thu",
+    transportationInterest: "Transportation needed both ways.",
+    payerInterest: "Family support with supplemental benefits.",
+    summary: "Tour completed and clinical fit appears strong."
+  },
+  {
+    key: "lead-06-packet-completed",
+    flow: "packet-completed",
+    stage: "Enrollment in Progress",
+    status: "Open",
+    leadSource: "Referral",
+    likelihood: "Hot",
+    caregiverRelationship: "Daughter",
+    preferredSchedule: "Tue/Thu/Fri",
+    transportationInterest: "Caregiver requests PM return only.",
+    payerInterest: "Long-term care insurance in progress.",
+    summary: "Packet completed and pending final intake review."
+  },
+  {
     key: "lead-08-nurture-2",
     flow: "nurture",
     stage: "Nurture",
@@ -1299,104 +1304,6 @@ const SEED_LEAD_SCENARIOS: SeedLeadScenario[] = [
     transportationInterest: "Unsure, dependent on move plans.",
     payerInterest: "Budget review in progress.",
     summary: "Nurture cadence established for future enrollment."
-  },
-  {
-    key: "lead-09-closed-lost-1",
-    flow: "lost",
-    stage: "Closed - Lost",
-    status: "Lost",
-    leadSource: "Referral",
-    likelihood: "Warm",
-    caregiverRelationship: "Son",
-    preferredSchedule: "Mon-Fri",
-    transportationInterest: "Needed but out-of-area route.",
-    payerInterest: "Price-sensitive decision.",
-    summary: "Lead chose another center closer to home.",
-    lostReason: "Chose competitor"
-  },
-  {
-    key: "lead-10-closed-lost-2",
-    flow: "lost",
-    stage: "Closed - Lost",
-    status: "Lost",
-    leadSource: "Facebook/Instagram",
-    likelihood: "Cold",
-    caregiverRelationship: "Daughter",
-    preferredSchedule: "2 afternoons/week",
-    transportationInterest: "Would require PM pickup only.",
-    payerInterest: "Unable to support private-pay start.",
-    summary: "Family deferred due financial constraints.",
-    lostReason: "Price"
-  },
-  {
-    key: "lead-11-converted-1",
-    flow: "converted",
-    stage: "Closed - Won",
-    status: "Won",
-    leadSource: "Referral",
-    likelihood: "Hot",
-    caregiverRelationship: "Daughter",
-    preferredSchedule: "Mon/Wed/Fri",
-    transportationInterest: "Transportation requested both ways.",
-    payerInterest: "Private pay + family contribution.",
-    summary: "Converted after packet completion and intake approval.",
-    convertedMemberOffset: 0
-  },
-  {
-    key: "lead-12-converted-2",
-    flow: "converted",
-    stage: "Closed - Won",
-    status: "Won",
-    leadSource: "Hospital/Provider",
-    likelihood: "Hot",
-    caregiverRelationship: "Son",
-    preferredSchedule: "Tue/Thu/Fri",
-    transportationInterest: "Door-to-door AM pickup required.",
-    payerInterest: "VA and private-pay blend.",
-    summary: "Converted with discharge planner handoff complete.",
-    convertedMemberOffset: 1
-  },
-  {
-    key: "lead-13-converted-3",
-    flow: "converted",
-    stage: "Closed - Won",
-    status: "Won",
-    leadSource: "Website",
-    likelihood: "Hot",
-    caregiverRelationship: "Spouse",
-    preferredSchedule: "Mon-Thu mornings",
-    transportationInterest: "Family drops off, center returns PM.",
-    payerInterest: "Long-term care plan activated.",
-    summary: "Converted after clinical review and caregiver education.",
-    convertedMemberOffset: 2
-  },
-  {
-    key: "lead-14-converted-4",
-    flow: "converted",
-    stage: "Closed - Won",
-    status: "Won",
-    leadSource: "Community Event",
-    likelihood: "Warm",
-    caregiverRelationship: "Niece",
-    preferredSchedule: "Mon/Wed",
-    transportationInterest: "Bus stop pickup approved.",
-    payerInterest: "Family self-pay arrangement.",
-    summary: "Converted following trial-day completion.",
-    convertedMemberOffset: 3
-  },
-  {
-    key: "lead-15-converted-5",
-    flow: "converted",
-    stage: "Closed - Won",
-    status: "Won",
-    leadSource: "Referral",
-    likelihood: "Hot",
-    caregiverRelationship: "Daughter",
-    preferredSchedule: "Tue/Thu",
-    transportationInterest: "Door-to-door both ways.",
-    payerInterest: "Private pay with billing autopay.",
-    summary: "Converted after final enrollment packet signatures.",
-    convertedMemberOffset: 4
   },
   {
     key: "lead-16-follow-up-pending-2",
@@ -1449,40 +1356,44 @@ const SEED_LEAD_SCENARIOS: SeedLeadScenario[] = [
     transportationInterest: "Unsure until move back into primary home.",
     payerInterest: "Budget review underway with siblings.",
     summary: "Family requested nurture cadence until housing transition is complete."
-  },
-  {
-    key: "lead-20-closed-lost-3",
-    flow: "lost",
-    stage: "Closed - Lost",
-    status: "Lost",
-    leadSource: "Walk-in",
-    likelihood: "Warm",
-    caregiverRelationship: "Daughter",
-    preferredSchedule: "Mon-Fri mornings",
-    transportationInterest: "Needed immediately but outside service footprint.",
-    payerInterest: "Would have needed partial subsidy to begin.",
-    summary: "Family could not move forward because transportation coverage was not workable.",
-    lostReason: "Schedule/Availability"
   }
 ];
 
-const SEED_LEAD_PROSPECTS = [
-  { memberName: "Evelyn Archer", memberDob: "1945-06-17", caregiverName: "Monica Archer" },
-  { memberName: "Jerome Baldwin", memberDob: "1939-11-04", caregiverName: "Andre Baldwin" },
-  { memberName: "Patricia Cole", memberDob: "1948-03-23", caregiverName: "Lena Cole" },
-  { memberName: "Robert Denson", memberDob: "1942-01-12", caregiverName: "Isaiah Denson" },
-  { memberName: "Nora Everett", memberDob: "1947-09-27", caregiverName: "Dana Everett" },
-  { memberName: "Louis Freeman", memberDob: "1941-02-03", caregiverName: "Kara Freeman" },
-  { memberName: "Gloria Hines", memberDob: "1940-08-15", caregiverName: "Devin Hines" },
-  { memberName: "Harold Ingram", memberDob: "1938-12-09", caregiverName: "Tasha Ingram" },
-  { memberName: "Clara Jordan", memberDob: "1946-10-30", caregiverName: "Monique Jordan" },
-  { memberName: "Samuel Knox", memberDob: "1943-04-11", caregiverName: "Elijah Knox" },
-  { memberName: "Theresa Lane", memberDob: "1944-07-08", caregiverName: "Camille Lane" },
-  { memberName: "Walter Mason", memberDob: "1937-05-19", caregiverName: "Jordan Mason" },
-  { memberName: "Irene Neal", memberDob: "1949-02-26", caregiverName: "Brenda Neal" },
-  { memberName: "Otis Parker", memberDob: "1941-09-14", caregiverName: "Melissa Parker" },
-  { memberName: "Ruth Quinn", memberDob: "1946-12-01", caregiverName: "Darius Quinn" }
-];
+type SeedLeadProspect = {
+  memberName: string;
+  memberDob: string;
+  caregiverName: string;
+};
+
+const SEED_MEMBER_FIRST_NAMES = ["Evelyn", "Jerome", "Patricia", "Robert", "Nora", "Louis", "Gloria", "Harold", "Clara", "Samuel"];
+const SEED_MEMBER_LAST_NAMES = ["Archer", "Baldwin", "Cole", "Denson", "Everett", "Freeman", "Hines", "Ingram", "Jordan", "Knox"];
+const SEED_CAREGIVER_FIRST_NAMES = ["Monica", "Andre", "Lena", "Isaiah", "Dana", "Kara", "Devin", "Tasha", "Monique", "Elijah"];
+
+function buildSeedLeadProspect(index: number): SeedLeadProspect {
+  const memberFirstName = SEED_MEMBER_FIRST_NAMES[index % SEED_MEMBER_FIRST_NAMES.length] ?? "Seed";
+  const memberLastName =
+    SEED_MEMBER_LAST_NAMES[Math.floor(index / SEED_MEMBER_FIRST_NAMES.length) % SEED_MEMBER_LAST_NAMES.length] ?? "Prospect";
+  const caregiverFirstName = SEED_CAREGIVER_FIRST_NAMES[(index * 3) % SEED_CAREGIVER_FIRST_NAMES.length] ?? "Caregiver";
+  const year = 1937 + (index % 13);
+  const month = String(((index * 3) % 12) + 1).padStart(2, "0");
+  const day = String(((index * 5) % 28) + 1).padStart(2, "0");
+
+  return {
+    memberName: `${memberFirstName} ${memberLastName}`,
+    memberDob: `${year}-${month}-${day}`,
+    caregiverName: `${caregiverFirstName} ${memberLastName}`
+  };
+}
+
+function buildPendingLeadScenarios(count: number) {
+  return Array.from({ length: count }, (_, idx) => {
+    const template = SEED_PENDING_LEAD_TEMPLATES[idx % SEED_PENDING_LEAD_TEMPLATES.length];
+    return {
+      ...template,
+      key: `${template.key}-${String(idx + 1).padStart(2, "0")}`
+    };
+  });
+}
 
 function seedLeadActivitySteps(flow: LeadFlow, lostReason: string | null): SeedLeadActivityStep[] {
   if (flow === "new-inquiry") {
@@ -1603,26 +1514,17 @@ function buildLeadSeedPackage(db: SeededDb): SeedLeadPackage {
     referralsByPartner.set(row.partner_id, [...(referralsByPartner.get(row.partner_id) ?? []), row]);
   });
 
-  const activeMembers = db.members.filter((row) => row.status === "active");
-  const convertedMembers = (activeMembers.length > 0 ? activeMembers : db.members).slice(0, 5);
-  const contactsByMember = new Map<string, SeededDb["memberContacts"]>();
-  db.memberContacts.forEach((row) => {
-    contactsByMember.set(row.member_id, [...(contactsByMember.get(row.member_id) ?? []), row]);
-  });
-
   const leads: SeededDb["leads"] = [];
   const leadActivities: SeededDb["leadActivities"] = [];
   const leadStageHistory: SeededDb["leadStageHistory"] = [];
   const partnerActivities: SeededDb["partnerActivities"] = [];
   const memberLeadByMemberId = new Map<string, string>();
-  const scenarios = SEED_LEAD_SCENARIOS.slice(0, TARGET_LEAD_COUNT);
-
-  let prospectCursor = 0;
+  const scenarios = buildPendingLeadScenarios(TARGET_LEAD_COUNT);
   scenarios.forEach((scenario, idx) => {
     const owner = ownerPool[idx % ownerPool.length] ?? db.staff[0];
     if (!owner) return;
 
-    const inquiryDate = addDays(today, -(88 - idx * 4));
+    const inquiryDate = addDays(today, -(120 - idx * 2));
     const stageSteps = seedLeadStageSteps(scenario.flow, scenario.stage);
     const finalStep = stageSteps[stageSteps.length - 1] ?? { dayOffset: 0, stage: scenario.stage, status: "open", reason: "Seed lead stage" };
     const partnerNeeded =
@@ -1637,33 +1539,14 @@ function buildLeadSeedPackage(db: SeededDb): SeedLeadPackage {
         : partnerNeeded && referralPool.length > 0
           ? referralPool[idx % referralPool.length]
           : null;
-
-    const convertedMember =
-      scenario.convertedMemberOffset !== undefined && convertedMembers.length > 0
-        ? convertedMembers[scenario.convertedMemberOffset % convertedMembers.length]
-        : null;
-    const fallbackProspect = SEED_LEAD_PROSPECTS[prospectCursor % SEED_LEAD_PROSPECTS.length];
-    if (!convertedMember) {
-      prospectCursor += 1;
-    }
-
-    const memberContacts = convertedMember ? contactsByMember.get(convertedMember.id) ?? [] : [];
-    const primaryContact = memberContacts[0] ?? null;
-    const caregiverName =
-      primaryContact?.contact_name ??
-      (convertedMember ? `Caregiver for ${convertedMember.display_name.split(" ")[0]}` : fallbackProspect.caregiverName);
-    const caregiverEmail =
-      primaryContact?.email ??
-      `${caregiverName.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "") || `caregiver${idx + 1}`}@example.com`;
-    const caregiverPhone =
-      primaryContact?.cellular_number ?? primaryContact?.home_number ?? `803-555-${String(3200 + idx).slice(-4)}`;
-    const memberName = convertedMember?.display_name ?? fallbackProspect.memberName;
-    const memberDob = asDateOnly(convertedMember?.dob ?? fallbackProspect.memberDob, null);
+    const prospect = buildSeedLeadProspect(idx);
+    const caregiverName = prospect.caregiverName;
+    const caregiverEmail = `${caregiverName.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "")}@example.com`;
+    const caregiverPhone = `803-555-${String(3200 + idx).slice(-4)}`;
+    const memberName = prospect.memberName;
+    const memberDob = prospect.memberDob;
 
     const leadId = stableUuid(`seed:v2:lead:${scenario.key}`);
-    if (convertedMember) {
-      memberLeadByMemberId.set(convertedMember.id, leadId);
-    }
 
     const activitySteps = seedLeadActivitySteps(scenario.flow, scenario.lostReason ?? null);
     const leadCreatedAt = toIsoAt(inquiryDate, 9 + (idx % 4), 10 + ((idx * 7) % 40));
@@ -3445,25 +3328,25 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
     const communityFeeRow = enrollmentPricingCommunityFees[0];
     const packetId = stableUuid(`seed:enrollment-packet:${member.id}`);
     const packetTokenHash = createHash("sha256").update(`seed:enrollment-packet-token:${packetId}`).digest("hex");
-    const packetStatus: "draft" | "prepared" | "sent" | "opened" | "partially_completed" | "completed" | "filed" =
-      idx % 7 === 0
-        ? "filed"
-        : idx % 7 === 1
-          ? "completed"
-          : idx % 7 === 2
-            ? "partially_completed"
-            : idx % 7 === 3
-              ? "opened"
-              : idx % 7 === 4
-                ? "sent"
-                : idx % 7 === 5
-                  ? "prepared"
-                  : "draft";
+    const packetSeedVariant = idx % 7;
+    const packetStatus: "draft" | "sent" | "in_progress" | "completed" =
+      packetSeedVariant === 0 || packetSeedVariant === 1
+        ? "completed"
+        : packetSeedVariant === 2 || packetSeedVariant === 3
+          ? "in_progress"
+          : packetSeedVariant === 4
+            ? "sent"
+            : "draft";
     const createdDate = addDays(today, -(35 + idx));
-    const sentAt = ["sent", "opened", "partially_completed", "completed", "filed"].includes(packetStatus)
-      ? toIsoAt(addDays(createdDate, 1), 11, 0)
-      : null;
-    const completedAt = ["completed", "filed"].includes(packetStatus) ? toIsoAt(addDays(createdDate, 4), 15, 40) : null;
+    const sentAt = ["sent", "in_progress", "completed"].includes(packetStatus) ? toIsoAt(addDays(createdDate, 1), 11, 0) : null;
+    const openedAt = ["in_progress", "completed"].includes(packetStatus) ? toIsoAt(addDays(createdDate, 2), 8, 20) : null;
+    const completedAt = packetStatus === "completed" ? toIsoAt(addDays(createdDate, 4), 15, 40) : null;
+    const lastFamilyActivityAt =
+      packetStatus === "completed"
+        ? completedAt
+        : packetStatus === "in_progress"
+          ? toIsoAt(addDays(createdDate, 3), 13, 10)
+          : openedAt;
     const caregiverEmail = cleanText(lead?.caregiver_email) ?? cleanText(contact?.email) ?? `caregiver${idx + 1}@example.org`;
     const primaryContactName = cleanText(lead?.caregiver_name) ?? cleanText(contact?.contact_name) ?? `Caregiver ${idx + 1}`;
     const primaryContactPhone = cleanText(lead?.caregiver_phone) ?? cleanText(contact?.cellular_number) ?? `803-555-${String(7100 + idx).slice(-4)}`;
@@ -3484,7 +3367,7 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
       uploaded_at: toIsoAt(addDays(createdDate, 1), 12, 15),
       updated_at: toIsoAt(addDays(createdDate, 1), 12, 15)
     });
-    if (packetStatus === "completed" || packetStatus === "filed") {
+    if (packetStatus === "completed") {
       workflowMemberFiles.push({
         id: completedPacketFileId,
         member_id: member.id,
@@ -3510,6 +3393,8 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
       status: packetStatus,
       token: packetTokenHash,
       token_expires_at: toIsoAt(addDays(createdDate, 14), 23, 59),
+      opened_at: openedAt,
+      last_family_activity_at: lastFamilyActivityAt,
       created_at: toIsoAt(createdDate, 10, 30),
       sent_at: sentAt,
       completed_at: completedAt,
@@ -3567,7 +3452,7 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
       updated_at: completedAt ?? sentAt ?? toIsoAt(createdDate, 10, 32)
     });
 
-    if (packetStatus !== "draft") {
+    if (packetSeedVariant !== 6) {
       enrollmentPacketEvents.push({
         id: stableUuid(`seed:enrollment-packet-event:${packetId}:prepared`),
         packet_id: packetId,
@@ -3607,18 +3492,18 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
         created_at: sentAt
       });
     }
-    if (packetStatus === "opened" || packetStatus === "partially_completed" || packetStatus === "completed" || packetStatus === "filed") {
+    if (openedAt) {
       enrollmentPacketEvents.push({
         id: stableUuid(`seed:enrollment-packet-event:${packetId}:opened`),
         packet_id: packetId,
         event_type: "opened",
         actor_user_id: null,
         actor_email: caregiverEmail,
-        timestamp: toIsoAt(addDays(createdDate, 2), 8, 20),
+        timestamp: openedAt,
         metadata: {}
       });
     }
-    if (packetStatus === "partially_completed" || packetStatus === "completed" || packetStatus === "filed") {
+    if (packetSeedVariant === 2 || packetStatus === "completed") {
       enrollmentPacketEvents.push({
         id: stableUuid(`seed:enrollment-packet-event:${packetId}:partial`),
         packet_id: packetId,
@@ -3640,7 +3525,7 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
         metadata: {}
       });
     }
-    if (packetStatus === "filed") {
+    if (packetSeedVariant === 0) {
       enrollmentPacketEvents.push({
         id: stableUuid(`seed:enrollment-packet-event:${packetId}:filed`),
         packet_id: packetId,
@@ -3664,7 +3549,7 @@ function buildRows(sourceDb: SeededDb, staffMap: Map<string, string>) {
       created_at: toIsoAt(createdDate, 10, 31),
       updated_at: toIsoAt(createdDate, 10, 31)
     });
-    if (packetStatus === "completed" || packetStatus === "filed") {
+    if (packetStatus === "completed") {
       enrollmentPacketSignatures.push({
         id: stableUuid(`seed:enrollment-packet-signature:${packetId}:caregiver`),
         packet_id: packetId,
@@ -4572,13 +4457,17 @@ async function main() {
   }
 
   if (!parsed.legacyOnly && parsed.modules.includes("intake")) {
-    const intakeSeedMemberLinks = await ensureIntakeReadySeedMembers(supabase, {
-      existingTables,
-      leads: rows.leads
-    });
-    console.log(
-      `intake_seed_member_links: intake_leads=${intakeSeedMemberLinks.intakeLeadCount} already_linked=${intakeSeedMemberLinks.alreadyLinkedCount} upserted=${intakeSeedMemberLinks.upsertedCount}`
-    );
+    if (MATERIALIZE_PIPELINE_LEAD_MEMBER_SHELLS) {
+      const intakeSeedMemberLinks = await ensureIntakeReadySeedMembers(supabase, {
+        existingTables,
+        leads: rows.leads
+      });
+      console.log(
+        `intake_seed_member_links: intake_leads=${intakeSeedMemberLinks.intakeLeadCount} already_linked=${intakeSeedMemberLinks.alreadyLinkedCount} upserted=${intakeSeedMemberLinks.upsertedCount}`
+      );
+    } else {
+      console.log("intake_seed_member_links: skipped=pipeline_shell_materialization_disabled");
+    }
   }
 
   if (!parsed.skipRpcPass) {
