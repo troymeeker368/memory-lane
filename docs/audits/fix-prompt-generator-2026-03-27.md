@@ -384,18 +384,6 @@ Validation:
 Do not do a broad sales rewrite. Keep this a read-model hardening pass.
 ```
 
-### Prompt 7. Replace repeated active-member preloads with search-first member lookups
-```text
-Fix this Memory Lane issue with the smallest production-safe change.
-
-Issue:
-Many pages still preload active member dropdown options on page load, which repeats eager roster reads across documentation, care plans, dashboards, reports, and physician orders.
-
-Scope:
-- Domain/workflow: shared member lookup UX
-- Canonical entities/tables: members and any shared member lookup/read-model helpers
-- Expected canonical read path: page/form -> one canonical member lookup service -> Supabase
-
 Inspect first:
 - lib/services/documentation.ts
 - lib/services/shared-lookups-supabase.ts
