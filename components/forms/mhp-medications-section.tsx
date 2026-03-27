@@ -370,9 +370,7 @@ export function MhpMedicationsSection({
               </option>
             ))}
           </select>
-        ) : (
-          <div className="h-10 rounded-lg border border-border bg-slate-50 px-3 text-xs leading-10 text-muted">Eye/Ear N/A</div>
-        )}
+        ) : null}
         <label className="flex h-10 items-center gap-2 rounded-lg border border-border px-3 text-xs">
           <input
             type="checkbox"

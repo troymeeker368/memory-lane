@@ -46,6 +46,41 @@ export type CarePlanSignatureEventType =
   | "signed"
   | "expired";
 
+function isMissingRpcFunctionError(error: unknown, rpcName: string) {
+  const candidate =
+    error && typeof error === "object"
+      ? (error as {
+          code?: unknown;
+          message?: unknown;
+          details?: unknown;
+          hint?: unknown;
+          cause?: { code?: unknown; message?: unknown; details?: unknown; hint?: unknown } | null;
+        })
+      : null;
+  const code = String(candidate?.code ?? candidate?.cause?.code ?? "").toUpperCase();
+  const message = [
+    candidate?.message,
+    candidate?.details,
+    candidate?.hint,
+    candidate?.cause?.message,
+    candidate?.cause?.details,
+    candidate?.cause?.hint
+  ]
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+  const normalizedName = rpcName.toLowerCase();
+
+  return (
+    code === "PGRST202" ||
+    code === "42883" ||
+    message.includes(`function ${normalizedName}`) ||
+    (message.includes(normalizedName) && message.includes("could not find")) ||
+    (message.includes(normalizedName) && message.includes("does not exist")) ||
+    (message.includes(normalizedName) && message.includes("schema cache"))
+  );
+}
+
 function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
@@ -183,8 +218,7 @@ async function prepareCarePlanCaregiverRequest(input: {
       p_updated_at: input.updatedAt
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to prepare care plan caregiver request.";
-    if (message.includes(PREPARE_CARE_PLAN_CAREGIVER_REQUEST_RPC)) {
+    if (isMissingRpcFunctionError(error, PREPARE_CARE_PLAN_CAREGIVER_REQUEST_RPC)) {
       throw new Error(
         `Care plan caregiver request RPC is not available. Apply Supabase migration ${CARE_PLAN_CAREGIVER_REQUEST_MIGRATION} and refresh PostgREST schema cache.`
       );
@@ -217,14 +251,28 @@ export async function transitionCarePlanCaregiverStatus(input: {
       p_expected_current_statuses: input.expectedCurrentStatuses ?? null
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to update care plan caregiver status.";
-    if (message.includes(TRANSITION_CARE_PLAN_CAREGIVER_STATUS_RPC)) {
+    if (isMissingRpcFunctionError(error, TRANSITION_CARE_PLAN_CAREGIVER_STATUS_RPC)) {
       throw new Error(
         `Care plan caregiver status RPC is not available. Apply Supabase migration ${CARE_PLAN_CAREGIVER_STATUS_TRANSITION_MIGRATION} and refresh PostgREST schema cache.`
       );
     }
     throw error;
   }
+}
+
+async function assertCarePlanCaregiverSentStateFinalizationReady(input: {
+  carePlanId: string;
+  updatedAt: string;
+  actor: { id: string; fullName: string };
+}) {
+  await transitionCarePlanCaregiverStatus({
+    carePlanId: input.carePlanId,
+    status: "ready_to_send",
+    updatedAt: input.updatedAt,
+    actor: input.actor,
+    caregiverSignatureError: null,
+    expectedCurrentStatuses: ["ready_to_send"]
+  });
 }
 
 export function canSendCaregiverSignature(plan: CarePlan) {
@@ -356,6 +404,11 @@ export async function sendCarePlanToCaregiverForSignature(input: SendCarePlanToC
     actorUserId: input.actor.id,
     actorName: input.actor.fullName,
     updatedAt: now
+  });
+  await assertCarePlanCaregiverSentStateFinalizationReady({
+    carePlanId: input.carePlanId,
+    updatedAt: now,
+    actor: input.actor
   });
 
   try {
