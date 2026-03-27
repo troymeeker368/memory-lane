@@ -24,17 +24,18 @@ test("lead conversion service uses canonical rpc_* names through shared wrapper"
 });
 
 test("POF public signing finalization uses canonical RPC and shared post-sign sync helper", () => {
-  const source = readWorkspaceFile("lib/services/pof-esign.ts");
+  const source = readWorkspaceFile("lib/services/pof-esign-public.ts");
 
-  assert.equal(source.includes('const RPC_FINALIZE_POF_SIGNATURE = "rpc_finalize_pof_signature"'), true);
-  assert.equal(source.includes("invokeSupabaseRpcOrThrow<unknown>(admin, RPC_FINALIZE_POF_SIGNATURE"), true);
-  assert.equal(source.includes("processSignedPhysicianOrderPostSignSync"), true);
+  assert.equal(source.includes('"rpc_finalize_pof_signature"'), true);
+  assert.equal(source.includes('invokeSupabaseRpcOrThrow<unknown>(admin, "rpc_finalize_pof_signature"'), true);
+  assert.equal(source.includes("runBestEffortCommittedPofSignatureFollowUp"), true);
 });
 
 test("physician order signing path routes lifecycle DB transition through rpc_sign_physician_order", () => {
-  const source = readWorkspaceFile("lib/services/physician-orders-supabase.ts");
+  const serviceSource = readWorkspaceFile("lib/services/physician-orders-supabase.ts");
+  const runtimeSource = readWorkspaceFile("lib/services/physician-order-post-sign-runtime.ts");
 
-  assert.equal(source.includes('const RPC_SIGN_PHYSICIAN_ORDER = "rpc_sign_physician_order"'), true);
-  assert.equal(source.includes("invokeSignPhysicianOrderRpc"), true);
-  assert.equal(source.includes("processSignedPhysicianOrderPostSignSync"), true);
+  assert.equal(runtimeSource.includes('const RPC_SIGN_PHYSICIAN_ORDER = "rpc_sign_physician_order"'), true);
+  assert.equal(serviceSource.includes("invokeSignPhysicianOrderRpc"), true);
+  assert.equal(serviceSource.includes("processSignedPhysicianOrderPostSignSync"), true);
 });

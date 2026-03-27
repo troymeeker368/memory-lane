@@ -47,7 +47,7 @@ function sanitizeAdditionalLeadPatch(additionalLeadPatch?: Record<string, JsonVa
   return patch;
 }
 
-async function invokeLeadConversionRpc(
+async function invokeLeadConversionRpcWithFallback(
   supabase: Awaited<ReturnType<typeof createClient>>,
   input: {
     rpcName: string;
@@ -91,11 +91,6 @@ function toLeadConversionResult(data: unknown) {
   } satisfies LeadStageTransitionMemberUpsertResult;
 }
 
-async function ensureLeadConversionMemberShellRows(memberId: string) {
-  const { ensureCanonicalMemberOperationalShellRows } = await import("@/lib/services/member-operational-shell");
-  await ensureCanonicalMemberOperationalShellRows(memberId);
-}
-
 export async function applyLeadStageTransitionWithMemberUpsertSupabase(input: {
   leadId: string;
   requestedStage: string;
@@ -133,13 +128,12 @@ export async function applyLeadStageTransitionWithMemberUpsertSupabase(input: {
     p_now: toEasternISO(),
     p_today: toEasternDate()
   };
-  const data = await invokeLeadConversionRpc(supabase, {
+  const data = await invokeLeadConversionRpcWithFallback(supabase, {
     rpcName: RPC_CONVERT_LEAD_TO_MEMBER,
     args
   });
 
   const result = toLeadConversionResult(data);
-  await ensureLeadConversionMemberShellRows(result.memberId);
   await logSystemEvent({
     event_type: "lead_member_conversion_completed",
     entity_type: "lead",
@@ -192,13 +186,12 @@ export async function createLeadWithMemberConversionSupabase(input: {
     p_now: toEasternISO(),
     p_today: toEasternDate()
   };
-  const data = await invokeLeadConversionRpc(supabase, {
+  const data = await invokeLeadConversionRpcWithFallback(supabase, {
     rpcName: RPC_CREATE_LEAD_WITH_MEMBER_CONVERSION,
     args
   });
 
   const result = toLeadConversionResult(data);
-  await ensureLeadConversionMemberShellRows(result.memberId);
   await logSystemEvent({
     event_type: "lead_member_conversion_completed",
     entity_type: "lead",

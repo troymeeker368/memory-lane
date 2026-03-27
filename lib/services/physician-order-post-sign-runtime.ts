@@ -11,6 +11,7 @@ import {
   isMissingRpcFunctionError,
   missingRpcFunctionRequiredError,
   physicianOrdersTableRequiredError,
+  toRpcRunSignedPofPostSignSyncRow,
   toRpcSignPhysicianOrderRow,
   toRpcSyncSignedPofToMemberClinicalProfileRow,
   type PofPostSignQueueStatusRow,
@@ -22,6 +23,8 @@ import {
 const CLAIM_POF_POST_SIGN_SYNC_QUEUE_RPC = "rpc_claim_pof_post_sign_sync_queue";
 const CLAIM_POF_POST_SIGN_SYNC_QUEUE_MIGRATION = "0097_pof_post_sign_retry_claim_rpc.sql";
 const RPC_SIGN_PHYSICIAN_ORDER = "rpc_sign_physician_order";
+const RPC_RUN_SIGNED_POF_POST_SIGN_SYNC = "rpc_run_signed_pof_post_sign_sync";
+const RUN_SIGNED_POF_POST_SIGN_SYNC_MIGRATION = "0155_signed_pof_post_sign_sync_rpc_consolidation.sql";
 const RPC_SYNC_SIGNED_POF_TO_MEMBER_CLINICAL_PROFILE = "rpc_sync_signed_pof_to_member_clinical_profile";
 const DEFAULT_POF_POST_SIGN_SYNC_ALERT_AGE_MINUTES = 30;
 const MAX_POF_POST_SIGN_SYNC_ALERT_ROWS = 50;
@@ -216,6 +219,30 @@ export async function invokeSyncSignedPofToMemberClinicalProfileRpc(input: {
         "Shared RPC rpc_sync_signed_pof_to_member_clinical_profile is not available. Apply Supabase migration 0043_delivery_state_and_pof_post_sign_sync_rpc.sql and refresh PostgREST schema cache."
       );
     }
+    throw error;
+  }
+}
+
+export async function invokeRunSignedPofPostSignSyncRpc(input: {
+  pofId: string;
+  syncTimestamp: string;
+  serviceRole?: boolean;
+}) {
+  const supabase = await createClient({ serviceRole: input.serviceRole ?? true });
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_RUN_SIGNED_POF_POST_SIGN_SYNC, {
+      p_pof_id: input.pofId,
+      p_sync_timestamp: input.syncTimestamp
+    });
+    return toRpcRunSignedPofPostSignSyncRow(data);
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, RPC_RUN_SIGNED_POF_POST_SIGN_SYNC)) {
+      throw new Error(
+        `Signed POF post-sign sync RPC is not available. Apply Supabase migration ${RUN_SIGNED_POF_POST_SIGN_SYNC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    const postgrestError = error as PostgrestErrorLike | null | undefined;
+    if (isMissingPhysicianOrdersTableError(postgrestError)) throw physicianOrdersTableRequiredError();
     throw error;
   }
 }

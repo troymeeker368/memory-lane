@@ -62,6 +62,18 @@ export type RpcSyncSignedPofToMemberClinicalProfileRow = {
   member_command_center_id: string | null;
 };
 
+export type RpcRunSignedPofPostSignSyncRow = {
+  member_id: string;
+  member_health_profile_id: string;
+  member_command_center_id: string | null;
+  anchor_physician_order_id: string;
+  synced_medications: number;
+  inserted_schedules: number;
+  patched_schedules: number;
+  reactivated_schedules: number;
+  deactivated_schedules: number;
+};
+
 export type PofPostSignQueueStatusRow = {
   physician_order_id: string;
   status: "queued" | "processing" | "completed";
@@ -303,6 +315,24 @@ export function toRpcSyncSignedPofToMemberClinicalProfileRow(data: unknown): Rpc
     member_id: row.member_id,
     member_health_profile_id: row.member_health_profile_id,
     member_command_center_id: clean(row.member_command_center_id) ?? null
+  };
+}
+
+export function toRpcRunSignedPofPostSignSyncRow(data: unknown): RpcRunSignedPofPostSignSyncRow {
+  const row = (Array.isArray(data) ? data[0] : null) as RpcRunSignedPofPostSignSyncRow | null;
+  if (!row?.member_id || !row.member_health_profile_id || !row.anchor_physician_order_id) {
+    throw new Error("Signed POF post-sign sync RPC did not return the expected canonical identifiers.");
+  }
+  return {
+    member_id: row.member_id,
+    member_health_profile_id: row.member_health_profile_id,
+    member_command_center_id: clean(row.member_command_center_id) ?? null,
+    anchor_physician_order_id: row.anchor_physician_order_id,
+    synced_medications: Math.max(0, Number(row.synced_medications ?? 0)),
+    inserted_schedules: Math.max(0, Number(row.inserted_schedules ?? 0)),
+    patched_schedules: Math.max(0, Number(row.patched_schedules ?? 0)),
+    reactivated_schedules: Math.max(0, Number(row.reactivated_schedules ?? 0)),
+    deactivated_schedules: Math.max(0, Number(row.deactivated_schedules ?? 0))
   };
 }
 

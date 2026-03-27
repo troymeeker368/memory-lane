@@ -1,4 +1,4 @@
-import { syncMemberHealthProfileFromSignedPhysicianOrder } from "@/lib/services/physician-orders-supabase";
+import { runSignedPhysicianOrderPostSignWorkflow } from "@/lib/services/physician-orders-supabase";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
@@ -71,16 +71,14 @@ export async function syncCommandCenterToMhp(memberId: string, actor: SyncActor 
 }
 
 export async function syncPhysicianOrderToMemberProfiles(input: PofSyncInput) {
-  const syncedProfile = await syncMemberHealthProfileFromSignedPhysicianOrder(input.physicianOrderId);
+  const syncedProfile = await runSignedPhysicianOrderPostSignWorkflow({
+    pofId: input.physicianOrderId,
+    syncTimestamp: input.atIso ?? undefined
+  });
   const syncedMemberId = String((syncedProfile as { member_id?: string } | null)?.member_id ?? "");
   if (syncedMemberId && syncedMemberId !== input.memberId) {
     throw new Error("Physician order sync/member mismatch.");
   }
-
-  await syncMhpToCommandCenter(input.memberId, {
-    actorUserId: input.actorUserId,
-    actorName: input.actorName
-  }, input.atIso ?? undefined);
 
   return syncedProfile;
 }

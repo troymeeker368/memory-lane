@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { listCanonicalMemberLinksForLeadIds, resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import {
@@ -27,6 +28,9 @@ export type {
 } from "@/lib/services/schedule-changes-shared";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAVE_SCHEDULE_CHANGE_WITH_ATTENDANCE_SYNC_RPC = "rpc_save_schedule_change_with_attendance_sync";
+const UPDATE_SCHEDULE_CHANGE_STATUS_WITH_ATTENDANCE_SYNC_RPC = "rpc_update_schedule_change_status_with_attendance_sync";
+const SAVE_SCHEDULE_CHANGE_WITH_ATTENDANCE_SYNC_MIGRATION = "0157_schedule_change_attendance_sync_rpc.sql";
 const SCHEDULE_CHANGE_SELECT =
   "id, member_id, change_type, effective_start_date, effective_end_date, original_days, new_days, suspend_base_schedule, reason, notes, entered_by, entered_by_user_id, status, created_at, updated_at, closed_at, closed_by, closed_by_user_id";
 
@@ -98,6 +102,13 @@ function extractErrorText(error: PostgrestErrorLike | null | undefined) {
   return [error?.message, error?.details, error?.hint].filter(Boolean).join(" ").toLowerCase();
 }
 
+function isMissingRpcFunctionError(error: unknown, rpcName: string) {
+  if (!error || typeof error !== "object") return false;
+  const code = String((error as { code?: string }).code ?? "").toUpperCase();
+  const text = String((error as { message?: string }).message ?? "").toLowerCase();
+  return (code === "PGRST202" || code === "42883") && text.includes(rpcName.toLowerCase());
+}
+
 function isMissingScheduleChangesTableError(error: PostgrestErrorLike | null | undefined) {
   const text = extractErrorText(error);
   if (!text) return false;
@@ -153,6 +164,8 @@ type ScheduleChangeDbRow = Record<string, unknown> & {
   closed_by?: string | null;
   closed_by_user_id?: string | null;
 };
+
+type SaveScheduleChangeWithAttendanceSyncRpcRow = ScheduleChangeDbRow;
 
 function toRow(data: ScheduleChangeDbRow): ScheduleChangeRow {
   return {
@@ -311,6 +324,62 @@ export async function createScheduleChangeSupabase(input: {
   return toRow(data);
 }
 
+export async function saveScheduleChangeWithAttendanceSyncSupabase(input: {
+  id?: string | null;
+  memberId: string;
+  changeType: ScheduleChangeType;
+  effectiveStartDate: string;
+  effectiveEndDate: string | null;
+  originalDays: Array<string | null | undefined>;
+  newDays: Array<string | null | undefined>;
+  suspendBaseSchedule: boolean;
+  reason: string;
+  notes: string | null;
+  enteredBy?: string | null;
+  enteredByUserId?: string | null;
+  actorName: string;
+  actorUserId: string;
+}) {
+  const canonicalMemberId = await resolveScheduleMemberId(input.memberId, "saveScheduleChangeWithAttendanceSyncSupabase");
+  const supabase = await createClient();
+  const now = toEasternISO();
+  const normalizedId = String(input.id ?? "").trim() || null;
+  const originalDays = normalizeWeekdays(input.originalDays);
+  const newDays = normalizeWeekdays(input.newDays);
+
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, SAVE_SCHEDULE_CHANGE_WITH_ATTENDANCE_SYNC_RPC, {
+      p_schedule_change_id: normalizedId,
+      p_member_id: canonicalMemberId,
+      p_change_type: input.changeType,
+      p_effective_start_date: normalizeOperationalDateOnly(input.effectiveStartDate),
+      p_effective_end_date: input.effectiveEndDate ? normalizeOperationalDateOnly(input.effectiveEndDate) : null,
+      p_original_days: originalDays,
+      p_new_days: newDays,
+      p_suspend_base_schedule: Boolean(input.suspendBaseSchedule),
+      p_reason: input.reason.trim(),
+      p_notes: input.notes?.trim() || null,
+      p_entered_by: String(input.enteredBy ?? "").trim() || input.actorName.trim(),
+      p_entered_by_user_id: String(input.enteredByUserId ?? "").trim() || input.actorUserId,
+      p_actor_user_id: input.actorUserId,
+      p_actor_name: input.actorName,
+      p_now: now
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as SaveScheduleChangeWithAttendanceSyncRpcRow | null;
+    if (!row?.id) {
+      throw new Error("Schedule change attendance sync RPC did not return the saved row.");
+    }
+    return toRow(row);
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, SAVE_SCHEDULE_CHANGE_WITH_ATTENDANCE_SYNC_RPC)) {
+      throw new Error(
+        `Schedule change attendance sync RPC is not available. Apply Supabase migration ${SAVE_SCHEDULE_CHANGE_WITH_ATTENDANCE_SYNC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
+}
+
 export async function updateScheduleChangeSupabase(input: {
   id: string;
   memberId: string;
@@ -385,4 +454,35 @@ export async function updateScheduleChangeStatusSupabase(input: {
     throw new Error(error.message);
   }
   return data ? toRow(data) : null;
+}
+
+export async function updateScheduleChangeStatusWithAttendanceSyncSupabase(input: {
+  id: string;
+  status: ScheduleChangeStatus;
+  actorName: string;
+  actorUserId: string;
+}) {
+  const supabase = await createClient();
+  try {
+    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, UPDATE_SCHEDULE_CHANGE_STATUS_WITH_ATTENDANCE_SYNC_RPC, {
+      p_schedule_change_id: input.id.trim(),
+      p_status: input.status,
+      p_actor_user_id: input.actorUserId,
+      p_actor_name: input.actorName,
+      p_now: toEasternISO()
+    });
+    const row = (Array.isArray(data) ? data[0] : null) as SaveScheduleChangeWithAttendanceSyncRpcRow | null;
+    if (!row?.id) {
+      throw new Error("Schedule change status attendance sync RPC did not return the saved row.");
+    }
+    return toRow(row);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to update schedule change.";
+    if (message.includes(UPDATE_SCHEDULE_CHANGE_STATUS_WITH_ATTENDANCE_SYNC_RPC)) {
+      throw new Error(
+        `Schedule change attendance sync RPC is not available. Apply Supabase migration ${SAVE_SCHEDULE_CHANGE_WITH_ATTENDANCE_SYNC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
 }

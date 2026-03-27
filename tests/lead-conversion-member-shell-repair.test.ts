@@ -7,29 +7,27 @@ function readWorkspaceFile(relativePath: string) {
   return fs.readFileSync(path.join(process.cwd(), relativePath), "utf8");
 }
 
-test("lead conversion service repairs member shell rows after RPC conversion", () => {
+test("lead conversion service relies on the canonical RPC boundary instead of post-RPC shell repair", () => {
   const serviceSource = readWorkspaceFile("lib/services/sales-lead-conversion-supabase.ts");
-  const shellSource = readWorkspaceFile("lib/services/member-operational-shell.ts");
 
-  assert.equal(serviceSource.includes("ensureLeadConversionMemberShellRows"), true);
-  assert.equal(serviceSource.includes('import("@/lib/services/member-operational-shell")'), true);
-  assert.equal(serviceSource.includes("await ensureLeadConversionMemberShellRows(result.memberId);"), true);
-  assert.equal(shellSource.includes("ensureCanonicalMemberOperationalShellRows"), true);
-  assert.equal(shellSource.includes("backfillMissingMemberCommandCenterRows"), true);
-  assert.equal(shellSource.includes("backfillMissingMemberHealthProfiles"), true);
+  assert.equal(serviceSource.includes("ensureLeadConversionMemberShellRows"), false);
+  assert.equal(serviceSource.includes('import("@/lib/services/member-operational-shell")'), false);
+  assert.equal(serviceSource.includes("await ensureLeadConversionMemberShellRows(result.memberId);"), false);
+  assert.equal(serviceSource.includes("invokeLeadConversionRpcWithFallback"), true);
 });
 
-test("lead conversion migration restores MHP creation and backfills missing member shells", () => {
+test("lead conversion wrapper migration refuses success when canonical shell rows are missing", () => {
   const migrationSource = readWorkspaceFile(
-    "supabase/migrations/0148_restore_lead_conversion_mhp_and_member_shell_backfill.sql"
+    "supabase/migrations/0156_lead_conversion_wrapper_shell_assertions.sql"
   );
 
   assert.equal(
-    migrationSource.includes("create or replace function public.apply_lead_stage_transition_with_member_upsert("),
+    migrationSource.includes("create or replace function public.rpc_convert_lead_to_member("),
     true
   );
-  assert.equal(migrationSource.includes("insert into public.member_health_profiles ("), true);
-  assert.equal(migrationSource.includes("left join public.member_command_centers mcc"), true);
-  assert.equal(migrationSource.includes("left join public.member_attendance_schedules mas"), true);
-  assert.equal(migrationSource.includes("left join public.member_health_profiles mhp"), true);
+  assert.equal(migrationSource.includes("create or replace function public.rpc_create_lead_with_member_conversion("), true);
+  assert.equal(migrationSource.includes("Lead conversion did not persist member_command_centers"), true);
+  assert.equal(migrationSource.includes("Lead conversion did not persist member_attendance_schedules"), true);
+  assert.equal(migrationSource.includes("Lead conversion did not persist member_health_profiles"), true);
+  assert.equal(migrationSource.includes("Lead creation with conversion did not persist member_health_profiles"), true);
 });

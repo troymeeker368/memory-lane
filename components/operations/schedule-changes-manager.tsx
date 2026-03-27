@@ -252,9 +252,19 @@ export function ScheduleChangesManager({
       successMessage: `Schedule change marked as ${status}.`,
       errorMessage: "Unable to update schedule change.",
       onSuccess: async (result) => {
-        const data = ((result.data as { row?: ScheduleChangeRow } | null) ?? null)?.row ?? null;
-        if (data) {
-          setLocalRows((current) => current.map((row) => (row.id === data.id ? data : row)));
+        const data = ((result.data as {
+          row?: ScheduleChangeRow;
+          memberSchedule?: { memberId: string; days: ScheduleWeekdayKey[] };
+        } | null) ?? null);
+        const row = data?.row ?? null;
+        if (row) {
+          setLocalRows((current) => current.map((currentRow) => (currentRow.id === row.id ? row : currentRow)));
+        }
+        if (data?.memberSchedule) {
+          setLocalSchedulesById((current) => ({
+            ...current,
+            [data.memberSchedule!.memberId]: data.memberSchedule!.days
+          }));
         }
         setFeedback(result.message);
         router.refresh();

@@ -7,16 +7,14 @@ import { getCurrentProfile } from "@/lib/auth";
 import { mutationError, mutationOk } from "@/lib/mutations/result";
 import {
   ensureMemberAttendanceScheduleSupabase,
-  type MemberAttendanceScheduleRow,
-  updateMemberAttendanceScheduleSupabase
+  type MemberAttendanceScheduleRow
 } from "@/lib/services/member-command-center-write";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import {
   getScheduleChangeSupabase,
-  createScheduleChangeSupabase,
+  saveScheduleChangeWithAttendanceSyncSupabase,
   type ScheduleWeekdayKey,
-  updateScheduleChangeStatusSupabase,
-  updateScheduleChangeSupabase
+  updateScheduleChangeStatusWithAttendanceSyncSupabase,
 } from "@/lib/services/schedule-changes-supabase";
 import {
   SCHEDULE_CHANGE_STATUSES,
@@ -94,35 +92,6 @@ function getMccScheduleDays(schedule: MemberAttendanceScheduleRow | null | undef
     throw new Error("Unable to load member schedule from MCC.");
   }
   return SCHEDULE_WEEKDAY_KEYS.filter((day) => Boolean(schedule[day]));
-}
-
-async function applyAttendanceScheduleDays(input: {
-  memberId: string;
-  days: string[];
-  actorUserId: string;
-  actorName: string;
-}) {
-  const schedule = await ensureMemberAttendanceScheduleSupabase(input.memberId);
-  if (!schedule) {
-    throw new Error(`Unable to resolve attendance schedule for member ${input.memberId}.`);
-  }
-
-  const daySet = new Set(input.days);
-  const attendanceDaysPerWeek = SCHEDULE_WEEKDAY_KEYS.filter((day) => daySet.has(day)).length;
-  const updated = await updateMemberAttendanceScheduleSupabase(schedule.id, {
-    monday: daySet.has("monday"),
-    tuesday: daySet.has("tuesday"),
-    wednesday: daySet.has("wednesday"),
-    thursday: daySet.has("thursday"),
-    friday: daySet.has("friday"),
-    attendance_days_per_week: attendanceDaysPerWeek,
-    updated_by_user_id: input.actorUserId,
-    updated_by_name: input.actorName
-  });
-  if (!updated) {
-    throw new Error(`Unable to update attendance schedule for member ${input.memberId}.`);
-  }
-  return updated;
 }
 
 async function getCurrentMemberScheduleDays(memberId: string) {
@@ -223,53 +192,25 @@ export async function upsertScheduleChangeAction(raw: z.infer<typeof upsertSched
       return mutationError(validationError);
     }
 
-    const saved = existing
-      ? await updateScheduleChangeSupabase({
-          id: existing.id,
-          memberId,
-          changeType: payload.data.changeType,
-          effectiveStartDate,
-          effectiveEndDate,
-          originalDays,
-          newDays,
-          suspendBaseSchedule,
-          reason: payload.data.reason,
-          notes: payload.data.notes || null
-        })
-      : await createScheduleChangeSupabase({
-          memberId,
-          changeType: payload.data.changeType,
-          effectiveStartDate,
-          effectiveEndDate,
-          originalDays,
-          newDays,
-          suspendBaseSchedule,
-          reason: payload.data.reason,
-          notes: payload.data.notes || null,
-          enteredBy: actor.full_name,
-          enteredByUserId: actor.id
-        });
+    const saved = await saveScheduleChangeWithAttendanceSyncSupabase({
+      id: existing?.id ?? null,
+      memberId,
+      changeType: payload.data.changeType,
+      effectiveStartDate,
+      effectiveEndDate,
+      originalDays,
+      newDays,
+      suspendBaseSchedule,
+      reason: payload.data.reason,
+      notes: payload.data.notes || null,
+      enteredBy: existing?.entered_by ?? actor.full_name,
+      enteredByUserId: existing?.entered_by_user_id ?? actor.id,
+      actorName: actor.full_name,
+      actorUserId: actor.id
+    });
 
     if (!saved) {
       return mutationError(existing ? "Schedule change not found." : "Unable to save schedule change.");
-    }
-
-    const wasPermanent = existing?.change_type === "Permanent Schedule Change";
-    const isPermanent = saved.change_type === "Permanent Schedule Change";
-    if (isPermanent) {
-      await applyAttendanceScheduleDays({
-        memberId,
-        days: saved.new_days,
-        actorUserId: actor.id,
-        actorName: actor.full_name
-      });
-    } else if (wasPermanent) {
-      await applyAttendanceScheduleDays({
-        memberId,
-        days: existing.original_days,
-        actorUserId: actor.id,
-        actorName: actor.full_name
-      });
     }
 
     revalidateScheduleChangeWorkflows(memberId);
@@ -294,7 +235,7 @@ export async function setScheduleChangeStatusAction(raw: z.infer<typeof schedule
       return mutationError("Invalid schedule change action.");
     }
 
-    const updated = await updateScheduleChangeStatusSupabase({
+    const updated = await updateScheduleChangeStatusWithAttendanceSyncSupabase({
       id: payload.data.id,
       status: payload.data.status as ScheduleChangeStatus,
       actorName: actor.full_name,
@@ -305,9 +246,11 @@ export async function setScheduleChangeStatusAction(raw: z.infer<typeof schedule
     }
 
     revalidateScheduleChangeWorkflows(updated.member_id);
+    const memberSchedule = await getCurrentMemberScheduleDays(updated.member_id);
     return mutationOk(
       {
-        row: updated
+        row: updated,
+        memberSchedule
       },
       `Schedule change marked as ${payload.data.status}.`
     );

@@ -10,6 +10,7 @@ import { recordImmediateSystemAlert } from "@/lib/services/workflow-observabilit
 import {
   claimQueuedPhysicianOrderPostSignSyncRows,
   emitAgedPostSignSyncQueueAlerts,
+  invokeRunSignedPofPostSignSyncRpc,
   invokeSignPhysicianOrderRpc,
   invokeSyncSignedPofToMemberClinicalProfileRpc,
   markPostSignQueueCompleted,
@@ -21,7 +22,6 @@ import {
 } from "@/lib/services/enrollment-packet-intake-staging";
 import {
   calculateRenewalDueDate,
-  addDaysDateOnly,
   applyEnrollmentPacketPrefillToDraft,
   buildPostSignSyncError,
   clean,
@@ -56,10 +56,6 @@ const CREATE_DRAFT_POF_FROM_INTAKE_MIGRATION = "0055_intake_draft_pof_atomic_cre
 async function loadPofDocumentPdfBuilder() {
   const { buildPofDocumentPdfBytes } = await import("@/lib/services/pof-document-pdf");
   return buildPofDocumentPdfBytes;
-}
-
-async function loadMarWorkflowService() {
-  return import("@/lib/services/mar-workflow");
 }
 
 async function loadIntakeToPofMapping() {
@@ -100,35 +96,55 @@ export type SignPhysicianOrderResult = {
   lastError: string | null;
 };
 
-async function runPostSignSyncCascade(input: {
+function normalizeSignedPofPostSignFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : "Unknown post-sign sync error.";
+  const stepMatch = message.match(/(?:^|\s)(mhp_mcc|mar_schedules):\s*(.+?)(?:\s+\(ref [^)]+\))?$/i);
+  if (stepMatch) {
+    return {
+      step: stepMatch[1].toLowerCase() as Extract<PofPostSignSyncStep, "mhp_mcc" | "mar_schedules">,
+      message: stepMatch[2].trim()
+    };
+  }
+  return {
+    step: "mar_schedules" as const,
+    message
+  };
+}
+
+async function runSignedPofPostSignBoundary(input: {
   pofId: string;
-  memberId: string;
   syncTimestamp: string;
   serviceRole?: boolean;
 }) {
-  let step: PofPostSignSyncStep = "mhp_mcc";
   try {
-    await syncMemberHealthProfileFromSignedPhysicianOrder(input.pofId, { serviceRole: input.serviceRole });
-    step = "mar_schedules";
-    const scheduleStartDate = toEasternDate(input.syncTimestamp);
-    const scheduleEndDate = addDaysDateOnly(scheduleStartDate, 30);
-    const { generateMarSchedulesForMember } = await loadMarWorkflowService();
-    await generateMarSchedulesForMember({
-      memberId: input.memberId,
-      startDate: scheduleStartDate,
-      endDate: scheduleEndDate,
-      serviceRole: input.serviceRole ?? true
+    await invokeRunSignedPofPostSignSyncRpc({
+      pofId: input.pofId,
+      syncTimestamp: input.syncTimestamp,
+      serviceRole: input.serviceRole
     });
     return {
       ok: true as const
     };
   } catch (error) {
+    const normalized = normalizeSignedPofPostSignFailure(error);
     return {
       ok: false as const,
-      step,
-      errorMessage: buildPostSignSyncError(step, error)
+      step: normalized.step,
+      errorMessage: buildPostSignSyncError(normalized.step, normalized.message)
     };
   }
+}
+
+export async function runSignedPhysicianOrderPostSignWorkflow(input: {
+  pofId: string;
+  syncTimestamp?: string | null;
+  serviceRole?: boolean;
+}) {
+  return invokeRunSignedPofPostSignSyncRpc({
+    pofId: input.pofId,
+    syncTimestamp: clean(input.syncTimestamp) ?? toEasternISO(),
+    serviceRole: input.serviceRole
+  });
 }
 
 type ResolvePhysicianOrderMemberOptions = {
@@ -555,9 +571,8 @@ export async function processSignedPhysicianOrderPostSignSync(input: {
   serviceRole?: boolean;
 }): Promise<SignPhysicianOrderResult> {
   const attemptCount = Math.max(0, Number(input.queueAttemptCount ?? 0)) + 1;
-  const postSign = await runPostSignSyncCascade({
+  const postSign = await runSignedPofPostSignBoundary({
     pofId: input.pofId,
-    memberId: input.memberId,
     syncTimestamp: input.signedAtIso,
     serviceRole: input.serviceRole
   });
@@ -710,9 +725,8 @@ export async function retryQueuedPhysicianOrderPostSignSync(input?: {
   for (const row of rows) {
     processed += 1;
     const attemptCount = Math.max(0, Number(row.attempt_count ?? 0)) + 1;
-    const postSign = await runPostSignSyncCascade({
+    const postSign = await runSignedPofPostSignBoundary({
       pofId: row.physician_order_id,
-      memberId: row.member_id,
       syncTimestamp: now,
       serviceRole
     });

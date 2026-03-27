@@ -647,7 +647,7 @@ test("lead conversion canonical SQL restores member health profile shell creatio
   );
 });
 
-test("canonical enrollment packet submit path emits the submitted workflow milestone and lead conversion repairs shell rows", () => {
+test("canonical enrollment packet submit path emits the submitted workflow milestone and relies on strict lead conversion RPC shells", () => {
   const publicRuntimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
   const completionCascadeSource = readWorkspaceFile("lib/services/enrollment-packet-completion-cascade.ts");
   const leadConversionSource = readWorkspaceFile("lib/services/sales-lead-conversion-supabase.ts");
@@ -656,7 +656,8 @@ test("canonical enrollment packet submit path emits the submitted workflow miles
   assert.equal(publicRuntimeSource.includes("runEnrollmentPacketCompletionCascade"), true);
   assert.equal(completionCascadeSource.includes("recordEnrollmentPacketSubmittedMilestone"), true);
   assert.equal(mappingRuntimeSource.includes('eventType: "enrollment_packet_submitted"'), true);
-  assert.equal(leadConversionSource.includes("ensureLeadConversionMemberShellRows"), true);
+  assert.equal(leadConversionSource.includes("ensureLeadConversionMemberShellRows"), false);
+  assert.equal(leadConversionSource.includes("invokeLeadConversionRpcWithFallback"), true);
 });
 
 test("canonical submit runtime emits enrollment packet submitted workflow notifications", () => {
