@@ -259,6 +259,7 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
   let leadId = payload.data.leadId?.trim() || "";
   let canonicalMemberId: string | null = null;
   let wonConversionHandled = false;
+  let createRootDedupeKey: string | null = null;
   if (leadId) {
     try {
       const canonicalLead = await resolveSalesLeadId(leadId, "saveSalesLeadAction");
@@ -313,6 +314,7 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
         leadPatch
       });
       leadId = conversion.leadId;
+      createRootDedupeKey = `lead-create-convert:${conversion.idempotencyKey}`;
       wonConversionHandled = true;
     } catch (error) {
       return { error: error instanceof Error ? error.message : "Unable to create and convert lead." };
@@ -324,6 +326,7 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
         createdByUserId: profile.id
       });
       leadId = created.id;
+      createRootDedupeKey = `lead-create:${created.idempotencyKey}`;
     } catch (error) {
       return { error: error instanceof Error ? error.message : "Unable to create lead." };
     }
@@ -360,7 +363,8 @@ export async function saveSalesLeadAction(raw: z.infer<typeof salesLeadSchema>) 
         stage,
         status,
         leadSource: payload.data.leadSource
-      }
+      },
+      dedupeKey: payload.data.leadId ? null : createRootDedupeKey
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to write lead audit log.";

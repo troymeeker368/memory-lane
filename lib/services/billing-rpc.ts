@@ -267,10 +267,13 @@ export async function invokeCreateBillingExportRpc(input: {
 }) {
   const supabase = await createClient({ serviceRole: true });
   try {
-    await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_CREATE_BILLING_EXPORT, {
+    const result = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_CREATE_BILLING_EXPORT, {
       p_export_job: input.exportJobPayload,
       p_invoice_ids: input.invoiceIds
     });
+    return Array.isArray(result)
+      ? String(result[0] ?? input.exportJobPayload.id)
+      : String(result ?? input.exportJobPayload.id);
   } catch (error) {
     if (isMissingRpcFunctionError(error, RPC_CREATE_BILLING_EXPORT)) {
       throw new Error(buildMissingBillingAtomicWorkflowMessage(RPC_CREATE_BILLING_EXPORT) + buildRpcDiagnosticSuffix(error));

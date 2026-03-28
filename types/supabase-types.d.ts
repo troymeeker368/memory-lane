@@ -299,6 +299,7 @@ export type Database = {
           actor_role: Database["public"]["Enums"]["app_role"] | null
           actor_user_id: string | null
           created_at: string
+          dedupe_key: string | null
           details: Json | null
           entity_id: string | null
           entity_type: string
@@ -309,6 +310,7 @@ export type Database = {
           actor_role?: Database["public"]["Enums"]["app_role"] | null
           actor_user_id?: string | null
           created_at?: string
+          dedupe_key?: string | null
           details?: Json | null
           entity_id?: string | null
           entity_type: string
@@ -319,6 +321,7 @@ export type Database = {
           actor_role?: Database["public"]["Enums"]["app_role"] | null
           actor_user_id?: string | null
           created_at?: string
+          dedupe_key?: string | null
           details?: Json | null
           entity_id?: string | null
           entity_type?: string
@@ -582,6 +585,7 @@ export type Database = {
           generated_at: string
           generated_by: string | null
           id: string
+          idempotency_key: string | null
           notes: string | null
           quickbooks_detail_level: string
           status: string
@@ -596,6 +600,7 @@ export type Database = {
           generated_at?: string
           generated_by?: string | null
           id?: string
+          idempotency_key?: string | null
           notes?: string | null
           quickbooks_detail_level?: string
           status?: string
@@ -610,6 +615,7 @@ export type Database = {
           generated_at?: string
           generated_by?: string | null
           id?: string
+          idempotency_key?: string | null
           notes?: string | null
           quickbooks_detail_level?: string
           status?: string
@@ -3253,6 +3259,7 @@ export type Database = {
           member_id: string
           packet_id: string
           upload_category: string
+          upload_fingerprint: string | null
           uploaded_at: string
         }
         Insert: {
@@ -3267,6 +3274,7 @@ export type Database = {
           member_id: string
           packet_id: string
           upload_category?: string
+          upload_fingerprint?: string | null
           uploaded_at?: string
         }
         Update: {
@@ -3281,6 +3289,7 @@ export type Database = {
           member_id?: string
           packet_id?: string
           upload_category?: string
+          upload_fingerprint?: string | null
           uploaded_at?: string
         }
         Relationships: [
@@ -3886,6 +3895,7 @@ export type Database = {
           independence_notes: string | null
           joy_sparks: string | null
           lead_id: string | null
+          creation_idempotency_key: string | null
           medication_management_status: string | null
           member_id: string
           mobility_aids: string | null
@@ -3954,6 +3964,7 @@ export type Database = {
           independence_notes?: string | null
           joy_sparks?: string | null
           lead_id?: string | null
+          creation_idempotency_key?: string | null
           medication_management_status?: string | null
           member_id: string
           mobility_aids?: string | null
@@ -4022,6 +4033,7 @@ export type Database = {
           independence_notes?: string | null
           joy_sparks?: string | null
           lead_id?: string | null
+          creation_idempotency_key?: string | null
           medication_management_status?: string | null
           member_id?: string
           mobility_aids?: string | null
@@ -4379,6 +4391,7 @@ export type Database = {
           partner_id: string | null
           referral_name: string | null
           referral_source_id: string | null
+          idempotency_key: string | null
           stage: string
           stage_updated_at: string
           status: Database["public"]["Enums"]["lead_status"]
@@ -4411,6 +4424,7 @@ export type Database = {
           partner_id?: string | null
           referral_name?: string | null
           referral_source_id?: string | null
+          idempotency_key?: string | null
           stage: string
           stage_updated_at?: string
           status?: Database["public"]["Enums"]["lead_status"]
@@ -4443,6 +4457,7 @@ export type Database = {
           partner_id?: string | null
           referral_name?: string | null
           referral_source_id?: string | null
+          idempotency_key?: string | null
           stage?: string
           stage_updated_at?: string
           status?: Database["public"]["Enums"]["lead_status"]
@@ -4997,6 +5012,7 @@ export type Database = {
       }
       medication_orders: {
         Row: {
+          creation_idempotency_key: string | null
           created_at: string
           created_by: string | null
           created_by_name: string | null
@@ -5029,6 +5045,7 @@ export type Database = {
           verified_by_name: string | null
         }
         Insert: {
+          creation_idempotency_key?: string | null
           created_at?: string
           created_by?: string | null
           created_by_name?: string | null
@@ -5061,6 +5078,7 @@ export type Database = {
           verified_by_name?: string | null
         }
         Update: {
+          creation_idempotency_key?: string | null
           created_at?: string
           created_by?: string | null
           created_by_name?: string | null
@@ -8422,6 +8440,7 @@ export type Database = {
           actor_user_id: string | null
           correlation_id: string | null
           created_at: string
+          dedupe_key: string | null
           entity_id: string | null
           entity_type: string
           event_type: string
@@ -8437,6 +8456,7 @@ export type Database = {
           actor_user_id?: string | null
           correlation_id?: string | null
           created_at?: string
+          dedupe_key?: string | null
           entity_id?: string | null
           entity_type: string
           event_type: string
@@ -8452,6 +8472,7 @@ export type Database = {
           actor_user_id?: string | null
           correlation_id?: string | null
           created_at?: string
+          dedupe_key?: string | null
           entity_id?: string | null
           entity_type?: string
           event_type?: string
@@ -10284,6 +10305,7 @@ export type Database = {
           p_actor_user_id: string
           p_business_status: string
           p_created_by_user_id: string
+          p_idempotency_key?: string
           p_lead_patch?: Json
           p_member_display_name?: string
           p_member_dob?: string
@@ -10421,6 +10443,7 @@ export type Database = {
           p_now?: string
         }
         Returns: {
+          duplicate_safe: boolean
           followup_due_at: string
           followup_status: string
           log_id: string
@@ -10493,6 +10516,7 @@ export type Database = {
           complete: boolean
           completed_by: string | null
           completed_by_user_id: string | null
+          creation_idempotency_key: string | null
           created_at: string
           diet_other: string | null
           diet_restrictions_notes: string | null
@@ -10565,6 +10589,7 @@ export type Database = {
           p_actor_user_id: string
           p_business_status: string
           p_created_by_user_id: string
+          p_idempotency_key?: string
           p_lead_patch?: Json
           p_member_display_name?: string
           p_member_dob?: string

@@ -186,8 +186,7 @@ function buildLegacyLeadSavePayload(input: LegacyLeadSaveInput): Parameters<type
     closedDate: isLost ? input.closedDate ?? toEasternDate() : "",
     duplicateDecision: "" as const,
     mergeTargetLeadId: "",
-    allowUnlinkedReferral: input.allowUnlinkedReferral ?? false,
-    skipDuplicateReview: true
+    allowUnlinkedReferral: input.allowUnlinkedReferral ?? false
   };
 }
 

@@ -20,6 +20,7 @@ export type WorkflowEventInput = {
   metadata?: Record<string, JsonValue> | null;
   requestId?: string | null;
   correlationId?: string | null;
+  dedupeKey?: string | null;
 };
 
 function normalizeText(value: string | null | undefined) {
@@ -53,7 +54,8 @@ export async function recordWorkflowEvent(input: WorkflowEventInput) {
       severity: input.severity ?? null,
       metadata: input.metadata ?? {},
       request_id: input.requestId ?? null,
-      correlation_id: input.correlationId ?? null
+      correlation_id: input.correlationId ?? null,
+      dedupe_key: input.dedupeKey ?? null
     },
     { required: false }
   );

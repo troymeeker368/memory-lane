@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
-
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
+import { buildIdempotencyHash } from "@/lib/services/idempotency";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import {
   type MarAdministrationHistoryRow,
@@ -85,17 +84,73 @@ function buildPrnAdministrationIdempotencyKey(input: {
   status: MarPrnStatus;
   submissionId?: string | null;
 }) {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        medicationOrderId: input.medicationOrderId,
-        administeredAt: input.administeredAt,
-        indication: input.indication.trim().toLowerCase(),
-        status: input.status,
-        submissionId: clean(input.submissionId)?.toLowerCase() ?? null
-      })
-    )
-    .digest("hex");
+  return buildIdempotencyHash("mar-prn:administration", {
+    medicationOrderId: input.medicationOrderId,
+    administeredAt: input.administeredAt,
+    indication: input.indication.trim().toLowerCase(),
+    status: input.status,
+    submissionId: clean(input.submissionId)?.toLowerCase() ?? null
+  });
+}
+
+function buildPrnOrderCreationIdempotencyKey(input: {
+  memberId: string;
+  order: {
+    physicianOrderId?: string | null;
+    pofMedicationId?: string | null;
+    sourceMedicationId?: string | null;
+    medicationName: string;
+    strength?: string | null;
+    form?: string | null;
+    route?: string | null;
+    directions: string;
+    prnReason?: string | null;
+    frequencyText?: string | null;
+    minIntervalMinutes?: number | null;
+    maxDosesPer24h?: number | null;
+    maxDailyDose?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    providerName: string;
+    requiresReview?: boolean;
+    requiresEffectivenessFollowup?: boolean;
+  };
+  administration: {
+    administeredAt: string;
+    indication: string;
+    status: MarPrnStatus;
+    submissionId?: string | null;
+  };
+}) {
+  return buildIdempotencyHash("mar-prn:manual-order-root", {
+    memberId: input.memberId,
+    order: {
+      physicianOrderId: clean(input.order.physicianOrderId),
+      pofMedicationId: clean(input.order.pofMedicationId),
+      sourceMedicationId: clean(input.order.sourceMedicationId),
+      medicationName: clean(input.order.medicationName),
+      strength: clean(input.order.strength),
+      form: clean(input.order.form),
+      route: clean(input.order.route),
+      directions: clean(input.order.directions),
+      prnReason: clean(input.order.prnReason),
+      frequencyText: clean(input.order.frequencyText),
+      minIntervalMinutes: input.order.minIntervalMinutes ?? null,
+      maxDosesPer24h: input.order.maxDosesPer24h ?? null,
+      maxDailyDose: clean(input.order.maxDailyDose),
+      startDate: clean(input.order.startDate),
+      endDate: clean(input.order.endDate),
+      providerName: clean(input.order.providerName),
+      requiresReview: input.order.requiresReview ?? true,
+      requiresEffectivenessFollowup: input.order.requiresEffectivenessFollowup ?? true
+    },
+    administration: {
+      administeredAt: input.administration.administeredAt,
+      indication: input.administration.indication.trim().toLowerCase(),
+      status: input.administration.status,
+      submissionId: clean(input.administration.submissionId)?.toLowerCase() ?? null
+    }
+  });
 }
 
 function buildOrderOption(row: MedicationOrderRow, memberName: string): MarPrnOption {
@@ -352,43 +407,46 @@ export async function documentPrnMedicationAdministration(input: {
   }
 
   const orderOption = await loadPrnMedicationOrderOptionById(row.medication_order_id, input.serviceRole ?? true);
-  await recordWorkflowEvent({
-    eventType: "mar_administration_documented",
-    entityType: "med_administration_log",
-    entityId: row.log_id,
-    actorType: "user",
-    actorUserId: input.actor.userId,
-    status: input.status.toLowerCase(),
-    severity: input.status === "Given" ? "low" : "medium",
-    metadata: {
-      member_id: row.member_id,
-      medication_order_id: row.medication_order_id,
-      pof_medication_id: orderOption.pofMedicationId,
-      indication,
-      followup_status: row.followup_status
-    }
-  });
-  try {
-    await recordWorkflowMilestone({
-      event: {
-        event_type: "mar_administration_documented",
-        entity_type: "med_administration_log",
-        entity_id: row.log_id,
-        actor_type: "user",
-        actor_id: input.actor.userId,
-        actor_user_id: input.actor.userId,
-        status: input.status.toLowerCase(),
-        severity: input.status === "Given" ? "low" : "medium",
-        metadata: {
-          member_id: row.member_id,
-          medication_order_id: row.medication_order_id,
-          indication,
-          followup_status: row.followup_status
-        }
+  if (!row.duplicate_safe) {
+    await recordWorkflowEvent({
+      eventType: "mar_administration_documented",
+      entityType: "med_administration_log",
+      entityId: row.log_id,
+      actorType: "user",
+      actorUserId: input.actor.userId,
+      status: input.status.toLowerCase(),
+      severity: input.status === "Given" ? "low" : "medium",
+      dedupeKey: `mar-prn-administration:${idempotencyKey}`,
+      metadata: {
+        member_id: row.member_id,
+        medication_order_id: row.medication_order_id,
+        pof_medication_id: orderOption.pofMedicationId,
+        indication,
+        followup_status: row.followup_status
       }
     });
-  } catch (error) {
-    console.error("[mar-prn-workflow] unable to emit PRN administration milestone", error);
+    try {
+      await recordWorkflowMilestone({
+        event: {
+          event_type: "mar_administration_documented",
+          entity_type: "med_administration_log",
+          entity_id: row.log_id,
+          actor_type: "user",
+          actor_id: input.actor.userId,
+          actor_user_id: input.actor.userId,
+          status: input.status.toLowerCase(),
+          severity: input.status === "Given" ? "low" : "medium",
+          metadata: {
+            member_id: row.member_id,
+            medication_order_id: row.medication_order_id,
+            indication,
+            followup_status: row.followup_status
+          }
+        }
+      });
+    } catch (error) {
+      console.error("[mar-prn-workflow] unable to emit PRN administration milestone", error);
+    }
   }
 
   return {
@@ -449,8 +507,18 @@ export async function createPrnMedicationOrderAndAdministration(input: {
   const administeredAt = clean(input.administration.administeredAtIso) ?? toEasternISO();
   const indication = clean(input.administration.indication);
   if (!indication) throw new Error("Indication is required.");
-  const idempotencyKey = buildPrnAdministrationIdempotencyKey({
-    medicationOrderId: `${memberId}:${clean(input.order.medicationName) ?? "prn-order"}`,
+  const orderCreationIdempotencyKey = buildPrnOrderCreationIdempotencyKey({
+    memberId,
+    order: input.order,
+    administration: {
+      administeredAt,
+      indication,
+      status: input.administration.status,
+      submissionId: input.administration.submissionId
+    }
+  });
+  const administrationIdempotencyKey = buildPrnAdministrationIdempotencyKey({
+    medicationOrderId: orderCreationIdempotencyKey,
     administeredAt,
     indication,
     status: input.administration.status,
@@ -486,7 +554,8 @@ export async function createPrnMedicationOrderAndAdministration(input: {
         end_date: clean(input.order.endDate),
         provider_name: clean(input.order.providerName),
         requires_review: input.order.requiresReview ?? true,
-        requires_effectiveness_followup: input.order.requiresEffectivenessFollowup ?? true
+        requires_effectiveness_followup: input.order.requiresEffectivenessFollowup ?? true,
+        creation_idempotency_key: orderCreationIdempotencyKey
       },
       p_admin_payload: {
         admin_datetime: administeredAt,
@@ -497,7 +566,7 @@ export async function createPrnMedicationOrderAndAdministration(input: {
         followup_due_at: clean(input.administration.followupDueAtIso),
         status: input.administration.status,
         notes: clean(input.administration.notes),
-        idempotency_key: idempotencyKey
+        idempotency_key: administrationIdempotencyKey
       },
       p_actor_user_id: input.actor.userId,
       p_actor_name: input.actor.fullName,
@@ -514,22 +583,25 @@ export async function createPrnMedicationOrderAndAdministration(input: {
     throw new Error("PRN order RPC did not return the saved order and administration.");
   }
   const orderOption = await loadPrnMedicationOrderOptionById(row.medication_order_id, input.serviceRole ?? true);
-  await recordWorkflowEvent({
-    eventType: "mar_prn_order_created",
-    entityType: "medication_order",
-    entityId: row.medication_order_id,
-    actorType: "user",
-    actorUserId: input.actor.userId,
-    status: "created",
-    severity: orderOption.requiresReview ? "medium" : "low",
-    metadata: {
-      member_id: row.member_id,
-      medication_name: orderOption.medicationName,
-      order_source: orderOption.orderSource,
-      requires_review: orderOption.requiresReview,
-      administration_log_id: row.log_id
-    }
-  });
+  if (!row.duplicate_safe) {
+    await recordWorkflowEvent({
+      eventType: "mar_prn_order_created",
+      entityType: "medication_order",
+      entityId: row.medication_order_id,
+      actorType: "user",
+      actorUserId: input.actor.userId,
+      status: "created",
+      severity: orderOption.requiresReview ? "medium" : "low",
+      dedupeKey: `mar-prn-order-created:${orderCreationIdempotencyKey}`,
+      metadata: {
+        member_id: row.member_id,
+        medication_name: orderOption.medicationName,
+        order_source: orderOption.orderSource,
+        requires_review: orderOption.requiresReview,
+        administration_log_id: row.log_id
+      }
+    });
+  }
   return {
     medicationOrderId: row.medication_order_id,
     administrationId: row.log_id,
@@ -560,13 +632,15 @@ export async function documentPrnFollowupAssessment(input: {
     medication_order_id: string;
     followup_due_at: string | null;
     followup_status: MarPrnFollowupStatus;
+    duplicate_safe: boolean;
   }>;
+  const outcomeAssessedAt = clean(input.outcomeAssessedAtIso) ?? toEasternISO();
   try {
     rpcResult = await invokeSupabaseRpcOrThrow(supabase, COMPLETE_PRN_FOLLOWUP_RPC, {
       p_log_id: input.administrationId,
       p_effectiveness_result: input.prnOutcome,
       p_followup_notes: clean(input.prnFollowupNote),
-      p_assessed_at: clean(input.outcomeAssessedAtIso) ?? toEasternISO(),
+      p_assessed_at: outcomeAssessedAt,
       p_now: toEasternISO()
     });
   } catch (error) {
@@ -577,43 +651,52 @@ export async function documentPrnFollowupAssessment(input: {
   }
   const row = rpcResult[0];
   if (!row?.log_id || !row.member_id) throw new Error("PRN follow-up RPC did not return the saved log.");
-  await recordWorkflowEvent({
-    eventType: "mar_prn_followup_completed",
-    entityType: "med_administration_log",
-    entityId: row.log_id,
-    actorType: "user",
-    actorUserId: input.actor.userId,
-    status: input.prnOutcome.toLowerCase(),
-    severity: input.prnOutcome === "Ineffective" ? "high" : "low",
-    metadata: {
-      member_id: row.member_id,
-      medication_order_id: row.medication_order_id,
-      followup_status: row.followup_status
-    }
+  const followupDedupeKey = buildIdempotencyHash("mar-prn:followup", {
+    administrationId: row.log_id,
+    prnOutcome: input.prnOutcome,
+    prnFollowupNote: clean(input.prnFollowupNote),
+    outcomeAssessedAt
   });
-  if (input.prnOutcome === "Ineffective") {
-    try {
-      await recordWorkflowMilestone({
-        event: {
-          eventType: "action_required",
-          entityType: "med_administration_log",
-          entityId: row.log_id,
-          actorType: "user",
-          actorUserId: input.actor.userId,
-          status: "open",
-          severity: "high",
-          metadata: {
-            member_id: row.member_id,
-            medication_order_id: row.medication_order_id,
-            title: "PRN Follow-up Needed",
-            message: "A PRN medication was documented as ineffective. Review the member and complete follow-up now.",
-            priority: "high",
-            action_url: `/health/mar?memberId=${row.member_id}`
+  if (!row.duplicate_safe) {
+    await recordWorkflowEvent({
+      eventType: "mar_prn_followup_completed",
+      entityType: "med_administration_log",
+      entityId: row.log_id,
+      actorType: "user",
+      actorUserId: input.actor.userId,
+      status: input.prnOutcome.toLowerCase(),
+      severity: input.prnOutcome === "Ineffective" ? "high" : "low",
+      dedupeKey: `mar-prn-followup:${followupDedupeKey}`,
+      metadata: {
+        member_id: row.member_id,
+        medication_order_id: row.medication_order_id,
+        followup_status: row.followup_status
+      }
+    });
+    if (input.prnOutcome === "Ineffective") {
+      try {
+        await recordWorkflowMilestone({
+          event: {
+            eventType: "action_required",
+            entityType: "med_administration_log",
+            entityId: row.log_id,
+            actorType: "user",
+            actorUserId: input.actor.userId,
+            status: "open",
+            severity: "high",
+            metadata: {
+              member_id: row.member_id,
+              medication_order_id: row.medication_order_id,
+              title: "PRN Follow-up Needed",
+              message: "A PRN medication was documented as ineffective. Review the member and complete follow-up now.",
+              priority: "high",
+              action_url: `/health/mar?memberId=${row.member_id}`
+            }
           }
-        }
-      });
-    } catch (error) {
-      console.error("[mar-prn-workflow] unable to emit PRN follow-up notification", error);
+        });
+      } catch (error) {
+        console.error("[mar-prn-workflow] unable to emit PRN follow-up notification", error);
+      }
     }
   }
   return {
@@ -622,6 +705,7 @@ export async function documentPrnFollowupAssessment(input: {
     medicationOrderId: row.medication_order_id,
     followupDueAt: row.followup_due_at,
     followupStatus: row.followup_status,
-    outcomeAssessedAt: clean(input.outcomeAssessedAtIso) ?? toEasternISO()
+    outcomeAssessedAt,
+    duplicateSafe: Boolean(row.duplicate_safe)
   };
 }

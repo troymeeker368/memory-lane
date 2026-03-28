@@ -13,6 +13,7 @@ import {
 import { getActivePhysicianOrderForMember, getMemberHealthProfile } from "@/lib/services/physician-orders-read";
 import { requireSignedIntakeAssessment } from "@/lib/services/intake-assessment-esign";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
+import { buildIdempotencyHash } from "@/lib/services/idempotency";
 import { toEasternISO } from "@/lib/timezone";
 
 export type CreateIntakeAssessmentPayload = {
@@ -299,10 +300,16 @@ export async function createIntakeAssessmentWithResponses(input: {
   };
   serviceRole?: boolean;
 }): Promise<IntakeAssessmentForPofPrefill> {
+  const creationIdempotencyKey = buildIdempotencyHash("intake-assessment:create", {
+    actorUserId: input.actor.id,
+    payload: input.payload,
+    responseContext: input.responseContext ?? null
+  });
   const insertPayload = buildIntakeAssessmentInsertPayload({
     payload: input.payload,
     actor: input.actor
   });
+  (insertPayload as Record<string, unknown>).creation_idempotency_key = creationIdempotencyKey;
 
   const responseRows = buildAssessmentResponseRows({
     assessmentId: "pending-rpc-assessment-id",
@@ -360,7 +367,8 @@ export async function createIntakeAssessmentWithResponses(input: {
       lead_id: input.payload.leadId ?? null,
       assessment_date: input.payload.assessmentDate,
       complete: input.payload.complete
-    }
+    },
+    dedupeKey: `intake-assessment-created:${creationIdempotencyKey}`
   });
 
   return assessment;

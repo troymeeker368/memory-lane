@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import { buildIdempotencyHash } from "@/lib/services/idempotency";
 import { logSystemEvent } from "@/lib/services/system-event-service";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -47,6 +48,27 @@ function sanitizeAdditionalLeadPatch(additionalLeadPatch?: Record<string, JsonVa
   return patch;
 }
 
+function buildLeadRootIdempotencyKey(input: {
+  workflow: "create-and-convert";
+  createdByUserId: string;
+  requestedStage: string;
+  requestedStatus: string;
+  memberDisplayName: string;
+  memberDob?: string | null;
+  memberEnrollmentDate?: string | null;
+  leadPatch: Record<string, JsonValue>;
+}) {
+  return buildIdempotencyHash(`sales-lead:${input.workflow}`, {
+    createdByUserId: input.createdByUserId,
+    requestedStage: input.requestedStage,
+    requestedStatus: input.requestedStatus,
+    memberDisplayName: input.memberDisplayName,
+    memberDob: input.memberDob ?? null,
+    memberEnrollmentDate: input.memberEnrollmentDate ?? null,
+    leadPatch: sanitizeAdditionalLeadPatch(input.leadPatch)
+  });
+}
+
 async function invokeLeadConversionRpcWithFallback(
   supabase: Awaited<ReturnType<typeof createClient>>,
   input: {
@@ -72,6 +94,10 @@ export interface LeadStageTransitionMemberUpsertResult {
   fromStatus: LeadDbStatus | null;
   toStatus: LeadDbStatus;
   businessStatus: CanonicalLeadBusinessStatus;
+}
+
+export interface LeadRootIdempotencyResult {
+  idempotencyKey: string;
 }
 
 function toLeadConversionResult(data: unknown) {
@@ -145,7 +171,14 @@ export async function applyLeadStageTransitionWithMemberUpsertSupabase(input: {
       source: input.source,
       to_stage: result.toStage,
       to_status: result.toStatus
-    }
+    },
+    dedupe_key: buildIdempotencyHash("lead-member-conversion:event", {
+      leadId: result.leadId,
+      memberId: result.memberId,
+      source: input.source,
+      toStage: result.toStage,
+      toStatus: result.toStatus
+    })
   }, { required: false });
 
   return result;
@@ -164,6 +197,16 @@ export async function createLeadWithMemberConversionSupabase(input: {
   memberEnrollmentDate?: string | null;
   leadPatch: Record<string, JsonValue>;
 }) {
+  const idempotencyKey = buildLeadRootIdempotencyKey({
+    workflow: "create-and-convert",
+    createdByUserId: input.createdByUserId,
+    requestedStage: input.requestedStage,
+    requestedStatus: input.requestedStatus,
+    memberDisplayName: input.memberDisplayName,
+    memberDob: input.memberDob ?? null,
+    memberEnrollmentDate: input.memberEnrollmentDate ?? null,
+    leadPatch: input.leadPatch
+  });
   const resolved = resolveCanonicalLeadTransition({
     requestedStage: input.requestedStage,
     requestedStatus: input.requestedStatus
@@ -183,6 +226,7 @@ export async function createLeadWithMemberConversionSupabase(input: {
     p_member_dob: input.memberDob ?? null,
     p_member_enrollment_date: input.memberEnrollmentDate ?? null,
     p_lead_patch: input.leadPatch as JsonValue,
+    p_idempotency_key: idempotencyKey,
     p_now: toEasternISO(),
     p_today: toEasternDate()
   };
@@ -203,8 +247,14 @@ export async function createLeadWithMemberConversionSupabase(input: {
       source: input.source,
       to_stage: result.toStage,
       to_status: result.toStatus
-    }
+    },
+    dedupe_key: `lead-member-conversion:create:${idempotencyKey}`
   }, { required: false });
 
-  return result;
+  return {
+    ...result,
+    idempotencyKey
+  } satisfies LeadStageTransitionMemberUpsertResult & LeadRootIdempotencyResult;
 }
+
+export { buildLeadRootIdempotencyKey };

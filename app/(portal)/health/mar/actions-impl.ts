@@ -117,7 +117,13 @@ const monthlyMarReportSchema = z.object({
   saveToMemberFiles: z.boolean().optional().default(true)
 });
 
-async function insertAudit(action: string, entityType: string, entityId: string | null, details: Record<string, unknown>) {
+async function insertAudit(
+  action: string,
+  entityType: string,
+  entityId: string | null,
+  details: Record<string, unknown>,
+  dedupeKey?: string | null
+) {
   let actorUserId: string | null = null;
   let actorRole: string | null = null;
   try {
@@ -131,6 +137,7 @@ async function insertAudit(action: string, entityType: string, entityId: string 
       entityType,
       entityId,
       details,
+      dedupeKey: dedupeKey ?? null,
       serviceRole: true
     });
   } catch (error) {
@@ -258,7 +265,7 @@ export async function recordPrnMarAdministrationAction(raw: z.infer<typeof prnAd
         indication: payload.data.indication,
         status: payload.data.status,
         memberId: result.memberId
-      });
+      }, `audit:mar-prn-admin:${result.administrationId}`);
     }
 
     revalidateMarRoutes(result.memberId);
@@ -329,13 +336,15 @@ export async function createPrnOrderAndAdministrationAction(raw: z.infer<typeof 
       serviceRole: true
     });
 
-    await insertAudit("create_log", "medication_order", result.medicationOrderId, {
-      source: "prn-create-and-administer",
-      memberId: result.memberId,
-      medicationName: payload.data.medicationName,
-      providerName: payload.data.providerName,
-      administrationId: result.administrationId
-    });
+    if (!result.duplicateSafe) {
+      await insertAudit("create_log", "medication_order", result.medicationOrderId, {
+        source: "prn-create-and-administer",
+        memberId: result.memberId,
+        medicationName: payload.data.medicationName,
+        providerName: payload.data.providerName,
+        administrationId: result.administrationId
+      }, `audit:mar-prn-order:${result.medicationOrderId}`);
+    }
 
     revalidateMarRoutes(result.memberId);
     return {
@@ -377,12 +386,14 @@ export async function recordPrnOutcomeAction(raw: z.infer<typeof prnOutcomeSchem
       }
     });
 
-    await insertAudit("create_log", "mar_administration", result.administrationId, {
-      source: "prn-outcome",
-      prnOutcome: payload.data.prnOutcome,
-      outcomeAssessedAtIso: payload.data.outcomeAssessedAtIso ?? null,
-      memberId: result.memberId
-    });
+    if (!result.duplicateSafe) {
+      await insertAudit("create_log", "mar_administration", result.administrationId, {
+        source: "prn-outcome",
+        prnOutcome: payload.data.prnOutcome,
+        outcomeAssessedAtIso: payload.data.outcomeAssessedAtIso ?? null,
+        memberId: result.memberId
+      }, `audit:mar-prn-followup:${result.administrationId}`);
+    }
 
     revalidateMarRoutes(result.memberId);
     return {
@@ -391,7 +402,8 @@ export async function recordPrnOutcomeAction(raw: z.infer<typeof prnOutcomeSchem
       memberId: result.memberId,
       prnOutcome: payload.data.prnOutcome,
       prnFollowupNote: payload.data.prnFollowupNote ?? null,
-      outcomeAssessedAt: result.outcomeAssessedAt
+      outcomeAssessedAt: result.outcomeAssessedAt,
+      duplicateSafe: result.duplicateSafe
     };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save PRN outcome." };

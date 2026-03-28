@@ -238,6 +238,7 @@ export type BillingBatchWritePlan = {
 export type BillingExportRpcPayload = {
   id: string;
   billing_batch_id: string;
+  idempotency_key: string;
   export_type: (typeof BILLING_EXPORT_TYPES)[number];
   quickbooks_detail_level: "Summary" | "Detailed";
   file_name: string;

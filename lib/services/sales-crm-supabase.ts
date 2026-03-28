@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
+import { buildIdempotencyHash, isPostgresUniqueViolation } from "@/lib/services/idempotency";
 import {
   getSalesPartnerByIdOrCodeSupabase,
   resolveSalesPartnerAndReferralSupabase,
@@ -24,17 +25,38 @@ export async function createSalesLeadSupabase(input: {
   leadPatch: Record<string, unknown>;
   createdByUserId: string;
 }) {
+  const { stage_updated_at: _ignoredStageUpdatedAt, updated_at: _ignoredUpdatedAt, ...stableLeadPatch } = input.leadPatch;
+  const idempotencyKey = buildIdempotencyHash("sales-lead:create", {
+    createdByUserId: input.createdByUserId,
+    leadPatch: stableLeadPatch
+  });
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("leads")
     .insert({
       ...input.leadPatch,
-      created_by_user_id: input.createdByUserId
+      created_by_user_id: input.createdByUserId,
+      idempotency_key: idempotencyKey
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
-  return { id: String(data.id) };
+  if (!error && data?.id) {
+    return { id: String(data.id), idempotencyKey, duplicateSafe: false };
+  }
+
+  if (isPostgresUniqueViolation(error)) {
+    const { data: existing, error: existingError } = await supabase
+      .from("leads")
+      .select("id")
+      .eq("idempotency_key", idempotencyKey)
+      .maybeSingle();
+    if (existingError) throw new Error(existingError.message);
+    if (existing?.id) {
+      return { id: String(existing.id), idempotencyKey, duplicateSafe: true };
+    }
+  }
+
+  throw new Error(error?.message ?? "Unable to create lead.");
 }
 
 export async function insertSalesAuditLogSupabase(input: {
@@ -44,6 +66,7 @@ export async function insertSalesAuditLogSupabase(input: {
   entityType: string;
   entityId: string;
   details?: Record<string, unknown>;
+  dedupeKey?: string | null;
 }) {
   await insertAuditLogEntry({
     actorUserId: input.actorUserId,
@@ -51,7 +74,8 @@ export async function insertSalesAuditLogSupabase(input: {
     action: input.action,
     entityType: input.entityType,
     entityId: input.entityId,
-    details: input.details ?? {}
+    details: input.details ?? {},
+    dedupeKey: input.dedupeKey ?? null
   });
 }
 

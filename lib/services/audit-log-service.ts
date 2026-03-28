@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { isPostgresUniqueViolation } from "@/lib/services/idempotency";
 
 type AuditLogEntryInput = {
   actorUserId: string | null;
@@ -9,6 +10,7 @@ type AuditLogEntryInput = {
   entityType: string;
   entityId?: string | null;
   details?: Record<string, unknown>;
+  dedupeKey?: string | null;
   serviceRole?: boolean;
 };
 
@@ -20,10 +22,17 @@ export async function insertAuditLogEntry(input: AuditLogEntryInput) {
     action: input.action,
     entity_type: input.entityType,
     entity_id: input.entityId ?? null,
-    details: input.details ?? {}
+    details: input.details ?? {},
+    dedupe_key: input.dedupeKey ?? null
   });
 
   if (error) {
+    if (input.dedupeKey && isPostgresUniqueViolation(error)) {
+      return false;
+    }
+
     throw new Error(`Unable to insert audit log entry (${input.action}): ${error.message}`);
   }
+
+  return true;
 }

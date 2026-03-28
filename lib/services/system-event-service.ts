@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { isPostgresUniqueViolation } from "@/lib/services/idempotency";
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -14,6 +15,7 @@ export type LogSystemEventInput = {
   metadata?: JsonValue | null;
   request_id?: string | null;
   correlation_id?: string | null;
+  dedupe_key?: string | null;
 };
 
 type LogSystemEventOptions = {
@@ -49,10 +51,15 @@ export async function logSystemEvent(
     severity: input.severity ?? null,
     metadata: (input.metadata ?? {}) as JsonValue,
     request_id: input.request_id ?? null,
-    correlation_id: input.correlation_id ?? null
+    correlation_id: input.correlation_id ?? null,
+    dedupe_key: input.dedupe_key ?? null
   });
 
   if (error) {
+    if (input.dedupe_key && isPostgresUniqueViolation(error)) {
+      return false;
+    }
+
     const summary = {
       eventType: input.event_type,
       entityType: input.entity_type,

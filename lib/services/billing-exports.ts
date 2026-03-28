@@ -7,6 +7,7 @@ import { BILLING_EXPORT_TYPES } from "@/lib/services/billing-types";
 import { asNumber, startOfMonth, toAmount } from "@/lib/services/billing-utils";
 import { buildCsvRows, normalizeInvoiceRow, toDataUrl } from "@/lib/services/billing-core";
 import { invokeCreateBillingExportRpc } from "@/lib/services/billing-rpc";
+import { buildIdempotencyHash } from "@/lib/services/idempotency";
 import { formatBillingPayorDisplayName, listBillingPayorContactsForMembers } from "@/lib/services/billing-payor-contacts";
 import { isMissingSchemaObjectError } from "@/lib/services/billing-schema-errors";
 import { recordImmediateSystemAlert, recordWorkflowEvent } from "@/lib/services/workflow-observability";
@@ -27,6 +28,11 @@ export async function createBillingExport(input: {
   try {
     const supabase = await createClient();
     const now = toEasternISO();
+    const idempotencyKey = buildIdempotencyHash("billing-export:create", {
+      billingBatchId: input.billingBatchId,
+      exportType: input.exportType,
+      quickbooksDetailLevel: input.quickbooksDetailLevel
+    });
     const [{ data: batch, error: batchError }, { data: invoices, error: invoiceError }] = await Promise.all([
       supabase.from("billing_batches").select("*").eq("id", input.billingBatchId).maybeSingle(),
       supabase
@@ -48,6 +54,22 @@ export async function createBillingExport(input: {
       throw new Error(invoiceError.message);
     }
     if (!batch) return { ok: false as const, error: "Billing batch not found." };
+
+    const { data: existingExport, error: existingExportError } = await supabase
+      .from("billing_export_jobs")
+      .select("id")
+      .eq("idempotency_key", idempotencyKey)
+      .maybeSingle();
+    if (existingExportError) {
+      if (isMissingSchemaObjectError(existingExportError)) {
+        return { ok: false as const, error: "Billing execution schema is not available yet. Apply Supabase migration 0013 first." };
+      }
+      throw new Error(existingExportError.message);
+    }
+    if (existingExport?.id) {
+      return { ok: true as const, billingExportId: String(existingExport.id), duplicateSafe: true as const };
+    }
+
     const invoiceRows = ((invoices ?? []) as BillingExportInvoiceRow[]).map((row) => normalizeInvoiceRow(row));
     if (invoiceRows.length === 0) {
       return { ok: false as const, error: "No finalized invoices available for export." };
@@ -119,12 +141,13 @@ export async function createBillingExport(input: {
       csv = buildCsvRows(header, body);
     }
 
-    const fileName = `${input.exportType}-${startOfMonth(String((batch as BillingBatchRow).billing_month))}-${Date.now()}.csv`;
-    const billingExportId = randomUUID();
-    await invokeCreateBillingExportRpc({
+    const fileName = `${input.exportType}-${startOfMonth(String((batch as BillingBatchRow).billing_month))}-${input.quickbooksDetailLevel.toLowerCase()}-${idempotencyKey.slice(0, 8)}.csv`;
+    const requestedBillingExportId = randomUUID();
+    const billingExportId = await invokeCreateBillingExportRpc({
       exportJobPayload: {
-        id: billingExportId,
+        id: requestedBillingExportId,
         billing_batch_id: input.billingBatchId,
+        idempotency_key: idempotencyKey,
         export_type: input.exportType,
         quickbooks_detail_level: input.quickbooksDetailLevel,
         file_name: fileName,
@@ -145,6 +168,7 @@ export async function createBillingExport(input: {
       actorType: "user",
       status: "generated",
       severity: "low",
+      dedupeKey: `billing-export-generated:${idempotencyKey}`,
       metadata: {
         billing_export_id: billingExportId,
         export_type: input.exportType,
@@ -154,9 +178,14 @@ export async function createBillingExport(input: {
       }
     });
 
-    return { ok: true as const, billingExportId };
+    return { ok: true as const, billingExportId, duplicateSafe: false as const };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to generate billing export.";
+    const idempotencyKey = buildIdempotencyHash("billing-export:create", {
+      billingBatchId: input.billingBatchId,
+      exportType: input.exportType,
+      quickbooksDetailLevel: input.quickbooksDetailLevel
+    });
     await recordWorkflowEvent({
       eventType: "billing_export_failed",
       entityType: "billing_batch",
@@ -164,6 +193,7 @@ export async function createBillingExport(input: {
       actorType: "user",
       status: "failed",
       severity: "high",
+      dedupeKey: `billing-export-failed:${idempotencyKey}`,
       metadata: {
         export_type: input.exportType,
         quickbooks_detail_level: input.quickbooksDetailLevel,

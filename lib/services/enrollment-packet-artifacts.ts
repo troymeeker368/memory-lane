@@ -1,7 +1,8 @@
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { buildCompletedEnrollmentPacketDocxData } from "@/lib/services/enrollment-packet-docx";
+import { buildIdempotencyHash } from "@/lib/services/idempotency";
 import { type EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 import {
   deleteMemberDocumentObject,
@@ -71,6 +72,7 @@ function buildEnrollmentPacketDocumentSource(input: {
   packetId: string;
   uploadCategory: EnrollmentPacketUploadCategory;
   fileName: string;
+  uploadFingerprint?: string | null;
 }) {
   if (input.uploadCategory === "completed_packet") {
     return `enrollment-packet:${input.packetId}:completed`;
@@ -78,8 +80,28 @@ function buildEnrollmentPacketDocumentSource(input: {
   if (input.uploadCategory === "signature_artifact") {
     return `enrollment-packet:${input.packetId}:signature`;
   }
-  const slug = slugify(input.fileName) || "file";
+  const slug = input.uploadFingerprint?.trim() || slugify(input.fileName) || "file";
   return `enrollment-packet:${input.packetId}:${input.uploadCategory}:${slug}`;
+}
+
+function buildEnrollmentPacketUploadFingerprint(input: {
+  packetId: string;
+  uploadCategory: EnrollmentPacketUploadCategory;
+  fileName: string;
+  contentType: string;
+  bytes: Buffer;
+  clientUploadId?: string | null;
+}) {
+  const byteHash = createHash("sha256").update(input.bytes).digest("hex");
+  return buildIdempotencyHash("enrollment-packet:upload", {
+    packetId: input.packetId,
+    uploadCategory: input.uploadCategory,
+    fileName: safeFileName(input.fileName),
+    contentType: input.contentType.trim(),
+    byteLength: input.bytes.length,
+    byteHash,
+    clientUploadId: String(input.clientUploadId ?? "").trim() || null
+  });
 }
 
 function resolveEnrollmentPacketMemberFileCategory(
@@ -236,9 +258,47 @@ export async function insertUploadAndFile(input: {
   uploadedByUserId: string | null;
   uploadedByName: string | null;
   dataUrl?: string | null;
+  clientUploadId?: string | null;
 }) {
   const safeName = safeFileName(input.fileName) || `upload-${randomUUID()}`;
-  const objectPath = `members/${input.memberId}/enrollment-packets/${input.packetId}/${input.uploadCategory}/${randomUUID()}-${slugify(safeName)}`;
+  const uploadFingerprint = buildEnrollmentPacketUploadFingerprint({
+    packetId: input.packetId,
+    uploadCategory: input.uploadCategory,
+    fileName: safeName,
+    contentType: input.contentType,
+    bytes: input.bytes,
+    clientUploadId: input.clientUploadId ?? null
+  });
+  const objectPath = `members/${input.memberId}/enrollment-packets/${input.packetId}/${input.uploadCategory}/${uploadFingerprint}-${slugify(safeName)}`;
+  const admin = createSupabaseAdminClient();
+  const { data: existingUpload, error: existingUploadError } = await admin
+    .from("enrollment_packet_uploads")
+    .select("file_path, member_file_id")
+    .eq("packet_id", input.packetId)
+    .eq("upload_category", input.uploadCategory)
+    .eq("upload_fingerprint", uploadFingerprint)
+    .maybeSingle();
+  if (existingUploadError) {
+    if (isMissingSchemaObjectError(existingUploadError)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "enrollment_packet_uploads",
+          migration: ENROLLMENT_PACKET_UPLOAD_SCHEMA_MIGRATION
+        })
+      );
+    }
+    throw new Error(existingUploadError.message);
+  }
+  const existingStorageUri = String((existingUpload as { file_path?: string | null } | null)?.file_path ?? "").trim();
+  const existingMemberFileId = String((existingUpload as { member_file_id?: string | null } | null)?.member_file_id ?? "").trim();
+  if (existingStorageUri && existingMemberFileId) {
+    return {
+      storageUri: existingStorageUri,
+      objectPath: parseMemberDocumentStorageUri(existingStorageUri) ?? objectPath,
+      memberFileId: existingMemberFileId,
+      memberFileCreated: false
+    };
+  }
   const storageUri = await uploadMemberDocumentObject({
     objectPath,
     bytes: input.bytes,
@@ -252,7 +312,8 @@ export async function insertUploadAndFile(input: {
       documentSource: buildEnrollmentPacketDocumentSource({
         packetId: input.packetId,
         uploadCategory: input.uploadCategory,
-        fileName: safeName
+        fileName: safeName,
+        uploadFingerprint
       }),
       fileName: safeName,
       fileType: input.contentType,
@@ -272,19 +333,26 @@ export async function insertUploadAndFile(input: {
     throw error;
   }
 
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin.from("enrollment_packet_uploads").insert({
-    packet_id: input.packetId,
-    member_id: input.memberId,
-    file_path: storageUri,
-    file_name: safeName,
-    file_type: input.contentType,
-    upload_category: input.uploadCategory,
-    member_file_id: memberFile.id,
-    finalization_batch_id: input.batchId,
-    finalization_status: "staged",
-    uploaded_at: toEasternISO()
-  });
+  const { error } = await admin
+    .from("enrollment_packet_uploads")
+    .upsert(
+      {
+        packet_id: input.packetId,
+        member_id: input.memberId,
+        file_path: storageUri,
+        file_name: safeName,
+        file_type: input.contentType,
+        upload_category: input.uploadCategory,
+        upload_fingerprint: uploadFingerprint,
+        member_file_id: memberFile.id,
+        finalization_batch_id: input.batchId,
+        finalization_status: "staged",
+        uploaded_at: toEasternISO()
+      },
+      {
+        onConflict: "packet_id,upload_category,upload_fingerprint"
+      }
+    );
   if (error) {
     if (memberFile.created) {
       try {
