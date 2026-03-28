@@ -15,6 +15,80 @@ export type MarPrnOutcome = (typeof MAR_PRN_OUTCOME_OPTIONS)[number];
 export type MarPrnStatus = (typeof MAR_PRN_STATUS_OPTIONS)[number];
 export type MarPrnFollowupStatus = (typeof MAR_PRN_FOLLOWUP_STATUS_OPTIONS)[number];
 
+export interface MarPrnStandingOrderTemplate {
+  id: string;
+  medicationName: string;
+  strength: string;
+  form: string | null;
+  route: string;
+  directions: string;
+  prnReason: string;
+  frequencyText: string;
+  minIntervalMinutes: number | null;
+  maxDosesPer24h: number | null;
+  maxDailyDose: string | null;
+  providerName: string;
+}
+
+export const MAR_PRN_STANDING_ORDER_TEMPLATES: MarPrnStandingOrderTemplate[] = [
+  {
+    id: "tylenol",
+    medicationName: "Tylenol",
+    strength: "650mg",
+    form: null,
+    route: "By mouth",
+    directions: "Every 4 hrs for pain/fever",
+    prnReason: "pain/fever",
+    frequencyText: "Every 4 hrs",
+    minIntervalMinutes: 240,
+    maxDosesPer24h: null,
+    maxDailyDose: null,
+    providerName: "Center Standing Order"
+  },
+  {
+    id: "ibuprofen",
+    medicationName: "Ibuprofen",
+    strength: "200mg",
+    form: null,
+    route: "By mouth",
+    directions: "Every 8 hrs for pain",
+    prnReason: "pain",
+    frequencyText: "Every 8 hrs",
+    minIntervalMinutes: 480,
+    maxDosesPer24h: null,
+    maxDailyDose: null,
+    providerName: "Center Standing Order"
+  },
+  {
+    id: "mylanta",
+    medicationName: "Mylanta",
+    strength: "10mL",
+    form: null,
+    route: "By mouth",
+    directions: "Every 4 hrs for indigestion",
+    prnReason: "indigestion",
+    frequencyText: "Every 4 hrs",
+    minIntervalMinutes: 240,
+    maxDosesPer24h: null,
+    maxDailyDose: null,
+    providerName: "Center Standing Order"
+  },
+  {
+    id: "benadryl",
+    medicationName: "Benadryl",
+    strength: "25mg",
+    form: null,
+    route: "By mouth",
+    directions: "Every 6 hrs for itching",
+    prnReason: "itching",
+    frequencyText: "Every 6 hrs",
+    minIntervalMinutes: 360,
+    maxDosesPer24h: null,
+    maxDailyDose: null,
+    providerName: "Center Standing Order"
+  }
+];
+
 export interface MarTodayRow {
   marScheduleId: string;
   memberId: string;

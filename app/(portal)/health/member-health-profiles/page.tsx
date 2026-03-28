@@ -130,9 +130,9 @@ export default async function MemberHealthProfilesPage({
                     </div>
                   </td>
                   <td>
-                    <Link className="capitalize font-semibold text-brand" href={`/members/${row.member.id}#discharge-actions`}>
+                    <span className="capitalize font-semibold text-primary-text">
                       {row.member.status}
-                    </Link>
+                    </span>
                   </td>
                   <td>{row.profile.code_status ?? row.member.code_status ?? "-"}</td>
                   <td>{row.member.latest_assessment_track ?? "-"}</td>

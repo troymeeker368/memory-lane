@@ -9,8 +9,8 @@ import {
 import { MhpEditModal } from "@/components/forms/mhp-edit-modal";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
-import type { MarPrnOption, MarPrnStatus } from "@/lib/services/mar-shared";
-import { MAR_PRN_STATUS_OPTIONS } from "@/lib/services/mar-shared";
+import type { MarPrnOption, MarPrnStatus, MarPrnStandingOrderTemplate } from "@/lib/services/mar-shared";
+import { MAR_PRN_STANDING_ORDER_TEMPLATES, MAR_PRN_STATUS_OPTIONS } from "@/lib/services/mar-shared";
 import { toEasternDate, toEasternDateTimeLocal } from "@/lib/timezone";
 
 function addMinutes(dateTimeLocal: string, minutes: number) {
@@ -151,6 +151,22 @@ export function MarPrnRecordModal({
     setNewProviderName("");
     setRequiresReview(true);
     setRequiresEffectivenessFollowup(true);
+  }
+
+  function applyStandingOrderTemplate(template: MarPrnStandingOrderTemplate) {
+    setNewMedicationName(template.medicationName);
+    setNewStrength(template.strength);
+    setNewForm(template.form ?? "");
+    setNewRoute(template.route);
+    setNewDirections(template.directions);
+    setNewPrnReason(template.prnReason);
+    setNewFrequencyText(template.frequencyText);
+    setNewMinIntervalMinutes(template.minIntervalMinutes == null ? "" : String(template.minIntervalMinutes));
+    setNewMaxDosesPer24h(template.maxDosesPer24h == null ? "" : String(template.maxDosesPer24h));
+    setNewMaxDailyDose(template.maxDailyDose ?? "");
+    setNewProviderName(template.providerName);
+    setDoseGiven(template.strength);
+    setRouteGiven(template.route);
   }
 
   return (
@@ -301,6 +317,29 @@ export function MarPrnRecordModal({
           </div>
         ) : (
           <div className="space-y-4 rounded-xl border border-border p-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <p className="text-sm font-semibold">Center Standing Order Templates</p>
+              <p className="mt-1 text-xs text-muted">
+                Choose a standing order to prefill the PRN record, then adjust anything member-specific before saving.
+              </p>
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {MAR_PRN_STANDING_ORDER_TEMPLATES.map((template) => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    className="rounded-lg border border-border bg-white p-3 text-left transition hover:border-brand hover:bg-brand/5"
+                    onClick={() => applyStandingOrderTemplate(template)}
+                  >
+                    <p className="text-sm font-semibold">{template.medicationName}</p>
+                    <p className="text-xs text-muted">
+                      {template.strength} | {template.route}
+                    </p>
+                    <p className="mt-1 text-xs text-muted">{template.directions}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="grid gap-3 md:grid-cols-2">
               <input className="h-10 rounded-lg border border-border px-3 text-sm" placeholder="Medication name" value={newMedicationName} onChange={(event) => setNewMedicationName(event.target.value)} />
               <input className="h-10 rounded-lg border border-border px-3 text-sm" placeholder="Provider name" value={newProviderName} onChange={(event) => setNewProviderName(event.target.value)} />

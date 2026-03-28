@@ -273,6 +273,7 @@ function toPrnEffectiveness(
 
 export type MarMonthlyAdministrationDetailRow = {
   id: string;
+  pofMedicationId: string | null;
   medicationName: string;
   source: "scheduled" | "prn";
   status: "Given" | "Not Given" | "Refused" | "Held" | "Omitted";
@@ -776,6 +777,7 @@ export async function assembleMarMonthlyReportData(input: {
   const detailRows: MarMonthlyAdministrationDetailRow[] = [
     ...administrations.map((row) => ({
       id: row.id,
+      pofMedicationId: row.pof_medication_id,
       medicationName: row.medication_name,
       source: row.source,
       status: row.status,
@@ -794,6 +796,7 @@ export async function assembleMarMonthlyReportData(input: {
       return [
         {
           id: row.id,
+          pofMedicationId: order.pof_medication_id,
           medicationName: order.medication_name,
           source: "prn" as const,
           status: row.status,
