@@ -737,7 +737,7 @@ export function MarWorkflowBoard({
                   : `${prnMedicationOptions.length} active PRN option(s) available.`}
               </p>
               <p className="mt-2 text-xs text-muted">
-                Use Record PRN to select an existing standing order or add a new provider order and administer immediately.
+                Use Record PRN to select an existing standing PRN from the signed POF or add a new PRN medication order and administer immediately.
               </p>
             </div>
           </div>
