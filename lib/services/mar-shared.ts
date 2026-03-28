@@ -161,7 +161,7 @@ export interface MarPrnOption {
   maxDosesPer24h: number | null;
   maxDailyDose: string | null;
   providerName: string | null;
-  orderSource: "pof" | "manual_provider_order" | "legacy_mhp";
+  orderSource: "pof" | "manual_provider_order" | "legacy_mhp" | "center_standing_order";
   status: "active" | "inactive" | "expired" | "discontinued";
   requiresReview: boolean;
   requiresEffectivenessFollowup: boolean;

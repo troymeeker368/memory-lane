@@ -165,7 +165,7 @@ type MedicationOrderRow = {
   start_date: string | null;
   end_date: string | null;
   provider_name: string | null;
-  order_source: "pof" | "manual_provider_order" | "legacy_mhp";
+  order_source: "pof" | "manual_provider_order" | "legacy_mhp" | "center_standing_order";
   status: "active" | "inactive" | "expired" | "discontinued";
   requires_effectiveness_followup: boolean | null;
 };

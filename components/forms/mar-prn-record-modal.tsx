@@ -25,6 +25,13 @@ function toIso(dateTimeLocal: string) {
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
 }
 
+function getPrnOrderSourceLabel(orderSource: MarPrnOption["orderSource"]) {
+  if (orderSource === "pof") return "POF";
+  if (orderSource === "center_standing_order") return "Center Standing PRN";
+  if (orderSource === "manual_provider_order") return "Manual PRN";
+  return "Legacy PRN";
+}
+
 export function MarPrnRecordModal({
   open,
   onClose,
@@ -215,7 +222,7 @@ export function MarPrnRecordModal({
                     }}
                   >
                     <p className="text-sm font-semibold">{option.medicationName}</p>
-                    <p className="text-xs text-muted">{option.memberName} | {option.orderSource === "pof" ? "POF" : option.orderSource === "manual_provider_order" ? "Manual PRN" : "Legacy PRN"}</p>
+                    <p className="text-xs text-muted">{option.memberName} | {getPrnOrderSourceLabel(option.orderSource)}</p>
                     {option.prnReason ? <p className="mt-1 text-xs text-muted">PRN reason: {option.prnReason}</p> : null}
                     {option.providerName ? <p className="text-xs text-muted">Provider: {option.providerName}</p> : null}
                   </button>

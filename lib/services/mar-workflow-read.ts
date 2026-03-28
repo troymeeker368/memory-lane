@@ -8,6 +8,7 @@ import type {
 import {
   getPrnHistorySnapshot,
   listActivePrnMedicationOptions,
+  syncCenterStandingPrnMedicationOrders,
   syncActivePrnMedicationOrders
 } from "@/lib/services/mar-prn-workflow";
 import { listMarWorkflowMemberOptions, type MarWorkflowMemberOption } from "@/lib/services/mar-member-options";
@@ -181,6 +182,7 @@ export async function syncTodayMarSchedules(options?: { serviceRole?: boolean })
 export async function refreshMarWorkflowData(options?: { serviceRole?: boolean }) {
   const serviceRole = options?.serviceRole ?? true;
   await syncTodayMarSchedules({ serviceRole });
+  await syncCenterStandingPrnMedicationOrders({ serviceRole });
   await syncActivePrnMedicationOrders({ serviceRole });
 }
 

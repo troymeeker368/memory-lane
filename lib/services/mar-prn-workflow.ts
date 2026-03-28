@@ -14,10 +14,12 @@ import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 const SYNC_ACTIVE_PRN_ORDERS_RPC = "rpc_sync_active_prn_medication_orders";
+const SYNC_CENTER_STANDING_PRN_ORDERS_RPC = "rpc_sync_center_standing_prn_orders";
 const RECORD_PRN_ADMIN_RPC = "rpc_record_prn_medication_administration";
 const CREATE_PRN_ORDER_AND_ADMIN_RPC = "rpc_create_prn_medication_order_and_administer";
 const COMPLETE_PRN_FOLLOWUP_RPC = "rpc_complete_prn_administration_followup";
 const PRN_WORKFLOW_MIGRATION = "0107_prn_medication_orders_and_logs.sql";
+const CENTER_STANDING_PRN_MIGRATION = "0166_center_standing_prn_orders.sql";
 
 type MedicationOrderRow = {
   id: string;
@@ -37,7 +39,7 @@ type MedicationOrderRow = {
   start_date: string | null;
   end_date: string | null;
   provider_name: string | null;
-  order_source: "pof" | "manual_provider_order" | "legacy_mhp";
+  order_source: "pof" | "manual_provider_order" | "legacy_mhp" | "center_standing_order";
   status: "active" | "inactive" | "expired" | "discontinued";
   requires_review: boolean;
   requires_effectiveness_followup: boolean;
@@ -245,9 +247,25 @@ async function loadPrnMedicationOrderOptionById(orderId: string, serviceRole = t
   return buildOrderOption(row, memberNames.get(row.member_id) ?? "Member");
 }
 
-function mapMissingRpcError(message: string, rpcName: string) {
+function mapMissingRpcError(message: string, rpcName: string, migrationName = PRN_WORKFLOW_MIGRATION) {
   if (!message.includes(rpcName)) return null;
-  return `PRN medication workflow RPC ${rpcName} is not available. Apply Supabase migration ${PRN_WORKFLOW_MIGRATION} and refresh PostgREST schema cache.`;
+  return `PRN medication workflow RPC ${rpcName} is not available. Apply Supabase migration ${migrationName} and refresh PostgREST schema cache.`;
+}
+
+export async function syncCenterStandingPrnMedicationOrders(options?: { serviceRole?: boolean }) {
+  const supabase = await createClient({ serviceRole: options?.serviceRole ?? true });
+  try {
+    return await invokeSupabaseRpcOrThrow<Array<{ synced_orders: number | null; inactivated_orders: number | null }>>(
+      supabase,
+      SYNC_CENTER_STANDING_PRN_ORDERS_RPC,
+      { p_now: toEasternISO() }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to sync center standing PRN medication orders.";
+    const mapped = mapMissingRpcError(message, SYNC_CENTER_STANDING_PRN_ORDERS_RPC, CENTER_STANDING_PRN_MIGRATION);
+    if (mapped) throw new Error(mapped);
+    throw error;
+  }
 }
 
 export async function syncActivePrnMedicationOrders(options?: { serviceRole?: boolean }) {
