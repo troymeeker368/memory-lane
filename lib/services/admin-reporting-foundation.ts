@@ -1,5 +1,4 @@
 import type { ReportDateRange } from "@/lib/services/report-date-range";
-import { loadExpectedAttendanceSupabaseContext } from "@/lib/services/expected-attendance-supabase";
 import { calculateAttendanceRatePercent } from "@/lib/services/attendance-rate";
 import {
   ATTENDANCE_SUMMARY_DEFAULT_CAPACITY,
@@ -19,14 +18,11 @@ import {
   type AttendanceSummaryRow,
   type OnDemandReportCategory,
   type OnDemandReportResult,
-  type ReportingAttendanceRow,
   type ReportingAttendanceBillingRateRow,
   type ReportingCenterBillingSettingRow,
-  type ReportingClosureRow,
-  type ReportingLocationRow,
-  type ReportingMemberBillingSettingRow,
-  type ReportingMemberRow
+  type ReportingMemberBillingSettingRow
 } from "@/lib/services/admin-reporting-core";
+import { loadReportingAttendanceDataset } from "@/lib/services/reporting-attendance-dataset";
 import { buildLeadStageOutcomeSummaryRows } from "@/lib/services/sales-workflows";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate } from "@/lib/timezone";
@@ -73,97 +69,6 @@ type MemberDocumentationSummaryRow = {
   shower_count: number | null;
   transportation_count: number | null;
 };
-
-async function loadAttendanceDataset(input: {
-  range: ReportDateRange;
-  memberStatus: "active" | "inactive" | "all";
-}) {
-  const supabase = await createClient();
-  let memberQuery = supabase
-    .from("members")
-    .select("id, display_name, status")
-    .order("display_name", { ascending: true });
-  if (input.memberStatus !== "all") {
-    memberQuery = memberQuery.eq("status", input.memberStatus);
-  }
-  const { data: membersData, error: membersError } = await memberQuery;
-  if (membersError) throw new Error(membersError.message);
-  const members = (membersData ?? []) as ReportingMemberRow[];
-  const memberIds = members.map((row) => row.id);
-  if (memberIds.length === 0) {
-    return {
-      members,
-      memberLocationById: new Map<string, string>(),
-      attendanceRecordByMemberDate: new Map<string, "present" | "absent">(),
-      closureByDate: new Map<string, ReportingClosureRow>(),
-      expectedContext: await loadExpectedAttendanceSupabaseContext({
-        memberIds: [],
-        startDate: input.range.from,
-        endDate: input.range.to,
-        includeAttendanceRecords: false
-      })
-    };
-  }
-
-  const [locationsResult, attendanceResult, closureResult, expectedContext] = await Promise.all([
-    supabase.from("member_command_centers").select("member_id, location").in("member_id", memberIds),
-    supabase
-      .from("attendance_records")
-      .select("member_id, attendance_date, status")
-      .in("member_id", memberIds)
-      .gte("attendance_date", input.range.from)
-      .lte("attendance_date", input.range.to),
-    supabase
-      .from("center_closures")
-      .select("closure_date, active, billable_override")
-      .gte("closure_date", input.range.from)
-      .lte("closure_date", input.range.to),
-    loadExpectedAttendanceSupabaseContext({
-      memberIds,
-      startDate: input.range.from,
-      endDate: input.range.to,
-      includeAttendanceRecords: false
-    })
-  ]);
-  if (locationsResult.error) throw new Error(locationsResult.error.message);
-  if (attendanceResult.error) throw new Error(attendanceResult.error.message);
-  if (closureResult.error) throw new Error(closureResult.error.message);
-
-  const memberLocationById = new Map<string, string>();
-  ((locationsResult.data ?? []) as ReportingLocationRow[]).forEach((row) => {
-    memberLocationById.set(
-      row.member_id,
-      String(row.location ?? "").trim() || "Unassigned"
-    );
-  });
-  members.forEach((member) => {
-    if (!memberLocationById.has(member.id)) {
-      memberLocationById.set(member.id, "Unassigned");
-    }
-  });
-
-  const attendanceRecordByMemberDate = new Map<string, "present" | "absent">();
-  ((attendanceResult.data ?? []) as ReportingAttendanceRow[]).forEach((row) => {
-    attendanceRecordByMemberDate.set(
-      `${row.member_id}:${row.attendance_date}`,
-      row.status
-    );
-  });
-
-  const closureByDate = new Map<string, ReportingClosureRow>();
-  ((closureResult.data ?? []) as ReportingClosureRow[]).forEach((row) => {
-    closureByDate.set(row.closure_date, row);
-  });
-
-  return {
-    members,
-    memberLocationById,
-    attendanceRecordByMemberDate,
-    closureByDate,
-    expectedContext
-  };
-}
-
 
 async function loadBillingSettingsForMembers(memberIds: string[]) {
   const supabase = await createClient();
@@ -264,7 +169,7 @@ export async function getAdminRevenueSummary(input: AdminRevenueSummaryInput): P
     to: normalizeDateOnly(input.to, toEasternDate())
   };
   const normalizedRange = range.from <= range.to ? range : { from: range.to, to: range.from };
-  const attendanceDataset = await loadAttendanceDataset({
+  const attendanceDataset = await loadReportingAttendanceDataset({
     range: normalizedRange,
     memberStatus: "active"
   });
@@ -556,7 +461,7 @@ export async function getAttendanceSummaryReport(input: AttendanceSummaryInput):
         ? "inactive"
         : "all";
 
-  const attendanceDataset = await loadAttendanceDataset({
+  const attendanceDataset = await loadReportingAttendanceDataset({
     range: normalizedRange,
     memberStatus: memberStatusFilter
   });

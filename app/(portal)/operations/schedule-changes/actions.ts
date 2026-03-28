@@ -17,6 +17,8 @@ import {
   updateScheduleChangeStatusWithAttendanceSyncSupabase,
 } from "@/lib/services/schedule-changes-supabase";
 import {
+  getEnabledScheduleWeekdays,
+  normalizeScheduleWeekdays,
   SCHEDULE_CHANGE_STATUSES,
   SCHEDULE_CHANGE_TYPES,
   SCHEDULE_WEEKDAY_KEYS,
@@ -44,18 +46,6 @@ const scheduleChangeStatusSchema = z.object({
   id: z.string().trim().min(1),
   status: z.enum(SCHEDULE_CHANGE_STATUSES)
 });
-
-function normalizeWeekdays(values: Array<string | null | undefined>) {
-  return Array.from(
-    new Set(
-      values
-        .map((value) => String(value ?? "").trim().toLowerCase())
-        .filter((value): value is ScheduleWeekdayKey =>
-          SCHEDULE_WEEKDAY_KEYS.includes(value as ScheduleWeekdayKey)
-        )
-    )
-  );
-}
 
 async function requireScheduleChangeEditor() {
   const profile = await getCurrentProfile();
@@ -91,7 +81,7 @@ function getMccScheduleDays(schedule: MemberAttendanceScheduleRow | null | undef
   if (!schedule) {
     throw new Error("Unable to load member schedule from MCC.");
   }
-  return SCHEDULE_WEEKDAY_KEYS.filter((day) => Boolean(schedule[day]));
+  return getEnabledScheduleWeekdays(schedule);
 }
 
 async function getCurrentMemberScheduleDays(memberId: string) {
@@ -154,7 +144,7 @@ export async function upsertScheduleChangeAction(raw: z.infer<typeof upsertSched
       return mutationError("Member is required.", { memberId: "Member is required." });
     }
 
-    let originalDays = normalizeWeekdays(existing?.original_days ?? payload.data.originalDays);
+    let originalDays = normalizeScheduleWeekdays(existing?.original_days ?? payload.data.originalDays);
     if (!existing) {
       try {
         const memberSchedule = await ensureMemberAttendanceScheduleSupabase(memberId);
@@ -177,7 +167,7 @@ export async function upsertScheduleChangeAction(raw: z.infer<typeof upsertSched
     }
 
     const newDays =
-      payload.data.changeType === "Scheduled Absence" ? [] : normalizeWeekdays(payload.data.newDays);
+      payload.data.changeType === "Scheduled Absence" ? [] : normalizeScheduleWeekdays(payload.data.newDays);
     const suspendBaseSchedule =
       payload.data.changeType === "Permanent Schedule Change" ? false : payload.data.suspendBaseSchedule;
 

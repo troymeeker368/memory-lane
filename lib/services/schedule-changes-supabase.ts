@@ -3,6 +3,7 @@ import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { listCanonicalMemberLinksForLeadIds, resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import {
+  normalizeScheduleWeekdays,
   SCHEDULE_CHANGE_STATUSES,
   SCHEDULE_CHANGE_TYPES,
   SCHEDULE_WEEKDAY_KEYS,
@@ -131,17 +132,6 @@ function normalizeStatus(value: string): ScheduleChangeStatus {
   throw new Error("Invalid schedule change status.");
 }
 
-function normalizeWeekdays(values: Array<string | null | undefined>): ScheduleWeekdayKey[] {
-  const normalized = Array.from(
-    new Set(
-      values
-        .map((value) => String(value ?? "").trim().toLowerCase())
-        .filter((value): value is ScheduleWeekdayKey => SCHEDULE_WEEKDAY_KEYS.includes(value as ScheduleWeekdayKey))
-    )
-  );
-  return normalized;
-}
-
 type ScheduleChangeDbRow = Record<string, unknown> & {
   id?: string;
   member_id?: string;
@@ -172,8 +162,8 @@ function toRow(data: ScheduleChangeDbRow): ScheduleChangeRow {
     change_type: normalizeChangeType(String(data.change_type)),
     effective_start_date: String(data.effective_start_date),
     effective_end_date: data.effective_end_date ? String(data.effective_end_date) : null,
-    original_days: normalizeWeekdays(Array.isArray(data.original_days) ? data.original_days : []),
-    new_days: normalizeWeekdays(Array.isArray(data.new_days) ? data.new_days : []),
+    original_days: normalizeScheduleWeekdays(Array.isArray(data.original_days) ? data.original_days : []),
+    new_days: normalizeScheduleWeekdays(Array.isArray(data.new_days) ? data.new_days : []),
     suspend_base_schedule: Boolean(data.suspend_base_schedule),
     reason: String(data.reason ?? ""),
     notes: data.notes ? String(data.notes) : null,
@@ -295,8 +285,8 @@ export async function saveScheduleChangeWithAttendanceSyncSupabase(input: {
   const supabase = await createClient();
   const now = toEasternISO();
   const normalizedId = String(input.id ?? "").trim() || null;
-  const originalDays = normalizeWeekdays(input.originalDays);
-  const newDays = normalizeWeekdays(input.newDays);
+  const originalDays = normalizeScheduleWeekdays(input.originalDays);
+  const newDays = normalizeScheduleWeekdays(input.newDays);
 
   try {
     const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, SAVE_SCHEDULE_CHANGE_WITH_ATTENDANCE_SYNC_RPC, {
@@ -346,8 +336,8 @@ export async function updateScheduleChangeSupabase(input: {
   const canonicalMemberId = await resolveScheduleMemberId(input.memberId, "updateScheduleChangeSupabase");
   const supabase = await createClient();
   const now = toEasternISO();
-  const originalDays = normalizeWeekdays(input.originalDays);
-  const newDays = normalizeWeekdays(input.newDays);
+  const originalDays = normalizeScheduleWeekdays(input.originalDays);
+  const newDays = normalizeScheduleWeekdays(input.newDays);
   const payload = {
     member_id: canonicalMemberId,
     change_type: input.changeType,

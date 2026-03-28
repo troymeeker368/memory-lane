@@ -93,10 +93,30 @@ const WEEKDAY_SHORT_LABELS: Record<ScheduleWeekdayKey, string> = {
   friday: "Fri"
 };
 
-function toScheduleWeekdayKey(weekday: OperationsWeekdayKey): ScheduleWeekdayKey | null {
+export function toScheduleWeekdayKey(weekday: OperationsWeekdayKey): ScheduleWeekdayKey | null {
   if (weekday === "monday" || weekday === "tuesday" || weekday === "wednesday" || weekday === "thursday" || weekday === "friday") {
     return weekday;
   }
+  return null;
+}
+
+export function buildTransportLocationLabel(input: {
+  mode: TransportMode;
+  busStopName: string | null;
+  doorToDoorAddress: string | null;
+}) {
+  if (input.mode === "Bus Stop") return input.busStopName?.trim() || "Bus Stop";
+  return input.doorToDoorAddress?.trim() || "Door-to-Door";
+}
+
+export function resolveTransportPeriod(input: {
+  dayEnabled: boolean;
+  amMode: TransportMode | null;
+  pmMode: TransportMode | null;
+}): "AM" | "PM" | null {
+  if (!input.dayEnabled) return null;
+  if (input.amMode) return "AM";
+  if (input.pmMode) return "PM";
   return null;
 }
 

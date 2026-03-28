@@ -751,7 +751,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
 
   let created;
   try {
-    await upsertMemberFileByDocumentSource({
+    const upserted = await upsertMemberFileByDocumentSource({
       memberId,
       memberFileId,
       documentSource: input.documentSource,
@@ -770,7 +770,8 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
       },
       supabase: admin
     });
-    const { data, error } = await admin.from("member_files").select("*").eq("id", memberFileId).single();
+    const persistedMemberFileId = String(upserted.id ?? memberFileId).trim() || memberFileId;
+    const { data, error } = await admin.from("member_files").select("*").eq("id", persistedMemberFileId).single();
     if (error) throw new Error(error.message);
     created = data;
   } catch (error) {

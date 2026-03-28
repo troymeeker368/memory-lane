@@ -6,6 +6,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireNavItemAccess } from "@/lib/auth";
 import { getMembers } from "@/lib/services/documentation";
 import { getMemberActivitySnapshot } from "@/lib/services/activity-snapshots";
+import { parseDateInput, resolveDateRangeWindow } from "@/lib/services/report-date-range";
 import { toEasternDate } from "@/lib/timezone";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
@@ -31,32 +32,23 @@ function dateDaysAgo(daysAgo: number) {
   return day;
 }
 
-function parseDateInput(raw?: string) {
-  if (!raw) return null;
-  const parsed = new Date(`${raw}T00:00:00.000`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed;
-}
-
 function resolveMemberSummaryRange(rawPreset?: string, rawFrom?: string, rawTo?: string) {
   const preset = (RANGE_PRESETS.find((item) => item.value === rawPreset)?.value ?? "last-30-days") as RangePreset;
 
   if (preset === "custom") {
     const parsedFrom = parseDateInput(rawFrom);
     const parsedTo = parseDateInput(rawTo);
-
-    const fallbackTo = startOfTodayLocal();
-    const fallbackFrom = dateDaysAgo(29);
-
-    const fromDate = parsedFrom ?? (parsedTo ? new Date(parsedTo.getTime()) : fallbackFrom);
-    const toDate = parsedTo ?? (parsedFrom ? new Date(parsedFrom.getTime()) : fallbackTo);
-    const safeFrom = fromDate <= toDate ? fromDate : toDate;
-    const safeTo = fromDate <= toDate ? toDate : fromDate;
+    const resolved =
+      parsedFrom && !parsedTo
+        ? resolveDateRangeWindow(rawFrom, rawFrom, 30, true)
+        : parsedTo && !parsedFrom
+          ? resolveDateRangeWindow(rawTo, rawTo, 30, true)
+          : resolveDateRangeWindow(rawFrom, rawTo, 30, true);
 
     return {
       preset,
-      from: toEasternDate(safeFrom),
-      to: toEasternDate(safeTo)
+      from: resolved.from,
+      to: resolved.to
     };
   }
 

@@ -16,6 +16,8 @@ import {
   MEMBER_FILE_CATEGORY_OPTIONS,
   MEMBER_TRANSPORTATION_SERVICE_OPTIONS
 } from "@/lib/canonical";
+import { resolveTransportPeriod } from "@/lib/services/member-schedule-selectors";
+import { countEnabledScheduleWeekdays } from "@/lib/services/schedule-changes-shared";
 import {
   listBillingScheduleTemplatesSupabase,
   listMemberBillingSettingsSupabase
@@ -221,7 +223,13 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
   const wednesdayAdded = wednesday && !wasWednesday;
   const thursdayAdded = thursday && !wasThursday;
   const fridayAdded = friday && !wasFriday;
-  const attendanceDaysPerWeek = [monday, tuesday, wednesday, thursday, friday].filter(Boolean).length;
+  const attendanceDaysPerWeek = countEnabledScheduleWeekdays({
+    monday,
+    tuesday,
+    wednesday,
+    thursday,
+    friday
+  });
   const dailyRate = asOptionalPositiveNumber(formData, "dailyRate");
   if (dailyRate == null) {
     return { ok: false, error: "Daily Rate is required and must be greater than 0." };
@@ -441,17 +449,6 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     busStop: schedule.transport_friday_pm_bus_stop
   });
 
-  const derivePeriod = (
-    dayEnabled: boolean,
-    amMode: "Door to Door" | "Bus Stop" | null,
-    pmMode: "Door to Door" | "Bus Stop" | null
-  ) => {
-    if (!dayEnabled) return null;
-    if (amMode) return "AM";
-    if (pmMode) return "PM";
-    return null;
-  };
-
   const schedulePatch = {
     enrollment_date: enrollmentDate,
     monday,
@@ -461,11 +458,19 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     friday,
     // Current operations are full-day only; half-day toggle is intentionally disabled.
     full_day: true,
-    transport_monday_period: derivePeriod(monday, mondayAm.mode, mondayPm.mode),
-    transport_tuesday_period: derivePeriod(tuesday, tuesdayAm.mode, tuesdayPm.mode),
-    transport_wednesday_period: derivePeriod(wednesday, wednesdayAm.mode, wednesdayPm.mode),
-    transport_thursday_period: derivePeriod(thursday, thursdayAm.mode, thursdayPm.mode),
-    transport_friday_period: derivePeriod(friday, fridayAm.mode, fridayPm.mode),
+    transport_monday_period: resolveTransportPeriod({ dayEnabled: monday, amMode: mondayAm.mode, pmMode: mondayPm.mode }),
+    transport_tuesday_period: resolveTransportPeriod({ dayEnabled: tuesday, amMode: tuesdayAm.mode, pmMode: tuesdayPm.mode }),
+    transport_wednesday_period: resolveTransportPeriod({
+      dayEnabled: wednesday,
+      amMode: wednesdayAm.mode,
+      pmMode: wednesdayPm.mode
+    }),
+    transport_thursday_period: resolveTransportPeriod({
+      dayEnabled: thursday,
+      amMode: thursdayAm.mode,
+      pmMode: thursdayPm.mode
+    }),
+    transport_friday_period: resolveTransportPeriod({ dayEnabled: friday, amMode: fridayAm.mode, pmMode: fridayPm.mode }),
     transport_monday_am_mode: mondayAm.mode,
     transport_monday_am_door_to_door_address: mondayAm.doorToDoorAddress,
     transport_monday_am_bus_number: mondayAm.busNumber,
@@ -755,11 +760,31 @@ export async function saveMemberCommandCenterTransportationAction(formData: Form
       transportation_mode: transportationRequired === true ? firstMode : null,
       transport_bus_number: transportationRequired === true ? firstBusNumber : null,
       transportation_bus_stop: transportationRequired === true && firstMode === "Bus Stop" ? firstBusStop : null,
-      transport_monday_period: schedule.monday ? (mondayAm.mode ? "AM" : mondayPm.mode ? "PM" : null) : null,
-      transport_tuesday_period: schedule.tuesday ? (tuesdayAm.mode ? "AM" : tuesdayPm.mode ? "PM" : null) : null,
-      transport_wednesday_period: schedule.wednesday ? (wednesdayAm.mode ? "AM" : wednesdayPm.mode ? "PM" : null) : null,
-      transport_thursday_period: schedule.thursday ? (thursdayAm.mode ? "AM" : thursdayPm.mode ? "PM" : null) : null,
-      transport_friday_period: schedule.friday ? (fridayAm.mode ? "AM" : fridayPm.mode ? "PM" : null) : null,
+      transport_monday_period: resolveTransportPeriod({
+        dayEnabled: schedule.monday,
+        amMode: mondayAm.mode,
+        pmMode: mondayPm.mode
+      }),
+      transport_tuesday_period: resolveTransportPeriod({
+        dayEnabled: schedule.tuesday,
+        amMode: tuesdayAm.mode,
+        pmMode: tuesdayPm.mode
+      }),
+      transport_wednesday_period: resolveTransportPeriod({
+        dayEnabled: schedule.wednesday,
+        amMode: wednesdayAm.mode,
+        pmMode: wednesdayPm.mode
+      }),
+      transport_thursday_period: resolveTransportPeriod({
+        dayEnabled: schedule.thursday,
+        amMode: thursdayAm.mode,
+        pmMode: thursdayPm.mode
+      }),
+      transport_friday_period: resolveTransportPeriod({
+        dayEnabled: schedule.friday,
+        amMode: fridayAm.mode,
+        pmMode: fridayPm.mode
+      }),
       transport_monday_am_mode: schedule.monday ? mondayAm.mode : null,
       transport_monday_am_door_to_door_address: schedule.monday ? mondayAm.doorToDoorAddress : null,
       transport_monday_am_bus_number: schedule.monday ? mondayAm.busNumber : null,

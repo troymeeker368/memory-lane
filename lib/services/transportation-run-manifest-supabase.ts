@@ -1,7 +1,6 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
-import { buildPreferredContactByMember } from "@/lib/services/member-contact-priority";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import {
   getWeekdayForDate,
@@ -13,7 +12,9 @@ import {
   resolveExpectedAttendanceFromSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
 import {
+  buildTransportLocationLabel,
   getTransportSlotForScheduleDay,
+  toScheduleWeekdayKey,
   type ScheduleWeekdayKey
 } from "@/lib/services/member-schedule-selectors";
 import type {
@@ -21,6 +22,8 @@ import type {
   MemberContactRow
 } from "@/lib/services/member-command-center-read";
 import type { TransportationManifestAdjustmentRow } from "@/lib/services/transportation-station-supabase";
+import { listPreferredContactsByMemberSupabase } from "@/lib/services/transportation-contact-preferences-supabase";
+import { resolveEffectiveTransportationBillingStatus } from "@/lib/services/billing-effective";
 
 type Shift = "AM" | "PM";
 type TransportMode = "Bus Stop" | "Door to Door";
@@ -176,28 +179,6 @@ export interface TransportationRunManifestResult {
   recentRunsForDate: TransportationRunHistoryEntry[];
 }
 
-function toScheduleWeekday(weekday: OperationsWeekdayKey): ScheduleWeekdayKey | null {
-  if (
-    weekday === "monday" ||
-    weekday === "tuesday" ||
-    weekday === "wednesday" ||
-    weekday === "thursday" ||
-    weekday === "friday"
-  ) {
-    return weekday;
-  }
-  return null;
-}
-
-function buildLocationLabel(input: {
-  mode: TransportMode;
-  busStopName: string | null;
-  doorToDoorAddress: string | null;
-}) {
-  if (input.mode === "Bus Stop") return input.busStopName?.trim() || "Bus Stop";
-  return input.doorToDoorAddress?.trim() || "Door-to-Door";
-}
-
 function sortManifestRows(left: TransportationRunManifestRow, right: TransportationRunManifestRow) {
   const byStatus = left.operationalStatus.localeCompare(right.operationalStatus);
   if (byStatus !== 0) {
@@ -264,16 +245,6 @@ function mapRunRow(row: TransportationRunRow): TransportationRunHistoryEntry {
   };
 }
 
-async function listPreferredContactsByMember(memberIds: string[]) {
-  if (memberIds.length === 0) {
-    return new Map<string, MemberContactRow>();
-  }
-  const supabase = await createClient();
-  const { data, error } = await supabase.from("member_contacts").select(MEMBER_CONTACT_MANIFEST_SELECT).in("member_id", memberIds);
-  if (error) throw new Error(error.message);
-  return buildPreferredContactByMember((data ?? []) as MemberContactRow[]);
-}
-
 export async function getTransportationRunManifestSupabase(input: {
   selectedDate: string;
   shift: Shift;
@@ -288,7 +259,7 @@ export async function getTransportationRunManifestSupabase(input: {
   }
 
   const weekday = getWeekdayForDate(selectedDate);
-  const scheduleWeekday = toScheduleWeekday(weekday);
+  const scheduleWeekday = toScheduleWeekdayKey(weekday);
   const [{ data: schedulesData, error: schedulesError }, { data: adjustmentsData, error: adjustmentsError }] =
     await Promise.all([
       supabase.from("member_attendance_schedules").select("*").eq("transportation_required", true),
@@ -361,7 +332,7 @@ export async function getTransportationRunManifestSupabase(input: {
       .eq("service_date", selectedDate)
       .order("bus_number", { ascending: true })
       .order("last_submitted_at", { ascending: false }),
-    listPreferredContactsByMember(memberIds)
+    listPreferredContactsByMemberSupabase({ memberIds })
   ]);
 
   if (membersError) throw new Error(membersError.message);
@@ -440,7 +411,7 @@ export async function getTransportationRunManifestSupabase(input: {
       shift: selectedShift,
       busNumber: selectedBusNumber,
       transportType,
-      locationLabel: buildLocationLabel({
+      locationLabel: buildTransportLocationLabel({
         mode: transportType,
         busStopName: slot.busStop ?? null,
         doorToDoorAddress: slot.doorToDoorAddress ?? null
@@ -458,8 +429,8 @@ export async function getTransportationRunManifestSupabase(input: {
       operationalStatus,
       operationalReasonCode,
       operationalReasonLabel: statusLabelFromCode(operationalReasonCode),
-      billingStatus: schedule.transportation_billing_status ?? "BillNormally",
-      billable: (schedule.transportation_billing_status ?? "BillNormally") === "BillNormally",
+      billingStatus: resolveEffectiveTransportationBillingStatus({ attendanceSetting: schedule }),
+      billable: resolveEffectiveTransportationBillingStatus({ attendanceSetting: schedule }) === "BillNormally",
       alreadyPostedTransportLogId: existingLog?.id ?? null,
       adjustmentId: null,
       notes: manualExclusionsByMemberId.get(schedule.member_id)?.notes ?? null
@@ -474,7 +445,9 @@ export async function getTransportationRunManifestSupabase(input: {
     const existingLog = existingLogByMemberId.get(adjustment.member_id) ?? null;
     const contact = preferredContactsByMember.get(adjustment.member_id) ?? null;
     const transportType = coerceTransportMode(adjustment.transport_type) ?? "Door to Door";
-    const billingStatus = schedule?.transportation_billing_status ?? "BillNormally";
+    const billingStatus = resolveEffectiveTransportationBillingStatus({
+      attendanceSetting: schedule
+    });
 
     let operationalStatus: TransportationOperationalStatus = "eligible";
     let operationalReasonCode: TransportationRunManifestRow["operationalReasonCode"] = null;
@@ -500,7 +473,7 @@ export async function getTransportationRunManifestSupabase(input: {
       shift: selectedShift,
       busNumber: selectedBusNumber,
       transportType,
-      locationLabel: buildLocationLabel({
+      locationLabel: buildTransportLocationLabel({
         mode: transportType,
         busStopName: adjustment.bus_stop_name ?? null,
         doorToDoorAddress: adjustment.door_to_door_address ?? null

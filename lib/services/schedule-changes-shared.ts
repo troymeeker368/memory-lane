@@ -14,6 +14,27 @@ export type ScheduleChangeStatus = (typeof SCHEDULE_CHANGE_STATUSES)[number];
 export const SCHEDULE_WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday"] as const;
 export type ScheduleWeekdayKey = (typeof SCHEDULE_WEEKDAY_KEYS)[number];
 
+type ScheduleWeekdayFlags = Partial<Record<ScheduleWeekdayKey, boolean | null | undefined>>;
+
+export function normalizeScheduleWeekdays(values: Array<string | null | undefined>): ScheduleWeekdayKey[] {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value ?? "").trim().toLowerCase())
+        .filter((value): value is ScheduleWeekdayKey => SCHEDULE_WEEKDAY_KEYS.includes(value as ScheduleWeekdayKey))
+    )
+  );
+}
+
+export function getEnabledScheduleWeekdays(schedule: ScheduleWeekdayFlags | null | undefined): ScheduleWeekdayKey[] {
+  if (!schedule) return [];
+  return SCHEDULE_WEEKDAY_KEYS.filter((day) => Boolean(schedule[day]));
+}
+
+export function countEnabledScheduleWeekdays(schedule: ScheduleWeekdayFlags | null | undefined) {
+  return getEnabledScheduleWeekdays(schedule).length;
+}
+
 export interface ScheduleChangeRow {
   id: string;
   member_id: string;

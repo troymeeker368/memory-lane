@@ -1,8 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
-import { toEasternDate } from "@/lib/timezone";
+import { resolveDateRangeWindow } from "@/lib/services/report-date-range";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const SNAPSHOT_ACTIVITY_FEED_LIMIT = 200;
 
 type StaffSnapshotReadModelRpcRow = {
@@ -46,24 +45,8 @@ type ActivityTimelineRpcRow = {
   source_kind: string | null;
 };
 
-function parseDateInput(raw?: string) {
-  if (!raw) return null;
-  const parsed = new Date(`${raw}T00:00:00.000`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
 function resolveRange(rawFrom?: string, rawTo?: string, fallbackDays = 30) {
-  const now = new Date();
-  const toDate = parseDateInput(rawTo) ?? new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const fromDate = parseDateInput(rawFrom) ?? new Date(toDate.getTime() - (fallbackDays - 1) * DAY_MS);
-  const safeFrom = fromDate <= toDate ? fromDate : toDate;
-  const safeTo = fromDate <= toDate ? toDate : fromDate;
-  return {
-    from: toEasternDate(safeFrom),
-    to: toEasternDate(safeTo),
-    fromDateTime: new Date(safeFrom.getFullYear(), safeFrom.getMonth(), safeFrom.getDate(), 0, 0, 0, 0),
-    toDateTime: new Date(safeTo.getFullYear(), safeTo.getMonth(), safeTo.getDate(), 23, 59, 59, 999)
-  };
+  return resolveDateRangeWindow(rawFrom, rawTo, fallbackDays, true);
 }
 
 export function staffNameToSlug(staffName: string) {

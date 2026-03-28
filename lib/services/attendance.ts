@@ -10,7 +10,8 @@ import {
 } from "@/lib/services/operations-calendar";
 import {
   formatScheduleWeekdayAbbreviations,
-  getTransportSlotForScheduleDay
+  getTransportSlotForScheduleDay,
+  toScheduleWeekdayKey
 } from "@/lib/services/member-schedule-selectors";
 import {
   loadExpectedAttendanceSupabaseContext,
@@ -19,10 +20,6 @@ import {
 } from "@/lib/services/expected-attendance-supabase";
 import { calculateAttendanceRatePercent } from "@/lib/services/attendance-rate";
 import { ATTENDANCE_SCHEDULE_SELECT } from "@/lib/services/attendance-selects";
-import {
-  type ScheduleWeekdayKey
-} from "@/lib/services/schedule-changes-supabase";
-
 
 type AttendanceStatusLabel = "Present" | "Checked Out" | "Absent" | "Not Checked In Yet" | "Not Scheduled";
 
@@ -294,19 +291,6 @@ function buildAttendanceRecordMap(records: AttendanceRecordRow[]) {
   return map;
 }
 
-function toScheduleWeekday(weekday: OperationsWeekdayKey): ScheduleWeekdayKey | null {
-  if (
-    weekday === "monday" ||
-    weekday === "tuesday" ||
-    weekday === "wednesday" ||
-    weekday === "thursday" ||
-    weekday === "friday"
-  ) {
-    return weekday;
-  }
-  return null;
-}
-
 function getTransportSnapshotForWeekday(input: {
   schedule: AttendanceScheduleRow | null;
   weekday: OperationsWeekdayKey;
@@ -321,7 +305,7 @@ function getTransportSnapshotForWeekday(input: {
     };
   }
 
-  const weekday = toScheduleWeekday(input.weekday);
+  const weekday = toScheduleWeekdayKey(input.weekday);
   if (!weekday) {
     return {
       required: false,

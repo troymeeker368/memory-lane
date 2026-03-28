@@ -10,7 +10,7 @@ import {
 } from "@/lib/services/billing-selects";
 import { BILLING_BATCH_TYPE_OPTIONS } from "@/lib/services/billing-types";
 import { asNumber, addMonths, normalizeDateOnly, previousMonth, startOfMonth, toAmount, toMonthRange } from "@/lib/services/billing-utils";
-import { normalizeInvoiceRow } from "@/lib/services/billing-core";
+import { computeDueState, normalizeInvoiceRow } from "@/lib/services/billing-core";
 import {
   formatBillingPayorDisplayName,
   listBillingPayorContactsForMembers
@@ -24,7 +24,7 @@ import {
   isMissingSchemaObjectError
 } from "@/lib/services/billing-schema-errors";
 import { getBillingGenerationPreview as getBillingGenerationPreviewFromHelpers } from "@/lib/services/billing-preview-helpers";
-import { toEasternDate, toEasternISO } from "@/lib/timezone";
+import { toEasternDate } from "@/lib/timezone";
 import type { Database } from "@/types/supabase-types";
 import type {
   listCenterClosures as listCenterClosuresImpl
@@ -105,15 +105,6 @@ export async function getBillingBatches() {
     total_amount: toAmount(asNumber(row.total_amount)),
     dueState: computeDueState(row.next_due_date ?? null, row.completion_date ?? null)
   }));
-}
-
-function computeDueState(nextDueDate: string | null, completionDate: string | null) {
-  if (completionDate) return "Completed";
-  if (!nextDueDate) return "Unknown";
-  const due = new Date(nextDueDate);
-  if (Number.isNaN(due.getTime())) return "Unknown";
-  const now = new Date(toEasternISO());
-  return due < now ? "Overdue" : "Current";
 }
 
 export async function getDraftInvoices() {

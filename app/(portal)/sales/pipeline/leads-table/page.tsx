@@ -1,6 +1,7 @@
 import { LeadsPipelineTable } from "@/components/sales/leads-pipeline-table";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { resolveCanonicalLeadState } from "@/lib/canonical";
 import { getLeadList } from "@/lib/services/leads-read";
 
 function firstString(value: string | string[] | undefined) {
@@ -36,7 +37,10 @@ export default async function LeadsPipelineTablePage({ searchParams }: { searchP
     | undefined) ?? "inquiry_date";
   const dir = (firstString(params.dir) as "asc" | "desc" | undefined) ?? "desc";
   const page = parsePage(firstString(params.page));
-  const dbStatus = status === "Won" ? "won" : status === "Lost" ? "lost" : "open";
+  const { dbStatus } = resolveCanonicalLeadState({
+    requestedStage: "Inquiry",
+    requestedStatus: status || "Open"
+  });
   const result = await getLeadList({
     status: dbStatus,
     q: q || undefined,

@@ -1,16 +1,11 @@
 import "server-only";
 
-import { createClient } from "@/lib/supabase/server";
 import {
   buildAttendanceFacts,
   countOpenCenterDays,
-  listDatesInRange,
-  type ReportingAttendanceRow,
-  type ReportingClosureRow,
-  type ReportingLocationRow,
-  type ReportingMemberRow
+  listDatesInRange
 } from "@/lib/services/admin-reporting-core";
-import { loadExpectedAttendanceSupabaseContext } from "@/lib/services/expected-attendance-supabase";
+import { loadReportingAttendanceDataset } from "@/lib/services/reporting-attendance-dataset";
 import { toEasternDate } from "@/lib/timezone";
 
 export const ATTENDANCE_REPORT_MONTH_OPTIONS = [
@@ -135,83 +130,10 @@ export function resolveAttendanceSummaryReportInput(raw: Partial<Record<string, 
 
 async function loadAttendanceSummaryDataset(year: number) {
   const yearRange = { from: `${year}-01-01`, to: `${year}-12-31` };
-  const supabase = await createClient();
-  const { data: membersData, error: membersError } = await supabase
-    .from("members")
-    .select("id, display_name, status")
-    .order("display_name", { ascending: true });
-
-  if (membersError) throw new Error(`Unable to load members for attendance summary: ${membersError.message}`);
-
-  const members = (membersData ?? []) as ReportingMemberRow[];
-  const memberIds = members.map((member) => member.id);
-  if (memberIds.length === 0) {
-    return {
-      members,
-      memberLocationById: new Map<string, string>(),
-      attendanceRecordByMemberDate: new Map<string, "present" | "absent">(),
-      closureByDate: new Map<string, ReportingClosureRow>(),
-      expectedContext: await loadExpectedAttendanceSupabaseContext({
-        memberIds: [],
-        startDate: yearRange.from,
-        endDate: yearRange.to,
-        includeAttendanceRecords: false
-      })
-    };
-  }
-
-  const [locationsResult, attendanceResult, closureResult, expectedContext] = await Promise.all([
-    supabase.from("member_command_centers").select("member_id, location").in("member_id", memberIds),
-    supabase
-      .from("attendance_records")
-      .select("member_id, attendance_date, status")
-      .in("member_id", memberIds)
-      .gte("attendance_date", yearRange.from)
-      .lte("attendance_date", yearRange.to),
-    supabase
-      .from("center_closures")
-      .select("closure_date, active, billable_override")
-      .gte("closure_date", yearRange.from)
-      .lte("closure_date", yearRange.to),
-    loadExpectedAttendanceSupabaseContext({
-      memberIds,
-      startDate: yearRange.from,
-      endDate: yearRange.to,
-      includeAttendanceRecords: false
-    })
-  ]);
-
-  if (locationsResult.error) throw new Error(`Unable to load member locations for attendance summary: ${locationsResult.error.message}`);
-  if (attendanceResult.error) throw new Error(`Unable to load attendance records for attendance summary: ${attendanceResult.error.message}`);
-  if (closureResult.error) throw new Error(`Unable to load center closures for attendance summary: ${closureResult.error.message}`);
-
-  const memberLocationById = new Map<string, string>();
-  ((locationsResult.data ?? []) as ReportingLocationRow[]).forEach((row) => {
-    memberLocationById.set(row.member_id, String(row.location ?? "").trim() || "Unassigned");
+  return loadReportingAttendanceDataset({
+    range: yearRange,
+    memberStatus: "all"
   });
-  members.forEach((member) => {
-    if (!memberLocationById.has(member.id)) {
-      memberLocationById.set(member.id, "Unassigned");
-    }
-  });
-
-  const attendanceRecordByMemberDate = new Map<string, "present" | "absent">();
-  ((attendanceResult.data ?? []) as ReportingAttendanceRow[]).forEach((row) => {
-    attendanceRecordByMemberDate.set(`${row.member_id}:${row.attendance_date}`, row.status);
-  });
-
-  const closureByDate = new Map<string, ReportingClosureRow>();
-  ((closureResult.data ?? []) as ReportingClosureRow[]).forEach((row) => {
-    closureByDate.set(row.closure_date, row);
-  });
-
-  return {
-    members,
-    memberLocationById,
-    attendanceRecordByMemberDate,
-    closureByDate,
-    expectedContext
-  };
 }
 
 function average(value: number, divisor: number) {

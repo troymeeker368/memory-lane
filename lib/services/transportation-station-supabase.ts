@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
-import { buildPreferredContactByMember } from "@/lib/services/member-contact-priority";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizeOperationalDateOnly, getWeekdayForDate, type OperationsWeekdayKey } from "@/lib/services/operations-calendar";
-import { getTransportSlotForScheduleDay } from "@/lib/services/member-schedule-selectors";
+import {
+  buildTransportLocationLabel,
+  getTransportSlotForScheduleDay,
+  toScheduleWeekdayKey
+} from "@/lib/services/member-schedule-selectors";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import {
   loadExpectedAttendanceSupabaseContext,
@@ -16,6 +19,7 @@ import {
   type MemberAttendanceScheduleRow,
   type MemberContactRow
 } from "@/lib/services/member-command-center-read";
+import { listPreferredContactsByMemberSupabase } from "@/lib/services/transportation-contact-preferences-supabase";
 
 type Shift = "AM" | "PM";
 type TransportMode = "Bus Stop" | "Door to Door";
@@ -107,28 +111,6 @@ function shiftsForSelection(selection: TransportationStationShift): Shift[] {
   return [selection];
 }
 
-function toScheduleWeekday(weekday: OperationsWeekdayKey): ScheduleWeekdayKey | null {
-  if (
-    weekday === "monday" ||
-    weekday === "tuesday" ||
-    weekday === "wednesday" ||
-    weekday === "thursday" ||
-    weekday === "friday"
-  ) {
-    return weekday;
-  }
-  return null;
-}
-
-function buildLocationLabel(input: {
-  mode: TransportMode;
-  busStopName: string | null;
-  doorToDoorAddress: string | null;
-}) {
-  if (input.mode === "Bus Stop") return input.busStopName?.trim() || "Bus Stop";
-  return input.doorToDoorAddress?.trim() || "Door-to-Door";
-}
-
 function sortRiders(left: TransportationManifestRider, right: TransportationManifestRider) {
   const byName = left.memberName.localeCompare(right.memberName, undefined, { sensitivity: "base" });
   if (byName !== 0) return byName;
@@ -177,23 +159,6 @@ function transportationManifestStorageRequiredError() {
 const MEMBER_CONTACT_MANIFEST_SELECT =
   "id, member_id, contact_name, category, cellular_number, work_number, home_number, street_address, city, state, zip, updated_at";
 
-async function listPreferredContactsByMember(memberIds: string[]) {
-  if (memberIds.length === 0) {
-    return { rows: [] as MemberContactRow[], preferred: new Map<string, MemberContactRow>() };
-  }
-  const supabase = await createClient();
-  const { data, error } = await supabase.from("member_contacts").select(MEMBER_CONTACT_MANIFEST_SELECT).in("member_id", memberIds);
-  if (error) {
-    if (isMissingTableError(error, "member_contacts")) {
-      throw transportationManifestStorageRequiredError();
-    }
-    throw new Error(error.message);
-  }
-  const rows = (data ?? []) as MemberContactRow[];
-  const preferred = buildPreferredContactByMember(rows);
-  return { rows, preferred };
-}
-
 export async function resolvePreferredMemberContactSupabase(memberId: string, explicitContactId?: string | null) {
   const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
     actionLabel: "resolvePreferredMemberContactSupabase"
@@ -214,7 +179,7 @@ export async function resolvePreferredMemberContactSupabase(memberId: string, ex
     }
     if (data) return data as MemberContactRow;
   }
-  const { preferred } = await listPreferredContactsByMember([canonicalMemberId]);
+  const preferred = await listPreferredContactsByMemberSupabase({ memberIds: [canonicalMemberId] });
   return preferred.get(canonicalMemberId) ?? null;
 }
 
@@ -381,11 +346,19 @@ export async function getTransportationManifestSupabase(input?: {
     includeAttendanceRecords: false
   });
 
-  const [membersData, { preferred: preferredContactByMember }, adjustmentsResult] = await Promise.all([
+  const [membersData, preferredContactByMember, adjustmentsResult] = await Promise.all([
     memberIds.length > 0
       ? supabase.from("members").select("id, display_name, status").in("id", memberIds)
       : Promise.resolve({ data: [], error: null }),
-    listPreferredContactsByMember(memberIds),
+    listPreferredContactsByMemberSupabase({
+      memberIds,
+      onQueryError: (error) => {
+        if (isMissingTableError(error, "member_contacts")) {
+          throw transportationManifestStorageRequiredError();
+        }
+        throw new Error(error.message ?? "Unable to load member contacts.");
+      }
+    }),
     supabase
       .from("transportation_manifest_adjustments")
       .select("*")
@@ -408,7 +381,7 @@ export async function getTransportationManifestSupabase(input?: {
 
   const scheduledRiders: TransportationManifestRider[] = [];
   const holdExcludedScheduledRiders: TransportationManifestRider[] = [];
-  const scheduleWeekday = toScheduleWeekday(weekday);
+  const scheduleWeekday = toScheduleWeekdayKey(weekday);
   schedules.forEach((schedule) => {
     const member = memberById.get(schedule.member_id);
     if (!member || member.status !== "active") return;
@@ -432,7 +405,7 @@ export async function getTransportationManifestSupabase(input?: {
         shift,
         busNumber: slot.busNumber ?? null,
         transportType: slot.mode,
-        locationLabel: buildLocationLabel({
+        locationLabel: buildTransportLocationLabel({
           mode: slot.mode,
           busStopName: slot.busStop ?? null,
           doorToDoorAddress: slot.doorToDoorAddress ?? null
@@ -488,7 +461,7 @@ export async function getTransportationManifestSupabase(input?: {
       shift: row.shift,
       busNumber: row.bus_number,
       transportType,
-      locationLabel: buildLocationLabel({
+      locationLabel: buildTransportLocationLabel({
         mode: transportType,
         busStopName,
         doorToDoorAddress
