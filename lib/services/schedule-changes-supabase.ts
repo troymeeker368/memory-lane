@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
@@ -277,53 +275,6 @@ export async function getScheduleChangeSupabase(id: string) {
   return data ? toRow(data) : null;
 }
 
-export async function createScheduleChangeSupabase(input: {
-  memberId: string;
-  changeType: ScheduleChangeType;
-  effectiveStartDate: string;
-  effectiveEndDate: string | null;
-  originalDays: Array<string | null | undefined>;
-  newDays: Array<string | null | undefined>;
-  suspendBaseSchedule: boolean;
-  reason: string;
-  notes: string | null;
-  enteredBy: string;
-  enteredByUserId: string;
-}) {
-  const canonicalMemberId = await resolveScheduleMemberId(input.memberId, "createScheduleChangeSupabase");
-  const supabase = await createClient();
-  const now = toEasternISO();
-  const originalDays = normalizeWeekdays(input.originalDays);
-  const newDays = normalizeWeekdays(input.newDays);
-  const payload = {
-    id: `schedule-change-${randomUUID()}`,
-    member_id: canonicalMemberId,
-    change_type: input.changeType,
-    effective_start_date: normalizeOperationalDateOnly(input.effectiveStartDate),
-    effective_end_date: input.effectiveEndDate ? normalizeOperationalDateOnly(input.effectiveEndDate) : null,
-    original_days: originalDays,
-    new_days: newDays,
-    suspend_base_schedule: Boolean(input.suspendBaseSchedule),
-    reason: input.reason.trim(),
-    notes: input.notes?.trim() || null,
-    entered_by: input.enteredBy.trim(),
-    entered_by_user_id: input.enteredByUserId,
-    status: "active" as ScheduleChangeStatus,
-    created_at: now,
-    updated_at: now,
-    closed_at: null,
-    closed_by: null,
-    closed_by_user_id: null
-  };
-
-  const { data, error } = await supabase.from("schedule_changes").insert(payload).select("*").single();
-  if (error) {
-    if (isMissingScheduleChangesTableError(error)) throw scheduleChangesStorageRequiredError();
-    throw new Error(error.message);
-  }
-  return toRow(data);
-}
-
 export async function saveScheduleChangeWithAttendanceSyncSupabase(input: {
   id?: string | null;
   memberId: string;
@@ -416,39 +367,6 @@ export async function updateScheduleChangeSupabase(input: {
     .eq("id", input.id)
     .select("*")
     .maybeSingle();
-  if (error) {
-    if (isMissingScheduleChangesTableError(error)) throw scheduleChangesStorageRequiredError();
-    throw new Error(error.message);
-  }
-  return data ? toRow(data) : null;
-}
-
-export async function updateScheduleChangeStatusSupabase(input: {
-  id: string;
-  status: ScheduleChangeStatus;
-  actorName: string;
-  actorUserId: string;
-}) {
-  const supabase = await createClient();
-  const now = toEasternISO();
-  const updates =
-    input.status === "active"
-      ? {
-          status: input.status,
-          closed_at: null,
-          closed_by: null,
-          closed_by_user_id: null,
-          updated_at: now
-        }
-      : {
-          status: input.status,
-          closed_at: now,
-          closed_by: input.actorName,
-          closed_by_user_id: input.actorUserId,
-          updated_at: now
-        };
-
-  const { data, error } = await supabase.from("schedule_changes").update(updates).eq("id", input.id).select("*").maybeSingle();
   if (error) {
     if (isMissingScheduleChangesTableError(error)) throw scheduleChangesStorageRequiredError();
     throw new Error(error.message);

@@ -304,3 +304,7 @@ export function isEnrollmentPacketEligibleLeadState(input: {
   const resolved = resolveCanonicalLeadState(input);
   return ENROLLMENT_PACKET_ELIGIBLE_LEAD_STAGES.includes(resolved.stage as EnrollmentPacketEligibleLeadStage);
 }
+
+export function getEnrollmentPacketEligibleLeadQueryStages() {
+  return [...ENROLLMENT_PACKET_ELIGIBLE_LEAD_STAGES, "EIP"] as const;
+}

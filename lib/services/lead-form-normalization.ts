@@ -38,16 +38,34 @@ export function normalizeLeadFormLeadSource(value: string | null | undefined) {
   return hasOption(LEAD_SOURCE_OPTIONS, normalized) ? normalized : "Other";
 }
 
-export function normalizeLeadFormLikelihood(value: string | null | undefined) {
+export function normalizeLeadFormLikelihood(value: string | null | undefined): (typeof LEAD_LIKELIHOOD_OPTIONS)[number];
+export function normalizeLeadFormLikelihood(
+  value: string | null | undefined,
+  fallback: (typeof LEAD_LIKELIHOOD_OPTIONS)[number]
+): (typeof LEAD_LIKELIHOOD_OPTIONS)[number];
+export function normalizeLeadFormLikelihood(value: string | null | undefined, fallback: ""): (typeof LEAD_LIKELIHOOD_OPTIONS)[number] | "";
+export function normalizeLeadFormLikelihood(
+  value: string | null | undefined,
+  fallback: (typeof LEAD_LIKELIHOOD_OPTIONS)[number] | "" = "Warm"
+) {
   const normalized = clean(value);
-  if (!normalized) return "Warm";
-  return hasOption(LEAD_LIKELIHOOD_OPTIONS, normalized) ? normalized : "Warm";
+  if (!normalized) return fallback;
+  return hasOption(LEAD_LIKELIHOOD_OPTIONS, normalized) ? normalized : fallback;
 }
 
-export function normalizeLeadFormFollowUpType(value: string | null | undefined) {
+export function normalizeLeadFormFollowUpType(value: string | null | undefined): (typeof LEAD_FOLLOW_UP_TYPES)[number];
+export function normalizeLeadFormFollowUpType(
+  value: string | null | undefined,
+  fallback: (typeof LEAD_FOLLOW_UP_TYPES)[number]
+): (typeof LEAD_FOLLOW_UP_TYPES)[number];
+export function normalizeLeadFormFollowUpType(value: string | null | undefined, fallback: ""): (typeof LEAD_FOLLOW_UP_TYPES)[number] | "";
+export function normalizeLeadFormFollowUpType(
+  value: string | null | undefined,
+  fallback: (typeof LEAD_FOLLOW_UP_TYPES)[number] | "" = "Call"
+) {
   const normalized = clean(value);
-  if (!normalized) return "Call";
-  return hasOption(LEAD_FOLLOW_UP_TYPES, normalized) ? normalized : "Call";
+  if (!normalized) return fallback;
+  return hasOption(LEAD_FOLLOW_UP_TYPES, normalized) ? normalized : fallback;
 }
 
 export function splitLeadFormLostReason(value: string | null | undefined) {

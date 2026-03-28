@@ -12,6 +12,14 @@ import {
   LEAD_STATUS_OPTIONS,
   resolveCanonicalLeadState
 } from "@/lib/canonical";
+import {
+  normalizeLeadFormFollowUpType,
+  normalizeLeadFormLeadSource,
+  normalizeLeadFormLikelihood,
+  normalizeLeadFormStage,
+  normalizeLeadFormStatus,
+  splitLeadFormLostReason
+} from "@/lib/services/lead-form-normalization";
 import { getLeadRecordById } from "@/lib/services/leads-read";
 import { legacyLeadActivityInputSchema, normalizeLegacyLeadActivityInput } from "@/lib/services/sales-lead-activities";
 import { toEasternDate } from "@/lib/timezone";
@@ -19,43 +27,10 @@ import { toEasternDate } from "@/lib/timezone";
 import { requireManagerAdminEditor } from "@/app/action-helpers";
 
 function resolveLegacyLeadStateOptions(requestedStage: string, requestedStatus: string) {
-  const resolved = resolveCanonicalLeadState({ requestedStage, requestedStatus });
   return {
-    stage: resolved.stage,
-    status: resolved.status
+    stage: normalizeLeadFormStage(requestedStage),
+    status: normalizeLeadFormStatus(requestedStage, requestedStatus)
   };
-}
-
-function normalizeLegacyLeadSourceOption(leadSource: string | null | undefined): (typeof LEAD_SOURCE_OPTIONS)[number] {
-  const normalized = (leadSource ?? "").trim();
-  return LEAD_SOURCE_OPTIONS.includes(normalized as (typeof LEAD_SOURCE_OPTIONS)[number])
-    ? (normalized as (typeof LEAD_SOURCE_OPTIONS)[number])
-    : "Other";
-}
-
-function normalizeLegacyLikelihoodOption(likelihood: string | null | undefined): (typeof LEAD_LIKELIHOOD_OPTIONS)[number] | "" {
-  const normalized = (likelihood ?? "").trim();
-  return LEAD_LIKELIHOOD_OPTIONS.includes(normalized as (typeof LEAD_LIKELIHOOD_OPTIONS)[number])
-    ? (normalized as (typeof LEAD_LIKELIHOOD_OPTIONS)[number])
-    : "";
-}
-
-function normalizeLegacyFollowUpTypeOption(followUpType: string | null | undefined): (typeof LEAD_FOLLOW_UP_TYPES)[number] | "" {
-  const normalized = (followUpType ?? "").trim();
-  return LEAD_FOLLOW_UP_TYPES.includes(normalized as (typeof LEAD_FOLLOW_UP_TYPES)[number])
-    ? (normalized as (typeof LEAD_FOLLOW_UP_TYPES)[number])
-    : "";
-}
-
-function splitLegacyLostReasonParts(lostReason: string | null | undefined) {
-  const normalized = (lostReason ?? "").trim();
-  if (!normalized) {
-    return { lostReason: "", lostReasonOther: "" };
-  }
-  if (LEAD_LOST_REASON_OPTIONS.includes(normalized as (typeof LEAD_LOST_REASON_OPTIONS)[number])) {
-    return { lostReason: normalized, lostReasonOther: "" };
-  }
-  return { lostReason: "Other", lostReasonOther: normalized };
 }
 
 function resolveLegacyReferralLookup(input: { partnerId?: string | null; referralSourceId?: string | null; referralName?: string | null }) {
@@ -164,9 +139,9 @@ async function getLegacyLeadRecordById(leadId: string): Promise<{ lead: LegacyLe
 
 function buildLegacyLeadSavePayload(input: LegacyLeadSaveInput): Parameters<typeof saveSalesLeadAction>[0] {
   const { stage, status } = resolveLegacyLeadStateOptions(input.stage, input.status);
-  const leadSource = normalizeLegacyLeadSourceOption(input.leadSource);
+  const leadSource = normalizeLeadFormLeadSource(input.leadSource);
   const isLost = status === "Lost";
-  const lostReasonParts = splitLegacyLostReasonParts(input.lostReason);
+  const lostReasonParts = splitLeadFormLostReason(input.lostReason);
   const referralLookup = resolveLegacyReferralLookup({
     partnerId: input.partnerId,
     referralSourceId: input.referralSourceId,
@@ -198,9 +173,9 @@ function buildLegacyLeadSavePayload(input: LegacyLeadSaveInput): Parameters<type
     partnerId: referralLookup.partnerId,
     referralSourceId: referralLookup.referralSourceId,
     referralName: input.referralName ?? "",
-    likelihood: normalizeLegacyLikelihoodOption(input.likelihood),
+    likelihood: normalizeLeadFormLikelihood(input.likelihood, ""),
     nextFollowUpDate: isLost ? "" : input.nextFollowUpDate ?? "",
-    nextFollowUpType: isLost ? "" : normalizeLegacyFollowUpTypeOption(input.nextFollowUpType),
+    nextFollowUpType: isLost ? "" : normalizeLeadFormFollowUpType(input.nextFollowUpType, ""),
     tourDate: input.tourDate ?? "",
     tourCompleted: input.tourDate ? Boolean(input.tourCompleted) : undefined,
     discoveryDate: input.discoveryDate ?? "",

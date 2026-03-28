@@ -8,7 +8,8 @@ import {
   normalizeLeadFormLikelihood,
   normalizeLeadFormStage,
   normalizeLeadFormStatus,
-  normalizeLeadFormSummary
+  normalizeLeadFormSummary,
+  splitLeadFormLostReason
 } from "@/lib/services/lead-form-normalization";
 
 function readWorkspaceFile(relativePath: string) {
@@ -31,6 +32,12 @@ test("legacy lead values normalize into the current lead edit form model", () =>
   assert.equal(normalizeLeadFormLeadSource("Legacy source"), "Other");
   assert.equal(normalizeLeadFormLikelihood("very warm"), "Warm");
   assert.equal(normalizeLeadFormFollowUpType("fax"), "Call");
+  assert.equal(normalizeLeadFormLikelihood(undefined, ""), "");
+  assert.equal(normalizeLeadFormFollowUpType(undefined, ""), "");
+  assert.deepEqual(splitLeadFormLostReason("Budget"), {
+    lostReason: "Other",
+    lostReasonOther: "Budget"
+  });
   assert.deepEqual(normalized, {
     stage: "Enrollment in Progress",
     status: "Open",
@@ -50,4 +57,18 @@ test("lead save action has separate validation messaging for edit mode", () => {
 
   assert.equal(source.includes('submissionMode: z.enum(["create", "edit"]).optional()'), true);
   assert.equal(source.includes('submissionMode === "edit" ? "Invalid lead update." : "Invalid inquiry submission."'), true);
+});
+
+test("legacy app actions reuse shared lead normalization helpers", () => {
+  const source = readWorkspaceFile("app/actions.ts");
+  const canonicalSource = readWorkspaceFile("lib/canonical.ts");
+  const crmSource = readWorkspaceFile("lib/services/sales-crm-read-model.ts");
+
+  assert.equal(source.includes('from "@/lib/services/lead-form-normalization"'), true);
+  assert.equal(source.includes("normalizeLegacyLeadSourceOption"), false);
+  assert.equal(source.includes("normalizeLegacyLikelihoodOption"), false);
+  assert.equal(source.includes("normalizeLegacyFollowUpTypeOption"), false);
+  assert.equal(source.includes("splitLegacyLostReasonParts"), false);
+  assert.equal(canonicalSource.includes("getEnrollmentPacketEligibleLeadQueryStages"), true);
+  assert.equal(crmSource.includes("getEnrollmentPacketEligibleLeadQueryStages"), true);
 });
