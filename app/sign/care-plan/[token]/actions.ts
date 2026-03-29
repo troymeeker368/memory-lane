@@ -22,7 +22,7 @@ export async function submitPublicCarePlanSignatureAction(formData: FormData) {
     const caregiverUserAgent = headersList.get("user-agent");
     const { submitPublicCarePlanSignature } = await loadPublicCarePlanSignatureService();
 
-    await submitPublicCarePlanSignature({
+    const signed = await submitPublicCarePlanSignature({
       token,
       caregiverTypedName,
       signatureImageDataUrl,
@@ -30,7 +30,12 @@ export async function submitPublicCarePlanSignatureAction(formData: FormData) {
       caregiverIp,
       caregiverUserAgent
     });
-    return { ok: true } as const;
+    return {
+      ok: true,
+      finalMemberFileId: signed.finalMemberFileId,
+      actionNeeded: signed.actionNeeded,
+      actionNeededMessage: signed.actionNeededMessage
+    } as const;
   } catch (error) {
     return {
       ok: false,

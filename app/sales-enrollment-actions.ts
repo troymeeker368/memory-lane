@@ -86,7 +86,9 @@ export async function sendEnrollmentPacketAction(raw: z.infer<typeof enrollmentP
     return {
       ok: true,
       requestId: sent.request.id,
-      requestUrl: sent.requestUrl
+      requestUrl: sent.requestUrl,
+      actionNeeded: sent.actionNeeded,
+      actionNeededMessage: sent.actionNeededMessage
     } as const;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to send enrollment packet.";
@@ -184,7 +186,9 @@ export async function resendEnrollmentPacketAction(raw: z.infer<typeof packetAct
     return {
       ok: true,
       requestId: sent.request.id,
-      requestUrl: sent.requestUrl
+      requestUrl: sent.requestUrl,
+      actionNeeded: sent.actionNeeded,
+      actionNeededMessage: sent.actionNeededMessage
     } as const;
   } catch (error) {
     if (error instanceof WorkflowDeliveryError) {
@@ -244,7 +248,9 @@ export async function replaceEnrollmentPacketAction(raw: z.infer<typeof replaceE
     return {
       ok: true,
       requestId: sent.request.id,
-      requestUrl: sent.requestUrl
+      requestUrl: sent.requestUrl,
+      actionNeeded: sent.actionNeeded,
+      actionNeededMessage: sent.actionNeededMessage
     } as const;
   } catch (error) {
     if (error instanceof WorkflowDeliveryError) {

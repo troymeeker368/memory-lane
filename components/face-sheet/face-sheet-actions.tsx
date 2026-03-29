@@ -1,12 +1,12 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 
-import { generateMemberFaceSheetPdfAction } from "@/app/(portal)/members/[memberId]/face-sheet/actions";
 import { triggerPdfDownload, triggerPdfPrint } from "@/components/documents/pdf-client";
 
 export function FaceSheetActions({ memberId }: { memberId: string }) {
   const [isPending, startTransition] = useTransition();
+  const [status, setStatus] = useState("");
 
   return (
     <div className="print-hide flex flex-wrap items-center gap-2">
@@ -17,15 +17,38 @@ export function FaceSheetActions({ memberId }: { memberId: string }) {
         disabled={isPending}
         onClick={() =>
           startTransition(async () => {
-            const result = await generateMemberFaceSheetPdfAction({ memberId });
-            if (!result?.ok) return;
+            setStatus("");
+            const response = await fetch(`/api/members/${memberId}/face-sheet`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              }
+            });
+
+            let result:
+              | { ok: true; fileName: string; dataUrl: string }
+              | { ok: false; error: string };
+
+            try {
+              result = (await response.json()) as typeof result;
+            } catch {
+              setStatus("Error: unexpected server response while generating the face sheet PDF.");
+              return;
+            }
+
+            if (!result?.ok) {
+              setStatus(`Error: ${result.error}`);
+              return;
+            }
             triggerPdfDownload(result.dataUrl, result.fileName);
             triggerPdfPrint(result.dataUrl);
+            setStatus("Face sheet PDF downloaded and print dialog opened.");
           })
         }
       >
         {isPending ? "Preparing..." : "Download / Print PDF"}
       </button>
+      {status ? <p className="text-xs text-muted">{status}</p> : null}
     </div>
   );
 }

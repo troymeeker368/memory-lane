@@ -18,6 +18,11 @@ export function CarePlanPublicSignForm({
   const [hasSignature, setHasSignature] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [signed, setSigned] = useState(false);
+  const [signedOutcome, setSignedOutcome] = useState<{
+    actionNeeded: boolean;
+    actionNeededMessage: string | null;
+    finalMemberFileId: string | null;
+  } | null>(null);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -114,15 +119,29 @@ export function CarePlanPublicSignForm({
         return;
       }
       setSigned(true);
-      setStatus("Signature saved successfully.");
+      setSignedOutcome({
+        actionNeeded: result.actionNeeded,
+        actionNeededMessage: result.actionNeededMessage,
+        finalMemberFileId: result.finalMemberFileId ?? null
+      });
+      setStatus(result.actionNeededMessage ?? "Signature saved successfully.");
     });
   }
 
   if (signed) {
     return (
-      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
-        <p className="font-semibold">Signing Successful</p>
-        <p>Thank you. The signed care plan has been received.</p>
+      <div
+        className={`rounded-lg border p-3 text-sm ${
+          signedOutcome?.actionNeeded
+            ? "border-amber-200 bg-amber-50 text-amber-800"
+            : "border-emerald-200 bg-emerald-50 text-emerald-700"
+        }`}
+      >
+        <p className="font-semibold">{signedOutcome?.actionNeeded ? "Signature Received" : "Signing Successful"}</p>
+        <p>{signedOutcome?.actionNeededMessage ?? "Thank you. The signed care plan has been received."}</p>
+        {signedOutcome?.finalMemberFileId ? (
+          <p className="mt-2 text-xs">Member file reference: {signedOutcome.finalMemberFileId}</p>
+        ) : null}
       </div>
     );
   }

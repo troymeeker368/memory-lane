@@ -52,6 +52,14 @@ type SendEnrollmentPacketFailure = {
   activePacket?: ActivePacketConflict;
 };
 
+type SendEnrollmentPacketSuccess = {
+  ok: true;
+  requestId: string;
+  requestUrl: string;
+  actionNeeded: boolean;
+  actionNeededMessage: string | null;
+};
+
 export function SendEnrollmentPacketAction({
   leadId,
   defaultCaregiverEmail,
@@ -80,7 +88,7 @@ export function SendEnrollmentPacketAction({
   const [communityFeeEdited, setCommunityFeeEdited] = useState(false);
   const [dailyRateEdited, setDailyRateEdited] = useState(false);
   const [initialAmountEdited, setInitialAmountEdited] = useState(false);
-  const [sentResult, setSentResult] = useState(false);
+  const [sentResult, setSentResult] = useState<SendEnrollmentPacketSuccess | null>(null);
   const [activeConflict, setActiveConflict] = useState<ActivePacketConflict | null>(null);
   const [voidReason, setVoidReason] = useState("");
   const submitGuardRef = useRef(false);
@@ -209,9 +217,7 @@ export function SendEnrollmentPacketAction({
     setIsSubmitting(true);
     startTransition(async () => {
       try {
-        const result = (await sendEnrollmentPacketAction(actionPayload)) as
-          | { ok: true; requestId: string; requestUrl: string }
-          | SendEnrollmentPacketFailure;
+        const result = (await sendEnrollmentPacketAction(actionPayload)) as SendEnrollmentPacketSuccess | SendEnrollmentPacketFailure;
         if (!result.ok) {
           if (result.code === "active_enrollment_packet_exists" && result.activePacket) {
             setActiveConflict(result.activePacket);
@@ -224,7 +230,7 @@ export function SendEnrollmentPacketAction({
         }
 
         router.refresh();
-        setSentResult(true);
+        setSentResult(result);
         setStatus(null);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Unable to send enrollment packet.");
@@ -280,7 +286,7 @@ export function SendEnrollmentPacketAction({
         setActiveConflict(null);
         setVoidReason("");
         router.refresh();
-        setSentResult(true);
+        setSentResult(result);
         setStatus(null);
       } finally {
         setIsSubmitting(false);
@@ -300,9 +306,19 @@ export function SendEnrollmentPacketAction({
           <div className="max-h-[95vh] w-full max-w-2xl overflow-auto rounded-lg bg-white p-4 shadow-xl">
             {sentResult ? (
               <div className="space-y-3">
-                <h3 className="text-base font-semibold">Enrollment Packet Sent Successfully</h3>
-                <p className="text-sm text-muted">
-                  The enrollment packet was sent and is now in the signature workflow.
+                <h3 className="text-base font-semibold">
+                  {sentResult.actionNeeded ? "Enrollment Packet Sent With Follow-up Required" : "Enrollment Packet Sent Successfully"}
+                </h3>
+                <p
+                  className={`rounded-lg border px-3 py-2 text-sm ${
+                    sentResult.actionNeeded
+                      ? "border-amber-200 bg-amber-50 text-amber-800"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  }`}
+                >
+                  {sentResult.actionNeeded
+                    ? sentResult.actionNeededMessage ?? "The enrollment packet was sent, but sales activity follow-up is still required."
+                    : "The enrollment packet was sent and is now in the signature workflow."}
                 </p>
                 <div className="mt-4 flex justify-end">
                   <button
@@ -310,7 +326,7 @@ export function SendEnrollmentPacketAction({
                     className="rounded-lg border border-border px-4 py-2 text-sm font-semibold"
                     onClick={() => {
                       setIsOpen(false);
-                      setSentResult(false);
+                      setSentResult(null);
                       setActiveConflict(null);
                       setVoidReason("");
                     }}

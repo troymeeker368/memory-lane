@@ -750,6 +750,10 @@ export async function sendEnrollmentPacketRequest(input: {
     }
   }
 
+  const actionNeededMessage = leadActivitySyncError
+    ? "Enrollment packet was sent, but sales activity still needs follow-up. Open the lead and confirm the packet activity appears before relying on sales workflow history."
+    : null;
+
   return {
     request: toSummary({
       id: requestId,
@@ -779,6 +783,8 @@ export async function sendEnrollmentPacketRequest(input: {
       mapping_sync_attempted_at: reusablePreparedActive?.mapping_sync_attempted_at ?? null,
       latest_mapping_run_id: reusablePreparedActive?.latest_mapping_run_id ?? null
     }),
-    requestUrl
+    requestUrl,
+    actionNeeded: Boolean(leadActivitySyncError),
+    actionNeededMessage
   };
 }

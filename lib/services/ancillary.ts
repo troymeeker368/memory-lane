@@ -9,6 +9,11 @@ interface AncillaryScope {
   staffUserId?: string | null;
 }
 
+function isAutomatedLatePickupCategoryName(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized.includes("late pick-up") || normalized.includes("late pickup");
+}
+
 export type MemberAncillaryChargeLogRow = {
   id: string | null;
   member_id: string | null;
@@ -94,7 +99,7 @@ export async function getAncillarySummary(monthKey?: string, scope?: AncillarySc
   }
 
   return {
-    categories: categories ?? [],
+    categories: (categories ?? []).filter((category) => !isAutomatedLatePickupCategoryName(category.name)),
     logs: (logsData ?? []).map((row) => ({
       ...row,
       notes: row.reconciliation_note ?? null

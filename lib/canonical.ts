@@ -184,8 +184,7 @@ export const ANCILLARY_CHARGE_CATALOG = [
   { name: "Transport - Door to Door", price_cents: 2000 },
   { name: "Transport - Bus Stop", price_cents: 1000 },
   { name: "Transport - Refused/No Show", price_cents: 1000 },
-  { name: "Late Pick-Up (first 15 min)", price_cents: 2500 },
-  { name: "Late Pick-Up (next 15 min)", price_cents: 3000 }
+  { name: "Late Pickup", price_cents: 2500 }
 ] as const;
 
 // Leads Pipeline (1).xlsx - Lists tab

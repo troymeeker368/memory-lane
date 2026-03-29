@@ -7,6 +7,7 @@ import { requireNavItemAccess } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions/core";
 import { getAncillarySummary } from "@/lib/services/ancillary";
 import { getEnrollmentPricingOverview, listEnrollmentPricingAuditRows } from "@/lib/services/enrollment-pricing";
+import { getOperationalSettings } from "@/lib/services/operations-settings";
 import { toEasternDate } from "@/lib/timezone";
 
 type PricingTab = "overview" | "community-fee" | "daily-rates" | "ancillary-rates" | "history";
@@ -68,6 +69,26 @@ function formatDateTime(value: string | null | undefined) {
   });
 }
 
+function formatClockLabel(value: string | null | undefined) {
+  if (!value || !/^\d{2}:\d{2}$/.test(value)) return value ?? "-";
+  const [hoursRaw, minutesRaw] = value.split(":");
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return value;
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const hour12 = hours % 12 || 12;
+  return `${hour12}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
+function addMinutesToClock(value: string, delta: number) {
+  const [hoursRaw, minutesRaw] = value.split(":");
+  const totalMinutes = Number(hoursRaw) * 60 + Number(minutesRaw) + delta;
+  const wrapped = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+  const hours = Math.floor(wrapped / 60);
+  const minutes = wrapped % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
 export default async function OperationsPricingPage({
   searchParams
 }: {
@@ -78,10 +99,11 @@ export default async function OperationsPricingPage({
   const selectedTab = toTab(params.tab);
   const todayDate = toEasternDate();
 
-  const [overview, auditRows, ancillarySummary] = await Promise.all([
+  const [overview, auditRows, ancillarySummary, operationalSettings] = await Promise.all([
     getEnrollmentPricingOverview(),
     listEnrollmentPricingAuditRows(100),
-    selectedTab === "ancillary-rates" ? getAncillarySummary() : Promise.resolve(null)
+    selectedTab === "ancillary-rates" ? getAncillarySummary() : Promise.resolve(null),
+    selectedTab === "ancillary-rates" ? getOperationalSettings() : Promise.resolve(null)
   ]);
 
   const normalizedRole = normalizeRoleKey(profile.role);
@@ -300,6 +322,15 @@ export default async function OperationsPricingPage({
           <p className="mt-1 text-sm text-muted">
             Configure default ancillary charge rates used by the canonical ancillary entry workflow.
           </p>
+          {operationalSettings ? (
+            <div className="mt-3 rounded-lg border border-border bg-slate-50 px-3 py-3 text-sm text-muted">
+              <p className="font-semibold text-fg">Automated Late Pickup Billing</p>
+              <p className="mt-1">
+                Late pickup is no longer a manual ancillary pricing row. Attendance checkout now drives it automatically:
+                {` after ${formatClockLabel(operationalSettings.latePickupRules.graceStartTime)} through ${formatClockLabel(addMinutesToClock(operationalSettings.latePickupRules.graceStartTime, operationalSettings.latePickupRules.firstWindowMinutes))} = $${(operationalSettings.latePickupRules.firstWindowFeeCents / 100).toFixed(2)}, then $${(operationalSettings.latePickupRules.additionalPerMinuteCents / 100).toFixed(2)}/min through ${formatClockLabel(addMinutesToClock(operationalSettings.latePickupRules.graceStartTime, operationalSettings.latePickupRules.firstWindowMinutes + operationalSettings.latePickupRules.additionalMinutesCap))}, capped after that.`}
+              </p>
+            </div>
+          ) : null}
           {!canEditAncillary ? (
             <p className="mt-2 rounded-lg border border-border bg-slate-50 px-3 py-2 text-sm text-muted">
               Read-only for directors. Admin access is required to change ancillary rates.

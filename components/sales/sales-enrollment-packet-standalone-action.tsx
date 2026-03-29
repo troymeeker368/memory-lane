@@ -37,6 +37,14 @@ type PricingPreview = {
   issues: string[];
 };
 
+type SendEnrollmentPacketSuccess = {
+  ok: true;
+  requestId: string;
+  requestUrl: string;
+  actionNeeded: boolean;
+  actionNeededMessage: string | null;
+};
+
 export function SalesEnrollmentPacketStandaloneAction({
   leads,
   pricingPreview
@@ -60,7 +68,7 @@ export function SalesEnrollmentPacketStandaloneAction({
   const [communityFeeEdited, setCommunityFeeEdited] = useState(false);
   const [dailyRateEdited, setDailyRateEdited] = useState(false);
   const [initialAmountEdited, setInitialAmountEdited] = useState(false);
-  const [sentResult, setSentResult] = useState(false);
+  const [sentResult, setSentResult] = useState<SendEnrollmentPacketSuccess | null>(null);
   const submitGuardRef = useRef(false);
   const router = useRouter();
   const isWorking = isPending || isSubmitting;
@@ -190,7 +198,7 @@ export function SalesEnrollmentPacketStandaloneAction({
         }
 
         router.refresh();
-        setSentResult(true);
+        setSentResult(result);
         setStatus(null);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Unable to send enrollment packet.");
@@ -221,9 +229,19 @@ export function SalesEnrollmentPacketStandaloneAction({
           <div className="max-h-[95vh] w-full max-w-2xl overflow-auto rounded-lg bg-white p-4 shadow-xl">
             {sentResult ? (
               <div className="space-y-3">
-                <h3 className="text-base font-semibold">Enrollment Packet Sent Successfully</h3>
-                <p className="text-sm text-muted">
-                  The enrollment packet was sent and is now in the signature workflow.
+                <h3 className="text-base font-semibold">
+                  {sentResult.actionNeeded ? "Enrollment Packet Sent With Follow-up Required" : "Enrollment Packet Sent Successfully"}
+                </h3>
+                <p
+                  className={`rounded-lg border px-3 py-2 text-sm ${
+                    sentResult.actionNeeded
+                      ? "border-amber-200 bg-amber-50 text-amber-800"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  }`}
+                >
+                  {sentResult.actionNeeded
+                    ? sentResult.actionNeededMessage ?? "The enrollment packet was sent, but sales activity follow-up is still required."
+                    : "The enrollment packet was sent and is now in the signature workflow."}
                 </p>
                 <div className="mt-4 flex justify-end gap-2">
                   <button
@@ -231,7 +249,7 @@ export function SalesEnrollmentPacketStandaloneAction({
                     className="rounded-lg border border-border px-4 py-2 text-sm font-semibold"
                     onClick={() => {
                       setIsOpen(false);
-                      setSentResult(false);
+                      setSentResult(null);
                     }}
                     disabled={isWorking}
                   >

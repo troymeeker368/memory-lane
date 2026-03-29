@@ -382,10 +382,15 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     if (!signedDetail?.carePlan.finalMemberFileId) {
       throw new Error("This signature link was already used, but the final care plan file is missing.");
     }
+    const actionNeeded = signedDetail.carePlan.postSignReadinessStatus !== "ready";
     return {
       carePlanId: tokenRow.id,
       memberId: tokenRow.member_id,
-      finalMemberFileId: signedDetail.carePlan.finalMemberFileId
+      finalMemberFileId: signedDetail.carePlan.finalMemberFileId,
+      actionNeeded,
+      actionNeededMessage: actionNeeded
+        ? "Signature was already received, but staff still needs to finish post-sign follow-up before the care plan is fully ready."
+        : null
     };
   }
   const status = await markExpiredIfNeeded({
@@ -418,6 +423,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         wasAlreadySigned: boolean;
       }
     | null = null;
+  let postCommitActionNeededMessage: string | null = null;
   try {
     const generated = await buildCarePlanPdfDataUrl(detail.carePlan.id, { serviceRole: true });
     const parsedPdf = parseDataUrlPayload(generated.dataUrl);
@@ -459,7 +465,9 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
       return {
         carePlanId: detail.carePlan.id,
         memberId: detail.carePlan.memberId,
-        finalMemberFileId: finalized.finalMemberFileId
+        finalMemberFileId: finalized.finalMemberFileId,
+        actionNeeded: false,
+        actionNeededMessage: null
       };
     }
   } catch (error) {
@@ -582,6 +590,8 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     await markCarePlanPostSignReady(detail.carePlan.id);
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete post-sign readiness update.";
+    postCommitActionNeededMessage =
+      "Signature was received and filed, but staff still needs to finish post-sign follow-up before the care plan is fully ready.";
     await recordCarePlanAlertSafely({
       entityType: "care_plan",
       entityId: detail.carePlan.id,
@@ -604,6 +614,8 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
   return {
     carePlanId: detail.carePlan.id,
     memberId: detail.carePlan.memberId,
-    finalMemberFileId: finalized.finalMemberFileId
+    finalMemberFileId: finalized.finalMemberFileId,
+    actionNeeded: Boolean(postCommitActionNeededMessage),
+    actionNeededMessage: postCommitActionNeededMessage
   };
 }
