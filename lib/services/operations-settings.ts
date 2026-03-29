@@ -18,11 +18,11 @@ const DEFAULT_OPERATIONAL_SETTINGS: OperationalSettings = {
   busNumbers: [...MEMBER_BUS_NUMBER_OPTIONS],
   makeupPolicy: "rolling_30_day_expiration",
   latePickupRules: {
-    graceStartTime: "17:00",
+    graceStartTime: "16:30",
     firstWindowMinutes: 15,
     firstWindowFeeCents: 2500,
     additionalPerMinuteCents: 200,
-    additionalMinutesCap: 15
+    additionalMinutesCap: 30
   }
 };
 

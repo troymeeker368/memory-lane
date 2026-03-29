@@ -1,5 +1,7 @@
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
+import { calculateLatePickupFee, getOperationalSettings } from "@/lib/services/operations-settings";
 import { createClient } from "@/lib/supabase/server";
+import { toEasternDateTimeLocal, toEasternISO } from "@/lib/timezone";
 
 type CreateAncillaryChargeInput = {
   memberId: string;
@@ -37,6 +39,140 @@ function schemaDependencyError(details: string) {
 function isLatePickupCategory(categoryName?: string | null) {
   const normalized = (categoryName ?? "").toLowerCase();
   return normalized.includes("late pick-up") || normalized.includes("late pickup");
+}
+
+function attendanceLatePickupSource(attendanceRecordId: string) {
+  return {
+    sourceEntity: "attendanceRecords",
+    sourceEntityId: attendanceRecordId
+  } as const;
+}
+
+function toLatePickupTimeFromIso(checkOutAt: string | null | undefined) {
+  if (!checkOutAt) return null;
+  const local = toEasternDateTimeLocal(checkOutAt);
+  return local.split("T")[1] ?? null;
+}
+
+async function getLatePickupCategorySupabase() {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("ancillary_charge_categories")
+    .select("id, name, price_cents")
+    .ilike("name", "Late Pickup")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) {
+    throw new Error("Late Pickup ancillary charge category not found.");
+  }
+  return {
+    id: String(data.id),
+    name: String(data.name ?? ""),
+    price_cents: Number(data.price_cents ?? 0)
+  };
+}
+
+export async function syncAttendanceLatePickupAncillaryChargeSupabase(input: {
+  attendanceRecordId: string;
+  memberId: string;
+  attendanceDate: string;
+  checkOutAt: string | null;
+  actorUserId: string;
+}) {
+  const supabase = await createClient();
+  const category = await getLatePickupCategorySupabase();
+  const { sourceEntity, sourceEntityId } = attendanceLatePickupSource(input.attendanceRecordId);
+  const { data: existingRows, error: existingError } = await supabase
+    .from("ancillary_charge_logs")
+    .select("id, billing_status, invoice_id, unit_rate, amount, late_pickup_time")
+    .eq("category_id", category.id)
+    .eq("source_entity", sourceEntity)
+    .eq("source_entity_id", sourceEntityId);
+  if (existingError) {
+    if (
+      isPostgresColumnMissingError(existingError, "source_entity") ||
+      isPostgresColumnMissingError(existingError, "source_entity_id")
+    ) {
+      throw schemaDependencyError(
+        "public.ancillary_charge_logs requires source_entity text and source_entity_id text for attendance late pick-up automation."
+      );
+    }
+    throw new Error(existingError.message);
+  }
+
+  if ((existingRows ?? []).length > 1) {
+    throw new Error("Multiple automated late pick-up ancillary charges exist for this attendance record.");
+  }
+
+  const existing = existingRows?.[0] ?? null;
+  const latePickupTime = toLatePickupTimeFromIso(input.checkOutAt);
+  const settings = await getOperationalSettings();
+  const fee = latePickupTime
+    ? calculateLatePickupFee({
+        latePickupTime,
+        rules: settings.latePickupRules
+      })
+    : null;
+
+  const shouldHaveCharge = Boolean(fee && fee.amountCents > 0);
+  if (!shouldHaveCharge) {
+    if (!existing) {
+      return { action: "none" as const, ancillaryChargeId: null };
+    }
+    if (String(existing.billing_status ?? "Unbilled") === "Billed" || existing.invoice_id) {
+      throw new Error("Late pick-up charge has already been billed and cannot be removed automatically.");
+    }
+
+    const { error: deleteError } = await supabase.from("ancillary_charge_logs").delete().eq("id", existing.id);
+    if (deleteError) throw new Error(deleteError.message);
+    return { action: "deleted" as const, ancillaryChargeId: String(existing.id) };
+  }
+
+  const unitRate = Number(((fee?.amountCents ?? 0) / 100).toFixed(2));
+  const amount = unitRate;
+  if (existing) {
+    const status = String(existing.billing_status ?? "Unbilled");
+    const existingAmount = Number(existing.amount ?? 0);
+    const existingTime = String(existing.late_pickup_time ?? "");
+    if ((status === "Billed" || existing.invoice_id) && (existingAmount !== amount || existingTime !== latePickupTime)) {
+      throw new Error("Late pick-up charge has already been billed and cannot be changed automatically.");
+    }
+    if (existingAmount === amount && existingTime === latePickupTime && status === "Unbilled") {
+      return { action: "unchanged" as const, ancillaryChargeId: String(existing.id) };
+    }
+
+    const { error: updateError } = await supabase
+      .from("ancillary_charge_logs")
+      .update({
+        member_id: input.memberId,
+        category_id: category.id,
+        service_date: input.attendanceDate,
+        late_pickup_time: latePickupTime,
+        staff_user_id: input.actorUserId,
+        notes: "Auto-generated from attendance checkout.",
+        quantity: 1,
+        unit_rate: unitRate,
+        amount,
+        billing_status: status === "Billed" ? "Billed" : "Unbilled",
+        invoice_id: status === "Billed" ? existing.invoice_id : null,
+        updated_at: toEasternISO()
+      })
+      .eq("id", existing.id);
+    if (updateError) throw new Error(updateError.message);
+    return { action: "updated" as const, ancillaryChargeId: String(existing.id) };
+  }
+
+  const created = await createAncillaryChargeSupabase({
+    memberId: input.memberId,
+    categoryId: category.id,
+    serviceDate: input.attendanceDate,
+    latePickupTime,
+    notes: "Auto-generated from attendance checkout.",
+    sourceEntity,
+    sourceEntityId,
+    actorUserId: input.actorUserId
+  });
+  return { action: "created" as const, ancillaryChargeId: created.ancillaryChargeId };
 }
 
 export async function createAncillaryChargeSupabase(input: CreateAncillaryChargeInput) {
@@ -87,7 +223,21 @@ export async function createAncillaryChargeSupabase(input: CreateAncillaryCharge
   }
 
   const quantity = 1;
-  const unitRate = Number((Number(category.price_cents ?? 0) / 100).toFixed(2));
+  let unitRate = Number((Number(category.price_cents ?? 0) / 100).toFixed(2));
+  if (requiresLatePickupTime) {
+    const settings = await getOperationalSettings();
+    const fee = calculateLatePickupFee({
+      latePickupTime: input.latePickupTime?.trim() || "",
+      rules: settings.latePickupRules
+    });
+    if (!fee) {
+      throw new Error("Unable to calculate late pick-up fee from operations settings.");
+    }
+    if (fee.amountCents <= 0) {
+      throw new Error("Late pick-up fee does not apply for the selected pick-up time.");
+    }
+    unitRate = Number((fee.amountCents / 100).toFixed(2));
+  }
   const amount = Number((unitRate * quantity).toFixed(2));
   const { data, error } = await supabase
     .from("ancillary_charge_logs")
@@ -134,7 +284,7 @@ export async function updateAncillaryCategoryPriceSupabase(input: {
     .from("ancillary_charge_categories")
     .update({ price_cents: input.priceCents })
     .eq("id", input.categoryId)
-    .select("id, name")
+    .select("id, name, price_cents")
     .maybeSingle();
 
   if (error) {
@@ -146,7 +296,8 @@ export async function updateAncillaryCategoryPriceSupabase(input: {
 
   return {
     id: String(data.id),
-    name: String(data.name ?? "")
+    name: String(data.name ?? ""),
+    price_cents: Number(data.price_cents ?? input.priceCents)
   };
 }
 

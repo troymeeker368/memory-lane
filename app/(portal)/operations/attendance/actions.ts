@@ -20,6 +20,7 @@ import {
   upsertAttendanceRecordSupabase,
   type AttendanceRecordRow
 } from "@/lib/services/attendance-workflow-supabase";
+import { syncAttendanceLatePickupAncillaryChargeSupabase } from "@/lib/services/ancillary-write-supabase";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { easternDateTimeLocalToISO, toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
@@ -182,6 +183,23 @@ async function upsertAttendanceRecord(input: {
   return upsertAttendanceRecordSupabase(input);
 }
 
+async function syncAttendanceLatePickupCharge(input: {
+  attendanceRecordId: string;
+  memberId: string;
+  attendanceDate: string;
+  recordStatus: "present" | "absent" | null;
+  checkOutAt: string | null;
+  actorUserId: string;
+}) {
+  await syncAttendanceLatePickupAncillaryChargeSupabase({
+    attendanceRecordId: input.attendanceRecordId,
+    memberId: input.memberId,
+    attendanceDate: input.attendanceDate,
+    checkOutAt: input.recordStatus === "present" ? input.checkOutAt : null,
+    actorUserId: input.actorUserId
+  });
+}
+
 export async function saveAttendanceStatusAction(formData: FormData) {
   try {
     const actor = await requireAttendanceEditor();
@@ -225,6 +243,14 @@ export async function saveAttendanceStatusAction(formData: FormData) {
 
       if (existing) {
         await deleteAttendanceRecordSupabase(existing.id);
+        await syncAttendanceLatePickupCharge({
+          attendanceRecordId: existing.id,
+          memberId,
+          attendanceDate,
+          recordStatus: null,
+          checkOutAt: null,
+          actorUserId: actor.id
+        });
       }
 
       revalidateAttendanceViews(memberId);
@@ -263,6 +289,9 @@ export async function saveAttendanceStatusAction(formData: FormData) {
         actor,
         at: now
       });
+      if (!updated) {
+        throw new Error("Attendance record could not be saved.");
+      }
 
       if (existingStatus === "absent") {
         await applyScheduledAbsenceMakeupDelta({
@@ -273,6 +302,15 @@ export async function saveAttendanceStatusAction(formData: FormData) {
           source: "attendance-check-in-reversal"
         });
       }
+
+      await syncAttendanceLatePickupCharge({
+        attendanceRecordId: updated.id,
+        memberId,
+        attendanceDate,
+        recordStatus: updated.status,
+        checkOutAt: updated.check_out_at,
+        actorUserId: actor.id
+      });
 
       await syncAttendanceBillingForDate({
         memberId,
@@ -298,6 +336,9 @@ export async function saveAttendanceStatusAction(formData: FormData) {
         actor,
         at: now
       });
+      if (!updated) {
+        throw new Error("Attendance record could not be saved.");
+      }
 
       if (existingStatus === "absent") {
         await applyScheduledAbsenceMakeupDelta({
@@ -308,6 +349,15 @@ export async function saveAttendanceStatusAction(formData: FormData) {
           source: "attendance-check-out-reversal"
         });
       }
+
+      await syncAttendanceLatePickupCharge({
+        attendanceRecordId: updated.id,
+        memberId,
+        attendanceDate,
+        recordStatus: updated.status,
+        checkOutAt: updated.check_out_at,
+        actorUserId: actor.id
+      });
 
       await syncAttendanceBillingForDate({
         memberId,
@@ -341,6 +391,9 @@ export async function saveAttendanceStatusAction(formData: FormData) {
       actor,
       at: now
     });
+    if (!updated) {
+      throw new Error("Attendance record could not be saved.");
+    }
 
     if (requestedStatus === "absent" && existingStatus !== "absent") {
       await applyScheduledAbsenceMakeupDelta({
@@ -359,6 +412,15 @@ export async function saveAttendanceStatusAction(formData: FormData) {
         source: "attendance-present-reversal"
       });
     }
+
+    await syncAttendanceLatePickupCharge({
+      attendanceRecordId: updated.id,
+      memberId,
+      attendanceDate,
+      recordStatus: updated.status,
+      checkOutAt: updated.check_out_at,
+      actorUserId: actor.id
+    });
 
     await syncAttendanceBillingForDate({
       memberId,
@@ -429,6 +491,9 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
       actor,
       at: now
     });
+    if (!updated) {
+      throw new Error("Attendance record could not be saved.");
+    }
 
     if (useMakeupDay) {
       await applyMakeupBalanceDeltaWithAuditSupabase({
@@ -442,6 +507,15 @@ export async function saveUnscheduledAttendanceAction(formData: FormData) {
         failIfInsufficient: true
       });
     }
+
+    await syncAttendanceLatePickupCharge({
+      attendanceRecordId: updated.id,
+      memberId,
+      attendanceDate,
+      recordStatus: updated.status,
+      checkOutAt: updated.check_out_at,
+      actorUserId: actor.id
+    });
 
     await syncAttendanceBillingForDate({
       memberId,
