@@ -193,8 +193,15 @@ export function MarPrnRecordModal({
         {tab === "standing" ? (
           <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
             <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                Standing PRNs only appear here when they were checked on the member's active signed POF.
+              </div>
               {filteredOrders.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted">No active PRN orders match this member/filter.</div>
+                <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted">
+                  {search.trim()
+                    ? "No active PRN orders match this member/filter."
+                    : "No active PRN standing orders are on the selected member's active signed POF. Update and re-sign the POF to have them appear here, or use Add New PRN Medication."}
+                </div>
               ) : (
                 filteredOrders.map((option) => (
                   <button
