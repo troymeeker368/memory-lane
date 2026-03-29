@@ -5,10 +5,11 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireNavItemAccess } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions/core";
+import { getAncillarySummary } from "@/lib/services/ancillary";
 import { getEnrollmentPricingOverview, listEnrollmentPricingAuditRows } from "@/lib/services/enrollment-pricing";
 import { toEasternDate } from "@/lib/timezone";
 
-type PricingTab = "overview" | "community-fee" | "daily-rates" | "history";
+type PricingTab = "overview" | "community-fee" | "daily-rates" | "ancillary-rates" | "history";
 export const dynamic = "force-dynamic";
 
 const PricingCommunityFeeManager = nextDynamic(
@@ -25,10 +26,18 @@ const PricingDailyRatesManager = nextDynamic(
   }
 );
 
+const AncillaryPricingManager = nextDynamic(
+  () => import("@/components/forms/ancillary-pricing-manager").then((mod) => mod.AncillaryPricingManager),
+  {
+    loading: () => <p className="text-sm text-muted">Loading ancillary rates manager...</p>
+  }
+);
+
 const TAB_ITEMS: Array<{ key: PricingTab; label: string }> = [
   { key: "overview", label: "Pricing Overview" },
   { key: "community-fee", label: "Community Fee" },
   { key: "daily-rates", label: "Daily Rates" },
+  { key: "ancillary-rates", label: "Ancillary Charges" },
   { key: "history", label: "History / Audit" }
 ];
 
@@ -36,6 +45,7 @@ function toTab(value: string | string[] | undefined): PricingTab {
   const normalized = Array.isArray(value) ? value[0] : value;
   if (normalized === "community-fee") return "community-fee";
   if (normalized === "daily-rates") return "daily-rates";
+  if (normalized === "ancillary-rates") return "ancillary-rates";
   if (normalized === "history") return "history";
   return "overview";
 }
@@ -68,13 +78,15 @@ export default async function OperationsPricingPage({
   const selectedTab = toTab(params.tab);
   const todayDate = toEasternDate();
 
-  const [overview, auditRows] = await Promise.all([
+  const [overview, auditRows, ancillarySummary] = await Promise.all([
     getEnrollmentPricingOverview(),
-    listEnrollmentPricingAuditRows(100)
+    listEnrollmentPricingAuditRows(100),
+    selectedTab === "ancillary-rates" ? getAncillarySummary() : Promise.resolve(null)
   ]);
 
   const normalizedRole = normalizeRoleKey(profile.role);
   const canEdit = normalizedRole === "admin" || normalizedRole === "director";
+  const canEditAncillary = normalizedRole === "admin";
 
   return (
     <div className="space-y-4">
@@ -134,6 +146,9 @@ export default async function OperationsPricingPage({
               </Link>
               <Link href="/operations/pricing?tab=daily-rates" className="font-semibold text-brand">
                 Edit Daily Rates
+              </Link>
+              <Link href="/operations/pricing?tab=ancillary-rates" className="font-semibold text-brand">
+                Manage Ancillary Charges
               </Link>
             </div>
             {overview.issues.length > 0 ? (
@@ -276,6 +291,31 @@ export default async function OperationsPricingPage({
               ) : null}
             </tbody>
           </table>
+        </Card>
+      ) : null}
+
+      {selectedTab === "ancillary-rates" ? (
+        <Card>
+          <CardTitle>Ancillary Charge Defaults</CardTitle>
+          <p className="mt-1 text-sm text-muted">
+            Configure default ancillary charge rates used by the canonical ancillary entry workflow.
+          </p>
+          {!canEditAncillary ? (
+            <p className="mt-2 rounded-lg border border-border bg-slate-50 px-3 py-2 text-sm text-muted">
+              Read-only for directors. Admin access is required to change ancillary rates.
+            </p>
+          ) : null}
+          <div className="mt-3">
+            <AncillaryPricingManager
+              categories={(ancillarySummary?.categories as Array<{ id: string; name: string; price_cents: number }> | undefined) ?? []}
+              canEdit={canEditAncillary}
+            />
+          </div>
+          <div className="mt-3">
+            <Link href="/ancillary" className="text-sm font-semibold text-brand">
+              Open Ancillary Charges
+            </Link>
+          </div>
         </Card>
       ) : null}
     </div>

@@ -18,7 +18,13 @@ function centsToDollars(cents: number) {
   return (cents / 100).toFixed(2);
 }
 
-export function AncillaryPricingManager({ categories }: { categories: PricingCategory[] }) {
+export function AncillaryPricingManager({
+  categories,
+  canEdit = true
+}: {
+  categories: PricingCategory[];
+  canEdit?: boolean;
+}) {
   const categoriesSyncKey = useMemo(
     () => categories.map((category) => `${category.id}:${category.price_cents}:${category.name}`).join("|"),
     [categories]
@@ -47,8 +53,8 @@ export function AncillaryPricingManager({ categories }: { categories: PricingCat
             <tr>
               <th>Charge Item</th>
               <th>Current Price</th>
-              <th>Edit Price ($)</th>
-              <th>Save</th>
+              {canEdit ? <th>Edit Price ($)</th> : null}
+              <th>{canEdit ? "Save" : "Status"}</th>
             </tr>
           </thead>
           <tbody>
@@ -56,71 +62,77 @@ export function AncillaryPricingManager({ categories }: { categories: PricingCat
               <tr key={category.id}>
                 <td>{category.name}</td>
                 <td>${centsToDollars(category.price_cents)}</td>
+                {canEdit ? (
+                  <td>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      className="h-10 w-36 rounded-lg border border-border px-3 text-fg"
+                      value={priceInputs[category.id] ?? ""}
+                      onChange={(event) =>
+                        setPriceInputs((current) => ({
+                          ...current,
+                          [category.id]: event.target.value
+                        }))
+                      }
+                    />
+                  </td>
+                ) : null}
                 <td>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    className="h-10 w-36 rounded-lg border border-border px-3 text-fg"
-                    value={priceInputs[category.id] ?? ""}
-                    onChange={(event) =>
-                      setPriceInputs((current) => ({
-                        ...current,
-                        [category.id]: event.target.value
-                      }))
-                    }
-                  />
-                </td>
-                <td>
-                  <Button
-                    type="button"
-                    disabled={isSaving}
-                    onClick={() =>
-                      void run(() => {
-                        const rawValue = priceInputs[category.id] ?? "";
-                        const parsedValue = Number(rawValue);
-                        if (!Number.isFinite(parsedValue) || parsedValue < 0) {
-                          setStatusByCategoryId((current) => ({
-                            ...current,
-                            [category.id]: "Enter a valid non-negative price."
-                          }));
-                          return Promise.resolve({ ok: false, error: "Enter a valid non-negative price." });
-                        }
-
-                        return updateAncillaryCategoryPriceAction({
-                          categoryId: category.id,
-                          unitPriceDollars: parsedValue
-                        });
-                      }, {
-                        successMessage: "Saved.",
-                        errorMessage: "Unable to update ancillary pricing.",
-                        onSuccess: (result) => {
-                          const updatedCategory = ((result.data as { updated?: PricingCategory } | null)?.updated ?? null) as PricingCategory | null;
-                          if (updatedCategory) {
-                            setLocalCategories((current) =>
-                              current.map((item) => (item.id === updatedCategory.id ? updatedCategory : item))
-                            );
-                            setPriceInputs((current) => ({
+                  {canEdit ? (
+                    <Button
+                      type="button"
+                      disabled={isSaving}
+                      onClick={() =>
+                        void run(() => {
+                          const rawValue = priceInputs[category.id] ?? "";
+                          const parsedValue = Number(rawValue);
+                          if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+                            setStatusByCategoryId((current) => ({
                               ...current,
-                              [updatedCategory.id]: centsToDollars(updatedCategory.price_cents)
+                              [category.id]: "Enter a valid non-negative price."
+                            }));
+                            return Promise.resolve({ ok: false, error: "Enter a valid non-negative price." });
+                          }
+
+                          return updateAncillaryCategoryPriceAction({
+                            categoryId: category.id,
+                            unitPriceDollars: parsedValue
+                          });
+                        }, {
+                          successMessage: "Saved.",
+                          errorMessage: "Unable to update ancillary pricing.",
+                          onSuccess: (result) => {
+                            const updatedCategory = ((result.data as { updated?: PricingCategory } | null)?.updated ?? null) as PricingCategory | null;
+                            if (updatedCategory) {
+                              setLocalCategories((current) =>
+                                current.map((item) => (item.id === updatedCategory.id ? updatedCategory : item))
+                              );
+                              setPriceInputs((current) => ({
+                                ...current,
+                                [updatedCategory.id]: centsToDollars(updatedCategory.price_cents)
+                              }));
+                            }
+                            setStatusByCategoryId((current) => ({
+                              ...current,
+                              [category.id]: "Saved."
+                            }));
+                          },
+                          onError: (result) => {
+                            setStatusByCategoryId((current) => ({
+                              ...current,
+                              [category.id]: `Error: ${result.error}`
                             }));
                           }
-                          setStatusByCategoryId((current) => ({
-                            ...current,
-                            [category.id]: "Saved."
-                          }));
-                        },
-                        onError: (result) => {
-                          setStatusByCategoryId((current) => ({
-                            ...current,
-                            [category.id]: `Error: ${result.error}`
-                          }));
-                        }
-                      })
-                    }
-                  >
-                    Save
-                  </Button>
+                        })
+                      }
+                    >
+                      Save
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-muted">Admin only</span>
+                  )}
                   <MutationNotice
                     kind={statusByCategoryId[category.id]?.startsWith("Error") ? "error" : "success"}
                     message={statusByCategoryId[category.id]}
