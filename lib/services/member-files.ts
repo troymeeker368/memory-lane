@@ -579,7 +579,12 @@ export async function deleteCommandCenterMemberFile(input: {
   if (!existing) return false;
 
   const expectedMemberId = String(input.memberId ?? "").trim();
-  if (expectedMemberId && String(existing.member_id ?? "").trim() !== expectedMemberId) {
+  const canonicalExpectedMemberId = expectedMemberId
+    ? await resolveCanonicalMemberId(expectedMemberId, {
+        actionLabel: "deleteCommandCenterMemberFile"
+      })
+    : null;
+  if (canonicalExpectedMemberId && String(existing.member_id ?? "").trim() !== canonicalExpectedMemberId) {
     throw new Error("Member file/member mismatch.");
   }
 
@@ -609,7 +614,12 @@ export async function getMemberFileDownloadUrl(input: {
   if (!existing) throw new Error("Member file was not found.");
 
   const expectedMemberId = String(input.memberId ?? "").trim();
-  if (expectedMemberId && String(existing.member_id ?? "").trim() !== expectedMemberId) {
+  const canonicalExpectedMemberId = expectedMemberId
+    ? await resolveCanonicalMemberId(expectedMemberId, {
+        actionLabel: "getMemberFileDownloadUrl"
+      })
+    : null;
+  if (canonicalExpectedMemberId && String(existing.member_id ?? "").trim() !== canonicalExpectedMemberId) {
     throw new Error("Member file/member mismatch.");
   }
   assertAuthorizedMemberFileDownloader(input.actor, String(existing.category ?? ""));

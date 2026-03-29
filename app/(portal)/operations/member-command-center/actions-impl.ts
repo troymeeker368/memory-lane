@@ -524,7 +524,6 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
   };
 
   const activeMemberBillingSettings = (await listMemberBillingSettingsSupabase(memberId))
-    .filter((row) => row.member_id === memberId)
     .filter((row) => row.active)
     .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1));
   const existingBillingSetting =
@@ -534,13 +533,11 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
 
   const fallbackPayorId =
     activeMemberBillingSettings
-      .filter((row) => row.member_id === memberId)
       .map((row) => row.payor_id)
       .find((row): row is string => Boolean(row)) ?? null;
   const legacyPayorId = existingBillingSetting?.payor_id ?? fallbackPayorId ?? null;
 
   const activeScheduleTemplates = (await listBillingScheduleTemplatesSupabase(memberId))
-    .filter((row) => row.member_id === memberId)
     .filter((row) => row.active)
     .sort((left, right) => (left.effective_start_date < right.effective_start_date ? 1 : -1));
   const existingScheduleTemplate =

@@ -321,49 +321,6 @@ export async function saveScheduleChangeWithAttendanceSyncSupabase(input: {
   }
 }
 
-export async function updateScheduleChangeSupabase(input: {
-  id: string;
-  memberId: string;
-  changeType: ScheduleChangeType;
-  effectiveStartDate: string;
-  effectiveEndDate: string | null;
-  originalDays: Array<string | null | undefined>;
-  newDays: Array<string | null | undefined>;
-  suspendBaseSchedule: boolean;
-  reason: string;
-  notes: string | null;
-}) {
-  const canonicalMemberId = await resolveScheduleMemberId(input.memberId, "updateScheduleChangeSupabase");
-  const supabase = await createClient();
-  const now = toEasternISO();
-  const originalDays = normalizeScheduleWeekdays(input.originalDays);
-  const newDays = normalizeScheduleWeekdays(input.newDays);
-  const payload = {
-    member_id: canonicalMemberId,
-    change_type: input.changeType,
-    effective_start_date: normalizeOperationalDateOnly(input.effectiveStartDate),
-    effective_end_date: input.effectiveEndDate ? normalizeOperationalDateOnly(input.effectiveEndDate) : null,
-    original_days: originalDays,
-    new_days: newDays,
-    suspend_base_schedule: Boolean(input.suspendBaseSchedule),
-    reason: input.reason.trim(),
-    notes: input.notes?.trim() || null,
-    updated_at: now
-  };
-
-  const { data, error } = await supabase
-    .from("schedule_changes")
-    .update(payload)
-    .eq("id", input.id)
-    .select("*")
-    .maybeSingle();
-  if (error) {
-    if (isMissingScheduleChangesTableError(error)) throw scheduleChangesStorageRequiredError();
-    throw new Error(error.message);
-  }
-  return data ? toRow(data) : null;
-}
-
 export async function updateScheduleChangeStatusWithAttendanceSyncSupabase(input: {
   id: string;
   status: ScheduleChangeStatus;
