@@ -33,6 +33,14 @@ const VOID_ENROLLMENT_PACKET_RPC = "rpc_void_enrollment_packet_request";
 
 type StaffStatusFilter = EnrollmentPacketStatus | "active" | "all";
 
+function rawStatusesForOperationalFilter(filter: StaffStatusFilter) {
+  if (filter === "all") return null;
+  if (filter === "active") return ["draft", "sent", "opened", "partially_completed", "in_progress"];
+  if (filter === "in_progress") return ["opened", "partially_completed", "in_progress"];
+  if (filter === "completed") return ["completed", "filed"];
+  return [filter];
+}
+
 export type EnrollmentPacketStaffDetail = {
   request: OperationalEnrollmentPacketListItem;
   memberName: string;
@@ -162,10 +170,17 @@ export async function listOperationalEnrollmentPackets(input?: {
     query = query.eq("lead_id", normalizedLeadId);
   }
 
+  const rawStatuses = rawStatusesForOperationalFilter(normalizedStatus);
+  if (rawStatuses?.length === 1) {
+    query = query.eq("status", rawStatuses[0]);
+  } else if (rawStatuses && rawStatuses.length > 1) {
+    query = query.in("status", rawStatuses);
+  }
+
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  const rows = ((data ?? []) as EnrollmentPacketRequestRow[]).filter((row) =>
+  const rows = ((data ?? []) as unknown as EnrollmentPacketRequestRow[]).filter((row) =>
     matchesStatusFilter(toStatus(row.status), normalizedStatus)
   );
   if (rows.length === 0) return [] satisfies OperationalEnrollmentPacketListItem[];

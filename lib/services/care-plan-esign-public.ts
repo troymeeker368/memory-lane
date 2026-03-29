@@ -410,6 +410,14 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
   });
 
   const signedPdfStoragePath = `members/${detail.carePlan.memberId}/care-plans/${detail.carePlan.id}/final-signed.pdf`;
+  let finalized:
+    | {
+        carePlanId: string;
+        memberId: string;
+        finalMemberFileId: string;
+        wasAlreadySigned: boolean;
+      }
+    | null = null;
   try {
     const generated = await buildCarePlanPdfDataUrl(detail.carePlan.id, { serviceRole: true });
     const parsedPdf = parseDataUrlPayload(generated.dataUrl);
@@ -420,7 +428,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     });
 
     const rotatedToken = hashToken(generateSigningToken());
-    const finalized = await invokeFinalizeCarePlanCaregiverSignatureRpc({
+    finalized = await invokeFinalizeCarePlanCaregiverSignatureRpc({
       carePlanId: detail.carePlan.id,
       rotatedToken,
       consumedTokenHash: hashToken(token),
@@ -454,27 +462,110 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         finalMemberFileId: finalized.finalMemberFileId
       };
     }
-
-    try {
-      await recordWorkflowMilestone({
-        event: {
-          event_type: "care_plan_caregiver_signed",
-          entity_type: "care_plan",
-          entity_id: detail.carePlan.id,
-          actor_type: "caregiver",
-          status: "signed",
-          severity: "low",
-          metadata: {
-            member_id: detail.carePlan.memberId,
-            final_member_file_id: finalized.finalMemberFileId,
-            caregiver_email: detail.carePlan.caregiverEmail,
-            signature_image_url: signatureUri
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unable to complete care plan filing.";
+    const fallbackStatus = detail.carePlan.caregiverSignatureStatus;
+    if (!finalized) {
+      const canWriteFallbackStatus = fallbackStatus !== "signed";
+      await cleanupFailedCarePlanCaregiverArtifacts({
+        carePlanId: detail.carePlan.id,
+        actorUserId: detail.carePlan.caregiverSentByUserId,
+        memberId: detail.carePlan.memberId,
+        signatureObjectPath: signaturePath,
+        signedPdfObjectPath: signedPdfStoragePath,
+        reason
+      });
+      if (canWriteFallbackStatus) {
+        try {
+          await transitionCarePlanCaregiverStatus({
+            carePlanId: detail.carePlan.id,
+            status: fallbackStatus,
+            updatedAt: toEasternISO(),
+            actor: {
+              id: detail.carePlan.caregiverSentByUserId,
+              fullName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName ?? null
+            },
+            caregiverSentAt: detail.carePlan.caregiverSentAt,
+            caregiverViewedAt: detail.carePlan.caregiverViewedAt,
+            caregiverSignatureError: reason,
+            expectedCurrentStatuses: ["ready_to_send", "send_failed", "sent", "viewed", "expired"]
+          });
+        } catch (statusError) {
+          if (!isCarePlanStatusTransitionRaceError(statusError)) {
+            throw statusError;
           }
         }
+      }
+      await recordWorkflowEvent({
+        eventType: "care_plan_failed",
+        entityType: "care_plan",
+        entityId: detail.carePlan.id,
+        actorType: "caregiver",
+        status: "failed",
+        severity: "high",
+        metadata: {
+          member_id: detail.carePlan.memberId,
+          phase: "signature_completion",
+          caregiver_email: detail.carePlan.caregiverEmail,
+          error: reason
+        }
       });
-    } catch (error) {
-      console.error("[care-plan-esign] unable to emit caregiver signature workflow milestone", error);
+      await recordCarePlanAlertSafely({
+        entityType: "care_plan",
+        entityId: detail.carePlan.id,
+        actorUserId: detail.carePlan.caregiverSentByUserId,
+        severity: "high",
+        alertKey: "care_plan_signature_completion_failed",
+        metadata: {
+          member_id: detail.carePlan.memberId,
+          caregiver_email: detail.carePlan.caregiverEmail,
+          error: reason
+        }
+      }, "submitPublicCarePlanSignature");
+    } else {
+      await recordCarePlanAlertSafely({
+        entityType: "care_plan",
+        entityId: detail.carePlan.id,
+        actorUserId: detail.carePlan.caregiverSentByUserId,
+        severity: "high",
+        alertKey: "care_plan_post_commit_follow_up_failed",
+        metadata: {
+          member_id: detail.carePlan.memberId,
+          caregiver_email: detail.carePlan.caregiverEmail,
+          final_member_file_id: finalized.finalMemberFileId,
+          error: reason
+        }
+      }, "submitPublicCarePlanSignature.postCommit");
+      console.error("[care-plan-esign] post-commit follow-up failed after caregiver signature finalized", {
+        carePlanId: detail.carePlan.id,
+        message: reason
+      });
     }
+    throw error;
+  }
+
+  try {
+    await recordWorkflowMilestone({
+      event: {
+        event_type: "care_plan_caregiver_signed",
+        entity_type: "care_plan",
+        entity_id: detail.carePlan.id,
+        actor_type: "caregiver",
+        status: "signed",
+        severity: "low",
+        metadata: {
+          member_id: detail.carePlan.memberId,
+          final_member_file_id: finalized.finalMemberFileId,
+          caregiver_email: detail.carePlan.caregiverEmail,
+          signature_image_url: signatureUri
+        }
+      }
+    });
+  } catch (error) {
+    console.error("[care-plan-esign] unable to emit caregiver signature workflow milestone", error);
+  }
+
+  try {
     await recordWorkflowEvent({
       eventType: "care_plan_signed",
       entityType: "care_plan",
@@ -489,71 +580,30 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
       }
     });
     await markCarePlanPostSignReady(detail.carePlan.id);
-
-    return {
-      carePlanId: detail.carePlan.id,
-      memberId: detail.carePlan.memberId,
-      finalMemberFileId: finalized.finalMemberFileId
-    };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "Unable to complete care plan filing.";
-    const fallbackStatus = detail.carePlan.caregiverSignatureStatus;
-    const canWriteFallbackStatus = fallbackStatus !== "signed";
-    await cleanupFailedCarePlanCaregiverArtifacts({
-      carePlanId: detail.carePlan.id,
-      actorUserId: detail.carePlan.caregiverSentByUserId,
-      memberId: detail.carePlan.memberId,
-      signatureObjectPath: signaturePath,
-      signedPdfObjectPath: signedPdfStoragePath,
-      reason
-    });
-    if (canWriteFallbackStatus) {
-      try {
-        await transitionCarePlanCaregiverStatus({
-          carePlanId: detail.carePlan.id,
-          status: fallbackStatus,
-          updatedAt: toEasternISO(),
-          actor: {
-            id: detail.carePlan.caregiverSentByUserId,
-            fullName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName ?? null
-          },
-          caregiverSentAt: detail.carePlan.caregiverSentAt,
-          caregiverViewedAt: detail.carePlan.caregiverViewedAt,
-          caregiverSignatureError: reason,
-          expectedCurrentStatuses: ["ready_to_send", "send_failed", "sent", "viewed", "expired"]
-        });
-      } catch (statusError) {
-        if (!isCarePlanStatusTransitionRaceError(statusError)) {
-          throw statusError;
-        }
-      }
-    }
-    await recordWorkflowEvent({
-      eventType: "care_plan_failed",
-      entityType: "care_plan",
-      entityId: detail.carePlan.id,
-      actorType: "caregiver",
-      status: "failed",
-      severity: "high",
-      metadata: {
-        member_id: detail.carePlan.memberId,
-        phase: "signature_completion",
-        caregiver_email: detail.carePlan.caregiverEmail,
-        error: reason
-      }
-    });
+    const reason = error instanceof Error ? error.message : "Unable to complete post-sign readiness update.";
     await recordCarePlanAlertSafely({
       entityType: "care_plan",
       entityId: detail.carePlan.id,
       actorUserId: detail.carePlan.caregiverSentByUserId,
       severity: "high",
-      alertKey: "care_plan_signature_completion_failed",
+      alertKey: "care_plan_post_commit_follow_up_failed",
       metadata: {
         member_id: detail.carePlan.memberId,
         caregiver_email: detail.carePlan.caregiverEmail,
+        final_member_file_id: finalized.finalMemberFileId,
         error: reason
       }
-    }, "submitPublicCarePlanSignature");
-    throw error;
+    }, "submitPublicCarePlanSignature.postCommit");
+    console.error("[care-plan-esign] unable to complete non-destructive post-commit follow-up", {
+      carePlanId: detail.carePlan.id,
+      message: reason
+    });
   }
+
+  return {
+    carePlanId: detail.carePlan.id,
+    memberId: detail.carePlan.memberId,
+    finalMemberFileId: finalized.finalMemberFileId
+  };
 }

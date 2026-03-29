@@ -25,6 +25,41 @@ function normalizeDirectoryText(value: string | null | undefined) {
   return String(value ?? "").trim();
 }
 
+function normalizeDirectoryIdentityPart(value: unknown) {
+  return normalizeDirectoryText(typeof value === "string" ? value : null).toLowerCase();
+}
+
+function isUniqueViolation(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? (error as { code?: unknown }).code : undefined;
+  return typeof code === "string" && code === "23505";
+}
+
+function pickSingleDirectoryMatch<T extends Record<string, unknown>>(label: string, rows: T[]) {
+  if (rows.length === 0) return null;
+  if (rows.length > 1) {
+    throw new Error(`${label} contains multiple rows for the same normalized identity.`);
+  }
+  return rows[0];
+}
+
+function matchesProviderDirectoryRow(
+  row: Record<string, unknown>,
+  input: {
+    providerName: string;
+    practiceName: string;
+  }
+) {
+  return (
+    normalizeDirectoryIdentityPart(row.provider_name) === normalizeDirectoryIdentityPart(input.providerName) &&
+    normalizeDirectoryIdentityPart(row.practice_name) === normalizeDirectoryIdentityPart(input.practiceName)
+  );
+}
+
+function matchesHospitalDirectoryRow(row: Record<string, unknown>, hospitalName: string) {
+  return normalizeDirectoryIdentityPart(row.hospital_name) === normalizeDirectoryIdentityPart(hospitalName);
+}
+
 async function loadProviderDirectoryRow(input: {
   providerName: string;
   practiceName: string;
@@ -41,9 +76,10 @@ async function loadProviderDirectoryRow(input: {
     query = query.or("practice_name.is.null,practice_name.eq.");
   }
 
-  const { data, error } = await query.maybeSingle();
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
-  return (data as Record<string, unknown> | null) ?? null;
+  const rows = ((data ?? []) as Record<string, unknown>[]).filter((row) => matchesProviderDirectoryRow(row, input));
+  return pickSingleDirectoryMatch("provider_directory", rows);
 }
 
 async function loadHospitalDirectoryRow(hospitalName: string) {
@@ -51,10 +87,10 @@ async function loadHospitalDirectoryRow(hospitalName: string) {
   const { data, error } = await supabase
     .from("hospital_preference_directory")
     .select(HOSPITAL_DIRECTORY_UPSERT_SELECT)
-    .ilike("hospital_name", hospitalName)
-    .maybeSingle();
+    .ilike("hospital_name", hospitalName);
   if (error) throw new Error(error.message);
-  return (data as Record<string, unknown> | null) ?? null;
+  const rows = ((data ?? []) as Record<string, unknown>[]).filter((row) => matchesHospitalDirectoryRow(row, hospitalName));
+  return pickSingleDirectoryMatch("hospital_preference_directory", rows);
 }
 
 async function recordMhpWriteEvent(input: {
@@ -440,7 +476,27 @@ export async function upsertProviderDirectoryFromMhpSupabase(input: {
     created_at: now,
     updated_at: now
   });
-  if (error) throw new Error(error.message);
+  if (!error) return;
+  if (!isUniqueViolation(error)) throw new Error(error.message);
+
+  const conflicted = await loadProviderDirectoryRow({
+    providerName: normalizedProviderName,
+    practiceName: normalizedPracticeName
+  });
+  if (!conflicted?.id) throw new Error(error.message);
+
+  const { error: conflictUpdateError } = await supabase
+    .from("provider_directory")
+    .update({
+      provider_name: normalizedProviderName,
+      specialty: input.specialty ?? (conflicted.specialty as string | null) ?? null,
+      specialty_other: input.specialtyOther ?? (conflicted.specialty_other as string | null) ?? null,
+      practice_name: normalizedPracticeName || (conflicted.practice_name as string | null) || null,
+      provider_phone: input.providerPhone ?? (conflicted.provider_phone as string | null) ?? null,
+      updated_at: now
+    })
+    .eq("id", String(conflicted.id));
+  if (conflictUpdateError) throw new Error(conflictUpdateError.message);
 }
 
 export async function upsertHospitalPreferenceDirectoryFromMhpSupabase(input: {
@@ -474,5 +530,18 @@ export async function upsertHospitalPreferenceDirectoryFromMhpSupabase(input: {
     created_at: now,
     updated_at: now
   });
-  if (error) throw new Error(error.message);
+  if (!error) return;
+  if (!isUniqueViolation(error)) throw new Error(error.message);
+
+  const conflicted = await loadHospitalDirectoryRow(normalizedHospitalName);
+  if (!conflicted?.id) throw new Error(error.message);
+
+  const { error: conflictUpdateError } = await supabase
+    .from("hospital_preference_directory")
+    .update({
+      hospital_name: normalizedHospitalName,
+      updated_at: now
+    })
+    .eq("id", String(conflicted.id));
+  if (conflictUpdateError) throw new Error(conflictUpdateError.message);
 }

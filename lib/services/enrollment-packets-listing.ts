@@ -20,6 +20,51 @@ import type {
 } from "@/lib/services/enrollment-packet-types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
+export const ENROLLMENT_PACKET_REQUEST_LIST_SELECT = [
+  "id",
+  "member_id",
+  "lead_id",
+  "sender_user_id",
+  "caregiver_email",
+  "status",
+  "delivery_status",
+  "last_delivery_attempt_at",
+  "delivery_failed_at",
+  "delivery_error",
+  "token",
+  "last_consumed_submission_token_hash",
+  "token_expires_at",
+  "created_at",
+  "sent_at",
+  "opened_at",
+  "completed_at",
+  "last_family_activity_at",
+  "voided_at",
+  "voided_by_user_id",
+  "void_reason",
+  "updated_at",
+  "mapping_sync_status",
+  "mapping_sync_error",
+  "mapping_sync_attempted_at",
+  "latest_mapping_run_id"
+].join(", ");
+
+function applyCompletedPacketOperationalReadinessFilter(
+  query: any,
+  operationalReadiness: CompletedEnrollmentPacketFilters["operationalReadiness"]
+) {
+  if (operationalReadiness === "operationally_ready") {
+    return query.eq("mapping_sync_status", "completed");
+  }
+  if (operationalReadiness === "mapping_failed") {
+    return query.eq("mapping_sync_status", "failed");
+  }
+  if (operationalReadiness === "filed_pending_mapping") {
+    return query.or("mapping_sync_status.is.null,mapping_sync_status.eq.pending,mapping_sync_status.eq.not_started");
+  }
+  return query;
+}
+
 export async function listEnrollmentPacketRequestsForMember(memberId: string) {
   const normalizedMemberId = clean(memberId);
   if (!normalizedMemberId) throw new Error("Member ID is required.");
@@ -30,22 +75,22 @@ export async function listEnrollmentPacketRequestsForMember(memberId: string) {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("enrollment_packet_requests")
-    .select("*")
+    .select(ENROLLMENT_PACKET_REQUEST_LIST_SELECT)
     .eq("member_id", canonicalMemberId)
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
-  return ((data ?? []) as EnrollmentPacketRequestRow[]).map((row) => toSummary(row));
+  return ((data ?? []) as unknown as EnrollmentPacketRequestRow[]).map((row) => toSummary(row));
 }
 
 export async function listActivePacketRows(memberId: string) {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("enrollment_packet_requests")
-    .select("*")
+    .select(ENROLLMENT_PACKET_REQUEST_LIST_SELECT)
     .eq("member_id", memberId)
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as EnrollmentPacketRequestRow[];
+  const rows = (data ?? []) as unknown as EnrollmentPacketRequestRow[];
   return rows.filter((row) => {
     if (isExpired(row.token_expires_at)) return false;
     const status = toStatus(row.status);
@@ -59,11 +104,11 @@ export async function listActivePacketRowsForLead(leadId: string) {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("enrollment_packet_requests")
-    .select("*")
+    .select(ENROLLMENT_PACKET_REQUEST_LIST_SELECT)
     .eq("lead_id", normalizedLeadId)
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as EnrollmentPacketRequestRow[];
+  const rows = (data ?? []) as unknown as EnrollmentPacketRequestRow[];
   return rows.filter((row) => {
     if (isExpired(row.token_expires_at)) return false;
     const status = toStatus(row.status);
@@ -97,11 +142,11 @@ export async function listEnrollmentPacketRequestsForLead(leadId: string) {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("enrollment_packet_requests")
-    .select("*")
+    .select(ENROLLMENT_PACKET_REQUEST_LIST_SELECT)
     .eq("lead_id", canonical.leadId)
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
-  return ((data ?? []) as EnrollmentPacketRequestRow[]).map((row) => toSummary(row));
+  return ((data ?? []) as unknown as EnrollmentPacketRequestRow[]).map((row) => toSummary(row));
 }
 
 export async function listCompletedEnrollmentPacketRequests(
@@ -123,7 +168,7 @@ export async function listCompletedEnrollmentPacketRequests(
   const admin = createSupabaseAdminClient();
   let query = admin
     .from("enrollment_packet_requests")
-    .select("*")
+    .select(ENROLLMENT_PACKET_REQUEST_LIST_SELECT)
     .order("completed_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
     .limit(safeLimit);
@@ -137,10 +182,16 @@ export async function listCompletedEnrollmentPacketRequests(
     query = query.lte("completed_at", `${toDate}T23:59:59`);
   }
 
+  if (normalizedOperationalReadiness === "not_filed") {
+    return [];
+  }
+
+  query = applyCompletedPacketOperationalReadinessFilter(query, normalizedOperationalReadiness);
+
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  const rows = (data ?? []) as EnrollmentPacketRequestRow[];
+  const rows = (data ?? []) as unknown as EnrollmentPacketRequestRow[];
   if (rows.length === 0) return [];
 
   const memberIds = Array.from(new Set(rows.map((row) => row.member_id).filter(Boolean)));
