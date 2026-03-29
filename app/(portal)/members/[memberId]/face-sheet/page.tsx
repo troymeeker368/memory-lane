@@ -41,7 +41,7 @@ export default async function MemberFaceSheetPage({
   if (!faceSheet) notFound();
 
   return (
-    <div className="face-sheet-page space-y-4">
+    <div className="face-sheet-page space-y-5">
       <div className="print-hide flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <BackArrowButton fallbackHref={backHref} ariaLabel="Back to member record" />
@@ -58,14 +58,18 @@ export default async function MemberFaceSheetPage({
           className="border-b-0 pb-0"
           metaLines={[`Generated: ${formatDateTime(faceSheet.generatedAt)} (ET)`]}
         />
-        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[110px_1fr]">
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-start">
           {faceSheet.member.photoUrl ? (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={faceSheet.member.photoUrl} alt={`${faceSheet.member.name} photo`} className="h-28 w-28 rounded border border-black/30 object-cover" />
+              <img
+                src={faceSheet.member.photoUrl}
+                alt={`${faceSheet.member.name} photo`}
+                className="h-24 w-24 rounded-md border border-black/30 object-cover"
+              />
             </>
           ) : (
-            <div className="flex h-28 w-28 items-center justify-center rounded border border-black/30 text-2xl font-semibold">
+            <div className="flex h-24 w-24 items-center justify-center rounded-md border border-black/30 text-2xl font-semibold">
               {faceSheet.member.name
                 .split(/\s+/)
                 .filter(Boolean)
@@ -75,11 +79,23 @@ export default async function MemberFaceSheetPage({
                 .toUpperCase()}
             </div>
           )}
-          <div className="grid gap-1 text-sm sm:grid-cols-2">
-            <p><span className="font-semibold">Member:</span> {faceSheet.member.name}</p>
-            <p><span className="font-semibold">DOB:</span> {formatOptionalDate(faceSheet.member.dob)}</p>
-            <p><span className="font-semibold">Age:</span> {faceSheet.member.age ?? "-"}</p>
-            <p><span className="font-semibold">Gender:</span> {faceSheet.member.gender ?? "-"}</p>
+          <div className="grid min-h-24 gap-x-8 gap-y-3 rounded-md border border-slate-200 px-4 py-3 text-sm sm:grid-cols-2 sm:content-center">
+            <div className="space-y-0.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Member</p>
+              <p className="break-words font-medium text-slate-900">{faceSheet.member.name}</p>
+            </div>
+            <div className="space-y-0.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">DOB</p>
+              <p className="font-medium text-slate-900">{formatOptionalDate(faceSheet.member.dob)}</p>
+            </div>
+            <div className="space-y-0.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Age</p>
+              <p className="font-medium text-slate-900">{faceSheet.member.age ?? "-"}</p>
+            </div>
+            <div className="space-y-0.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Gender</p>
+              <p className="font-medium text-slate-900">{faceSheet.member.gender ?? "-"}</p>
+            </div>
           </div>
         </div>
       </header>

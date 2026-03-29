@@ -9,45 +9,18 @@ import {
   toSummary
 } from "@/lib/services/enrollment-packet-core";
 import {
-  isEnrollmentPacketOperationallyReady,
-  resolveEnrollmentPacketOperationalReadiness,
-  toEnrollmentPacketMappingSyncStatus
-} from "@/lib/services/enrollment-packet-readiness";
+  buildEnrollmentPacketListPresentation,
+  buildEnrollmentPacketSearchClauses,
+  ENROLLMENT_PACKET_REQUEST_LIST_SELECT,
+  matchesEnrollmentPacketListSearch,
+  resolveEnrollmentPacketRelatedNames
+} from "@/lib/services/enrollment-packet-list-support";
 import type {
   CompletedEnrollmentPacketFilters,
   CompletedEnrollmentPacketListItem,
   EnrollmentPacketRequestRow
 } from "@/lib/services/enrollment-packet-types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-
-export const ENROLLMENT_PACKET_REQUEST_LIST_SELECT = [
-  "id",
-  "member_id",
-  "lead_id",
-  "sender_user_id",
-  "caregiver_email",
-  "status",
-  "delivery_status",
-  "last_delivery_attempt_at",
-  "delivery_failed_at",
-  "delivery_error",
-  "token",
-  "last_consumed_submission_token_hash",
-  "token_expires_at",
-  "created_at",
-  "sent_at",
-  "opened_at",
-  "completed_at",
-  "last_family_activity_at",
-  "voided_at",
-  "voided_by_user_id",
-  "void_reason",
-  "updated_at",
-  "mapping_sync_status",
-  "mapping_sync_error",
-  "mapping_sync_attempted_at",
-  "latest_mapping_run_id"
-].join(", ");
 
 function applyCompletedPacketOperationalReadinessFilter(
   query: any,
@@ -188,82 +161,21 @@ export async function listCompletedEnrollmentPacketRequests(
 
   query = applyCompletedPacketOperationalReadinessFilter(query, normalizedOperationalReadiness);
 
+  const searchClauses = searchNeedle ? await buildEnrollmentPacketSearchClauses(searchNeedle) : [];
+  if (searchClauses.length > 0) {
+    query = query.or(searchClauses.join(","));
+  }
+
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
   const rows = (data ?? []) as unknown as EnrollmentPacketRequestRow[];
   if (rows.length === 0) return [];
 
-  const memberIds = Array.from(new Set(rows.map((row) => row.member_id).filter(Boolean)));
-  const leadIds = Array.from(new Set(rows.map((row) => row.lead_id).filter((value): value is string => Boolean(value))));
-  const senderIds = Array.from(new Set(rows.map((row) => row.sender_user_id).filter(Boolean)));
+  const names = await resolveEnrollmentPacketRelatedNames(rows);
+  const items = rows.map((row) => buildEnrollmentPacketListPresentation(row, names));
 
-  const memberNames = new Map<string, string>();
-  if (memberIds.length > 0) {
-    const { data: members, error: membersError } = await admin.from("members").select("id, display_name").in("id", memberIds);
-    if (membersError) throw new Error(membersError.message);
-    for (const row of (members ?? []) as Array<{ id: string; display_name: string | null }>) {
-      memberNames.set(String(row.id), clean(row.display_name) ?? "Unknown member");
-    }
-  }
+  if (!searchNeedle) return items;
 
-  const leadNames = new Map<string, string>();
-  if (leadIds.length > 0) {
-    const { data: leads, error: leadsError } = await admin.from("leads").select("id, member_name").in("id", leadIds);
-    if (leadsError) throw new Error(leadsError.message);
-    for (const row of (leads ?? []) as Array<{ id: string; member_name: string | null }>) {
-      leadNames.set(String(row.id), clean(row.member_name) ?? "Unknown lead");
-    }
-  }
-
-  const senderNames = new Map<string, string>();
-  if (senderIds.length > 0) {
-    const { data: senders, error: sendersError } = await admin.from("profiles").select("id, full_name").in("id", senderIds);
-    if (sendersError) throw new Error(sendersError.message);
-    for (const row of (senders ?? []) as Array<{ id: string; full_name: string | null }>) {
-      senderNames.set(String(row.id), clean(row.full_name) ?? "Unknown staff");
-    }
-  }
-
-  const items = rows.map((row) => {
-    const summary = toSummary(row);
-    return {
-      ...summary,
-      memberName: memberNames.get(row.member_id) ?? "Unknown member",
-      leadMemberName: row.lead_id ? leadNames.get(row.lead_id) ?? null : null,
-      senderName: senderNames.get(row.sender_user_id) ?? null,
-      mappingSyncStatus: toEnrollmentPacketMappingSyncStatus(row.mapping_sync_status),
-      operationalReadinessStatus: resolveEnrollmentPacketOperationalReadiness({
-        status: row.status,
-        mappingSyncStatus: row.mapping_sync_status
-      }),
-      operationallyReady: isEnrollmentPacketOperationallyReady({
-        status: row.status,
-        mappingSyncStatus: row.mapping_sync_status
-      }),
-      mappingSyncError: clean(row.mapping_sync_error)
-    };
-  });
-
-  const readinessFilteredItems =
-    normalizedOperationalReadiness === "all"
-      ? items
-      : items.filter((item) => item.operationalReadinessStatus === normalizedOperationalReadiness);
-
-  if (!searchNeedle) return readinessFilteredItems;
-
-  return readinessFilteredItems.filter((item) => {
-    const haystack = [
-      item.memberName,
-      item.leadMemberName,
-      item.caregiverEmail,
-      item.senderName,
-      item.senderUserId,
-      item.memberId,
-      item.leadId
-    ]
-      .map((value) => clean(value)?.toLowerCase())
-      .filter((value): value is string => Boolean(value));
-    return haystack.some((value) => value.includes(searchNeedle));
-  });
+  return items.filter((item) => matchesEnrollmentPacketListSearch(item, searchNeedle));
 }

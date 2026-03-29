@@ -451,7 +451,7 @@ async function buildFaceSheetPdf(memberId: string) {
   }
 
   function drawHeroSection() {
-    const photoBoxSize = 86;
+    const photoBoxSize = 78;
     const photoX = PAGE_MARGIN;
     const photoY = y - photoBoxSize;
 
@@ -489,6 +489,8 @@ async function buildFaceSheetPdf(memberId: string) {
     const detailX = photoX + photoBoxSize + GRID_GAP;
     const detailWidth = CONTENT_WIDTH - photoBoxSize - GRID_GAP;
     const labelWidth = (detailWidth - GRID_GAP) / 2;
+    const rowTop = y - 6;
+    const rowGap = 34;
     const rows = [
       [
         { label: "Member", value: lineOrDash(resolvedFaceSheet.member.name) },
@@ -507,9 +509,10 @@ async function buildFaceSheetPdf(memberId: string) {
     rows.forEach((row, rowIndex) => {
       row.forEach((item, columnIndex) => {
         const x = detailX + columnIndex * (labelWidth + GRID_GAP);
+        const rowY = rowTop - rowIndex * rowGap;
         page.drawText(`${item.label}:`, {
           x,
-          y: y - rowIndex * 28,
+          y: rowY,
           size: 9.25,
           font: bold,
           color: colors.ink
@@ -518,7 +521,7 @@ async function buildFaceSheetPdf(memberId: string) {
         drawWrappedLines({
           lines: valueLines,
           x,
-          yTop: y - rowIndex * 28 - 11,
+          yTop: rowY - 11,
           font: regular,
           fontSize: 9.25,
           lineHeight: BODY_LINE_HEIGHT,
@@ -527,7 +530,7 @@ async function buildFaceSheetPdf(memberId: string) {
       });
     });
 
-    y -= photoBoxSize + 12;
+    y -= photoBoxSize + 10;
   }
 
   const generatedLabel = `Generated: ${formatDateTime(faceSheet.generatedAt)} (ET)`;

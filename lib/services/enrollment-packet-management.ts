@@ -8,16 +8,18 @@ import {
   toSummary
 } from "@/lib/services/enrollment-packet-core";
 import {
+  buildEnrollmentPacketListPresentation,
+  buildEnrollmentPacketSearchClauses,
+  ENROLLMENT_PACKET_REQUEST_LIST_SELECT,
+  matchesEnrollmentPacketListSearch,
+  resolveEnrollmentPacketRelatedNames
+} from "@/lib/services/enrollment-packet-list-support";
+import {
   getLeadById,
   getMemberById,
   loadPacketFields,
   loadRequestById
 } from "@/lib/services/enrollment-packet-mapping-runtime";
-import {
-  isEnrollmentPacketOperationallyReady,
-  resolveEnrollmentPacketOperationalReadiness,
-  toEnrollmentPacketMappingSyncStatus
-} from "@/lib/services/enrollment-packet-readiness";
 import type {
   EnrollmentPacketAuditEvent,
   EnrollmentPacketFieldsRow,
@@ -50,14 +52,6 @@ export type EnrollmentPacketStaffDetail = {
   events: EnrollmentPacketAuditEvent[];
 };
 
-function matchesStatusFilter(status: EnrollmentPacketStatus, filter: StaffStatusFilter) {
-  if (filter === "all") return true;
-  if (filter === "active") {
-    return status === "draft" || status === "sent" || status === "in_progress";
-  }
-  return status === filter;
-}
-
 function normalizeStatusFilter(input?: {
   status?: StaffStatusFilter;
   includeCompleted?: boolean;
@@ -80,73 +74,6 @@ function buildResendRequestedStartDate(fields: EnrollmentPacketFieldsRow | null,
   return fromPayload ?? fromPricing ?? clean(leadStartDate) ?? toEasternDate();
 }
 
-async function resolvePacketNames(rows: EnrollmentPacketRequestRow[]) {
-  const admin = createSupabaseAdminClient();
-  const memberIds = Array.from(new Set(rows.map((row) => row.member_id).filter(Boolean)));
-  const leadIds = Array.from(new Set(rows.map((row) => row.lead_id).filter((value): value is string => Boolean(value))));
-  const senderIds = Array.from(new Set(rows.map((row) => row.sender_user_id).filter(Boolean)));
-
-  const memberNames = new Map<string, string>();
-  const leadNames = new Map<string, string>();
-  const senderNames = new Map<string, string>();
-
-  if (memberIds.length > 0) {
-    const { data, error } = await admin.from("members").select("id, display_name").in("id", memberIds);
-    if (error) throw new Error(error.message);
-    for (const row of (data ?? []) as Array<{ id: string; display_name: string | null }>) {
-      memberNames.set(String(row.id), clean(row.display_name) ?? "Unknown member");
-    }
-  }
-
-  if (leadIds.length > 0) {
-    const { data, error } = await admin.from("leads").select("id, member_name").in("id", leadIds);
-    if (error) throw new Error(error.message);
-    for (const row of (data ?? []) as Array<{ id: string; member_name: string | null }>) {
-      leadNames.set(String(row.id), clean(row.member_name) ?? "Unknown lead");
-    }
-  }
-
-  if (senderIds.length > 0) {
-    const { data, error } = await admin.from("profiles").select("id, full_name").in("id", senderIds);
-    if (error) throw new Error(error.message);
-    for (const row of (data ?? []) as Array<{ id: string; full_name: string | null }>) {
-      senderNames.set(String(row.id), clean(row.full_name) ?? "Unknown staff");
-    }
-  }
-
-  return { memberNames, leadNames, senderNames };
-}
-
-function toOperationalListItem(
-  row: EnrollmentPacketRequestRow,
-  names: {
-    memberNames: Map<string, string>;
-    leadNames: Map<string, string>;
-    senderNames: Map<string, string>;
-  }
-): OperationalEnrollmentPacketListItem {
-  const summary = toSummary(row);
-  const mappingSyncStatus = toEnrollmentPacketMappingSyncStatus(row.mapping_sync_status);
-  const operationalReadinessStatus = resolveEnrollmentPacketOperationalReadiness({
-    status: row.status,
-    mappingSyncStatus: row.mapping_sync_status
-  });
-
-  return {
-    ...summary,
-    memberName: names.memberNames.get(row.member_id) ?? "Unknown member",
-    leadMemberName: row.lead_id ? names.leadNames.get(row.lead_id) ?? null : null,
-    senderName: names.senderNames.get(row.sender_user_id) ?? null,
-    mappingSyncStatus,
-    operationalReadinessStatus,
-    operationallyReady: isEnrollmentPacketOperationallyReady({
-      status: row.status,
-      mappingSyncStatus: row.mapping_sync_status
-    }),
-    mappingSyncError: clean(row.mapping_sync_error)
-  };
-}
-
 export async function listOperationalEnrollmentPackets(input?: {
   status?: StaffStatusFilter;
   search?: string | null;
@@ -162,7 +89,7 @@ export async function listOperationalEnrollmentPackets(input?: {
 
   let query = admin
     .from("enrollment_packet_requests")
-    .select("*")
+    .select(ENROLLMENT_PACKET_REQUEST_LIST_SELECT)
     .order("updated_at", { ascending: false })
     .limit(safeLimit);
 
@@ -177,32 +104,23 @@ export async function listOperationalEnrollmentPackets(input?: {
     query = query.in("status", rawStatuses);
   }
 
+  const searchClauses = searchNeedle ? await buildEnrollmentPacketSearchClauses(searchNeedle) : [];
+  if (searchClauses.length > 0) {
+    query = query.or(searchClauses.join(","));
+  }
+
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  const rows = ((data ?? []) as unknown as EnrollmentPacketRequestRow[]).filter((row) =>
-    matchesStatusFilter(toStatus(row.status), normalizedStatus)
-  );
+  const rows = (data ?? []) as unknown as EnrollmentPacketRequestRow[];
   if (rows.length === 0) return [] satisfies OperationalEnrollmentPacketListItem[];
 
-  const names = await resolvePacketNames(rows);
-  const items = rows.map((row) => toOperationalListItem(row, names));
+  const names = await resolveEnrollmentPacketRelatedNames(rows);
+  const items = rows.map((row) => buildEnrollmentPacketListPresentation(row, names));
 
   if (!searchNeedle) return items;
 
-  return items.filter((item) => {
-    const haystack = [
-      item.memberName,
-      item.leadMemberName,
-      item.caregiverEmail,
-      item.senderName,
-      item.memberId,
-      item.leadId
-    ]
-      .map((value) => clean(value)?.toLowerCase())
-      .filter((value): value is string => Boolean(value));
-    return haystack.some((value) => value.includes(searchNeedle));
-  });
+  return items.filter((item) => matchesEnrollmentPacketListSearch(item, searchNeedle));
 }
 
 export const listOperationalEnrollmentPacketRequests = listOperationalEnrollmentPackets;
@@ -214,8 +132,8 @@ export async function getOperationalEnrollmentPacketById(packetId: string): Prom
   const request = await loadRequestById(normalizedPacketId);
   if (!request) return null;
 
-  const names = await resolvePacketNames([request]);
-  return toOperationalListItem(request, names);
+  const names = await resolveEnrollmentPacketRelatedNames([request]);
+  return buildEnrollmentPacketListPresentation(request, names);
 }
 
 export async function listEnrollmentPacketAuditEvents(packetId: string): Promise<EnrollmentPacketAuditEvent[]> {
