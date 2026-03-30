@@ -18,6 +18,7 @@ import {
   resolveExpectedAttendanceFromSupabaseContext,
   type ExpectedAttendanceSupabaseContext
 } from "@/lib/services/expected-attendance-supabase";
+import { isCenterClosedOnDate } from "@/lib/services/expected-attendance";
 import { calculateAttendanceRatePercent } from "@/lib/services/attendance-rate";
 import { ATTENDANCE_SCHEDULE_SELECT } from "@/lib/services/attendance-selects";
 
@@ -534,9 +535,7 @@ export async function getUnscheduledAttendanceMemberOptions(input?: {
 }): Promise<UnscheduledAttendanceMemberOption[]> {
   const selectedDate = normalizeOperationalDateOnly(input?.selectedDate ?? getOperationsTodayDate());
   const base = await loadAttendanceBaseData({ startDate: selectedDate, endDate: selectedDate });
-  const dateIsCenterClosed = base.expectedAttendanceContext.centerClosures.some(
-    (closure) => closure.closure_date === selectedDate
-  );
+  const dateIsCenterClosed = isCenterClosedOnDate(base.expectedAttendanceContext.centerClosures, selectedDate);
   if (dateIsCenterClosed) return [];
 
   const scheduleByMember = new Map(base.schedules.map((row) => [row.member_id, row] as const));

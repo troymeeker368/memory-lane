@@ -163,6 +163,27 @@ async function loadMemberFileRowById(memberFileId: string) {
   return data;
 }
 
+async function loadMemberFileRowByDocumentSource(input: {
+  memberId: string;
+  documentSource: string;
+}) {
+  const memberId = String(input.memberId ?? "").trim();
+  const documentSource = String(input.documentSource ?? "").trim();
+  if (!memberId || !documentSource) return null;
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("member_files")
+    .select("*")
+    .eq("member_id", memberId)
+    .eq("document_source", documentSource)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 async function createSignedMemberDocumentUrl(objectPath: string, expiresInSeconds = 60 * 15) {
   const normalized = String(objectPath ?? "").trim();
   if (!normalized) throw new Error("Storage object path is required.");
@@ -516,7 +537,7 @@ export async function saveCommandCenterMemberFileUpload(input: {
   const contentType = String(input.fileType ?? "").trim() || parsed.contentType || "application/octet-stream";
   const objectName = slugifyMemberFileSegment(fileName) || `member-file-${uploadToken}`;
   const objectPath = `members/${memberId}/member-files/manual/${uploadToken}-${objectName}`;
-  const storageUri = await uploadMemberDocumentObject({
+  await uploadMemberDocumentObject({
     objectPath,
     bytes: parsed.bytes,
     contentType
@@ -531,7 +552,7 @@ export async function saveCommandCenterMemberFileUpload(input: {
       fileName,
       fileType: contentType,
       dataUrl: null,
-      storageObjectPath: parseMemberDocumentStorageUri(storageUri),
+      storageObjectPath: objectPath,
       category: input.category,
       categoryOther,
       uploadedByUserId: input.actor.id,
@@ -561,11 +582,49 @@ export async function saveCommandCenterMemberFileUpload(input: {
     throw error;
   }
 
-  const created = await loadMemberFileRowById(memberFile.id);
-  if (!created) {
-    throw new Error("Member file upload completed, but the saved row could not be loaded.");
+  const created =
+    (await loadMemberFileRowById(memberFile.id)) ??
+    (await loadMemberFileRowByDocumentSource({
+      memberId,
+      documentSource
+    }));
+  if (created) {
+    return created;
   }
-  return created;
+
+  await recordImmediateSystemAlert({
+    entityType: "member_file",
+    entityId: memberFile.id,
+    actorUserId: input.actor.id,
+    severity: "high",
+    alertKey: "member_file_upload_verification_pending",
+    metadata: {
+      member_id: memberId,
+      document_source: documentSource,
+      storage_object_path: objectPath,
+      file_name: fileName,
+      file_type: contentType,
+      category: input.category,
+      category_other: categoryOther,
+      uploaded_by_user_id: input.actor.id,
+      uploaded_by_name: input.actor.fullName,
+      uploaded_at: now
+    }
+  });
+
+  return {
+    id: memberFile.id,
+    member_id: memberId,
+    file_name: fileName,
+    file_type: contentType,
+    file_data_url: null,
+    storage_object_path: objectPath,
+    category: input.category,
+    category_other: categoryOther,
+    document_source: documentSource,
+    uploaded_by_name: input.actor.fullName,
+    uploaded_at: now
+  };
 }
 
 export async function deleteCommandCenterMemberFile(input: {

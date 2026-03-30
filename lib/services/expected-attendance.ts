@@ -98,7 +98,7 @@ export function isMemberHoldActiveForDate(hold: MemberHoldLike, dateOnlyInput: s
   });
 }
 
-function isCenterClosedOnDate(closures: CenterClosureLike[], dateOnly: string) {
+export function isCenterClosedOnDate(closures: CenterClosureLike[], dateOnly: string) {
   return closures.some((closure) => {
     const isActive =
       closure.active == null
