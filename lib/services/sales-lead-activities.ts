@@ -9,6 +9,11 @@ import {
 import { normalizeRoleKey } from "@/lib/permissions";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { resolveCanonicalLeadRef } from "@/lib/services/canonical-person-ref";
+import {
+  buildLeadActivityReplayKey,
+  findExistingLeadActivityReplayId,
+  normalizeLeadActivityReplayInput
+} from "@/lib/services/sales-activity-idempotency";
 import { applyLeadStageTransitionWithMemberUpsertSupabase } from "@/lib/services/sales-lead-conversion-supabase";
 import { applyLeadStageTransitionSupabase } from "@/lib/services/sales-lead-stage-supabase";
 import { createClient } from "@/lib/supabase/server";
@@ -119,12 +124,37 @@ export async function createSalesLeadActivity(input: {
   const referralSourceId = input.activity.referralSourceId?.trim() || lead.referral_source_id || null;
   const nextFollowUpDate = clean(input.activity.nextFollowUpDate) ?? clean(lead.next_follow_up_date);
   const nextFollowUpType = clean(input.activity.nextFollowUpType) ?? clean(lead.next_follow_up_type);
+  const requestedActivityAt = clean(input.activity.activityAt);
+  const activityAt = requestedActivityAt ?? toEasternISO();
+  const normalizedReplayInput = normalizeLeadActivityReplayInput({
+    leadId: canonicalLead.leadId,
+    activityAt,
+    activityType: input.activity.activityType,
+    outcome: input.activity.outcome,
+    lostReason: input.activity.lostReason || null,
+    notes: input.activity.notes || null,
+    nextFollowUpDate,
+    nextFollowUpType,
+    completedByUserId: input.actor.id,
+    partnerId,
+    referralSourceId
+  });
+  const existingActivityId = await findExistingLeadActivityReplayId(supabase, normalizedReplayInput, {
+    allowRecentWindow: !requestedActivityAt
+  });
+  if (existingActivityId) {
+    return {
+      leadId: lead.id,
+      activityId: existingActivityId
+    };
+  }
+  const activityReplayKey = buildLeadActivityReplayKey(normalizedReplayInput);
   const { data: insertedActivity, error: insertError } = await supabase
     .from("lead_activities")
     .insert({
     lead_id: canonicalLead.leadId,
     member_name: lead.member_name,
-    activity_at: input.activity.activityAt || toEasternISO(),
+    activity_at: activityAt,
     activity_type: input.activity.activityType,
     outcome: input.activity.outcome,
     lost_reason: input.activity.lostReason || null,
@@ -205,7 +235,8 @@ export async function createSalesLeadActivity(input: {
     details: {
       activityType: input.activity.activityType,
       outcome: input.activity.outcome
-    }
+    },
+    dedupeKey: `lead-activity:audit:${activityReplayKey}`
   });
 
   await recordWorkflowEvent({
@@ -224,7 +255,8 @@ export async function createSalesLeadActivity(input: {
       next_follow_up_type: nextFollowUpType,
       partner_id: partnerId,
       referral_source_id: referralSourceId
-    }
+    },
+    dedupeKey: `lead-activity:workflow:${activityReplayKey}`
   });
 
   return {

@@ -688,6 +688,7 @@ export async function sendEnrollmentPacketRequest(input: {
         notes: `Enrollment packet request ${requestId} sent to ${caregiverEmail}.`,
         completedByUserId: senderUserId,
         completedByName: senderFullName,
+        activityAt: sentAt,
         actionUrl: `/sales/leads/${lead.id}`
       });
       if (!synced) {

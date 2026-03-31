@@ -4,6 +4,10 @@ import { normalizePhoneForStorage } from "@/lib/phone";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { buildIdempotencyHash, isPostgresUniqueViolation } from "@/lib/services/idempotency";
 import {
+  findExistingPartnerActivityReplayId,
+  normalizePartnerActivityReplayInput
+} from "@/lib/services/sales-activity-idempotency";
+import {
   getSalesPartnerByIdOrCodeSupabase,
   resolveSalesPartnerAndReferralSupabase,
   type SalesPartnerRow
@@ -98,12 +102,37 @@ export async function createPartnerActivitySupabase(input: {
 
   const nowDate = toEasternDate();
   const supabase = await createClient();
+  const normalizedReplayInput = normalizePartnerActivityReplayInput({
+    partnerId: partner.id,
+    referralSourceId: referralSource.id,
+    activityAt: clean(input.activityAt),
+    activityType: input.activityType,
+    notes: clean(input.notes),
+    nextFollowUpDate: clean(input.nextFollowUpDate),
+    nextFollowUpType: clean(input.nextFollowUpType),
+    completedByName: input.completedByName
+  });
+  const existingActivityId = await findExistingPartnerActivityReplayId(supabase, normalizedReplayInput, {
+    allowRecentWindow: normalizedReplayInput.activityAt === null
+  });
+  if (existingActivityId) {
+    await Promise.all([
+      supabase.from("community_partner_organizations").update({ last_touched: nowDate }).eq("id", partner.id),
+      supabase.from("referral_sources").update({ last_touched: nowDate }).eq("id", referralSource.id)
+    ]);
+    return {
+      partner,
+      referralSource,
+      duplicateSafe: true as const
+    };
+  }
+  const activityAt = normalizedReplayInput.activityAt ?? toEasternISO();
   const { error: insertError } = await supabase.from("partner_activities").insert({
     referral_source_id: referralSource.id,
     partner_id: partner.id,
     organization_name: partner.organization_name,
     contact_name: referralSource.contact_name,
-    activity_at: clean(input.activityAt) ?? toEasternISO(),
+    activity_at: activityAt,
     activity_type: input.activityType,
     notes: clean(input.notes),
     completed_by_name: input.completedByName,
@@ -120,7 +149,8 @@ export async function createPartnerActivitySupabase(input: {
 
   return {
     partner,
-    referralSource
+    referralSource,
+    duplicateSafe: false as const
   };
 }
 

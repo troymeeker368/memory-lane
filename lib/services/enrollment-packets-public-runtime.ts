@@ -472,6 +472,7 @@ export async function savePublicEnrollmentPacketProgress(input: {
     secondaryContactZip: input.secondaryContactZip,
     notes: input.notes
   });
+  const requestWasAlreadyInProgress = toStatus(context.request.status) === "in_progress";
   const now = toEasternISO();
   const admin = createSupabaseAdminClient();
   try {
@@ -511,11 +512,13 @@ export async function savePublicEnrollmentPacketProgress(input: {
     throw error;
   }
 
-  await insertPacketEvent({
-    packetId: context.request.id,
-    eventType: "in_progress",
-    actorEmail: cleanEmail(mergedPayload.primaryContactEmail) ?? context.request.caregiverEmail
-  });
+  if (!requestWasAlreadyInProgress) {
+    await insertPacketEvent({
+      packetId: context.request.id,
+      eventType: "in_progress",
+      actorEmail: cleanEmail(mergedPayload.primaryContactEmail) ?? context.request.caregiverEmail
+    });
+  }
   return { ok: true as const };
 }
 

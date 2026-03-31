@@ -14,6 +14,10 @@ import {
   recordWorkflowEvent,
   maybeRecordRepeatedFailureAlert
 } from "@/lib/services/workflow-observability";
+import {
+  findExistingLeadActivityReplayId,
+  normalizeLeadActivityReplayInput
+} from "@/lib/services/sales-activity-idempotency";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
@@ -118,10 +122,29 @@ export async function addLeadActivity(input: {
   activityAt?: string;
 }) {
   const admin = createSupabaseAdminClient();
+  const requestedActivityAt = clean(input.activityAt);
+  const activityAt = requestedActivityAt ?? toEasternISO();
+  const normalizedReplayInput = normalizeLeadActivityReplayInput({
+    leadId: input.leadId,
+    activityAt,
+    activityType: input.activityType,
+    outcome: input.outcome,
+    lostReason: null,
+    notes: input.notes,
+    nextFollowUpDate: null,
+    nextFollowUpType: null,
+    completedByUserId: input.completedByUserId,
+    partnerId: null,
+    referralSourceId: null
+  });
+  const existingActivityId = await findExistingLeadActivityReplayId(admin, normalizedReplayInput, {
+    allowRecentWindow: !requestedActivityAt
+  });
+  if (existingActivityId) return true;
   const { error } = await admin.from("lead_activities").insert({
     lead_id: input.leadId,
     member_name: input.memberName,
-    activity_at: input.activityAt ?? toEasternISO(),
+    activity_at: activityAt,
     activity_type: input.activityType,
     outcome: input.outcome,
     notes: input.notes,
@@ -170,10 +193,29 @@ async function addLeadActivityStrict(input: {
   activityAt?: string;
 }) {
   const admin = createSupabaseAdminClient();
+  const requestedActivityAt = clean(input.activityAt);
+  const activityAt = requestedActivityAt ?? toEasternISO();
+  const normalizedReplayInput = normalizeLeadActivityReplayInput({
+    leadId: input.leadId,
+    activityAt,
+    activityType: input.activityType,
+    outcome: input.outcome,
+    lostReason: null,
+    notes: input.notes,
+    nextFollowUpDate: null,
+    nextFollowUpType: null,
+    completedByUserId: input.completedByUserId,
+    partnerId: null,
+    referralSourceId: null
+  });
+  const existingActivityId = await findExistingLeadActivityReplayId(admin, normalizedReplayInput, {
+    allowRecentWindow: !requestedActivityAt
+  });
+  if (existingActivityId) return;
   const { error } = await admin.from("lead_activities").insert({
     lead_id: input.leadId,
     member_name: input.memberName,
-    activity_at: input.activityAt ?? toEasternISO(),
+    activity_at: activityAt,
     activity_type: input.activityType,
     outcome: input.outcome,
     notes: input.notes,

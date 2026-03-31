@@ -5,9 +5,6 @@ import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import {
-  listCenterBillingSettingsSupabase,
-} from "@/lib/services/member-command-center-read";
-import {
   upsertCenterBillingSettingSupabase
 } from "@/lib/services/member-command-center-write";
 import {
@@ -33,9 +30,11 @@ import {
   upsertBillingScheduleTemplate,
   upsertBillingAdjustment,
   ensureCenterClosuresForCurrentAndNextYear,
+  validateCenterBillingSettingOverlap,
   validateMemberBillingSettingOverlap,
   validateScheduleTemplateOverlap
 } from "@/lib/services/billing-configuration";
+import { resolveEffectiveTransportationBillingStatus } from "@/lib/services/billing-effective";
 import {
   createBillingExport,
   createCustomInvoice,
@@ -76,12 +75,6 @@ function asBoolean(formData: FormData, key: string, fallback = false) {
 function asDateOnly(formData: FormData, key: string, fallback = toEasternDate()) {
   const value = asString(formData, key).slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
-}
-
-function dateRangesOverlap(startA: string, endA: string | null, startB: string, endB: string | null) {
-  const normalizedEndA = endA ?? "9999-12-31";
-  const normalizedEndB = endB ?? "9999-12-31";
-  return startA <= normalizedEndB && startB <= normalizedEndA;
 }
 
 async function requireBillingProfile() {
@@ -139,18 +132,13 @@ async function handleSaveCenterBillingSetting(formData: FormData) {
   const effectiveEndDate = asNullableString(formData, "effectiveEndDate");
   const active = asBoolean(formData, "active", false);
 
-  const existingSettings = await listCenterBillingSettingsSupabase();
-  if (active) {
-    const overlap = existingSettings.find(
-      (row) =>
-        row.id !== id &&
-        row.active &&
-        dateRangesOverlap(effectiveStartDate, effectiveEndDate, row.effective_start_date, row.effective_end_date)
-    );
-    if (overlap) {
-      throw new Error("Active center billing settings cannot have overlapping effective date ranges.");
-    }
-  }
+  const overlap = await validateCenterBillingSettingOverlap({
+    effectiveStartDate,
+    effectiveEndDate,
+    active,
+    excludeId: id || undefined
+  });
+  if (!overlap.ok) throw new Error(overlap.error);
 
   const payload = {
     default_daily_rate: asNumber(formData, "defaultDailyRate", 0),
@@ -332,10 +320,9 @@ async function handleSaveMemberBillingSetting(formData: FormData) {
   if (!overlap.ok) throw new Error(overlap.error);
 
   const transportStatus = asString(formData, "transportationBillingStatus");
-  const transportationStatus: "BillNormally" | "Waived" | "IncludedInProgramRate" =
-    transportStatus === "Waived" || transportStatus === "IncludedInProgramRate"
-      ? transportStatus
-      : ("BillNormally" as const);
+  const transportationStatus = resolveEffectiveTransportationBillingStatus({
+    attendanceSetting: { transportation_billing_status: transportStatus }
+  });
   const payload = {
     member_id: asString(formData, "memberId"),
     payor_id: null,

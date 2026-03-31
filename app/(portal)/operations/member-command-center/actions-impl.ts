@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import { canAccessModule, canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
-import { resolveActiveEffectiveRowForDate } from "@/lib/services/billing-effective";
+import { resolveActiveEffectiveRowForDate, resolveEffectiveTransportationBillingStatus } from "@/lib/services/billing-effective";
 import {
   saveMemberCommandCenterAttendanceBillingWorkflow,
   saveMemberCommandCenterBundle,
@@ -235,10 +235,9 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
     return { ok: false, error: "Daily Rate is required and must be greater than 0." };
   }
   const transportationBillingStatusRaw = asString(formData, "transportationBillingStatus");
-  const transportationBillingStatus: "BillNormally" | "Waived" | "IncludedInProgramRate" =
-    transportationBillingStatusRaw === "Waived" || transportationBillingStatusRaw === "IncludedInProgramRate"
-      ? transportationBillingStatusRaw
-      : "BillNormally";
+  const transportationBillingStatus = resolveEffectiveTransportationBillingStatus({
+    attendanceSetting: { transportation_billing_status: transportationBillingStatusRaw }
+  });
   const useCenterDefaultBillingMode = asCheckbox(formData, "useCenterDefaultBillingMode");
   const billingModeRaw = asString(formData, "billingMode");
   const billingMode: "Membership" | "Monthly" | "Custom" | null =

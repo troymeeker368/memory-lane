@@ -14,12 +14,10 @@ import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 const SYNC_ACTIVE_PRN_ORDERS_RPC = "rpc_sync_active_prn_medication_orders";
-const SYNC_CENTER_STANDING_PRN_ORDERS_RPC = "rpc_sync_center_standing_prn_orders";
 const RECORD_PRN_ADMIN_RPC = "rpc_record_prn_medication_administration";
 const CREATE_PRN_ORDER_AND_ADMIN_RPC = "rpc_create_prn_medication_order_and_administer";
 const COMPLETE_PRN_FOLLOWUP_RPC = "rpc_complete_prn_administration_followup";
 const PRN_WORKFLOW_MIGRATION = "0107_prn_medication_orders_and_logs.sql";
-const CENTER_STANDING_PRN_MIGRATION = "0166_center_standing_prn_orders.sql";
 
 type MedicationOrderRow = {
   id: string;
@@ -253,19 +251,9 @@ function mapMissingRpcError(message: string, rpcName: string, migrationName = PR
 }
 
 export async function syncCenterStandingPrnMedicationOrders(options?: { serviceRole?: boolean }) {
-  const supabase = await createClient({ serviceRole: options?.serviceRole ?? true });
-  try {
-    return await invokeSupabaseRpcOrThrow<Array<{ synced_orders: number | null; inactivated_orders: number | null }>>(
-      supabase,
-      SYNC_CENTER_STANDING_PRN_ORDERS_RPC,
-      { p_now: toEasternISO() }
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to sync center standing PRN medication orders.";
-    const mapped = mapMissingRpcError(message, SYNC_CENTER_STANDING_PRN_ORDERS_RPC, CENTER_STANDING_PRN_MIGRATION);
-    if (mapped) throw new Error(mapped);
-    throw error;
-  }
+  // `rpc_sync_center_standing_prn_orders` was retired in migration 0167.
+  // Keep this export for compatibility and route to the canonical active PRN sync RPC.
+  return syncActivePrnMedicationOrders(options);
 }
 
 export async function syncActivePrnMedicationOrders(options?: { serviceRole?: boolean }) {

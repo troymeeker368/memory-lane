@@ -6,12 +6,17 @@ function readWorkspaceFile(relativePath: string) {
   return readFileSync(relativePath, "utf8");
 }
 
-test("face sheet regeneration replaces the canonical member-file row instead of creating a broken duplicate object path", () => {
+test("face sheet regeneration replaces the canonical member-file row without deleting committed storage on verification readback misses", () => {
   const faceSheetActionSource = readWorkspaceFile("app/(portal)/members/[memberId]/face-sheet/actions.ts");
   const memberFilesSource = readWorkspaceFile("lib/services/member-files.ts");
 
   assert.equal(faceSheetActionSource.includes("replaceExistingByDocumentSource: true"), true);
-  assert.equal(memberFilesSource.includes("const upserted = await upsertMemberFileByDocumentSource({"), true);
-  assert.equal(memberFilesSource.includes('const persistedMemberFileId = String(upserted.id ?? memberFileId).trim() || memberFileId;'), true);
-  assert.equal(memberFilesSource.includes('.eq("id", persistedMemberFileId).single();'), true);
+  assert.equal(memberFilesSource.includes("async function loadPersistedMemberFileOrReturnVerificationPending"), true);
+  assert.equal(memberFilesSource.includes("let upserted;"), true);
+  assert.equal(memberFilesSource.includes("const updated = await loadPersistedMemberFileOrReturnVerificationPending({"), true);
+  assert.equal(memberFilesSource.includes('alertKey: "generated_member_file_verification_pending"'), true);
+  assert.equal(
+    memberFilesSource.includes("return loadPersistedMemberFileOrReturnVerificationPending({"),
+    true
+  );
 });

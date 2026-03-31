@@ -17,6 +17,8 @@ import {
   listBillingPayorContactsForMembers
 } from "@/lib/services/billing-payor-contacts";
 import {
+  resolveEffectiveDailyRate,
+  resolveEffectiveTransportationBillingStatus,
   resolveActiveEffectiveMemberRowForDate,
   resolveActiveEffectiveRowForDate
 } from "@/lib/services/billing-effective";
@@ -222,13 +224,17 @@ export async function getMemberAttendanceBillingSetting(memberId: string) {
   const schedule = data as MemberAttendanceBillingRow | null;
   if (!schedule) return null;
 
-  const dailyRateCandidate = [schedule.daily_rate, schedule.custom_daily_rate, schedule.default_daily_rate]
-    .map((value) => (Number.isFinite(value) ? Number(value) : null))
-    .find((value): value is number => value != null && value > 0);
+  const resolvedDailyRate = resolveEffectiveDailyRate({
+    attendanceSetting: schedule,
+    memberSetting: null,
+    centerSetting: null
+  });
   return {
     memberId,
-    dailyRate: dailyRateCandidate ?? null,
-    transportationBillingStatus: (schedule.transportation_billing_status ?? "BillNormally") as "BillNormally" | "Waived" | "IncludedInProgramRate",
+    dailyRate: Number.isFinite(resolvedDailyRate) && resolvedDailyRate > 0 ? resolvedDailyRate : null,
+    transportationBillingStatus: resolveEffectiveTransportationBillingStatus({
+      attendanceSetting: schedule
+    }),
     billingRateEffectiveDate: schedule.billing_rate_effective_date ?? null,
     billingNotes: schedule.billing_notes ?? null
   };

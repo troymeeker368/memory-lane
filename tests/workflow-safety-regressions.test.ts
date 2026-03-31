@@ -36,3 +36,13 @@ test("POF post-sign runner reports missing configuration explicitly", () => {
   assert.equal(source.includes("runnerConfigured: false"), true);
   assert.equal(source.includes("runnerConfigured: true"), true);
 });
+
+test("member file writes preserve committed storage when verification readback misses", () => {
+  const source = readWorkspaceFile("lib/services/member-files.ts");
+
+  assert.equal(source.includes("async function loadPersistedMemberFileOrReturnVerificationPending"), true);
+  assert.equal(source.includes('alertKey: "member_file_upload_verification_pending"'), true);
+  assert.equal(source.includes('alertKey: "generated_member_file_verification_pending"'), true);
+  assert.equal(source.includes("return loadPersistedMemberFileOrReturnVerificationPending({"), true);
+  assert.equal(source.includes("const updated = await loadPersistedMemberFileOrReturnVerificationPending({"), true);
+});
