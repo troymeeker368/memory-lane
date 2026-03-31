@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { retryQueuedPhysicianOrderPostSignSync } from "@/lib/services/physician-orders-supabase";
+import { emitAgedPostSignSyncQueueAlerts } from "@/lib/services/physician-order-post-sign-runtime";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -22,6 +23,11 @@ function parseLimitValue(value: string | number | null | undefined) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 25;
   return Math.min(100, Math.max(1, Math.trunc(parsed)));
+}
+
+function isHealthMode(request: NextRequest) {
+  const mode = request.nextUrl.searchParams.get("mode") ?? "";
+  return mode.trim().toLowerCase() === "health";
 }
 
 async function handleRunnerRequest(request: NextRequest) {
@@ -57,6 +63,26 @@ async function handleRunnerRequest(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
   }
 
+  const now = toEasternISO();
+  if (isHealthMode(request)) {
+    const agedQueueSummary = await emitAgedPostSignSyncQueueAlerts({
+      nowIso: now,
+      serviceRole: true,
+      actorUserId: null
+    });
+    const healthStatus = agedQueueSummary.agedQueueRows > 0 ? "degraded" : "healthy";
+    return NextResponse.json({
+      ok: true,
+      timestamp: now,
+      runnerConfigured: true,
+      mode: "health",
+      healthStatus,
+      agedQueueRows: agedQueueSummary.agedQueueRows,
+      agedQueueAlertsRaised: agedQueueSummary.alertsRaised,
+      agedQueueAlertAgeMinutes: agedQueueSummary.alertAgeMinutes
+    });
+  }
+
   let limit = parseLimitValue(request.nextUrl.searchParams.get("limit"));
   if (request.method === "POST") {
     try {
@@ -76,8 +102,10 @@ async function handleRunnerRequest(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    timestamp: toEasternISO(),
+    timestamp: now,
     runnerConfigured: true,
+    mode: "run",
+    healthStatus: result.agedQueueRows > 0 ? "degraded" : "healthy",
     ...result
   });
 }

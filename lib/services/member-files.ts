@@ -511,6 +511,65 @@ export async function upsertMemberFileByDocumentSource(input: {
   }
 }
 
+async function loadPersistedMemberFileOrReturnVerificationPending(input: {
+  memberFileId: string;
+  memberId: string;
+  documentSource: string;
+  storageObjectPath: string;
+  fileName: string;
+  fileType: string;
+  category: string;
+  categoryOther?: string | null;
+  uploadedByUserId?: string | null;
+  uploadedByName?: string | null;
+  uploadedAtIso: string;
+  alertKey: string;
+}) {
+  const persisted =
+    (await loadMemberFileRowById(input.memberFileId)) ??
+    (await loadMemberFileRowByDocumentSource({
+      memberId: input.memberId,
+      documentSource: input.documentSource
+    }));
+  if (persisted) {
+    return persisted;
+  }
+
+  await recordImmediateSystemAlert({
+    entityType: "member_file",
+    entityId: input.memberFileId,
+    actorUserId: input.uploadedByUserId ?? null,
+    severity: "high",
+    alertKey: input.alertKey,
+    metadata: {
+      member_id: input.memberId,
+      document_source: input.documentSource,
+      storage_object_path: input.storageObjectPath,
+      file_name: input.fileName,
+      file_type: input.fileType,
+      category: input.category,
+      category_other: input.categoryOther ?? null,
+      uploaded_by_user_id: input.uploadedByUserId ?? null,
+      uploaded_by_name: input.uploadedByName ?? null,
+      uploaded_at: input.uploadedAtIso
+    }
+  });
+
+  return {
+    id: input.memberFileId,
+    member_id: input.memberId,
+    file_name: input.fileName,
+    file_type: input.fileType,
+    file_data_url: null,
+    storage_object_path: input.storageObjectPath,
+    category: input.category,
+    category_other: input.categoryOther ?? null,
+    document_source: input.documentSource,
+    uploaded_by_name: input.uploadedByName ?? null,
+    uploaded_at: input.uploadedAtIso
+  };
+}
+
 export async function saveCommandCenterMemberFileUpload(input: {
   actor: MemberFileMutationActor;
   memberId: string;
@@ -582,49 +641,20 @@ export async function saveCommandCenterMemberFileUpload(input: {
     throw error;
   }
 
-  const created =
-    (await loadMemberFileRowById(memberFile.id)) ??
-    (await loadMemberFileRowByDocumentSource({
-      memberId,
-      documentSource
-    }));
-  if (created) {
-    return created;
-  }
-
-  await recordImmediateSystemAlert({
-    entityType: "member_file",
-    entityId: memberFile.id,
-    actorUserId: input.actor.id,
-    severity: "high",
-    alertKey: "member_file_upload_verification_pending",
-    metadata: {
-      member_id: memberId,
-      document_source: documentSource,
-      storage_object_path: objectPath,
-      file_name: fileName,
-      file_type: contentType,
-      category: input.category,
-      category_other: categoryOther,
-      uploaded_by_user_id: input.actor.id,
-      uploaded_by_name: input.actor.fullName,
-      uploaded_at: now
-    }
-  });
-
-  return {
-    id: memberFile.id,
-    member_id: memberId,
-    file_name: fileName,
-    file_type: contentType,
-    file_data_url: null,
-    storage_object_path: objectPath,
+  return loadPersistedMemberFileOrReturnVerificationPending({
+    memberFileId: memberFile.id,
+    memberId,
+    documentSource,
+    storageObjectPath: objectPath,
+    fileName,
+    fileType: contentType,
     category: input.category,
-    category_other: categoryOther,
-    document_source: documentSource,
-    uploaded_by_name: input.actor.fullName,
-    uploaded_at: now
-  };
+    categoryOther,
+    uploadedByUserId: input.actor.id,
+    uploadedByName: input.actor.fullName,
+    uploadedAtIso: now,
+    alertKey: "member_file_upload_verification_pending"
+  });
 }
 
 export async function deleteCommandCenterMemberFile(input: {
@@ -748,9 +778,9 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     if (existing) {
       const existingId = String(existing.id);
       const storageObjectPath = await uploadGeneratedPdfObject(existingId, defaultName);
-      let updated;
+      let upserted;
       try {
-        await upsertMemberFileByDocumentSource({
+        upserted = await upsertMemberFileByDocumentSource({
           memberId,
           memberFileId: existingId,
           documentSource: input.documentSource,
@@ -769,9 +799,6 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
           },
           supabase: admin
         });
-        const { data, error } = await admin.from("member_files").select("*").eq("id", existingId).maybeSingle();
-        if (error) throw new Error(error.message);
-        updated = data;
       } catch (error) {
         try {
           await deleteMemberDocumentObject(storageObjectPath);
@@ -793,13 +820,26 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
         throw error;
       }
 
-      if (updated) {
-        return {
-          created: updated,
-          fileName: defaultName,
-          generatedAtIso: now
-        };
-      }
+      const persistedMemberFileId = String(upserted?.id ?? existingId).trim() || existingId;
+      const updated = await loadPersistedMemberFileOrReturnVerificationPending({
+        memberFileId: persistedMemberFileId,
+        memberId,
+        documentSource: input.documentSource,
+        storageObjectPath,
+        fileName: defaultName,
+        fileType: "application/pdf",
+        category: input.category,
+        categoryOther,
+        uploadedByUserId: input.uploadedBy.id,
+        uploadedByName: input.uploadedBy.name,
+        uploadedAtIso: now,
+        alertKey: "generated_member_file_verification_pending"
+      });
+      return {
+        created: updated,
+        fileName: defaultName,
+        generatedAtIso: now
+      };
     }
   }
 
@@ -818,9 +858,9 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
   const memberFileId = nextMemberFileId();
   const storageObjectPath = await uploadGeneratedPdfObject(memberFileId, fileName);
 
-  let created;
+  let upserted;
   try {
-    const upserted = await upsertMemberFileByDocumentSource({
+    upserted = await upsertMemberFileByDocumentSource({
       memberId,
       memberFileId,
       documentSource: input.documentSource,
@@ -839,10 +879,6 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
       },
       supabase: admin
     });
-    const persistedMemberFileId = String(upserted.id ?? memberFileId).trim() || memberFileId;
-    const { data, error } = await admin.from("member_files").select("*").eq("id", persistedMemberFileId).single();
-    if (error) throw new Error(error.message);
-    created = data;
   } catch (error) {
     try {
       await deleteMemberDocumentObject(storageObjectPath);
@@ -863,6 +899,22 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     }
     throw error;
   }
+
+  const persistedMemberFileId = String(upserted?.id ?? memberFileId).trim() || memberFileId;
+  const created = await loadPersistedMemberFileOrReturnVerificationPending({
+    memberFileId: persistedMemberFileId,
+    memberId,
+    documentSource: input.documentSource,
+    storageObjectPath,
+    fileName,
+    fileType: "application/pdf",
+    category: input.category,
+    categoryOther,
+    uploadedByUserId: input.uploadedBy.id,
+    uploadedByName: input.uploadedBy.name,
+    uploadedAtIso: now,
+    alertKey: "generated_member_file_verification_pending"
+  });
 
   return {
     created,
