@@ -340,11 +340,12 @@ export async function listCenterClosures(input?: { includeInactive?: boolean }) 
 
 export async function listMemberBillingSettings() {
   const supabase = await createClient();
-  const [{ data: settingsData, error: settingsError }, { data: membersData }] = await Promise.all([
+  const [{ data: settingsData, error: settingsError }, { data: membersData, error: membersError }] = await Promise.all([
     supabase.from("member_billing_settings").select("*").order("effective_start_date", { ascending: false }),
     supabase.from("members").select(BILLING_MEMBER_LOOKUP_SELECT)
   ]);
   if (settingsError) throw new Error(settingsError.message);
+  if (membersError) throw new Error(membersError.message);
 
   const settingsRows = (settingsData ?? []) as BillingSettingRow[];
   const memberNameById = new Map(
@@ -383,11 +384,12 @@ export async function listMemberBillingSettings() {
 
 export async function listBillingScheduleTemplates() {
   const supabase = await createClient();
-  const [{ data: templatesData, error: templatesError }, { data: membersData }] = await Promise.all([
+  const [{ data: templatesData, error: templatesError }, { data: membersData, error: membersError }] = await Promise.all([
     supabase.from("billing_schedule_templates").select("*").order("effective_start_date", { ascending: false }),
     supabase.from("members").select(BILLING_MEMBER_LOOKUP_SELECT)
   ]);
   if (templatesError) throw new Error(templatesError.message);
+  if (membersError) throw new Error(membersError.message);
 
   const memberNameById = new Map(
     ((membersData ?? []) as MemberLookupRow[]).map((row) => [String(row.id), String(row.display_name)] as const)
@@ -400,11 +402,12 @@ export async function listBillingScheduleTemplates() {
 
 async function getMembersAndPayorsForLookup() {
   const supabase = await createClient();
-  const { data: members } = await supabase
+  const { data: members, error: membersError } = await supabase
     .from("members")
     .select("id, display_name, status")
     .eq("status", "active")
     .order("display_name", { ascending: true });
+  if (membersError) throw new Error(membersError.message);
 
   const membersList = ((members ?? []) as MemberLookupRow[]).map((row) => ({
     id: String(row.id),

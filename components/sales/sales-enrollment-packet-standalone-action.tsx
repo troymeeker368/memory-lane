@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { EligibleLeadSearchPicker } from "@/components/sales/eligible-lead-search-picker";
 import { sendEnrollmentPacketAction } from "@/app/sales-enrollment-actions";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,13 +18,6 @@ type StaffTransportationOption = (typeof STAFF_TRANSPORTATION_OPTIONS)[number];
 function todayDateString() {
   return new Date().toISOString().slice(0, 10);
 }
-
-type LeadOption = {
-  id: string;
-  memberName: string;
-  caregiverEmail: string | null;
-  memberStartDate: string | null;
-};
 
 type PricingPreview = {
   communityFeeAmount: number | null;
@@ -46,10 +40,8 @@ type SendEnrollmentPacketSuccess = {
 };
 
 export function SalesEnrollmentPacketStandaloneAction({
-  leads,
   pricingPreview
 }: {
-  leads: LeadOption[];
   pricingPreview: PricingPreview;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -73,7 +65,6 @@ export function SalesEnrollmentPacketStandaloneAction({
   const router = useRouter();
   const isWorking = isPending || isSubmitting;
 
-  const leadById = useMemo(() => new Map(leads.map((lead) => [lead.id, lead] as const)), [leads]);
   const resolvedDaysPerWeek = requestedDays.length;
   const resolvedDailyRateTier = useMemo(
     () =>
@@ -137,9 +128,6 @@ export function SalesEnrollmentPacketStandaloneAction({
 
   const onLeadChange = (nextLeadId: string) => {
     setLeadId(nextLeadId);
-    const nextLead = leadById.get(nextLeadId);
-    setCaregiverEmail(nextLead?.caregiverEmail ?? "");
-    setRequestedStartDate(nextLead?.memberStartDate ?? todayDateString());
     setInitialAmountEdited(false);
   };
 
@@ -268,22 +256,14 @@ export function SalesEnrollmentPacketStandaloneAction({
                 ) : null}
 
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
-                  <label className="space-y-1 text-sm">
-                    <span className="text-xs font-semibold text-muted">Lead</span>
-                    <select
-                      className="h-11 w-full rounded-lg border border-border px-3"
-                      value={leadId}
-                      onChange={(event) => onLeadChange(event.target.value)}
-                      disabled={isWorking}
-                    >
-                      <option value="">Select lead</option>
-                      {leads.map((lead) => (
-                        <option key={lead.id} value={lead.id}>
-                          {lead.memberName}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <EligibleLeadSearchPicker
+                    value={leadId}
+                    onChange={onLeadChange}
+                    onSelectOption={(nextLead) => {
+                      setCaregiverEmail(nextLead?.caregiver_email ?? "");
+                      setRequestedStartDate(nextLead?.member_start_date ?? todayDateString());
+                    }}
+                  />
 
                   <label className="space-y-1 text-sm md:col-span-2">
                     <span className="text-xs font-semibold text-muted">Caregiver Email</span>

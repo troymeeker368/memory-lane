@@ -59,6 +59,20 @@ export interface SalesLeadEnrollmentRow {
   member_start_date: string | null;
 }
 
+type SalesEnrollmentPacketEligibleLeadFilterRow = {
+  id: string;
+  member_name: string | null;
+  caregiver_email: string | null;
+  member_start_date: string | null;
+  stage: string;
+  status: string;
+};
+
+export type SalesEnrollmentPacketEligibleLeadRow = Omit<
+  SalesEnrollmentPacketEligibleLeadFilterRow,
+  "stage" | "status"
+>;
+
 export interface SalesLeadLookupRow {
   id: string;
   member_name: string | null;
@@ -156,6 +170,15 @@ const SALES_LEAD_READ_SELECT = [
   "created_by_name"
 ].join(", ");
 
+const SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT = [
+  "id",
+  "member_name",
+  "caregiver_email",
+  "member_start_date",
+  "stage",
+  "status"
+].join(", ");
+
 const SALES_LEAD_LOOKUP_SELECT = "id, member_name, caregiver_name, stage, status, created_at, partner_id, referral_source_id";
 const SALES_PARTNER_LOOKUP_SELECT =
   "id, partner_id, organization_name, category, location, primary_phone, primary_email, active, last_touched";
@@ -201,6 +224,23 @@ function toSalesLeadReadRow(row: Record<string, unknown>): SalesLeadReadRow {
     lost_reason: clean(row.lost_reason),
     closed_date: clean(row.closed_date),
     created_by_name: clean(row.created_by_name)
+  };
+}
+
+function toEnrollmentPacketEligibleLeadFilterRow(
+  row: Record<string, unknown>
+): SalesEnrollmentPacketEligibleLeadFilterRow {
+  const resolved = resolveCanonicalLeadState({
+    requestedStage: typeof row.stage === "string" ? row.stage : "Inquiry",
+    requestedStatus: typeof row.status === "string" ? row.status : "Open"
+  });
+  return {
+    id: String(row.id ?? ""),
+    member_name: clean(row.member_name),
+    caregiver_email: clean(row.caregiver_email),
+    member_start_date: clean(row.member_start_date),
+    stage: resolved.stage,
+    status: resolved.status
   };
 }
 
@@ -335,12 +375,12 @@ export async function getSalesLeadForEnrollmentSupabase(leadId: string) {
 
 export async function listEnrollmentPacketEligibleLeadsSupabase(input?: {
   limit?: number;
-}) {
+}): Promise<SalesEnrollmentPacketEligibleLeadRow[]> {
   const limit = normalizePageSize(input?.limit ?? 500, 500);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("leads")
-    .select(SALES_LEAD_READ_SELECT)
+    .select(SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT)
     .eq("status", "open")
     .in("stage", [...getEnrollmentPacketEligibleLeadQueryStages()])
     .order("inquiry_date", { ascending: false, nullsFirst: false })
@@ -348,13 +388,74 @@ export async function listEnrollmentPacketEligibleLeadsSupabase(input?: {
     .limit(limit);
   if (error) throw new Error(error.message);
   return ((data ?? []) as unknown as Record<string, unknown>[])
-    .map((row) => toSalesLeadReadRow(row))
+    .map((row) => toEnrollmentPacketEligibleLeadFilterRow(row))
+    .filter((row) =>
+      isEnrollmentPacketEligibleLeadState({
+        requestedStage: row.stage,
+        requestedStatus: row.status
+      })
+    )
+    .map(({ stage: _stage, status: _status, ...row }) => row);
+}
+
+export async function listEnrollmentPacketEligibleLeadPickerSupabase(input?: {
+  q?: string;
+  selectedId?: string | null;
+  limit?: number;
+  minQueryLength?: number;
+}): Promise<SalesEnrollmentPacketEligibleLeadRow[]> {
+  const q = clean(input?.q);
+  const limit = normalizePageSize(input?.limit ?? 25, 25);
+  const minQueryLength =
+    Number.isFinite(input?.minQueryLength) && Number(input?.minQueryLength) > 0
+      ? Math.floor(Number(input?.minQueryLength))
+      : 2;
+  const selectedId = clean(input?.selectedId);
+  const supabase = await createClient();
+  const selectedLeadPromise = selectedId
+    ? supabase.from("leads").select(SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT).eq("id", selectedId).maybeSingle()
+    : Promise.resolve({ data: null, error: null } as const);
+  const matchesPromise =
+    q && q.length >= minQueryLength
+      ? supabase
+          .from("leads")
+          .select(SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT)
+          .eq("status", "open")
+          .in("stage", [...getEnrollmentPacketEligibleLeadQueryStages()])
+          .or(
+            [
+              `member_name.ilike.${buildSupabaseIlikePattern(q)}`,
+              `caregiver_name.ilike.${buildSupabaseIlikePattern(q)}`,
+              `caregiver_email.ilike.${buildSupabaseIlikePattern(q)}`
+            ].join(",")
+          )
+          .order("inquiry_date", { ascending: false, nullsFirst: false })
+          .order("member_name", { ascending: true })
+          .limit(limit)
+      : Promise.resolve({ data: [] as SalesEnrollmentPacketEligibleLeadFilterRow[], error: null } as const);
+
+  const [selectedLeadResult, matchesResult] = await Promise.all([selectedLeadPromise, matchesPromise]);
+  if (selectedLeadResult.error) throw new Error(selectedLeadResult.error.message);
+  if (matchesResult.error) throw new Error(matchesResult.error.message);
+
+  const rows = [selectedLeadResult.data, ...((matchesResult.data ?? []) as Array<Record<string, unknown> | null>)]
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+    .map((row) => toEnrollmentPacketEligibleLeadFilterRow(row))
     .filter((row) =>
       isEnrollmentPacketEligibleLeadState({
         requestedStage: row.stage,
         requestedStatus: row.status
       })
     );
+
+  const seen = new Set<string>();
+  return rows
+    .filter((row) => {
+      if (seen.has(row.id)) return false;
+      seen.add(row.id);
+      return true;
+    })
+    .map(({ stage: _stage, status: _status, ...row }) => row);
 }
 
 export async function getSalesFormLookupsSupabase(options?: {

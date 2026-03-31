@@ -3,10 +3,10 @@
 import { useMemo, useState, useTransition } from "react";
 
 import { runDocumentationCreateAction } from "@/app/documentation-create-actions";
+import { MemberSearchPicker } from "@/components/forms/member-search-picker";
 import { Button } from "@/components/ui/button";
 import { PARTICIPATION_LEVEL_OPTIONS, PARTICIPATION_MISSING_REASONS } from "@/lib/canonical";
 import { toEasternDate } from "@/lib/timezone";
-import type { SelectMember } from "@/types/data";
 
 type ParticipationMissingReason = "" | (typeof PARTICIPATION_MISSING_REASONS)[number];
 type ActivityFieldKey = "activity1" | "activity2" | "activity3" | "activity4" | "activity5";
@@ -33,12 +33,12 @@ function useTodayDate() {
   return useMemo(() => toEasternDate(), []);
 }
 
-export function DailyActivityForm({ members }: { members: SelectMember[] }) {
+export function DailyActivityForm() {
   const today = useTodayDate();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
   const [form, setForm] = useState<DailyActivityFormState>({
-    memberId: members[0]?.id ?? "",
+    memberId: "",
     activityDate: today,
     activity1: 100,
     reasonMissing1: "",
@@ -70,14 +70,7 @@ export function DailyActivityForm({ members }: { members: SelectMember[] }) {
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-3">
-        <label className="space-y-1 text-sm">
-          <span className="font-semibold">Member</span>
-          <select className="h-11 w-full rounded-lg border border-border bg-white px-3" value={form.memberId} onChange={(e) => update("memberId", e.target.value)}>
-            {members.map((m) => (
-              <option key={m.id} value={m.id}>{m.display_name}</option>
-            ))}
-          </select>
-        </label>
+        <MemberSearchPicker scope="documentation" value={form.memberId} onChange={(nextValue) => update("memberId", nextValue)} />
 
         <label className="space-y-1 text-sm">
           <span className="font-semibold">Date</span>

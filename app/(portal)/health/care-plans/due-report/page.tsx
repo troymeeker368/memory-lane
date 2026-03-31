@@ -4,7 +4,7 @@ import { CarePlanStatusLink } from "@/components/care-plans/care-plan-status-lin
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { getCarePlanTracks, getCarePlans } from "@/lib/services/care-plans";
-import { getMembers } from "@/lib/services/documentation";
+import { listMemberPickerOptionsSupabase } from "@/lib/services/shared-lookups-supabase";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
 
 function parsePage(value: string | string[] | undefined) {
@@ -25,10 +25,16 @@ export default async function CarePlanDueReportPage({
   const status = typeof params.status === "string" ? params.status : "All";
   const track = typeof params.track === "string" ? params.track : "All";
   const memberId = typeof params.memberId === "string" ? params.memberId : "All";
+  const memberSearch = typeof params.memberSearch === "string" ? params.memberSearch : "";
   const page = parsePage(params.page);
   const [tracks, members, result] = await Promise.all([
     getCarePlanTracks(),
-    getMembers(),
+    listMemberPickerOptionsSupabase({
+      q: memberSearch,
+      selectedId: memberId === "All" ? null : memberId,
+      status: "active",
+      limit: 25
+    }),
     getCarePlans({
       status,
       track: track === "All" ? undefined : track,
@@ -41,6 +47,7 @@ export default async function CarePlanDueReportPage({
     const search = new URLSearchParams();
     if (status !== "All") search.set("status", status);
     if (track !== "All") search.set("track", track);
+    if (memberSearch) search.set("memberSearch", memberSearch);
     if (memberId !== "All") search.set("memberId", memberId);
     if (targetPage > 1) search.set("page", String(targetPage));
     return `/health/care-plans/due-report?${search.toString()}`;
@@ -51,6 +58,7 @@ export default async function CarePlanDueReportPage({
       <Card>
         <CardTitle>Care Plan Due Report</CardTitle>
         <form className="mt-3 grid gap-2 md:grid-cols-5">
+          <input name="memberSearch" defaultValue={memberSearch} placeholder="Search member name" className="h-10 rounded-lg border border-border px-3 text-sm" />
           <select name="status" defaultValue={status} className="h-10 rounded-lg border border-border px-3 text-sm">
             <option>All</option>
             <option>Due Soon</option>
@@ -71,6 +79,7 @@ export default async function CarePlanDueReportPage({
             Clear Filters
           </Link>
         </form>
+        <p className="mt-2 text-xs text-muted">Search at least 2 letters to load a limited active-member picker.</p>
       </Card>
 
       <Card className="table-wrap">

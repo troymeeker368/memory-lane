@@ -20,12 +20,14 @@ function parsePageNumber(value: string | string[] | undefined) {
 
 function buildPhysicianOrdersHref(input: {
   memberId: string;
+  memberSearch: string;
   status: string;
   q: string;
   page: number;
 }) {
   const params = new URLSearchParams();
   if (input.memberId) params.set("memberId", input.memberId);
+  if (input.memberSearch) params.set("memberSearch", input.memberSearch);
   if (input.status && input.status !== "all") params.set("status", input.status);
   if (input.q) params.set("q", input.q);
   if (input.page > 1) params.set("page", String(input.page));
@@ -50,6 +52,7 @@ export default async function PhysicianOrdersIndexPage({
   const canCreate = canCreatePhysicianOrdersModuleForRole(profile.role);
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";
+  const memberSearch = firstString(query.memberSearch) ?? "";
   const status = firstString(query.status) ?? "all";
   const q = firstString(query.q) ?? "";
   const page = parsePageNumber(query.page);
@@ -57,7 +60,11 @@ export default async function PhysicianOrdersIndexPage({
     ? resolveCanonicalMemberId(memberId, { actionLabel: "PhysicianOrdersIndexPage" })
     : Promise.resolve(memberId);
   const [members, canonicalMemberId, result] = await Promise.all([
-    listPhysicianOrderMemberLookup(),
+    listPhysicianOrderMemberLookup({
+      q: memberSearch,
+      selectedId: memberId,
+      limit: 25
+    }),
     canonicalMemberIdPromise,
     canonicalMemberIdPromise.then((resolvedMemberId) =>
       listPhysicianOrdersPage({
@@ -106,7 +113,13 @@ export default async function PhysicianOrdersIndexPage({
       </Card>
 
       <Card>
-        <form className="grid gap-2 md:grid-cols-5" action="/health/physician-orders">
+        <form className="grid gap-2 md:grid-cols-6" action="/health/physician-orders">
+          <input
+            name="memberSearch"
+            defaultValue={memberSearch}
+            placeholder="Search member name"
+            className="h-10 rounded-lg border border-border px-3 text-sm"
+          />
           <select name="memberId" defaultValue={canonicalMemberId} className="h-10 rounded-lg border border-border px-3 text-sm">
             <option value="">All members</option>
             {members.map((member) => (
@@ -142,6 +155,9 @@ export default async function PhysicianOrdersIndexPage({
           </div>
         </form>
         <p className="mt-2 text-xs text-muted">
+          Search at least 2 letters to load a limited active-member picker for physician-order filters.
+        </p>
+        <p className="mt-1 text-xs text-muted">
           Showing {rangeStart}-{rangeEnd} of {totalRows} physician orders
         </p>
       </Card>
@@ -206,7 +222,7 @@ export default async function PhysicianOrdersIndexPage({
           <div className="flex items-center gap-2">
             {hasPreviousPage ? (
               <Link
-                href={buildPhysicianOrdersHref({ memberId: canonicalMemberId, status, q, page: currentPage - 1 })}
+                href={buildPhysicianOrdersHref({ memberId: canonicalMemberId, memberSearch, status, q, page: currentPage - 1 })}
                 className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
               >
                 Previous Page
@@ -214,7 +230,7 @@ export default async function PhysicianOrdersIndexPage({
             ) : null}
             {hasNextPage ? (
               <Link
-                href={buildPhysicianOrdersHref({ memberId: canonicalMemberId, status, q, page: currentPage + 1 })}
+                href={buildPhysicianOrdersHref({ memberId: canonicalMemberId, memberSearch, status, q, page: currentPage + 1 })}
                 className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
               >
                 Next Page

@@ -8,11 +8,11 @@ type MemberOption = {
   display_name: string;
 };
 
-type ToiletLogFormProps = { members: MemberOption[] };
-type ShowerLogFormProps = { members: MemberOption[] };
+type ToiletLogFormProps = Record<string, never>;
+type ShowerLogFormProps = Record<string, never>;
 type TransportationLogFormProps = { members: MemberOption[] };
 type PhotoUploadFormProps = Record<string, never>;
-type BloodSugarFormProps = { members: MemberOption[]; compact?: boolean };
+type BloodSugarFormProps = { compact?: boolean };
 type AssessmentFormProps = {
   members: CanonicalPersonRef[];
   initialMemberId?: string;

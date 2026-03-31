@@ -2,22 +2,12 @@ import { SalesEnrollmentPacketStandaloneAction } from "@/components/sales/sales-
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getEnrollmentPricingOverview } from "@/lib/services/enrollment-pricing";
-import { listEnrollmentPacketEligibleLeads } from "@/lib/services/leads-read";
 
 export const dynamic = "force-dynamic";
 
 export default async function SendEnrollmentPacketStandalonePage() {
   await requireModuleAccess("sales");
-  const [pricingOverview, leadResult] = await Promise.all([
-    getEnrollmentPricingOverview(),
-    listEnrollmentPacketEligibleLeads({ limit: 500 })
-  ]);
-  const leads = leadResult.map((row) => ({
-    id: String(row.id),
-    memberName: String(row.member_name ?? ""),
-    caregiverEmail: typeof row.caregiver_email === "string" ? row.caregiver_email : null,
-    memberStartDate: typeof row.member_start_date === "string" ? row.member_start_date : null
-  }));
+  const pricingOverview = await getEnrollmentPricingOverview();
 
   return (
     <div className="space-y-4">
@@ -29,7 +19,6 @@ export default async function SendEnrollmentPacketStandalonePage() {
       </Card>
       <Card>
         <SalesEnrollmentPacketStandaloneAction
-          leads={leads}
           pricingPreview={{
             communityFeeAmount: pricingOverview.activeCommunityFee?.amount ?? null,
             dailyRates: pricingOverview.activeDailyRates.map((tier) => ({

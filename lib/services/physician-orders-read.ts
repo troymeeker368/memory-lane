@@ -2,7 +2,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
-import { listAllActiveMemberLookupSupabase, listMemberLookupSupabase } from "@/lib/services/shared-lookups-supabase";
+import { listMemberLookupSupabase, listMemberPickerOptionsSupabase } from "@/lib/services/shared-lookups-supabase";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import {
   PHYSICIAN_ORDER_INDEX_SELECT,
@@ -165,8 +165,17 @@ function mapPhysicianOrderIndexRows(
   });
 }
 
-export async function listPhysicianOrderMemberLookup() {
-  return listAllActiveMemberLookupSupabase();
+export async function listPhysicianOrderMemberLookup(input?: {
+  q?: string;
+  selectedId?: string | null;
+  limit?: number;
+}) {
+  return listMemberPickerOptionsSupabase({
+    q: input?.q,
+    selectedId: input?.selectedId,
+    status: "active",
+    limit: input?.limit ?? 25
+  });
 }
 
 export async function listPhysicianOrdersPage(

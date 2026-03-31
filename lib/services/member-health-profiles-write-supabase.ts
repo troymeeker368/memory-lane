@@ -5,8 +5,8 @@ import { toEasternISO } from "@/lib/timezone";
 
 type DbRow = Record<string, unknown>;
 const PROVIDER_DIRECTORY_UPSERT_SELECT =
-  "id, specialty, specialty_other, practice_name, provider_phone";
-const HOSPITAL_DIRECTORY_UPSERT_SELECT = "id";
+  "id, provider_name, specialty, specialty_other, practice_name, provider_phone";
+const HOSPITAL_DIRECTORY_UPSERT_SELECT = "id, hospital_name";
 
 export type MhpWriteActor = {
   actorUserId?: string | null;

@@ -9,14 +9,16 @@ import {
   getSalesLeadListSupabase,
   getSalesRecentActivitySnapshotSupabase,
   getSalesSummarySnapshotSupabase,
+  listEnrollmentPacketEligibleLeadPickerSupabase,
   listEnrollmentPacketEligibleLeadsSupabase,
   resolveSalesPartnerAndReferralSupabase,
   type SalesLeadEnrollmentRow,
+  type SalesEnrollmentPacketEligibleLeadRow,
   type SalesPartnerRow,
   type SalesReferralSourceRow
 } from "@/lib/services/sales-crm-read-model";
 
-export type { SalesLeadEnrollmentRow, SalesPartnerRow, SalesReferralSourceRow };
+export type { SalesEnrollmentPacketEligibleLeadRow, SalesLeadEnrollmentRow, SalesPartnerRow, SalesReferralSourceRow };
 
 export async function getLeadById(leadId: string) {
   return getLeadDetail(leadId);
@@ -60,6 +62,10 @@ export async function getLeadEnrollmentSnapshot(...args: Parameters<typeof getSa
 
 export async function listEnrollmentPacketEligibleLeads(...args: Parameters<typeof listEnrollmentPacketEligibleLeadsSupabase>) {
   return listEnrollmentPacketEligibleLeadsSupabase(...args);
+}
+
+export async function listEnrollmentPacketEligibleLeadPicker(...args: Parameters<typeof listEnrollmentPacketEligibleLeadPickerSupabase>) {
+  return listEnrollmentPacketEligibleLeadPickerSupabase(...args);
 }
 
 export async function getLeadHomeSnapshot(...args: Parameters<typeof getSalesHomeSnapshotSupabase>) {

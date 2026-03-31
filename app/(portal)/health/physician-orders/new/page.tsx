@@ -101,11 +101,20 @@ export default async function NewPhysicianOrderPage({
   const profile = await getCurrentProfile();
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";
+  const memberSearch = firstString(query.memberSearch) ?? "";
   const pofId = firstString(query.pofId) ?? "";
   const saveError = firstString(query.saveError) ?? "";
+  const shouldLoadMemberOptions = !memberId && !pofId;
+  const memberLookupPromise = shouldLoadMemberOptions
+    ? listPhysicianOrderMemberLookup({
+        q: memberSearch,
+        selectedId: memberId,
+        limit: 25
+      })
+    : Promise.resolve([] as Awaited<ReturnType<typeof listPhysicianOrderMemberLookup>>);
   const [actorDisplayName, members] = await Promise.all([
     getManagedUserSignoffLabel(profile.id, profile.full_name),
-    listPhysicianOrderMemberLookup()
+    memberLookupPromise
   ]);
   const editingPromise = pofId ? getPhysicianOrderById(pofId) : Promise.resolve(null);
   let canonicalMemberId = memberId;
@@ -137,6 +146,12 @@ export default async function NewPhysicianOrderPage({
             <CardTitle>Select Member for New Physician Order</CardTitle>
           </div>
           <form action="/health/physician-orders/new" className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              name="memberSearch"
+              defaultValue={memberSearch}
+              placeholder="Search active member name"
+              className="h-10 min-w-[220px] rounded-lg border border-border px-3 text-sm"
+            />
             <select name="memberId" className="h-10 min-w-[280px] rounded-lg border border-border px-3 text-sm" required>
               <option value="">Select member</option>
               {members.map((member) => (
@@ -149,6 +164,7 @@ export default async function NewPhysicianOrderPage({
               Start POF
             </button>
           </form>
+          <p className="mt-2 text-xs text-muted">Search at least 2 letters to load a limited active-member picker.</p>
         </Card>
       </div>
     );

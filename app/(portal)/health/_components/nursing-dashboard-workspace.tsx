@@ -405,7 +405,7 @@ function QuickEntryPanel({
         </Link>
       </div>
       <div className="mt-4">
-        <BloodSugarFormShell members={dashboard.members} compact />
+        <BloodSugarFormShell compact />
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         <Link href="/health/mar" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700">

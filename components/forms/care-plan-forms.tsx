@@ -7,6 +7,7 @@ import {
   createCarePlanAction,
   reviewCarePlanAction
 } from "@/app/care-plan-actions";
+import { MemberSearchPicker } from "@/components/forms/member-search-picker";
 import { CarePlanSignatureBlock } from "@/components/care-plans/care-plan-signature-block";
 import { EsignaturePad } from "@/components/signature/esignature-pad";
 import { Button } from "@/components/ui/button";
@@ -67,7 +68,7 @@ function normalizeSectionDrafts(sections: CarePlanSectionDraft[]) {
   }));
 }
 
-function resolveMemberCarePlanTrack(member: MemberOption | undefined, fallbackTrack: CarePlanTrack) {
+function resolveMemberCarePlanTrack(member: MemberOption | null | undefined, fallbackTrack: CarePlanTrack) {
   return isCarePlanTrack(member?.latest_assessment_track) ? member.latest_assessment_track : fallbackTrack;
 }
 
@@ -124,14 +125,12 @@ function TrackSectionEditor({
 }
 
 export function NewCarePlanForm({
-  members,
   tracks,
-  initialMemberId,
+  initialMemberOption,
   signerNameDefault
 }: {
-  members: MemberOption[];
   tracks: CarePlanTrack[];
-  initialMemberId?: string;
+  initialMemberOption?: MemberOption | null;
   signerNameDefault: string;
 }) {
   const router = useRouter();
@@ -140,7 +139,7 @@ export function NewCarePlanForm({
   const [status, setStatus] = useState<string | null>(null);
 
   const fallbackTrack = tracks[0] ?? "Track 1";
-  const initialMember = (initialMemberId && members.find((member) => member.id === initialMemberId)) || members[0];
+  const initialMember = initialMemberOption ?? null;
   const initialTrack = resolveMemberCarePlanTrack(initialMember, fallbackTrack);
   const initialEnrollmentDate = initialMember?.enrollment_date || today;
 
@@ -165,32 +164,27 @@ export function NewCarePlanForm({
       <div className="space-y-2 rounded-lg border border-border p-3">
         <p className="text-sm font-semibold">Member Information</p>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-          <label className="space-y-1 text-sm">
-            <span className="font-semibold">Member</span>
-            <select
-              className="h-11 w-full rounded-lg border border-border px-3"
-              value={form.memberId}
-              onChange={(event) => {
-                const nextMemberId = event.target.value;
-                const selectedMember = members.find((member) => member.id === nextMemberId);
-                const enrollmentDate = selectedMember?.enrollment_date || today;
-                const nextTrack = resolveMemberCarePlanTrack(selectedMember, fallbackTrack);
-                setForm((current) => ({
-                  ...current,
-                  memberId: nextMemberId,
-                  track: nextTrack,
-                  sections: buildTrackSectionDrafts(nextTrack),
-                  enrollmentDate
-                }));
-              }}
-            >
-              {members.map((member) => (
-                <option key={member.id} value={member.id}>
-                  {member.display_name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <MemberSearchPicker
+            scope="care-plan"
+            value={form.memberId}
+            onChange={(nextMemberId) =>
+              setForm((current) => ({
+                ...current,
+                memberId: nextMemberId
+              }))
+            }
+            onSelectOption={(selectedMember) => {
+              const enrollmentDate = selectedMember?.enrollment_date || today;
+              const nextTrack = resolveMemberCarePlanTrack(selectedMember ?? undefined, fallbackTrack);
+              setForm((current) => ({
+                ...current,
+                memberId: selectedMember?.id ?? "",
+                track: nextTrack,
+                sections: buildTrackSectionDrafts(nextTrack),
+                enrollmentDate
+              }));
+            }}
+          />
 
           <label className="space-y-1 text-sm">
             <span className="font-semibold">Care Plan Track</span>

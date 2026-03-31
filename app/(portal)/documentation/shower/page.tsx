@@ -4,7 +4,6 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { MobileList } from "@/components/ui/mobile-list";
 import { requireModuleAccess } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions";
-import { getMembers } from "@/lib/services/documentation";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
 import { formatDateTime } from "@/lib/utils";
 
@@ -15,14 +14,14 @@ export default async function ShowerLogPage() {
   const normalizedRole = normalizeRoleKey(profile.role);
   const canEdit = normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "director";
   const showStaffColumn = normalizedRole !== "program-assistant";
-  const [members, workflows] = await Promise.all([getMembers(), getDocumentationWorkflows({ role: profile.role, staffUserId: profile.id })]);
+  const workflows = await getDocumentationWorkflows({ role: profile.role, staffUserId: profile.id });
 
   return (
     <div className="space-y-4">
       <Card>
         <CardTitle>Shower Log Entry</CardTitle>
         <p className="mt-1 text-sm text-muted">Capture shower completion, laundry support, and briefs changes.</p>
-        <div className="mt-3"><ShowerLogFormShell members={members} /></div>
+        <div className="mt-3"><ShowerLogFormShell /></div>
       </Card>
 
       <MobileList items={workflows.showers.map((row: ShowerWorkflowRow) => ({ id: row.id, title: row.member_name, fields: [{ label: "When", value: formatDateTime(row.event_at) }, { label: "Laundry", value: row.laundry ? "Yes" : "No" }, { label: "Briefs", value: row.briefs ? "Yes" : "No" }, ...(showStaffColumn ? [{ label: "Staff", value: row.staff_name }] : [])] }))} />

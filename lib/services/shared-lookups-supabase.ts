@@ -1,4 +1,5 @@
 import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-read";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { createClient } from "@/lib/supabase/server";
 
 export type StaffLookupRow = {
@@ -15,6 +16,8 @@ export type MemberLookupRow = {
 };
 
 const DEFAULT_MEMBER_LOOKUP_LIMIT = 200;
+const DEFAULT_MEMBER_PICKER_LIMIT = 25;
+const DEFAULT_MEMBER_PICKER_MIN_QUERY_LENGTH = 2;
 
 function normalizeMemberLookupLimit(input?: {
   limit?: number;
@@ -133,6 +136,52 @@ export async function listMemberLookupByIdsSupabase(memberIds: string[]): Promis
     enrollment_date: row.enrollment_date ?? null,
     latest_assessment_track: row.latest_assessment_track ?? null
   }));
+}
+
+export async function listMemberPickerOptionsSupabase(filters?: {
+  q?: string;
+  selectedId?: string | null;
+  status?: "all" | "active" | "inactive";
+  limit?: number;
+  minQueryLength?: number;
+  canonicalSelectedId?: boolean;
+  serviceRole?: boolean;
+}): Promise<MemberLookupRow[]> {
+  const q = String(filters?.q ?? "").trim();
+  const limit =
+    Number.isFinite(filters?.limit) && Number(filters?.limit) > 0
+      ? Math.floor(Number(filters?.limit))
+      : DEFAULT_MEMBER_PICKER_LIMIT;
+  const minQueryLength =
+    Number.isFinite(filters?.minQueryLength) && Number(filters?.minQueryLength) > 0
+      ? Math.floor(Number(filters?.minQueryLength))
+      : DEFAULT_MEMBER_PICKER_MIN_QUERY_LENGTH;
+  const status = filters?.status ?? "active";
+
+  const selectedId = String(filters?.selectedId ?? "").trim();
+  const canonicalSelectedId = selectedId
+    ? filters?.canonicalSelectedId
+      ? selectedId
+      : await resolveCanonicalMemberId(selectedId, {
+          actionLabel: "listMemberPickerOptionsSupabase",
+          serviceRole: filters?.serviceRole
+        }).catch(() => null)
+    : null;
+
+  const [searchedRows, selectedRows] = await Promise.all([
+    q.length >= minQueryLength
+      ? listMemberSearchLookupSupabase({
+          q,
+          status,
+          limit,
+          minQueryLength: 1
+        })
+      : Promise.resolve([] as MemberLookupRow[]),
+    canonicalSelectedId ? listMemberLookupByIdsSupabase([canonicalSelectedId]) : Promise.resolve([] as MemberLookupRow[])
+  ]);
+
+  const selectedRowIds = new Set(selectedRows.map((row) => row.id));
+  return [...selectedRows, ...searchedRows.filter((row) => !selectedRowIds.has(row.id))];
 }
 
 export async function listActiveMemberLookupSupabase(): Promise<MemberLookupRow[]> {

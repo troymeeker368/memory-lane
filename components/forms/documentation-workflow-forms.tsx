@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   runDocumentationCreateAction
 } from "@/app/documentation-create-actions";
+import { MemberSearchPicker } from "@/components/forms/member-search-picker";
 import { Button } from "@/components/ui/button";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternDateTimeLocal } from "@/lib/timezone";
 import {
@@ -29,12 +30,12 @@ function useToday() {
   return useMemo(() => toEasternDate(), []);
 }
 
-export function ToiletLogForm({ members }: { members: MemberOption[] }) {
+export function ToiletLogForm() {
   const now = useNowIso();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
   const [form, setForm] = useState({
-    memberId: members[0]?.id ?? "",
+    memberId: "",
     eventAt: now,
     briefs: false,
     memberSupplied: true,
@@ -50,11 +51,7 @@ export function ToiletLogForm({ members }: { members: MemberOption[] }) {
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-3">
-        <select className="h-11 rounded-lg border border-border px-3" value={form.memberId} onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}>
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>{m.display_name}</option>
-          ))}
-        </select>
+        <MemberSearchPicker scope="documentation" value={form.memberId} onChange={(nextValue) => setForm((f) => ({ ...f, memberId: nextValue }))} />
         <input type="datetime-local" className="h-11 rounded-lg border border-border px-3" value={form.eventAt} onChange={(e) => setForm((f) => ({ ...f, eventAt: e.target.value }))} />
         <select
           className="h-11 rounded-lg border border-border px-3"
@@ -99,20 +96,16 @@ export function ToiletLogForm({ members }: { members: MemberOption[] }) {
   );
 }
 
-export function ShowerLogForm({ members }: { members: MemberOption[] }) {
+export function ShowerLogForm() {
   const now = useNowIso();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
-  const [form, setForm] = useState({ memberId: members[0]?.id ?? "", eventAt: now, laundry: false, briefs: false, notes: "" });
+  const [form, setForm] = useState({ memberId: "", eventAt: now, laundry: false, briefs: false, notes: "" });
 
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-2">
-        <select className="h-11 rounded-lg border border-border px-3" value={form.memberId} onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}>
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>{m.display_name}</option>
-          ))}
-        </select>
+        <MemberSearchPicker scope="documentation" value={form.memberId} onChange={(nextValue) => setForm((f) => ({ ...f, memberId: nextValue }))} />
         <input type="datetime-local" className="h-11 rounded-lg border border-border px-3" value={form.eventAt} onChange={(e) => setForm((f) => ({ ...f, eventAt: e.target.value }))} />
       </div>
       <div className="flex gap-4 text-sm">
@@ -315,7 +308,7 @@ export function PhotoUploadForm() {
   );
 }
 
-export function BloodSugarForm({ compact = false, members }: { members: MemberOption[]; compact?: boolean }) {
+export function BloodSugarForm({ compact = false }: { compact?: boolean }) {
   const now = useNowIso();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
@@ -352,12 +345,7 @@ export function BloodSugarForm({ compact = false, members }: { members: MemberOp
     <div className="space-y-3">
       {compact ? (
         <>
-          <select className="h-11 w-full rounded-lg border border-border px-3" value={form.memberId} onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}>
-            <option value="">Select member</option>
-            {members.map((m) => (
-              <option key={m.id} value={m.id}>{m.display_name}</option>
-            ))}
-          </select>
+          <MemberSearchPicker scope="health" value={form.memberId} onChange={(nextValue) => setForm((f) => ({ ...f, memberId: nextValue }))} />
           <div className="grid gap-3 sm:grid-cols-2">
             <input
               type="datetime-local"
@@ -388,12 +376,7 @@ export function BloodSugarForm({ compact = false, members }: { members: MemberOp
       ) : (
         <>
           <div className="grid gap-3 md:grid-cols-3">
-            <select className="h-11 rounded-lg border border-border px-3" value={form.memberId} onChange={(e) => setForm((f) => ({ ...f, memberId: e.target.value }))}>
-              <option value="">Select member</option>
-              {members.map((m) => (
-                <option key={m.id} value={m.id}>{m.display_name}</option>
-              ))}
-            </select>
+            <MemberSearchPicker scope="health" value={form.memberId} onChange={(nextValue) => setForm((f) => ({ ...f, memberId: nextValue }))} />
             <input type="datetime-local" className="h-11 rounded-lg border border-border px-3" value={form.checkedAt} onChange={(e) => setForm((f) => ({ ...f, checkedAt: e.target.value }))} />
             <input
               type="number"
