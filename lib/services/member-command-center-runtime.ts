@@ -44,6 +44,17 @@ const MEMBER_FILE_LIST_RPC = "rpc_list_member_files";
 const MEMBER_FILE_LIST_MIGRATION = "0145_reports_and_member_files_read_rpcs.sql";
 const DEFAULT_MEMBER_LOOKUP_LIMIT = 200;
 
+function buildMissingCanonicalMemberShellError(input: {
+  memberId: string;
+  table: "member_command_centers" | "member_attendance_schedules";
+}) {
+  const shellLabel =
+    input.table === "member_command_centers" ? "Member Command Center shell" : "member attendance schedule";
+  return new Error(
+    `Missing canonical ${input.table} row for member ${input.memberId}. ${shellLabel} must be provisioned by the canonical lead conversion or enrollment workflow before Member Command Center reads can succeed. Run \`npm run repair:historical-drift -- --apply\` or another explicit repair workflow for historical drift instead of relying on read-time backfill.`
+  );
+}
+
 type MemberFileRpcRow = {
   id: string;
   member_id: string;
@@ -385,7 +396,6 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
     };
   }
   const memberIds = members.map((row) => row.id);
-  await backfillMissingMemberCommandCenterRowsSupabase(memberIds);
   const supabase = await createClient();
   const [{ data: profilesData, error: profilesError }, { data: schedulesData, error: schedulesError }] = await Promise.all([
     supabase.from("member_command_centers").select(MEMBER_COMMAND_CENTER_INDEX_PROFILE_SELECT).in("member_id", memberIds),
@@ -431,10 +441,16 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
       const profile = profileByMember.get(member.id);
       const schedule = scheduleByMember.get(member.id);
       if (!profile) {
-        throw new Error(`Missing canonical member_command_centers row for member ${member.id} after backfill.`);
+        throw buildMissingCanonicalMemberShellError({
+          memberId: member.id,
+          table: "member_command_centers"
+        });
       }
       if (!schedule) {
-        throw new Error(`Missing canonical member_attendance_schedules row for member ${member.id} after backfill.`);
+        throw buildMissingCanonicalMemberShellError({
+          memberId: member.id,
+          table: "member_attendance_schedules"
+        });
       }
       return {
         member,
@@ -462,7 +478,6 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string, opt
   const canonicalOptions = { ...options, canonicalInput: true } satisfies EnsureCanonicalMemberOptions;
   const member = await getMemberSupabase(canonicalMemberId, canonicalOptions);
   if (!member) return null;
-  await backfillMissingMemberCommandCenterRowsSupabase([canonicalMemberId]);
   const [{ getMemberCarePlanOverview }, { getLatestEnrollmentPacketPofStagingSummary }] =
     await Promise.all([
       import("@/lib/services/care-plans-read"),
@@ -488,10 +503,16 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string, opt
     getLatestEnrollmentPacketPofStagingSummary(canonicalMemberId, { canonicalInput: true })
   ]);
   if (!storedProfile) {
-    throw new Error(`Missing canonical member_command_centers row for member ${canonicalMemberId} after backfill.`);
+    throw buildMissingCanonicalMemberShellError({
+      memberId: canonicalMemberId,
+      table: "member_command_centers"
+    });
   }
   if (!storedSchedule) {
-    throw new Error(`Missing canonical member_attendance_schedules row for member ${canonicalMemberId} after backfill.`);
+    throw buildMissingCanonicalMemberShellError({
+      memberId: canonicalMemberId,
+      table: "member_attendance_schedules"
+    });
   }
   const profile = storedProfile;
   const schedule = {

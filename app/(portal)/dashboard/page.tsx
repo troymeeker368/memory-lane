@@ -5,19 +5,23 @@ import { PunchStatusBadge, PunchTypeBadge } from "@/components/ui/punch-type-bad
 import { getCurrentProfile } from "@/lib/auth";
 import { canView, normalizeRoleKey } from "@/lib/permissions";
 import { getDailyAttendanceView } from "@/lib/services/attendance";
-import { getDashboardAlerts, getDashboardStats } from "@/lib/services/dashboard";
+import {
+  getDashboardAlerts,
+  getDashboardStats,
+  listDashboardAncillaryChargesForMonth,
+  type DashboardAncillaryChargeRow
+} from "@/lib/services/dashboard";
 import { listMemberHolds } from "@/lib/services/holds-supabase";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { getSalesOpenLeadSummary } from "@/lib/services/sales-workflows";
 import { listMemberLookupByIdsSupabase } from "@/lib/services/shared-lookups-supabase";
-import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 const HOLD_EXPIRY_LOOKAHEAD_DAYS = 14;
 type AdminSnapshot = {
   membersData: Array<{ id: string; display_name: string }>;
   holds: Awaited<ReturnType<typeof listMemberHolds>>;
-  ancillaryData: Array<{ service_date: string; amount: number | null; billing_status: string | null }>;
+  ancillaryData: DashboardAncillaryChargeRow[];
 };
 
 function toDateOnly(value: string | null | undefined) {
@@ -95,14 +99,9 @@ export default async function DashboardPage() {
         : Promise.resolve(null),
       isAdminOrCoordinator
         ? withDashboardTiming("query:adminSnapshot", async () => {
-            const supabase = await createClient();
-            const [holds, { data: ancillaryData }] = await Promise.all([
+            const [holds, ancillaryData] = await Promise.all([
               listMemberHolds(),
-              supabase
-                .from("ancillary_charge_logs")
-                .select("service_date, amount, billing_status")
-                .gte("service_date", `${today.slice(0, 7)}-01`)
-                .lte("service_date", `${today.slice(0, 7)}-31`)
+              listDashboardAncillaryChargesForMonth(today)
             ]);
             const membersData = await listMemberLookupByIdsSupabase(holds.map((hold) => hold.member_id));
             return {
@@ -111,7 +110,7 @@ export default async function DashboardPage() {
                 display_name: member.display_name
               })),
               holds,
-              ancillaryData: ancillaryData ?? []
+              ancillaryData
             } satisfies AdminSnapshot;
           })
         : Promise.resolve({ membersData: [], holds: [], ancillaryData: [] } satisfies AdminSnapshot)

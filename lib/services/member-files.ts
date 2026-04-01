@@ -724,23 +724,9 @@ export async function getMemberFileDownloadUrl(input: {
       fileName: String(existing.file_name ?? "member-file")
     };
   }
-
-  const backfilledStoragePath = await backfillLegacyMemberFileStorage({
-    id: String(existing.id),
-    member_id: String(existing.member_id),
-    file_name: String(existing.file_name ?? ""),
-    file_type: String(existing.file_type ?? ""),
-    file_data_url: String(existing.file_data_url ?? ""),
-    storage_object_path: null
-  });
-  if (!backfilledStoragePath) {
-    throw new Error("Member file is missing both storage and inline data.");
-  }
-
-  return {
-    url: await createSignedMemberDocumentUrl(backfilledStoragePath, input.expiresInSeconds ?? 60 * 15),
-    fileName: String(existing.file_name ?? "member-file")
-  };
+  throw new Error(
+    `Member file ${String(existing.id)} is missing its canonical storage object path. Run \`npm run repair:historical-drift -- --apply\` or the targeted member-file backfill (\`npm run backfill:member-files\`) before attempting downloads.`
+  );
 }
 
 export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPdfInput) {

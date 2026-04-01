@@ -1,5 +1,12 @@
+import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
+
+export type DashboardAncillaryChargeRow = {
+  service_date: string;
+  amount: number | null;
+  billing_status: string | null;
+};
 
 export async function getDashboardStats(userId: string) {
   const supabase = await createClient({ serviceRole: true });
@@ -86,4 +93,34 @@ export async function getDashboardAlerts() {
   return alerts;
 }
 
+export async function listDashboardAncillaryChargesForMonth(selectedDate: string): Promise<DashboardAncillaryChargeRow[]> {
+  const normalizedDate = /^\d{4}-\d{2}-\d{2}$/.test(selectedDate) ? selectedDate : toEasternDate();
+  const monthPrefix = normalizedDate.slice(0, 7);
+  const monthStart = `${monthPrefix}-01`;
+  const monthEnd = `${monthPrefix}-31`;
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("ancillary_charge_logs")
+    .select("service_date, amount, billing_status")
+    .gte("service_date", monthStart)
+    .lte("service_date", monthEnd);
+
+  if (error) {
+    if (isMissingSchemaObjectError(error)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "ancillary_charge_logs",
+          migration: "0001_initial_schema.sql"
+        })
+      );
+    }
+    throw new Error(`Unable to load dashboard ancillary charges: ${error.message}`);
+  }
+
+  return ((data ?? []) as DashboardAncillaryChargeRow[]).map((row) => ({
+    service_date: String(row.service_date ?? ""),
+    amount: typeof row.amount === "number" ? row.amount : row.amount == null ? null : Number(row.amount),
+    billing_status: typeof row.billing_status === "string" ? row.billing_status : null
+  }));
+}
 

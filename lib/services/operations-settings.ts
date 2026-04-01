@@ -44,7 +44,7 @@ type OperationsSettingsRow = Pick<
   | "late_pickup_additional_minutes_cap"
 >;
 
-function defaultOperationalSettingsRow() {
+function defaultOperationalSettingsRow(): OperationsSettingsRow {
   return {
     id: "default",
     bus_numbers: [...DEFAULT_OPERATIONAL_SETTINGS.busNumbers],
@@ -118,22 +118,27 @@ export async function getOperationalSettings(): Promise<OperationalSettings> {
   }
 
   if (!data) {
-    // Repair the required singleton row through a server-only client so
-    // authenticated read paths do not fail RLS when a drifted environment
-    // is missing the seeded record.
-    const adminSupabase = await createClient({ serviceRole: true });
-    const { data: created, error: createError } = await adminSupabase
-      .from("operations_settings")
-      .upsert(defaultOperationalSettingsRow(), { onConflict: "id" })
-      .select(OPERATIONAL_SETTINGS_SELECT_COLUMNS)
-      .single();
-    if (createError) {
-      throwOperationalSettingsError(createError as { code?: string; message: string });
-    }
-    return normalizeSettingsRow(created);
+    throw new Error(
+      'Missing required operations_settings singleton row with id "default". Apply migration 0018_runtime_mock_dependency_cleanup.sql, then reseed or run `npm run repair:historical-drift -- --apply` before continuing.'
+    );
   }
 
   return normalizeSettingsRow(data);
+}
+
+export async function repairOperationalSettingsSingleton() {
+  const supabase = await createClient({ serviceRole: true });
+  const { data, error } = await supabase
+    .from("operations_settings")
+    .upsert(defaultOperationalSettingsRow(), { onConflict: "id" })
+    .select(OPERATIONAL_SETTINGS_SELECT_COLUMNS)
+    .single();
+
+  if (error) {
+    throwOperationalSettingsError(error as { code?: string; message: string });
+  }
+
+  return normalizeSettingsRow(data as OperationsSettingsRow);
 }
 
 export async function getConfiguredBusNumbers() {
