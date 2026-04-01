@@ -86,3 +86,22 @@ test("clinical lineage drift audit stays read-only and covers intake, POF, and M
   assert.equal(source.toLowerCase().includes("insert into public."), false);
   assert.equal(source.toLowerCase().includes("alter table public."), false);
 });
+
+test("0175 adds additive FK-covering indexes across queue, clinical, transportation, and support domains", () => {
+  const source = readWorkspaceFile("supabase/migrations/0175_fk_covering_indexes_hardening.sql");
+
+  assert.equal(source.includes("create index if not exists idx_enrollment_packet_follow_up_queue_claimed_by_user_id"), true);
+  assert.equal(source.includes("on public.enrollment_packet_follow_up_queue (packet_id, member_id);"), true);
+  assert.equal(source.includes("create index if not exists idx_intake_assessment_signatures_assessment_id_member_id"), true);
+  assert.equal(source.includes("create index if not exists idx_care_plans_final_member_file_id"), true);
+  assert.equal(source.includes("on public.care_plan_diagnoses (member_diagnosis_id, member_id);"), true);
+  assert.equal(source.includes("create index if not exists idx_pof_requests_member_file_id"), true);
+  assert.equal(source.includes("on public.mar_administrations (mar_schedule_id, pof_medication_id, member_id);"), true);
+  assert.equal(source.includes("create index if not exists idx_transportation_logs_transport_run_result_id"), true);
+  assert.equal(source.includes("create index if not exists idx_incidents_final_pdf_member_file_id"), true);
+  assert.equal(source.includes("create index if not exists idx_billing_invoices_billing_batch_id"), true);
+  assert.equal(source.includes("create index if not exists idx_member_files_uploaded_by_user_id"), true);
+  assert.equal(source.includes("create index if not exists idx_user_notifications_actor_user_id"), true);
+  assert.equal(source.toLowerCase().includes("drop index"), false);
+  assert.equal(source.toLowerCase().includes("alter table"), false);
+});
