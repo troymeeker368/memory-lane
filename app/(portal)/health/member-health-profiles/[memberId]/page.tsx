@@ -18,7 +18,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { requireRoles } from "@/lib/auth";
 import { formatBillingPayorDisplayName, getBillingPayorContact } from "@/lib/services/billing-payor-contacts";
-import { getCarePlanPostSignReadinessLabel } from "@/lib/services/care-plans";
+import { getCarePlanPostSignReadinessLabel, getMemberCarePlanSummary } from "@/lib/services/care-plans";
 import { getMemberCarePlanSnapshot } from "@/lib/services/care-plans-read";
 import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-read";
 import { getMemberProgressNoteSummary } from "@/lib/services/notes-read";
@@ -205,8 +205,7 @@ export default async function MemberHealthProfileDetailPage({
   const tab = resolveTab(firstString(query.tab));
 
   const detail = await getMemberHealthProfileDetailSupabase(memberId, {
-    includeProviderDirectory: tab === "medical",
-    includeHospitalPreferenceDirectory: tab === "legal"
+    tab
   });
   if (!detail) notFound();
 
@@ -239,21 +238,32 @@ export default async function MemberHealthProfileDetailPage({
   const equipmentUpdatedBy = latestUpdatedBy(detail.equipment, (row) => row.updated_at, (row) => row.created_by_name);
   const notesUpdatedBy = latestUpdatedBy(detail.notes, (row) => row.updated_at, (row) => row.created_by_name);
   const assessmentsUpdatedBy = latestUpdatedBy(detail.assessments, (row) => row.created_at, (row) => row.completed_by);
-  const [carePlanSnapshot, billingPayor, relatedPhysicianOrders, progressNoteSummary] = await Promise.all([
-    getMemberCarePlanSnapshot(member.id, { canonicalInput: true }),
-    getBillingPayorContact(member.id, {
-      source: "MemberHealthProfileDetailPage",
-      canonicalInput: true
-    }),
-    getPhysicianOrdersForMember(member.id, { canonicalInput: true }),
-    getMemberProgressNoteSummary(member.id, { canonicalInput: true })
+  const overviewDataPromise =
+    tab === "overview"
+      ? Promise.all([
+          getMemberCarePlanSnapshot(member.id, { canonicalInput: true }),
+          getBillingPayorContact(member.id, {
+            source: "MemberHealthProfileDetailPage",
+            canonicalInput: true
+          }),
+          getPhysicianOrdersForMember(member.id, { canonicalInput: true })
+        ]).then(([carePlanSnapshot, billingPayor, relatedPhysicianOrders]) => ({
+          carePlanSnapshot,
+          billingPayor,
+          relatedPhysicianOrders
+        }))
+      : Promise.resolve(null);
+  const [carePlanSummary, progressNoteSummary, overviewData] = await Promise.all([
+    getMemberCarePlanSummary(member.id, { canonicalInput: true }),
+    getMemberProgressNoteSummary(member.id, { canonicalInput: true }),
+    overviewDataPromise
   ]);
-  const relatedCarePlans = carePlanSnapshot.rows;
+  const relatedCarePlans = overviewData?.carePlanSnapshot.rows ?? [];
   const carePlansUpdatedAt = latestTimestamp(relatedCarePlans.map((row) => row.updatedAt));
   const carePlansUpdatedBy = latestUpdatedBy(relatedCarePlans, (row) => row.updatedAt, (row) => row.completedBy);
+  const relatedPhysicianOrders = overviewData?.relatedPhysicianOrders ?? [];
   const physicianOrdersUpdatedAt = latestTimestamp(relatedPhysicianOrders.map((row) => row.updatedAt));
   const physicianOrdersUpdatedBy = latestUpdatedBy(relatedPhysicianOrders, (row) => row.updatedAt, (row) => row.updatedByName);
-  const carePlanSummary = carePlanSnapshot.summary;
   const latestIntakeAssessment = detail.assessments[0] ?? null;
   const trackFromRecord = member.latest_assessment_track ?? latestIntakeAssessment?.recommended_track ?? null;
   const trackSourceText = latestIntakeAssessment
@@ -369,7 +379,11 @@ export default async function MemberHealthProfileDetailPage({
               memberId={member.id}
               memberDob={member.dob ?? ""}
               genderDefault={genderDefault}
-              billingPayorDisplay={formatBillingPayorDisplayName(billingPayor)}
+              billingPayorDisplay={
+                overviewData?.billingPayor
+                  ? formatBillingPayorDisplayName(overviewData.billingPayor)
+                  : "No payor contact designated"
+              }
               originalReferralSource={profile.original_referral_source ?? ""}
               photoConsent={profile.photo_consent}
               primaryCaregiverName={profile.primary_caregiver_name ?? ""}

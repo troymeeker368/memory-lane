@@ -28,6 +28,13 @@ export interface MemberCarePlanOverview {
   carePlanSummary: MemberCarePlanSummary;
 }
 
+type LatestCarePlanSummaryRow = {
+  id: string;
+  next_due_date: string | null;
+  post_sign_readiness_status: string | null;
+  post_sign_readiness_reason: string | null;
+};
+
 const CARE_PLAN_BASE_SELECT = [
   "id",
   "member_id",
@@ -453,6 +460,28 @@ function buildMemberCarePlanSummary(canonicalMemberId: string, latest: CarePlan 
   };
 }
 
+function buildMemberCarePlanSummaryFromLatestRow(
+  canonicalMemberId: string,
+  latest: LatestCarePlanSummaryRow | null
+): MemberCarePlanSummary {
+  if (!latest) {
+    return buildMemberCarePlanSummary(canonicalMemberId, null);
+  }
+
+  return {
+    hasExistingPlan: true,
+    nextDueDate: latest.next_due_date,
+    status: latest.next_due_date ? computeCarePlanStatus(latest.next_due_date) : null,
+    postSignReadinessStatus: latest.post_sign_readiness_status
+      ? toListPostSignReadinessStatus(latest.post_sign_readiness_status)
+      : null,
+    postSignReadinessReason: clean(latest.post_sign_readiness_reason),
+    actionHref: `/health/care-plans/${latest.id}?view=review`,
+    actionLabel: "Review Care Plan",
+    planId: latest.id
+  };
+}
+
 function buildMemberCarePlanOverviewFromLatest(
   canonicalMemberId: string,
   latest: { id: string; next_due_date: string | null } | null
@@ -554,7 +583,22 @@ export async function getMemberCarePlanSummary(
   memberId: string,
   options?: ResolveCarePlanMemberOptions
 ): Promise<MemberCarePlanSummary> {
-  return (await getMemberCarePlanSnapshot(memberId, options)).summary;
+  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getMemberCarePlanSummary", options);
+  const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
+  const { data, error } = await supabase
+    .from("care_plans")
+    .select("id, next_due_date, post_sign_readiness_status, post_sign_readiness_reason")
+    .eq("member_id", canonicalMemberId)
+    .order("review_date", { ascending: false })
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+
+  return buildMemberCarePlanSummaryFromLatestRow(
+    canonicalMemberId,
+    (data as LatestCarePlanSummaryRow | null) ?? null
+  );
 }
 
 export async function getCarePlanVersionById(carePlanId: string, versionId: string) {

@@ -111,8 +111,16 @@ const MEMBER_NOTE_SELECT =
 export type MhpTab = (typeof MHP_TABS)[number];
 
 type MemberHealthProfileDetailOptions = {
+  tab?: MhpTab;
   includeProviderDirectory?: boolean;
   includeHospitalPreferenceDirectory?: boolean;
+  includeAssessments?: boolean;
+  includeDiagnoses?: boolean;
+  includeMedications?: boolean;
+  includeAllergies?: boolean;
+  includeProviders?: boolean;
+  includeEquipment?: boolean;
+  includeNotes?: boolean;
 };
 
 type MemberRow = {
@@ -469,6 +477,50 @@ function sortByLastName(a: string, b: string) {
   return toKey(a).localeCompare(toKey(b));
 }
 
+function resolveMemberHealthProfileDetailReadPlan(options?: MemberHealthProfileDetailOptions) {
+  const tab = options?.tab;
+
+  const defaultPlan = {
+    includeProviderDirectory: true,
+    includeHospitalPreferenceDirectory: true,
+    includeAssessments: true,
+    includeDiagnoses: true,
+    includeMedications: true,
+    includeAllergies: true,
+    includeProviders: true,
+    includeEquipment: true,
+    includeNotes: true
+  };
+
+  const tabPlan =
+    !tab
+      ? defaultPlan
+      : {
+          includeProviderDirectory: tab === "medical",
+          includeHospitalPreferenceDirectory: tab === "legal",
+          includeAssessments: tab === "overview",
+          includeDiagnoses: tab === "medical",
+          includeMedications: tab === "medical",
+          includeAllergies: tab === "medical",
+          includeProviders: tab === "medical",
+          includeEquipment: tab === "equipment",
+          includeNotes: tab === "notes"
+        };
+
+  return {
+    includeProviderDirectory: options?.includeProviderDirectory ?? tabPlan.includeProviderDirectory,
+    includeHospitalPreferenceDirectory:
+      options?.includeHospitalPreferenceDirectory ?? tabPlan.includeHospitalPreferenceDirectory,
+    includeAssessments: options?.includeAssessments ?? tabPlan.includeAssessments,
+    includeDiagnoses: options?.includeDiagnoses ?? tabPlan.includeDiagnoses,
+    includeMedications: options?.includeMedications ?? tabPlan.includeMedications,
+    includeAllergies: options?.includeAllergies ?? tabPlan.includeAllergies,
+    includeProviders: options?.includeProviders ?? tabPlan.includeProviders,
+    includeEquipment: options?.includeEquipment ?? tabPlan.includeEquipment,
+    includeNotes: options?.includeNotes ?? tabPlan.includeNotes
+  };
+}
+
 export async function ensureMemberHealthProfileSupabase(memberId: string, options?: { serviceRole?: boolean }) {
   const canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "ensureMemberHealthProfileSupabase" });
   const supabase = await createClient();
@@ -636,8 +688,7 @@ export async function getMemberHealthProfileDetailSupabase(
 ) {
   const canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "getMemberHealthProfileDetailSupabase" });
   const supabase = await createClient();
-  const includeProviderDirectory = options?.includeProviderDirectory ?? true;
-  const includeHospitalPreferenceDirectory = options?.includeHospitalPreferenceDirectory ?? true;
+  const readPlan = resolveMemberHealthProfileDetailReadPlan(options);
   const { data: memberData, error: memberError } = await supabase
     .from("members")
     .select("id, display_name, status, dob, enrollment_date, city, code_status, latest_assessment_track")
@@ -662,27 +713,42 @@ export async function getMemberHealthProfileDetailSupabase(
     mccResult
   ] = await Promise.all([
     supabase.from("member_health_profiles").select(MEMBER_HEALTH_PROFILE_SELECT).eq("member_id", canonicalMemberId).maybeSingle(),
-    supabase.from("member_diagnoses").select(MEMBER_DIAGNOSIS_SELECT).eq("member_id", canonicalMemberId),
-    supabase.from("member_medications").select(MEMBER_MEDICATION_SELECT).eq("member_id", canonicalMemberId),
-    supabase.from("member_allergies").select(MEMBER_ALLERGY_SELECT).eq("member_id", canonicalMemberId),
-    supabase.from("member_providers").select(MEMBER_PROVIDER_SELECT).eq("member_id", canonicalMemberId),
-    includeProviderDirectory
+    readPlan.includeDiagnoses
+      ? supabase.from("member_diagnoses").select(MEMBER_DIAGNOSIS_SELECT).eq("member_id", canonicalMemberId)
+      : Promise.resolve({ data: [], error: null }),
+    readPlan.includeMedications
+      ? supabase.from("member_medications").select(MEMBER_MEDICATION_SELECT).eq("member_id", canonicalMemberId)
+      : Promise.resolve({ data: [], error: null }),
+    readPlan.includeAllergies
+      ? supabase.from("member_allergies").select(MEMBER_ALLERGY_SELECT).eq("member_id", canonicalMemberId)
+      : Promise.resolve({ data: [], error: null }),
+    readPlan.includeProviders
+      ? supabase.from("member_providers").select(MEMBER_PROVIDER_SELECT).eq("member_id", canonicalMemberId)
+      : Promise.resolve({ data: [], error: null }),
+    readPlan.includeProviderDirectory
       ? supabase.from("provider_directory").select(PROVIDER_DIRECTORY_SELECT).order("updated_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
-    includeHospitalPreferenceDirectory
+    readPlan.includeHospitalPreferenceDirectory
       ? supabase
           .from("hospital_preference_directory")
           .select(HOSPITAL_PREFERENCE_DIRECTORY_SELECT)
           .order("updated_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
-    supabase.from("member_equipment").select(MEMBER_EQUIPMENT_SELECT).eq("member_id", canonicalMemberId),
-    supabase.from("member_notes").select(MEMBER_NOTE_SELECT).eq("member_id", canonicalMemberId),
-    supabase
-      .from("intake_assessments")
-      .select("id, member_id, assessment_date, total_score, recommended_track, completed_by, signature_status, draft_pof_status, created_at")
-      .eq("member_id", canonicalMemberId)
-      .order("assessment_date", { ascending: false })
-      .order("created_at", { ascending: false }),
+    readPlan.includeEquipment
+      ? supabase.from("member_equipment").select(MEMBER_EQUIPMENT_SELECT).eq("member_id", canonicalMemberId)
+      : Promise.resolve({ data: [], error: null }),
+    readPlan.includeNotes
+      ? supabase.from("member_notes").select(MEMBER_NOTE_SELECT).eq("member_id", canonicalMemberId)
+      : Promise.resolve({ data: [], error: null }),
+    (() => {
+      const query = supabase
+        .from("intake_assessments")
+        .select("id, member_id, assessment_date, total_score, recommended_track, completed_by, signature_status, draft_pof_status, created_at")
+        .eq("member_id", canonicalMemberId)
+        .order("assessment_date", { ascending: false })
+        .order("created_at", { ascending: false });
+      return readPlan.includeAssessments ? query : query.limit(1);
+    })(),
     supabase.from("member_command_centers").select("member_id, profile_image_url").eq("member_id", canonicalMemberId).maybeSingle()
   ]);
 
