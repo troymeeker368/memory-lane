@@ -96,6 +96,18 @@ export type SignPhysicianOrderResult = {
   lastError: string | null;
 };
 
+function assertSignedPhysicianOrderPostSignReady(input: {
+  result: SignPhysicianOrderResult;
+  contextLabel: string;
+}) {
+  if (input.result.postSignStatus === "synced") {
+    return;
+  }
+  throw new Error(
+    `${input.contextLabel} was committed, but downstream clinical sync is still queued for follow-up. Staff should review the order before treating it as fully synced.`
+  );
+}
+
 function normalizeSignedPofPostSignFailure(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown post-sign sync error.";
   const stepMatch = message.match(/(?:^|\s)(mhp_mcc|mar_schedules):\s*(.+?)(?:\s+\(ref [^)]+\))?$/i);
@@ -518,7 +530,11 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
       throw new Error(mapPhysicianOrderWriteError(error, "Unable to update physician order."));
     }
     if (wantsSigned) {
-      await signPhysicianOrder(existing.id, input.actor);
+      const signResult = await signPhysicianOrder(existing.id, input.actor);
+      assertSignedPhysicianOrderPostSignReady({
+        result: signResult,
+        contextLabel: "Physician order signature"
+      });
     }
     const saved = await getPhysicianOrderById(existing.id);
     if (!saved) throw new Error("Unable to load saved physician order.");
@@ -548,7 +564,11 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
     throw new Error(mapPhysicianOrderWriteError(error, "Unable to create physician order."));
   }
   if (wantsSigned) {
-    await signPhysicianOrder(data.id, input.actor);
+    const signResult = await signPhysicianOrder(data.id, input.actor);
+    assertSignedPhysicianOrderPostSignReady({
+      result: signResult,
+      contextLabel: "Physician order signature"
+    });
   }
   const saved = await getPhysicianOrderById(data.id);
   if (!saved) throw new Error("Unable to load saved physician order.");

@@ -22,6 +22,8 @@ import {
 
 const CLAIM_POF_POST_SIGN_SYNC_QUEUE_RPC = "rpc_claim_pof_post_sign_sync_queue";
 const CLAIM_POF_POST_SIGN_SYNC_QUEUE_MIGRATION = "0097_pof_post_sign_retry_claim_rpc.sql";
+const FINALIZE_POF_POST_SIGN_SYNC_QUEUE_RPC = "rpc_finalize_pof_post_sign_sync_queue";
+const FINALIZE_POF_POST_SIGN_SYNC_QUEUE_MIGRATION = "0174_pof_post_sign_queue_outcome_rpc.sql";
 const RPC_SIGN_PHYSICIAN_ORDER = "rpc_sign_physician_order";
 const RPC_RUN_SIGNED_POF_POST_SIGN_SYNC = "rpc_run_signed_pof_post_sign_sync";
 const RUN_SIGNED_POF_POST_SIGN_SYNC_MIGRATION = "0155_signed_pof_post_sign_sync_rpc_consolidation.sql";
@@ -247,6 +249,45 @@ export async function invokeRunSignedPofPostSignSyncRpc(input: {
   }
 }
 
+async function finalizePostSignQueueOutcome(input: {
+  queueId: string;
+  status: "queued" | "completed";
+  attemptCount: number;
+  lastAttemptAt: string;
+  nextRetryAt?: string | null;
+  lastError?: string | null;
+  lastFailedStep?: PofPostSignSyncStep | null;
+  pofRequestId?: string | null;
+  actor: { id: string | null; fullName: string | null };
+  serviceRole?: boolean;
+}) {
+  const supabase = await createClient({ serviceRole: input.serviceRole });
+  try {
+    await invokeSupabaseRpcOrThrow<unknown>(supabase, FINALIZE_POF_POST_SIGN_SYNC_QUEUE_RPC, {
+      p_queue_id: input.queueId,
+      p_status: input.status,
+      p_attempt_count: input.attemptCount,
+      p_last_attempt_at: input.lastAttemptAt,
+      p_next_retry_at: input.status === "queued" ? clean(input.nextRetryAt) : null,
+      p_last_error: input.status === "queued" ? clean(input.lastError) : null,
+      p_last_error_at: input.status === "queued" ? input.lastAttemptAt : null,
+      p_last_failed_step: input.status === "queued" ? clean(input.lastFailedStep) : null,
+      p_pof_request_id: clean(input.pofRequestId),
+      p_actor_user_id: clean(input.actor.id),
+      p_actor_name: clean(input.actor.fullName)
+    });
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, FINALIZE_POF_POST_SIGN_SYNC_QUEUE_RPC)) {
+      throw new Error(
+        `POF post-sign queue outcome RPC is not available. Apply Supabase migration ${FINALIZE_POF_POST_SIGN_SYNC_QUEUE_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    const postgrestError = error as PostgrestErrorLike | null | undefined;
+    if (isMissingPofPostSignQueueTableError(postgrestError)) throw pofPostSignQueueTableRequiredError();
+    throw error;
+  }
+}
+
 export async function markPostSignQueueCompleted(input: {
   queueId: string;
   attemptCount: number;
@@ -255,29 +296,15 @@ export async function markPostSignQueueCompleted(input: {
   pofRequestId?: string | null;
   serviceRole?: boolean;
 }) {
-  const supabase = await createClient({ serviceRole: input.serviceRole });
-  const requestId = clean(input.pofRequestId);
-  const payload = {
+  await finalizePostSignQueueOutcome({
+    queueId: input.queueId,
     status: "completed",
-    attempt_count: input.attemptCount,
-    last_attempt_at: input.completedAt,
-    next_retry_at: null,
-    last_error: null,
-    last_error_at: null,
-    last_failed_step: null,
-    ...(requestId ? { pof_request_id: requestId } : {}),
-    claimed_at: null,
-    claimed_by_user_id: null,
-    claimed_by_name: null,
-    resolved_at: input.completedAt,
-    resolved_by_user_id: clean(input.actor.id),
-    resolved_by_name: clean(input.actor.fullName)
-  };
-  const { error } = await supabase.from("pof_post_sign_sync_queue").update(payload).eq("id", input.queueId);
-  if (error) {
-    if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
-    throw new Error(error.message);
-  }
+    attemptCount: input.attemptCount,
+    lastAttemptAt: input.completedAt,
+    pofRequestId: input.pofRequestId,
+    actor: input.actor,
+    serviceRole: input.serviceRole
+  });
 }
 
 export async function markPostSignQueueQueued(input: {
@@ -291,29 +318,16 @@ export async function markPostSignQueueQueued(input: {
   queuedAt: string;
   serviceRole?: boolean;
 }) {
-  const supabase = await createClient({ serviceRole: input.serviceRole });
-  const requestId = clean(input.pofRequestId);
-  const payload = {
+  await finalizePostSignQueueOutcome({
+    queueId: input.queueId,
     status: "queued",
-    attempt_count: input.attemptCount,
-    last_attempt_at: input.queuedAt,
-    next_retry_at: input.nextRetryAt,
-    last_error: input.errorMessage,
-    last_error_at: input.queuedAt,
-    last_failed_step: input.step,
-    ...(requestId ? { pof_request_id: requestId } : {}),
-    claimed_at: null,
-    claimed_by_user_id: null,
-    claimed_by_name: null,
-    queued_by_user_id: clean(input.actor.id),
-    queued_by_name: clean(input.actor.fullName),
-    resolved_at: null,
-    resolved_by_user_id: null,
-    resolved_by_name: null
-  };
-  const { error } = await supabase.from("pof_post_sign_sync_queue").update(payload).eq("id", input.queueId);
-  if (error) {
-    if (isMissingPofPostSignQueueTableError(error)) throw pofPostSignQueueTableRequiredError();
-    throw new Error(error.message);
-  }
+    attemptCount: input.attemptCount,
+    lastAttemptAt: input.queuedAt,
+    nextRetryAt: input.nextRetryAt,
+    lastError: input.errorMessage,
+    lastFailedStep: input.step,
+    pofRequestId: input.pofRequestId,
+    actor: input.actor,
+    serviceRole: input.serviceRole
+  });
 }

@@ -7,8 +7,11 @@ import { normalizePhoneForStorage } from "@/lib/phone";
 import { canAccessModule, canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import { resolveActiveEffectiveRowForDate, resolveEffectiveTransportationBillingStatus } from "@/lib/services/billing-effective";
 import {
+  deleteMemberCommandCenterContact,
+  mutateMemberCommandCenterAllergyWorkflow,
   saveMemberCommandCenterAttendanceBillingWorkflow,
   saveMemberCommandCenterBundle,
+  saveMemberCommandCenterContact,
   saveMemberCommandCenterTransportationWorkflow
 } from "@/lib/services/member-command-center";
 import {
@@ -24,13 +27,8 @@ import {
 } from "@/lib/services/member-command-center-read";
 import { getMemberLockerConflict } from "@/lib/services/members-read";
 import {
-  addMemberAllergySupabase,
-  deleteMemberAllergySupabase,
-  deleteMemberContactSupabase,
   ensureMemberAttendanceScheduleSupabase,
   ensureMemberCommandCenterProfileSupabase,
-  updateMemberAllergySupabase,
-  upsertMemberContactSupabase
 } from "@/lib/services/member-command-center-write";
 import {
   deleteCommandCenterMemberFile,
@@ -989,16 +987,20 @@ export async function addMemberCommandCenterAllergyInlineAction(formData: FormDa
     if (!allergyGroup || !allergyName) return { ok: false, error: "Allergy group and name are required." };
 
     const now = toEasternISO();
-    const created = await addMemberAllergySupabase({
-      member_id: memberId,
-      allergy_group: allergyGroup,
-      allergy_name: allergyName,
-      severity: asNullableString(formData, "allergySeverity"),
-      comments: asNullableString(formData, "allergyComments"),
-      created_by_user_id: actor.id,
-      created_by_name: actor.full_name,
-      created_at: now,
-      updated_at: now
+    const created = await mutateMemberCommandCenterAllergyWorkflow({
+      memberId,
+      operation: "create",
+      payload: {
+        allergy_group: allergyGroup,
+        allergy_name: allergyName,
+        severity: asNullableString(formData, "allergySeverity"),
+        comments: asNullableString(formData, "allergyComments")
+      },
+      actor: {
+        id: actor.id,
+        fullName: actor.full_name
+      },
+      now
     });
 
     revalidateCommandCenter(memberId);
@@ -1010,7 +1012,7 @@ export async function addMemberCommandCenterAllergyInlineAction(formData: FormDa
 
 export async function updateMemberCommandCenterAllergyInlineAction(formData: FormData) {
   try {
-    await requireCommandCenterEditor();
+    const actor = await requireCommandCenterEditor();
     const memberId = asString(formData, "memberId");
     const allergyId = asString(formData, "allergyId");
     if (!memberId || !allergyId) return { ok: false, error: "Missing allergy reference." };
@@ -1024,12 +1026,21 @@ export async function updateMemberCommandCenterAllergyInlineAction(formData: For
     if (!allergyGroup || !allergyName) return { ok: false, error: "Allergy group and name are required." };
 
     const now = toEasternISO();
-    const updated = await updateMemberAllergySupabase(allergyId, {
-      allergy_group: allergyGroup,
-      allergy_name: allergyName,
-      severity: asNullableString(formData, "allergySeverity"),
-      comments: asNullableString(formData, "allergyComments"),
-      updated_at: now
+    const updated = await mutateMemberCommandCenterAllergyWorkflow({
+      memberId,
+      operation: "update",
+      allergyId,
+      payload: {
+        allergy_group: allergyGroup,
+        allergy_name: allergyName,
+        severity: asNullableString(formData, "allergySeverity"),
+        comments: asNullableString(formData, "allergyComments")
+      },
+      actor: {
+        id: actor.id,
+        fullName: actor.full_name
+      },
+      now
     });
     if (!updated) return { ok: false, error: "Allergy not found." };
 
@@ -1042,12 +1053,20 @@ export async function updateMemberCommandCenterAllergyInlineAction(formData: For
 
 export async function deleteMemberCommandCenterAllergyInlineAction(formData: FormData) {
   try {
-    await requireCommandCenterEditor();
+    const actor = await requireCommandCenterEditor();
     const memberId = asString(formData, "memberId");
     const allergyId = asString(formData, "allergyId");
     if (!memberId || !allergyId) return { ok: false, error: "Missing allergy reference." };
 
-    await deleteMemberAllergySupabase(allergyId);
+    await mutateMemberCommandCenterAllergyWorkflow({
+      memberId,
+      operation: "delete",
+      allergyId,
+      actor: {
+        id: actor.id,
+        fullName: actor.full_name
+      }
+    });
 
     revalidateCommandCenter(memberId);
     return { ok: true };
@@ -1093,55 +1112,31 @@ export async function upsertMemberContactAction(raw: {
 
     const now = toEasternISO();
 
-    if (raw.id?.trim()) {
-      const updated = await upsertMemberContactSupabase({
-        id: raw.id.trim(),
-        member_id: memberId,
-        contact_name: contactName,
-        relationship_to_member: raw.relationshipToMember?.trim() || null,
-        category: normalizedCategory,
-        category_other: normalizedCategory === "Other" ? categoryOther : null,
-        email: raw.email?.trim() || null,
-        cellular_number: normalizePhone(raw.cellularNumber),
-        work_number: normalizePhone(raw.workNumber),
-        home_number: normalizePhone(raw.homeNumber),
-        street_address: raw.streetAddress?.trim() || null,
-        city: raw.city?.trim() || null,
-        state: raw.state?.trim() || null,
-        zip: raw.zip?.trim() || null,
-        is_payor: raw.isPayor === true,
-        created_by_user_id: actor.id,
-        created_by_name: actor.full_name,
-        created_at: now,
-        updated_at: now
-      });
-      if (!updated) return { error: "Contact not found." };
-      revalidateCommandCenter(memberId);
-      return { ok: true, row: updated };
-    } else {
-      const created = await upsertMemberContactSupabase({
-        member_id: memberId,
-        contact_name: contactName,
-        relationship_to_member: raw.relationshipToMember?.trim() || null,
-        category: normalizedCategory,
-        category_other: normalizedCategory === "Other" ? categoryOther : null,
-        email: raw.email?.trim() || null,
-        cellular_number: normalizePhone(raw.cellularNumber),
-        work_number: normalizePhone(raw.workNumber),
-        home_number: normalizePhone(raw.homeNumber),
-        street_address: raw.streetAddress?.trim() || null,
-        city: raw.city?.trim() || null,
-        state: raw.state?.trim() || null,
-        zip: raw.zip?.trim() || null,
-        is_payor: raw.isPayor === true,
-        created_by_user_id: actor.id,
-        created_by_name: actor.full_name,
-        created_at: now,
-        updated_at: now
-      });
-      revalidateCommandCenter(memberId);
-      return { ok: true, row: created };
-    }
+    const saved = await saveMemberCommandCenterContact({
+      id: raw.id?.trim() || undefined,
+      memberId,
+      contactName,
+      relationshipToMember: raw.relationshipToMember?.trim() || null,
+      category: normalizedCategory,
+      categoryOther: normalizedCategory === "Other" ? categoryOther : null,
+      email: raw.email?.trim() || null,
+      cellularNumber: normalizePhone(raw.cellularNumber),
+      workNumber: normalizePhone(raw.workNumber),
+      homeNumber: normalizePhone(raw.homeNumber),
+      streetAddress: raw.streetAddress?.trim() || null,
+      city: raw.city?.trim() || null,
+      state: raw.state?.trim() || null,
+      zip: raw.zip?.trim() || null,
+      isPayor: raw.isPayor === true,
+      actor: {
+        id: actor.id,
+        fullName: actor.full_name
+      },
+      now
+    });
+    if (raw.id?.trim() && !saved) return { error: "Contact not found." };
+    revalidateCommandCenter(memberId);
+    return { ok: true, row: saved };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save contact." };
   }
@@ -1154,7 +1149,7 @@ export async function deleteMemberContactAction(raw: { id: string; memberId: str
     const memberId = raw.memberId?.trim();
     if (!id || !memberId) return { error: "Invalid contact delete request." };
 
-    await deleteMemberContactSupabase(id);
+    await deleteMemberCommandCenterContact({ id });
 
     revalidateCommandCenter(memberId);
     return { ok: true };

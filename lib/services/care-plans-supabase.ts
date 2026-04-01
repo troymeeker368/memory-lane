@@ -8,7 +8,7 @@ import {
   computeNextReviewDueDate,
   serializeSectionsSnapshot
 } from "@/lib/services/care-plan-model";
-import { getCarePlanDispatchState } from "@/lib/services/care-plans-read-model";
+import { getCarePlanById, getCarePlanDispatchState } from "@/lib/services/care-plans-read-model";
 import { getDefaultCaregiverSignatureExpiresOnDate } from "@/lib/services/care-plan-esign-rules";
 import { recordImmediateSystemAlert, recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import type {
@@ -110,7 +110,7 @@ async function recordCarePlanActionRequired(input: {
   }
 }
 
-async function updateCarePlanPostSignReadiness(input: {
+export async function setCarePlanPostSignReadiness(input: {
   carePlanId: string;
   status: CarePlanPostSignReadinessStatus;
   reason?: string | null;
@@ -128,6 +128,18 @@ async function updateCarePlanPostSignReadiness(input: {
     })
     .eq("id", input.carePlanId);
   if (error) throw new Error(error.message);
+}
+
+export async function markCarePlanPostSignReady(input: {
+  carePlanId: string;
+  actor: { id: string; fullName: string };
+}) {
+  return setCarePlanPostSignReadiness({
+    carePlanId: input.carePlanId,
+    status: "ready",
+    reason: null,
+    actor: input.actor
+  });
 }
 
 async function loadCarePlanNurseEsignService() {
@@ -334,7 +346,7 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
   const hasCaregiverContact = Boolean(signedCarePlan.caregiverName) && Boolean(signedCarePlan.caregiverEmail);
   const shouldAutoSend = hasCaregiverContact && signedCarePlan.caregiverSignatureStatus !== "signed";
 
-  await updateCarePlanPostSignReadiness({
+  await setCarePlanPostSignReadiness({
     carePlanId: input.carePlanId,
     status: shouldAutoSend ? "signed_pending_caregiver_dispatch" : "ready",
     reason: shouldAutoSend ? "Caregiver dispatch still needs to complete." : null,
@@ -358,10 +370,8 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
         signatureName: input.actor.signatureName
       }
     });
-    await updateCarePlanPostSignReadiness({
+    await markCarePlanPostSignReady({
       carePlanId: signedCarePlan.id,
-      status: "ready",
-      reason: null,
       actor: {
         id: input.actor.id,
         fullName: input.actor.fullName
@@ -391,6 +401,195 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
     memberId: signedCarePlan.memberId,
     caregiverSignatureStatus: signedCarePlan.caregiverSignatureStatus
   };
+}
+
+async function completeCarePlanNurseSignatureWorkflow(input: {
+  carePlanId: string;
+  memberId: string;
+  reviewDate: string;
+  nextDueDate: string;
+  noChangesNeeded: boolean;
+  modificationsRequired: boolean;
+  modificationsDescription: string;
+  careTeamNotes: string;
+  sections: Array<{
+    sectionType: CarePlanSectionType;
+    shortTermGoals: string;
+    longTermGoals: string;
+    displayOrder: number;
+  }>;
+  snapshotType: "initial" | "review";
+  reviewHistory?: {
+    reviewDate: string;
+    reviewedBy: string | null;
+    summary: string;
+    changesMade: boolean;
+  } | null;
+  actor: { id: string; fullName: string; signatureName: string };
+  signedByName: string | null;
+}) {
+  await setCarePlanPostSignReadiness({
+    carePlanId: input.carePlanId,
+    status: "signed_pending_snapshot",
+    reason:
+      input.snapshotType === "initial"
+        ? "Version snapshot persistence still needs to complete."
+        : "Version and review history persistence still needs to complete.",
+    actor: {
+      id: input.actor.id,
+      fullName: input.actor.fullName
+    }
+  });
+
+  try {
+    await createCarePlanVersionSnapshot({
+      carePlanId: input.carePlanId,
+      snapshotType: input.snapshotType,
+      snapshotDate: input.reviewDate,
+      reviewedBy: input.signedByName ?? input.actor.signatureName,
+      status: computeCarePlanStatus(input.nextDueDate),
+      nextDueDate: input.nextDueDate,
+      noChangesNeeded: input.noChangesNeeded,
+      modificationsRequired: input.modificationsRequired,
+      modificationsDescription: input.modificationsDescription,
+      careTeamNotes: input.careTeamNotes,
+      sections: input.sections,
+      reviewHistory: input.reviewHistory ?? null
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : input.snapshotType === "initial"
+          ? "Unable to persist care plan version snapshot."
+          : "Unable to persist care plan review history.";
+    await recordCarePlanActionRequired({
+      carePlanId: input.carePlanId,
+      memberId: input.memberId,
+      actorUserId: input.actor.id,
+      alertKey:
+        input.snapshotType === "initial"
+          ? "care_plan_snapshot_follow_up_required"
+          : "care_plan_review_history_follow_up_required",
+      title:
+        input.snapshotType === "initial"
+          ? "Care Plan Version History Repair Needed"
+          : "Care Plan Review History Repair Needed",
+      message:
+        input.snapshotType === "initial"
+          ? "The care plan was created and signed, but version history persistence still needs repair."
+          : "The care plan review was signed, but version and review history still need repair.",
+      metadata: {
+        phase: input.snapshotType === "initial" ? "create_snapshot" : "review_snapshot",
+        review_date: input.reviewDate,
+        next_due_date: input.nextDueDate,
+        error: message
+      }
+    });
+    throw buildCarePlanWorkflowError(
+      input.snapshotType === "initial"
+        ? `Care Plan was created and signed, but version history persistence failed (${message}). Open the saved care plan before retrying downstream actions.`
+        : `Care Plan review was saved and signed, but version/review history persistence failed (${message}). Open the saved care plan before retrying downstream actions.`,
+      input.carePlanId
+    );
+  }
+
+  let finalizedCarePlan: CarePlanWriteResult;
+  try {
+    finalizedCarePlan = await finalizeCaregiverDispatchAfterNurseSignature({
+      carePlanId: input.carePlanId,
+      actor: input.actor
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
+    await recordCarePlanActionRequired({
+      carePlanId: input.carePlanId,
+      memberId: input.memberId,
+      actorUserId: input.actor.id,
+      alertKey: "care_plan_caregiver_dispatch_follow_up_required",
+      title: "Care Plan Caregiver Send Retry Needed",
+      message:
+        input.snapshotType === "initial"
+          ? "The care plan was created and signed, but caregiver dispatch still needs follow-up."
+          : "The care plan review was signed, but caregiver dispatch still needs follow-up.",
+      metadata: {
+        phase: input.snapshotType === "initial" ? "create_caregiver_dispatch" : "review_caregiver_dispatch",
+        review_date: input.reviewDate,
+        next_due_date: input.nextDueDate,
+        error: message
+      }
+    });
+    throw buildCarePlanWorkflowError(
+      input.snapshotType === "initial"
+        ? `Care Plan was created and signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry sending the caregiver link.`
+        : `Care Plan review was signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry sending the caregiver link.`,
+      input.carePlanId
+    );
+  }
+
+  const alignedState = await getCarePlanDispatchState(input.carePlanId);
+  if (!alignedState) {
+    throw buildCarePlanWorkflowError(
+      "Care Plan signed follow-up could not verify the final saved state. Open the saved care plan before continuing.",
+      input.carePlanId
+    );
+  }
+
+  const requiresCaregiverDispatch = Boolean(alignedState.caregiverName) && Boolean(alignedState.caregiverEmail);
+  const caregiverDispatchAligned = requiresCaregiverDispatch
+    ? ["sent", "viewed", "signed"].includes(alignedState.caregiverSignatureStatus)
+    : true;
+  if (!caregiverDispatchAligned) {
+    await recordCarePlanActionRequired({
+      carePlanId: input.carePlanId,
+      memberId: input.memberId,
+      actorUserId: input.actor.id,
+      alertKey: "care_plan_caregiver_dispatch_alignment_required",
+      title: "Care Plan Caregiver Dispatch Repair Needed",
+      message: "The care plan signed successfully, but caregiver dispatch did not land in the expected canonical state.",
+      metadata: {
+        phase: "dispatch_alignment",
+        caregiver_signature_status: alignedState.caregiverSignatureStatus,
+        review_date: input.reviewDate,
+        next_due_date: input.nextDueDate
+      }
+    });
+    throw buildCarePlanWorkflowError(
+      "Care Plan signed successfully, but caregiver dispatch did not reach the expected canonical state. Open the saved care plan before continuing.",
+      input.carePlanId
+    );
+  }
+
+  return finalizedCarePlan;
+}
+
+async function assertCarePlanWriteBoundaryAligned(input: {
+  carePlanId: string;
+  memberId: string;
+  expectedCaregiverStatus?: string | null;
+}) {
+  const detail = await getCarePlanById(input.carePlanId, { serviceRole: true });
+  if (!detail) {
+    throw new Error("Care plan could not be reloaded after post-sign workflow completion.");
+  }
+  if (detail.carePlan.memberId !== input.memberId) {
+    throw new Error("Care plan post-sign workflow reloaded against the wrong member.");
+  }
+  if (detail.versions.length === 0) {
+    throw new Error("Care plan version history did not persist.");
+  }
+  if (detail.carePlan.postSignReadinessStatus !== "ready") {
+    throw new Error("Care plan post-sign readiness did not finalize to ready.");
+  }
+  if (
+    clean(input.expectedCaregiverStatus) &&
+    detail.carePlan.caregiverSignatureStatus !== clean(input.expectedCaregiverStatus)
+  ) {
+    throw new Error(
+      `Care plan caregiver dispatch drifted. Expected ${input.expectedCaregiverStatus}, found ${detail.carePlan.caregiverSignatureStatus}.`
+    );
+  }
+  return detail;
 }
 
 export async function createCarePlan(input: {
@@ -485,83 +684,30 @@ export async function createCarePlan(input: {
     );
   }
 
-  await updateCarePlanPostSignReadiness({
+  const finalizedCarePlan = await completeCarePlanNurseSignatureWorkflow({
     carePlanId: createdCarePlanId,
-    status: "signed_pending_snapshot",
-    reason: "Version snapshot persistence still needs to complete.",
+    memberId: canonicalMemberId,
+    reviewDate: input.reviewDate,
+    nextDueDate,
+    noChangesNeeded: Boolean(input.noChangesNeeded),
+    modificationsRequired: Boolean(input.modificationsRequired),
+    modificationsDescription: input.modificationsDescription ?? "",
+    careTeamNotes: input.careTeamNotes,
+    sections: normalizedSections,
+    snapshotType: "initial",
     actor: {
       id: input.actor.id,
-      fullName: input.actor.fullName
-    }
+      fullName: input.actor.fullName,
+      signatureName: input.actor.signatureName
+    },
+    signedByName: signedState.signedByName ?? input.actor.signatureName
   });
 
-  try {
-    await createCarePlanVersionSnapshot({
-      carePlanId: createdCarePlanId,
-      snapshotType: "initial",
-      snapshotDate: input.reviewDate,
-      reviewedBy: signedState.signedByName ?? input.actor.signatureName,
-      status: computeCarePlanStatus(nextDueDate),
-      nextDueDate,
-      noChangesNeeded: Boolean(input.noChangesNeeded),
-      modificationsRequired: Boolean(input.modificationsRequired),
-      modificationsDescription: input.modificationsDescription ?? "",
-      careTeamNotes: input.careTeamNotes,
-      sections: normalizedSections
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to persist care plan version snapshot.";
-    await recordCarePlanActionRequired({
-      carePlanId: createdCarePlanId,
-      memberId: canonicalMemberId,
-      actorUserId: input.actor.id,
-      alertKey: "care_plan_snapshot_follow_up_required",
-      title: "Care Plan Version History Repair Needed",
-      message: "The care plan was created and signed, but version history persistence still needs repair.",
-      metadata: {
-        phase: "create_snapshot",
-        review_date: input.reviewDate,
-        next_due_date: nextDueDate,
-        error: message
-      }
-    });
-    throw buildCarePlanWorkflowError(
-      `Care Plan was created and signed, but version history persistence failed (${message}). Open the saved care plan before retrying downstream actions.`,
-      createdCarePlanId
-    );
-  }
-
-  let finalizedCarePlan: CarePlanWriteResult;
-  try {
-    finalizedCarePlan = await finalizeCaregiverDispatchAfterNurseSignature({
-      carePlanId: createdCarePlanId,
-      actor: {
-        id: input.actor.id,
-        fullName: input.actor.fullName,
-        signatureName: input.actor.signatureName
-      }
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
-    await recordCarePlanActionRequired({
-      carePlanId: createdCarePlanId,
-      memberId: canonicalMemberId,
-      actorUserId: input.actor.id,
-      alertKey: "care_plan_caregiver_dispatch_follow_up_required",
-      title: "Care Plan Caregiver Send Retry Needed",
-      message: "The care plan was created and signed, but caregiver dispatch still needs follow-up.",
-      metadata: {
-        phase: "create_caregiver_dispatch",
-        review_date: input.reviewDate,
-        next_due_date: nextDueDate,
-        error: message
-      }
-    });
-    throw buildCarePlanWorkflowError(
-      `Care Plan was created and signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry sending the caregiver link.`,
-      createdCarePlanId
-    );
-  }
+  await assertCarePlanWriteBoundaryAligned({
+    carePlanId: createdCarePlanId,
+    memberId: canonicalMemberId,
+    expectedCaregiverStatus: finalizedCarePlan.caregiverSignatureStatus
+  });
 
   await recordWorkflowEvent({
     eventType: "care_plan_created",
@@ -671,91 +817,38 @@ export async function reviewCarePlan(input: {
     }
   });
 
-  await updateCarePlanPostSignReadiness({
+  const finalizedCarePlan = await completeCarePlanNurseSignatureWorkflow({
     carePlanId: input.carePlanId,
-    status: "signed_pending_snapshot",
-    reason: "Version and review history persistence still needs to complete.",
+    memberId: String(existing.member_id),
+    reviewDate: input.reviewDate,
+    nextDueDate,
+    noChangesNeeded: input.noChangesNeeded,
+    modificationsRequired: input.modificationsRequired,
+    modificationsDescription: input.modificationsDescription,
+    careTeamNotes: input.careTeamNotes,
+    sections: normalizedSections,
+    snapshotType: "review",
+    reviewHistory: {
+      reviewDate: input.reviewDate,
+      reviewedBy: signedState.signedByName ?? input.actor.signatureName,
+      summary: input.modificationsRequired
+        ? input.modificationsDescription || "Reviewed with modifications."
+        : "Reviewed without required modifications.",
+      changesMade: input.modificationsRequired
+    },
     actor: {
       id: input.actor.id,
-      fullName: input.actor.fullName
-    }
+      fullName: input.actor.fullName,
+      signatureName: input.actor.signatureName
+    },
+    signedByName: signedState.signedByName ?? input.actor.signatureName
   });
 
-  try {
-    await createCarePlanVersionSnapshot({
-      carePlanId: input.carePlanId,
-      snapshotType: "review",
-      snapshotDate: input.reviewDate,
-      reviewedBy: signedState.signedByName ?? input.actor.signatureName,
-      status: computeCarePlanStatus(nextDueDate),
-      nextDueDate,
-      noChangesNeeded: input.noChangesNeeded,
-      modificationsRequired: input.modificationsRequired,
-      modificationsDescription: input.modificationsDescription,
-      careTeamNotes: input.careTeamNotes,
-      sections: normalizedSections,
-      reviewHistory: {
-        reviewDate: input.reviewDate,
-        reviewedBy: signedState.signedByName ?? input.actor.signatureName,
-        summary: input.modificationsRequired
-          ? input.modificationsDescription || "Reviewed with modifications."
-          : "Reviewed without required modifications.",
-        changesMade: input.modificationsRequired
-      }
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to persist care plan review history.";
-    await recordCarePlanActionRequired({
-      carePlanId: input.carePlanId,
-      memberId: String(existing.member_id),
-      actorUserId: input.actor.id,
-      alertKey: "care_plan_review_history_follow_up_required",
-      title: "Care Plan Review History Repair Needed",
-      message: "The care plan review was signed, but version and review history still need repair.",
-      metadata: {
-        phase: "review_snapshot",
-        review_date: input.reviewDate,
-        next_due_date: nextDueDate,
-        error: message
-      }
-    });
-    throw buildCarePlanWorkflowError(
-      `Care Plan review was saved and signed, but version/review history persistence failed (${message}). Open the saved care plan before retrying downstream actions.`,
-      input.carePlanId
-    );
-  }
-
-  let finalizedCarePlan: CarePlanWriteResult;
-  try {
-    finalizedCarePlan = await finalizeCaregiverDispatchAfterNurseSignature({
-      carePlanId: input.carePlanId,
-      actor: {
-        id: input.actor.id,
-        fullName: input.actor.fullName,
-        signatureName: input.actor.signatureName
-      }
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to complete caregiver dispatch.";
-    await recordCarePlanActionRequired({
-      carePlanId: input.carePlanId,
-      memberId: String(existing.member_id),
-      actorUserId: input.actor.id,
-      alertKey: "care_plan_review_dispatch_follow_up_required",
-      title: "Care Plan Caregiver Send Retry Needed",
-      message: "The care plan review was signed, but caregiver dispatch still needs follow-up.",
-      metadata: {
-        phase: "review_caregiver_dispatch",
-        review_date: input.reviewDate,
-        next_due_date: nextDueDate,
-        error: message
-      }
-    });
-    throw buildCarePlanWorkflowError(
-      `Care Plan review was saved and signed, but caregiver dispatch failed (${message}). Open the saved care plan to retry the caregiver link.`,
-      input.carePlanId
-    );
-  }
+  await assertCarePlanWriteBoundaryAligned({
+    carePlanId: input.carePlanId,
+    memberId: String(existing.member_id),
+    expectedCaregiverStatus: finalizedCarePlan.caregiverSignatureStatus
+  });
 
   await recordWorkflowEvent({
     eventType: "care_plan_reviewed",

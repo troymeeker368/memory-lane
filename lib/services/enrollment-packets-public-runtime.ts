@@ -7,6 +7,7 @@ import {
   isMissingSchemaObjectError
 } from "@/lib/services/billing-schema-errors";
 import {
+  type EnrollmentPacketCompletionCascadeResult,
   repairEnrollmentPacketCompletionCascade,
   runEnrollmentPacketCompletionCascade
 } from "@/lib/services/enrollment-packet-completion-cascade";
@@ -72,6 +73,14 @@ const PUBLIC_ENROLLMENT_PACKET_SUBMIT_LOOKBACK_MINUTES = 15;
 const PUBLIC_ENROLLMENT_PACKET_TOKEN_SUBMIT_ATTEMPT_LIMIT = 5;
 const PUBLIC_ENROLLMENT_PACKET_IP_SUBMIT_ATTEMPT_LIMIT = 10;
 
+type EnrollmentPacketCompletionAgreementSummary = Pick<
+  EnrollmentPacketCompletionCascadeResult,
+  | "senderNotificationDelivered"
+  | "leadActivitySynced"
+  | "completedPacketArtifactLinked"
+  | "operationalShellsReady"
+>;
+
 async function loadEnrollmentPacketCompletionValidator() {
   const { validateEnrollmentPacketCompletion, validateEnrollmentPacketSubmission } = await import(
     "@/lib/services/enrollment-packet-public-validation"
@@ -136,9 +145,10 @@ async function buildCommittedEnrollmentPacketReplayResult(input: {
   request: EnrollmentPacketRequestRow;
 }) {
   let repairedRequest = input.request;
+  let repairedSummary: EnrollmentPacketCompletionAgreementSummary | null = null;
 
   try {
-    await repairEnrollmentPacketCompletionCascade({
+    repairedSummary = await repairEnrollmentPacketCompletionCascade({
       packetId: input.request.id,
       actorType: "system"
     });
@@ -169,7 +179,84 @@ async function buildCommittedEnrollmentPacketReplayResult(input: {
     mappingSyncStatus: repairedRequest.mapping_sync_status ?? "pending",
     wasAlreadyFiled: true
   });
+  await assertEnrollmentPacketCompletionAgreement({
+    request: repairedRequest,
+    operationalReadinessStatus: submitResult.operationalReadinessStatus,
+    senderNotificationDelivered: repairedSummary?.senderNotificationDelivered ?? true,
+    leadActivitySynced: repairedSummary?.leadActivitySynced ?? true,
+    completedPacketArtifactLinked: repairedSummary?.completedPacketArtifactLinked ?? true,
+    operationalShellsReady: repairedSummary?.operationalShellsReady ?? true,
+    source: "buildCommittedEnrollmentPacketReplayResult"
+  });
   return submitResult;
+}
+
+function buildEnrollmentPacketCompletionAgreementMessage(input: {
+  operationalReadinessStatus: string;
+  senderNotificationDelivered: boolean;
+  leadActivitySynced: boolean;
+  completedPacketArtifactLinked: boolean;
+  operationalShellsReady: boolean;
+  hasLead: boolean;
+}) {
+  const issues: string[] = [];
+  if (input.operationalReadinessStatus !== "operationally_ready") {
+    issues.push("downstream mapping is not fully complete");
+  }
+  if (!input.completedPacketArtifactLinked) {
+    issues.push("completed packet artifact linkage did not finalize");
+  }
+  if (!input.operationalShellsReady) {
+    issues.push("member operational shell sync did not finalize");
+  }
+  if (!input.senderNotificationDelivered) {
+    issues.push("sender notification did not finalize");
+  }
+  if (input.hasLead && !input.leadActivitySynced) {
+    issues.push("lead activity sync did not finalize");
+  }
+
+  if (issues.length === 0) return null;
+  return `Enrollment packet was filed, but ${issues.join(", ")}. Staff should repair the packet workflow before treating this member as operationally ready.`;
+}
+
+async function assertEnrollmentPacketCompletionAgreement(input: {
+  request: EnrollmentPacketRequestRow;
+  operationalReadinessStatus: string;
+  senderNotificationDelivered: boolean;
+  leadActivitySynced: boolean;
+  completedPacketArtifactLinked: boolean;
+  operationalShellsReady: boolean;
+  source: string;
+}) {
+  const message = buildEnrollmentPacketCompletionAgreementMessage({
+    operationalReadinessStatus: input.operationalReadinessStatus,
+    senderNotificationDelivered: input.senderNotificationDelivered,
+    leadActivitySynced: input.leadActivitySynced,
+    completedPacketArtifactLinked: input.completedPacketArtifactLinked,
+    operationalShellsReady: input.operationalShellsReady,
+    hasLead: Boolean(input.request.lead_id)
+  });
+  if (!message) return;
+
+  await recordImmediateSystemAlert({
+    entityType: "enrollment_packet_request",
+    entityId: input.request.id,
+    actorUserId: input.request.sender_user_id,
+    severity: "high",
+    alertKey: "enrollment_packet_completion_consensus_failed",
+    metadata: {
+      member_id: input.request.member_id,
+      lead_id: input.request.lead_id,
+      operational_readiness_status: input.operationalReadinessStatus,
+      sender_notification_delivered: input.senderNotificationDelivered,
+      lead_activity_synced: input.leadActivitySynced,
+      completed_packet_artifact_linked: input.completedPacketArtifactLinked,
+      operational_shells_ready: input.operationalShellsReady,
+      source: input.source
+    }
+  });
+  throw new Error(message);
 }
 
 async function invokeFinalizeEnrollmentPacketCompletionRpc(input: {
@@ -649,6 +736,7 @@ export async function submitPublicEnrollmentPacket(input: {
         error?: string | null;
       }
     | null = null;
+  let completionCascadeSummary: EnrollmentPacketCompletionAgreementSummary | null = null;
   const stagedUploads: Array<{
     uploadCategory: EnrollmentPacketUploadCategory;
     objectPath: string;
@@ -938,6 +1026,12 @@ export async function submitPublicEnrollmentPacket(input: {
         mappingRunId: cascadeSummary.mappingRunId,
         status: cascadeSummary.mappingStatus
       };
+      completionCascadeSummary = {
+        senderNotificationDelivered: cascadeSummary.senderNotificationDelivered,
+        leadActivitySynced: cascadeSummary.leadActivitySynced,
+        completedPacketArtifactLinked: cascadeSummary.completedPacketArtifactLinked,
+        operationalShellsReady: cascadeSummary.operationalShellsReady
+      };
       failedMappingRunId = cascadeSummary.mappingRunId;
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Unable to run enrollment packet completion cascade.";
@@ -1072,6 +1166,15 @@ export async function submitPublicEnrollmentPacket(input: {
     memberId: member.id,
     mappingSyncStatus: mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending",
     wasAlreadyFiled: false
+  });
+  await assertEnrollmentPacketCompletionAgreement({
+    request,
+    operationalReadinessStatus: submitResult.operationalReadinessStatus,
+    senderNotificationDelivered: completionCascadeSummary?.senderNotificationDelivered ?? false,
+    leadActivitySynced: completionCascadeSummary?.leadActivitySynced ?? !request.lead_id,
+    completedPacketArtifactLinked: completionCascadeSummary?.completedPacketArtifactLinked ?? false,
+    operationalShellsReady: completionCascadeSummary?.operationalShellsReady ?? false,
+    source: "submitPublicEnrollmentPacket.preReturn"
   });
   return submitResult;
 }

@@ -24,6 +24,7 @@ import {
   recordCarePlanAlertSafely,
   transitionCarePlanCaregiverStatus
 } from "@/lib/services/care-plan-esign";
+import { markCarePlanPostSignReady as markCarePlanPostSignReadyWorkflow } from "@/lib/services/care-plans-supabase";
 
 const TOKEN_BYTE_LENGTH = 32;
 const CARE_PLAN_CAREGIVER_FINALIZATION_RPC = "rpc_finalize_care_plan_caregiver_signature";
@@ -291,17 +292,34 @@ async function cleanupFailedCarePlanCaregiverArtifacts(input: {
   }
 }
 
-async function markCarePlanPostSignReady(carePlanId: string) {
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin
-    .from("care_plans")
-    .update({
-      post_sign_readiness_status: "ready",
-      post_sign_readiness_reason: null,
-      updated_at: toEasternISO()
-    })
-    .eq("id", carePlanId);
-  if (error) throw new Error(error.message);
+async function requireCommittedSignedCarePlanReady(input: {
+  carePlanId: string;
+  expectedMemberId: string;
+  expectedFinalMemberFileId?: string | null;
+}) {
+  const detail = await getCarePlanById(input.carePlanId, { serviceRole: true });
+  if (!detail) {
+    throw new Error("Care plan could not be reloaded after caregiver signature finalization.");
+  }
+  if (detail.carePlan.memberId !== input.expectedMemberId) {
+    throw new Error("Care plan caregiver signature finalized against the wrong member.");
+  }
+  if (!detail.carePlan.finalMemberFileId) {
+    throw new Error("Final signed care plan member file is missing.");
+  }
+  if (
+    clean(input.expectedFinalMemberFileId) &&
+    detail.carePlan.finalMemberFileId !== clean(input.expectedFinalMemberFileId)
+  ) {
+    throw new Error("Final signed care plan member file drifted after caregiver signature finalization.");
+  }
+  if (detail.carePlan.caregiverSignatureStatus !== "signed") {
+    throw new Error("Caregiver signature state did not finalize to signed.");
+  }
+  if (detail.carePlan.postSignReadinessStatus !== "ready") {
+    throw new Error("Care plan post-sign readiness did not finalize to ready.");
+  }
+  return detail;
 }
 
 export async function getPublicCarePlanSigningContext(
@@ -382,15 +400,17 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     if (!signedDetail?.carePlan.finalMemberFileId) {
       throw new Error("This signature link was already used, but the final care plan file is missing.");
     }
-    const actionNeeded = signedDetail.carePlan.postSignReadinessStatus !== "ready";
+    if (signedDetail.carePlan.postSignReadinessStatus !== "ready") {
+      throw new Error(
+        "This care plan was already signed, but post-sign finalization is still incomplete. Staff should finish follow-up before relying on it."
+      );
+    }
     return {
       carePlanId: tokenRow.id,
       memberId: tokenRow.member_id,
       finalMemberFileId: signedDetail.carePlan.finalMemberFileId,
-      actionNeeded,
-      actionNeededMessage: actionNeeded
-        ? "Signature was already received, but staff still needs to finish post-sign follow-up before the care plan is fully ready."
-        : null
+      actionNeeded: false,
+      actionNeededMessage: null
     };
   }
   const status = await markExpiredIfNeeded({
@@ -423,7 +443,6 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         wasAlreadySigned: boolean;
       }
     | null = null;
-  let postCommitActionNeededMessage: string | null = null;
   try {
     const generated = await buildCarePlanPdfDataUrl(detail.carePlan.id, { serviceRole: true });
     const parsedPdf = parseDataUrlPayload(generated.dataUrl);
@@ -461,6 +480,11 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         signatureObjectPath: signaturePath,
         signedPdfObjectPath: signedPdfStoragePath,
         reason: "Replay-safe caregiver signature finalization reused committed signed state."
+      });
+      await requireCommittedSignedCarePlanReady({
+        carePlanId: detail.carePlan.id,
+        expectedMemberId: detail.carePlan.memberId,
+        expectedFinalMemberFileId: finalized.finalMemberFileId
       });
       return {
         carePlanId: detail.carePlan.id,
@@ -587,11 +611,36 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         caregiver_email: detail.carePlan.caregiverEmail
       }
     });
-    await markCarePlanPostSignReady(detail.carePlan.id);
+  } catch (error) {
+    console.error("[care-plan-esign] unable to emit caregiver signature workflow event", {
+      carePlanId: detail.carePlan.id,
+      message: error instanceof Error ? error.message : "Unknown care plan caregiver signature event failure."
+    });
+  }
+
+  try {
+    await markCarePlanPostSignReadyWorkflow({
+      carePlanId: detail.carePlan.id,
+      actor: {
+        id:
+          detail.carePlan.caregiverSentByUserId ??
+          detail.carePlan.nurseSignedByUserId ??
+          detail.carePlan.nurseDesigneeUserId ??
+          "system",
+        fullName:
+          detail.carePlan.nurseSignedByName ??
+          detail.carePlan.nurseDesigneeName ??
+          detail.carePlan.caregiverName ??
+          "Care Plan Caregiver Signature"
+      }
+    });
+    await requireCommittedSignedCarePlanReady({
+      carePlanId: detail.carePlan.id,
+      expectedMemberId: detail.carePlan.memberId,
+      expectedFinalMemberFileId: finalized.finalMemberFileId
+    });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete post-sign readiness update.";
-    postCommitActionNeededMessage =
-      "Signature was received and filed, but staff still needs to finish post-sign follow-up before the care plan is fully ready.";
     await recordCarePlanAlertSafely({
       entityType: "care_plan",
       entityId: detail.carePlan.id,
@@ -605,17 +654,18 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         error: reason
       }
     }, "submitPublicCarePlanSignature.postCommit");
-    console.error("[care-plan-esign] unable to complete non-destructive post-commit follow-up", {
+    console.error("[care-plan-esign] unable to complete caregiver signature finalization boundary", {
       carePlanId: detail.carePlan.id,
       message: reason
     });
+    throw error;
   }
 
   return {
     carePlanId: detail.carePlan.id,
     memberId: detail.carePlan.memberId,
     finalMemberFileId: finalized.finalMemberFileId,
-    actionNeeded: Boolean(postCommitActionNeededMessage),
-    actionNeededMessage: postCommitActionNeededMessage
+    actionNeeded: false,
+    actionNeededMessage: null
   };
 }

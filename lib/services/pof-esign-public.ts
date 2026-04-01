@@ -43,10 +43,7 @@ import { toEasternDate, toEasternISO } from "@/lib/timezone";
 import { toSendWorkflowDeliveryStatus } from "@/lib/services/send-workflow-state";
 import type { PhysicianOrderForm } from "@/lib/services/physician-order-model";
 
-async function recordPofAlertSafely(
-  input: Parameters<typeof recordImmediateSystemAlert>[0],
-  context: string
-) {
+async function recordPofAlertSafely(input: Parameters<typeof recordImmediateSystemAlert>[0], context: string) {
   try {
     await recordImmediateSystemAlert(input);
   } catch (error) {
@@ -390,7 +387,6 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
       request,
       signedAt: now
     });
-
     return {
       requestId: finalized.request_id,
       memberId: finalized.member_id,

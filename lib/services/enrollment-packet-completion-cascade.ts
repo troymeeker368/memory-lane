@@ -49,6 +49,8 @@ export type EnrollmentPacketCompletionCascadeResult = {
   senderNotificationDelivered: boolean;
   senderNotificationCount: number;
   completedPacketArtifactCreated: boolean;
+  completedPacketArtifactLinked: boolean;
+  operationalShellsReady: boolean;
   leadActivitySynced: boolean;
 };
 
@@ -402,6 +404,10 @@ export async function runEnrollmentPacketCompletionCascade(
     completedAt: input.request.completed_at ?? toEasternISO(),
     actionUrl: input.request.lead_id ? `/sales/leads/${input.request.lead_id}` : `/operations/member-command-center/${input.member.id}`
   });
+  const linkedArtifactsMissing = await listPacketsMissingEnrollmentPacketMemberFileLinks({
+    packetIds: [input.request.id]
+  });
+  const missingOperationalShellsAfterMapping = await listMembersMissingEnrollmentPacketOperationalShells([input.member.id]);
   const leadActivitySynced = await ensureEnrollmentPacketLeadActivity({
     request: input.request,
     member: input.member,
@@ -417,6 +423,8 @@ export async function runEnrollmentPacketCompletionCascade(
     senderNotificationDelivered: milestone.delivered,
     senderNotificationCount: milestone.notificationCount,
     completedPacketArtifactCreated,
+    completedPacketArtifactLinked: hasCompletedPacketArtifact && !linkedArtifactsMissing.has(input.request.id),
+    operationalShellsReady: !missingOperationalShellsAfterMapping.has(input.member.id),
     leadActivitySynced
   };
 }

@@ -1,7 +1,9 @@
 import {
   backfillMissingMemberCommandCenterRowsSupabase,
+  deleteMemberContactSupabase,
   ensureMemberAttendanceScheduleSupabase,
   ensureMemberCommandCenterProfileSupabase,
+  upsertMemberContactSupabase,
   updateMemberSupabase
 } from "@/lib/services/member-command-center-write";
 import {
@@ -10,6 +12,7 @@ import {
   getMemberCommandCenterIndexSupabase
 } from "@/lib/services/member-command-center-read";
 import { createClient } from "@/lib/supabase/server";
+import { mutateMemberAllergyWorkflow } from "@/lib/services/member-health-profiles";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -203,4 +206,70 @@ export async function updateMemberDobFromCommandCenter(memberId: string, dob: st
 
 export async function updateMemberEnrollmentFromSchedule(memberId: string, enrollmentDate: string | null) {
   return updateMemberSupabase(memberId, { enrollment_date: enrollmentDate ?? null });
+}
+
+export async function mutateMemberCommandCenterAllergyWorkflow(input: {
+  memberId: string;
+  operation: "create" | "update" | "delete";
+  allergyId?: string | null;
+  payload?: Record<string, unknown>;
+  actor: { id: string; fullName: string };
+  now?: string;
+}) {
+  const result = await mutateMemberAllergyWorkflow({
+    memberId: input.memberId,
+    operation: input.operation,
+    allergyId: input.allergyId,
+    payload: input.payload ?? {},
+    actor: input.actor,
+    now: input.now
+  });
+  return result.entity_row;
+}
+
+export async function saveMemberCommandCenterContact(input: {
+  id?: string;
+  memberId: string;
+  contactName: string;
+  relationshipToMember?: string | null;
+  category: string;
+  categoryOther?: string | null;
+  email?: string | null;
+  cellularNumber?: string | null;
+  workNumber?: string | null;
+  homeNumber?: string | null;
+  streetAddress?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  isPayor?: boolean;
+  actor: { id: string; fullName: string };
+  now?: string;
+}) {
+  const timestamp = input.now ?? toEasternISO();
+  return upsertMemberContactSupabase({
+    id: clean(input.id) ?? undefined,
+    member_id: input.memberId,
+    contact_name: input.contactName,
+    relationship_to_member: clean(input.relationshipToMember) ?? null,
+    category: input.category,
+    category_other: clean(input.categoryOther) ?? null,
+    email: clean(input.email)?.toLowerCase() ?? null,
+    cellular_number: clean(input.cellularNumber) ?? null,
+    work_number: clean(input.workNumber) ?? null,
+    home_number: clean(input.homeNumber) ?? null,
+    street_address: clean(input.streetAddress) ?? null,
+    city: clean(input.city) ?? null,
+    state: clean(input.state) ?? null,
+    zip: clean(input.zip) ?? null,
+    is_payor: input.isPayor === true,
+    created_by_user_id: input.actor.id,
+    created_by_name: input.actor.fullName,
+    created_at: timestamp,
+    updated_at: timestamp
+  });
+}
+
+export async function deleteMemberCommandCenterContact(input: { id: string }) {
+  return deleteMemberContactSupabase(input.id);
 }
