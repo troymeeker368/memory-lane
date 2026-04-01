@@ -3,6 +3,7 @@ import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { calculateAssessmentTotal, getAssessmentTrack } from "@/lib/assessment";
 
 import { type IntakeAssessmentForPofPrefill } from "@/lib/services/intake-to-pof-mapping";
+import { buildIntakeAssessmentPdfDataUrl } from "@/lib/services/intake-assessment-pdf";
 import {
   CommittedDraftPhysicianOrderReloadError,
   createDraftPhysicianOrderFromAssessment,
@@ -12,6 +13,8 @@ import {
 } from "@/lib/services/physician-orders-supabase";
 import { getActivePhysicianOrderForMember, getMemberHealthProfile } from "@/lib/services/physician-orders-read";
 import { requireSignedIntakeAssessment } from "@/lib/services/intake-assessment-esign";
+import { queueIntakePostSignFollowUpTask } from "@/lib/services/intake-post-sign-follow-up";
+import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { buildIdempotencyHash } from "@/lib/services/idempotency";
 import { toEasternISO } from "@/lib/timezone";
@@ -383,6 +386,151 @@ export async function autoCreateDraftPhysicianOrderFromIntake(input: {
     ...input,
     intakeSignature
   });
+}
+
+export type IntakePostSignWorkflowTaskType = "draft_pof_creation" | "member_file_pdf_persistence";
+
+export type CompleteIntakeAssessmentPostSignWorkflowResult = {
+  draftPofStatus: "created" | "failed";
+  followUpTaskType?: IntakePostSignWorkflowTaskType;
+  openFollowUpTaskTypes: IntakePostSignWorkflowTaskType[];
+  actionNeededMessage: string | null;
+  memberFileVerifiedPersisted: boolean;
+};
+
+export async function completeIntakeAssessmentPostSignWorkflow(input: {
+  assessment: IntakeAssessmentForPofPrefill;
+  memberId: string;
+  memberName: string;
+  actor: { id: string; fullName: string; signoffName?: string | null };
+}) : Promise<CompleteIntakeAssessmentPostSignWorkflowResult> {
+  const draftPofAttemptedAt = toEasternISO();
+  try {
+    await autoCreateDraftPhysicianOrderFromIntake({
+      assessment: input.assessment,
+      actor: input.actor
+    });
+  } catch (error) {
+    const committedReloadMiss = error instanceof CommittedDraftPhysicianOrderReloadError;
+    const message = error instanceof Error ? error.message : "Unable to create draft physician order from intake.";
+    const queueTitleOverride = committedReloadMiss ? "Draft POF Verification Follow-up Needed" : null;
+    const queueMessageOverride = committedReloadMiss
+      ? "The intake assessment signed successfully and a draft POF was committed in Supabase, but the immediate readback could not verify it. Confirm the saved draft from Physician Orders before treating intake follow-up as complete."
+      : null;
+    await updateIntakeAssessmentDraftPofStatus({
+      assessmentId: input.assessment.id,
+      status: committedReloadMiss ? "created" : "failed",
+      attemptedAt: draftPofAttemptedAt,
+      error: committedReloadMiss ? null : message
+    });
+    let followUpQueueError: string | null = null;
+    try {
+      await queueIntakePostSignFollowUpTask({
+        assessmentId: input.assessment.id,
+        memberId: input.memberId,
+        taskType: "draft_pof_creation",
+        actorUserId: input.actor.id,
+        actorName: input.actor.fullName,
+        errorMessage: message,
+        titleOverride: queueTitleOverride,
+        messageOverride: queueMessageOverride
+      });
+    } catch (queueError) {
+      followUpQueueError =
+        queueError instanceof Error ? queueError.message : "Unable to queue intake post-sign follow-up task.";
+    }
+    return {
+      draftPofStatus: committedReloadMiss ? "created" : "failed",
+      followUpTaskType: followUpQueueError ? undefined : "draft_pof_creation",
+      openFollowUpTaskTypes: ["draft_pof_creation"],
+      actionNeededMessage: committedReloadMiss
+        ? followUpQueueError
+          ? `Intake Assessment was signed and the draft POF was committed, but immediate readback verification failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
+          : `Intake Assessment was signed and the draft POF was committed, but immediate readback verification still needs follow-up (${message}).`
+        : followUpQueueError
+          ? `Intake Assessment was signed and draft POF creation failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
+          : `Intake Assessment was signed, but draft POF creation failed (${message}).`,
+      memberFileVerifiedPersisted: false
+    };
+  }
+
+  try {
+    const generated = await buildIntakeAssessmentPdfDataUrl(input.assessment.id);
+    const savedPdf = await saveGeneratedMemberPdfToFiles({
+      memberId: input.memberId,
+      memberName: input.memberName || "Member",
+      documentLabel: "Intake Assessment",
+      documentSource: `Intake Assessment:${input.assessment.id}`,
+      category: "Assessment",
+      dataUrl: generated.dataUrl,
+      uploadedBy: {
+        id: input.actor.id,
+        name: input.actor.fullName
+      },
+      generatedAtIso: toEasternISO(),
+      replaceExistingByDocumentSource: true
+    });
+
+    if (!savedPdf.verifiedPersisted) {
+      const message =
+        "Intake Assessment PDF storage upload completed, but Supabase member-file verification still needs follow-up.";
+      let followUpQueueError: string | null = null;
+      try {
+        await queueIntakePostSignFollowUpTask({
+          assessmentId: input.assessment.id,
+          memberId: input.memberId,
+          taskType: "member_file_pdf_persistence",
+          actorUserId: input.actor.id,
+          actorName: input.actor.fullName,
+          errorMessage: message
+        });
+      } catch (queueError) {
+        followUpQueueError =
+          queueError instanceof Error ? queueError.message : "Unable to queue intake post-sign follow-up task.";
+      }
+      return {
+        draftPofStatus: "created",
+        followUpTaskType: followUpQueueError ? undefined : "member_file_pdf_persistence",
+        openFollowUpTaskTypes: ["member_file_pdf_persistence"],
+        actionNeededMessage: followUpQueueError
+          ? `${message} Follow-up queue creation also failed (${followUpQueueError}).`
+          : message,
+        memberFileVerifiedPersisted: false
+      };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown PDF generation error.";
+    let followUpQueueError: string | null = null;
+    try {
+      await queueIntakePostSignFollowUpTask({
+        assessmentId: input.assessment.id,
+        memberId: input.memberId,
+        taskType: "member_file_pdf_persistence",
+        actorUserId: input.actor.id,
+        actorName: input.actor.fullName,
+        errorMessage: message
+      });
+    } catch (queueError) {
+      followUpQueueError =
+        queueError instanceof Error ? queueError.message : "Unable to queue intake post-sign follow-up task.";
+    }
+    return {
+      draftPofStatus: "created",
+      followUpTaskType: followUpQueueError ? undefined : "member_file_pdf_persistence",
+      openFollowUpTaskTypes: ["member_file_pdf_persistence"],
+      actionNeededMessage: followUpQueueError
+        ? `Intake Assessment PDF save to Member Files failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
+        : `Intake Assessment was created, but saving its PDF to member files failed (${message}).`,
+      memberFileVerifiedPersisted: false
+    };
+  }
+
+  return {
+    draftPofStatus: "created",
+    openFollowUpTaskTypes: [],
+    actionNeededMessage: null,
+    memberFileVerifiedPersisted: true
+  };
 }
 
 export {

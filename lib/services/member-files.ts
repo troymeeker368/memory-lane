@@ -532,7 +532,10 @@ async function loadPersistedMemberFileOrReturnVerificationPending(input: {
       documentSource: input.documentSource
     }));
   if (persisted) {
-    return persisted;
+    return {
+      ...persisted,
+      verifiedPersisted: true as const
+    };
   }
 
   await recordImmediateSystemAlert({
@@ -566,7 +569,8 @@ async function loadPersistedMemberFileOrReturnVerificationPending(input: {
     category_other: input.categoryOther ?? null,
     document_source: input.documentSource,
     uploaded_by_name: input.uploadedByName ?? null,
-    uploaded_at: input.uploadedAtIso
+    uploaded_at: input.uploadedAtIso,
+    verifiedPersisted: false as const
   };
 }
 
@@ -838,7 +842,8 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
       return {
         created: updated,
         fileName: defaultName,
-        generatedAtIso: now
+        generatedAtIso: now,
+        verifiedPersisted: Boolean((updated as { verifiedPersisted?: boolean }).verifiedPersisted ?? true)
       };
     }
   }
@@ -919,6 +924,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
   return {
     created,
     fileName,
-    generatedAtIso: now
+    generatedAtIso: now,
+    verifiedPersisted: Boolean((created as { verifiedPersisted?: boolean }).verifiedPersisted ?? true)
   };
 }

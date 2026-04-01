@@ -4,15 +4,11 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getCurrentProfile } from "@/lib/auth";
-import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
 import {
-  autoCreateDraftPhysicianOrderFromIntake,
-  CommittedDraftPhysicianOrderReloadError,
-  createIntakeAssessmentWithResponses,
-  updateIntakeAssessmentDraftPofStatus
+  completeIntakeAssessmentPostSignWorkflow,
+  createIntakeAssessmentWithResponses
 } from "@/lib/services/intake-pof-mhp-cascade";
 import { normalizeIntakeAssistiveDeviceFields } from "@/lib/services/intake-pof-shared";
-import { buildIntakeAssessmentPdfDataUrl } from "@/lib/services/intake-assessment-pdf";
 import {
   isAuthorizedIntakeAssessmentSignerRole,
   signIntakeAssessment
@@ -22,14 +18,12 @@ import {
   type IntakeDraftPofReadinessStatus
 } from "@/lib/services/intake-draft-pof-readiness";
 import { getLeadRecordById } from "@/lib/services/leads-read";
-import { queueIntakePostSignFollowUpTask } from "@/lib/services/intake-post-sign-follow-up";
 import {
   resolveIntakePostSignReadiness,
   type IntakePostSignReadinessStatus
 } from "@/lib/services/intake-post-sign-readiness";
 import { buildCommittedWorkflowActionState } from "@/lib/services/committed-workflow-state";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
-import { toEasternISO } from "@/lib/timezone";
 
 import { resolveActionMemberIdentity } from "@/app/action-helpers";
 
@@ -317,120 +311,12 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     };
   }
 
-  const draftPofAttemptedAt = toEasternISO();
-  try {
-    await autoCreateDraftPhysicianOrderFromIntake({
-      assessment: created,
-      actor: { id: profile.id, fullName: profile.full_name, signoffName: signerName }
-    });
-  } catch (error) {
-    const committedReloadMiss = error instanceof CommittedDraftPhysicianOrderReloadError;
-    const message = error instanceof Error ? error.message : "Unable to create draft physician order from intake.";
-    const queueTitleOverride = committedReloadMiss ? "Draft POF Verification Follow-up Needed" : null;
-    const queueMessageOverride = committedReloadMiss
-      ? "The intake assessment signed successfully and a draft POF was committed in Supabase, but the immediate readback could not verify it. Confirm the saved draft from Physician Orders before treating intake follow-up as complete."
-      : null;
-    await updateIntakeAssessmentDraftPofStatus({
-      assessmentId: created.id,
-      status: committedReloadMiss ? "created" : "failed",
-      attemptedAt: draftPofAttemptedAt,
-      error: committedReloadMiss ? null : message
-    });
-    let followUpQueueError: string | null = null;
-    try {
-      await queueIntakePostSignFollowUpTask({
-        assessmentId: created.id,
-        memberId: effectiveMemberId,
-        taskType: "draft_pof_creation",
-        actorUserId: profile.id,
-        actorName: profile.full_name,
-        errorMessage: message,
-        titleOverride: queueTitleOverride,
-        messageOverride: queueMessageOverride
-      });
-    } catch (queueError) {
-      followUpQueueError =
-        queueError instanceof Error ? queueError.message : "Unable to queue intake post-sign follow-up task.";
-    }
-    revalidatePath("/health/assessment");
-    revalidatePath(`/health/assessment/${created.id}`);
-    revalidatePath(`/reports/assessments/${created.id}`);
-    const readiness = buildIntakePostSignState({
-      signatureStatus: "signed",
-      draftPofStatus: committedReloadMiss ? "created" : "failed",
-      openFollowUpTaskTypes: ["draft_pof_creation"]
-    });
-    return {
-      ok: true as const,
-      assessmentId: created.id,
-      followUpTaskType: followUpQueueError ? undefined : ("draft_pof_creation" as const),
-      ...readiness,
-      ...buildCommittedWorkflowActionState({
-        operationalStatus: readiness.postSignReadinessStatus,
-        operationallyReady: readiness.postSignReady,
-        actionNeededMessage: committedReloadMiss
-          ? followUpQueueError
-            ? `Intake Assessment was signed and the draft POF was committed, but immediate readback verification failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
-            : `Intake Assessment was signed and the draft POF was committed, but immediate readback verification still needs follow-up (${message}).`
-          : followUpQueueError
-            ? `Intake Assessment was signed and draft POF creation failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
-            : `Intake Assessment was signed, but draft POF creation failed (${message}).`
-      })
-    };
-  }
-
-  try {
-    const generated = await buildIntakeAssessmentPdfDataUrl(created.id);
-    await saveGeneratedMemberPdfToFiles({
-      memberId: effectiveMemberId,
-      memberName: canonicalIdentity.displayName || "Member",
-      documentLabel: "Intake Assessment",
-      documentSource: `Intake Assessment:${created.id}`,
-      category: "Assessment",
-      dataUrl: generated.dataUrl,
-      uploadedBy: {
-        id: profile.id,
-        name: profile.full_name
-      },
-      generatedAtIso: toEasternISO(),
-      replaceExistingByDocumentSource: true
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown PDF generation error.";
-    let followUpQueueError: string | null = null;
-    try {
-      await queueIntakePostSignFollowUpTask({
-        assessmentId: created.id,
-        memberId: effectiveMemberId,
-        taskType: "member_file_pdf_persistence",
-        actorUserId: profile.id,
-        actorName: profile.full_name,
-        errorMessage: message
-      });
-    } catch (queueError) {
-      followUpQueueError =
-        queueError instanceof Error ? queueError.message : "Unable to queue intake post-sign follow-up task.";
-    }
-    return {
-      ok: true as const,
-      assessmentId: created.id,
-      followUpTaskType: followUpQueueError ? undefined : ("member_file_pdf_persistence" as const),
-      ...buildCommittedWorkflowActionState({
-        operationalStatus: followUpQueueError ? "signed_pending_member_file_pdf" : "signed_pending_member_file_pdf",
-        operationallyReady: false,
-        actionNeededMessage: followUpQueueError
-          ? `Intake Assessment PDF save to Member Files failed (${message}). Follow-up queue creation also failed (${followUpQueueError}).`
-          : `Intake Assessment was created, but saving its PDF to member files failed (${message}).`
-      }),
-      ...(followUpQueueError
-        ? {}
-        : buildIntakePostSignState({
-            signatureStatus: "signed",
-            draftPofStatus: "created",
-            openFollowUpTaskTypes: ["member_file_pdf_persistence"]
-          }))
-    };
-  }
+  const postSignWorkflow = await completeIntakeAssessmentPostSignWorkflow({
+    assessment: created,
+    memberId: effectiveMemberId,
+    memberName: canonicalIdentity.displayName || "Member",
+    actor: { id: profile.id, fullName: profile.full_name, signoffName: signerName }
+  });
 
   revalidatePath("/health");
   revalidatePath("/health/assessment");
@@ -442,21 +328,20 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
   revalidatePath(`/operations/member-command-center/${effectiveMemberId}`);
   revalidatePath(`/members/${effectiveMemberId}`);
   revalidatePath(`/reports/assessments/${created.id}`);
+  const readiness = buildIntakePostSignState({
+    signatureStatus: "signed",
+    draftPofStatus: postSignWorkflow.draftPofStatus,
+    openFollowUpTaskTypes: postSignWorkflow.openFollowUpTaskTypes
+  });
   return {
     ok: true,
     assessmentId: created.id,
-    ...(() => {
-      const readiness = buildIntakePostSignState({
-        signatureStatus: "signed",
-        draftPofStatus: "created"
-      });
-      return {
-        ...readiness,
-        ...buildCommittedWorkflowActionState({
-          operationalStatus: readiness.postSignReadinessStatus,
-          operationallyReady: readiness.postSignReady
-        })
-      };
-    })()
+    followUpTaskType: postSignWorkflow.followUpTaskType,
+    ...readiness,
+    ...buildCommittedWorkflowActionState({
+      operationalStatus: readiness.postSignReadinessStatus,
+      operationallyReady: readiness.postSignReady,
+      actionNeededMessage: postSignWorkflow.actionNeededMessage
+    })
   };
 }
