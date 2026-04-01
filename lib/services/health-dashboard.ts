@@ -1,5 +1,4 @@
 import { getCarePlanDashboard } from "@/lib/services/care-plans";
-import { getMembers } from "@/lib/services/documentation";
 import { listIncidentDashboard } from "@/lib/services/incidents";
 import {
   getHealthDashboardMarActionRows,
@@ -112,7 +111,7 @@ export async function getHealthDashboardData(options?: {
     totalPages: 1
   };
 
-  const [marActionRows, marRecentRows, bloodSugarResult, members, carePlans, incidents, progressNotes, careAlertRows] =
+  const [marActionRows, marRecentRows, bloodSugarResult, activeMemberCountResult, carePlans, incidents, progressNotes, careAlertRows] =
     await Promise.all([
       getHealthDashboardMarActionRows({ serviceRole: true, hoursAhead: 12 }),
       getHealthDashboardMarRecentRows({ serviceRole: true, limit: 8 }),
@@ -121,7 +120,7 @@ export async function getHealthDashboardData(options?: {
         .select("id, checked_at, member_id, member_name, reading_mg_dl, nurse_name, notes")
         .order("checked_at", { ascending: false })
         .limit(16),
-      getMembers(),
+      supabase.from("members").select("id", { count: "exact", head: true }).eq("status", "active"),
       options?.includeCarePlans ? getCarePlanDashboard({ page: 1, pageSize: 12 }) : Promise.resolve(emptyCarePlanDashboard),
       options?.includeIncidents ? listIncidentDashboard({ limit: 12 }) : Promise.resolve(emptyIncidentDashboard),
       options?.includeProgressNotes
@@ -133,6 +132,7 @@ export async function getHealthDashboardData(options?: {
     ]);
 
   if (bloodSugarResult.error) throw new Error(`Unable to load v_blood_sugar_logs_detailed: ${bloodSugarResult.error.message}`);
+  if (activeMemberCountResult.error) throw new Error(`Unable to count active members: ${activeMemberCountResult.error.message}`);
 
   const marRows = marActionRows.map(normalizeDashboardMarRow);
   const recentMarRows = marRecentRows.map(normalizeDashboardMarRow);
@@ -202,7 +202,7 @@ export async function getHealthDashboardData(options?: {
     bloodSugarRows,
     recentHealthDocs,
     careAlerts,
-    members: members.map((member) => ({ id: member.id, display_name: member.display_name })),
+    activeMemberCount: activeMemberCountResult.count ?? 0,
     carePlans,
     incidents: {
       ...incidents,

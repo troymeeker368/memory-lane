@@ -639,9 +639,11 @@ export type Database = {
           description: string
           id: string
           invoice_id: string
+          line_number: number
           line_type: string
           member_id: string
           payor_id: string | null
+          product_or_service: string
           quantity: number
           service_date: string | null
           service_period_end: string | null
@@ -658,9 +660,11 @@ export type Database = {
           description: string
           id?: string
           invoice_id: string
+          line_number?: number
           line_type: string
           member_id: string
           payor_id?: string | null
+          product_or_service?: string
           quantity?: number
           service_date?: string | null
           service_period_end?: string | null
@@ -677,9 +681,11 @@ export type Database = {
           description?: string
           id?: string
           invoice_id?: string
+          line_number?: number
           line_type?: string
           member_id?: string
           payor_id?: string | null
+          product_or_service?: string
           quantity?: number
           service_date?: string | null
           service_period_end?: string | null
@@ -724,11 +730,19 @@ export type Database = {
         Row: {
           adjustment_amount: number
           ancillary_amount: number
+          balance_due_amount: number
           base_period_end: string | null
           base_period_start: string | null
           base_program_amount: number
           base_program_billed_days: number
           billing_batch_id: string | null
+          bill_to_address_line_1_snapshot: string | null
+          bill_to_address_line_2_snapshot: string | null
+          bill_to_address_line_3_snapshot: string | null
+          bill_to_email_snapshot: string | null
+          bill_to_message_snapshot: string | null
+          bill_to_name_snapshot: string | null
+          bill_to_phone_snapshot: string | null
           billing_method_snapshot: string | null
           billing_mode_snapshot: string | null
           created_at: string
@@ -749,6 +763,7 @@ export type Database = {
           monthly_billing_basis_snapshot: string | null
           notes: string | null
           payor_id: string | null
+          payments_amount: number
           total_amount: number
           transportation_amount: number
           transportation_billing_status_snapshot: string | null
@@ -759,11 +774,19 @@ export type Database = {
         Insert: {
           adjustment_amount?: number
           ancillary_amount?: number
+          balance_due_amount?: number
           base_period_end?: string | null
           base_period_start?: string | null
           base_program_amount?: number
           base_program_billed_days?: number
           billing_batch_id?: string | null
+          bill_to_address_line_1_snapshot?: string | null
+          bill_to_address_line_2_snapshot?: string | null
+          bill_to_address_line_3_snapshot?: string | null
+          bill_to_email_snapshot?: string | null
+          bill_to_message_snapshot?: string | null
+          bill_to_name_snapshot?: string | null
+          bill_to_phone_snapshot?: string | null
           billing_method_snapshot?: string | null
           billing_mode_snapshot?: string | null
           created_at?: string
@@ -784,6 +807,7 @@ export type Database = {
           monthly_billing_basis_snapshot?: string | null
           notes?: string | null
           payor_id?: string | null
+          payments_amount?: number
           total_amount?: number
           transportation_amount?: number
           transportation_billing_status_snapshot?: string | null
@@ -794,11 +818,19 @@ export type Database = {
         Update: {
           adjustment_amount?: number
           ancillary_amount?: number
+          balance_due_amount?: number
           base_period_end?: string | null
           base_period_start?: string | null
           base_program_amount?: number
           base_program_billed_days?: number
           billing_batch_id?: string | null
+          bill_to_address_line_1_snapshot?: string | null
+          bill_to_address_line_2_snapshot?: string | null
+          bill_to_address_line_3_snapshot?: string | null
+          bill_to_email_snapshot?: string | null
+          bill_to_message_snapshot?: string | null
+          bill_to_name_snapshot?: string | null
+          bill_to_phone_snapshot?: string | null
           billing_method_snapshot?: string | null
           billing_mode_snapshot?: string | null
           created_at?: string
@@ -819,6 +851,7 @@ export type Database = {
           monthly_billing_basis_snapshot?: string | null
           notes?: string | null
           payor_id?: string | null
+          payments_amount?: number
           total_amount?: number
           transportation_amount?: number
           transportation_billing_status_snapshot?: string | null

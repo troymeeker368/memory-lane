@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { saveUnscheduledAttendanceAction } from "@/app/(portal)/operations/attendance/actions";
+import { UnscheduledAttendanceMemberSearchPicker } from "@/components/forms/unscheduled-attendance-member-search-picker";
 import type { AttendanceMutationRecord } from "@/components/forms/attendance-member-cell";
 import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { MutationNotice } from "@/components/ui/mutation-notice";
+import type { UnscheduledAttendanceMemberOption } from "@/lib/services/attendance";
 
 function currentTimeString() {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -24,46 +26,35 @@ function currentTimeString() {
 
 export function UnscheduledAttendanceForm({
   selectedDate,
-  members,
   onSaved
 }: {
   selectedDate: string;
-  members: Array<{ id: string; displayName: string; makeupBalance: number }>;
   onSaved?: (payload: {
     record: AttendanceMutationRecord;
-    member: { id: string; displayName: string; makeupBalance: number };
+    member: UnscheduledAttendanceMemberOption;
   }) => void;
 }) {
-  const [memberId, setMemberId] = useState(members[0]?.id ?? "");
+  const [memberId, setMemberId] = useState("");
+  const [selectedMember, setSelectedMember] = useState<UnscheduledAttendanceMemberOption | null>(null);
   const [useMakeupDay, setUseMakeupDay] = useState<"yes" | "no">("no");
   const [checkInTime, setCheckInTime] = useState(currentTimeString());
   const [status, setStatus] = useState<string | null>(null);
   const { isSaving, run } = useScopedMutation();
 
-  const selectedMember = useMemo(
-    () => members.find((member) => member.id === memberId) ?? null,
-    [members, memberId]
-  );
   const currentBalance = selectedMember?.makeupBalance ?? 0;
   const projectedBalance = useMakeupDay === "yes" ? Math.max(0, currentBalance - 1) : currentBalance;
 
   return (
     <div className="mt-3 grid gap-2 rounded-lg border border-border p-3">
       <div className="grid gap-2 md:grid-cols-4">
-        <label className="space-y-1 text-sm md:col-span-2">
-          <span className="text-xs font-semibold text-muted">Member</span>
-          <select
+        <div className="md:col-span-2">
+          <UnscheduledAttendanceMemberSearchPicker
+            selectedDate={selectedDate}
             value={memberId}
-            onChange={(event) => setMemberId(event.target.value)}
-            className="h-10 w-full rounded-lg border border-border px-3"
-          >
-            {members.map((member) => (
-              <option key={member.id} value={member.id}>
-                {member.displayName}
-              </option>
-            ))}
-          </select>
-        </label>
+            onChange={(nextValue) => setMemberId(nextValue)}
+            onSelectOption={(option) => setSelectedMember(option)}
+          />
+        </div>
 
         <label className="space-y-1 text-sm">
           <span className="text-xs font-semibold text-muted">Use makeup day?</span>
@@ -132,6 +123,10 @@ export function UnscheduledAttendanceForm({
                       }
                     });
                   }
+                  setMemberId("");
+                  setSelectedMember(null);
+                  setUseMakeupDay("no");
+                  setCheckInTime(currentTimeString());
                   setStatus(result.message);
                 },
                 onError: async (result) => {

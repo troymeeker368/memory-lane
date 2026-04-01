@@ -2,51 +2,28 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 
-import {
-  searchAncillaryMembersAction,
-  searchCarePlanMembersAction,
-  searchDocumentationMembersAction,
-  searchHealthMembersAction,
-  searchReportMembersAction,
-  searchPhysicianOrderMembersAction
-} from "@/app/lookup-actions";
-import type { MemberLookupRow } from "@/lib/services/shared-lookups-supabase";
+import { searchUnscheduledAttendanceMembersAction } from "@/app/lookup-actions";
+import type { UnscheduledAttendanceMemberOption } from "@/lib/services/attendance";
 
-type MemberSearchScope = "documentation" | "health" | "care-plan" | "physician-orders" | "ancillary" | "reports";
-
-const SEARCH_ACTIONS = {
-  ancillary: searchAncillaryMembersAction,
-  documentation: searchDocumentationMembersAction,
-  health: searchHealthMembersAction,
-  reports: searchReportMembersAction,
-  "care-plan": searchCarePlanMembersAction,
-  "physician-orders": searchPhysicianOrderMembersAction
-} satisfies Record<MemberSearchScope, (input: { q?: string; selectedId?: string | null; limit?: number }) => Promise<MemberLookupRow[]>>;
-
-function getSelectedOption(options: MemberLookupRow[], value: string) {
+function getSelectedOption(options: UnscheduledAttendanceMemberOption[], value: string) {
   return options.find((option) => option.id === value) ?? null;
 }
 
-export function MemberSearchPicker({
-  scope,
+export function UnscheduledAttendanceMemberSearchPicker({
+  selectedDate,
   value,
   onChange,
   onSelectOption,
-  label = "Member",
-  searchPlaceholder = "Search member name",
   limit = 25
 }: {
-  scope: MemberSearchScope;
+  selectedDate: string;
   value: string;
   onChange: (nextValue: string) => void;
-  onSelectOption?: (option: MemberLookupRow | null) => void;
-  label?: string;
-  searchPlaceholder?: string;
+  onSelectOption?: (option: UnscheduledAttendanceMemberOption | null) => void;
   limit?: number;
 }) {
-  const searchAction = SEARCH_ACTIONS[scope];
   const [query, setQuery] = useState("");
-  const [options, setOptions] = useState<MemberLookupRow[]>([]);
+  const [options, setOptions] = useState<UnscheduledAttendanceMemberOption[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const selectedOption = useMemo(() => getSelectedOption(options, value), [options, value]);
@@ -55,7 +32,8 @@ export function MemberSearchPicker({
     const trimmedQuery = nextQuery.trim();
     startTransition(async () => {
       try {
-        const nextOptions = await searchAction({
+        const nextOptions = await searchUnscheduledAttendanceMembersAction({
+          selectedDate,
           q: trimmedQuery,
           selectedId,
           limit
@@ -64,14 +42,14 @@ export function MemberSearchPicker({
         setStatus(
           trimmedQuery.length >= 2
             ? nextOptions.length === 0
-              ? "No active members matched that search."
-              : `Showing ${nextOptions.length} matching member${nextOptions.length === 1 ? "" : "s"}.`
+              ? "No unscheduled attendance matches found for that search."
+              : `Showing ${nextOptions.length} eligible member${nextOptions.length === 1 ? "" : "s"} for unscheduled attendance.`
             : selectedId
               ? null
-              : "Search at least 2 letters to load matching active members."
+              : "Search at least 2 letters to load eligible unscheduled members."
         );
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : "Unable to load member matches.");
+        setStatus(error instanceof Error ? error.message : "Unable to load unscheduled attendance matches.");
       }
     });
   };
@@ -79,7 +57,7 @@ export function MemberSearchPicker({
   useEffect(() => {
     if (!value || selectedOption) return;
     runSearch("", value);
-  }, [selectedOption, value]);
+  }, [selectedDate, selectedOption, value]);
 
   useEffect(() => {
     onSelectOption?.(selectedOption);
@@ -88,17 +66,17 @@ export function MemberSearchPicker({
   return (
     <div className="space-y-2">
       <label className="space-y-1 text-sm">
-        <span className="font-semibold">{label}</span>
+        <span className="text-xs font-semibold text-muted">Member</span>
         <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
           <input
-            className="h-11 w-full rounded-lg border border-border px-3"
+            className="h-10 w-full rounded-lg border border-border px-3"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder={searchPlaceholder}
+            placeholder="Search active member name"
           />
           <button
             type="button"
-            className="h-11 rounded-lg border border-border px-3 text-sm font-semibold"
+            className="h-10 rounded-lg border border-border px-3 text-sm font-semibold"
             onClick={() => runSearch(query)}
             disabled={isPending}
           >
@@ -106,11 +84,11 @@ export function MemberSearchPicker({
           </button>
           <button
             type="button"
-            className="h-11 rounded-lg border border-border px-3 text-sm font-semibold"
+            className="h-10 rounded-lg border border-border px-3 text-sm font-semibold"
             onClick={() => {
               setQuery("");
               setOptions(selectedOption ? [selectedOption] : []);
-              setStatus("Search at least 2 letters to load matching active members.");
+              setStatus("Search at least 2 letters to load eligible unscheduled members.");
             }}
             disabled={isPending}
           >
@@ -120,7 +98,7 @@ export function MemberSearchPicker({
       </label>
 
       <select
-        className="h-11 w-full rounded-lg border border-border px-3"
+        className="h-10 w-full rounded-lg border border-border px-3"
         value={value}
         onChange={(event) => {
           onChange(event.target.value);
@@ -132,14 +110,13 @@ export function MemberSearchPicker({
         <option value="">{options.length === 0 ? "Search members to load options" : "Select member"}</option>
         {options.map((option) => (
           <option key={option.id} value={option.id}>
-            {option.display_name}
+            {option.displayName}
+            {option.makeupBalance > 0 ? ` (${option.makeupBalance} makeup day${option.makeupBalance === 1 ? "" : "s"})` : ""}
           </option>
         ))}
       </select>
 
-      <p className="text-xs text-muted">
-        {status ?? "Search at least 2 letters to load matching active members."}
-      </p>
+      <p className="text-xs text-muted">{status ?? "Search at least 2 letters to load eligible unscheduled members."}</p>
     </div>
   );
 }

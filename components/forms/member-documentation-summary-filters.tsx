@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useTransition } from "react";
 
+import { MemberSearchPicker } from "@/components/forms/member-search-picker";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 
 type RangePreset = "today" | "last-week" | "last-30-days" | "last-90-days" | "last-year" | "custom";
@@ -53,13 +54,11 @@ function getPresetRange(preset: Exclude<RangePreset, "custom">) {
 }
 
 export function MemberDocumentationSummaryFilters({
-  members,
   initialMemberId,
   initialRange,
   initialFrom,
   initialTo
 }: {
-  members: Array<{ id: string; display_name: string }>;
   initialMemberId: string;
   initialRange: RangePreset;
   initialFrom: string;
@@ -100,30 +99,15 @@ export function MemberDocumentationSummaryFilters({
   return (
     <form className="mt-3 grid gap-2 md:grid-cols-6">
       <div className="md:col-span-2">
-        <label className="mb-1 block text-xs font-semibold text-muted" htmlFor="memberId">
-          Member
-        </label>
-        <select
-          id="memberId"
-          name="memberId"
+        <MemberSearchPicker
+          scope="reports"
           value={memberId}
-          size={Math.min(Math.max(members.length, 2), 10)}
-          disabled={isPending}
-          onChange={(event) => {
-            const nextMemberId = event.target.value;
+          onChange={(nextMemberId) => {
             setMemberId(nextMemberId);
             pushQuery({ memberId: nextMemberId, range, from, to });
           }}
-          className="h-auto max-h-56 w-full overflow-y-auto rounded-lg border border-border bg-white px-3 py-2 text-sm text-fg"
-        >
-          <option value="">Select member</option>
-          {members.map((member) => (
-            <option key={member.id} value={member.id}>
-              {member.display_name}
-            </option>
-          ))}
-        </select>
-        <p className="mt-1 text-xs text-muted">Scroll to browse member options.</p>
+          label="Member"
+        />
       </div>
 
       <div>

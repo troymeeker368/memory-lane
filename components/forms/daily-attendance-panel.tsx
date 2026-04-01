@@ -117,24 +117,17 @@ function mapAttendanceRecordOntoRow(row: DailyAttendanceClientRow, record: Atten
 export function DailyAttendancePanel({
   dailyAttendance,
   query,
-  unscheduledMembers,
   canEdit
 }: {
   dailyAttendance: DailyAttendanceView;
   query: string;
-  unscheduledMembers: UnscheduledMemberOption[];
   canEdit: boolean;
 }) {
   const [rows, setRows] = useState<DailyAttendanceClientRow[]>(dailyAttendance.rows);
-  const [unscheduledOptions, setUnscheduledOptions] = useState(unscheduledMembers);
 
   useEffect(() => {
     setRows(dailyAttendance.rows);
   }, [dailyAttendance.rows]);
-
-  useEffect(() => {
-    setUnscheduledOptions(unscheduledMembers);
-  }, [unscheduledMembers]);
 
   const summary = useMemo(
     () => deriveSummary(rows, dailyAttendance.summary.onHoldExcludedMembers),
@@ -152,22 +145,6 @@ export function DailyAttendancePanel({
         return current.filter((row) => row.memberId !== record.memberId);
       }
       return current.map((row) => (row.memberId === record.memberId ? mapAttendanceRecordOntoRow(row, record) : row));
-    });
-
-    setUnscheduledOptions((current) => {
-      const existingOption = current.find((member) => member.id === record.memberId);
-      const unscheduledRow = rows.find((row) => row.memberId === record.memberId && row.isUnscheduledRow);
-      if (record.recordStatus == null && unscheduledRow && !existingOption) {
-        return [
-          ...current,
-          {
-            id: unscheduledRow.memberId,
-            displayName: unscheduledRow.memberName,
-            makeupBalance: unscheduledRow.makeupBalance ?? 0
-          }
-        ].sort((left, right) => left.displayName.localeCompare(right.displayName));
-      }
-      return current;
     });
   }
 
@@ -212,7 +189,6 @@ export function DailyAttendancePanel({
       ];
     });
 
-    setUnscheduledOptions((current) => current.filter((member) => member.id !== payload.member.id));
   }
 
   return (
@@ -243,11 +219,7 @@ export function DailyAttendancePanel({
       {canEdit ? (
         <div className="mt-3">
           <p className="text-sm font-semibold text-primary-text">Unscheduled Day Add</p>
-          {unscheduledOptions.length === 0 ? (
-            <p className="mt-1 text-xs text-muted">All active members are already scheduled (or on hold) for this date.</p>
-          ) : (
-            <UnscheduledAttendanceForm selectedDate={dailyAttendance.selectedDate} members={unscheduledOptions} onSaved={handleUnscheduledSaved} />
-          )}
+          <UnscheduledAttendanceForm selectedDate={dailyAttendance.selectedDate} onSaved={handleUnscheduledSaved} />
         </div>
       ) : null}
 

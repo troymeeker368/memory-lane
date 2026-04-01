@@ -5,7 +5,7 @@ export const BILLING_MEMBER_ATTENDANCE_SCHEDULE_SELECT =
   "member_id, daily_rate, custom_daily_rate, default_daily_rate, transportation_billing_status, monday, tuesday, wednesday, thursday, friday";
 
 export const BILLING_ATTENDANCE_RECORD_STATUS_SELECT =
-  "member_id, attendance_date, status";
+  "id, member_id, attendance_date, status";
 
 export const BILLING_TRANSPORTATION_LOG_SELECT =
   "id, member_id, service_date, transport_type, quantity, unit_rate, total_amount, billing_status, billing_exclusion_reason, billable";

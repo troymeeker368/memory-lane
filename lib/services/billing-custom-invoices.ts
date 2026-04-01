@@ -16,15 +16,29 @@ import type {
 import { addDays, asNumber, buildCustomInvoiceNumber, endOfMonth, normalizeDateOnly, startOfMonth, toAmount, toDateRange } from "@/lib/services/billing-utils";
 import { collectBillingEligibleBaseDates } from "@/lib/services/billing-core";
 import {
+  buildBillingInvoiceBillToSnapshot,
+  buildServiceDateInvoiceLineDescription,
+  resolveInvoiceProductOrService
+} from "@/lib/services/billing-invoice-format";
+import {
   getActiveBillingScheduleTemplate,
   getActiveCenterBillingSetting,
   getMemberAttendanceBillingSetting,
   getActiveMemberBillingSetting,
   getNonBillableCenterClosureSet
 } from "@/lib/services/billing-configuration";
+import { getBillingPayorContact } from "@/lib/services/billing-payor-contacts";
 import { loadExpectedAttendanceSupabaseContext } from "@/lib/services/expected-attendance-supabase";
 import { resolveEffectiveDailyRate, resolveEffectiveTransportationBillingStatus } from "@/lib/services/billing-effective";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
+
+function normalizeRequiredSourceDateOrThrow(value: unknown, fieldName: string, sourceId: unknown) {
+  const normalized = normalizeDateOnly(String(value ?? ""), "");
+  if (!normalized) {
+    throw new Error(`Billing source row ${String(sourceId ?? "")} is missing a valid ${fieldName}.`);
+  }
+  return normalized;
+}
 
 export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
   try {
@@ -38,6 +52,11 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       .maybeSingle();
     if (memberError) throw new Error(memberError.message);
     if (!member) return { ok: false as const, error: "Member not found." };
+    const payor = await getBillingPayorContact(input.memberId, {
+      logMissing: true,
+      source: "createCustomInvoice"
+    });
+    const billToSnapshot = buildBillingInvoiceBillToSnapshot(payor);
 
     const [centerSetting, memberSetting, attendanceSetting] = await Promise.all([
       getActiveCenterBillingSetting(period.start),
@@ -80,7 +99,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
     });
     manualExcludeDates.forEach((dateOnly) => baseDates.delete(dateOnly));
 
-    const baseLineItems: CustomInvoiceManualLine[] = [];
+    const baseLineItems: Array<CustomInvoiceManualLine & { serviceDate?: string | null; productOrService?: string | null }> = [];
     if (input.calculationMethod === "ManualLineItems") {
       baseLineItems.push(...(input.manualLineItems ?? []));
     } else if (input.calculationMethod === "FlatAmount") {
@@ -89,16 +108,23 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
         quantity: 1,
         unitRate: asNumber(input.flatAmount),
         amount: asNumber(input.flatAmount),
-        lineType: "BaseProgram"
+        lineType: "BaseProgram",
+        productOrService: resolveInvoiceProductOrService("BaseProgram")
       });
     } else {
-      baseLineItems.push({
-        description: `Custom program charges (${baseDates.size} day(s))`,
-        quantity: baseDates.size,
-        unitRate: dailyRate,
-        amount: toAmount(baseDates.size * dailyRate),
-        lineType: "BaseProgram"
-      });
+      Array.from(baseDates)
+        .sort((left, right) => left.localeCompare(right))
+        .forEach((dateOnly) => {
+          baseLineItems.push({
+            description: buildServiceDateInvoiceLineDescription(dateOnly, String(member.display_name ?? "Member")),
+            quantity: 1,
+            unitRate: dailyRate,
+            amount: dailyRate,
+            lineType: "BaseProgram",
+            serviceDate: dateOnly,
+            productOrService: resolveInvoiceProductOrService("BaseProgram")
+          });
+        });
     }
 
     const transportBillingStatus = resolveEffectiveTransportationBillingStatus({
@@ -114,6 +140,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       quantity: number;
       unit_rate: number;
       amount: number;
+      product_or_service: string;
       source_table: "transportation_logs" | "ancillary_charge_logs" | "billing_adjustments";
       source_record_id: string;
     }> = [];
@@ -167,19 +194,20 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
               ? asNumber(row.total_amount)
               : asNumber(row.quantity || 1) * asNumber(row.unit_rate)
           );
-          const serviceDate = normalizeDateOnly(String(row.service_date ?? ""));
+          const serviceDate = normalizeRequiredSourceDateOrThrow(row.service_date, "service_date", row.id);
           variableRows.push({
             line_type: "Transportation",
             service_date: serviceDate,
             service_period_start: serviceDate,
             service_period_end: serviceDate,
-            description: `Transportation (${row.transport_type ?? "Trip"})`,
-            quantity: asNumber(row.quantity || 1),
-            unit_rate: toAmount(asNumber(row.unit_rate)),
-            amount,
-            source_table: "transportation_logs",
-            source_record_id: String(row.id)
-          });
+          description: `Transportation (${row.transport_type ?? "Trip"})`,
+          quantity: asNumber(row.quantity || 1),
+          unit_rate: toAmount(asNumber(row.unit_rate)),
+          amount,
+          product_or_service: resolveInvoiceProductOrService("Transportation"),
+          source_table: "transportation_logs",
+          source_record_id: String(row.id)
+        });
         });
     const categoryById = new Map(
       (((ancillaryCategoriesResult.data ?? []) as Array<{ id: string; name: string | null; price_cents: number | null }>)).map((row) => [
@@ -194,7 +222,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
         const unitRate = asNumber(row.unit_rate) > 0 ? asNumber(row.unit_rate) : asNumber(category?.price_cents) / 100;
         const quantity = asNumber(row.quantity || 1);
         const amount = toAmount(asNumber(row.amount) > 0 ? asNumber(row.amount) : quantity * unitRate);
-        const serviceDate = normalizeDateOnly(String(row.service_date ?? ""));
+        const serviceDate = normalizeRequiredSourceDateOrThrow(row.service_date, "service_date", row.id);
         variableRows.push({
           line_type: "Ancillary",
           service_date: serviceDate,
@@ -204,6 +232,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
           quantity,
           unit_rate: toAmount(unitRate),
           amount,
+          product_or_service: resolveInvoiceProductOrService("Ancillary"),
           source_table: "ancillary_charge_logs",
           source_record_id: String(row.id)
         });
@@ -213,7 +242,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       .filter((row) => String(row.billing_status ?? "Unbilled") === "Unbilled")
       .forEach((row) => {
         const amount = toAmount(asNumber(row.amount));
-        const serviceDate = normalizeDateOnly(String(row.adjustment_date ?? ""));
+        const serviceDate = normalizeRequiredSourceDateOrThrow(row.adjustment_date, "adjustment_date", row.id);
         variableRows.push({
           line_type: amount < 0 ? "Credit" : "Adjustment",
           service_date: serviceDate,
@@ -223,6 +252,7 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
           quantity: asNumber(row.quantity || 1),
           unit_rate: toAmount(asNumber(row.unit_rate)),
           amount,
+          product_or_service: resolveInvoiceProductOrService(amount < 0 ? "Credit" : "Adjustment"),
           source_table: "billing_adjustments",
           source_record_id: String(row.id)
         });
@@ -281,6 +311,15 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       ancillary_amount: ancillaryAmount,
       adjustment_amount: adjustmentAmount,
       total_amount: totalAmount,
+      payments_amount: 0,
+      balance_due_amount: totalAmount,
+      bill_to_name_snapshot: billToSnapshot.bill_to_name_snapshot,
+      bill_to_address_line_1_snapshot: billToSnapshot.bill_to_address_line_1_snapshot,
+      bill_to_address_line_2_snapshot: billToSnapshot.bill_to_address_line_2_snapshot,
+      bill_to_address_line_3_snapshot: billToSnapshot.bill_to_address_line_3_snapshot,
+      bill_to_email_snapshot: billToSnapshot.bill_to_email_snapshot,
+      bill_to_phone_snapshot: billToSnapshot.bill_to_phone_snapshot,
+      bill_to_message_snapshot: billToSnapshot.bill_to_message_snapshot,
       notes: input.notes ?? null,
       created_by_user_id: input.runByUser,
       created_by_name: input.runByName,
@@ -288,16 +327,20 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
       updated_at: now
     };
 
-    const baseLines: BillingBatchInvoiceLineRpcPayload[] = baseLineItems.map((line) => {
+    const baseLines: BillingBatchInvoiceLineRpcPayload[] = baseLineItems.map((line, index) => {
       const lineType = line.lineType ?? "BaseProgram";
+      const serviceDate = normalizeDateOnly(line.serviceDate ?? "", "");
+      const effectiveServiceDate = serviceDate || null;
       return {
         id: randomUUID(),
         invoice_id: invoiceId,
         member_id: input.memberId,
         payor_id: null,
-        service_date: null,
-        service_period_start: period.start,
-        service_period_end: period.end,
+        line_number: index + 1,
+        product_or_service: line.productOrService ?? resolveInvoiceProductOrService(lineType),
+        service_date: effectiveServiceDate,
+        service_period_start: effectiveServiceDate ?? period.start,
+        service_period_end: effectiveServiceDate ?? period.end,
         line_type: lineType,
         description: line.description,
         quantity: asNumber(line.quantity || 1),
@@ -310,11 +353,13 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
         updated_at: now
       };
     });
-    const variableLines: BillingBatchInvoiceLineRpcPayload[] = variableRows.map((line) => ({
+    const variableLines: BillingBatchInvoiceLineRpcPayload[] = variableRows.map((line, index) => ({
       id: randomUUID(),
       invoice_id: invoiceId,
       member_id: input.memberId,
       payor_id: null,
+      line_number: baseLines.length + index + 1,
+      product_or_service: line.product_or_service,
       service_date: line.service_date,
       service_period_start: line.service_period_start,
       service_period_end: line.service_period_end,
@@ -332,7 +377,14 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
     const invoiceLinePayloads = [...baseLines, ...variableLines];
     const coveragePayloads: BillingBatchCoverageRpcPayload[] = invoiceLinePayloads.map((line) => ({
       member_id: input.memberId,
-      coverage_type: line.line_type === "Transportation" ? "Transportation" : line.line_type === "Ancillary" ? "Ancillary" : "BaseProgram",
+      coverage_type:
+        line.line_type === "Transportation"
+          ? "Transportation"
+          : line.line_type === "Ancillary"
+            ? "Ancillary"
+            : line.line_type === "Adjustment" || line.line_type === "Credit" || line.line_type === "PriorBalance"
+              ? "Adjustment"
+              : "BaseProgram",
       coverage_start_date: normalizeDateOnly(line.service_period_start, period.start),
       coverage_end_date: normalizeDateOnly(line.service_period_end, period.end),
       source_invoice_id: invoiceId,

@@ -608,7 +608,7 @@ export function NursingDashboardWorkspace({
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Active census snapshot</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-950">{dashboard.members.length}</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-950">{dashboard.activeMemberCount}</p>
             <p className="mt-1 text-xs text-slate-500">Active members available for quick charting.</p>
           </div>
         </div>

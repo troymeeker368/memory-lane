@@ -110,6 +110,13 @@ export type BillingPreviewRow = {
   memberName: string;
   payorName: string;
   payorId: string | null;
+  billToNameSnapshot: string | null;
+  billToAddressLine1Snapshot: string | null;
+  billToAddressLine2Snapshot: string | null;
+  billToAddressLine3Snapshot: string | null;
+  billToEmailSnapshot: string | null;
+  billToPhoneSnapshot: string | null;
+  billToMessageSnapshot: string | null;
   billingMode: (typeof BILLING_MODE_OPTIONS)[number];
   monthlyBillingBasis: (typeof MONTHLY_BILLING_BASIS_OPTIONS)[number] | null;
   invoiceMonth: string;
@@ -126,6 +133,18 @@ export type BillingPreviewRow = {
   baseProgramBilledDays: number;
   memberDailyRateSnapshot: number;
   transportationBillingStatusSnapshot: "BillNormally" | "Waived" | "IncludedInProgramRate";
+  baseProgramSourceRows: Array<{
+    service_date: string | null;
+    service_period_start: string;
+    service_period_end: string;
+    description: string;
+    quantity: number;
+    unit_rate: number;
+    amount: number;
+    product_or_service: string;
+    source_table: "attendance_records" | null;
+    source_record_id: string | null;
+  }>;
   variableSourceRows: Array<{
     line_type: "Transportation" | "Ancillary" | "Adjustment" | "Credit";
     service_date: string | null;
@@ -135,6 +154,7 @@ export type BillingPreviewRow = {
     quantity: number;
     unit_rate: number;
     amount: number;
+    product_or_service: string;
     source_table: "transportation_logs" | "ancillary_charge_logs" | "billing_adjustments";
     source_record_id: string;
   }>;
@@ -166,6 +186,15 @@ export type BillingBatchInvoiceRpcPayload = {
   ancillary_amount: number;
   adjustment_amount: number;
   total_amount: number;
+  payments_amount: number;
+  balance_due_amount: number;
+  bill_to_name_snapshot: string | null;
+  bill_to_address_line_1_snapshot: string | null;
+  bill_to_address_line_2_snapshot: string | null;
+  bill_to_address_line_3_snapshot: string | null;
+  bill_to_email_snapshot: string | null;
+  bill_to_phone_snapshot: string | null;
+  bill_to_message_snapshot: string | null;
   notes: string | null;
   created_by_user_id: string;
   created_by_name: string;
@@ -178,6 +207,8 @@ export type BillingBatchInvoiceLineRpcPayload = {
   invoice_id: string;
   member_id: string;
   payor_id: string | null;
+  line_number: number;
+  product_or_service: string;
   service_date: string | null;
   service_period_start: string;
   service_period_end: string;

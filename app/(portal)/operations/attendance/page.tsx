@@ -10,7 +10,6 @@ import {
   getDailyAttendanceView,
   getDailyCensusView,
   getDailyTrackSheetView,
-  getUnscheduledAttendanceMemberOptions,
   getWeeklyAttendanceView,
   getWeeklyCensusView,
   type DailyTrackGroup
@@ -157,17 +156,13 @@ export default async function OperationsAttendancePage({
   const isDailyCensusTab = selectedTab === "daily-census";
   const isDailyTracksTab = selectedTab === "daily-tracks";
   const isWeeklyCensusTab = selectedTab === "weekly-census";
-  const unscheduledMembersPromise = isDailyAttendanceTab
-    ? getUnscheduledAttendanceMemberOptions({ selectedDate })
-    : Promise.resolve([]);
 
-  const [dailyAttendance, weeklyAttendance, dailyCensus, dailyTracks, weeklyCensus, unscheduledMembers] = await Promise.all([
+  const [dailyAttendance, weeklyAttendance, dailyCensus, dailyTracks, weeklyCensus] = await Promise.all([
     isDailyAttendanceTab ? getDailyAttendanceView({ selectedDate }) : Promise.resolve(null),
     isWeeklyAttendanceTab ? getWeeklyAttendanceView({ anchorDate: selectedWeekAnchor }) : Promise.resolve(null),
     isDailyCensusTab ? getDailyCensusView({ selectedDate }) : Promise.resolve(null),
     isDailyTracksTab ? getDailyTrackSheetView({ selectedDate }) : Promise.resolve(null),
-    isWeeklyCensusTab ? getWeeklyCensusView({ anchorDate: selectedWeekAnchor }) : Promise.resolve(null),
-    unscheduledMembersPromise
+    isWeeklyCensusTab ? getWeeklyCensusView({ anchorDate: selectedWeekAnchor }) : Promise.resolve(null)
   ]);
 
   const weeklyAttendanceDays =
@@ -247,7 +242,6 @@ export default async function OperationsAttendancePage({
           <DailyAttendancePanel
             dailyAttendance={dailyAttendance}
             query={query}
-            unscheduledMembers={unscheduledMembers}
             canEdit={canEdit}
           />
         </Card>

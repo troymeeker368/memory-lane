@@ -1,5 +1,6 @@
 import { ensureMemberHealthProfileSupabase } from "@/lib/services/member-health-profiles-supabase";
 import { createClient } from "@/lib/supabase/server";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -7,6 +8,9 @@ type DbRow = Record<string, unknown>;
 const PROVIDER_DIRECTORY_UPSERT_SELECT =
   "id, provider_name, specialty, specialty_other, practice_name, provider_phone";
 const HOSPITAL_DIRECTORY_UPSERT_SELECT = "id, hospital_name";
+const LOOKUP_PROVIDER_DIRECTORY_NORMALIZED_RPC = "rpc_lookup_provider_directory_normalized";
+const LOOKUP_HOSPITAL_DIRECTORY_NORMALIZED_RPC = "rpc_lookup_hospital_preference_directory_normalized";
+const MHP_DIRECTORY_LOOKUP_RPC_MIGRATION = "0172_mhp_directory_normalized_lookup_rpcs.sql";
 
 export type MhpWriteActor = {
   actorUserId?: string | null;
@@ -33,6 +37,13 @@ function isUniqueViolation(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const code = "code" in error ? (error as { code?: unknown }).code : undefined;
   return typeof code === "string" && code === "23505";
+}
+
+function isMissingRpcFunctionError(error: unknown, rpcName: string) {
+  if (!error || typeof error !== "object") return false;
+  const code = String((error as { code?: string }).code ?? "").toUpperCase();
+  const text = String((error as { message?: string }).message ?? "").toLowerCase();
+  return (code === "PGRST202" || code === "42883") && text.includes(rpcName.toLowerCase());
 }
 
 function pickSingleDirectoryMatch<T extends Record<string, unknown>>(label: string, rows: T[]) {
@@ -65,32 +76,45 @@ async function loadProviderDirectoryRow(input: {
   practiceName: string;
 }) {
   const supabase = await createClient();
-  let query = supabase
-    .from("provider_directory")
-    .select(PROVIDER_DIRECTORY_UPSERT_SELECT)
-    .ilike("provider_name", input.providerName);
-
-  if (input.practiceName) {
-    query = query.ilike("practice_name", input.practiceName);
-  } else {
-    query = query.or("practice_name.is.null,practice_name.eq.");
+  try {
+    const rows = await invokeSupabaseRpcOrThrow<Record<string, unknown>[]>(
+      supabase,
+      LOOKUP_PROVIDER_DIRECTORY_NORMALIZED_RPC,
+      {
+        p_provider_name: input.providerName,
+        p_practice_name: input.practiceName || null
+      }
+    );
+    return pickSingleDirectoryMatch("provider_directory", rows);
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, LOOKUP_PROVIDER_DIRECTORY_NORMALIZED_RPC)) {
+      throw new Error(
+        `Member Health Profile directory lookup RPC is not available. Apply Supabase migration ${MHP_DIRECTORY_LOOKUP_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
   }
-
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
-  const rows = ((data ?? []) as Record<string, unknown>[]).filter((row) => matchesProviderDirectoryRow(row, input));
-  return pickSingleDirectoryMatch("provider_directory", rows);
 }
 
 async function loadHospitalDirectoryRow(hospitalName: string) {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("hospital_preference_directory")
-    .select(HOSPITAL_DIRECTORY_UPSERT_SELECT)
-    .ilike("hospital_name", hospitalName);
-  if (error) throw new Error(error.message);
-  const rows = ((data ?? []) as Record<string, unknown>[]).filter((row) => matchesHospitalDirectoryRow(row, hospitalName));
-  return pickSingleDirectoryMatch("hospital_preference_directory", rows);
+  try {
+    const rows = await invokeSupabaseRpcOrThrow<Record<string, unknown>[]>(
+      supabase,
+      LOOKUP_HOSPITAL_DIRECTORY_NORMALIZED_RPC,
+      {
+        p_hospital_name: hospitalName
+      }
+    );
+    return pickSingleDirectoryMatch("hospital_preference_directory", rows);
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, LOOKUP_HOSPITAL_DIRECTORY_NORMALIZED_RPC)) {
+      throw new Error(
+        `Member Health Profile directory lookup RPC is not available. Apply Supabase migration ${MHP_DIRECTORY_LOOKUP_RPC_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
+  }
 }
 
 async function recordMhpWriteEvent(input: {

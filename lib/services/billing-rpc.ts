@@ -14,10 +14,11 @@ import type {
   BillingPreviewRow
 } from "@/lib/services/billing-types";
 import { BILLING_BATCH_TYPE_OPTIONS } from "@/lib/services/billing-types";
+import { resolveInvoiceProductOrService } from "@/lib/services/billing-invoice-format";
 import { addMonths, buildInvoiceNumber, normalizeDateOnly, startOfMonth } from "@/lib/services/billing-utils";
 
-const BILLING_ATOMIC_WORKFLOW_MIGRATION = "0044_atomic_billing_and_completion_finalization.sql";
-const CUSTOM_INVOICE_ATOMIC_WORKFLOW_MIGRATION = "0126_custom_invoice_atomic_rpc.sql";
+const BILLING_ATOMIC_WORKFLOW_MIGRATION = "0173_billing_invoice_snapshot_itemization.sql";
+const CUSTOM_INVOICE_ATOMIC_WORKFLOW_MIGRATION = "0173_billing_invoice_snapshot_itemization.sql";
 const RPC_GENERATE_BILLING_BATCH = "rpc_generate_billing_batch";
 const RPC_CREATE_BILLING_EXPORT = "rpc_create_billing_export";
 const RPC_CREATE_CUSTOM_INVOICE = "rpc_create_custom_invoice";
@@ -146,6 +147,15 @@ export function buildBillingBatchWritePlan(input: {
       ancillary_amount: row.ancillaryAmount,
       adjustment_amount: row.adjustmentAmount,
       total_amount: row.totalAmount,
+      payments_amount: 0,
+      balance_due_amount: row.totalAmount,
+      bill_to_name_snapshot: row.billToNameSnapshot,
+      bill_to_address_line_1_snapshot: row.billToAddressLine1Snapshot,
+      bill_to_address_line_2_snapshot: row.billToAddressLine2Snapshot,
+      bill_to_address_line_3_snapshot: row.billToAddressLine3Snapshot,
+      bill_to_email_snapshot: row.billToEmailSnapshot,
+      bill_to_phone_snapshot: row.billToPhoneSnapshot,
+      bill_to_message_snapshot: row.billToMessageSnapshot,
       notes: null,
       created_by_user_id: input.runByUser,
       created_by_name: input.runByName,
@@ -153,45 +163,78 @@ export function buildBillingBatchWritePlan(input: {
       updated_at: input.now
     });
 
+    const baseProgramLines: BillingBatchInvoiceLineRpcPayload[] =
+      row.baseProgramSourceRows.length > 0
+        ? row.baseProgramSourceRows.map((sourceLine, index) => ({
+            id: randomUUID(),
+            invoice_id: invoiceId,
+            member_id: row.memberId,
+            payor_id: row.payorId,
+            line_number: index + 1,
+            product_or_service: sourceLine.product_or_service,
+            service_date: sourceLine.service_date,
+            service_period_start: sourceLine.service_period_start,
+            service_period_end: sourceLine.service_period_end,
+            line_type: "BaseProgram" as const,
+            description: sourceLine.description,
+            quantity: sourceLine.quantity,
+            unit_rate: sourceLine.unit_rate,
+            amount: sourceLine.amount,
+            source_table: sourceLine.source_table,
+            source_record_id: sourceLine.source_record_id,
+            billing_status: "Billed" as const,
+            created_at: input.now,
+            updated_at: input.now
+          }))
+        : [
+            {
+              id: randomUUID(),
+              invoice_id: invoiceId,
+              member_id: row.memberId,
+              payor_id: row.payorId,
+              line_number: 1,
+              product_or_service: resolveInvoiceProductOrService("BaseProgram"),
+              service_date: null,
+              service_period_start: row.basePeriodStart,
+              service_period_end: row.basePeriodEnd,
+              line_type: "BaseProgram",
+              description: `Base program charges (${row.baseProgramBilledDays} day(s))`,
+              quantity: row.baseProgramBilledDays,
+              unit_rate: row.memberDailyRateSnapshot,
+              amount: row.baseProgramAmount,
+              source_table: "attendance_records",
+              source_record_id: null,
+              billing_status: "Billed",
+              created_at: input.now,
+              updated_at: input.now
+            }
+          ];
+
+    const variableLines: BillingBatchInvoiceLineRpcPayload[] = row.variableSourceRows.map((sourceLine, index) => ({
+      id: randomUUID(),
+      invoice_id: invoiceId,
+      member_id: row.memberId,
+      payor_id: row.payorId,
+      line_number: baseProgramLines.length + index + 1,
+      product_or_service: sourceLine.product_or_service,
+      service_date: sourceLine.service_date,
+      service_period_start: sourceLine.service_period_start,
+      service_period_end: sourceLine.service_period_end,
+      line_type: sourceLine.line_type,
+      description: sourceLine.description,
+      quantity: sourceLine.quantity,
+      unit_rate: sourceLine.unit_rate,
+      amount: sourceLine.amount,
+      source_table: sourceLine.source_table,
+      source_record_id: sourceLine.source_record_id,
+      billing_status: "Billed" as const,
+      created_at: input.now,
+      updated_at: input.now
+    }));
+
     const invoiceLines: BillingBatchInvoiceLineRpcPayload[] = [
-      {
-        id: randomUUID(),
-        invoice_id: invoiceId,
-        member_id: row.memberId,
-        payor_id: row.payorId,
-        service_date: null,
-        service_period_start: row.basePeriodStart,
-        service_period_end: row.basePeriodEnd,
-        line_type: "BaseProgram",
-        description: `Base program charges (${row.baseProgramBilledDays} day(s))`,
-        quantity: row.baseProgramBilledDays,
-        unit_rate: row.memberDailyRateSnapshot,
-        amount: row.baseProgramAmount,
-        source_table: "attendance_records",
-        source_record_id: null,
-        billing_status: "Billed",
-        created_at: input.now,
-        updated_at: input.now
-      },
-      ...row.variableSourceRows.map((sourceLine) => ({
-        id: randomUUID(),
-        invoice_id: invoiceId,
-        member_id: row.memberId,
-        payor_id: row.payorId,
-        service_date: sourceLine.service_date,
-        service_period_start: sourceLine.service_period_start,
-        service_period_end: sourceLine.service_period_end,
-        line_type: sourceLine.line_type,
-        description: sourceLine.description,
-        quantity: sourceLine.quantity,
-        unit_rate: sourceLine.unit_rate,
-        amount: sourceLine.amount,
-        source_table: sourceLine.source_table,
-        source_record_id: sourceLine.source_record_id,
-        billing_status: "Billed" as const,
-        created_at: input.now,
-        updated_at: input.now
-      }))
+      ...baseProgramLines,
+      ...variableLines
     ];
     invoiceLinePayloads.push(...invoiceLines);
 

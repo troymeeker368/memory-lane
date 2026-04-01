@@ -183,8 +183,10 @@ export function toDataUrl(fileName: string, csv: string) {
 type BillingInvoiceLike = Database["public"]["Tables"]["billing_invoices"]["Row"] &
   Partial<{
     balance_due: number | null;
+    balance_due_amount: number | null;
     completion_date: string | null;
     next_due_date: string | null;
+    payments_amount: number | null;
     status: string | null;
   }>;
 
@@ -215,7 +217,7 @@ export function normalizeInvoiceRow(row: BillingInvoiceLike): NormalizedInvoiceR
     invoice_date: row.invoice_date ? String(row.invoice_date) : null,
     due_date: row.due_date ? String(row.due_date) : null,
     total_amount: Number(row.total_amount ?? 0),
-    balance_due: Number(row.balance_due ?? row.total_amount ?? 0),
+    balance_due: Number(row.balance_due_amount ?? row.balance_due ?? row.total_amount ?? 0),
     completion_date: completionDate,
     next_due_date: nextDueDate,
     status: String(row.status ?? ""),

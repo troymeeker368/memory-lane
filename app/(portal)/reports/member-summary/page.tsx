@@ -4,7 +4,6 @@ import { unstable_noStore as noStore } from "next/cache";
 import { MemberDocumentationSummaryFilters } from "@/components/forms/member-documentation-summary-filters";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireNavItemAccess } from "@/lib/auth";
-import { getMembers } from "@/lib/services/documentation";
 import { getMemberActivitySnapshot } from "@/lib/services/activity-snapshots";
 import { parseDateInput, resolveDateRangeWindow } from "@/lib/services/report-date-range";
 import { toEasternDate } from "@/lib/timezone";
@@ -84,10 +83,7 @@ export default async function MemberSummaryPage({
   const resolvedRange = resolveMemberSummaryRange(rawRange, rawFrom, rawTo);
   const isCustomRange = resolvedRange.preset === "custom";
 
-  const [members, snapshot] = await Promise.all([
-    getMembers(),
-    memberId ? getMemberActivitySnapshot(memberId, resolvedRange.from, resolvedRange.to) : Promise.resolve(null)
-  ]);
+  const snapshot = memberId ? await getMemberActivitySnapshot(memberId, resolvedRange.from, resolvedRange.to) : null;
   const placeholderNotice = snapshot?.placeholderNotice;
   const timelineItems = snapshot
     ? [...snapshot.activities].sort((a, b) => {
@@ -102,7 +98,6 @@ export default async function MemberSummaryPage({
         <CardTitle>Member Documentation Summary</CardTitle>
         <p className="mt-1 text-sm text-muted">Select a member and date range to review documentation, clinical logs, and ancillary activity.</p>
         <MemberDocumentationSummaryFilters
-          members={members}
           initialMemberId={memberId}
           initialRange={resolvedRange.preset}
           initialFrom={resolvedRange.from}

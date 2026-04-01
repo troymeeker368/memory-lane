@@ -21,6 +21,7 @@ import {
 import { isCenterClosedOnDate } from "@/lib/services/expected-attendance";
 import { calculateAttendanceRatePercent } from "@/lib/services/attendance-rate";
 import { ATTENDANCE_SCHEDULE_SELECT } from "@/lib/services/attendance-selects";
+import { listMemberPickerOptionsSupabase } from "@/lib/services/shared-lookups-supabase";
 
 type AttendanceStatusLabel = "Present" | "Checked Out" | "Absent" | "Not Checked In Yet" | "Not Scheduled";
 
@@ -254,6 +255,10 @@ function sortByLastName(left: string, right: string) {
   return toSortKey(left).localeCompare(toSortKey(right), undefined, { sensitivity: "base" });
 }
 
+function normalizeAttendanceMemberIds(memberIds?: Array<string | null | undefined>) {
+  return Array.from(new Set((memberIds ?? []).map((value) => String(value ?? "").trim()).filter(Boolean)));
+}
+
 function getStatusLabel(input: {
   status: "present" | "absent" | null;
   checkInAt: string | null;
@@ -329,13 +334,41 @@ function getTransportSnapshotForWeekday(input: {
   };
 }
 
-async function loadAttendanceBaseData(input: { startDate: string; endDate: string }) {
+async function loadAttendanceBaseData(input: {
+  startDate: string;
+  endDate: string;
+  memberIds?: Array<string | null | undefined>;
+}) {
   const supabase = await createClient();
-  const { data: membersData, error: membersError } = await supabase
+  const requestedMemberIds = normalizeAttendanceMemberIds(input.memberIds);
+  if (input.memberIds && requestedMemberIds.length === 0) {
+    return {
+      members: [] as MemberRow[],
+      schedules: [] as AttendanceScheduleRow[],
+      attendanceRecords: [] as AttendanceRecordRow[],
+      expectedAttendanceContext: {
+        startDate: input.startDate,
+        endDate: input.endDate,
+        schedulesByMember: new Map(),
+        holdsByMember: new Map(),
+        scheduleChangesByMember: new Map(),
+        centerClosures: [],
+        attendanceRecordByMemberDate: new Map()
+      } satisfies ExpectedAttendanceSupabaseContext,
+      mccPhotos: new Map<string, string | null>(),
+      mhpPhotos: new Map<string, string | null>()
+    };
+  }
+
+  let membersQuery = supabase
     .from("members")
     .select("id, display_name, status, locker_number, latest_assessment_track")
     .eq("status", "active")
     .order("display_name", { ascending: true });
+  if (requestedMemberIds.length > 0) {
+    membersQuery = membersQuery.in("id", requestedMemberIds);
+  }
+  const { data: membersData, error: membersError } = await membersQuery;
 
   if (membersError) throw new Error(membersError.message);
 
@@ -535,6 +568,61 @@ export async function getUnscheduledAttendanceMemberOptions(input?: {
 }): Promise<UnscheduledAttendanceMemberOption[]> {
   const selectedDate = normalizeOperationalDateOnly(input?.selectedDate ?? getOperationsTodayDate());
   const base = await loadAttendanceBaseData({ startDate: selectedDate, endDate: selectedDate });
+  const dateIsCenterClosed = isCenterClosedOnDate(base.expectedAttendanceContext.centerClosures, selectedDate);
+  if (dateIsCenterClosed) return [];
+
+  const scheduleByMember = new Map(base.schedules.map((row) => [row.member_id, row] as const));
+  const recordMap = buildAttendanceRecordMap(base.attendanceRecords);
+
+  return base.members
+    .filter((member) => {
+      const schedule = scheduleByMember.get(member.id) ?? null;
+      const attendanceRecord = recordMap.get(`${member.id}:${selectedDate}`) ?? null;
+      const resolution = resolveExpectedAttendanceFromSupabaseContext({
+        context: base.expectedAttendanceContext,
+        memberId: member.id,
+        date: selectedDate,
+        baseScheduleOverride: schedule,
+        hasUnscheduledAttendanceAddition: Boolean(attendanceRecord)
+      });
+      if (resolution.isScheduled || resolution.blockedBy === "member-hold") {
+        return false;
+      }
+      return true;
+    })
+    .map((member) => ({
+      id: member.id,
+      displayName: member.display_name,
+      makeupBalance: Math.max(0, Number(scheduleByMember.get(member.id)?.make_up_days_available ?? 0))
+    }))
+    .sort((left, right) => sortByLastName(left.displayName, right.displayName));
+}
+
+export async function searchUnscheduledAttendanceMemberOptions(input?: {
+  selectedDate?: string | null;
+  q?: string | null;
+  selectedId?: string | null;
+  limit?: number;
+  minQueryLength?: number;
+}): Promise<UnscheduledAttendanceMemberOption[]> {
+  const selectedDate = normalizeOperationalDateOnly(input?.selectedDate ?? getOperationsTodayDate());
+  const candidateMembers = await listMemberPickerOptionsSupabase({
+    q: input?.q ?? "",
+    selectedId: input?.selectedId ?? null,
+    status: "active",
+    limit: input?.limit ?? 25,
+    minQueryLength: input?.minQueryLength ?? 2
+  });
+  const candidateMemberIds = candidateMembers.map((member) => member.id);
+  if (candidateMemberIds.length === 0) {
+    return [];
+  }
+
+  const base = await loadAttendanceBaseData({
+    startDate: selectedDate,
+    endDate: selectedDate,
+    memberIds: candidateMemberIds
+  });
   const dateIsCenterClosed = isCenterClosedOnDate(base.expectedAttendanceContext.centerClosures, selectedDate);
   if (dateIsCenterClosed) return [];
 

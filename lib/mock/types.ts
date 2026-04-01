@@ -707,6 +707,15 @@ export interface MockBillingInvoice {
   prior_balance_amount: number;
   discount_amount: number;
   total_amount: number;
+  payments_amount: number;
+  balance_due_amount: number;
+  bill_to_name_snapshot: string | null;
+  bill_to_address_line_1_snapshot: string | null;
+  bill_to_address_line_2_snapshot: string | null;
+  bill_to_address_line_3_snapshot: string | null;
+  bill_to_email_snapshot: string | null;
+  bill_to_phone_snapshot: string | null;
+  bill_to_message_snapshot: string | null;
   invoice_status: "Draft" | "Finalized" | "Sent" | "Paid" | "PartiallyPaid" | "Void";
   export_status: "NotExported" | "Exported";
   exported_at: string | null;
@@ -734,8 +743,9 @@ export interface MockBillingCoverage {
 export interface MockBillingInvoiceLine {
   id: string;
   invoice_id: string;
-  line_order: number;
+  line_number: number;
   line_type: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment" | "Credit" | "PriorBalance";
+  product_or_service: string;
   service_period_start: string | null;
   service_period_end: string | null;
   service_date: string | null;

@@ -112,10 +112,12 @@ export async function createBillingExport(input: {
       });
       csv = buildCsvRows(header, body);
     } else if (input.exportType === "InternalReviewCSV") {
-      const header = ["InvoiceNumber", "LineType", "Description", "ServiceDate", "Quantity", "UnitRate", "Amount"];
+      const header = ["InvoiceNumber", "LineNumber", "ProductOrService", "LineType", "Description", "ServiceDate", "Quantity", "UnitRate", "Amount"];
       const invoiceById = new Map(invoiceRows.map((row) => [String(row.id), row] as const));
-      const body = ((lines ?? []) as Array<{ invoice_id: string; line_type: string; description: string; service_date: string | null; quantity: number; unit_rate: number; amount: number }>).map((line) => [
+      const body = ((lines ?? []) as Array<{ invoice_id: string; line_number?: number | null; product_or_service?: string | null; line_type: string; description: string; service_date: string | null; quantity: number; unit_rate: number; amount: number }>).map((line) => [
         invoiceById.get(String(line.invoice_id))?.invoice_number ?? "",
+        asNumber(line.line_number ?? 0),
+        line.product_or_service ?? "",
         line.line_type,
         line.description,
         line.service_date ?? "",

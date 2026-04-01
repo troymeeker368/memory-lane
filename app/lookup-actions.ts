@@ -2,6 +2,7 @@
 
 import { requireModuleAccess, requireRoles } from "@/lib/auth";
 import { PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
+import { searchUnscheduledAttendanceMemberOptions } from "@/lib/services/attendance";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { listEnrollmentPacketEligibleLeadPicker } from "@/lib/services/leads-read";
 import { listMemberPickerOptionsSupabase } from "@/lib/services/shared-lookups-supabase";
@@ -52,9 +53,39 @@ export async function searchPhysicianOrderMembersAction(input: MemberLookupReque
   });
 }
 
+export async function searchReportMembersAction(input: MemberLookupRequest) {
+  await requireModuleAccess("reports");
+  return listMemberPickerOptionsSupabase({
+    q: input.q,
+    selectedId: input.selectedId,
+    status: "active",
+    limit: input.limit ?? 25
+  });
+}
+
+export async function searchAncillaryMembersAction(input: MemberLookupRequest) {
+  await requireModuleAccess("ancillary");
+  return listMemberPickerOptionsSupabase({
+    q: input.q,
+    selectedId: input.selectedId,
+    status: "active",
+    limit: input.limit ?? 25
+  });
+}
+
 export async function searchEnrollmentPacketEligibleLeadsAction(input: MemberLookupRequest) {
   await requireModuleAccess("sales");
   return listEnrollmentPacketEligibleLeadPicker({
+    q: input.q,
+    selectedId: input.selectedId,
+    limit: input.limit ?? 25
+  });
+}
+
+export async function searchUnscheduledAttendanceMembersAction(input: MemberLookupRequest & { selectedDate: string }) {
+  await requireModuleAccess("operations");
+  return searchUnscheduledAttendanceMemberOptions({
+    selectedDate: input.selectedDate,
     q: input.q,
     selectedId: input.selectedId,
     limit: input.limit ?? 25
