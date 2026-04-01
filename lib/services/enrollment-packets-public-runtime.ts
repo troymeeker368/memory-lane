@@ -191,6 +191,122 @@ async function buildCommittedEnrollmentPacketReplayResult(input: {
   return submitResult;
 }
 
+async function verifyCommittedEnrollmentPacketFinalizeAfterError(input: {
+  packetId: string;
+  expectedMemberId: string;
+  actorUserId: string;
+  uploadBatchId: string | null;
+  consumedSubmissionTokenHash: string;
+  stagedUploads: Array<{
+    uploadCategory: EnrollmentPacketUploadCategory;
+    memberFileId: string | null;
+  }>;
+  reason: string;
+}) {
+  const refreshedRequest = await loadRequestById(input.packetId);
+  if (!refreshedRequest) {
+    await recordImmediateSystemAlert({
+      entityType: "enrollment_packet_request",
+      entityId: input.packetId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "enrollment_packet_finalize_verification_pending",
+      metadata: {
+        member_id: input.expectedMemberId,
+        upload_batch_id: input.uploadBatchId,
+        reason: input.reason,
+        verification_result: "request_missing"
+      }
+    });
+    return { kind: "unverified" as const, request: null };
+  }
+
+  if (refreshedRequest.member_id !== input.expectedMemberId) {
+    await recordImmediateSystemAlert({
+      entityType: "enrollment_packet_request",
+      entityId: input.packetId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "enrollment_packet_finalize_verification_pending",
+      metadata: {
+        member_id: input.expectedMemberId,
+        refreshed_member_id: refreshedRequest.member_id,
+        upload_batch_id: input.uploadBatchId,
+        reason: input.reason,
+        verification_result: "member_mismatch"
+      }
+    });
+    return { kind: "unverified" as const, request: refreshedRequest };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const batchId = String(input.uploadBatchId ?? "").trim();
+  let uploadRows: Array<{
+    upload_category: EnrollmentPacketUploadCategory;
+    member_file_id: string | null;
+    finalization_status: string | null;
+  }> = [];
+  if (batchId) {
+    const { data, error } = await admin
+      .from("enrollment_packet_uploads")
+      .select("upload_category, member_file_id, finalization_status")
+      .eq("packet_id", input.packetId)
+      .eq("finalization_batch_id", batchId);
+    if (error) throwEnrollmentPacketSchemaError(error, "enrollment_packet_uploads");
+    uploadRows = (data ??
+      []) as Array<{
+      upload_category: EnrollmentPacketUploadCategory;
+      member_file_id: string | null;
+      finalization_status: string | null;
+    }>;
+  }
+
+  const expectedArtifacts = input.stagedUploads
+    .map((upload) => `${upload.uploadCategory}:${String(upload.memberFileId ?? "").trim()}`)
+    .filter((value) => !value.endsWith(":"));
+  const finalizedArtifacts = new Set(
+    uploadRows
+      .filter((row) => String(row.finalization_status ?? "").trim() === "finalized")
+      .map((row) => `${row.upload_category}:${String(row.member_file_id ?? "").trim()}`)
+      .filter((value) => !value.endsWith(":"))
+  );
+  const stagedOnly =
+    uploadRows.length > 0 &&
+    uploadRows.every((row) => String(row.finalization_status ?? "").trim() === "staged");
+  const hasExpectedFinalizedArtifacts =
+    expectedArtifacts.length > 0 && expectedArtifacts.every((key) => finalizedArtifacts.has(key));
+  const tokenConsumed =
+    clean(refreshedRequest.last_consumed_submission_token_hash) === input.consumedSubmissionTokenHash;
+  const requestStatus = toStatus(refreshedRequest.status);
+
+  if (requestStatus === "completed" && hasExpectedFinalizedArtifacts) {
+    return { kind: "committed" as const, request: refreshedRequest };
+  }
+
+  if (requestStatus !== "completed" && !tokenConsumed && stagedOnly) {
+    return { kind: "not_committed" as const, request: refreshedRequest };
+  }
+
+  await recordImmediateSystemAlert({
+    entityType: "enrollment_packet_request",
+    entityId: input.packetId,
+    actorUserId: input.actorUserId,
+    severity: "high",
+    alertKey: "enrollment_packet_finalize_verification_pending",
+    metadata: {
+      member_id: input.expectedMemberId,
+      refreshed_status: requestStatus,
+      upload_batch_id: input.uploadBatchId,
+      finalized_artifact_count: finalizedArtifacts.size,
+      expected_artifact_count: expectedArtifacts.length,
+      token_consumed: tokenConsumed,
+      reason: input.reason,
+      verification_result: "ambiguous"
+    }
+  });
+  return { kind: "unverified" as const, request: refreshedRequest };
+}
+
 function buildEnrollmentPacketCompletionAgreementMessage(input: {
   operationalReadinessStatus: string;
   senderNotificationDelivered: boolean;
@@ -461,9 +577,20 @@ export async function getPublicEnrollmentPacketContext(
     return { state: "voided" };
   }
   if (toStatus(request.status) === "completed") {
+    const completedRequest = (await loadRequestById(request.id)) ?? request;
+    const completedResult = buildPublicEnrollmentPacketSubmitResult({
+      packetId: completedRequest.id,
+      memberId: completedRequest.member_id,
+      mappingSyncStatus: completedRequest.mapping_sync_status ?? "pending",
+      wasAlreadyFiled: true
+    });
     return {
       state: "completed",
-      request: toSummary(request)
+      request: toSummary(completedRequest),
+      mappingSyncStatus: completedResult.mappingSyncStatus,
+      operationalReadinessStatus: completedResult.operationalReadinessStatus,
+      actionNeeded: completedResult.operationalReadinessStatus !== "operationally_ready",
+      actionNeededMessage: completedResult.actionNeededMessage
     };
   }
   if (isExpired(request.token_expires_at)) {
@@ -737,6 +864,8 @@ export async function submitPublicEnrollmentPacket(input: {
       }
     | null = null;
   let completionCascadeSummary: EnrollmentPacketCompletionAgreementSummary | null = null;
+  const consumedSubmissionTokenHash = hashToken(normalizedToken);
+  let finalizeAttempted = false;
   const stagedUploads: Array<{
     uploadCategory: EnrollmentPacketUploadCategory;
     objectPath: string;
@@ -899,10 +1028,11 @@ export async function submitPublicEnrollmentPacket(input: {
     });
 
     finalizedAt = toEasternISO();
+    finalizeAttempted = true;
     finalizedSubmission = await invokeFinalizeEnrollmentPacketCompletionRpc({
       packetId: request.id,
       rotatedToken,
-      consumedSubmissionTokenHash: hashToken(normalizedToken),
+      consumedSubmissionTokenHash,
       completedAt: now,
       filedAt: finalizedAt,
       signerName: caregiverTypedName,
@@ -943,7 +1073,29 @@ export async function submitPublicEnrollmentPacket(input: {
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete enrollment packet.";
-    if (stagedUploads.length > 0) {
+    let finalizeVerification:
+      | Awaited<ReturnType<typeof verifyCommittedEnrollmentPacketFinalizeAfterError>>
+      | null = null;
+    if (!finalizedSubmission && finalizeAttempted) {
+      finalizeVerification = await verifyCommittedEnrollmentPacketFinalizeAfterError({
+        packetId: request.id,
+        expectedMemberId: member.id,
+        actorUserId: request.sender_user_id,
+        uploadBatchId,
+        consumedSubmissionTokenHash,
+        stagedUploads: stagedUploads.map((upload) => ({
+          uploadCategory: upload.uploadCategory,
+          memberFileId: upload.memberFileId
+        })),
+        reason
+      });
+      if (finalizeVerification.kind === "committed" && finalizeVerification.request) {
+        return buildCommittedEnrollmentPacketReplayResult({
+          request: finalizeVerification.request
+        });
+      }
+    }
+    if (stagedUploads.length > 0 && finalizeVerification?.kind !== "unverified") {
       await artifactOps.cleanupEnrollmentPacketUploadArtifacts({
         packetId: request.id,
         memberId: member.id,

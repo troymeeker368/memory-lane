@@ -61,12 +61,18 @@ export default async function PublicPofSigningPage({
   }
 
   if (context.state === "signed") {
+    const toneClasses = context.postSignOutcome.actionNeeded
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : undefined;
     return (
       <div className="mx-auto max-w-3xl space-y-4 p-4">
         <DocumentBrandHeader title="Physician Order Form Signature" />
-        <Card>
-          <CardTitle>Already Signed</CardTitle>
+        <Card className={toneClasses}>
+          <CardTitle>{context.postSignOutcome.actionNeeded ? "Already Signed, Clinical Sync Pending" : "Already Signed"}</CardTitle>
           <p className="mt-2 text-sm text-muted">This POF was already signed on {context.request.signedAt ? formatDateTime(context.request.signedAt) : "a previous date"}.</p>
+          {context.postSignOutcome.actionNeededMessage ? (
+            <p className="mt-2 text-sm">{context.postSignOutcome.actionNeededMessage}</p>
+          ) : null}
         </Card>
       </div>
     );

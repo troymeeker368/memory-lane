@@ -62,13 +62,19 @@ export default async function PublicCarePlanSigningPage({
   }
 
   if (context.state === "completed") {
+    const toneClasses = context.completedOutcome.actionNeeded
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : "border-slate-200 bg-white text-slate-700";
     return (
       <div className="mx-auto max-w-3xl p-4">
-        <Card>
-          <CardTitle>Already Signed</CardTitle>
+        <Card className={toneClasses}>
+          <CardTitle>{context.completedOutcome.actionNeeded ? "Already Signed, Follow-up Still Needed" : "Already Signed"}</CardTitle>
           <p className="mt-2 text-sm text-muted">
             This care plan was already signed on {context.carePlan.caregiverSignedAt ? formatDateTime(context.carePlan.caregiverSignedAt) : "a previous date"}.
           </p>
+          {context.completedOutcome.actionNeededMessage ? (
+            <p className="mt-2 text-sm">{context.completedOutcome.actionNeededMessage}</p>
+          ) : null}
         </Card>
       </div>
     );

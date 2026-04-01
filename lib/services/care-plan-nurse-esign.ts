@@ -129,6 +129,121 @@ async function cleanupCarePlanNurseSignatureArtifactAfterFinalizeFailure(input: 
   }
 }
 
+async function verifyCommittedCarePlanNurseSignatureAfterFinalizeError(input: {
+  carePlanId: string;
+  expectedMemberId: string;
+  expectedSignatureArtifactStoragePath: string | null;
+  expectedSignatureArtifactMemberFileId: string | null;
+  actorUserId: string;
+  reason: string;
+}) {
+  let state: CarePlanNurseSignatureState;
+  try {
+    state = await getCarePlanNurseSignatureState(input.carePlanId, { serviceRole: true });
+  } catch (error) {
+    await recordImmediateSystemAlert({
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "care_plan_nurse_signature_finalize_verification_pending",
+      metadata: {
+        member_id: input.expectedMemberId,
+        reason: input.reason,
+        verification_result: "state_reload_failed",
+        reload_error: error instanceof Error ? error.message : "Unknown reload error."
+      }
+    });
+    return { kind: "unverified" as const, state: null };
+  }
+
+  if (state.memberId !== input.expectedMemberId) {
+    await recordImmediateSystemAlert({
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "care_plan_nurse_signature_finalize_verification_pending",
+      metadata: {
+        member_id: input.expectedMemberId,
+        refreshed_member_id: state.memberId,
+        reason: input.reason,
+        verification_result: "member_mismatch"
+      }
+    });
+    return { kind: "unverified" as const, state };
+  }
+
+  if (
+    state.status === "signed" &&
+    state.signedByUserId &&
+    state.signedByName &&
+    state.signedAt &&
+    state.signatureArtifactStoragePath === input.expectedSignatureArtifactStoragePath &&
+    state.signatureArtifactMemberFileId === input.expectedSignatureArtifactMemberFileId
+  ) {
+    return { kind: "committed" as const, state };
+  }
+
+  if (
+    state.status !== "signed" &&
+    state.signatureArtifactStoragePath !== input.expectedSignatureArtifactStoragePath &&
+    state.signatureArtifactMemberFileId !== input.expectedSignatureArtifactMemberFileId
+  ) {
+    return { kind: "not_committed" as const, state };
+  }
+
+  await recordImmediateSystemAlert({
+    entityType: "care_plan",
+    entityId: input.carePlanId,
+    actorUserId: input.actorUserId,
+    severity: "high",
+    alertKey: "care_plan_nurse_signature_finalize_verification_pending",
+    metadata: {
+      member_id: input.expectedMemberId,
+      refreshed_status: state.status,
+      refreshed_signature_artifact_storage_path: state.signatureArtifactStoragePath,
+      refreshed_signature_artifact_member_file_id: state.signatureArtifactMemberFileId,
+      expected_signature_artifact_storage_path: input.expectedSignatureArtifactStoragePath,
+      expected_signature_artifact_member_file_id: input.expectedSignatureArtifactMemberFileId,
+      reason: input.reason,
+      verification_result: "ambiguous"
+    }
+  });
+  return { kind: "unverified" as const, state };
+}
+
+function toFinalizedCarePlanNurseSignatureRowFromState(
+  state: CarePlanNurseSignatureState
+): FinalizedCarePlanNurseSignatureRpcRow {
+  const memberId = state.memberId;
+  if (
+    !memberId ||
+    state.status !== "signed" ||
+    !state.signedByUserId ||
+    !state.signedByName ||
+    !state.signedAt ||
+    !state.signatureArtifactStoragePath ||
+    !state.signatureArtifactMemberFileId
+  ) {
+    throw new Error("Committed care plan nurse signature state is incomplete.");
+  }
+
+  return {
+    care_plan_id: state.carePlanId,
+    member_id: memberId,
+    signed_by_user_id: state.signedByUserId,
+    signed_by_name: state.signedByName,
+    signed_at: state.signedAt,
+    status: "signed",
+    signature_artifact_storage_path: state.signatureArtifactStoragePath,
+    signature_artifact_member_file_id: state.signatureArtifactMemberFileId,
+    signature_metadata: state.signatureMetadata,
+    caregiver_signature_status: null,
+    was_already_signed: false
+  };
+}
+
 export async function getCarePlanNurseSignatureState(
   carePlanId: string,
   options?: { serviceRole?: boolean }
@@ -265,6 +380,7 @@ export async function signCarePlanNurseEsign(input: {
   });
 
   let rpcData: unknown;
+  let finalizedRow: FinalizedCarePlanNurseSignatureRpcRow | null = null;
   try {
     rpcData = await invokeSupabaseRpcOrThrow<unknown>(supabase, FINALIZE_CARE_PLAN_NURSE_SIGNATURE_RPC, {
       p_care_plan_id: carePlan.id,
@@ -278,31 +394,62 @@ export async function signCarePlanNurseEsign(input: {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to finalize care plan nurse signature.";
-    await cleanupCarePlanNurseSignatureArtifactAfterFinalizeFailure({
+    const verification = await verifyCommittedCarePlanNurseSignatureAfterFinalizeError({
       carePlanId: carePlan.id,
-      memberId: carePlan.member_id,
+      expectedMemberId: carePlan.member_id,
+      expectedSignatureArtifactStoragePath: persistence.signatureRow.signature_artifact_storage_path,
+      expectedSignatureArtifactMemberFileId: persistence.signatureRow.signature_artifact_member_file_id,
       actorUserId: input.actor.id,
-      reason: message,
-      artifact
+      reason: message
     });
-    if (message.includes(FINALIZE_CARE_PLAN_NURSE_SIGNATURE_RPC)) {
+    if (verification.kind === "committed" && verification.state) {
+      finalizedRow = toFinalizedCarePlanNurseSignatureRowFromState(verification.state);
+    } else if (verification.kind === "not_committed") {
+      await cleanupCarePlanNurseSignatureArtifactAfterFinalizeFailure({
+        carePlanId: carePlan.id,
+        memberId: carePlan.member_id,
+        actorUserId: input.actor.id,
+        reason: message,
+        artifact
+      });
+    }
+    if (finalizedRow) {
+      // Preserve committed artifacts and continue through the canonical success path.
+    } else if (message.includes(FINALIZE_CARE_PLAN_NURSE_SIGNATURE_RPC)) {
       throw new Error(
         `Care plan nurse signature finalization RPC is not available. Apply Supabase migration ${FINALIZE_CARE_PLAN_NURSE_SIGNATURE_MIGRATION} and refresh PostgREST schema cache.`
       );
+    } else {
+      throw error;
     }
-    throw error;
   }
 
-  const finalizedRow = (Array.isArray(rpcData) ? rpcData[0] : null) as FinalizedCarePlanNurseSignatureRpcRow | null;
+  if (!finalizedRow) {
+    finalizedRow = (Array.isArray(rpcData) ? rpcData[0] : null) as FinalizedCarePlanNurseSignatureRpcRow | null;
+  }
   if (!finalizedRow?.care_plan_id) {
-    await cleanupCarePlanNurseSignatureArtifactAfterFinalizeFailure({
+    const verification = await verifyCommittedCarePlanNurseSignatureAfterFinalizeError({
       carePlanId: carePlan.id,
-      memberId: carePlan.member_id,
+      expectedMemberId: carePlan.member_id,
+      expectedSignatureArtifactStoragePath: persistence.signatureRow.signature_artifact_storage_path,
+      expectedSignatureArtifactMemberFileId: persistence.signatureRow.signature_artifact_member_file_id,
       actorUserId: input.actor.id,
-      reason: "Care plan nurse signature finalization RPC did not return a signature row.",
-      artifact
+      reason: "Care plan nurse signature finalization RPC did not return a signature row."
     });
-    throw new Error("Care plan nurse signature finalization RPC did not return a signature row.");
+    if (verification.kind === "committed" && verification.state) {
+      finalizedRow = toFinalizedCarePlanNurseSignatureRowFromState(verification.state);
+    } else {
+      if (verification.kind === "not_committed") {
+        await cleanupCarePlanNurseSignatureArtifactAfterFinalizeFailure({
+          carePlanId: carePlan.id,
+          memberId: carePlan.member_id,
+          actorUserId: input.actor.id,
+          reason: "Care plan nurse signature finalization RPC did not return a signature row.",
+          artifact
+        });
+      }
+      throw new Error("Care plan nurse signature finalization RPC did not return a signature row.");
+    }
   }
 
   const state = toStateFromRow(finalizedRow);

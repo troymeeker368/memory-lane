@@ -129,6 +129,120 @@ async function cleanupIntakeSignatureArtifactAfterFinalizeFailure(input: {
   }
 }
 
+async function verifyCommittedIntakeSignatureAfterFinalizeError(input: {
+  assessmentId: string;
+  expectedMemberId: string;
+  expectedSignatureArtifactStoragePath: string | null;
+  expectedSignatureArtifactMemberFileId: string | null;
+  actorUserId: string;
+  reason: string;
+}) {
+  let state: IntakeAssessmentSignatureState;
+  try {
+    state = await getIntakeAssessmentSignatureState(input.assessmentId, { serviceRole: true });
+  } catch (error) {
+    await recordImmediateSystemAlert({
+      entityType: "intake_assessment",
+      entityId: input.assessmentId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "intake_assessment_signature_finalize_verification_pending",
+      metadata: {
+        member_id: input.expectedMemberId,
+        reason: input.reason,
+        verification_result: "state_reload_failed",
+        reload_error: error instanceof Error ? error.message : "Unknown reload error."
+      }
+    });
+    return { kind: "unverified" as const, state: null };
+  }
+
+  if (state.memberId !== input.expectedMemberId) {
+    await recordImmediateSystemAlert({
+      entityType: "intake_assessment",
+      entityId: input.assessmentId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "intake_assessment_signature_finalize_verification_pending",
+      metadata: {
+        member_id: input.expectedMemberId,
+        refreshed_member_id: state.memberId,
+        reason: input.reason,
+        verification_result: "member_mismatch"
+      }
+    });
+    return { kind: "unverified" as const, state };
+  }
+
+  if (
+    state.status === "signed" &&
+    state.signedByUserId &&
+    state.signedByName &&
+    state.signedAt &&
+    state.signatureArtifactStoragePath === input.expectedSignatureArtifactStoragePath &&
+    state.signatureArtifactMemberFileId === input.expectedSignatureArtifactMemberFileId
+  ) {
+    return { kind: "committed" as const, state };
+  }
+
+  if (
+    state.status !== "signed" &&
+    state.signatureArtifactStoragePath !== input.expectedSignatureArtifactStoragePath &&
+    state.signatureArtifactMemberFileId !== input.expectedSignatureArtifactMemberFileId
+  ) {
+    return { kind: "not_committed" as const, state };
+  }
+
+  await recordImmediateSystemAlert({
+    entityType: "intake_assessment",
+    entityId: input.assessmentId,
+    actorUserId: input.actorUserId,
+    severity: "high",
+    alertKey: "intake_assessment_signature_finalize_verification_pending",
+    metadata: {
+      member_id: input.expectedMemberId,
+      refreshed_status: state.status,
+      refreshed_signature_artifact_storage_path: state.signatureArtifactStoragePath,
+      refreshed_signature_artifact_member_file_id: state.signatureArtifactMemberFileId,
+      expected_signature_artifact_storage_path: input.expectedSignatureArtifactStoragePath,
+      expected_signature_artifact_member_file_id: input.expectedSignatureArtifactMemberFileId,
+      reason: input.reason,
+      verification_result: "ambiguous"
+    }
+  });
+  return { kind: "unverified" as const, state };
+}
+
+function toFinalizedIntakeAssessmentSignatureRowFromState(
+  state: IntakeAssessmentSignatureState
+): FinalizedIntakeAssessmentSignatureRpcRow {
+  const memberId = state.memberId;
+  if (
+    !memberId ||
+    state.status !== "signed" ||
+    !state.signedByUserId ||
+    !state.signedByName ||
+    !state.signedAt ||
+    !state.signatureArtifactStoragePath ||
+    !state.signatureArtifactMemberFileId
+  ) {
+    throw new Error("Committed intake assessment signature state is incomplete.");
+  }
+
+  return {
+    assessment_id: state.assessmentId,
+    member_id: memberId,
+    signed_by_user_id: state.signedByUserId,
+    signed_by_name: state.signedByName,
+    signed_at: state.signedAt,
+    status: "signed",
+    signature_artifact_storage_path: state.signatureArtifactStoragePath,
+    signature_artifact_member_file_id: state.signatureArtifactMemberFileId,
+    signature_metadata: state.signatureMetadata,
+    was_already_signed: false
+  };
+}
+
 export async function getIntakeAssessmentSignatureState(
   assessmentId: string,
   options?: { serviceRole?: boolean }
@@ -290,6 +404,7 @@ export async function signIntakeAssessment(input: {
       }
     });
     let rpcData: unknown;
+    let finalizedRow: FinalizedIntakeAssessmentSignatureRpcRow | null = null;
     try {
       rpcData = await invokeSupabaseRpcOrThrow<unknown>(supabase, FINALIZE_INTAKE_SIGNATURE_RPC, {
         p_assessment_id: assessment.id,
@@ -303,31 +418,62 @@ export async function signIntakeAssessment(input: {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to finalize intake assessment signature.";
-      await cleanupIntakeSignatureArtifactAfterFinalizeFailure({
+      const verification = await verifyCommittedIntakeSignatureAfterFinalizeError({
         assessmentId: assessment.id,
-        memberId: assessment.member_id,
+        expectedMemberId: assessment.member_id,
+        expectedSignatureArtifactStoragePath: persistence.signatureRow.signature_artifact_storage_path,
+        expectedSignatureArtifactMemberFileId: persistence.signatureRow.signature_artifact_member_file_id,
         actorUserId: input.actor.id,
-        reason: message,
-        artifact
+        reason: message
       });
-      if (message.includes(FINALIZE_INTAKE_SIGNATURE_RPC)) {
+      if (verification.kind === "committed" && verification.state) {
+        finalizedRow = toFinalizedIntakeAssessmentSignatureRowFromState(verification.state);
+      } else if (verification.kind === "not_committed") {
+        await cleanupIntakeSignatureArtifactAfterFinalizeFailure({
+          assessmentId: assessment.id,
+          memberId: assessment.member_id,
+          actorUserId: input.actor.id,
+          reason: message,
+          artifact
+        });
+      }
+      if (finalizedRow) {
+        // Preserve committed artifacts and continue through the canonical success path.
+      } else if (message.includes(FINALIZE_INTAKE_SIGNATURE_RPC)) {
         throw new Error(
           `Intake assessment signature finalization RPC is not available. Apply Supabase migration ${FINALIZE_INTAKE_SIGNATURE_MIGRATION} and refresh PostgREST schema cache.`
         );
+      } else {
+        throw error;
       }
-      throw error;
     }
 
-    const finalizedRow = (Array.isArray(rpcData) ? rpcData[0] : null) as FinalizedIntakeAssessmentSignatureRpcRow | null;
+    if (!finalizedRow) {
+      finalizedRow = (Array.isArray(rpcData) ? rpcData[0] : null) as FinalizedIntakeAssessmentSignatureRpcRow | null;
+    }
     if (!finalizedRow?.assessment_id) {
-      await cleanupIntakeSignatureArtifactAfterFinalizeFailure({
+      const verification = await verifyCommittedIntakeSignatureAfterFinalizeError({
         assessmentId: assessment.id,
-        memberId: assessment.member_id,
+        expectedMemberId: assessment.member_id,
+        expectedSignatureArtifactStoragePath: persistence.signatureRow.signature_artifact_storage_path,
+        expectedSignatureArtifactMemberFileId: persistence.signatureRow.signature_artifact_member_file_id,
         actorUserId: input.actor.id,
-        reason: "Intake assessment signature finalization RPC did not return a signature row.",
-        artifact
+        reason: "Intake assessment signature finalization RPC did not return a signature row."
       });
-      throw new Error("Intake assessment signature finalization RPC did not return a signature row.");
+      if (verification.kind === "committed" && verification.state) {
+        finalizedRow = toFinalizedIntakeAssessmentSignatureRowFromState(verification.state);
+      } else {
+        if (verification.kind === "not_committed") {
+          await cleanupIntakeSignatureArtifactAfterFinalizeFailure({
+            assessmentId: assessment.id,
+            memberId: assessment.member_id,
+            actorUserId: input.actor.id,
+            reason: "Intake assessment signature finalization RPC did not return a signature row.",
+            artifact
+          });
+        }
+        throw new Error("Intake assessment signature finalization RPC did not return a signature row.");
+      }
     }
 
     const state = toStateFromRow(finalizedRow);

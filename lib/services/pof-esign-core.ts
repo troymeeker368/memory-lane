@@ -9,6 +9,7 @@ import {
 import type {
   PhysicianOrderForm
 } from "@/lib/services/physician-order-model";
+import type { PublicPofPostSignOutcome } from "@/lib/services/pof-post-sign-runtime";
 import type { PofRequestStatus, PofRequestSummary } from "@/lib/services/pof-types";
 import { easternDateTimeLocalToISO } from "@/lib/timezone";
 import { toSendWorkflowDeliveryStatus } from "@/lib/services/send-workflow-state";
@@ -123,7 +124,7 @@ export type PublicPofSigningContext =
   | { state: "invalid" }
   | { state: "expired"; request: PofRequestSummary }
   | { state: "declined"; request: PofRequestSummary }
-  | { state: "signed"; request: PofRequestSummary }
+  | { state: "signed"; request: PofRequestSummary; postSignOutcome: PublicPofPostSignOutcome }
   | { state: "ready"; request: PofRequestSummary; pofPayload: PhysicianOrderForm };
 
 export type PofRuntimeDiagnostics = {

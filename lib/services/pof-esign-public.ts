@@ -28,6 +28,7 @@ import {
   toRpcFinalizePofSignatureRow,
   toStatus,
   toSummary,
+  type PofRequestRow,
   type PublicPofSigningContext,
   type SubmitPublicPofSignatureInput
 } from "@/lib/services/pof-esign-core";
@@ -113,6 +114,106 @@ async function cleanupFailedPofSignatureArtifacts(input: {
   }
 }
 
+async function buildCommittedPofFinalizeReplayResult(request: PofRequestRow) {
+  if (!request.signed_pdf_url || !request.member_file_id) {
+    throw new Error("This signature link was already used, but the final signed artifact is missing.");
+  }
+
+  const postSign = await loadPublicPofPostSignOutcome(request);
+  return {
+    requestId: request.id,
+    memberId: request.member_id,
+    memberFileId: request.member_file_id,
+    postSignStatus: postSign.postSignStatus,
+    retry: postSign.retry,
+    actionNeeded: postSign.actionNeeded,
+    actionNeededMessage: postSign.actionNeededMessage,
+    signedPdfUrl: await maybeCreateSignedPofAccessUrl({
+      requestId: request.id,
+      memberId: request.member_id,
+      actorUserId: request.sent_by_user_id,
+      signedPdfStorageUrl: request.signed_pdf_url
+    })
+  };
+}
+
+async function verifyCommittedPofSignatureAfterFinalizeError(input: {
+  requestId: string;
+  expectedMemberId: string;
+  expectedMemberFileId: string;
+  expectedSignedPdfStorageUrl: string;
+  consumedTokenHash: string;
+  actorUserId: string;
+  reason: string;
+}) {
+  const refreshed = await loadPofRequestById(input.requestId);
+  if (!refreshed) {
+    await recordPofAlertSafely({
+      entityType: "pof_request",
+      entityId: input.requestId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "pof_signature_finalize_verification_pending",
+      metadata: {
+        member_id: input.expectedMemberId,
+        reason: input.reason,
+        verification_result: "request_missing"
+      }
+    }, "verifyCommittedPofSignatureAfterFinalizeError");
+    return { kind: "unverified" as const, request: null };
+  }
+
+  if (refreshed.member_id !== input.expectedMemberId) {
+    await recordPofAlertSafely({
+      entityType: "pof_request",
+      entityId: input.requestId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "pof_signature_finalize_verification_pending",
+      metadata: {
+        member_id: input.expectedMemberId,
+        refreshed_member_id: refreshed.member_id,
+        reason: input.reason,
+        verification_result: "member_mismatch"
+      }
+    }, "verifyCommittedPofSignatureAfterFinalizeError");
+    return { kind: "unverified" as const, request: refreshed };
+  }
+
+  const requestStatus = toStatus(refreshed.status);
+  const matchesExpectedArtifacts =
+    refreshed.member_file_id === input.expectedMemberFileId &&
+    refreshed.signed_pdf_url === input.expectedSignedPdfStorageUrl;
+  if (requestStatus === "signed" && matchesExpectedArtifacts) {
+    return { kind: "committed" as const, request: refreshed };
+  }
+
+  const tokenConsumed = clean(refreshed.last_consumed_signature_token_hash) === input.consumedTokenHash;
+  if (requestStatus !== "signed" && !refreshed.member_file_id && !refreshed.signed_pdf_url && !tokenConsumed) {
+    return { kind: "not_committed" as const, request: refreshed };
+  }
+
+  await recordPofAlertSafely({
+    entityType: "pof_request",
+    entityId: input.requestId,
+    actorUserId: input.actorUserId,
+    severity: "high",
+    alertKey: "pof_signature_finalize_verification_pending",
+    metadata: {
+      member_id: input.expectedMemberId,
+      refreshed_status: requestStatus,
+      refreshed_member_file_id: refreshed.member_file_id,
+      refreshed_signed_pdf_url: refreshed.signed_pdf_url,
+      expected_member_file_id: input.expectedMemberFileId,
+      expected_signed_pdf_url: input.expectedSignedPdfStorageUrl,
+      token_consumed: tokenConsumed,
+      reason: input.reason,
+      verification_result: "ambiguous"
+    }
+  }, "verifyCommittedPofSignatureAfterFinalizeError");
+  return { kind: "unverified" as const, request: refreshed };
+}
+
 async function buildSignedPdfBytes(input: {
   pofPayload: PhysicianOrderForm;
   providerTypedName: string;
@@ -167,7 +268,14 @@ export async function getPublicPofSigningContext(
   let status = toStatus(currentRequest.status);
   if (status === "expired") return { state: "expired", request: summary };
   if (status === "declined") return { state: "declined", request: summary };
-  if (status === "signed") return { state: "signed", request: summary };
+  if (status === "signed") {
+    const signedRequest = (await loadPofRequestById(currentRequest.id)) ?? currentRequest;
+    return {
+      state: "signed",
+      request: toSummary(signedRequest),
+      postSignOutcome: await loadPublicPofPostSignOutcome(signedRequest)
+    };
+  }
 
   if (!currentRequest.opened_at) {
     const now = toEasternISO();
@@ -208,7 +316,13 @@ export async function getPublicPofSigningContext(
     status = toStatus(currentRequest.status);
     if (status === "expired") return { state: "expired", request: toSummary(currentRequest) };
     if (status === "declined") return { state: "declined", request: toSummary(currentRequest) };
-    if (status === "signed") return { state: "signed", request: toSummary(currentRequest) };
+    if (status === "signed") {
+      return {
+        state: "signed",
+        request: toSummary(currentRequest),
+        postSignOutcome: await loadPublicPofPostSignOutcome(currentRequest)
+      };
+    }
   }
 
   let pofPayload: PhysicianOrderForm;
@@ -242,25 +356,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
   if (!matched) throw new Error("This signature link is invalid.");
   const request = matched.request;
   if (matched.tokenMatch === "consumed" && request.status === "signed") {
-    const postSign = await loadPublicPofPostSignOutcome(request);
-    if (!request.signed_pdf_url || !request.member_file_id) {
-      throw new Error("This signature link was already used, but the final signed artifact is missing.");
-    }
-    return {
-      requestId: request.id,
-      memberId: request.member_id,
-      memberFileId: request.member_file_id,
-      postSignStatus: postSign.postSignStatus,
-      retry: postSign.retry,
-      actionNeeded: postSign.actionNeeded,
-      actionNeededMessage: postSign.actionNeededMessage,
-      signedPdfUrl: await maybeCreateSignedPofAccessUrl({
-        requestId: request.id,
-        memberId: request.member_id,
-        actorUserId: request.sent_by_user_id,
-        signedPdfStorageUrl: request.signed_pdf_url
-      })
-    };
+    return buildCommittedPofFinalizeReplayResult(request);
   }
   if (request.status === "signed") throw new Error("This signature link has already been used.");
   if (request.status === "declined") throw new Error("This signature request was voided.");
@@ -315,6 +411,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     };
     const rotatedToken = hashToken(generateSigningToken());
     const consumedTokenHash = hashToken(token);
+    const expectedMemberFileId = nextMemberFileId();
     const admin = createSupabaseAdminClient();
     let finalizedRaw: unknown;
     try {
@@ -325,7 +422,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
         p_provider_ip: clean(input.providerIp),
         p_provider_user_agent: clean(input.providerUserAgent),
         p_signed_pdf_url: signedPdfUri,
-        p_member_file_id: nextMemberFileId(),
+        p_member_file_id: expectedMemberFileId,
         p_member_file_name: memberFileName,
         p_member_file_data_url: signedPdfDataUrl,
         p_member_file_storage_object_path: parseMemberDocumentStorageUri(signedPdfUri),
@@ -338,14 +435,29 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
         p_consumed_signature_token_hash: consumedTokenHash
       });
     } catch (error) {
-      await cleanupFailedPofSignatureArtifacts({
+      const reason = error instanceof Error ? error.message : "Unable to complete POF signing.";
+      const verification = await verifyCommittedPofSignatureAfterFinalizeError({
         requestId: request.id,
-        memberId: request.member_id,
+        expectedMemberId: request.member_id,
+        expectedMemberFileId,
+        expectedSignedPdfStorageUrl: signedPdfUri,
+        consumedTokenHash,
         actorUserId: request.sent_by_user_id,
-        signatureObjectPath: signaturePath,
-        signedPdfObjectPath: signedPdfPath,
-        reason: error instanceof Error ? error.message : "Unable to complete POF signing."
+        reason
       });
+      if (verification.kind === "committed" && verification.request) {
+        return buildCommittedPofFinalizeReplayResult(verification.request);
+      }
+      if (verification.kind === "not_committed") {
+        await cleanupFailedPofSignatureArtifacts({
+          requestId: request.id,
+          memberId: request.member_id,
+          actorUserId: request.sent_by_user_id,
+          signatureObjectPath: signaturePath,
+          signedPdfObjectPath: signedPdfPath,
+          reason
+        });
+      }
       if (isMissingRpcFunctionError(error, "rpc_finalize_pof_signature")) {
         throw new Error(
           "POF signing finalization RPC is not available. Apply Supabase migration 0053_artifact_drift_replay_hardening.sql and refresh PostgREST schema cache."

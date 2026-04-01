@@ -62,8 +62,6 @@ export default async function EnrollmentPacketConfirmationPage({
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const statusParam = resolvedSearchParams?.status;
   const replayedParam = resolvedSearchParams?.replayed;
-  const followUpRequired =
-    (Array.isArray(statusParam) ? statusParam[0] : statusParam) === "follow-up-required";
   const wasReplayed = (Array.isArray(replayedParam) ? replayedParam[0] : replayedParam) === "1";
   const { getPublicEnrollmentPacketContext } = await import("@/lib/services/enrollment-packets-public");
   const context = await getPublicEnrollmentPacketContext(token);
@@ -81,6 +79,10 @@ export default async function EnrollmentPacketConfirmationPage({
       </div>
     );
   }
+
+  const queryIndicatesFollowUp =
+    (Array.isArray(statusParam) ? statusParam[0] : statusParam) === "follow-up-required";
+  const followUpRequired = queryIndicatesFollowUp || context.actionNeeded;
 
   const [{ getMemberById, loadPacketFields }] = await Promise.all([
     import("@/lib/services/enrollment-packet-mapping-runtime")
@@ -116,8 +118,8 @@ export default async function EnrollmentPacketConfirmationPage({
         </div>
         {followUpRequired ? (
           <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-            Memory Lane received the enrollment packet. Some staff follow-up is still needed before downstream
-            setup is fully operational, and the care team has been signaled to review it.
+            {context.actionNeededMessage ??
+              "Memory Lane received the enrollment packet. Some staff follow-up is still needed before downstream setup is fully operational, and the care team has been signaled to review it."}
           </div>
         ) : null}
         {wasReplayed ? (

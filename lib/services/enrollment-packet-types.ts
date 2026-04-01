@@ -207,7 +207,14 @@ export type PublicEnrollmentPacketContext =
   | { state: "invalid" }
   | { state: "expired" }
   | { state: "voided" }
-  | { state: "completed"; request: EnrollmentPacketRequestSummary }
+  | {
+      state: "completed";
+      request: EnrollmentPacketRequestSummary;
+      mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
+      operationalReadinessStatus: EnrollmentPacketOperationalReadinessStatus;
+      actionNeeded: boolean;
+      actionNeededMessage: string | null;
+    }
   | {
       state: "ready";
       request: EnrollmentPacketRequestSummary;

@@ -6,6 +6,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternISO } from "@/lib/timezone";
 import { buildCarePlanPdfDataUrl } from "@/lib/services/care-plan-pdf";
 import { resolvePublicCaregiverLinkState } from "@/lib/services/care-plan-esign-rules";
+import { buildCarePlanPublicCompletionOutcome } from "@/lib/services/care-plan-post-sign-readiness";
 import { getCarePlanById, type CaregiverSignatureStatus } from "@/lib/services/care-plans";
 import {
   buildDatedPdfFileName,
@@ -50,7 +51,11 @@ type CarePlanCaregiverFinalizeRpcRow = {
 export type PublicCarePlanSigningContext =
   | { state: "invalid" }
   | { state: "expired"; carePlan: NonNullable<Awaited<ReturnType<typeof getCarePlanById>>>["carePlan"] }
-  | { state: "completed"; carePlan: NonNullable<Awaited<ReturnType<typeof getCarePlanById>>>["carePlan"] }
+  | {
+      state: "completed";
+      carePlan: NonNullable<Awaited<ReturnType<typeof getCarePlanById>>>["carePlan"];
+      completedOutcome: ReturnType<typeof buildCarePlanPublicCompletionOutcome>;
+    }
   | { state: "ready"; detail: NonNullable<Awaited<ReturnType<typeof getCarePlanById>>> };
 
 export type SubmitPublicCarePlanSignatureInput = {
@@ -322,6 +327,81 @@ async function requireCommittedSignedCarePlanReady(input: {
   return detail;
 }
 
+async function verifyCommittedCarePlanCaregiverSignatureAfterFinalizeError(input: {
+  carePlanId: string;
+  expectedMemberId: string;
+  expectedFinalMemberFileId: string;
+  actorUserId: string | null;
+  reason: string;
+}) {
+  const detail = await getCarePlanById(input.carePlanId, { serviceRole: true });
+  if (!detail) {
+    await recordCarePlanAlertSafely({
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "care_plan_signature_finalize_verification_pending",
+      metadata: {
+        member_id: input.expectedMemberId,
+        reason: input.reason,
+        verification_result: "care_plan_missing"
+      }
+    }, "verifyCommittedCarePlanCaregiverSignatureAfterFinalizeError");
+    return { kind: "unverified" as const, detail: null };
+  }
+
+  if (detail.carePlan.memberId !== input.expectedMemberId) {
+    await recordCarePlanAlertSafely({
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorUserId: input.actorUserId,
+      severity: "high",
+      alertKey: "care_plan_signature_finalize_verification_pending",
+      metadata: {
+        member_id: input.expectedMemberId,
+        refreshed_member_id: detail.carePlan.memberId,
+        reason: input.reason,
+        verification_result: "member_mismatch"
+      }
+    }, "verifyCommittedCarePlanCaregiverSignatureAfterFinalizeError");
+    return { kind: "unverified" as const, detail };
+  }
+
+  const finalMemberFileId = clean(detail.carePlan.finalMemberFileId);
+  if (
+    detail.carePlan.caregiverSignatureStatus === "signed" &&
+    finalMemberFileId &&
+    finalMemberFileId === input.expectedFinalMemberFileId
+  ) {
+    return { kind: "committed" as const, detail };
+  }
+
+  if (
+    detail.carePlan.caregiverSignatureStatus !== "signed" &&
+    finalMemberFileId !== input.expectedFinalMemberFileId
+  ) {
+    return { kind: "not_committed" as const, detail };
+  }
+
+  await recordCarePlanAlertSafely({
+    entityType: "care_plan",
+    entityId: input.carePlanId,
+    actorUserId: input.actorUserId,
+    severity: "high",
+    alertKey: "care_plan_signature_finalize_verification_pending",
+    metadata: {
+      member_id: input.expectedMemberId,
+      refreshed_status: detail.carePlan.caregiverSignatureStatus,
+      refreshed_final_member_file_id: finalMemberFileId,
+      expected_final_member_file_id: input.expectedFinalMemberFileId,
+      reason: input.reason,
+      verification_result: "ambiguous"
+    }
+  }, "verifyCommittedCarePlanCaregiverSignatureAfterFinalizeError");
+  return { kind: "unverified" as const, detail };
+}
+
 export async function getPublicCarePlanSigningContext(
   token: string,
   metadata?: { ip?: string | null; userAgent?: string | null }
@@ -346,7 +426,13 @@ export async function getPublicCarePlanSigningContext(
   const detail = await getCarePlanById(tokenRow.id, { serviceRole: true });
   if (!detail) return { state: "invalid" };
   if (linkState === "expired") return { state: "expired", carePlan: detail.carePlan };
-  if (linkState === "completed") return { state: "completed", carePlan: detail.carePlan };
+  if (linkState === "completed") {
+    return {
+      state: "completed",
+      carePlan: detail.carePlan,
+      completedOutcome: buildCarePlanPublicCompletionOutcome(detail.carePlan.postSignReadinessStatus)
+    };
+  }
   if (linkState !== "ready") return { state: "invalid" };
 
   if (!detail.carePlan.caregiverViewedAt) {
@@ -400,9 +486,11 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     if (!signedDetail?.carePlan.finalMemberFileId) {
       throw new Error("This signature link was already used, but the final care plan file is missing.");
     }
-    if (signedDetail.carePlan.postSignReadinessStatus !== "ready") {
+    const completedOutcome = buildCarePlanPublicCompletionOutcome(signedDetail.carePlan.postSignReadinessStatus);
+    if (completedOutcome.actionNeeded) {
       throw new Error(
-        "This care plan was already signed, but post-sign finalization is still incomplete. Staff should finish follow-up before relying on it."
+        completedOutcome.actionNeededMessage ??
+          "This care plan was already signed, but post-sign finalization is still incomplete. Staff should finish follow-up before relying on it."
       );
     }
     return {
@@ -423,7 +511,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
   if (status === "signed") throw new Error("This signature link has already been used.");
   if (status !== "sent" && status !== "viewed") throw new Error("This signature link is not active.");
 
-  const detail = await getCarePlanById(tokenRow.id, { serviceRole: true });
+  let detail = await getCarePlanById(tokenRow.id, { serviceRole: true });
   if (!detail) throw new Error("Care plan was not found.");
 
   const now = toEasternISO();
@@ -435,6 +523,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
   });
 
   const signedPdfStoragePath = `members/${detail.carePlan.memberId}/care-plans/${detail.carePlan.id}/final-signed.pdf`;
+  const expectedFinalMemberFileId = detail.carePlan.finalMemberFileId ?? `mf_${randomUUID().replace(/-/g, "")}`;
   let finalized:
     | {
         carePlanId: string;
@@ -443,6 +532,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         wasAlreadySigned: boolean;
       }
     | null = null;
+  let finalizeAttempted = false;
   try {
     const generated = await buildCarePlanPdfDataUrl(detail.carePlan.id, { serviceRole: true });
     const parsedPdf = parseDataUrlPayload(generated.dataUrl);
@@ -453,13 +543,14 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     });
 
     const rotatedToken = hashToken(generateSigningToken());
+    finalizeAttempted = true;
     finalized = await invokeFinalizeCarePlanCaregiverSignatureRpc({
       carePlanId: detail.carePlan.id,
       rotatedToken,
       consumedTokenHash: hashToken(token),
       signedAt: now,
       updatedAt: toEasternISO(),
-      finalMemberFileId: detail.carePlan.finalMemberFileId ?? `mf_${randomUUID().replace(/-/g, "")}`,
+      finalMemberFileId: expectedFinalMemberFileId,
       finalMemberFileName: buildDatedPdfFileName("Care Plan Final Signed", detail.carePlan.memberName, now),
       finalMemberFileDataUrl: generated.dataUrl,
       finalMemberFileStorageObjectPath: parseMemberDocumentStorageUri(signedPdfStorageUri),
@@ -498,62 +589,94 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     const reason = error instanceof Error ? error.message : "Unable to complete care plan filing.";
     const fallbackStatus = detail.carePlan.caregiverSignatureStatus;
     if (!finalized) {
-      const canWriteFallbackStatus = fallbackStatus !== "signed";
-      await cleanupFailedCarePlanCaregiverArtifacts({
-        carePlanId: detail.carePlan.id,
-        actorUserId: detail.carePlan.caregiverSentByUserId,
-        memberId: detail.carePlan.memberId,
-        signatureObjectPath: signaturePath,
-        signedPdfObjectPath: signedPdfStoragePath,
-        reason
-      });
-      if (canWriteFallbackStatus) {
-        try {
-          await transitionCarePlanCaregiverStatus({
+      let finalizeVerification:
+        | Awaited<ReturnType<typeof verifyCommittedCarePlanCaregiverSignatureAfterFinalizeError>>
+        | null = null;
+      if (finalizeAttempted) {
+        finalizeVerification = await verifyCommittedCarePlanCaregiverSignatureAfterFinalizeError({
+          carePlanId: detail.carePlan.id,
+          expectedMemberId: detail.carePlan.memberId,
+          expectedFinalMemberFileId,
+          actorUserId: detail.carePlan.caregiverSentByUserId,
+          reason
+        });
+      }
+
+      if (finalizeVerification?.kind === "committed" && finalizeVerification.detail?.carePlan.finalMemberFileId) {
+        const committedFinalMemberFileId = finalizeVerification.detail.carePlan.finalMemberFileId;
+        detail = finalizeVerification.detail;
+        finalized = {
+          carePlanId: detail.carePlan.id,
+          memberId: detail.carePlan.memberId,
+          finalMemberFileId: committedFinalMemberFileId,
+          wasAlreadySigned: false
+        };
+      } else {
+        const canWriteFallbackStatus =
+          fallbackStatus !== "signed" && finalizeVerification?.kind !== "unverified";
+        if (finalizeVerification?.kind !== "unverified") {
+          await cleanupFailedCarePlanCaregiverArtifacts({
             carePlanId: detail.carePlan.id,
-            status: fallbackStatus,
-            updatedAt: toEasternISO(),
-            actor: {
-              id: detail.carePlan.caregiverSentByUserId,
-              fullName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName ?? null
-            },
-            caregiverSentAt: detail.carePlan.caregiverSentAt,
-            caregiverViewedAt: detail.carePlan.caregiverViewedAt,
-            caregiverSignatureError: reason,
-            expectedCurrentStatuses: ["ready_to_send", "send_failed", "sent", "viewed", "expired"]
+            actorUserId: detail.carePlan.caregiverSentByUserId,
+            memberId: detail.carePlan.memberId,
+            signatureObjectPath: signaturePath,
+            signedPdfObjectPath: signedPdfStoragePath,
+            reason
           });
-        } catch (statusError) {
-          if (!isCarePlanStatusTransitionRaceError(statusError)) {
-            throw statusError;
+        }
+        if (canWriteFallbackStatus) {
+          try {
+            await transitionCarePlanCaregiverStatus({
+              carePlanId: detail.carePlan.id,
+              status: fallbackStatus,
+              updatedAt: toEasternISO(),
+              actor: {
+                id: detail.carePlan.caregiverSentByUserId,
+                fullName: detail.carePlan.nurseSignedByName ?? detail.carePlan.nurseDesigneeName ?? null
+              },
+              caregiverSentAt: detail.carePlan.caregiverSentAt,
+              caregiverViewedAt: detail.carePlan.caregiverViewedAt,
+              caregiverSignatureError: reason,
+              expectedCurrentStatuses: ["ready_to_send", "send_failed", "sent", "viewed", "expired"]
+            });
+          } catch (statusError) {
+            if (!isCarePlanStatusTransitionRaceError(statusError)) {
+              throw statusError;
+            }
           }
         }
+        try {
+          await recordWorkflowEvent({
+            eventType: "care_plan_failed",
+            entityType: "care_plan",
+            entityId: detail.carePlan.id,
+            actorType: "caregiver",
+            status: "failed",
+            severity: "high",
+            metadata: {
+              member_id: detail.carePlan.memberId,
+              phase: "signature_completion",
+              caregiver_email: detail.carePlan.caregiverEmail,
+              error: reason
+            }
+          });
+          await recordCarePlanAlertSafely({
+            entityType: "care_plan",
+            entityId: detail.carePlan.id,
+            actorUserId: detail.carePlan.caregiverSentByUserId,
+            severity: "high",
+            alertKey: "care_plan_signature_completion_failed",
+            metadata: {
+              member_id: detail.carePlan.memberId,
+              caregiver_email: detail.carePlan.caregiverEmail,
+              error: reason
+            }
+          }, "submitPublicCarePlanSignature");
+        } catch (followUpError) {
+          throw followUpError;
+        }
+        throw error;
       }
-      await recordWorkflowEvent({
-        eventType: "care_plan_failed",
-        entityType: "care_plan",
-        entityId: detail.carePlan.id,
-        actorType: "caregiver",
-        status: "failed",
-        severity: "high",
-        metadata: {
-          member_id: detail.carePlan.memberId,
-          phase: "signature_completion",
-          caregiver_email: detail.carePlan.caregiverEmail,
-          error: reason
-        }
-      });
-      await recordCarePlanAlertSafely({
-        entityType: "care_plan",
-        entityId: detail.carePlan.id,
-        actorUserId: detail.carePlan.caregiverSentByUserId,
-        severity: "high",
-        alertKey: "care_plan_signature_completion_failed",
-        metadata: {
-          member_id: detail.carePlan.memberId,
-          caregiver_email: detail.carePlan.caregiverEmail,
-          error: reason
-        }
-      }, "submitPublicCarePlanSignature");
     } else {
       await recordCarePlanAlertSafely({
         entityType: "care_plan",
@@ -572,9 +695,14 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         carePlanId: detail.carePlan.id,
         message: reason
       });
+      throw error;
     }
-    throw error;
   }
+
+  if (!finalized) {
+    throw new Error("Care plan caregiver signature finalization did not produce a committed file reference.");
+  }
+  const finalizedMemberFileId = finalized.finalMemberFileId;
 
   try {
     await recordWorkflowMilestone({
@@ -587,7 +715,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         severity: "low",
         metadata: {
           member_id: detail.carePlan.memberId,
-          final_member_file_id: finalized.finalMemberFileId,
+          final_member_file_id: finalizedMemberFileId,
           caregiver_email: detail.carePlan.caregiverEmail,
           signature_image_url: signatureUri
         }
@@ -607,7 +735,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
       severity: "low",
       metadata: {
         member_id: detail.carePlan.memberId,
-        final_member_file_id: finalized.finalMemberFileId,
+        final_member_file_id: finalizedMemberFileId,
         caregiver_email: detail.carePlan.caregiverEmail
       }
     });
@@ -637,7 +765,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     await requireCommittedSignedCarePlanReady({
       carePlanId: detail.carePlan.id,
       expectedMemberId: detail.carePlan.memberId,
-      expectedFinalMemberFileId: finalized.finalMemberFileId
+      expectedFinalMemberFileId: finalizedMemberFileId
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete post-sign readiness update.";
@@ -650,7 +778,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
       metadata: {
         member_id: detail.carePlan.memberId,
         caregiver_email: detail.carePlan.caregiverEmail,
-        final_member_file_id: finalized.finalMemberFileId,
+        final_member_file_id: finalizedMemberFileId,
         error: reason
       }
     }, "submitPublicCarePlanSignature.postCommit");
@@ -664,7 +792,7 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
   return {
     carePlanId: detail.carePlan.id,
     memberId: detail.carePlan.memberId,
-    finalMemberFileId: finalized.finalMemberFileId,
+    finalMemberFileId: finalizedMemberFileId,
     actionNeeded: false,
     actionNeededMessage: null
   };
