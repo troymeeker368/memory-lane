@@ -42,7 +42,9 @@ type SaveGeneratedMemberPdfInput = {
   carePlanId?: string | null;
   category: MemberFileCategory;
   categoryOther?: string | null;
-  dataUrl: string;
+  dataUrl?: string;
+  bytes?: Buffer;
+  contentType?: string;
   uploadedBy: {
     id: string;
     name: string;
@@ -208,7 +210,7 @@ async function loadMemberFileRowByDocumentSource(input: {
   return data;
 }
 
-async function createSignedMemberDocumentUrl(objectPath: string, expiresInSeconds = 60 * 15) {
+export async function createSignedMemberDocumentUrl(objectPath: string, expiresInSeconds = 60 * 15) {
   const normalized = String(objectPath ?? "").trim();
   if (!normalized) throw new Error("Storage object path is required.");
 
@@ -762,7 +764,12 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
   const defaultName =
     safeFileName(input.fileNameOverride ?? "") || buildDatedPdfFileName(input.documentLabel, input.memberName, now);
   const categoryOther = input.category === "Other" ? input.categoryOther ?? null : null;
-  const parsed = parseDataUrlPayload(input.dataUrl, "Invalid generated PDF payload.");
+  const parsed = input.bytes
+    ? {
+        contentType: input.contentType ?? "application/pdf",
+        bytes: input.bytes
+      }
+    : parseDataUrlPayload(input.dataUrl ?? "", "Invalid generated PDF payload.");
 
   async function uploadGeneratedPdfObject(memberFileId: string, fileName: string) {
     const objectName = slugifyMemberFileSegment(fileName) || `${memberFileId}.pdf`;
@@ -773,6 +780,14 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
       contentType: "application/pdf"
     });
     return objectPath;
+  }
+
+  async function buildGeneratedPdfDownloadUrl(storageObjectPath: string) {
+    try {
+      return await createSignedMemberDocumentUrl(storageObjectPath);
+    } catch {
+      return null;
+    }
   }
 
   if (input.replaceExistingByDocumentSource) {
@@ -851,6 +866,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
       });
       return {
         created: updated,
+        downloadUrl: await buildGeneratedPdfDownloadUrl(storageObjectPath),
         fileName: defaultName,
         generatedAtIso: now,
         verifiedPersisted: Boolean((updated as { verifiedPersisted?: boolean }).verifiedPersisted ?? true)
@@ -933,6 +949,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
 
   return {
     created,
+    downloadUrl: await buildGeneratedPdfDownloadUrl(storageObjectPath),
     fileName,
     generatedAtIso: now,
     verifiedPersisted: Boolean((created as { verifiedPersisted?: boolean }).verifiedPersisted ?? true)

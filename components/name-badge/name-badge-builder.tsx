@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 
 import { generateMemberNameBadgePdfAction } from "@/app/(portal)/members/[memberId]/name-badge/actions";
+import { triggerPdfDownloadFromUrl, triggerPdfPrintFromUrl } from "@/components/documents/pdf-client";
 
 const STAR_GROUP_SRC =
   "https://dcnyjtfyftamcdsaxrsz.supabase.co/storage/v1/object/public/Assets/TS_Gray_Star_Group_4%20(1).png";
@@ -30,101 +31,6 @@ interface BadgeViewModel {
   };
   logoSrc: string;
   indicators: BadgeIndicatorView[];
-}
-
-function dataUrlToBlob(dataUrl: string) {
-  const commaIndex = dataUrl.indexOf(",");
-  if (commaIndex < 0) {
-    throw new Error("Invalid PDF payload.");
-  }
-  const meta = dataUrl.slice(0, commaIndex);
-  const base64 = dataUrl.slice(commaIndex + 1);
-  const mimeMatch = /data:([^;]+);base64/i.exec(meta);
-  const mimeType = mimeMatch?.[1] ?? "application/octet-stream";
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return new Blob([bytes], { type: mimeType });
-}
-
-async function triggerDownload(dataUrl: string, fileName: string) {
-  const blob = dataUrlToBlob(dataUrl);
-  if ("showSaveFilePicker" in window) {
-    try {
-      const handle = await (window as Window & {
-        showSaveFilePicker?: (options?: {
-          suggestedName?: string;
-          types?: Array<{ description: string; accept: Record<string, string[]> }>;
-        }) => Promise<{
-          createWritable: () => Promise<{
-            write: (data: Blob) => Promise<void>;
-            close: () => Promise<void>;
-          }>;
-        }>;
-      }).showSaveFilePicker?.({
-        suggestedName: fileName,
-        types: [{ description: "PDF Document", accept: { "application/pdf": [".pdf"] } }]
-      });
-      if (handle) {
-        const writable = await handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-        return;
-      }
-    } catch (error) {
-      const name = error instanceof DOMException ? error.name : "";
-      if (name === "AbortError") return;
-    }
-  }
-
-  const blobUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = blobUrl;
-  anchor.download = fileName;
-  anchor.style.display = "none";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-}
-
-function triggerPrint(dataUrl: string) {
-  const blob = dataUrlToBlob(dataUrl);
-  const blobUrl = URL.createObjectURL(blob);
-  const frame = document.createElement("iframe");
-  frame.style.position = "fixed";
-  frame.style.right = "0";
-  frame.style.bottom = "0";
-  frame.style.width = "0";
-  frame.style.height = "0";
-  frame.style.border = "0";
-  frame.style.opacity = "0";
-  frame.src = blobUrl;
-
-  const cleanup = () => {
-    frame.remove();
-    URL.revokeObjectURL(blobUrl);
-  };
-
-  frame.addEventListener(
-    "load",
-    () => {
-      const frameWindow = frame.contentWindow;
-      if (!frameWindow) {
-        cleanup();
-        return;
-      }
-      frameWindow.addEventListener("afterprint", cleanup, { once: true });
-      frameWindow.focus();
-      frameWindow.print();
-      window.setTimeout(cleanup, 60000);
-    },
-    { once: true }
-  );
-
-  document.body.appendChild(frame);
 }
 
 export function NameBadgeBuilder({
@@ -181,8 +87,12 @@ export function NameBadgeBuilder({
         setStatus(`Error: ${result?.error ?? "Unable to generate badge."}`);
         return;
       }
+      if (!result.downloadUrl) {
+        setStatus("Error: name badge PDF is missing its download source.");
+        return;
+      }
       if (mode === "print") {
-        triggerPrint(result.dataUrl);
+        await triggerPdfPrintFromUrl(result.downloadUrl);
         setStatus(
           result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
             ? `Name badge sent to printer. ${result.memberFilesMessage}`
@@ -190,7 +100,7 @@ export function NameBadgeBuilder({
         );
         return;
       }
-      await triggerDownload(result.dataUrl, result.fileName);
+      await triggerPdfDownloadFromUrl(result.downloadUrl, result.fileName);
       setStatus(
         result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
           ? `Name badge downloaded. ${result.memberFilesMessage}`

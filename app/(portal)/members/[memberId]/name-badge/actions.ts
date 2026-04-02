@@ -165,7 +165,7 @@ async function loadPngFromUrl(pdf: PDFDocumentType, src: string) {
   }
 }
 
-async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?: string[]) {
+async function buildNameBadgePdfBytes(memberId: string, selectedIndicatorKeys?: string[]) {
   const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
   const badge = await getMemberNameBadgeDetail(memberId);
   if (!badge) {
@@ -362,10 +362,9 @@ async function buildNameBadgePdfDataUrl(memberId: string, selectedIndicatorKeys?
   }
 
   const pdfBytes = await pdf.save();
-  const dataUrl = `data:application/pdf;base64,${Buffer.from(pdfBytes).toString("base64")}`;
   return {
     badge,
-    dataUrl
+    pdfBytes: Buffer.from(pdfBytes)
   } as const;
 }
 
@@ -383,9 +382,9 @@ export async function generateMemberNameBadgePdfAction(input: {
     return { ok: false, error: "Member is required." } as const;
   }
 
-  let built: Awaited<ReturnType<typeof buildNameBadgePdfDataUrl>>;
+  let built: Awaited<ReturnType<typeof buildNameBadgePdfBytes>>;
   try {
-    built = await buildNameBadgePdfDataUrl(memberId, input.selectedIndicatorKeys);
+    built = await buildNameBadgePdfBytes(memberId, input.selectedIndicatorKeys);
   } catch (error) {
     const message = normalizeBadgeErrorMessage(error);
     console.error("[NameBadge] generateMemberNameBadgePdfAction build failed", {
@@ -406,7 +405,8 @@ export async function generateMemberNameBadgePdfAction(input: {
       documentLabel: "Name Badge",
       documentSource: "Name Badge Generator",
       category: "Name Badge",
-      dataUrl: built.dataUrl,
+      bytes: built.pdfBytes,
+      contentType: "application/pdf",
       uploadedBy: {
         id: profile.id,
         name: profile.full_name
@@ -429,7 +429,7 @@ export async function generateMemberNameBadgePdfAction(input: {
   return {
     ok: true,
     fileName: saved.fileName,
-    dataUrl: built.dataUrl,
+    downloadUrl: saved.downloadUrl,
     ...buildGeneratedMemberFilePersistenceState({
       documentLabel: "Name Badge",
       verifiedPersisted: saved.verifiedPersisted

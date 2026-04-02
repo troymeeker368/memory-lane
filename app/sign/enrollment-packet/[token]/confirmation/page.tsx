@@ -63,7 +63,9 @@ export default async function EnrollmentPacketConfirmationPage({
   const statusParam = resolvedSearchParams?.status;
   const replayedParam = resolvedSearchParams?.replayed;
   const wasReplayed = (Array.isArray(replayedParam) ? replayedParam[0] : replayedParam) === "1";
-  const { getPublicEnrollmentPacketContext } = await import("@/lib/services/enrollment-packets-public");
+  const { getPublicEnrollmentPacketContext, issuePublicCompletedEnrollmentPacketDownloadToken } = await import(
+    "@/lib/services/enrollment-packets-public"
+  );
   const context = await getPublicEnrollmentPacketContext(token);
 
   if (context.state !== "completed") {
@@ -100,7 +102,8 @@ export default async function EnrollmentPacketConfirmationPage({
     intakePayload?.primaryContactName ??
     fields?.caregiver_name ??
     "Caregiver";
-  const completedPacketDownloadHref = `/sign/enrollment-packet/${encodeURIComponent(token)}/completed-packet`;
+  const { downloadToken } = await issuePublicCompletedEnrollmentPacketDownloadToken({ token });
+  const completedPacketDownloadHref = `/sign/enrollment-packet/${encodeURIComponent(downloadToken)}/completed-packet`;
   const legalText = buildEnrollmentPacketLegalText({
     caregiverName,
     photoConsentChoice: intakePayload?.photoConsentChoice ?? null

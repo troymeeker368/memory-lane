@@ -178,10 +178,11 @@ export async function getCustomInvoices(input?: { status?: "Draft" | "Finalized"
 
 export async function getBillingBatchReviewRows(billingBatchId: string) {
   const supabase = await createClient();
-  const [{ data: invoices, error: invoiceError }, { data: members }] = await Promise.all([
-    supabase.from("billing_invoices").select("*").eq("billing_batch_id", billingBatchId).order("created_at", { ascending: true }),
-    supabase.from("members").select("id, display_name")
-  ]);
+  const { data: invoices, error: invoiceError } = await supabase
+    .from("billing_invoices")
+    .select("*")
+    .eq("billing_batch_id", billingBatchId)
+    .order("created_at", { ascending: true });
   if (invoiceError) {
     if (isMissingSchemaObjectError(invoiceError)) {
       throw new Error(
@@ -193,6 +194,13 @@ export async function getBillingBatchReviewRows(billingBatchId: string) {
     }
     throw new Error(invoiceError.message);
   }
+  const invoiceRows = (invoices ?? []) as BillingInvoiceRow[];
+  const memberIds = Array.from(new Set(invoiceRows.map((invoice) => String(invoice.member_id)).filter(Boolean)));
+  const { data: members, error: membersError } =
+    memberIds.length > 0
+      ? await supabase.from("members").select("id, display_name").in("id", memberIds)
+      : { data: [], error: null };
+  if (membersError) throw new Error(membersError.message);
   const memberNameById = new Map(
     ((members ?? []) as Pick<MemberLookupRow, "id" | "display_name">[]).map((row) => [
       String(row.id),
@@ -200,10 +208,10 @@ export async function getBillingBatchReviewRows(billingBatchId: string) {
     ] as const)
   );
   const payorByMember = await listBillingPayorContactsForMembers(
-    ((invoices ?? []) as BillingInvoiceRow[]).map((invoice) => String(invoice.member_id))
+    memberIds
   );
 
-  return ((invoices ?? []) as BillingInvoiceRow[]).map((invoice) => {
+  return invoiceRows.map((invoice) => {
     const payor = payorByMember.get(String(invoice.member_id)) ?? null;
     return {
       invoiceId: String(invoice.id),
@@ -241,7 +249,6 @@ export async function getVariableChargesQueue(input: { month: string }) {
     { data: transportData, error: transportError },
     { data: ancillaryData, error: ancillaryError },
     { data: adjustmentData, error: adjustmentError },
-    { data: membersData, error: membersError },
     { data: categoryData, error: categoryError }
   ] = await Promise.all([
     supabase
@@ -259,7 +266,6 @@ export async function getVariableChargesQueue(input: { month: string }) {
       .select(BILLING_ADJUSTMENT_QUEUE_SELECT)
       .gte("adjustment_date", monthRange.start)
       .lte("adjustment_date", monthRange.end),
-    supabase.from("members").select(BILLING_MEMBER_LOOKUP_SELECT),
     supabase.from("ancillary_charge_categories").select(BILLING_ANCILLARY_CATEGORY_SELECT)
   ]);
   if (transportError) {
@@ -280,13 +286,26 @@ export async function getVariableChargesQueue(input: { month: string }) {
     }
     throw new Error(adjustmentError.message);
   }
-  if (membersError) throw new Error(membersError.message);
   if (categoryError) {
     if (isMissingSchemaObjectError(categoryError)) {
       throw new Error(buildMissingSchemaMessage({ objectName: "ancillary_charge_categories", migration: "0001_initial_schema.sql" }));
     }
     throw new Error(categoryError.message);
   }
+  const memberIds = Array.from(
+    new Set(
+      [
+        ...((transportData ?? []) as TransportationLogRow[]).map((row) => String(row.member_id ?? "")),
+        ...((ancillaryData ?? []) as AncillaryChargeLogRow[]).map((row) => String(row.member_id ?? "")),
+        ...((adjustmentData ?? []) as BillingAdjustmentRow[]).map((row) => String(row.member_id ?? ""))
+      ].filter(Boolean)
+    )
+  );
+  const { data: membersData, error: membersError } =
+    memberIds.length > 0
+      ? await supabase.from("members").select(BILLING_MEMBER_LOOKUP_SELECT).in("id", memberIds)
+      : { data: [], error: null };
+  if (membersError) throw new Error(membersError.message);
 
   const memberNameById = new Map(
     ((membersData ?? []) as Pick<MemberLookupRow, "id" | "display_name">[]).map((row) => [

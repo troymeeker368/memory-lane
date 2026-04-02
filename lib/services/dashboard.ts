@@ -1,5 +1,7 @@
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { createClient } from "@/lib/supabase/server";
+import { listMemberHolds } from "@/lib/services/holds-supabase";
+import { listMemberLookupByIdsSupabase } from "@/lib/services/shared-lookups-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export type DashboardAncillaryChargeRow = {
@@ -8,7 +10,19 @@ export type DashboardAncillaryChargeRow = {
   billing_status: string | null;
 };
 
-export async function getDashboardStats(userId: string) {
+export type DashboardAdminSnapshot = {
+  holds: Awaited<ReturnType<typeof listMemberHolds>>;
+  membersData: Array<{ id: string; display_name: string }>;
+  monthlyRevenueCents: number;
+  unreconciledCharges: number;
+};
+
+export async function getDashboardStats(
+  userId: string,
+  options?: {
+    includeLatestPunches?: boolean;
+  }
+) {
   const supabase = await createClient({ serviceRole: true });
 
   const today = new Date();
@@ -32,12 +46,14 @@ export async function getDashboardStats(userId: string) {
       .select("id", { count: "exact", head: true })
       .lt("due_at", toEasternISO())
       .eq("completed", false),
-    supabase
-      .from("time_punches")
-      .select("id, punch_type, punch_at")
-      .eq("staff_user_id", userId)
-      .order("punch_at", { ascending: false })
-      .limit(5)
+    options?.includeLatestPunches
+      ? supabase
+          .from("time_punches")
+          .select("id, punch_type, punch_at")
+          .eq("staff_user_id", userId)
+          .order("punch_at", { ascending: false })
+          .limit(5)
+      : Promise.resolve({ data: [], error: null })
   ]);
   if (todaysLogsError) throw new Error(`Unable to load today's documentation event count: ${todaysLogsError.message}`);
   if (missingDocsError) throw new Error(`Unable to load missing documentation assignment count: ${missingDocsError.message}`);
@@ -53,18 +69,22 @@ export async function getDashboardStats(userId: string) {
 export async function getDashboardAlerts() {
   const supabase = await createClient({ serviceRole: true });
 
-  const { data: overdueCarePlan, error: overdueCarePlanError } = await supabase
-    .from("documentation_tracker")
-    .select("id")
-    .lt("next_care_plan_due", toEasternDate())
-    .eq("care_plan_done", false)
-    .limit(1);
-
-  const { data: clockIssues, error: clockIssuesError } = await supabase
-    .from("time_punch_exceptions")
-    .select("id")
-    .eq("resolved", false)
-    .limit(1);
+  const [
+    { data: overdueCarePlan, error: overdueCarePlanError },
+    { data: clockIssues, error: clockIssuesError }
+  ] = await Promise.all([
+    supabase
+      .from("documentation_tracker")
+      .select("id")
+      .lt("next_care_plan_due", toEasternDate())
+      .eq("care_plan_done", false)
+      .limit(1),
+    supabase
+      .from("time_punch_exceptions")
+      .select("id")
+      .eq("resolved", false)
+      .limit(1)
+  ]);
   if (overdueCarePlanError) throw new Error(`Unable to load overdue care plan alerts: ${overdueCarePlanError.message}`);
   if (clockIssuesError) throw new Error(`Unable to load clock issue alerts: ${clockIssuesError.message}`);
 
@@ -122,5 +142,28 @@ export async function listDashboardAncillaryChargesForMonth(selectedDate: string
     amount: typeof row.amount === "number" ? row.amount : row.amount == null ? null : Number(row.amount),
     billing_status: typeof row.billing_status === "string" ? row.billing_status : null
   }));
+}
+
+export async function getDashboardAdminSnapshot(selectedDate: string): Promise<DashboardAdminSnapshot> {
+  const [holds, ancillaryRows] = await Promise.all([
+    listMemberHolds({ status: "active" }),
+    listDashboardAncillaryChargesForMonth(selectedDate)
+  ]);
+
+  const memberIds = Array.from(new Set(holds.map((hold) => hold.member_id).filter(Boolean)));
+  const membersData =
+    memberIds.length > 0
+      ? (await listMemberLookupByIdsSupabase(memberIds)).map((member) => ({
+          id: member.id,
+          display_name: member.display_name
+        }))
+      : [];
+
+  return {
+    holds,
+    membersData,
+    monthlyRevenueCents: ancillaryRows.reduce((sum, row) => sum + Math.round(Number(row.amount ?? 0) * 100), 0),
+    unreconciledCharges: ancillaryRows.filter((row) => String(row.billing_status ?? "Unbilled") !== "Billed").length
+  };
 }
 

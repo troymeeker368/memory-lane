@@ -1,5 +1,4 @@
 import { createClient } from "@/lib/supabase/server";
-import { isDevAuthBypassEnabled } from "@/lib/runtime";
 import {
   PERMISSION_MODULES,
   normalizeRoleKey
@@ -10,16 +9,6 @@ import {
   type HomeLandingResolution
 } from "@/lib/services/home-landing";
 import type { AppRole, PermissionModuleKey } from "@/types/app";
-
-const DEV_FORCE_ADMIN_EMAILS = new Set([
-  "tmeeker@townsquare.net",
-  "troy.meeker.bsn.rn.cdp@memorylane.local"
-]);
-
-const DEV_FORCE_ADMIN_PROFILE_IDS = new Set([
-  "b042eae4-d478-4adf-ac53-55c942a82c03",
-  "569f46e5-c97e-493a-8221-f8131bbd5b17"
-]);
 
 type LandingResolutionOptions = {
   traceLabel?: string;
@@ -155,23 +144,8 @@ export async function resolveCurrentHomeLanding(
     return { path: "/auth/set-password", reason: "invited-password-setup", role: data.role };
   }
 
-  const fullName = String((data as { full_name?: string | null }).full_name ?? "").trim().toLowerCase();
-  const email = String((data as { email?: string | null }).email ?? "").trim().toLowerCase();
-  const profileId = String((data as { id?: string | null }).id ?? "").trim().toLowerCase();
-  const authUserId = String(user.id ?? "").trim().toLowerCase();
-  const isNonProductionRuntime = process.env.NODE_ENV !== "production";
-  const forceDevAdminView =
-    (isDevAuthBypassEnabled() || isNonProductionRuntime) &&
-    (
-      DEV_FORCE_ADMIN_EMAILS.has(email) ||
-      DEV_FORCE_ADMIN_PROFILE_IDS.has(profileId) ||
-      DEV_FORCE_ADMIN_PROFILE_IDS.has(authUserId) ||
-      fullName === "troy meeker" ||
-      fullName.includes("troy meeker")
-    );
-
-  const role = (forceDevAdminView ? "admin" : normalizeRoleKey(data.role as AppRole)) as AppRole;
-  const hasProfileLevelCustomPermissions = !forceDevAdminView && shouldLookupCustomPermissions;
+  const role = normalizeRoleKey(data.role as AppRole) as AppRole;
+  const hasProfileLevelCustomPermissions = shouldLookupCustomPermissions;
   let hasCustomPermissions = false;
   const allowedModules = new Set<PermissionModuleKey>();
   let permissionRows: Array<{ module_key: string; can_view: boolean }> = [];
@@ -197,7 +171,7 @@ export async function resolveCurrentHomeLanding(
     throw new Error(`Failed to load user permissions: ${getErrorMessage(permissionsError)}`);
   }
 
-  if (!forceDevAdminView && Array.isArray(permissionRows) && permissionRows.length > 0) {
+  if (Array.isArray(permissionRows) && permissionRows.length > 0) {
     hasCustomPermissions = true;
     for (const row of permissionRows) {
       const moduleKey = String(row.module_key) as PermissionModuleKey;

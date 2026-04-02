@@ -4,16 +4,17 @@ import { refreshMarWorkflowAction } from "@/app/(portal)/health/mar/administrati
 import { MarMonthlyReportPanelShell, MarWorkflowBoardShell } from "@/components/forms/mar-shells";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireModuleAccess } from "@/lib/auth";
+import { requireMarAccess } from "@/lib/auth";
+import { canAccessPhysicianOrders, canDocumentMar } from "@/lib/permissions";
 import { getMarMemberOptionSets } from "@/lib/services/mar-member-options";
 import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow-read";
 
 export const dynamic = "force-dynamic";
 
 export default async function MarWorkflowPage() {
-  const profile = await requireModuleAccess("health");
-  const canDocument =
-    profile.role === "admin" || profile.role === "nurse" || profile.role === "manager" || profile.role === "director";
+  const profile = await requireMarAccess();
+  const canDocument = canDocumentMar(profile);
+  const canViewPhysicianOrders = canAccessPhysicianOrders(profile);
   let reportMemberOptions: Awaited<ReturnType<typeof getMarMemberOptionSets>>["reportOptions"] = [];
   let workflowMemberOptions: Awaited<ReturnType<typeof getMarMemberOptionSets>>["workflowOptions"] = [];
   let reportOptionsLoadError: string | null = null;
@@ -49,9 +50,11 @@ export default async function MarWorkflowPage() {
           <Link href="/health" className="font-semibold text-brand">
             Back to Health Dashboard
           </Link>
-          <Link href="/health/physician-orders" className="font-semibold text-brand">
-            Open Physician Orders
-          </Link>
+          {canViewPhysicianOrders ? (
+            <Link href="/health/physician-orders" className="font-semibold text-brand">
+              Open Physician Orders
+            </Link>
+          ) : null}
           <form action={refreshMarWorkflowAction}>
             <Button type="submit" className="h-auto px-3 py-2 text-sm">
               Refresh MAR schedules and PRN sync

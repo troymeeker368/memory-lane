@@ -1,8 +1,8 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
-import { canCreatePhysicianOrdersModuleForRole, PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
+import { requirePhysicianOrdersAccess } from "@/lib/auth";
+import { canAccessMemberCommandCenter, canManagePhysicianOrders } from "@/lib/permissions";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { listPhysicianOrderMemberLookup, listPhysicianOrdersPage } from "@/lib/services/physician-orders-read";
 import { formatDate, formatDateTime } from "@/lib/utils";
@@ -48,8 +48,9 @@ export default async function PhysicianOrdersIndexPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const profile = await requireRoles(PHYSICIAN_ORDER_MODULE_ROLES);
-  const canCreate = canCreatePhysicianOrdersModuleForRole(profile.role);
+  const profile = await requirePhysicianOrdersAccess();
+  const canCreate = canManagePhysicianOrders(profile);
+  const canViewCommandCenter = canAccessMemberCommandCenter(profile);
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";
   const memberSearch = firstString(query.memberSearch) ?? "";
@@ -101,7 +102,7 @@ export default async function PhysicianOrdersIndexPage({
               New Physician Order
             </Link>
           ) : null}
-          {canonicalMemberId ? (
+          {canonicalMemberId && canViewCommandCenter ? (
             <Link
               href={`/operations/member-command-center/${canonicalMemberId}`}
               className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"

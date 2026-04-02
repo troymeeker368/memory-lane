@@ -44,7 +44,7 @@ const MEMBER_FILE_LIST_RPC = "rpc_list_member_files";
 const MEMBER_FILE_LIST_MIGRATION = "0145_reports_and_member_files_read_rpcs.sql";
 const DEFAULT_MEMBER_LOOKUP_LIMIT = 200;
 
-function buildMissingCanonicalMemberShellError(input: {
+export function buildMissingCanonicalMemberShellError(input: {
   memberId: string;
   table: "member_command_centers" | "member_attendance_schedules";
 }) {

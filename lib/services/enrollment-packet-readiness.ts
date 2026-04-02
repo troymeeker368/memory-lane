@@ -1,4 +1,9 @@
 export type EnrollmentPacketMappingSyncStatus = "not_started" | "pending" | "completed" | "failed";
+export type EnrollmentPacketCompletionFollowUpStatus =
+  | "not_started"
+  | "pending"
+  | "completed"
+  | "action_required";
 export type EnrollmentPacketOperationalReadinessStatus =
   | "not_filed"
   | "filed_pending_mapping"
@@ -15,6 +20,13 @@ export function toEnrollmentPacketMappingSyncStatus(
   value: string | null | undefined
 ): EnrollmentPacketMappingSyncStatus {
   if (value === "completed" || value === "failed" || value === "not_started") return value;
+  return "pending";
+}
+
+export function toEnrollmentPacketCompletionFollowUpStatus(
+  value: string | null | undefined
+): EnrollmentPacketCompletionFollowUpStatus {
+  if (value === "completed" || value === "action_required" || value === "not_started") return value;
   return "pending";
 }
 

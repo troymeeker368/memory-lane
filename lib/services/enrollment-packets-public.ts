@@ -3,6 +3,7 @@ import "server-only";
 import type {
   getPublicCompletedEnrollmentPacketArtifact as getPublicCompletedEnrollmentPacketArtifactImpl,
   getPublicEnrollmentPacketContext as getPublicEnrollmentPacketContextImpl,
+  issuePublicCompletedEnrollmentPacketDownloadToken as issuePublicCompletedEnrollmentPacketDownloadTokenImpl,
   recordPublicEnrollmentPacketGuardFailure as recordPublicEnrollmentPacketGuardFailureImpl,
   savePublicEnrollmentPacketProgress as savePublicEnrollmentPacketProgressImpl,
   submitPublicEnrollmentPacket as submitPublicEnrollmentPacketImpl
@@ -10,6 +11,9 @@ import type {
 
 type GetPublicCompletedEnrollmentPacketArtifactInput = Parameters<typeof getPublicCompletedEnrollmentPacketArtifactImpl>[0];
 type GetPublicEnrollmentPacketContextInput = Parameters<typeof getPublicEnrollmentPacketContextImpl>;
+type IssuePublicCompletedEnrollmentPacketDownloadTokenInput = Parameters<
+  typeof issuePublicCompletedEnrollmentPacketDownloadTokenImpl
+>[0];
 type RecordPublicEnrollmentPacketGuardFailureInput = Parameters<typeof recordPublicEnrollmentPacketGuardFailureImpl>[0];
 type SavePublicEnrollmentPacketProgressInput = Parameters<typeof savePublicEnrollmentPacketProgressImpl>[0];
 type SubmitPublicEnrollmentPacketInput = Parameters<typeof submitPublicEnrollmentPacketImpl>[0];
@@ -26,6 +30,15 @@ export async function getPublicCompletedEnrollmentPacketArtifact(
 export async function getPublicEnrollmentPacketContext(...args: GetPublicEnrollmentPacketContextInput) {
   const { getPublicEnrollmentPacketContext } = await import("@/lib/services/enrollment-packets-public-runtime");
   return getPublicEnrollmentPacketContext(...args);
+}
+
+export async function issuePublicCompletedEnrollmentPacketDownloadToken(
+  input: IssuePublicCompletedEnrollmentPacketDownloadTokenInput
+) {
+  const { issuePublicCompletedEnrollmentPacketDownloadToken } = await import(
+    "@/lib/services/enrollment-packets-public-runtime"
+  );
+  return issuePublicCompletedEnrollmentPacketDownloadToken(input);
 }
 
 export async function savePublicEnrollmentPacketProgress(input: SavePublicEnrollmentPacketProgressInput) {

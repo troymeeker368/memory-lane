@@ -19,7 +19,6 @@ import { WorkflowDeliveryError } from "@/lib/services/send-workflow-state";
 import {
   optionalString,
   requireSalesRoles,
-  resolveRequestAppBaseUrl,
   resolveSalesLeadId,
   revalidateSalesLeadViews
 } from "@/app/sales-action-helpers";
@@ -73,8 +72,7 @@ export async function sendEnrollmentPacketAction(raw: z.infer<typeof enrollmentP
       communityFeeOverride: payload.data.communityFee ?? null,
       dailyRateOverride: payload.data.dailyRate ?? null,
       totalInitialEnrollmentAmountOverride: payload.data.totalInitialEnrollmentAmount ?? null,
-      optionalMessage: payload.data.optionalMessage || null,
-      appBaseUrl: await resolveRequestAppBaseUrl()
+      optionalMessage: payload.data.optionalMessage || null
     });
 
     revalidateEnrollmentPacketRoutes({
@@ -175,8 +173,7 @@ export async function resendEnrollmentPacketAction(raw: z.infer<typeof packetAct
     const sent = await resendEnrollmentPacketRequest({
       packetId: payload.data.packetId,
       actorUserId: profile.id,
-      actorFullName: profile.full_name,
-      appBaseUrl: await resolveRequestAppBaseUrl()
+      actorFullName: profile.full_name
     });
     revalidateEnrollmentPacketRoutes({
       memberId: sent.request.memberId,
@@ -237,7 +234,6 @@ export async function replaceEnrollmentPacketAction(raw: z.infer<typeof replaceE
       dailyRateOverride: payload.data.dailyRate ?? null,
       totalInitialEnrollmentAmountOverride: payload.data.totalInitialEnrollmentAmount ?? null,
       optionalMessage: payload.data.optionalMessage || null,
-      appBaseUrl: await resolveRequestAppBaseUrl(),
       voidReason: payload.data.voidReason || null
     });
     revalidateEnrollmentPacketRoutes({

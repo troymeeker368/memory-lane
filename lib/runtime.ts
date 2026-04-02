@@ -51,15 +51,27 @@ export function getPublicAppUrl() {
     clean(process.env.NEXT_PUBLIC_APP_URL) ??
     clean(process.env.APP_URL) ??
     clean(process.env.NEXT_PUBLIC_SITE_URL) ??
-    clean(process.env.SITE_URL);
+    clean(process.env.SITE_URL) ??
+    clean(process.env.VERCEL_PROJECT_PRODUCTION_URL) ??
+    clean(process.env.VERCEL_URL);
 
   if (!resolved) {
+    if (!isProductionNodeEnv()) {
+      return "http://localhost:3001";
+    }
     throw new Error(
       "Public app URL is not configured. Set NEXT_PUBLIC_APP_URL (or APP_URL/SITE_URL) so auth links are canonical."
     );
   }
 
-  return resolved.replace(/\/+$/, "");
+  const withProtocol = /^https?:\/\//i.test(resolved) ? resolved : `https://${resolved}`;
+  const parsed = new URL(withProtocol);
+  const localhostHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
+  if (parsed.protocol === "http:" && !localhostHostnames.has(parsed.hostname)) {
+    parsed.protocol = "https:";
+  }
+
+  return parsed.toString().replace(/\/+$/, "");
 }
 
 export function getDevAuthBootstrapPassword() {

@@ -7,7 +7,10 @@ import {
   BILLING_ANCILLARY_CATEGORY_SELECT,
   BILLING_ANCILLARY_CHARGE_LOG_SELECT,
   BILLING_ATTENDANCE_RECORD_STATUS_SELECT,
+  BILLING_CENTER_SETTING_SELECT,
   BILLING_MEMBER_ATTENDANCE_SCHEDULE_SELECT,
+  BILLING_MEMBER_SETTING_SELECT,
+  BILLING_SCHEDULE_TEMPLATE_SELECT,
   BILLING_TRANSPORTATION_LOG_SELECT
 } from "@/lib/services/billing-selects";
 import {
@@ -178,9 +181,22 @@ async function getBillingPreviewRows(input: {
   const invoiceMonthStart = startOfMonth(input.billingMonth);
   const minDate = addMonths(invoiceMonthStart, -2);
   const maxDate = endOfMonth(invoiceMonthStart);
+  const effectiveOverlapFilter = `effective_end_date.is.null,effective_end_date.gte.${minDate}`;
+
+  const { data: membersData, error: membersError } = await supabase
+    .from("members")
+    .select(BILLING_ACTIVE_MEMBER_LOOKUP_SELECT)
+    .eq("status", "active")
+    .order("display_name", { ascending: true });
+  if (membersError) throw new Error(membersError.message);
+
+  const activeMembers = (membersData ?? []) as Array<{ id: string; display_name: string }>;
+  if (activeMembers.length === 0) {
+    return [];
+  }
+  const activeMemberIds = activeMembers.map((member) => member.id);
 
   const [
-    { data: membersData, error: membersError },
     { data: centerSettingsData, error: centerSettingsError },
     { data: memberSettingsData, error: memberSettingsError },
     { data: attendanceSettingsData, error: attendanceSettingsError },
@@ -191,18 +207,53 @@ async function getBillingPreviewRows(input: {
     { data: categoryData, error: categoryError },
     { data: adjustmentData, error: adjustmentError }
   ] = await Promise.all([
-    supabase.from("members").select(BILLING_ACTIVE_MEMBER_LOOKUP_SELECT).eq("status", "active").order("display_name", { ascending: true }),
-    supabase.from("center_billing_settings").select("*"),
-    supabase.from("member_billing_settings").select("*"),
-    supabase.from("member_attendance_schedules").select(BILLING_MEMBER_ATTENDANCE_SCHEDULE_SELECT),
-    supabase.from("attendance_records").select(BILLING_ATTENDANCE_RECORD_STATUS_SELECT).gte("attendance_date", minDate).lte("attendance_date", maxDate),
-    supabase.from("billing_schedule_templates").select("*"),
-    supabase.from("transportation_logs").select(BILLING_TRANSPORTATION_LOG_SELECT).gte("service_date", minDate).lte("service_date", maxDate),
-    supabase.from("ancillary_charge_logs").select(BILLING_ANCILLARY_CHARGE_LOG_SELECT).gte("service_date", minDate).lte("service_date", maxDate),
+    supabase
+      .from("center_billing_settings")
+      .select(BILLING_CENTER_SETTING_SELECT)
+      .lte("effective_start_date", maxDate)
+      .or(effectiveOverlapFilter),
+    supabase
+      .from("member_billing_settings")
+      .select(BILLING_MEMBER_SETTING_SELECT)
+      .in("member_id", activeMemberIds)
+      .lte("effective_start_date", maxDate)
+      .or(effectiveOverlapFilter),
+    supabase
+      .from("member_attendance_schedules")
+      .select(BILLING_MEMBER_ATTENDANCE_SCHEDULE_SELECT)
+      .in("member_id", activeMemberIds),
+    supabase
+      .from("attendance_records")
+      .select(BILLING_ATTENDANCE_RECORD_STATUS_SELECT)
+      .in("member_id", activeMemberIds)
+      .gte("attendance_date", minDate)
+      .lte("attendance_date", maxDate),
+    supabase
+      .from("billing_schedule_templates")
+      .select(BILLING_SCHEDULE_TEMPLATE_SELECT)
+      .in("member_id", activeMemberIds)
+      .lte("effective_start_date", maxDate)
+      .or(effectiveOverlapFilter),
+    supabase
+      .from("transportation_logs")
+      .select(BILLING_TRANSPORTATION_LOG_SELECT)
+      .in("member_id", activeMemberIds)
+      .gte("service_date", minDate)
+      .lte("service_date", maxDate),
+    supabase
+      .from("ancillary_charge_logs")
+      .select(BILLING_ANCILLARY_CHARGE_LOG_SELECT)
+      .in("member_id", activeMemberIds)
+      .gte("service_date", minDate)
+      .lte("service_date", maxDate),
     supabase.from("ancillary_charge_categories").select(BILLING_ANCILLARY_CATEGORY_SELECT),
-    supabase.from("billing_adjustments").select(BILLING_ADJUSTMENT_PREVIEW_SELECT).gte("adjustment_date", minDate).lte("adjustment_date", maxDate)
+    supabase
+      .from("billing_adjustments")
+      .select(BILLING_ADJUSTMENT_PREVIEW_SELECT)
+      .in("member_id", activeMemberIds)
+      .gte("adjustment_date", minDate)
+      .lte("adjustment_date", maxDate)
   ]);
-  if (membersError) throw new Error(membersError.message);
   if (centerSettingsError) throw new Error(centerSettingsError.message);
   if (memberSettingsError) {
     if (isMissingSchemaObjectError(memberSettingsError)) {
@@ -253,7 +304,6 @@ async function getBillingPreviewRows(input: {
     throw new Error(adjustmentError.message);
   }
 
-  const activeMembers = (membersData ?? []) as Array<{ id: string; display_name: string }>;
   const centerSettings = (centerSettingsData ?? []) as CenterBillingSettingRow[];
   const memberSettings = (memberSettingsData ?? []) as BillingSettingRow[];
   const memberSettingsByMemberId = groupRowsByMemberId(memberSettings);

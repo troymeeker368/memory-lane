@@ -18,8 +18,7 @@ function dataUrlToBlob(dataUrl: string) {
   return new Blob([bytes], { type: mimeType });
 }
 
-export function triggerPdfDownload(dataUrl: string, fileName: string) {
-  const blob = dataUrlToBlob(dataUrl);
+function downloadBlob(blob: Blob, fileName: string) {
   const blobUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
 
@@ -33,8 +32,7 @@ export function triggerPdfDownload(dataUrl: string, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 }
 
-export function triggerPdfPrint(dataUrl: string) {
-  const blob = dataUrlToBlob(dataUrl);
+function printBlob(blob: Blob) {
   const blobUrl = URL.createObjectURL(blob);
   const frame = document.createElement("iframe");
 
@@ -70,4 +68,28 @@ export function triggerPdfPrint(dataUrl: string) {
   );
 
   document.body.appendChild(frame);
+}
+
+async function pdfUrlToBlob(url: string) {
+  const response = await fetch(url, { credentials: "omit" });
+  if (!response.ok) {
+    throw new Error("Unable to load PDF.");
+  }
+  return await response.blob();
+}
+
+export function triggerPdfDownload(dataUrl: string, fileName: string) {
+  downloadBlob(dataUrlToBlob(dataUrl), fileName);
+}
+
+export function triggerPdfPrint(dataUrl: string) {
+  printBlob(dataUrlToBlob(dataUrl));
+}
+
+export async function triggerPdfDownloadFromUrl(url: string, fileName: string) {
+  downloadBlob(await pdfUrlToBlob(url), fileName);
+}
+
+export async function triggerPdfPrintFromUrl(url: string) {
+  printBlob(await pdfUrlToBlob(url));
 }

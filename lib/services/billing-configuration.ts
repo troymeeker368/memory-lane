@@ -1,7 +1,12 @@
+import { cache } from "react";
+
 import { createClient } from "@/lib/supabase/server";
 import {
+  BILLING_CENTER_SETTING_SELECT,
   BILLING_MEMBER_LOOKUP_SELECT,
-  BILLING_MEMBER_RATE_SCHEDULE_SELECT
+  BILLING_MEMBER_RATE_SCHEDULE_SELECT,
+  BILLING_MEMBER_SETTING_SELECT,
+  BILLING_SCHEDULE_TEMPLATE_SELECT
 } from "@/lib/services/billing-selects";
 import {
   BILLING_ADJUSTMENT_TYPE_OPTIONS,
@@ -60,40 +65,78 @@ function dateRangesOverlap(input: {
   return leftStart <= rightEnd && rightStart <= leftEnd;
 }
 
-async function listCenterBillingSettingsRows() {
+const listCenterBillingSettingsRows = cache(async function listCenterBillingSettingsRows() {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("center_billing_settings").select("*").order("effective_start_date", { ascending: false });
+  const { data, error } = await supabase
+    .from("center_billing_settings")
+    .select(BILLING_CENTER_SETTING_SELECT)
+    .order("effective_start_date", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as CenterBillingSettingRow[];
-}
+});
 
-async function getMemberSettingsRows() {
+const getMemberSettingsRows = cache(async function getMemberSettingsRows() {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("member_billing_settings").select("*");
+  const { data, error } = await supabase.from("member_billing_settings").select(BILLING_MEMBER_SETTING_SELECT);
   if (error) throw new Error(error.message);
   return (data ?? []) as BillingSettingRow[];
-}
+});
 
-async function getScheduleTemplatesRows() {
+const getScheduleTemplatesRows = cache(async function getScheduleTemplatesRows() {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("billing_schedule_templates").select("*");
+  const { data, error } = await supabase.from("billing_schedule_templates").select(BILLING_SCHEDULE_TEMPLATE_SELECT);
   if (error) throw new Error(error.message);
   return (data ?? []) as ScheduleTemplateRow[];
-}
+});
 
 export async function getActiveCenterSettingForDate(dateOnly: string) {
-  const settings = await listCenterBillingSettingsRows();
-  return resolveActiveEffectiveRowForDate(dateOnly, settings);
+  const normalizedDate = normalizeDateOnly(dateOnly);
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("center_billing_settings")
+    .select("*")
+    .eq("active", true)
+    .lte("effective_start_date", normalizedDate)
+    .or(`effective_end_date.is.null,effective_end_date.gte.${normalizedDate}`)
+    .order("effective_start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as CenterBillingSettingRow | null) ?? null;
 }
 
 export async function getActiveMemberSettingForDate(memberId: string, dateOnly: string) {
-  const settings = await getMemberSettingsRows();
-  return resolveActiveEffectiveMemberRowForDate(memberId, dateOnly, settings);
+  const normalizedDate = normalizeDateOnly(dateOnly);
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("member_billing_settings")
+    .select("*")
+    .eq("member_id", memberId)
+    .eq("active", true)
+    .lte("effective_start_date", normalizedDate)
+    .or(`effective_end_date.is.null,effective_end_date.gte.${normalizedDate}`)
+    .order("effective_start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as BillingSettingRow | null) ?? null;
 }
 
 export async function getActiveScheduleTemplateForDate(memberId: string, dateOnly: string) {
-  const templates = await getScheduleTemplatesRows();
-  return resolveActiveEffectiveMemberRowForDate(memberId, dateOnly, templates);
+  const normalizedDate = normalizeDateOnly(dateOnly);
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("billing_schedule_templates")
+    .select("*")
+    .eq("member_id", memberId)
+    .eq("active", true)
+    .lte("effective_start_date", normalizedDate)
+    .or(`effective_end_date.is.null,effective_end_date.gte.${normalizedDate}`)
+    .order("effective_start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as ScheduleTemplateRow | null) ?? null;
 }
 
 export async function getNonBillableCenterClosureSet(range: DateRange) {
@@ -340,14 +383,19 @@ export async function listCenterClosures(input?: { includeInactive?: boolean }) 
 
 export async function listMemberBillingSettings() {
   const supabase = await createClient();
-  const [{ data: settingsData, error: settingsError }, { data: membersData, error: membersError }] = await Promise.all([
-    supabase.from("member_billing_settings").select("*").order("effective_start_date", { ascending: false }),
-    supabase.from("members").select(BILLING_MEMBER_LOOKUP_SELECT)
-  ]);
+  const { data: settingsData, error: settingsError } = await supabase
+    .from("member_billing_settings")
+    .select(BILLING_MEMBER_SETTING_SELECT)
+    .order("effective_start_date", { ascending: false });
   if (settingsError) throw new Error(settingsError.message);
-  if (membersError) throw new Error(membersError.message);
 
   const settingsRows = (settingsData ?? []) as BillingSettingRow[];
+  const memberIds = Array.from(new Set(settingsRows.map((row) => String(row.member_id)).filter(Boolean)));
+  const { data: membersData, error: membersError } =
+    memberIds.length > 0
+      ? await supabase.from("members").select(BILLING_MEMBER_LOOKUP_SELECT).in("id", memberIds)
+      : { data: [], error: null };
+  if (membersError) throw new Error(membersError.message);
   const memberNameById = new Map(
     ((membersData ?? []) as MemberLookupRow[]).map((row) => [String(row.id), String(row.display_name)] as const)
   );
@@ -384,17 +432,23 @@ export async function listMemberBillingSettings() {
 
 export async function listBillingScheduleTemplates() {
   const supabase = await createClient();
-  const [{ data: templatesData, error: templatesError }, { data: membersData, error: membersError }] = await Promise.all([
-    supabase.from("billing_schedule_templates").select("*").order("effective_start_date", { ascending: false }),
-    supabase.from("members").select(BILLING_MEMBER_LOOKUP_SELECT)
-  ]);
+  const { data: templatesData, error: templatesError } = await supabase
+    .from("billing_schedule_templates")
+    .select(BILLING_SCHEDULE_TEMPLATE_SELECT)
+    .order("effective_start_date", { ascending: false });
   if (templatesError) throw new Error(templatesError.message);
-  if (membersError) throw new Error(membersError.message);
 
+  const templateRows = (templatesData ?? []) as ScheduleTemplateRow[];
+  const memberIds = Array.from(new Set(templateRows.map((row) => String(row.member_id)).filter(Boolean)));
+  const { data: membersData, error: membersError } =
+    memberIds.length > 0
+      ? await supabase.from("members").select(BILLING_MEMBER_LOOKUP_SELECT).in("id", memberIds)
+      : { data: [], error: null };
+  if (membersError) throw new Error(membersError.message);
   const memberNameById = new Map(
     ((membersData ?? []) as MemberLookupRow[]).map((row) => [String(row.id), String(row.display_name)] as const)
   );
-  return ((templatesData ?? []) as ScheduleTemplateRow[]).map((row) => ({
+  return templateRows.map((row) => ({
     ...row,
     member_name: memberNameById.get(String(row.member_id)) ?? "Unknown Member"
   }));
@@ -404,7 +458,7 @@ async function getMembersAndPayorsForLookup() {
   const supabase = await createClient();
   const { data: members, error: membersError } = await supabase
     .from("members")
-    .select("id, display_name, status")
+    .select("id, display_name")
     .eq("status", "active")
     .order("display_name", { ascending: true });
   if (membersError) throw new Error(membersError.message);

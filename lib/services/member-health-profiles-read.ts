@@ -1,5 +1,5 @@
 import { getBillingPayorContact } from "@/lib/services/billing-payor-contacts";
-import { getMemberCarePlanSnapshot, getMemberCarePlanSummary } from "@/lib/services/care-plans-read";
+import { getMemberCarePlanSnapshot } from "@/lib/services/care-plans-read";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { getMemberProgressNoteSummary } from "@/lib/services/notes-read";
 import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-read";
@@ -22,11 +22,10 @@ export async function getMemberHealthProfileOverviewSupplement(
         actionLabel: "getMemberHealthProfileOverviewSupplement"
       });
 
-  const [carePlanSummary, progressNoteSummary, carePlanSnapshot, billingPayor, relatedPhysicianOrders] =
+  const [carePlanSnapshot, progressNoteSummary, billingPayor, relatedPhysicianOrders] =
     await Promise.all([
-      getMemberCarePlanSummary(canonicalMemberId, { canonicalInput: true }),
-      getMemberProgressNoteSummary(canonicalMemberId, { canonicalInput: true }),
       getMemberCarePlanSnapshot(canonicalMemberId, { canonicalInput: true }),
+      getMemberProgressNoteSummary(canonicalMemberId, { canonicalInput: true }),
       getBillingPayorContact(canonicalMemberId, {
         source: "getMemberHealthProfileOverviewSupplement",
         canonicalInput: true
@@ -35,7 +34,7 @@ export async function getMemberHealthProfileOverviewSupplement(
     ]);
 
   return {
-    carePlanSummary,
+    carePlanSummary: carePlanSnapshot.summary,
     progressNoteSummary,
     carePlanSnapshot,
     billingPayor,

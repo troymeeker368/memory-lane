@@ -4,7 +4,8 @@ import type {
   ModuleKey,
   ModulePermission,
   PermissionModuleKey,
-  PermissionSet
+  PermissionSet,
+  UserProfile
 } from "@/types/app";
 
 export const PTO_EXTERNAL_URL = "https://infhsg-ep.prismhr.com/uex/#/login?lang=en";
@@ -49,9 +50,13 @@ export const ROLE_RANKS: Record<CanonicalAppRole, number> = {
 };
 
 export const INCIDENT_ALLOWED_ROLES: CanonicalAppRole[] = ["nurse", "manager", "director", "admin"];
+export const MEMBER_HEALTH_PROFILE_MODULE_ROLES: AppRole[] = ["admin", "nurse"];
 export const PHYSICIAN_ORDER_MODULE_ROLES: AppRole[] = ["admin", "nurse"];
 export const PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES: AppRole[] = ["admin", "nurse", "manager"];
 export const CLINICAL_DOCUMENTATION_ACCESS_ROLES: AppRole[] = ["admin", "manager", "nurse"];
+export const MAR_MODULE_ROLES: AppRole[] = ["admin", "manager", "director", "nurse"];
+export const MEMBER_COMMAND_CENTER_EDITOR_ROLES: AppRole[] = ["admin", "manager"];
+export const MEMBER_COMMAND_CENTER_ATTENDANCE_EDITOR_ROLES: AppRole[] = ["admin", "manager", "coordinator"];
 
 export const PERMISSION_MODULES: PermissionModuleKey[] = [
   "documentation",
@@ -209,9 +214,39 @@ function roleMatchesAny(role: string | AppRole | null | undefined, allowedRoles:
   return allowedRoles.map((allowedRole) => normalizeRoleKey(allowedRole)).includes(normalizedRole);
 }
 
+function hasRoleScopedModulePermission(input: {
+  role: string | AppRole | null | undefined;
+  permissions: PermissionSet;
+  module: ModuleKey | PermissionModuleKey;
+  action: PermissionAction;
+  allowedRoles: AppRole[];
+}) {
+  return roleMatchesAny(input.role, input.allowedRoles) && hasModulePermission(input.permissions, input.module, input.action);
+}
+
 export function canGenerateMemberDocumentForRole(role: string | AppRole | null | undefined) {
   const normalizedRole = normalizeRoleKey(role);
   return normalizedRole === "admin" || normalizedRole === "manager" || normalizedRole === "nurse";
+}
+
+export function canAccessMemberHealthProfiles(input: Pick<UserProfile, "role" | "permissions">) {
+  return hasRoleScopedModulePermission({
+    role: input.role,
+    permissions: input.permissions,
+    module: "health",
+    action: "canView",
+    allowedRoles: MEMBER_HEALTH_PROFILE_MODULE_ROLES
+  });
+}
+
+export function canManageMemberHealthProfiles(input: Pick<UserProfile, "role" | "permissions">) {
+  return hasRoleScopedModulePermission({
+    role: input.role,
+    permissions: input.permissions,
+    module: "health",
+    action: "canEdit",
+    allowedRoles: MEMBER_HEALTH_PROFILE_MODULE_ROLES
+  });
 }
 
 export function canViewPhysicianOrdersModuleForRole(role: string | AppRole | null | undefined) {
@@ -222,12 +257,88 @@ export function canCreatePhysicianOrdersModuleForRole(role: string | AppRole | n
   return roleMatchesAny(role, PHYSICIAN_ORDER_MODULE_ROLES);
 }
 
+export function canAccessPhysicianOrders(input: Pick<UserProfile, "role" | "permissions">) {
+  return hasRoleScopedModulePermission({
+    role: input.role,
+    permissions: input.permissions,
+    module: "health",
+    action: "canView",
+    allowedRoles: PHYSICIAN_ORDER_MODULE_ROLES
+  });
+}
+
+export function canManagePhysicianOrders(input: Pick<UserProfile, "role" | "permissions">) {
+  return hasRoleScopedModulePermission({
+    role: input.role,
+    permissions: input.permissions,
+    module: "health",
+    action: "canView",
+    allowedRoles: PHYSICIAN_ORDER_MODULE_ROLES
+  });
+}
+
 export function canManagePofSignatureWorkflowForRole(role: string | AppRole | null | undefined) {
   return roleMatchesAny(role, PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES);
 }
 
+export function canManagePofSignatureWorkflow(input: Pick<UserProfile, "role" | "permissions">) {
+  return hasRoleScopedModulePermission({
+    role: input.role,
+    permissions: input.permissions,
+    module: "health",
+    action: "canView",
+    allowedRoles: PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES
+  });
+}
+
 export function canAccessClinicalDocumentationForRole(role: string | AppRole | null | undefined) {
   return roleMatchesAny(role, CLINICAL_DOCUMENTATION_ACCESS_ROLES);
+}
+
+export function canAccessMar(input: Pick<UserProfile, "role" | "permissions">) {
+  return hasRoleScopedModulePermission({
+    role: input.role,
+    permissions: input.permissions,
+    module: "health",
+    action: "canView",
+    allowedRoles: MAR_MODULE_ROLES
+  });
+}
+
+export function canDocumentMar(input: Pick<UserProfile, "role" | "permissions">) {
+  return hasRoleScopedModulePermission({
+    role: input.role,
+    permissions: input.permissions,
+    module: "health",
+    action: "canView",
+    allowedRoles: MAR_MODULE_ROLES
+  });
+}
+
+export function canAccessMemberCommandCenter(input: Pick<UserProfile, "role" | "permissions">) {
+  return hasModulePermission(input.permissions, "operations", "canView");
+}
+
+export function canEditMemberCommandCenter(input: Pick<UserProfile, "role" | "permissions">) {
+  return hasRoleScopedModulePermission({
+    role: input.role,
+    permissions: input.permissions,
+    module: "operations",
+    action: "canEdit",
+    allowedRoles: MEMBER_COMMAND_CENTER_EDITOR_ROLES
+  });
+}
+
+export function canEditMemberCommandCenterAttendanceBilling(input: Pick<UserProfile, "role" | "permissions">) {
+  return (
+    hasRoleScopedModulePermission({
+      role: input.role,
+      permissions: input.permissions,
+      module: "operations",
+      action: "canEdit",
+      allowedRoles: MEMBER_COMMAND_CENTER_ATTENDANCE_EDITOR_ROLES
+    }) || hasModulePermission(input.permissions, "operations", "canEdit")
+  );
 }
 
 export function getDefaultPermissionSet(role: string | AppRole): PermissionSet {

@@ -31,7 +31,11 @@ export interface MemberHoldRow {
   ended_by_name: string | null;
 }
 
-export async function listMemberHolds(input?: { memberId?: string | null; canonicalInput?: boolean }) {
+export async function listMemberHolds(input?: {
+  memberId?: string | null;
+  canonicalInput?: boolean;
+  status?: MemberHoldRow["status"] | "all";
+}) {
   const supabase = await createClient();
   let query = supabase
     .from("member_holds")
@@ -42,6 +46,9 @@ export async function listMemberHolds(input?: { memberId?: string | null; canoni
       canonicalInput: input.canonicalInput
     });
     query = query.eq("member_id", canonicalMemberId);
+  }
+  if (input?.status && input.status !== "all") {
+    query = query.eq("status", input.status);
   }
   const { data, error } = await query;
   if (error) throw new Error(error.message);

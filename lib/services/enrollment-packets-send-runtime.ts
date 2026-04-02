@@ -769,6 +769,8 @@ export async function sendEnrollmentPacketRequest(input: {
       delivery_error: null,
       token: hashedToken,
       last_consumed_submission_token_hash: reusablePreparedActive?.last_consumed_submission_token_hash ?? null,
+      completed_packet_download_token_hash: reusablePreparedActive?.completed_packet_download_token_hash ?? null,
+      completed_packet_download_token_issued_at: reusablePreparedActive?.completed_packet_download_token_issued_at ?? null,
       token_expires_at: expiresAt,
       created_at: reusablePreparedActive?.created_at ?? now,
       sent_at: sentAt,
@@ -782,7 +784,10 @@ export async function sendEnrollmentPacketRequest(input: {
       mapping_sync_status: reusablePreparedActive?.mapping_sync_status ?? null,
       mapping_sync_error: reusablePreparedActive?.mapping_sync_error ?? null,
       mapping_sync_attempted_at: reusablePreparedActive?.mapping_sync_attempted_at ?? null,
-      latest_mapping_run_id: reusablePreparedActive?.latest_mapping_run_id ?? null
+      latest_mapping_run_id: reusablePreparedActive?.latest_mapping_run_id ?? null,
+      completion_follow_up_status: reusablePreparedActive?.completion_follow_up_status ?? null,
+      completion_follow_up_error: reusablePreparedActive?.completion_follow_up_error ?? null,
+      completion_follow_up_checked_at: reusablePreparedActive?.completion_follow_up_checked_at ?? null
     }),
     requestUrl,
     actionNeeded: Boolean(leadActivitySyncError),

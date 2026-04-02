@@ -6,6 +6,7 @@ import {
   hashToken
 } from "@/lib/services/enrollment-packet-core";
 import {
+  toEnrollmentPacketCompletionFollowUpStatus,
   resolveEnrollmentPacketOperationalReadiness,
   toEnrollmentPacketMappingSyncStatus
 } from "@/lib/services/enrollment-packet-readiness";
@@ -377,7 +378,33 @@ export async function insertPacketEvent(input: {
 function buildEnrollmentPacketActionNeededMessage(input: {
   status: "completed";
   mappingSyncStatus: string | null | undefined;
+  completionFollowUpStatus?: string | null | undefined;
+  completionFollowUpError?: string | null | undefined;
 }) {
+  const completionFollowUpStatus = toEnrollmentPacketCompletionFollowUpStatus(input.completionFollowUpStatus);
+  if (completionFollowUpStatus === "pending") {
+    return {
+      operationalReadinessStatus: resolveEnrollmentPacketOperationalReadiness({
+        status: input.status,
+        mappingSyncStatus: input.mappingSyncStatus
+      }),
+      actionNeededMessage:
+        "Enrollment packet was completed, but downstream completion follow-up is still pending. Staff should wait for the canonical follow-up checks before treating the member as fully operationally ready."
+    } as const;
+  }
+
+  if (completionFollowUpStatus === "action_required") {
+    return {
+      operationalReadinessStatus: resolveEnrollmentPacketOperationalReadiness({
+        status: input.status,
+        mappingSyncStatus: input.mappingSyncStatus
+      }),
+      actionNeededMessage:
+        clean(input.completionFollowUpError) ??
+        "Enrollment packet was completed, but follow-up review is still required before the member should be treated as operationally ready."
+    } as const;
+  }
+
   const operationalReadinessStatus = resolveEnrollmentPacketOperationalReadiness({
     status: input.status,
     mappingSyncStatus: input.mappingSyncStatus
@@ -409,12 +436,17 @@ export function buildPublicEnrollmentPacketSubmitResult(input: {
   packetId: string;
   memberId: string;
   mappingSyncStatus: string | null | undefined;
+  completionFollowUpStatus?: string | null | undefined;
+  completionFollowUpError?: string | null | undefined;
   wasAlreadyFiled: boolean;
 }) {
   const mappingSyncStatus = toEnrollmentPacketMappingSyncStatus(input.mappingSyncStatus);
+  const completionFollowUpStatus = toEnrollmentPacketCompletionFollowUpStatus(input.completionFollowUpStatus);
   const readiness = buildEnrollmentPacketActionNeededMessage({
     status: "completed",
-    mappingSyncStatus
+    mappingSyncStatus,
+    completionFollowUpStatus,
+    completionFollowUpError: input.completionFollowUpError
   });
 
   return {
@@ -422,7 +454,9 @@ export function buildPublicEnrollmentPacketSubmitResult(input: {
     memberId: input.memberId,
     status: "completed" as const,
     mappingSyncStatus,
+    completionFollowUpStatus,
     operationalReadinessStatus: readiness.operationalReadinessStatus,
+    actionNeeded: readiness.actionNeededMessage !== null,
     actionNeededMessage: readiness.actionNeededMessage,
     wasAlreadyFiled: input.wasAlreadyFiled
   };

@@ -778,7 +778,7 @@ async function buildFaceSheetPdf(memberId: string) {
   const pdfBytes = await pdf.save();
   return {
     faceSheet,
-    dataUrl: `data:application/pdf;base64,${Buffer.from(pdfBytes).toString("base64")}`
+    pdfBytes: Buffer.from(pdfBytes)
   } as const;
 }
 
@@ -805,7 +805,8 @@ export async function generateMemberFaceSheetPdfAction(input: { memberId: string
       documentLabel: "Face Sheet",
       documentSource: "Face Sheet Generator",
       category: "Health Unit",
-      dataUrl: built.dataUrl,
+      bytes: built.pdfBytes,
+      contentType: "application/pdf",
       uploadedBy: {
         id: profile.id,
         name: profile.full_name
@@ -821,7 +822,7 @@ export async function generateMemberFaceSheetPdfAction(input: { memberId: string
     return {
       ok: true,
       fileName: saved.fileName,
-      dataUrl: built.dataUrl,
+      downloadUrl: saved.downloadUrl,
       ...buildGeneratedMemberFilePersistenceState({
         documentLabel: "Face Sheet",
         verifiedPersisted: saved.verifiedPersisted

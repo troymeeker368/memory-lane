@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 
-import { triggerPdfDownload, triggerPdfPrint } from "@/components/documents/pdf-client";
+import { triggerPdfDownloadFromUrl, triggerPdfPrintFromUrl } from "@/components/documents/pdf-client";
 
 export function FaceSheetActions({ memberId }: { memberId: string }) {
   const [isPending, startTransition] = useTransition();
@@ -29,7 +29,7 @@ export function FaceSheetActions({ memberId }: { memberId: string }) {
               | {
                   ok: true;
                   fileName: string;
-                  dataUrl: string;
+                  downloadUrl: string | null;
                   memberFilesStatus?: "verified" | "follow-up-needed";
                   memberFilesMessage?: string | null;
                 }
@@ -46,8 +46,12 @@ export function FaceSheetActions({ memberId }: { memberId: string }) {
               setStatus(`Error: ${result.error}`);
               return;
             }
-            triggerPdfDownload(result.dataUrl, result.fileName);
-            triggerPdfPrint(result.dataUrl);
+            if (!result.downloadUrl) {
+              setStatus("Face sheet saved to member files, but a temporary download link could not be created. Open it from Member Files.");
+              return;
+            }
+            await triggerPdfDownloadFromUrl(result.downloadUrl, result.fileName);
+            await triggerPdfPrintFromUrl(result.downloadUrl);
             setStatus(
               result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
                 ? `Face sheet PDF downloaded and print dialog opened. ${result.memberFilesMessage}`

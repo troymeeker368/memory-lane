@@ -27,10 +27,8 @@ import {
   clean,
   computePostSignRetryAt,
   fromStatus,
-  isMissingPhysicianOrdersTableError,
   mapPhysicianOrderWriteError,
   normalizePhysicianOrderSex,
-  physicianOrdersTableRequiredError,
   sanitizeAllergyRows,
   sanitizeDiagnosisRows,
   sanitizeList,
@@ -52,6 +50,8 @@ import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 const CREATE_DRAFT_POF_FROM_INTAKE_RPC = "rpc_create_draft_physician_order_from_intake";
 const CREATE_DRAFT_POF_FROM_INTAKE_MIGRATION = "0055_intake_draft_pof_atomic_creation.sql";
+const UPSERT_PHYSICIAN_ORDER_RPC = "rpc_upsert_physician_order";
+const UPSERT_PHYSICIAN_ORDER_MIGRATION = "0181_physician_order_save_rpc_atomicity.sql";
 
 async function loadPofDocumentPdfBuilder() {
   const { buildPofDocumentPdfBytes } = await import("@/lib/services/pof-document-pdf");
@@ -66,6 +66,17 @@ type CreateDraftPofFromIntakeRpcRow = {
   physician_order_id: string;
   draft_pof_status: string;
   was_existing: boolean;
+};
+
+type UpsertPhysicianOrderRpcRow = {
+  physician_order_id: string;
+  member_id: string;
+  version_number: number | null;
+  status: string | null;
+  queue_id: string | null;
+  queue_attempt_count: number | null;
+  queue_next_retry_at: string | null;
+  created_new: boolean | null;
 };
 
 export class CommittedDraftPhysicianOrderReloadError extends Error {
@@ -88,6 +99,23 @@ export class CommittedDraftPhysicianOrderReloadError extends Error {
   }
 }
 
+export class CommittedPhysicianOrderReloadError extends Error {
+  physicianOrderId: string;
+  targetStatus: string;
+
+  constructor(input: {
+    physicianOrderId: string;
+    targetStatus: string;
+  }) {
+    super(
+      `Physician order ${input.physicianOrderId} was saved as ${input.targetStatus}, but the canonical reload failed immediately afterward. Reopen the order from the physician orders list after verifying the saved record.`
+    );
+    this.name = "CommittedPhysicianOrderReloadError";
+    this.physicianOrderId = input.physicianOrderId;
+    this.targetStatus = input.targetStatus;
+  }
+}
+
 export type SignPhysicianOrderResult = {
   postSignStatus: "synced" | "queued";
   queueId: string;
@@ -95,18 +123,6 @@ export type SignPhysicianOrderResult = {
   nextRetryAt: string | null;
   lastError: string | null;
 };
-
-function assertSignedPhysicianOrderPostSignReady(input: {
-  result: SignPhysicianOrderResult;
-  contextLabel: string;
-}) {
-  if (input.result.postSignStatus === "synced") {
-    return;
-  }
-  throw new Error(
-    `${input.contextLabel} was committed, but downstream clinical sync is still queued for follow-up. Staff should review the order before treating it as fully synced.`
-  );
-}
 
 function normalizeSignedPofPostSignFailure(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown post-sign sync error.";
@@ -296,21 +312,166 @@ export async function buildNewPhysicianOrderDraft(input: {
   };
 }
 
-async function nextVersionNumber(memberId: string, options?: ResolvePhysicianOrderMemberOptions) {
-  const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "nextVersionNumber", options);
+async function invokeUpsertPhysicianOrderRpc(input: {
+  physicianOrderId?: string | null;
+  memberId: string;
+  payload: Record<string, unknown>;
+  targetStatus: "draft" | "sent" | "signed";
+  actor: { id: string; fullName: string };
+  signedAtIso?: string | null;
+  pofRequestId?: string | null;
+}) {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("physician_orders")
-    .select("version_number")
-    .eq("member_id", canonicalMemberId)
-    .order("version_number", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) {
-    if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
-    throw new Error(error.message);
+  let rpcData: unknown;
+  try {
+    rpcData = await invokeSupabaseRpcOrThrow<unknown>(supabase, UPSERT_PHYSICIAN_ORDER_RPC, {
+      p_pof_id: clean(input.physicianOrderId),
+      p_member_id: input.memberId,
+      p_payload: input.payload,
+      p_target_status: input.targetStatus,
+      p_actor_user_id: input.actor.id,
+      p_actor_name: input.actor.fullName,
+      p_signed_at: clean(input.signedAtIso),
+      p_pof_request_id: clean(input.pofRequestId)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save physician order.";
+    if (message.includes(UPSERT_PHYSICIAN_ORDER_RPC)) {
+      throw new Error(
+        `Physician order upsert RPC is not available. Apply Supabase migration ${UPSERT_PHYSICIAN_ORDER_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw new Error(mapPhysicianOrderWriteError(error as PostgrestErrorLike, "Unable to save physician order."));
   }
-  return Number(data?.version_number ?? 0) + 1;
+
+  const row = (Array.isArray(rpcData) ? rpcData[0] : null) as UpsertPhysicianOrderRpcRow | null;
+  if (!row?.physician_order_id || !row?.member_id) {
+    throw new Error("Physician order upsert RPC did not return canonical identifiers.");
+  }
+  if (input.targetStatus === "signed" && !clean(row.queue_id)) {
+    throw new Error("Physician order upsert RPC did not return post-sign queue details.");
+  }
+
+  return row;
+}
+
+async function loadCommittedPhysicianOrderOrThrow(input: {
+  physicianOrderId: string;
+  memberId: string;
+  actorUserId: string;
+  targetStatus: PhysicianOrderStatus;
+}) {
+  const saved = await getPhysicianOrderById(input.physicianOrderId, { serviceRole: true });
+  if (saved) {
+    return saved;
+  }
+
+  try {
+    await recordImmediateSystemAlert({
+      entityType: "physician_order",
+      entityId: input.physicianOrderId,
+      actorUserId: input.actorUserId,
+      severity: "medium",
+      alertKey: "physician_order_post_commit_reload_failed",
+      metadata: {
+        member_id: input.memberId,
+        target_status: input.targetStatus
+      }
+    });
+  } catch (alertError) {
+    console.error("[physician-orders] unable to persist post-commit physician order reload alert", alertError);
+  }
+
+  throw new CommittedPhysicianOrderReloadError({
+    physicianOrderId: input.physicianOrderId,
+    targetStatus: input.targetStatus
+  });
+}
+
+async function runCommittedPhysicianOrderPostSignSyncSafely(input: {
+  rpcRow: UpsertPhysicianOrderRpcRow;
+  actor: { id: string; fullName: string };
+  signedAtIso: string;
+  pofRequestId?: string | null;
+}) {
+  const queueId = clean(input.rpcRow.queue_id);
+  if (!queueId) {
+    throw new Error("Physician order post-sign queue id is missing after committed sign transition.");
+  }
+
+  try {
+    return await processSignedPhysicianOrderPostSignSync({
+      pofId: input.rpcRow.physician_order_id,
+      memberId: input.rpcRow.member_id,
+      queueId,
+      queueAttemptCount: Math.max(0, Number(input.rpcRow.queue_attempt_count ?? 0)),
+      actor: input.actor,
+      signedAtIso: input.signedAtIso,
+      pofRequestId: input.pofRequestId
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown physician order post-sign sync failure after committed sign.";
+    try {
+      await recordImmediateSystemAlert({
+        entityType: "physician_order",
+        entityId: input.rpcRow.physician_order_id,
+        actorUserId: input.actor.id,
+        severity: "high",
+        alertKey: "pof_post_sign_sync_commit_followup_failed",
+        metadata: {
+          member_id: input.rpcRow.member_id,
+          queue_id: queueId,
+          pof_request_id: clean(input.pofRequestId),
+          error: message
+        }
+      });
+    } catch (alertError) {
+      console.error("[physician-orders] unable to persist committed post-sign follow-up alert", alertError);
+    }
+
+    return {
+      postSignStatus: "queued" as const,
+      queueId,
+      attemptCount: Math.max(0, Number(input.rpcRow.queue_attempt_count ?? 0)),
+      nextRetryAt: clean(input.rpcRow.queue_next_retry_at),
+      lastError: message
+    };
+  }
+}
+
+async function markEnrollmentPacketPofStagingReviewedSafely(input: {
+  memberId: string;
+  actor: { id: string; fullName: string };
+  physicianOrderId: string;
+}) {
+  try {
+    await markEnrollmentPacketPofStagingReviewed({
+      memberId: input.memberId,
+      actorUserId: input.actor.id,
+      actorName: input.actor.fullName
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unable to mark enrollment packet POF staging reviewed after saving the physician order.";
+    try {
+      await recordImmediateSystemAlert({
+        entityType: "physician_order",
+        entityId: input.physicianOrderId,
+        actorUserId: input.actor.id,
+        severity: "medium",
+        alertKey: "physician_order_prefill_review_finalize_failed",
+        metadata: {
+          member_id: input.memberId,
+          error: message
+        }
+      });
+    } catch (alertError) {
+      console.error("[physician-orders] unable to persist POF staging review finalize alert", alertError);
+    }
+  }
 }
 
 export async function createDraftPhysicianOrderFromAssessment(input: {
@@ -445,7 +606,6 @@ export async function createDraftPhysicianOrderFromAssessment(input: {
 
 export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
   const canonicalMemberId = await resolvePhysicianOrderMemberId(input.memberId, "updatePhysicianOrder");
-  const supabase = await createClient();
   const existing = input.id ? await getPhysicianOrderById(input.id) : null;
   if (existing && existing.status === "Signed") {
     throw new Error("Signed physician orders are locked. Create a new order to make updates.");
@@ -458,8 +618,8 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
   const medications = sanitizeMedicationRows(input.medications);
 
   const wantsSigned = input.status === "Signed";
-  // Avoid tripping uniq_physician_orders_active_signed before we supersede old active orders.
-  // We persist as Sent first, then finalize signed state in signPhysicianOrder.
+  const targetStatus: "draft" | "sent" | "signed" =
+    input.status === "Signed" ? "signed" : input.status === "Sent" ? "sent" : "draft";
   const persistedStatus: PhysicianOrderStatus = wantsSigned ? "Sent" : input.status;
   const now = toEasternISO();
   const sentAt = persistedStatus === "Sent" ? now : null;
@@ -523,59 +683,38 @@ export async function updatePhysicianOrder(input: PhysicianOrderSaveInput) {
     updated_at: now
   };
 
-  if (existing) {
-    const { error } = await supabase.from("physician_orders").update(payload).eq("id", existing.id);
-    if (error) {
-      if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
-      throw new Error(mapPhysicianOrderWriteError(error, "Unable to update physician order."));
-    }
-    if (wantsSigned) {
-      const signResult = await signPhysicianOrder(existing.id, input.actor);
-      assertSignedPhysicianOrderPostSignReady({
-        result: signResult,
-        contextLabel: "Physician order signature"
-      });
-    }
-    const saved = await getPhysicianOrderById(existing.id);
-    if (!saved) throw new Error("Unable to load saved physician order.");
-    await markEnrollmentPacketPofStagingReviewed({
-      memberId: canonicalMemberId,
-      actorUserId: input.actor.id,
-      actorName: input.actor.fullName
-    });
-    return saved;
-  }
-
-  const version = await nextVersionNumber(canonicalMemberId, { canonicalInput: true });
-  const { data, error } = await supabase
-    .from("physician_orders")
-    .insert({
+  const rpcRow = await invokeUpsertPhysicianOrderRpc({
+    physicianOrderId: existing?.id ?? input.id ?? null,
+    memberId: canonicalMemberId,
+    payload: {
       ...payload,
-      version_number: version,
-      created_by_user_id: input.actor.id,
-      created_by_name: input.actor.fullName,
-      created_at: now
-    })
-    .select("id")
-    .single();
+      created_by_user_id: existing?.createdByUserId ?? input.actor.id,
+      created_by_name: existing?.createdByName ?? input.actor.fullName,
+      created_at: existing?.createdAt ?? now
+    },
+    targetStatus,
+    actor: input.actor,
+    signedAtIso: wantsSigned ? now : null
+  });
 
-  if (error) {
-    if (isMissingPhysicianOrdersTableError(error)) throw physicianOrdersTableRequiredError();
-    throw new Error(mapPhysicianOrderWriteError(error, "Unable to create physician order."));
-  }
   if (wantsSigned) {
-    const signResult = await signPhysicianOrder(data.id, input.actor);
-    assertSignedPhysicianOrderPostSignReady({
-      result: signResult,
-      contextLabel: "Physician order signature"
+    await runCommittedPhysicianOrderPostSignSyncSafely({
+      rpcRow,
+      actor: input.actor,
+      signedAtIso: now
     });
   }
-  const saved = await getPhysicianOrderById(data.id);
-  if (!saved) throw new Error("Unable to load saved physician order.");
-  await markEnrollmentPacketPofStagingReviewed({
+
+  const saved = await loadCommittedPhysicianOrderOrThrow({
+    physicianOrderId: rpcRow.physician_order_id,
     memberId: canonicalMemberId,
     actorUserId: input.actor.id,
-    actorName: input.actor.fullName
+    targetStatus: input.status
+  });
+  await markEnrollmentPacketPofStagingReviewedSafely({
+    memberId: canonicalMemberId,
+    actor: input.actor,
+    physicianOrderId: rpcRow.physician_order_id
   });
   return saved;
 }

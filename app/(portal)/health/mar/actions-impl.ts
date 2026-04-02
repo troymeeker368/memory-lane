@@ -3,7 +3,7 @@ import "server-only";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { getCurrentProfile, requireRoles } from "@/lib/auth";
+import { getCurrentProfile, requireMarAccess, requireMarDocumentation } from "@/lib/auth";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import {
   buildGeneratedMemberFilePersistenceState,
@@ -184,7 +184,7 @@ function revalidateMarRoutes(memberId: string) {
 }
 
 export async function refreshMarWorkflowAction() {
-  await requireRoles(["admin", "manager", "director", "nurse"]);
+  await requireMarDocumentation();
   await refreshMarWorkflowData({ serviceRole: true });
   revalidatePath("/health");
   revalidatePath("/health/mar");
@@ -194,7 +194,7 @@ export async function recordScheduledMarAdministrationAction(raw: z.infer<typeof
   const payload = scheduledAdministrationSchema.safeParse(raw);
   if (!payload.success) return { error: "Invalid MAR administration input." };
 
-  const profile = await requireRoles(["admin", "manager", "director", "nurse"]);
+  const profile = await requireMarDocumentation();
 
   try {
     const result = await documentScheduledMarAdministration({
@@ -240,7 +240,7 @@ export async function recordPrnMarAdministrationAction(raw: z.infer<typeof prnAd
   const payload = prnAdministrationSchema.safeParse(raw);
   if (!payload.success) return { error: "Invalid PRN administration input." };
 
-  const profile = await requireRoles(["admin", "manager", "director", "nurse"]);
+  const profile = await requireMarDocumentation();
 
   try {
     const result = await documentPrnMarAdministration({
@@ -298,7 +298,7 @@ export async function createPrnOrderAndAdministrationAction(raw: z.infer<typeof 
   const payload = createPrnOrderAndAdministrationSchema.safeParse(raw);
   if (!payload.success) return { error: "Invalid PRN order input." };
 
-  const profile = await requireRoles(["admin", "manager", "director", "nurse"]);
+  const profile = await requireMarDocumentation();
 
   try {
     const result = await createPrnOrderAndAdministration({
@@ -374,7 +374,7 @@ export async function recordPrnOutcomeAction(raw: z.infer<typeof prnOutcomeSchem
   const payload = prnOutcomeSchema.safeParse(raw);
   if (!payload.success) return { error: "Invalid PRN outcome input." };
 
-  const profile = await requireRoles(["admin", "manager", "director", "nurse"]);
+  const profile = await requireMarDocumentation();
 
   try {
     const result = await documentPrnOutcomeAssessment({
@@ -423,7 +423,7 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
   const payload = monthlyMarReportSchema.safeParse(raw);
   if (!payload.success) return { ok: false, error: "Invalid MAR monthly report input." } as const;
 
-  const profile = await requireRoles(["admin", "manager", "director", "nurse"]);
+  const profile = await requireMarDocumentation();
   const generatedAtIso = toEasternISO();
 
   try {

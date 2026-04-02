@@ -86,6 +86,72 @@ type TransportationRunResultRow = {
 
 const MEMBER_CONTACT_MANIFEST_SELECT =
   "id, member_id, contact_name, category, cellular_number, work_number, home_number, street_address, city, state, zip, updated_at";
+const TRANSPORTATION_MANIFEST_SCHEDULE_SELECT = [
+  "id",
+  "member_id",
+  "enrollment_date",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "transportation_required",
+  "transport_monday_am_mode",
+  "transport_monday_am_bus_number",
+  "transport_monday_am_bus_stop",
+  "transport_monday_am_door_to_door_address",
+  "transport_monday_pm_mode",
+  "transport_monday_pm_bus_number",
+  "transport_monday_pm_bus_stop",
+  "transport_monday_pm_door_to_door_address",
+  "transport_tuesday_am_mode",
+  "transport_tuesday_am_bus_number",
+  "transport_tuesday_am_bus_stop",
+  "transport_tuesday_am_door_to_door_address",
+  "transport_tuesday_pm_mode",
+  "transport_tuesday_pm_bus_number",
+  "transport_tuesday_pm_bus_stop",
+  "transport_tuesday_pm_door_to_door_address",
+  "transport_wednesday_am_mode",
+  "transport_wednesday_am_bus_number",
+  "transport_wednesday_am_bus_stop",
+  "transport_wednesday_am_door_to_door_address",
+  "transport_wednesday_pm_mode",
+  "transport_wednesday_pm_bus_number",
+  "transport_wednesday_pm_bus_stop",
+  "transport_wednesday_pm_door_to_door_address",
+  "transport_thursday_am_mode",
+  "transport_thursday_am_bus_number",
+  "transport_thursday_am_bus_stop",
+  "transport_thursday_am_door_to_door_address",
+  "transport_thursday_pm_mode",
+  "transport_thursday_pm_bus_number",
+  "transport_thursday_pm_bus_stop",
+  "transport_thursday_pm_door_to_door_address",
+  "transport_friday_am_mode",
+  "transport_friday_am_bus_number",
+  "transport_friday_am_bus_stop",
+  "transport_friday_am_door_to_door_address",
+  "transport_friday_pm_mode",
+  "transport_friday_pm_bus_number",
+  "transport_friday_pm_bus_stop",
+  "transport_friday_pm_door_to_door_address",
+  "transportation_billing_status"
+].join(", ");
+const TRANSPORTATION_MANIFEST_ADJUSTMENT_SELECT = [
+  "id",
+  "member_id",
+  "adjustment_type",
+  "notes",
+  "bus_number",
+  "transport_type",
+  "bus_stop_name",
+  "door_to_door_address",
+  "caregiver_contact_id",
+  "caregiver_contact_name_snapshot",
+  "caregiver_contact_phone_snapshot",
+  "caregiver_contact_address_snapshot"
+].join(", ");
 const TRANSPORTATION_RUN_SELECT =
   "id, service_date, shift, bus_number, status, submitted_by_name, posted_at, last_submitted_at, submission_count, total_expected, total_posted, total_excluded, total_duplicates, total_nonbillable";
 
@@ -262,10 +328,13 @@ export async function getTransportationRunManifestSupabase(input: {
   const scheduleWeekday = toScheduleWeekdayKey(weekday);
   const [{ data: schedulesData, error: schedulesError }, { data: adjustmentsData, error: adjustmentsError }] =
     await Promise.all([
-      supabase.from("member_attendance_schedules").select("*").eq("transportation_required", true),
+      supabase
+        .from("member_attendance_schedules")
+        .select(TRANSPORTATION_MANIFEST_SCHEDULE_SELECT)
+        .eq("transportation_required", true),
       supabase
         .from("transportation_manifest_adjustments")
-        .select("*")
+        .select(TRANSPORTATION_MANIFEST_ADJUSTMENT_SELECT)
         .eq("selected_date", selectedDate)
         .eq("shift", selectedShift)
     ]);
@@ -273,9 +342,9 @@ export async function getTransportationRunManifestSupabase(input: {
   if (schedulesError) throw new Error(schedulesError.message);
   if (adjustmentsError) throw new Error(adjustmentsError.message);
 
-  const schedules = (schedulesData ?? []) as MemberAttendanceScheduleRow[];
+  const schedules = ((schedulesData ?? []) as unknown) as MemberAttendanceScheduleRow[];
   const scheduleByMemberId = new Map(schedules.map((row) => [row.member_id, row] as const));
-  const adjustments = (adjustmentsData ?? []) as TransportationManifestAdjustmentRow[];
+  const adjustments = ((adjustmentsData ?? []) as unknown) as TransportationManifestAdjustmentRow[];
   const manualAdditions = adjustments.filter((row) => row.adjustment_type === "add");
   const manualExclusionsByMemberId = new Map(
     adjustments
@@ -297,7 +366,6 @@ export async function getTransportationRunManifestSupabase(input: {
     { data: membersData, error: membersError },
     { data: attendanceData, error: attendanceError },
     { data: existingLogsData, error: existingLogsError },
-    { data: existingRunData, error: existingRunError },
     { data: recentRunsData, error: recentRunsError },
     preferredContactsByMember
   ] = await Promise.all([
@@ -323,13 +391,6 @@ export async function getTransportationRunManifestSupabase(input: {
       .from("transportation_runs")
       .select(TRANSPORTATION_RUN_SELECT)
       .eq("service_date", selectedDate)
-      .eq("shift", selectedShift)
-      .eq("bus_number", selectedBusNumber)
-      .maybeSingle(),
-    supabase
-      .from("transportation_runs")
-      .select(TRANSPORTATION_RUN_SELECT)
-      .eq("service_date", selectedDate)
       .order("bus_number", { ascending: true })
       .order("last_submitted_at", { ascending: false }),
     listPreferredContactsByMemberSupabase({ memberIds })
@@ -338,11 +399,12 @@ export async function getTransportationRunManifestSupabase(input: {
   if (membersError) throw new Error(membersError.message);
   if (attendanceError) throw new Error(attendanceError.message);
   if (existingLogsError) throw new Error(existingLogsError.message);
-  if (existingRunError) throw new Error(existingRunError.message);
   if (recentRunsError) throw new Error(recentRunsError.message);
 
-  const existingRun = (existingRunData as TransportationRunRow | null) ?? null;
-  const recentRuns = ((recentRunsData ?? []) as TransportationRunRow[]).map(mapRunRow);
+  const recentRunRows = (recentRunsData ?? []) as TransportationRunRow[];
+  const existingRun =
+    recentRunRows.find((row) => row.shift === selectedShift && row.bus_number === selectedBusNumber) ?? null;
+  const recentRuns = recentRunRows.map(mapRunRow);
   const memberById = new Map(((membersData ?? []) as MemberRow[]).map((row) => [row.id, row] as const));
   const attendanceByMemberId = new Map(
     ((attendanceData ?? []) as AttendanceRow[]).map((row) => [String(row.member_id), row] as const)

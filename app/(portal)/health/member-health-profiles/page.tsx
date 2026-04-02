@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireMemberHealthProfilesAccess } from "@/lib/auth";
 import { firstSearchParam, parseEnumSearchParam, parsePositivePageParam } from "@/lib/search-params";
 import { getMemberHealthProfileIndexSupabase } from "@/lib/services/member-health-profiles-read";
 
@@ -21,7 +21,7 @@ export default async function MemberHealthProfilesPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireRoles(["admin", "nurse"]);
+  await requireMemberHealthProfilesAccess();
   const params = await searchParams;
   const q = firstSearchParam(params.q) ?? "";
   const status = parseEnumSearchParam(firstSearchParam(params.status), ["all", "active", "inactive"] as const, "active");

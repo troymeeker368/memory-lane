@@ -34,14 +34,15 @@ import {
   resolveTab,
   type MccTab
 } from "@/app/(portal)/operations/member-command-center/member-command-center-detail-shared";
-import { requireModuleAccess } from "@/lib/auth";
+import { requireMemberCommandCenterAccess } from "@/lib/auth";
 import {
-  canManagePofSignatureWorkflowForRole,
-  canCreatePhysicianOrdersModuleForRole,
+  canAccessMemberHealthProfiles,
+  canAccessPhysicianOrders,
+  canEditMemberCommandCenter,
+  canEditMemberCommandCenterAttendanceBilling,
   canGenerateMemberDocumentForRole,
-  canPerformModuleAction,
-  canViewPhysicianOrdersModuleForRole,
-  normalizeRoleKey
+  canManagePhysicianOrders,
+  canManagePofSignatureWorkflow
 } from "@/lib/permissions";
 import { resolveActiveEffectiveMemberRowForDate } from "@/lib/services/billing-effective";
 import {
@@ -108,7 +109,7 @@ async function renderTabSection(input: {
   allergiesUpdatedAt: string | null;
   allergiesUpdatedBy: string | null;
   selectedOperationalDate: string;
-  profile: Awaited<ReturnType<typeof requireModuleAccess>>;
+  profile: Awaited<ReturnType<typeof requireMemberCommandCenterAccess>>;
   lockerOptions: string[];
 }) {
   if (!input.detail) return null;
@@ -248,20 +249,15 @@ export default async function MemberCommandCenterDetailPage({
   params: Promise<{ memberId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const profile = await requireModuleAccess("operations");
-  const role = normalizeRoleKey(profile.role);
-  const canEdit = role === "admin" || role === "manager";
-  const canEditAttendanceBilling =
-    role === "admin" ||
-    role === "manager" ||
-    role === "coordinator" ||
-    canPerformModuleAction(role, "operations", "canEdit", profile.permissions);
-  const canViewMhpFromMcc = role === "admin" || role === "nurse";
-  const canViewFaceSheet = canGenerateMemberDocumentForRole(role);
-  const canViewNameBadge = canGenerateMemberDocumentForRole(role);
-  const canAccessPofWorkflow = canManagePofSignatureWorkflowForRole(role);
-  const canViewPhysicianOrders = canViewPhysicianOrdersModuleForRole(role);
-  const canCreatePhysicianOrders = canCreatePhysicianOrdersModuleForRole(role);
+  const profile = await requireMemberCommandCenterAccess();
+  const canEdit = canEditMemberCommandCenter(profile);
+  const canEditAttendanceBilling = canEditMemberCommandCenterAttendanceBilling(profile);
+  const canViewMhpFromMcc = canAccessMemberHealthProfiles(profile);
+  const canViewFaceSheet = canGenerateMemberDocumentForRole(profile.role);
+  const canViewNameBadge = canGenerateMemberDocumentForRole(profile.role);
+  const canAccessPofWorkflow = canManagePofSignatureWorkflow(profile);
+  const canViewPhysicianOrders = canAccessPhysicianOrders(profile);
+  const canCreatePhysicianOrders = canManagePhysicianOrders(profile);
   const { memberId } = await params;
   const query = await searchParams;
   const tab = resolveTab(firstString(query.tab));

@@ -4,8 +4,8 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { getCurrentProfile, requireRoles } from "@/lib/auth";
-import { canCreatePhysicianOrdersModuleForRole } from "@/lib/permissions";
+import { getCurrentProfile, requirePhysicianOrdersManagement } from "@/lib/auth";
+import { canManagePhysicianOrders } from "@/lib/permissions";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import {
   buildGeneratedMemberFilePersistenceState,
@@ -410,7 +410,7 @@ async function persistPhysicianOrderDraftFromFormData(formData: FormData, action
   const pofId = asNullableString(formData, "pofId");
   const memberId = await resolvePofMemberId(rawMemberId, actionLabel);
 
-  const profile = await requireRoles(["admin", "nurse"]);
+  const profile = await requirePhysicianOrdersManagement();
   const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
 
   const providerNameFromForm = asNullableString(formData, "providerName");
@@ -579,7 +579,7 @@ export async function generatePhysicianOrderPdfAction(input: { pofId: string; pe
   const profile = await getCurrentProfile();
   const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
   const persistToMemberFiles = input.persistToMemberFiles !== false;
-  if (!canCreatePhysicianOrdersModuleForRole(profile.role)) {
+  if (!canManagePhysicianOrders(profile)) {
     return { ok: false, error: "You do not have access to generate POF PDFs." } as const;
   }
 

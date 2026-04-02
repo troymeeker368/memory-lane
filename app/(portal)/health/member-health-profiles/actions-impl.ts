@@ -3,7 +3,7 @@ import "server-only";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { getCurrentProfile } from "@/lib/auth";
+import { requireMemberHealthProfilesManagement } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
 import {
   mutateMemberAllergyWorkflow,
@@ -147,11 +147,7 @@ function toNullableUuid(value: string | null | undefined) {
 }
 
 async function requireNurseAdmin() {
-  const profile = await getCurrentProfile();
-  if (profile.role !== "admin" && profile.role !== "nurse") {
-    throw new Error("Only Nurse/Admin can manage Member Health Profiles.");
-  }
-  return profile;
+  return requireMemberHealthProfilesManagement();
 }
 
 function revalidateMhp(memberId: string) {

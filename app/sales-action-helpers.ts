@@ -1,7 +1,6 @@
 import "server-only";
 
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
 import { z } from "zod";
 
 import { requireModuleAction } from "@/lib/auth";
@@ -66,21 +65,6 @@ export async function resolveSalesLeadId(rawLeadId: string, actionLabel: string)
     leadId: canonical.leadId,
     memberId: canonical.memberId
   };
-}
-
-export async function resolveRequestAppBaseUrl() {
-  const headerMap = await headers();
-  const origin = (headerMap.get("origin") ?? "").trim();
-  if (origin) return origin;
-
-  const forwardedHost = (headerMap.get("x-forwarded-host") ?? "").trim();
-  const host = forwardedHost || (headerMap.get("host") ?? "").trim();
-  if (!host) return null;
-  const forwardedProto = (headerMap.get("x-forwarded-proto") ?? "").trim();
-  const proto =
-    forwardedProto.split(",")[0]?.trim() ||
-    (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
-  return `${proto}://${host}`;
 }
 
 export function resolveLostReason(lostReason?: string, lostReasonOther?: string) {

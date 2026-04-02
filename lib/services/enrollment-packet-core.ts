@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 
 import {
   getDefaultEnrollmentPacketIntakePayload,
@@ -14,9 +14,11 @@ import {
   type StaffTransportationOption
 } from "@/lib/services/enrollment-packet-types";
 import { toSendWorkflowDeliveryStatus } from "@/lib/services/send-workflow-state";
+import { getPublicAppUrl } from "@/lib/runtime";
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 
 const TOKEN_BYTE_LENGTH = 32;
+const COMPLETED_PACKET_DOWNLOAD_TOKEN_TTL_SECONDS = 15 * 60;
 
 export function clean(value: string | null | undefined) {
   const normalized = (value ?? "").trim();
@@ -255,6 +257,95 @@ export function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function toBase64Url(value: string) {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function fromBase64Url(value: string) {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+
+function getCompletedPacketDownloadTokenSecret() {
+  const configured =
+    clean(process.env.ENROLLMENT_PACKET_COMPLETED_DOWNLOAD_TOKEN_SECRET) ??
+    clean(process.env.NEXTAUTH_SECRET) ??
+    clean(process.env.AUTH_SECRET);
+  if (configured) return configured;
+  if ((process.env.NODE_ENV ?? "").toLowerCase() === "production") {
+    throw new Error(
+      "Completed enrollment packet download token secret is not configured. Set ENROLLMENT_PACKET_COMPLETED_DOWNLOAD_TOKEN_SECRET or NEXTAUTH_SECRET."
+    );
+  }
+  return "memory-lane-dev-completed-packet-download-token";
+}
+
+export function createCompletedPacketDownloadToken(input: {
+  packetId: string;
+  memberId: string;
+  completedAt: string | null;
+  expiresAt?: string | null;
+}) {
+  const completedAt = clean(input.completedAt);
+  if (!clean(input.packetId) || !clean(input.memberId) || !completedAt) {
+    throw new Error("Completed enrollment packet download token requires packet, member, and completedAt.");
+  }
+  const expiresAt =
+    clean(input.expiresAt) ??
+    new Date(Date.now() + COMPLETED_PACKET_DOWNLOAD_TOKEN_TTL_SECONDS * 1000).toISOString();
+  const payload = JSON.stringify({
+    packetId: input.packetId,
+    memberId: input.memberId,
+    completedAt,
+    expiresAt
+  });
+  const body = toBase64Url(payload);
+  const signature = createHmac("sha256", getCompletedPacketDownloadTokenSecret()).update(body).digest("base64url");
+  return `${body}.${signature}`;
+}
+
+export function verifyCompletedPacketDownloadToken(token: string) {
+  const normalized = clean(token);
+  if (!normalized) {
+    throw new Error("Completed enrollment packet download authorization is invalid.");
+  }
+
+  const [body, signature] = normalized.split(".");
+  if (!body || !signature) {
+    throw new Error("Completed enrollment packet download authorization is invalid.");
+  }
+
+  const expectedSignature = createHmac("sha256", getCompletedPacketDownloadTokenSecret())
+    .update(body)
+    .digest("base64url");
+  if (signature !== expectedSignature) {
+    throw new Error("Completed enrollment packet download authorization is invalid.");
+  }
+
+  const parsed = JSON.parse(fromBase64Url(body)) as {
+    packetId?: unknown;
+    memberId?: unknown;
+    completedAt?: unknown;
+    expiresAt?: unknown;
+  };
+  const packetId = clean(typeof parsed.packetId === "string" ? parsed.packetId : null);
+  const memberId = clean(typeof parsed.memberId === "string" ? parsed.memberId : null);
+  const completedAt = clean(typeof parsed.completedAt === "string" ? parsed.completedAt : null);
+  const expiresAt = clean(typeof parsed.expiresAt === "string" ? parsed.expiresAt : null);
+  if (!packetId || !memberId || !completedAt || !expiresAt) {
+    throw new Error("Completed enrollment packet download authorization is invalid.");
+  }
+  if (Date.parse(expiresAt) <= Date.now()) {
+    throw new Error("Completed enrollment packet download authorization has expired.");
+  }
+
+  return {
+    packetId,
+    memberId,
+    completedAt,
+    expiresAt
+  };
+}
+
 export function generateSigningToken() {
   return randomBytes(TOKEN_BYTE_LENGTH).toString("hex");
 }
@@ -266,30 +357,8 @@ export function isExpired(expiresAt: string) {
 }
 
 export function buildAppBaseUrl(requestBaseUrl?: string | null) {
-  const explicit =
-    clean(requestBaseUrl) ??
-    clean(process.env.NEXT_PUBLIC_APP_URL) ??
-    clean(process.env.APP_URL) ??
-    clean(process.env.NEXT_PUBLIC_SITE_URL) ??
-    clean(process.env.SITE_URL);
-  const fallbackHost = clean(process.env.VERCEL_PROJECT_PRODUCTION_URL) ?? clean(process.env.VERCEL_URL);
-  const raw = explicit ?? fallbackHost ?? null;
-  if (!raw) {
-    if ((process.env.NODE_ENV ?? "").toLowerCase() === "production") {
-      throw new Error(
-        "Enrollment packet public URL is not configured. Set NEXT_PUBLIC_APP_URL (or APP_URL/SITE_URL) so signer links are live."
-      );
-    }
-    return "http://localhost:3001";
-  }
-
-  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-  const parsed = new URL(withProtocol);
-  const localhostHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
-  if (parsed.protocol === "http:" && !localhostHostnames.has(parsed.hostname)) {
-    parsed.protocol = "https:";
-  }
-  return parsed.toString().replace(/\/$/, "");
+  void requestBaseUrl;
+  return getPublicAppUrl();
 }
 
 export function isRowFoundError(error: unknown) {

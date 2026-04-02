@@ -341,86 +341,6 @@ type IntakeAssessmentRow = {
   created_at: string;
 };
 
-const EMPTY_MEMBER_HEALTH_PROFILE_TEMPLATE: Omit<MemberHealthProfileRow, "id" | "member_id"> = {
-  gender: null,
-  payor: null,
-  original_referral_source: null,
-  photo_consent: null,
-  profile_image_url: null,
-  primary_caregiver_name: null,
-  primary_caregiver_phone: null,
-  responsible_party_name: null,
-  responsible_party_phone: null,
-  provider_name: null,
-  provider_phone: null,
-  important_alerts: null,
-  diet_type: null,
-  dietary_restrictions: null,
-  swallowing_difficulty: null,
-  diet_texture: null,
-  supplements: null,
-  foods_to_omit: null,
-  ambulation: null,
-  transferring: null,
-  bathing: null,
-  dressing: null,
-  eating: null,
-  bladder_continence: null,
-  bowel_continence: null,
-  toileting: null,
-  toileting_needs: null,
-  toileting_comments: null,
-  hearing: null,
-  vision: null,
-  dental: null,
-  speech_verbal_status: null,
-  speech_comments: null,
-  personal_appearance_hygiene_grooming: null,
-  may_self_medicate: null,
-  medication_manager_name: null,
-  orientation_dob: null,
-  orientation_city: null,
-  orientation_current_year: null,
-  orientation_former_occupation: null,
-  memory_impairment: null,
-  memory_severity: null,
-  wandering: null,
-  combative_disruptive: null,
-  sleep_issues: null,
-  self_harm_unsafe: null,
-  impaired_judgement: null,
-  delirium: null,
-  disorientation: null,
-  agitation_resistive: null,
-  screaming_loud_noises: null,
-  exhibitionism_disrobing: null,
-  exit_seeking: null,
-  cognitive_behavior_comments: null,
-  code_status: null,
-  dnr: null,
-  dni: null,
-  polst_molst_colst: null,
-  hospice: null,
-  advanced_directives_obtained: null,
-  power_of_attorney: null,
-  hospital_preference: null,
-  legal_comments: null,
-  source_assessment_id: null,
-  source_assessment_at: null,
-  updated_by_user_id: null,
-  updated_by_name: null,
-  created_at: "",
-  updated_at: ""
-};
-
-function buildEmptyMemberHealthProfileRow(memberId: string): MemberHealthProfileRow {
-  return {
-    id: `missing-member-health-profile:${memberId}`,
-    member_id: memberId,
-    ...EMPTY_MEMBER_HEALTH_PROFILE_TEMPLATE
-  };
-}
-
 function sortDesc<T>(rows: T[], getValue: (row: T) => string | null | undefined) {
   return [...rows].sort((a, b) => {
     const left = getValue(a) ?? "";
@@ -529,9 +449,15 @@ function resolveMemberHealthProfileDetailReadPlan(options?: MemberHealthProfileD
   };
 }
 
+function buildMissingMemberHealthProfileShellError(memberId: string) {
+  return new Error(
+    `Missing canonical member_health_profiles row for member ${memberId}. The Member Health Profile shell must be provisioned by the canonical lead conversion or enrollment workflow before reads or edits can succeed. Run \`npm run repair:historical-drift -- --apply\` or another explicit repair workflow for historical drift instead of relying on read-time backfill.`
+  );
+}
+
 export async function ensureMemberHealthProfileSupabase(memberId: string, options?: { serviceRole?: boolean }) {
   const canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "ensureMemberHealthProfileSupabase" });
-  const supabase = await createClient();
+  const supabase = await createClient({ serviceRole: options?.serviceRole ?? true });
   const { data: existing, error: existingError } = await supabase
     .from("member_health_profiles")
     .select(MEMBER_HEALTH_PROFILE_SELECT)
@@ -541,16 +467,7 @@ export async function ensureMemberHealthProfileSupabase(memberId: string, option
   if (existing) {
     return (existing as unknown) as MemberHealthProfileRow;
   }
-
-  const now = toEasternISO();
-  const writeSupabase = await createClient({ serviceRole: options?.serviceRole ?? true });
-  const { data, error } = await writeSupabase
-    .from("member_health_profiles")
-    .insert({ member_id: canonicalMemberId, created_at: now, updated_at: now })
-    .select(MEMBER_HEALTH_PROFILE_SELECT)
-    .single();
-  if (error) throw new Error(error.message);
-  return (data as unknown) as MemberHealthProfileRow;
+  throw buildMissingMemberHealthProfileShellError(canonicalMemberId);
 }
 
 export async function getMemberHealthProfileIndexSupabase(filters?: {
@@ -643,6 +560,10 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
 
   const profileByMemberId = new Map((profilesResult.data ?? []).map((row) => [String(row.member_id), row as Partial<MemberHealthProfileRow>] as const));
   const mccPhotoByMemberId = new Map((mccResult.data ?? []).map((row) => [String(row.member_id), (row.profile_image_url as string | null) ?? null] as const));
+  const missingProfileMemberIds = memberIds.filter((memberId) => !profileByMemberId.has(memberId));
+  if (missingProfileMemberIds.length > 0) {
+    throw buildMissingMemberHealthProfileShellError(missingProfileMemberIds[0]);
+  }
 
   const latestAssessmentByMemberId = new Map<string, IntakeAssessmentRow>();
   ((assessmentsResult.data ?? []) as IntakeAssessmentRow[]).forEach((row) => {
@@ -653,16 +574,14 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
 
   const rows = members
     .map((member) => {
-      const storedProfile = profileByMemberId.get(member.id);
+      const storedProfile = profileByMemberId.get(member.id) as MemberHealthProfileRow | undefined;
+      if (!storedProfile) {
+        throw buildMissingMemberHealthProfileShellError(member.id);
+      }
       const latestAssessment = latestAssessmentByMemberId.get(member.id) ?? null;
-      const profileNeedsBackfill = !storedProfile;
-      const profile = {
-        ...buildEmptyMemberHealthProfileRow(member.id),
-        ...(storedProfile ?? {})
-      } satisfies MemberHealthProfileRow;
       const effectiveProfile = {
-        ...profile,
-        profile_image_url: profile.profile_image_url ?? mccPhotoByMemberId.get(member.id) ?? null
+        ...storedProfile,
+        profile_image_url: storedProfile.profile_image_url ?? mccPhotoByMemberId.get(member.id) ?? null
       };
 
       return {
@@ -671,11 +590,10 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
         latestAssessment,
         age: calculateAge(member.dob),
         alerts: [
-          profileNeedsBackfill ? "MHP profile row missing" : null,
           latestAssessment?.admission_review_required ? "Assessment review required" : null,
           effectiveProfile.important_alerts
         ].filter((alert): alert is string => Boolean(alert)),
-        profileNeedsBackfill
+        profileNeedsBackfill: false
       };
     })
     .sort((a, b) => sortByLastName(a.member.display_name, b.member.display_name));
@@ -820,12 +738,14 @@ export async function getMemberHealthProfileDetailSupabase(
   const notes = sortDesc((notesResult.data ?? []) as MemberNoteRow[], (row) => row.created_at);
   const assessments = assessmentsResult;
   const storedProfile = (profileResult.data as MemberHealthProfileRow | null) ?? null;
-  const profileNeedsBackfill = !storedProfile;
-  const profile = storedProfile ?? buildEmptyMemberHealthProfileRow(canonicalMemberId);
+  if (!storedProfile) {
+    throw buildMissingMemberHealthProfileShellError(canonicalMemberId);
+  }
 
   const effectiveProfile = {
-    ...profile,
-    profile_image_url: profile.profile_image_url ?? ((mccResult.data as { profile_image_url: string | null } | null)?.profile_image_url ?? null)
+    ...storedProfile,
+    profile_image_url:
+      storedProfile.profile_image_url ?? ((mccResult.data as { profile_image_url: string | null } | null)?.profile_image_url ?? null)
   };
 
   const lastUpdatedAt =
@@ -852,7 +772,7 @@ export async function getMemberHealthProfileDetailSupabase(
   return {
     member,
     profile: effectiveProfile,
-    profileNeedsBackfill,
+    profileNeedsBackfill: false,
     diagnoses,
     medications,
     allergies,

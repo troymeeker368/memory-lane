@@ -5,8 +5,18 @@ import { cache } from "react";
 import type { AppRole, ModuleKey, PermissionModuleKey, UserProfile } from "@/types/app";
 import type { PermissionAction } from "@/lib/permissions/core";
 import {
+  canAccessMar,
+  canAccessMemberCommandCenter,
+  canAccessMemberHealthProfiles,
+  canAccessPhysicianOrders,
   canAccessModule,
   canPerformModuleAction,
+  canDocumentMar,
+  canEditMemberCommandCenter,
+  canEditMemberCommandCenterAttendanceBilling,
+  canManageMemberHealthProfiles,
+  canManagePhysicianOrders,
+  canManagePofSignatureWorkflow,
   getPermissionSource,
   normalizeRoleKey,
   PERMISSION_MODULES,
@@ -14,17 +24,6 @@ import {
 } from "@/lib/permissions/core";
 import { canAccessNavItem, getNavItemByHref } from "@/lib/permissions/nav";
 import { createClient } from "@/lib/supabase/server";
-import { isDevAuthBypassEnabled } from "@/lib/runtime";
-
-const DEV_FORCE_ADMIN_EMAILS = new Set([
-  "tmeeker@townsquare.net",
-  "troy.meeker.bsn.rn.cdp@memorylane.local"
-]);
-
-const DEV_FORCE_ADMIN_PROFILE_IDS = new Set([
-  "b042eae4-d478-4adf-ac53-55c942a82c03",
-  "569f46e5-c97e-493a-8221-f8131bbd5b17"
-]);
 
 type ProfileTimingOptions = {
   traceLabel?: string;
@@ -189,22 +188,7 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
     redirect("/auth/set-password");
   }
 
-  const fullName = String((data as { full_name?: string | null }).full_name ?? "").trim().toLowerCase();
-  const email = String((data as { email?: string | null }).email ?? "").trim().toLowerCase();
-  const profileId = String((data as { id?: string | null }).id ?? "").trim().toLowerCase();
-  const authUserId = String(user.id ?? "").trim().toLowerCase();
-  const isNonProductionRuntime = process.env.NODE_ENV !== "production";
-  const forceDevAdminView =
-    (isDevAuthBypassEnabled() || isNonProductionRuntime) &&
-    (
-      DEV_FORCE_ADMIN_EMAILS.has(email) ||
-      DEV_FORCE_ADMIN_PROFILE_IDS.has(profileId) ||
-      DEV_FORCE_ADMIN_PROFILE_IDS.has(authUserId) ||
-      fullName === "troy meeker" ||
-      fullName.includes("troy meeker")
-    );
-
-  const role = forceDevAdminView ? "admin" : normalizeRoleKey(data.role as AppRole);
+  const role = normalizeRoleKey(data.role as AppRole);
   let hasCustomPermissions = false;
   let customPermissions = null;
   let permissionsRows: Array<{
@@ -216,7 +200,7 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
   }> = [];
   let permissionsError: unknown = null;
 
-  const hasProfileLevelCustomPermissions = !forceDevAdminView && shouldLookupCustomPermissions;
+  const hasProfileLevelCustomPermissions = shouldLookupCustomPermissions;
 
   if (hasProfileLevelCustomPermissions) {
     const permissionsStartedAt = timingNow();
@@ -239,7 +223,7 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
     throw new Error(`Failed to load user permissions: ${getErrorMessage(permissionsError)}`);
   }
 
-  if (!forceDevAdminView && Array.isArray(rows) && rows.length > 0) {
+  if (Array.isArray(rows) && rows.length > 0) {
     hasCustomPermissions = true;
     customPermissions = rows.reduce((acc, row) => {
       const moduleKey = String(row.module_key) as PermissionModuleKey;
@@ -317,6 +301,81 @@ export async function requireNavItemAccess(
     redirect("/unauthorized");
   }
   return profile;
+}
+
+type CapabilityAccessOptions = {
+  unauthorizedPath: string;
+};
+
+async function requireProfileCapability(
+  check: (profile: UserProfile) => boolean,
+  options: CapabilityAccessOptions
+): Promise<UserProfile> {
+  const profile = await getCurrentProfile();
+  if (!check(profile)) {
+    redirect(options.unauthorizedPath);
+  }
+  return profile;
+}
+
+export async function requireMemberHealthProfilesAccess() {
+  return requireProfileCapability(canAccessMemberHealthProfiles, {
+    unauthorizedPath: "/unauthorized?module=health&resource=member-health-profiles"
+  });
+}
+
+export async function requireMemberHealthProfilesManagement() {
+  return requireProfileCapability(canManageMemberHealthProfiles, {
+    unauthorizedPath: "/unauthorized?module=health&resource=member-health-profiles&action=canEdit"
+  });
+}
+
+export async function requirePhysicianOrdersAccess() {
+  return requireProfileCapability(canAccessPhysicianOrders, {
+    unauthorizedPath: "/unauthorized?module=health&resource=physician-orders"
+  });
+}
+
+export async function requirePhysicianOrdersManagement() {
+  return requireProfileCapability(canManagePhysicianOrders, {
+    unauthorizedPath: "/unauthorized?module=health&resource=physician-orders&action=canEdit"
+  });
+}
+
+export async function requirePofSignatureWorkflowManagement() {
+  return requireProfileCapability(canManagePofSignatureWorkflow, {
+    unauthorizedPath: "/unauthorized?module=health&resource=physician-orders-signature&action=canEdit"
+  });
+}
+
+export async function requireMemberCommandCenterAccess() {
+  return requireProfileCapability(canAccessMemberCommandCenter, {
+    unauthorizedPath: "/unauthorized?module=operations&resource=member-command-center"
+  });
+}
+
+export async function requireMemberCommandCenterEdit() {
+  return requireProfileCapability(canEditMemberCommandCenter, {
+    unauthorizedPath: "/unauthorized?module=operations&resource=member-command-center&action=canEdit"
+  });
+}
+
+export async function requireMemberCommandCenterAttendanceBillingEdit() {
+  return requireProfileCapability(canEditMemberCommandCenterAttendanceBilling, {
+    unauthorizedPath: "/unauthorized?module=operations&resource=member-command-center-attendance&action=canEdit"
+  });
+}
+
+export async function requireMarAccess() {
+  return requireProfileCapability(canAccessMar, {
+    unauthorizedPath: "/unauthorized?module=health&resource=mar"
+  });
+}
+
+export async function requireMarDocumentation() {
+  return requireProfileCapability(canDocumentMar, {
+    unauthorizedPath: "/unauthorized?module=health&resource=mar&action=canEdit"
+  });
 }
 
 export async function requireRoles(roles: AppRole[]): Promise<UserProfile> {

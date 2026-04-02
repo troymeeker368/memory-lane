@@ -532,6 +532,25 @@ export async function updateEnrollmentPacketMappingSyncState(input: {
   if (error) throw new Error(error.message);
 }
 
+export async function updateEnrollmentPacketCompletionFollowUpState(input: {
+  packetId: string;
+  status: "pending" | "completed" | "action_required";
+  checkedAt: string;
+  error?: string | null;
+}) {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
+    .from("enrollment_packet_requests")
+    .update({
+      completion_follow_up_status: input.status,
+      completion_follow_up_checked_at: input.checkedAt,
+      completion_follow_up_error: input.status === "action_required" ? String(input.error ?? "").trim() || null : null,
+      updated_at: input.checkedAt
+    })
+    .eq("id", input.packetId);
+  if (error) throw new Error(error.message);
+}
+
 export async function releaseEnrollmentPacketMappingClaim(input: {
   packetId: string;
   updatedAt: string;

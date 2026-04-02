@@ -5,7 +5,7 @@ import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
 import { requireModuleAccess } from "@/lib/auth";
-import { canAccessClinicalDocumentationForRole } from "@/lib/permissions";
+import { canAccessClinicalDocumentationForRole, canAccessMemberHealthProfiles } from "@/lib/permissions";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
 import { getMemberDetailById } from "@/lib/services/members-read";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
@@ -13,7 +13,7 @@ import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 export default async function MemberDetailPage({ params }: { params: Promise<{ memberId: string }> }) {
   const profile = await requireModuleAccess("documentation");
   const canManage = profile.role === "admin" || profile.role === "manager";
-  const canViewMhp = profile.role === "admin" || profile.role === "nurse";
+  const canViewMhp = canAccessMemberHealthProfiles(profile);
   const canViewCarePlans = canAccessCarePlansForRole(profile.role);
   const canViewAssessments = canAccessClinicalDocumentationForRole(profile.role);
   const { memberId } = await params;

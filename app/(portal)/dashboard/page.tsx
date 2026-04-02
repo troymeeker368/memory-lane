@@ -6,23 +6,15 @@ import { getCurrentProfile } from "@/lib/auth";
 import { canView, normalizeRoleKey } from "@/lib/permissions";
 import { getDailyAttendanceView } from "@/lib/services/attendance";
 import {
+  getDashboardAdminSnapshot,
   getDashboardAlerts,
-  getDashboardStats,
-  listDashboardAncillaryChargesForMonth,
-  type DashboardAncillaryChargeRow
+  getDashboardStats
 } from "@/lib/services/dashboard";
-import { listMemberHolds } from "@/lib/services/holds-supabase";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { getSalesOpenLeadSummary } from "@/lib/services/sales-workflows";
-import { listMemberLookupByIdsSupabase } from "@/lib/services/shared-lookups-supabase";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 const HOLD_EXPIRY_LOOKAHEAD_DAYS = 14;
-type AdminSnapshot = {
-  membersData: Array<{ id: string; display_name: string }>;
-  holds: Awaited<ReturnType<typeof listMemberHolds>>;
-  ancillaryData: DashboardAncillaryChargeRow[];
-};
 
 function toDateOnly(value: string | null | undefined) {
   const raw = String(value ?? "").trim();
@@ -89,7 +81,7 @@ export default async function DashboardPage() {
 
     const today = getOperationsTodayDate();
     const [stats, alerts, salesSummary, dailyAttendance, adminSnapshot] = await Promise.all([
-      withDashboardTiming("service:getDashboardStats", () => getDashboardStats(profile.id)),
+      withDashboardTiming("service:getDashboardStats", () => getDashboardStats(profile.id, { includeLatestPunches: canPunch })),
       withDashboardTiming("service:getDashboardAlerts", () => getDashboardAlerts()),
       canViewSales
         ? withDashboardTiming("service:getSalesOpenLeadSummary", () => getSalesOpenLeadSummary())
@@ -98,37 +90,21 @@ export default async function DashboardPage() {
         ? withDashboardTiming("service:getDailyAttendanceView", () => getDailyAttendanceView({ selectedDate: today }))
         : Promise.resolve(null),
       isAdminOrCoordinator
-        ? withDashboardTiming("query:adminSnapshot", async () => {
-            const [holds, ancillaryData] = await Promise.all([
-              listMemberHolds(),
-              listDashboardAncillaryChargesForMonth(today)
-            ]);
-            const membersData = await listMemberLookupByIdsSupabase(holds.map((hold) => hold.member_id));
-            return {
-              membersData: membersData.map((member) => ({
-                id: member.id,
-                display_name: member.display_name
-              })),
-              holds,
-              ancillaryData
-            } satisfies AdminSnapshot;
-          })
-        : Promise.resolve({ membersData: [], holds: [], ancillaryData: [] } satisfies AdminSnapshot)
+        ? withDashboardTiming("query:adminSnapshot", () => getDashboardAdminSnapshot(today))
+        : Promise.resolve({ membersData: [], holds: [], monthlyRevenueCents: 0, unreconciledCharges: 0 })
     ]);
 
     const firstName = profile.full_name.trim().split(/\s+/)[0] || profile.full_name;
     const absentTodayRows = (dailyAttendance?.rows ?? []).filter((row) => row.recordStatus === "absent");
     const membersData = adminSnapshot.membersData;
     const holds = adminSnapshot.holds;
-    const ancillaryData = adminSnapshot.ancillaryData;
     const expiryThreshold = addDays(today, HOLD_EXPIRY_LOOKAHEAD_DAYS);
-    const activeHolds = holds.filter((row) => row.status === "active");
     const memberNameById = new Map(membersData.map((member) => [member.id, member.display_name] as const));
-    const upcomingHolds = activeHolds
+    const upcomingHolds = holds
       .filter((hold) => toDateOnly(hold.start_date) && (toDateOnly(hold.start_date) as string) > today)
       .sort((left, right) => String(left.start_date).localeCompare(String(right.start_date)))
       .slice(0, 6);
-    const expiringHolds = activeHolds
+    const expiringHolds = holds
       .filter((hold) => {
         const endDate = toDateOnly(hold.end_date);
         if (!endDate) return false;
@@ -136,10 +112,6 @@ export default async function DashboardPage() {
       })
       .sort((left, right) => String(left.end_date).localeCompare(String(right.end_date)))
       .slice(0, 6);
-
-    const monthlyAncillary = ancillaryData ?? [];
-    const monthlyRevenueCents = monthlyAncillary.reduce((sum, row) => sum + Math.round(Number(row.amount ?? 0) * 100), 0);
-    const unreconciledCharges = monthlyAncillary.filter((row) => String(row.billing_status ?? "Unbilled") !== "Billed").length;
 
     const unresolvedLeads = salesSummary.unresolvedLeads;
     const unresolvedInquiryLeads = salesSummary.unresolvedInquiryLeads;
@@ -226,8 +198,8 @@ export default async function DashboardPage() {
             <Card>
               <CardTitle>Revenue Snapshot (This Month)</CardTitle>
               <CardBody>
-                <p className="text-sm">Recognized Charges: <span className="font-semibold">{formatCurrency(monthlyRevenueCents)}</span></p>
-                <p className="text-sm">Unreconciled Entries: <span className="font-semibold">{unreconciledCharges}</span></p>
+                <p className="text-sm">Recognized Charges: <span className="font-semibold">{formatCurrency(adminSnapshot.monthlyRevenueCents)}</span></p>
+                <p className="text-sm">Unreconciled Entries: <span className="font-semibold">{adminSnapshot.unreconciledCharges}</span></p>
                 {canViewReports ? (
                   <Link href="/reports/monthly-ancillary" className="mt-2 inline-block text-sm font-semibold text-brand">
                     Open Monthly Ancillary

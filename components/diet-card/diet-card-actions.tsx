@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 
 import { generateMemberDietCardPdfAction } from "@/app/(portal)/members/[memberId]/diet-card/actions";
-import { triggerPdfDownload, triggerPdfPrint } from "@/components/documents/pdf-client";
+import { triggerPdfDownloadFromUrl, triggerPdfPrintFromUrl } from "@/components/documents/pdf-client";
 
 export function DietCardActions({ memberId }: { memberId: string }) {
   const [isPending, startTransition] = useTransition();
@@ -24,8 +24,12 @@ export function DietCardActions({ memberId }: { memberId: string }) {
               setStatus(`Error: ${result?.error ?? "Unable to generate diet card PDF."}`);
               return;
             }
-            triggerPdfDownload(result.dataUrl, result.fileName);
-            triggerPdfPrint(result.dataUrl);
+            if (!result.downloadUrl) {
+              setStatus("Error: diet card PDF is missing its download source.");
+              return;
+            }
+            await triggerPdfDownloadFromUrl(result.downloadUrl, result.fileName);
+            await triggerPdfPrintFromUrl(result.downloadUrl);
             setStatus(
               result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
                 ? `Diet card downloaded and print dialog opened. ${result.memberFilesMessage}`

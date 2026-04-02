@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireModuleAccess } from "@/lib/auth";
+import { requireMemberCommandCenterAccess } from "@/lib/auth";
 import { firstSearchParam, parseEnumSearchParam, parsePositivePageParam } from "@/lib/search-params";
 import { getScheduledDayAbbreviations } from "@/lib/services/member-schedule-selectors";
 import { getMemberCommandCenterIndexSupabase } from "@/lib/services/member-command-center-read";
@@ -19,7 +19,7 @@ export default async function MemberCommandCenterIndexPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [ , params] = await Promise.all([
-    requireModuleAccess("operations"),
+    requireMemberCommandCenterAccess(),
     searchParams
   ]);
   const q = firstSearchParam(params.q) ?? "";

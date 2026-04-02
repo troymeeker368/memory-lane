@@ -8,7 +8,6 @@ import {
 } from "@/lib/services/billing-schema-errors";
 import {
   type EnrollmentPacketCompletionCascadeResult,
-  repairEnrollmentPacketCompletionCascade,
   runEnrollmentPacketCompletionCascade
 } from "@/lib/services/enrollment-packet-completion-cascade";
 import {
@@ -20,6 +19,7 @@ import {
 import {
   clean,
   cleanEmail,
+  createCompletedPacketDownloadToken,
   generateSigningToken,
   hashToken,
   isExpired,
@@ -31,7 +31,8 @@ import {
   throwEnrollmentPacketSchemaError,
   toDeliveryStatus,
   toStatus,
-  toSummary
+  toSummary,
+  verifyCompletedPacketDownloadToken
 } from "@/lib/services/enrollment-packet-core";
 import {
   loadEnrollmentPacketArtifactOps,
@@ -144,49 +145,15 @@ export async function recordPublicEnrollmentPacketGuardFailure(input: {
 async function buildCommittedEnrollmentPacketReplayResult(input: {
   request: EnrollmentPacketRequestRow;
 }) {
-  let repairedRequest = input.request;
-  let repairedSummary: EnrollmentPacketCompletionAgreementSummary | null = null;
-
-  try {
-    repairedSummary = await repairEnrollmentPacketCompletionCascade({
-      packetId: input.request.id,
-      actorType: "system"
-    });
-    repairedRequest = (await loadRequestById(input.request.id)) ?? input.request;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown enrollment packet replay repair failure.";
-    console.error("[enrollment-packets] unable to self-heal already-completed enrollment packet replay", {
-      packetId: input.request.id,
-      message
-    });
-    await recordImmediateSystemAlert({
-      entityType: "enrollment_packet_request",
-      entityId: input.request.id,
-      actorUserId: input.request.sender_user_id,
-      severity: "medium",
-      alertKey: "enrollment_packet_replay_repair_failed",
-      metadata: {
-        member_id: input.request.member_id,
-        lead_id: input.request.lead_id,
-        error: message
-      }
-    });
-  }
+  const committedRequest = (await loadRequestById(input.request.id)) ?? input.request;
 
   const submitResult = buildPublicEnrollmentPacketSubmitResult({
     packetId: input.request.id,
     memberId: input.request.member_id,
-    mappingSyncStatus: repairedRequest.mapping_sync_status ?? "pending",
+    mappingSyncStatus: committedRequest.mapping_sync_status ?? "pending",
+    completionFollowUpStatus: committedRequest.completion_follow_up_status ?? "pending",
+    completionFollowUpError: committedRequest.completion_follow_up_error,
     wasAlreadyFiled: true
-  });
-  await assertEnrollmentPacketCompletionAgreement({
-    request: repairedRequest,
-    operationalReadinessStatus: submitResult.operationalReadinessStatus,
-    senderNotificationDelivered: repairedSummary?.senderNotificationDelivered ?? true,
-    leadActivitySynced: repairedSummary?.leadActivitySynced ?? true,
-    completedPacketArtifactLinked: repairedSummary?.completedPacketArtifactLinked ?? true,
-    operationalShellsReady: repairedSummary?.operationalShellsReady ?? true,
-    source: "buildCommittedEnrollmentPacketReplayResult"
   });
   return submitResult;
 }
@@ -336,7 +303,7 @@ function buildEnrollmentPacketCompletionAgreementMessage(input: {
   return `Enrollment packet was filed, but ${issues.join(", ")}. Staff should repair the packet workflow before treating this member as operationally ready.`;
 }
 
-async function assertEnrollmentPacketCompletionAgreement(input: {
+async function recordEnrollmentPacketCompletionAgreementGap(input: {
   request: EnrollmentPacketRequestRow;
   operationalReadinessStatus: string;
   senderNotificationDelivered: boolean;
@@ -353,7 +320,7 @@ async function assertEnrollmentPacketCompletionAgreement(input: {
     operationalShellsReady: input.operationalShellsReady,
     hasLead: Boolean(input.request.lead_id)
   });
-  if (!message) return;
+  if (!message) return null;
 
   await recordImmediateSystemAlert({
     entityType: "enrollment_packet_request",
@@ -372,7 +339,7 @@ async function assertEnrollmentPacketCompletionAgreement(input: {
       source: input.source
     }
   });
-  throw new Error(message);
+  return message;
 }
 
 async function invokeFinalizeEnrollmentPacketCompletionRpc(input: {
@@ -455,6 +422,53 @@ async function loadRequestByToken(rawToken: string): Promise<EnrollmentPacketTok
   return {
     request: consumedData as EnrollmentPacketRequestRow,
     tokenMatch: "consumed"
+  };
+}
+
+async function loadCompletedPacketDownloadAuthorizedRequest(rawToken: string) {
+  const claims = verifyCompletedPacketDownloadToken(rawToken);
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("enrollment_packet_requests")
+    .select("*")
+    .eq("id", claims.packetId)
+    .eq("member_id", claims.memberId)
+    .eq("status", "completed")
+    .maybeSingle();
+  if (error) throwEnrollmentPacketSchemaError(error, "enrollment_packet_requests");
+
+  const request = (data as EnrollmentPacketRequestRow | null) ?? null;
+  if (!request) return null;
+  if (clean(request.completed_at) !== claims.completedAt) {
+    throw new Error("Completed enrollment packet download authorization is invalid.");
+  }
+  return request;
+}
+
+async function loadLatestCompletedPacketArtifact(packetId: string) {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("enrollment_packet_uploads")
+    .select("file_path, file_name, file_type, uploaded_at")
+    .eq("packet_id", packetId)
+    .eq("upload_category", "completed_packet")
+    .order("uploaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throwEnrollmentPacketSchemaError(error, "enrollment_packet_uploads");
+  if (!data) {
+    throw new Error("Completed enrollment packet PDF could not be found.");
+  }
+
+  const objectPath = parseMemberDocumentStorageUri(data.file_path);
+  if (!objectPath) {
+    throw new Error("Completed enrollment packet PDF storage path is invalid.");
+  }
+
+  return {
+    fileName: clean(data.file_name) ?? `Enrollment Packet Completed - ${packetId}.pdf`,
+    fileType: clean(data.file_type) ?? "application/pdf",
+    objectPath
   };
 }
 
@@ -582,14 +596,17 @@ export async function getPublicEnrollmentPacketContext(
       packetId: completedRequest.id,
       memberId: completedRequest.member_id,
       mappingSyncStatus: completedRequest.mapping_sync_status ?? "pending",
+      completionFollowUpStatus: completedRequest.completion_follow_up_status ?? "pending",
+      completionFollowUpError: completedRequest.completion_follow_up_error,
       wasAlreadyFiled: true
     });
     return {
       state: "completed",
       request: toSummary(completedRequest),
       mappingSyncStatus: completedResult.mappingSyncStatus,
+      completionFollowUpStatus: completedResult.completionFollowUpStatus,
       operationalReadinessStatus: completedResult.operationalReadinessStatus,
-      actionNeeded: completedResult.operationalReadinessStatus !== "operationally_ready",
+      actionNeeded: completedResult.actionNeeded,
       actionNeededMessage: completedResult.actionNeededMessage
     };
   }
@@ -736,7 +753,7 @@ export async function savePublicEnrollmentPacketProgress(input: {
   return { ok: true as const };
 }
 
-export async function getPublicCompletedEnrollmentPacketArtifact(input: {
+export async function issuePublicCompletedEnrollmentPacketDownloadToken(input: {
   token: string;
 }) {
   const context = await getPublicEnrollmentPacketContext(input.token);
@@ -744,30 +761,31 @@ export async function getPublicCompletedEnrollmentPacketArtifact(input: {
     throw new Error("Completed enrollment packet is not available.");
   }
 
-  const admin = createSupabaseAdminClient();
-  const { data, error } = await admin
-    .from("enrollment_packet_uploads")
-    .select("file_path, file_name, file_type, uploaded_at")
-    .eq("packet_id", context.request.id)
-    .eq("upload_category", "completed_packet")
-    .order("uploaded_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throwEnrollmentPacketSchemaError(error, "enrollment_packet_uploads");
-  if (!data) {
-    throw new Error("Completed enrollment packet PDF could not be found.");
-  }
-
-  const objectPath = parseMemberDocumentStorageUri(data.file_path);
-  if (!objectPath) {
-    throw new Error("Completed enrollment packet PDF storage path is invalid.");
-  }
-
   return {
     packetId: context.request.id,
-    fileName: clean(data.file_name) ?? `Enrollment Packet Completed - ${context.request.id}.pdf`,
-    fileType: clean(data.file_type) ?? "application/pdf",
-    objectPath
+    downloadToken: createCompletedPacketDownloadToken({
+      packetId: context.request.id,
+      memberId: context.request.memberId,
+      completedAt: context.request.completedAt
+    })
+  };
+}
+
+export async function getPublicCompletedEnrollmentPacketArtifact(input: {
+  token: string;
+}) {
+  const request = await loadCompletedPacketDownloadAuthorizedRequest(input.token);
+  if (!request) {
+    throw new Error("Completed enrollment packet is not available.");
+  }
+
+  const artifact = await loadLatestCompletedPacketArtifact(request.id);
+
+  return {
+    packetId: request.id,
+    fileName: artifact.fileName,
+    fileType: artifact.fileType,
+    objectPath: artifact.objectPath
   };
 }
 
@@ -864,6 +882,8 @@ export async function submitPublicEnrollmentPacket(input: {
       }
     | null = null;
   let completionCascadeSummary: EnrollmentPacketCompletionAgreementSummary | null = null;
+  let completionFollowUpStatus: "pending" | "completed" | "action_required" = "pending";
+  let completionFollowUpError: string | null = null;
   const consumedSubmissionTokenHash = hashToken(normalizedToken);
   let finalizeAttempted = false;
   const stagedUploads: Array<{
@@ -1228,6 +1248,9 @@ export async function submitPublicEnrollmentPacket(input: {
         actionUrl: `/sales/pipeline/enrollment-packets`,
         eventKeySuffix: "mapping-cascade-failed"
       });
+      completionFollowUpStatus = "action_required";
+      completionFollowUpError =
+        "Enrollment packet was completed, but downstream sync could not start. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.";
     }
   } else {
     mappingSummary = {
@@ -1269,6 +1292,9 @@ export async function submitPublicEnrollmentPacket(input: {
       actionUrl: `/sales/pipeline/enrollment-packets`,
       eventKeySuffix: "mapping-missing-fields"
     });
+    completionFollowUpStatus = "action_required";
+    completionFollowUpError =
+      "Enrollment packet was completed, but downstream sync could not start because the packet fields could not be reloaded. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.";
   }
 
   const reviewableUploads = uploadedArtifacts.filter(
@@ -1313,20 +1339,70 @@ export async function submitPublicEnrollmentPacket(input: {
     });
   }
 
+  const provisionalSubmitResult = buildPublicEnrollmentPacketSubmitResult({
+    packetId: request.id,
+    memberId: member.id,
+    mappingSyncStatus: mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending",
+    completionFollowUpStatus,
+    completionFollowUpError,
+    wasAlreadyFiled: false
+  });
+  const completionAgreementMessage =
+    mappingSummary?.status === "completed" && completionCascadeSummary
+      ? await recordEnrollmentPacketCompletionAgreementGap({
+          request,
+          operationalReadinessStatus: provisionalSubmitResult.operationalReadinessStatus,
+          senderNotificationDelivered: completionCascadeSummary.senderNotificationDelivered,
+          leadActivitySynced: completionCascadeSummary.leadActivitySynced,
+          completedPacketArtifactLinked: completionCascadeSummary.completedPacketArtifactLinked,
+          operationalShellsReady: completionCascadeSummary.operationalShellsReady,
+          source: "submitPublicEnrollmentPacket.preReturn"
+        })
+      : null;
+
+  if (completionAgreementMessage) {
+    completionFollowUpStatus = "action_required";
+    completionFollowUpError = completionAgreementMessage;
+  } else if (completionFollowUpStatus === "pending" && mappingSummary?.status === "completed") {
+    completionFollowUpStatus = "completed";
+    completionFollowUpError = null;
+  }
+
+  try {
+    await artifactOps.updateEnrollmentPacketCompletionFollowUpState({
+      packetId: request.id,
+      status: completionFollowUpStatus,
+      checkedAt: toEasternISO(),
+      error: completionFollowUpError
+    });
+  } catch (followUpStateError) {
+    const message =
+      followUpStateError instanceof Error
+        ? followUpStateError.message
+        : "Unable to persist enrollment packet completion follow-up state.";
+    console.error("[enrollment-packets] unable to persist completion follow-up state", followUpStateError);
+    await recordImmediateSystemAlert({
+      entityType: "enrollment_packet_request",
+      entityId: request.id,
+      actorUserId: request.sender_user_id,
+      severity: "high",
+      alertKey: "enrollment_packet_completion_follow_up_state_failed",
+      metadata: {
+        member_id: member.id,
+        lead_id: request.lead_id,
+        status: completionFollowUpStatus,
+        error: message
+      }
+    });
+  }
+
   const submitResult = buildPublicEnrollmentPacketSubmitResult({
     packetId: request.id,
     memberId: member.id,
     mappingSyncStatus: mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending",
+    completionFollowUpStatus,
+    completionFollowUpError,
     wasAlreadyFiled: false
-  });
-  await assertEnrollmentPacketCompletionAgreement({
-    request,
-    operationalReadinessStatus: submitResult.operationalReadinessStatus,
-    senderNotificationDelivered: completionCascadeSummary?.senderNotificationDelivered ?? false,
-    leadActivitySynced: completionCascadeSummary?.leadActivitySynced ?? !request.lead_id,
-    completedPacketArtifactLinked: completionCascadeSummary?.completedPacketArtifactLinked ?? false,
-    operationalShellsReady: completionCascadeSummary?.operationalShellsReady ?? false,
-    source: "submitPublicEnrollmentPacket.preReturn"
   });
   return submitResult;
 }

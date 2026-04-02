@@ -1,7 +1,6 @@
 "use server";
 
 import { Buffer } from "node:buffer";
-
 import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
@@ -52,7 +51,7 @@ async function buildDietCardPdf(memberId: string) {
   const pdfBytes = await pdf.save();
   return {
     dietCard,
-    dataUrl: `data:application/pdf;base64,${Buffer.from(pdfBytes).toString("base64")}`
+    pdfBytes: Buffer.from(pdfBytes)
   } as const;
 }
 
@@ -80,7 +79,8 @@ export async function generateMemberDietCardPdfAction(input: { memberId: string 
       documentSource: "Diet Card Generator",
       category: "Other",
       categoryOther: "Diet Card",
-      dataUrl: built.dataUrl,
+      bytes: built.pdfBytes,
+      contentType: "application/pdf",
       uploadedBy: {
         id: profile.id,
         name: profile.full_name
@@ -95,7 +95,7 @@ export async function generateMemberDietCardPdfAction(input: { memberId: string 
     return {
       ok: true,
       fileName: saved.fileName,
-      dataUrl: built.dataUrl,
+      downloadUrl: saved.downloadUrl,
       ...buildGeneratedMemberFilePersistenceState({
         documentLabel: "Diet Card",
         verifiedPersisted: saved.verifiedPersisted

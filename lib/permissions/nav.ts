@@ -1,7 +1,13 @@
 import type { AppNavItem, AppRole, CanonicalAppRole, PermissionSet } from "@/types/app";
 
 import {
+  canAccessMar,
+  canAccessMemberCommandCenter,
+  canAccessMemberHealthProfiles,
+  canAccessPhysicianOrders,
   INCIDENT_ALLOWED_ROLES,
+  MAR_MODULE_ROLES,
+  MEMBER_HEALTH_PROFILE_MODULE_ROLES,
   PHYSICIAN_ORDER_MODULE_ROLES,
   PTO_EXTERNAL_URL,
   type PermissionAction,
@@ -47,8 +53,8 @@ export const NAV_ITEMS: AppNavItem[] = [
   { label: "Recent Lead Activity", href: "/sales/activities", group: "Sales Activities", module: "sales", icon: "TrendingUp" },
 
   { label: "Nursing Dashboard", href: "/health", group: "Health Unit", module: "health", icon: "HeartPulse" },
-  { label: "MAR Workflow", href: "/health/mar", group: "Health Unit", module: "health", icon: "PillBottle", roles: ["admin", "manager", "director", "nurse"] },
-  { label: "Member Health Profiles", href: "/health/member-health-profiles", group: "Health Unit", module: "health", icon: "BookUser", roles: ["admin", "nurse"] },
+  { label: "MAR Workflow", href: "/health/mar", group: "Health Unit", module: "health", icon: "PillBottle", roles: MAR_MODULE_ROLES },
+  { label: "Member Health Profiles", href: "/health/member-health-profiles", group: "Health Unit", module: "health", icon: "BookUser", roles: MEMBER_HEALTH_PROFILE_MODULE_ROLES },
   { label: "Incident Reports", href: "/documentation/incidents", group: "Health Unit", module: "health", icon: "TriangleAlert", roles: INCIDENT_ALLOWED_ROLES },
   { label: "Blood Sugar", href: "/documentation/blood-sugar", group: "Health Unit", module: "health", icon: "Activity" },
   { label: "New Intake Assessment", href: "/health/assessment", group: "Health Unit", module: "health", icon: "ClipboardCheck" },
@@ -79,6 +85,22 @@ function canAccessNavItemDefinition(
   permissions: PermissionSet,
   action: PermissionAction
 ): boolean {
+  const capabilityProfile = { role, permissions };
+  if (action === "canView") {
+    if (item.href === "/operations/member-command-center") {
+      return canAccessMemberCommandCenter(capabilityProfile);
+    }
+    if (item.href === "/health/member-health-profiles") {
+      return canAccessMemberHealthProfiles(capabilityProfile);
+    }
+    if (item.href === "/health/physician-orders") {
+      return canAccessPhysicianOrders(capabilityProfile);
+    }
+    if (item.href === "/health/mar") {
+      return canAccessMar(capabilityProfile);
+    }
+  }
+
   if (!isRoleAllowedForNavItem(role, item)) {
     return false;
   }

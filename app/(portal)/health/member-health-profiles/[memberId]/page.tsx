@@ -17,7 +17,8 @@ import { SegmentedChoiceGroup } from "@/components/forms/segmented-choice-group"
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
-import { requireRoles } from "@/lib/auth";
+import { requireMemberHealthProfilesAccess } from "@/lib/auth";
+import { canAccessMemberCommandCenter, canAccessPhysicianOrders } from "@/lib/permissions";
 import { formatBillingPayorDisplayName } from "@/lib/services/billing-payor-contacts";
 import { getCarePlanPostSignReadinessLabel } from "@/lib/services/care-plans";
 import {
@@ -207,11 +208,13 @@ function OverviewTabFallback() {
 async function MemberHealthProfileOverviewTab({
   detail,
   genderDefault,
-  profileUpdatedBy
+  profileUpdatedBy,
+  canViewPhysicianOrders
 }: {
   detail: MemberHealthProfileDetail;
   genderDefault: string;
   profileUpdatedBy: string | null;
+  canViewPhysicianOrders: boolean;
 }) {
   const { member, profile } = detail;
   const [overviewData, assessments] = await Promise.all([
@@ -271,12 +274,14 @@ async function MemberHealthProfileOverviewTab({
           >
             Open Progress Notes
           </Link>
-          <Link
-            href={`/health/physician-orders?memberId=${member.id}`}
-            className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
-          >
-            Open Physician Orders
-          </Link>
+          {canViewPhysicianOrders ? (
+            <Link
+              href={`/health/physician-orders?memberId=${member.id}`}
+              className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
+            >
+              Open Physician Orders
+            </Link>
+          ) : null}
         </div>
         <div className="mt-4">
           <MhpOverviewForm
@@ -357,12 +362,16 @@ async function MemberHealthProfileOverviewTab({
           lastUpdatedBy={physicianOrdersUpdatedBy}
         />
         <div className="mt-2 flex flex-wrap gap-2">
-          <Link href={`/health/physician-orders?memberId=${member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
-            Open Member POF List
-          </Link>
-          <Link href={`/health/physician-orders/new?memberId=${member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
-            New Physician Order
-          </Link>
+          {canViewPhysicianOrders ? (
+            <Link href={`/health/physician-orders?memberId=${member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
+              Open Member POF List
+            </Link>
+          ) : null}
+          {canViewPhysicianOrders ? (
+            <Link href={`/health/physician-orders/new?memberId=${member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
+              New Physician Order
+            </Link>
+          ) : null}
         </div>
         <table className="mt-3">
           <thead><tr><th>Status</th><th>Clinical Sync</th><th>Provider</th><th>Sent</th><th>Signed</th><th>Updated</th><th>Open</th></tr></thead>
@@ -404,11 +413,13 @@ export default async function MemberHealthProfileDetailPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [currentProfile, { memberId }, query] = await Promise.all([
-    requireRoles(["admin", "nurse"]),
+    requireMemberHealthProfilesAccess(),
     params,
     searchParams
   ]);
   const canManageMemberStatus = currentProfile.role === "admin" || currentProfile.role === "manager";
+  const canViewCommandCenter = canAccessMemberCommandCenter(currentProfile);
+  const canViewPhysicianOrders = canAccessPhysicianOrders(currentProfile);
   const tab = resolveTab(firstString(query.tab));
 
   const detail = await getMemberHealthProfileDetailSupabase(memberId, {
@@ -478,20 +489,26 @@ export default async function MemberHealthProfileDetailPage({
             forceFallback
             ariaLabel="Back to member health profile list"
           />
-          <Link href={`/operations/member-command-center/${member.id}`} className="font-semibold text-brand">Member Command Center</Link>
+          {canViewCommandCenter ? (
+            <Link href={`/operations/member-command-center/${member.id}`} className="font-semibold text-brand">Member Command Center</Link>
+          ) : null}
           <Link href={`/members/${member.id}`} className="font-semibold text-brand">Member Detail</Link>
           <Link href={`/health/assessment?memberId=${member.id}`} className="font-semibold text-brand">New Intake Assessment</Link>
           <Link href={`/health/care-plans?memberId=${member.id}`} className="font-semibold text-brand">Care Plans</Link>
           <Link href={`/health/progress-notes?memberId=${member.id}`} className="font-semibold text-brand">Progress Notes</Link>
-          <Link href={`/health/physician-orders?memberId=${member.id}`} className="font-semibold text-brand">Physician Orders</Link>
+          {canViewPhysicianOrders ? (
+            <Link href={`/health/physician-orders?memberId=${member.id}`} className="font-semibold text-brand">Physician Orders</Link>
+          ) : null}
         </div>
         <div id="discharge-actions" className="mt-2 flex justify-center gap-2">
-          <Link
-            href={`/health/physician-orders/new?memberId=${member.id}`}
-            className="inline-flex h-9 items-center rounded-lg bg-brand px-3 text-xs font-semibold text-white hover:bg-[#12357e]"
-          >
-            New POF
-          </Link>
+          {canViewPhysicianOrders ? (
+            <Link
+              href={`/health/physician-orders/new?memberId=${member.id}`}
+              className="inline-flex h-9 items-center rounded-lg bg-brand px-3 text-xs font-semibold text-white hover:bg-[#12357e]"
+            >
+              New POF
+            </Link>
+          ) : null}
           <Link
             href={`/members/${member.id}/face-sheet?from=mhp`}
             className="inline-flex h-9 items-center rounded-lg bg-brand px-3 text-xs font-semibold text-white hover:bg-[#12357e]"
@@ -541,6 +558,7 @@ export default async function MemberHealthProfileDetailPage({
             detail={detail}
             genderDefault={genderDefault}
             profileUpdatedBy={profileUpdatedBy}
+            canViewPhysicianOrders={canViewPhysicianOrders}
           />
         </Suspense>
       ) : null}

@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { MEMBER_CONTACT_SELECT_WITH_PAYOR } from "@/lib/services/member-contact-payor-schema";
 import {
   backfillMissingMemberCommandCenterRowsSupabase,
+  buildMissingCanonicalMemberShellError,
   getAvailableLockerNumbersForMemberSupabase,
   getMemberCommandCenterDetailSupabase,
   getMemberCommandCenterIndexSupabase,
@@ -388,19 +389,14 @@ export async function listMemberAttendanceSchedulesForMemberIdsSupabase(
 
   const scheduleByMember = new Map(schedules.map((row) => [row.member_id, row] as const));
   const missingMemberIds = normalizedMemberIds.filter((memberId) => !scheduleByMember.has(memberId));
-  if (missingMemberIds.length === 0) return schedules;
+  if (missingMemberIds.length > 0) {
+    throw buildMissingCanonicalMemberShellError({
+      memberId: missingMemberIds[0],
+      table: "member_attendance_schedules"
+    });
+  }
 
-  const ensuredSchedules = await Promise.all(
-    missingMemberIds.map((memberId) => ensureMemberAttendanceScheduleSupabase(memberId))
-  );
-  ensuredSchedules.forEach((schedule, index) => {
-    if (!schedule) {
-      throw new Error(`Unable to ensure attendance schedule for member ${missingMemberIds[index]}.`);
-    }
-    scheduleByMember.set(schedule.member_id, schedule);
-  });
-
-  return Array.from(scheduleByMember.values());
+  return schedules;
 }
 
 export async function upsertMemberContactSupabase(input: {

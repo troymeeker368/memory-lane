@@ -1,7 +1,6 @@
 "use server";
 
-import { requireModuleAccess, requireRoles } from "@/lib/auth";
-import { PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
+import { requireModuleAccess, requirePhysicianOrdersAccess } from "@/lib/auth";
 import { searchUnscheduledAttendanceMemberOptions } from "@/lib/services/attendance";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { listEnrollmentPacketEligibleLeadPicker, listSalesLeadPickerOptions } from "@/lib/services/leads-read";
@@ -44,7 +43,7 @@ export async function searchCarePlanMembersAction(input: MemberLookupRequest) {
 }
 
 export async function searchPhysicianOrderMembersAction(input: MemberLookupRequest) {
-  await requireRoles(PHYSICIAN_ORDER_MODULE_ROLES);
+  await requirePhysicianOrdersAccess();
   return listMemberPickerOptionsSupabase({
     q: input.q,
     selectedId: input.selectedId,

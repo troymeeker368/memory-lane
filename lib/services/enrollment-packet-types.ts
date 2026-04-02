@@ -1,7 +1,10 @@
 import type { Buffer } from "node:buffer";
 
 import type { EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
-import type { EnrollmentPacketOperationalReadinessStatus } from "@/lib/services/enrollment-packet-readiness";
+import type {
+  EnrollmentPacketCompletionFollowUpStatus,
+  EnrollmentPacketOperationalReadinessStatus
+} from "@/lib/services/enrollment-packet-readiness";
 import type { SendWorkflowDeliveryStatus } from "@/lib/services/send-workflow-state";
 
 export const STAFF_TRANSPORTATION_OPTIONS = ["None", "Door to Door", "Bus Stop", "Mixed"] as const;
@@ -73,6 +76,8 @@ export type EnrollmentPacketRequestRow = {
   delivery_error: string | null;
   token: string;
   last_consumed_submission_token_hash: string | null;
+  completed_packet_download_token_hash: string | null;
+  completed_packet_download_token_issued_at: string | null;
   token_expires_at: string;
   created_at: string;
   sent_at: string | null;
@@ -87,6 +92,9 @@ export type EnrollmentPacketRequestRow = {
   mapping_sync_error: string | null;
   mapping_sync_attempted_at: string | null;
   latest_mapping_run_id: string | null;
+  completion_follow_up_status: string | null;
+  completion_follow_up_error: string | null;
+  completion_follow_up_checked_at: string | null;
 };
 
 export type EnrollmentPacketFieldsRow = {
@@ -211,6 +219,7 @@ export type PublicEnrollmentPacketContext =
       state: "completed";
       request: EnrollmentPacketRequestSummary;
       mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
+      completionFollowUpStatus: EnrollmentPacketCompletionFollowUpStatus;
       operationalReadinessStatus: EnrollmentPacketOperationalReadinessStatus;
       actionNeeded: boolean;
       actionNeededMessage: string | null;

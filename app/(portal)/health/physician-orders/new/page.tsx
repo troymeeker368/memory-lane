@@ -12,8 +12,7 @@ import { SegmentedChoiceGroup } from "@/components/forms/segmented-choice-group"
 import { PofEsignWorkflowCard } from "@/components/physician-orders/pof-esign-workflow-card";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
-import { getCurrentProfile, requireRoles } from "@/lib/auth";
-import { PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
+import { getCurrentProfile, requirePhysicianOrdersManagement } from "@/lib/auth";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import {
   MHP_AMBULATION_OPTIONS,
@@ -97,7 +96,7 @@ export default async function NewPhysicianOrderPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireRoles(PHYSICIAN_ORDER_MODULE_ROLES);
+  await requirePhysicianOrdersManagement();
   const profile = await getCurrentProfile();
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";

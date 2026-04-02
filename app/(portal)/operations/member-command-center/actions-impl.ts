@@ -2,9 +2,12 @@ import "server-only";
 
 import { revalidatePath } from "next/cache";
 
-import { getCurrentProfile } from "@/lib/auth";
+import {
+  requireMemberCommandCenterAccess,
+  requireMemberCommandCenterAttendanceBillingEdit,
+  requireMemberCommandCenterEdit
+} from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
-import { canAccessModule, canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import { resolveActiveEffectiveRowForDate, resolveEffectiveTransportationBillingStatus } from "@/lib/services/billing-effective";
 import {
   deleteMemberCommandCenterContact,
@@ -90,33 +93,15 @@ function normalizeLockerInput(raw: string) {
 }
 
 async function requireCommandCenterEditor() {
-  const profile = await getCurrentProfile();
-  if (profile.role !== "admin" && profile.role !== "manager") {
-    throw new Error("Only Admin/Manager can edit Member Command Center records.");
-  }
-  return profile;
+  return requireMemberCommandCenterEdit();
 }
 
 async function requireCommandCenterViewer() {
-  const profile = await getCurrentProfile();
-  if (!canAccessModule(profile.role, "operations", profile.permissions)) {
-    throw new Error("You do not have access to Member Command Center files.");
-  }
-  return profile;
+  return requireMemberCommandCenterAccess();
 }
 
 async function requireAttendanceBillingEditor() {
-  const profile = await getCurrentProfile();
-  const role = normalizeRoleKey(profile.role);
-  if (
-    role !== "admin" &&
-    role !== "manager" &&
-    role !== "coordinator" &&
-    !canPerformModuleAction(role, "operations", "canEdit", profile.permissions)
-  ) {
-    throw new Error("Only Admin/Manager/Coordinator can edit attendance billing settings.");
-  }
-  return profile;
+  return requireMemberCommandCenterAttendanceBillingEdit();
 }
 
 function revalidateCommandCenter(memberId: string) {

@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireRoles } from "@/lib/auth";
+import { requireMemberCommandCenterAttendanceBillingEdit } from "@/lib/auth";
 import { listCenterBillingSettingsSupabase } from "@/lib/services/member-command-center-read";
 
 import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
@@ -11,7 +11,7 @@ function todayDate() {
 }
 
 export default async function MccAttendanceBillingSettingsPage() {
-  await requireRoles(["admin", "manager", "director", "coordinator"]);
+  await requireMemberCommandCenterAttendanceBillingEdit();
   const centerBillingSettings = await listCenterBillingSettingsSupabase();
   const current = centerBillingSettings.find((row) => row.active) ?? centerBillingSettings[0] ?? null;
 
