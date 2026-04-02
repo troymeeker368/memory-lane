@@ -714,8 +714,8 @@ async function loadMemberHealthProfileAssessments(
   return options?.includeAll
     ? rawAssessments.map((row) => {
         const openFollowUpTaskTypes = (openFollowUpTasksByAssessmentId.get(row.id) ?? [])
-          .filter((task) => task.status === "action_required")
-          .map((task) => task.taskType);
+          .filter((task: IntakePostSignFollowUpTask) => task.status === "action_required")
+          .map((task: IntakePostSignFollowUpTask) => task.taskType);
         return {
           ...row,
           post_sign_readiness_status: resolveIntakePostSignReadiness({
