@@ -7,6 +7,7 @@ import {
   createPartnerActivityAction,
   createReferralSourceAction
 } from "@/app/sales-partner-actions";
+import { SalesLeadSearchPicker } from "@/components/forms/sales-lead-search-picker";
 import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
@@ -14,12 +15,6 @@ import { COMMUNITY_PARTNER_CATEGORY_OPTIONS, LEAD_ACTIVITY_TYPES, LEAD_FOLLOW_UP
 import { formatPhoneInput } from "@/lib/phone";
 import { toEasternDateTimeLocal } from "@/lib/timezone";
 type ReferralSourceCategory = (typeof COMMUNITY_PARTNER_CATEGORY_OPTIONS)[number];
-
-type LeadLookup = {
-  id: string;
-  member_name: string;
-  stage: string;
-};
 
 type PartnerLookup = {
   id: string;
@@ -35,14 +30,12 @@ type ReferralSourceLookup = {
 };
 
 export function SalesPartnerActivityForm({
-  leads,
   partners,
   referralSources,
   initialPartnerId,
   initialReferralSourceId,
   initialLeadId
 }: {
-  leads: LeadLookup[];
   partners: PartnerLookup[];
   referralSources: ReferralSourceLookup[];
   initialPartnerId?: string;
@@ -269,10 +262,11 @@ export function SalesPartnerActivityForm({
           </div>
 
           <div className="grid gap-3 md:grid-cols-3">
-            <select className="h-11 rounded-lg border border-border px-3" value={form.leadId} onChange={(event) => setForm((current) => ({ ...current, leadId: event.target.value }))}>
-              <option value="">No linked lead</option>
-              {leads.map((lead) => <option key={lead.id} value={lead.id}>{lead.member_name || "(No member name)"} ({lead.stage})</option>)}
-            </select>
+            <SalesLeadSearchPicker
+              value={form.leadId}
+              onChange={(nextValue) => setForm((current) => ({ ...current, leadId: nextValue }))}
+              label="Linked Lead"
+            />
             <input type="datetime-local" className="h-11 rounded-lg border border-border px-3" value={form.activityAt} onChange={(event) => setForm((current) => ({ ...current, activityAt: event.target.value }))} />
             <select className="h-11 rounded-lg border border-border px-3" value={form.activityType} onChange={(event) => setForm((current) => ({ ...current, activityType: event.target.value as (typeof LEAD_ACTIVITY_TYPES)[number] }))}>{LEAD_ACTIVITY_TYPES.map((activityType) => <option key={activityType} value={activityType}>{activityType}</option>)}</select>
           </div>

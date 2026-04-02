@@ -8,7 +8,10 @@ import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { canGenerateMemberDocumentForRole } from "@/lib/permissions";
-import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
+import {
+  buildGeneratedMemberFilePersistenceState,
+  saveGeneratedMemberPdfToFiles
+} from "@/lib/services/member-files";
 import { getMemberNameBadgeDetail } from "@/lib/services/member-name-badge";
 import { toEasternISO } from "@/lib/timezone";
 import type { PDFDocument as PDFDocumentType } from "pdf-lib";
@@ -426,7 +429,11 @@ export async function generateMemberNameBadgePdfAction(input: {
   return {
     ok: true,
     fileName: saved.fileName,
-    dataUrl: built.dataUrl
+    dataUrl: built.dataUrl,
+    ...buildGeneratedMemberFilePersistenceState({
+      documentLabel: "Name Badge",
+      verifiedPersisted: saved.verifiedPersisted
+    })
   } as const;
 }
 

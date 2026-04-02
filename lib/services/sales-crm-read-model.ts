@@ -1,6 +1,5 @@
 import {
   getEnrollmentPacketEligibleLeadQueryStages,
-  isEnrollmentPacketEligibleLeadState,
   resolveCanonicalLeadState
 } from "@/lib/canonical";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
@@ -64,14 +63,9 @@ type SalesEnrollmentPacketEligibleLeadFilterRow = {
   member_name: string | null;
   caregiver_email: string | null;
   member_start_date: string | null;
-  stage: string;
-  status: string;
 };
 
-export type SalesEnrollmentPacketEligibleLeadRow = Omit<
-  SalesEnrollmentPacketEligibleLeadFilterRow,
-  "stage" | "status"
->;
+export type SalesEnrollmentPacketEligibleLeadRow = SalesEnrollmentPacketEligibleLeadFilterRow;
 
 export interface SalesLeadLookupRow {
   id: string;
@@ -82,6 +76,46 @@ export interface SalesLeadLookupRow {
   created_at: string;
   partner_id: string | null;
   referral_source_id: string | null;
+}
+
+export type SalesLeadPickerRow = Pick<
+  SalesLeadLookupRow,
+  "id" | "member_name" | "stage" | "partner_id" | "referral_source_id"
+>;
+
+export type SalesLeadActivityRow = {
+  id: string;
+  lead_id: string;
+  activity_at: string;
+  activity_type: string;
+  outcome: string | null;
+  lost_reason: string | null;
+  next_follow_up_date: string | null;
+  next_follow_up_type: string | null;
+  completed_by_name: string | null;
+  notes: string | null;
+  member_name: string | null;
+};
+
+export type SalesPartnerActivityRow = {
+  id: string;
+  partner_id: string | null;
+  referral_source_id: string | null;
+  lead_id: string | null;
+  organization_name: string | null;
+  contact_name: string | null;
+  activity_at: string;
+  activity_type: string;
+  next_follow_up_date: string | null;
+  next_follow_up_type: string | null;
+  completed_by: string | null;
+  completed_by_name: string | null;
+  notes: string | null;
+};
+
+export interface SalesRecentActivitySnapshot {
+  activities: SalesLeadActivityRow[];
+  partnerActivities: SalesPartnerActivityRow[];
 }
 
 export interface SalesLeadReadRow extends SalesLeadLookupRow {
@@ -174,9 +208,7 @@ const SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT = [
   "id",
   "member_name",
   "caregiver_email",
-  "member_start_date",
-  "stage",
-  "status"
+  "member_start_date"
 ].join(", ");
 
 const SALES_LEAD_LOOKUP_SELECT = "id, member_name, caregiver_name, stage, status, created_at, partner_id, referral_source_id";
@@ -230,6 +262,15 @@ function toSalesLeadReadRow(row: Record<string, unknown>): SalesLeadReadRow {
 function toEnrollmentPacketEligibleLeadFilterRow(
   row: Record<string, unknown>
 ): SalesEnrollmentPacketEligibleLeadFilterRow {
+  return {
+    id: String(row.id ?? ""),
+    member_name: clean(row.member_name),
+    caregiver_email: clean(row.caregiver_email),
+    member_start_date: clean(row.member_start_date)
+  };
+}
+
+function toSalesLeadLookupRow(row: Record<string, unknown>): SalesLeadLookupRow {
   const resolved = resolveCanonicalLeadState({
     requestedStage: typeof row.stage === "string" ? row.stage : "Inquiry",
     requestedStatus: typeof row.status === "string" ? row.status : "Open"
@@ -237,10 +278,12 @@ function toEnrollmentPacketEligibleLeadFilterRow(
   return {
     id: String(row.id ?? ""),
     member_name: clean(row.member_name),
-    caregiver_email: clean(row.caregiver_email),
-    member_start_date: clean(row.member_start_date),
+    caregiver_name: clean(row.caregiver_name),
     stage: resolved.stage,
-    status: resolved.status
+    status: resolved.status,
+    created_at: String(row.created_at ?? ""),
+    partner_id: clean(row.partner_id),
+    referral_source_id: clean(row.referral_source_id)
   };
 }
 
@@ -373,31 +416,6 @@ export async function getSalesLeadForEnrollmentSupabase(leadId: string) {
   return (data as SalesLeadEnrollmentRow | null) ?? null;
 }
 
-export async function listEnrollmentPacketEligibleLeadsSupabase(input?: {
-  limit?: number;
-}): Promise<SalesEnrollmentPacketEligibleLeadRow[]> {
-  const limit = normalizePageSize(input?.limit ?? 500, 500);
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("leads")
-    .select(SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT)
-    .eq("status", "open")
-    .in("stage", [...getEnrollmentPacketEligibleLeadQueryStages()])
-    .order("inquiry_date", { ascending: false, nullsFirst: false })
-    .order("member_name", { ascending: true })
-    .limit(limit);
-  if (error) throw new Error(error.message);
-  return ((data ?? []) as unknown as Record<string, unknown>[])
-    .map((row) => toEnrollmentPacketEligibleLeadFilterRow(row))
-    .filter((row) =>
-      isEnrollmentPacketEligibleLeadState({
-        requestedStage: row.stage,
-        requestedStatus: row.status
-      })
-    )
-    .map(({ stage: _stage, status: _status, ...row }) => row);
-}
-
 export async function listEnrollmentPacketEligibleLeadPickerSupabase(input?: {
   q?: string;
   selectedId?: string | null;
@@ -413,7 +431,13 @@ export async function listEnrollmentPacketEligibleLeadPickerSupabase(input?: {
   const selectedId = clean(input?.selectedId);
   const supabase = await createClient();
   const selectedLeadPromise = selectedId
-    ? supabase.from("leads").select(SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT).eq("id", selectedId).maybeSingle()
+    ? supabase
+        .from("leads")
+        .select(SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT)
+        .eq("id", selectedId)
+        .eq("status", "open")
+        .in("stage", [...getEnrollmentPacketEligibleLeadQueryStages()])
+        .maybeSingle()
     : Promise.resolve({ data: null, error: null } as const);
   const matchesPromise =
     q && q.length >= minQueryLength
@@ -440,13 +464,7 @@ export async function listEnrollmentPacketEligibleLeadPickerSupabase(input?: {
 
   const rows = [selectedLeadResult.data, ...((matchesResult.data ?? []) as Array<Record<string, unknown> | null>)]
     .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
-    .map((row) => toEnrollmentPacketEligibleLeadFilterRow(row))
-    .filter((row) =>
-      isEnrollmentPacketEligibleLeadState({
-        requestedStage: row.stage,
-        requestedStatus: row.status
-      })
-    );
+    .map((row) => toEnrollmentPacketEligibleLeadFilterRow(row));
 
   const seen = new Set<string>();
   return rows
@@ -454,8 +472,58 @@ export async function listEnrollmentPacketEligibleLeadPickerSupabase(input?: {
       if (seen.has(row.id)) return false;
       seen.add(row.id);
       return true;
+    });
+}
+
+export async function listSalesLeadPickerOptionsSupabase(input?: {
+  q?: string;
+  selectedId?: string | null;
+  limit?: number;
+  minQueryLength?: number;
+}): Promise<SalesLeadPickerRow[]> {
+  const q = clean(input?.q);
+  const limit = normalizePageSize(input?.limit ?? 25, 25);
+  const minQueryLength =
+    Number.isFinite(input?.minQueryLength) && Number(input?.minQueryLength) > 0
+      ? Math.floor(Number(input?.minQueryLength))
+      : 2;
+  const selectedId = clean(input?.selectedId);
+  const supabase = await createClient();
+  const selectedLeadPromise = selectedId
+    ? supabase.from("leads").select(SALES_LEAD_LOOKUP_SELECT).eq("id", selectedId).maybeSingle()
+    : Promise.resolve({ data: null, error: null } as const);
+  const matchesPromise =
+    q && q.length >= minQueryLength
+      ? supabase
+          .from("leads")
+          .select(SALES_LEAD_LOOKUP_SELECT)
+          .or(
+            [`member_name.ilike.${buildSupabaseIlikePattern(q)}`, `caregiver_name.ilike.${buildSupabaseIlikePattern(q)}`].join(",")
+          )
+          .order("created_at", { ascending: false })
+          .limit(limit)
+      : Promise.resolve({ data: [] as SalesLeadLookupRow[], error: null } as const);
+
+  const [selectedLeadResult, matchesResult] = await Promise.all([selectedLeadPromise, matchesPromise]);
+  if (selectedLeadResult.error) throw new Error(selectedLeadResult.error.message);
+  if (matchesResult.error) throw new Error(matchesResult.error.message);
+
+  const seen = new Set<string>();
+  return [selectedLeadResult.data, ...((matchesResult.data ?? []) as Array<Record<string, unknown> | null>)]
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+    .map((row) => toSalesLeadLookupRow(row))
+    .filter((row) => {
+      if (seen.has(row.id)) return false;
+      seen.add(row.id);
+      return true;
     })
-    .map(({ stage: _stage, status: _status, ...row }) => row);
+    .map((row) => ({
+      id: row.id,
+      member_name: row.member_name,
+      stage: row.stage,
+      partner_id: row.partner_id,
+      referral_source_id: row.referral_source_id
+    }));
 }
 
 export async function getSalesFormLookupsSupabase(options?: {
@@ -713,8 +781,14 @@ export async function getSalesLeadFollowUpDashboardSupabase(input?: {
   };
 }
 
-export async function getSalesRecentActivitySnapshotSupabase(options?: { leadId?: string | null }) {
+export async function getSalesRecentActivitySnapshotSupabase(options?: {
+  leadId?: string | null;
+  includeLeadActivities?: boolean;
+  includePartnerActivities?: boolean;
+}): Promise<SalesRecentActivitySnapshot> {
   const supabase = await createClient();
+  const includeLeadActivities = options?.includeLeadActivities !== false;
+  const includePartnerActivities = options?.includePartnerActivities !== false;
   let leadActivitiesQuery = supabase
     .from("lead_activities")
     .select("id, lead_id, activity_at, activity_type, outcome, lost_reason, next_follow_up_date, next_follow_up_type, completed_by_name, notes, member_name")
@@ -724,19 +798,23 @@ export async function getSalesRecentActivitySnapshotSupabase(options?: { leadId?
     leadActivitiesQuery = leadActivitiesQuery.eq("lead_id", options.leadId);
   }
   const [leadActivitiesResult, partnerActivitiesResult] = await Promise.all([
-    leadActivitiesQuery,
-    supabase
-      .from("partner_activities")
-      .select("id, partner_id, referral_source_id, lead_id, organization_name, contact_name, activity_at, activity_type, next_follow_up_date, next_follow_up_type, completed_by, completed_by_name, notes")
-      .order("activity_at", { ascending: false })
-      .limit(100)
+    includeLeadActivities
+      ? leadActivitiesQuery
+      : Promise.resolve({ data: [] as SalesLeadActivityRow[], error: null } as const),
+    includePartnerActivities
+      ? supabase
+          .from("partner_activities")
+          .select("id, partner_id, referral_source_id, lead_id, organization_name, contact_name, activity_at, activity_type, next_follow_up_date, next_follow_up_type, completed_by, completed_by_name, notes")
+          .order("activity_at", { ascending: false })
+          .limit(100)
+      : Promise.resolve({ data: [] as SalesPartnerActivityRow[], error: null } as const)
   ]);
   if (leadActivitiesResult.error) throw new Error(leadActivitiesResult.error.message);
   if (partnerActivitiesResult.error) throw new Error(partnerActivitiesResult.error.message);
 
   return {
-    activities: leadActivitiesResult.data ?? [],
-    partnerActivities: (partnerActivitiesResult.data ?? []).map((activity) => ({
+    activities: (leadActivitiesResult.data ?? []) as SalesLeadActivityRow[],
+    partnerActivities: ((partnerActivitiesResult.data ?? []) as SalesPartnerActivityRow[]).map((activity) => ({
       ...activity,
       completed_by: activity.completed_by ?? activity.completed_by_name ?? null
     }))

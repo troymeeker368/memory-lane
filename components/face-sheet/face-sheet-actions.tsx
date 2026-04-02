@@ -26,7 +26,13 @@ export function FaceSheetActions({ memberId }: { memberId: string }) {
             });
 
             let result:
-              | { ok: true; fileName: string; dataUrl: string }
+              | {
+                  ok: true;
+                  fileName: string;
+                  dataUrl: string;
+                  memberFilesStatus?: "verified" | "follow-up-needed";
+                  memberFilesMessage?: string | null;
+                }
               | { ok: false; error: string };
 
             try {
@@ -42,7 +48,11 @@ export function FaceSheetActions({ memberId }: { memberId: string }) {
             }
             triggerPdfDownload(result.dataUrl, result.fileName);
             triggerPdfPrint(result.dataUrl);
-            setStatus("Face sheet PDF downloaded and print dialog opened.");
+            setStatus(
+              result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
+                ? `Face sheet PDF downloaded and print dialog opened. ${result.memberFilesMessage}`
+                : "Face sheet PDF downloaded and print dialog opened."
+            );
           })
         }
       >

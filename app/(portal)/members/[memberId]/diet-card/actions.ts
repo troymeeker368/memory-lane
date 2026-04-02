@@ -6,7 +6,10 @@ import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { canGenerateMemberDocumentForRole } from "@/lib/permissions";
-import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
+import {
+  buildGeneratedMemberFilePersistenceState,
+  saveGeneratedMemberPdfToFiles
+} from "@/lib/services/member-files";
 import { getMemberDietCard } from "@/lib/services/member-diet-card";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -92,7 +95,11 @@ export async function generateMemberDietCardPdfAction(input: { memberId: string 
     return {
       ok: true,
       fileName: saved.fileName,
-      dataUrl: built.dataUrl
+      dataUrl: built.dataUrl,
+      ...buildGeneratedMemberFilePersistenceState({
+        documentLabel: "Diet Card",
+        verifiedPersisted: saved.verifiedPersisted
+      })
     } as const;
   } catch (error) {
     return {

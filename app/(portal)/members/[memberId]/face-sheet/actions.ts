@@ -14,7 +14,10 @@ import {
   DOCUMENT_CENTER_NAME,
   DOCUMENT_CENTER_PHONE
 } from "@/lib/services/document-branding";
-import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
+import {
+  buildGeneratedMemberFilePersistenceState,
+  saveGeneratedMemberPdfToFiles
+} from "@/lib/services/member-files";
 import { getMemberFaceSheet } from "@/lib/services/member-face-sheet";
 import { toEasternISO } from "@/lib/timezone";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
@@ -818,7 +821,11 @@ export async function generateMemberFaceSheetPdfAction(input: { memberId: string
     return {
       ok: true,
       fileName: saved.fileName,
-      dataUrl: built.dataUrl
+      dataUrl: built.dataUrl,
+      ...buildGeneratedMemberFilePersistenceState({
+        documentLabel: "Face Sheet",
+        verifiedPersisted: saved.verifiedPersisted
+      })
     } as const;
   } catch (error) {
     return {

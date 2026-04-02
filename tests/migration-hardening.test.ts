@@ -105,3 +105,24 @@ test("0175 adds additive FK-covering indexes across queue, clinical, transportat
   assert.equal(source.toLowerCase().includes("drop index"), false);
   assert.equal(source.toLowerCase().includes("alter table"), false);
 });
+
+test("0176 drops only the explicitly approved redundant indexes", () => {
+  const source = readWorkspaceFile("supabase/migrations/0176_safe_unused_index_cleanup.sql");
+  const dropStatements = source.match(/drop index if exists public\.[a-z0-9_]+;/gi) ?? [];
+
+  assert.deepEqual(dropStatements, [
+    "drop index if exists public.idx_leads_partner_id;",
+    "drop index if exists public.idx_member_files_member_uploaded_at;",
+    "drop index if exists public.idx_role_permissions_role_id;"
+  ]);
+  assert.equal(source.includes("idx_leads_partner_id_created_at_desc"), true);
+  assert.equal(source.includes("idx_member_files_member_id_uploaded_at_desc"), true);
+  assert.equal(source.includes("role_permissions_role_id_module_key_key"), true);
+  assert.equal(source.includes("idx_members_display_name_trgm"), false);
+  assert.equal(source.includes("idx_audit_logs_entity_type_trgm"), false);
+  assert.equal(source.includes("idx_enrollment_packet_requests_status_updated_at_desc"), false);
+  assert.equal(source.includes("idx_member_files_pof_request"), false);
+  assert.equal(source.includes("idx_audit_logs_entity_type_created_at"), false);
+  assert.equal(source.includes("idx_member_contacts_member_updated_at"), false);
+  assert.equal(source.includes("idx_time_punches_staff_punch_at"), false);
+});

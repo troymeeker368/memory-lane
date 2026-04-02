@@ -68,6 +68,44 @@ function toStateFromRow(row: CarePlanNurseSignatureRow): CarePlanNurseSignatureS
   };
 }
 
+async function reportCarePlanPostCommitTelemetryFailure(input: {
+  carePlanId: string;
+  memberId: string;
+  actorUserId: string;
+  step: string;
+  error: unknown;
+}) {
+  const reason =
+    input.error instanceof Error ? input.error.message : "Unknown post-commit care plan telemetry failure.";
+  console.error("Care plan nurse signature post-commit telemetry failed.", {
+    carePlanId: input.carePlanId,
+    memberId: input.memberId,
+    step: input.step,
+    error: input.error
+  });
+  try {
+    await recordImmediateSystemAlert({
+      entityType: "care_plan",
+      entityId: input.carePlanId,
+      actorUserId: input.actorUserId,
+      severity: "medium",
+      alertKey: "care_plan_nurse_signature_post_commit_telemetry_failed",
+      metadata: {
+        member_id: input.memberId,
+        step: input.step,
+        error: reason
+      }
+    });
+  } catch (alertError) {
+    console.error("Failed to record care plan nurse post-commit telemetry alert.", {
+      carePlanId: input.carePlanId,
+      memberId: input.memberId,
+      step: input.step,
+      error: alertError
+    });
+  }
+}
+
 async function cleanupCarePlanNurseSignatureArtifactAfterFinalizeFailure(input: {
   carePlanId: string;
   memberId: string;
@@ -454,21 +492,31 @@ export async function signCarePlanNurseEsign(input: {
 
   const state = toStateFromRow(finalizedRow);
   if (!finalizedRow.was_already_signed) {
-    await recordWorkflowEvent({
-      eventType: "care_plan_nurse_signed",
-      entityType: "care_plan",
-      entityId: carePlan.id,
-      actorType: "user",
-      actorUserId: input.actor.id,
-      status: "signed",
-      severity: "low",
-      metadata: {
-        member_id: carePlan.member_id,
-        nurse_signature_status: state.status,
-        caregiver_signature_status: finalizedRow.caregiver_signature_status,
-        signature_artifact_member_file_id: state.signatureArtifactMemberFileId
-      }
-    });
+    try {
+      await recordWorkflowEvent({
+        eventType: "care_plan_nurse_signed",
+        entityType: "care_plan",
+        entityId: carePlan.id,
+        actorType: "user",
+        actorUserId: input.actor.id,
+        status: "signed",
+        severity: "low",
+        metadata: {
+          member_id: carePlan.member_id,
+          nurse_signature_status: state.status,
+          caregiver_signature_status: finalizedRow.caregiver_signature_status,
+          signature_artifact_member_file_id: state.signatureArtifactMemberFileId
+        }
+      });
+    } catch (telemetryError) {
+      await reportCarePlanPostCommitTelemetryFailure({
+        carePlanId: carePlan.id,
+        memberId: carePlan.member_id,
+        actorUserId: input.actor.id,
+        step: "recordWorkflowEvent:care_plan_nurse_signed",
+        error: telemetryError
+      });
+    }
   }
 
   return state;

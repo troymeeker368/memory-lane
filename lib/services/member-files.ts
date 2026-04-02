@@ -51,6 +51,30 @@ type SaveGeneratedMemberPdfInput = {
   replaceExistingByDocumentSource?: boolean;
 };
 
+export type GeneratedMemberFilePersistenceState = {
+  memberFilesStatus: "verified" | "follow-up-needed";
+  memberFilesMessage: string | null;
+};
+
+export function buildGeneratedMemberFilePersistenceState(input: {
+  documentLabel: string;
+  verifiedPersisted: boolean;
+}): GeneratedMemberFilePersistenceState {
+  if (input.verifiedPersisted) {
+    return {
+      memberFilesStatus: "verified",
+      memberFilesMessage: null
+    };
+  }
+
+  return {
+    memberFilesStatus: "follow-up-needed",
+    memberFilesMessage:
+      `${input.documentLabel} PDF was generated and uploaded to storage, but the canonical Member Files record could not be verified yet. ` +
+      "Staff should treat this as follow-up needed until the document appears in Member Files."
+  };
+}
+
 export function safeFileName(value: string) {
   return value.replace(/[<>:"/\\|?*]/g, "").trim();
 }

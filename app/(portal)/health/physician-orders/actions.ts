@@ -7,7 +7,10 @@ import { redirect } from "next/navigation";
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { canCreatePhysicianOrdersModuleForRole } from "@/lib/permissions";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
-import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
+import {
+  buildGeneratedMemberFilePersistenceState,
+  saveGeneratedMemberPdfToFiles
+} from "@/lib/services/member-files";
 import {
   getPofRequestSummaryById,
   resendPofSignatureRequest,
@@ -362,7 +365,7 @@ async function savePofPdfToMemberFiles(input: {
   dataUrl: string;
   uploadedBy: { id: string; name: string };
 }) {
-  await saveGeneratedMemberPdfToFiles({
+  return saveGeneratedMemberPdfToFiles({
     memberId: input.memberId,
     memberName: input.memberName,
     documentLabel: "POF",
@@ -585,8 +588,11 @@ export async function generatePhysicianOrderPdfAction(input: { pofId: string; pe
 
   try {
     const generated = await buildPhysicianOrderPdfDataUrl(pofId);
+    let memberFilesPersistence:
+      | ReturnType<typeof buildGeneratedMemberFilePersistenceState>
+      | null = null;
     if (persistToMemberFiles) {
-      await savePofPdfToMemberFiles({
+      const saved = await savePofPdfToMemberFiles({
         memberId: generated.form.memberId,
         memberName: generated.form.memberNameSnapshot,
         dataUrl: generated.dataUrl,
@@ -595,12 +601,17 @@ export async function generatePhysicianOrderPdfAction(input: { pofId: string; pe
           name: actorDisplayName
         }
       });
+      memberFilesPersistence = buildGeneratedMemberFilePersistenceState({
+        documentLabel: "POF",
+        verifiedPersisted: saved.verifiedPersisted
+      });
       revalidatePofRoutes(generated.form.memberId, generated.form.id);
     }
     return {
       ok: true,
       fileName: generated.fileName,
-      dataUrl: generated.dataUrl
+      dataUrl: generated.dataUrl,
+      ...(memberFilesPersistence ?? {})
     } as const;
   } catch (error) {
     return {

@@ -41,12 +41,15 @@ test("enrollment packet lead eligibility includes Tour, EIP, and Nurture", () =>
 
 test("send enrollment packet flows use the shared eligible lead list and backend guard", () => {
   const pageSource = readWorkspaceFile("app/(portal)/sales/new-entries/send-enrollment-packet/page.tsx");
+  const standaloneActionSource = readWorkspaceFile("components/sales/sales-enrollment-packet-standalone-action.tsx");
   const leadPageSource = readWorkspaceFile("app/(portal)/sales/leads/[leadId]/page.tsx");
   const leadsReadSource = readWorkspaceFile("lib/services/leads-read.ts");
   const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-send-runtime.ts");
 
-  assert.equal(leadsReadSource.includes("listEnrollmentPacketEligibleLeadsSupabase"), true);
-  assert.equal(pageSource.includes("listEnrollmentPacketEligibleLeads({ limit: 500 })"), true);
+  assert.equal(pageSource.includes("SalesEnrollmentPacketStandaloneAction"), true);
+  assert.equal(standaloneActionSource.includes("EligibleLeadSearchPicker"), true);
+  assert.equal(leadsReadSource.includes("listEnrollmentPacketEligibleLeadPickerSupabase"), true);
+  assert.equal(pageSource.includes("listEnrollmentPacketEligibleLeads({ limit: 500 })"), false);
   assert.equal(leadPageSource.includes("isEnrollmentPacketEligibleLeadState({"), true);
   assert.equal(runtimeSource.includes("isEnrollmentPacketEligibleLeadState({"), true);
   assert.equal(

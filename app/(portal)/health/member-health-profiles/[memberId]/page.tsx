@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 
 import { MhpAllergiesSection } from "@/components/forms/mhp-allergies-section";
 import { MhpDiagnosesSection } from "@/components/forms/mhp-diagnoses-section";
@@ -17,15 +18,14 @@ import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { requireRoles } from "@/lib/auth";
-import { formatBillingPayorDisplayName, getBillingPayorContact } from "@/lib/services/billing-payor-contacts";
-import { getCarePlanPostSignReadinessLabel, getMemberCarePlanSummary } from "@/lib/services/care-plans";
-import { getMemberCarePlanSnapshot } from "@/lib/services/care-plans-read";
-import { getPhysicianOrdersForMember } from "@/lib/services/physician-orders-read";
-import { getMemberProgressNoteSummary } from "@/lib/services/notes-read";
+import { formatBillingPayorDisplayName } from "@/lib/services/billing-payor-contacts";
+import { getCarePlanPostSignReadinessLabel } from "@/lib/services/care-plans";
 import {
   MHP_TABS,
   type MhpTab,
-  getMemberHealthProfileDetailSupabase
+  getMemberHealthProfileDetailSupabase,
+  getMemberHealthProfileAssessmentsSupabase,
+  getMemberHealthProfileOverviewSupplement
 } from "@/lib/services/member-health-profiles-read";
 import {
   MHP_AMBULATION_OPTIONS,
@@ -189,6 +189,213 @@ function SectionHeading({
   );
 }
 
+type MemberHealthProfileDetail = NonNullable<Awaited<ReturnType<typeof getMemberHealthProfileDetailSupabase>>>;
+
+function OverviewTabFallback() {
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardTitle>Overview</CardTitle>
+        <p className="mt-2 text-sm text-muted">
+          Loading care plan, progress note, billing payor, and physician order summary data.
+        </p>
+      </Card>
+    </div>
+  );
+}
+
+async function MemberHealthProfileOverviewTab({
+  detail,
+  genderDefault,
+  profileUpdatedBy
+}: {
+  detail: MemberHealthProfileDetail;
+  genderDefault: string;
+  profileUpdatedBy: string | null;
+}) {
+  const { member, profile } = detail;
+  const [overviewData, assessments] = await Promise.all([
+    getMemberHealthProfileOverviewSupplement(member.id, {
+      canonicalInput: true
+    }),
+    getMemberHealthProfileAssessmentsSupabase(member.id)
+  ]);
+  const carePlanSummary = overviewData.carePlanSummary;
+  const progressNoteSummary = overviewData.progressNoteSummary;
+  const relatedCarePlans = overviewData.carePlanSnapshot.rows ?? [];
+  const carePlansUpdatedAt = latestTimestamp(relatedCarePlans.map((row) => row.updatedAt));
+  const carePlansUpdatedBy = latestUpdatedBy(relatedCarePlans, (row) => row.updatedAt, (row) => row.completedBy);
+  const relatedPhysicianOrders = overviewData.relatedPhysicianOrders ?? [];
+  const physicianOrdersUpdatedAt = latestTimestamp(relatedPhysicianOrders.map((row) => row.updatedAt));
+  const physicianOrdersUpdatedBy = latestUpdatedBy(
+    relatedPhysicianOrders,
+    (row) => row.updatedAt,
+    (row) => row.updatedByName
+  );
+  const assessmentsUpdatedAt = latestTimestamp(assessments.map((row) => row.created_at));
+  const assessmentsUpdatedBy = latestUpdatedBy(assessments, (row) => row.created_at, (row) => row.completed_by);
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <SectionHeading title="Overview" lastUpdatedAt={profile.updated_at} lastUpdatedBy={profileUpdatedBy} />
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-border p-3 text-center">
+            <p className="text-xs text-muted">Next Care Plan Due</p>
+            <p className="font-semibold">{carePlanSummary.nextDueDate ? formatDate(carePlanSummary.nextDueDate) : "-"}</p>
+            <p className="text-xs text-muted">{carePlanSummary.status ?? "No enrollment date"}</p>
+            {carePlanSummary.postSignReadinessStatus ? (
+              <p className="text-xs text-muted">
+                {getCarePlanPostSignReadinessLabel(carePlanSummary.postSignReadinessStatus)}
+              </p>
+            ) : null}
+          </div>
+          <div className="rounded-lg border border-border p-3 text-center">
+            <p className="text-xs text-muted">Next Progress Note Due</p>
+            <p className="font-semibold">
+              {progressNoteSummary?.nextProgressNoteDueDate ? formatDate(progressNoteSummary.nextProgressNoteDueDate) : "-"}
+            </p>
+            <p className="text-xs text-muted">
+              {progressNoteSummary?.dataIssue ??
+                (progressNoteSummary ? progressNoteSummary.complianceStatus.replaceAll("_", " ") : "No enrollment date")}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Link href={carePlanSummary.actionHref} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
+            {carePlanSummary.actionLabel}
+          </Link>
+          <Link
+            href={`/health/progress-notes?memberId=${member.id}`}
+            className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
+          >
+            Open Progress Notes
+          </Link>
+          <Link
+            href={`/health/physician-orders?memberId=${member.id}`}
+            className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
+          >
+            Open Physician Orders
+          </Link>
+        </div>
+        <div className="mt-4">
+          <MhpOverviewForm
+            memberId={member.id}
+            memberDob={member.dob ?? ""}
+            genderDefault={genderDefault}
+            billingPayorDisplay={
+              overviewData.billingPayor
+                ? formatBillingPayorDisplayName(overviewData.billingPayor)
+                : "No payor contact designated"
+            }
+            originalReferralSource={profile.original_referral_source ?? ""}
+            photoConsent={profile.photo_consent}
+            primaryCaregiverName={profile.primary_caregiver_name ?? ""}
+            primaryCaregiverPhone={profile.primary_caregiver_phone ?? ""}
+            responsiblePartyName={profile.responsible_party_name ?? ""}
+            responsiblePartyPhone={profile.responsible_party_phone ?? ""}
+            importantAlerts={profile.important_alerts ?? ""}
+          />
+        </div>
+      </Card>
+
+      <Card className="table-wrap">
+        <SectionHeading title="Related Care Plans" lastUpdatedAt={carePlansUpdatedAt} lastUpdatedBy={carePlansUpdatedBy} />
+        <table className="mt-3">
+          <thead><tr><th>Track</th><th>Review Date</th><th>Next Due</th><th>Status</th><th>Post-Sign Readiness</th><th>Completed By</th><th>Open</th></tr></thead>
+          <tbody>
+            {relatedCarePlans.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="text-sm text-muted">No care plans found for this member yet.</td>
+              </tr>
+            ) : (
+              relatedCarePlans.slice(0, 25).map((row) => (
+                <tr key={row.id}>
+                  <td>{row.track}</td>
+                  <td>{formatDate(row.reviewDate)}</td>
+                  <td>{formatDate(row.nextDueDate)}</td>
+                  <td>{row.status}</td>
+                  <td>{getCarePlanPostSignReadinessLabel(row.postSignReadinessStatus)}</td>
+                  <td>{row.completedBy ?? "-"}</td>
+                  <td><Link className="font-semibold text-brand" href={`/health/care-plans/${row.id}`}>Open</Link></td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card className="table-wrap">
+        <SectionHeading title="Related Intake Assessments" lastUpdatedAt={assessmentsUpdatedAt} lastUpdatedBy={assessmentsUpdatedBy} />
+        <table className="mt-3">
+          <thead><tr><th>Date</th><th>Score</th><th>Track</th><th>Post-Sign Readiness</th><th>Completed By</th><th>Open</th></tr></thead>
+          <tbody>
+            {assessments.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="text-sm text-muted">No intake assessments found for this member yet.</td>
+              </tr>
+            ) : (
+              assessments.slice(0, 25).map((row) => (
+                <tr key={row.id}>
+                  <td>{formatDate(row.assessment_date)}</td>
+                  <td>{row.total_score}</td>
+                  <td>{row.recommended_track}</td>
+                  <td>{intakeReadinessLabel(row.post_sign_readiness_status ?? "not_signed")}</td>
+                  <td>{row.completed_by}</td>
+                  <td><Link className="font-semibold text-brand" href={`/health/assessment/${row.id}`}>Open</Link></td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card className="table-wrap">
+        <SectionHeading
+          title="Related Physician Orders / POF"
+          lastUpdatedAt={physicianOrdersUpdatedAt}
+          lastUpdatedBy={physicianOrdersUpdatedBy}
+        />
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Link href={`/health/physician-orders?memberId=${member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
+            Open Member POF List
+          </Link>
+          <Link href={`/health/physician-orders/new?memberId=${member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
+            New Physician Order
+          </Link>
+        </div>
+        <table className="mt-3">
+          <thead><tr><th>Status</th><th>Clinical Sync</th><th>Provider</th><th>Sent</th><th>Signed</th><th>Updated</th><th>Open</th></tr></thead>
+          <tbody>
+            {relatedPhysicianOrders.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="text-sm text-muted">No physician orders found for this member yet.</td>
+              </tr>
+            ) : (
+              relatedPhysicianOrders.slice(0, 25).map((row) => (
+                <tr key={row.id}>
+                  <td>{row.status}</td>
+                  <td>
+                    <div className="space-y-1">
+                      <p>{row.clinicalSyncDetail?.label ?? clinicalSyncLabel(row.clinicalSyncStatus)}</p>
+                      {row.clinicalSyncDetail?.message ? <p className="max-w-xs text-xs text-muted">{row.clinicalSyncDetail.message}</p> : null}
+                    </div>
+                  </td>
+                  <td>{row.providerName ?? "-"}</td>
+                  <td>{row.completedDate ? formatDate(row.completedDate) : "-"}</td>
+                  <td>{row.signedDate ? formatDate(row.signedDate) : "-"}</td>
+                  <td>{formatDateTime(row.updatedAt)}</td>
+                  <td><Link className="font-semibold text-brand" href={`/health/physician-orders/${row.id}?from=mhp`}>Open</Link></td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
 export default async function MemberHealthProfileDetailPage({
   params,
   searchParams
@@ -229,7 +436,6 @@ export default async function MemberHealthProfileDetailPage({
   const allergiesUpdatedAt = latestTimestamp(detail.allergies.map((row) => row.updated_at));
   const equipmentUpdatedAt = latestTimestamp(detail.equipment.map((row) => row.updated_at));
   const notesUpdatedAt = latestTimestamp(detail.notes.map((row) => row.updated_at));
-  const assessmentsUpdatedAt = latestTimestamp(detail.assessments.map((row) => row.created_at));
   const profileUpdatedBy = profile.updated_by_name ?? detail.lastUpdatedBy ?? null;
   const diagnosesUpdatedBy = latestUpdatedBy(detail.diagnoses, (row) => row.updated_at, (row) => row.created_by_name);
   const providersUpdatedBy = latestUpdatedBy(detail.providers, (row) => row.updated_at, (row) => row.created_by_name);
@@ -237,33 +443,6 @@ export default async function MemberHealthProfileDetailPage({
   const allergiesUpdatedBy = latestUpdatedBy(detail.allergies, (row) => row.updated_at, (row) => row.created_by_name);
   const equipmentUpdatedBy = latestUpdatedBy(detail.equipment, (row) => row.updated_at, (row) => row.created_by_name);
   const notesUpdatedBy = latestUpdatedBy(detail.notes, (row) => row.updated_at, (row) => row.created_by_name);
-  const assessmentsUpdatedBy = latestUpdatedBy(detail.assessments, (row) => row.created_at, (row) => row.completed_by);
-  const overviewDataPromise =
-    tab === "overview"
-      ? Promise.all([
-          getMemberCarePlanSnapshot(member.id, { canonicalInput: true }),
-          getBillingPayorContact(member.id, {
-            source: "MemberHealthProfileDetailPage",
-            canonicalInput: true
-          }),
-          getPhysicianOrdersForMember(member.id, { canonicalInput: true })
-        ]).then(([carePlanSnapshot, billingPayor, relatedPhysicianOrders]) => ({
-          carePlanSnapshot,
-          billingPayor,
-          relatedPhysicianOrders
-        }))
-      : Promise.resolve(null);
-  const [carePlanSummary, progressNoteSummary, overviewData] = await Promise.all([
-    getMemberCarePlanSummary(member.id, { canonicalInput: true }),
-    getMemberProgressNoteSummary(member.id, { canonicalInput: true }),
-    overviewDataPromise
-  ]);
-  const relatedCarePlans = overviewData?.carePlanSnapshot.rows ?? [];
-  const carePlansUpdatedAt = latestTimestamp(relatedCarePlans.map((row) => row.updatedAt));
-  const carePlansUpdatedBy = latestUpdatedBy(relatedCarePlans, (row) => row.updatedAt, (row) => row.completedBy);
-  const relatedPhysicianOrders = overviewData?.relatedPhysicianOrders ?? [];
-  const physicianOrdersUpdatedAt = latestTimestamp(relatedPhysicianOrders.map((row) => row.updatedAt));
-  const physicianOrdersUpdatedBy = latestUpdatedBy(relatedPhysicianOrders, (row) => row.updatedAt, (row) => row.updatedByName);
   const latestIntakeAssessment = detail.assessments[0] ?? null;
   const trackFromRecord = member.latest_assessment_track ?? latestIntakeAssessment?.recommended_track ?? null;
   const trackSourceText = latestIntakeAssessment
@@ -302,7 +481,7 @@ export default async function MemberHealthProfileDetailPage({
           <Link href={`/operations/member-command-center/${member.id}`} className="font-semibold text-brand">Member Command Center</Link>
           <Link href={`/members/${member.id}`} className="font-semibold text-brand">Member Detail</Link>
           <Link href={`/health/assessment?memberId=${member.id}`} className="font-semibold text-brand">New Intake Assessment</Link>
-          <Link href={carePlanSummary.actionHref} className="font-semibold text-brand">{carePlanSummary.actionLabel}</Link>
+          <Link href={`/health/care-plans?memberId=${member.id}`} className="font-semibold text-brand">Care Plans</Link>
           <Link href={`/health/progress-notes?memberId=${member.id}`} className="font-semibold text-brand">Progress Notes</Link>
           <Link href={`/health/physician-orders?memberId=${member.id}`} className="font-semibold text-brand">Physician Orders</Link>
         </div>
@@ -329,30 +508,15 @@ export default async function MemberHealthProfileDetailPage({
             <MemberStatusToggle memberId={member.id} memberName={member.display_name} status={member.status} />
           ) : null}
         </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-6">
+        <div className="mt-3 grid gap-3 sm:grid-cols-4">
           <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">DOB</p><p className="font-semibold">{formatOptionalDate(member.dob)}</p></div>
           <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Enrollment</p><p className="font-semibold">{formatOptionalDate(member.enrollment_date)}</p></div>
           <div className="rounded-lg border border-border p-3 text-center"><p className="text-xs text-muted">Code Status</p><p className="font-semibold" style={codeStatusStyle}>{codeStatusBanner}</p></div>
-          <div className="rounded-lg border border-border p-3 text-center">
-            <p className="text-xs text-muted">Next Care Plan Due</p>
-            <p className="font-semibold">{carePlanSummary.nextDueDate ? formatDate(carePlanSummary.nextDueDate) : "-"}</p>
-            <p className="text-xs text-muted">{carePlanSummary.status ?? "No enrollment date"}</p>
-            {carePlanSummary.postSignReadinessStatus ? (
-              <p className="text-xs text-muted">{getCarePlanPostSignReadinessLabel(carePlanSummary.postSignReadinessStatus)}</p>
-            ) : null}
-          </div>
-          <div className="rounded-lg border border-border p-3 text-center">
-            <p className="text-xs text-muted">Next Progress Note Due</p>
-            <p className="font-semibold">{progressNoteSummary?.nextProgressNoteDueDate ? formatDate(progressNoteSummary.nextProgressNoteDueDate) : "-"}</p>
-            <p className="text-xs text-muted">
-              {progressNoteSummary?.dataIssue ?? (progressNoteSummary ? progressNoteSummary.complianceStatus.replaceAll("_", " ") : "No enrollment date")}
-            </p>
-          </div>
           <MhpTrackBannerEditor
             memberId={member.id}
             initialTrack={trackFromRecord}
             sourceText={trackSourceText}
-            reviewHref={carePlanSummary.actionHref}
+            reviewHref={`/health/care-plans?memberId=${member.id}`}
           />
         </div>
       </Card>
@@ -372,118 +536,13 @@ export default async function MemberHealthProfileDetailPage({
       </Card>
 
       {tab === "overview" ? (
-        <div className="space-y-4">
-          <Card>
-            <SectionHeading title="Overview" lastUpdatedAt={profile.updated_at} lastUpdatedBy={profileUpdatedBy} />
-            <MhpOverviewForm
-              memberId={member.id}
-              memberDob={member.dob ?? ""}
-              genderDefault={genderDefault}
-              billingPayorDisplay={
-                overviewData?.billingPayor
-                  ? formatBillingPayorDisplayName(overviewData.billingPayor)
-                  : "No payor contact designated"
-              }
-              originalReferralSource={profile.original_referral_source ?? ""}
-              photoConsent={profile.photo_consent}
-              primaryCaregiverName={profile.primary_caregiver_name ?? ""}
-              primaryCaregiverPhone={profile.primary_caregiver_phone ?? ""}
-              responsiblePartyName={profile.responsible_party_name ?? ""}
-              responsiblePartyPhone={profile.responsible_party_phone ?? ""}
-              importantAlerts={profile.important_alerts ?? ""}
-            />
-          </Card>
-
-          <Card className="table-wrap">
-            <SectionHeading title="Related Care Plans" lastUpdatedAt={carePlansUpdatedAt} lastUpdatedBy={carePlansUpdatedBy} />
-            <table className="mt-3">
-              <thead><tr><th>Track</th><th>Review Date</th><th>Next Due</th><th>Status</th><th>Post-Sign Readiness</th><th>Completed By</th><th>Open</th></tr></thead>
-              <tbody>
-                {relatedCarePlans.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-sm text-muted">No care plans found for this member yet.</td>
-                  </tr>
-                ) : (
-                  relatedCarePlans.slice(0, 25).map((row) => (
-                    <tr key={row.id}>
-                      <td>{row.track}</td>
-                      <td>{formatDate(row.reviewDate)}</td>
-                      <td>{formatDate(row.nextDueDate)}</td>
-                      <td>{row.status}</td>
-                      <td>{getCarePlanPostSignReadinessLabel(row.postSignReadinessStatus)}</td>
-                      <td>{row.completedBy ?? "-"}</td>
-                      <td><Link className="font-semibold text-brand" href={`/health/care-plans/${row.id}`}>Open</Link></td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </Card>
-
-          <Card className="table-wrap">
-            <SectionHeading title="Related Intake Assessments" lastUpdatedAt={assessmentsUpdatedAt} lastUpdatedBy={assessmentsUpdatedBy} />
-            <table className="mt-3">
-              <thead><tr><th>Date</th><th>Score</th><th>Track</th><th>Post-Sign Readiness</th><th>Completed By</th><th>Open</th></tr></thead>
-              <tbody>
-                {detail.assessments.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="text-sm text-muted">No intake assessments found for this member yet.</td>
-                  </tr>
-                ) : (
-                  detail.assessments.slice(0, 25).map((row) => (
-                    <tr key={row.id}>
-                      <td>{formatDate(row.assessment_date)}</td>
-                      <td>{row.total_score}</td>
-                      <td>{row.recommended_track}</td>
-                      <td>{intakeReadinessLabel(row.post_sign_readiness_status ?? "not_signed")}</td>
-                      <td>{row.completed_by}</td>
-                      <td><Link className="font-semibold text-brand" href={`/health/assessment/${row.id}`}>Open</Link></td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </Card>
-
-          <Card className="table-wrap">
-            <SectionHeading title="Related Physician Orders / POF" lastUpdatedAt={physicianOrdersUpdatedAt} lastUpdatedBy={physicianOrdersUpdatedBy} />
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Link href={`/health/physician-orders?memberId=${member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
-                Open Member POF List
-              </Link>
-              <Link href={`/health/physician-orders/new?memberId=${member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
-                New Physician Order
-              </Link>
-            </div>
-            <table className="mt-3">
-              <thead><tr><th>Status</th><th>Clinical Sync</th><th>Provider</th><th>Sent</th><th>Signed</th><th>Updated</th><th>Open</th></tr></thead>
-              <tbody>
-                {relatedPhysicianOrders.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-sm text-muted">No physician orders found for this member yet.</td>
-                  </tr>
-                ) : (
-                  relatedPhysicianOrders.slice(0, 25).map((row) => (
-                    <tr key={row.id}>
-                      <td>{row.status}</td>
-                      <td>
-                        <div className="space-y-1">
-                          <p>{row.clinicalSyncDetail?.label ?? clinicalSyncLabel(row.clinicalSyncStatus)}</p>
-                          {row.clinicalSyncDetail?.message ? <p className="max-w-xs text-xs text-muted">{row.clinicalSyncDetail.message}</p> : null}
-                        </div>
-                      </td>
-                      <td>{row.providerName ?? "-"}</td>
-                      <td>{row.completedDate ? formatDate(row.completedDate) : "-"}</td>
-                      <td>{row.signedDate ? formatDate(row.signedDate) : "-"}</td>
-                      <td>{formatDateTime(row.updatedAt)}</td>
-                      <td><Link className="font-semibold text-brand" href={`/health/physician-orders/${row.id}?from=mhp`}>Open</Link></td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </Card>
-        </div>
+        <Suspense fallback={<OverviewTabFallback />}>
+          <MemberHealthProfileOverviewTab
+            detail={detail}
+            genderDefault={genderDefault}
+            profileUpdatedBy={profileUpdatedBy}
+          />
+        </Suspense>
       ) : null}
 
       {tab === "medical" ? (

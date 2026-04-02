@@ -5,7 +5,10 @@ import { z } from "zod";
 
 import { getCurrentProfile, requireRoles } from "@/lib/auth";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
-import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
+import {
+  buildGeneratedMemberFilePersistenceState,
+  saveGeneratedMemberPdfToFiles
+} from "@/lib/services/member-files";
 import { MAR_MONTHLY_REPORT_TYPES } from "@/lib/services/mar-monthly-report";
 import { buildMarMonthlyReportPdfDataUrl } from "@/lib/services/mar-monthly-report-pdf";
 import { refreshMarWorkflowData } from "@/lib/services/mar-workflow-read";
@@ -437,7 +440,7 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
     });
 
     try {
-      await saveGeneratedMemberPdfToFiles({
+      const saved = await saveGeneratedMemberPdfToFiles({
         memberId: generated.report.member.id,
         memberName: generated.report.member.fullName,
         documentLabel: `MAR ${marReportTypeLabel(payload.data.reportType)} ${payload.data.month}`,
@@ -452,6 +455,34 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
         generatedAtIso,
         replaceExistingByDocumentSource: true
       });
+      const memberFilesPersistence = buildGeneratedMemberFilePersistenceState({
+        documentLabel: `MAR ${marReportTypeLabel(payload.data.reportType)} ${payload.data.month}`,
+        verifiedPersisted: saved.verifiedPersisted
+      });
+
+      await insertAudit("create_log", "mar_monthly_report", generated.report.member.id, {
+        memberId: generated.report.member.id,
+        month: payload.data.month,
+        reportType: payload.data.reportType,
+        generatedAtIso,
+        savedToMemberFiles: saved.verifiedPersisted,
+        memberFilesStatus: memberFilesPersistence.memberFilesStatus,
+        partialRecordsDetected: generated.report.dataQuality.partialRecordsDetected
+      });
+
+      revalidateMarRoutes(generated.report.member.id);
+      return {
+        ok: true,
+        fileName: saved.fileName,
+        dataUrl: generated.dataUrl,
+        ...memberFilesPersistence,
+        reportMeta: {
+          hasMedicationRecords: generated.report.dataQuality.hasMedicationRecords,
+          hasMarDataForMonth: generated.report.dataQuality.hasMarDataForMonth,
+          partialRecordsDetected: generated.report.dataQuality.partialRecordsDetected,
+          warnings: generated.report.dataQuality.warnings
+        }
+      } as const;
     } catch (error) {
       return {
         ok: false,
@@ -461,28 +492,6 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
             : "MAR report generation succeeded, but saving to member files failed."
       } as const;
     }
-
-    await insertAudit("create_log", "mar_monthly_report", generated.report.member.id, {
-      memberId: generated.report.member.id,
-      month: payload.data.month,
-      reportType: payload.data.reportType,
-      generatedAtIso,
-      savedToMemberFiles: true,
-      partialRecordsDetected: generated.report.dataQuality.partialRecordsDetected
-    });
-
-    revalidateMarRoutes(generated.report.member.id);
-    return {
-      ok: true,
-      fileName: generated.fileName,
-      dataUrl: generated.dataUrl,
-      reportMeta: {
-        hasMedicationRecords: generated.report.dataQuality.hasMedicationRecords,
-        hasMarDataForMonth: generated.report.dataQuality.hasMarDataForMonth,
-        partialRecordsDetected: generated.report.dataQuality.partialRecordsDetected,
-        warnings: generated.report.dataQuality.warnings
-      }
-    } as const;
   } catch (error) {
     return {
       ok: false,

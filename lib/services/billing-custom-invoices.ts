@@ -13,7 +13,7 @@ import type {
   CreateCustomInvoiceInput,
   ScheduleTemplateRow
 } from "@/lib/services/billing-types";
-import { addDays, asNumber, buildCustomInvoiceNumber, endOfMonth, normalizeDateOnly, startOfMonth, toAmount, toDateRange } from "@/lib/services/billing-utils";
+import { addDays, asNumber, endOfMonth, normalizeDateOnly, startOfMonth, toAmount, toDateRange } from "@/lib/services/billing-utils";
 import { collectBillingEligibleBaseDates } from "@/lib/services/billing-core";
 import {
   buildBillingInvoiceBillToSnapshot,
@@ -276,19 +276,12 @@ export async function createCustomInvoice(input: CreateCustomInvoiceInput) {
     );
     const totalAmount = toAmount(baseProgramAmount + transportationAmount + ancillaryAmount + adjustmentAmount);
 
-    const { count: monthInvoiceCount, error: monthInvoiceError } = await supabase
-      .from("billing_invoices")
-      .select("id", { count: "exact", head: true })
-      .eq("invoice_source", "Custom")
-      .eq("invoice_month", startOfMonth(period.start));
-    if (monthInvoiceError) throw new Error(monthInvoiceError.message);
     const invoiceId = randomUUID();
-    const invoiceNumber = buildCustomInvoiceNumber(period.start, Number(monthInvoiceCount ?? 0));
     const invoicePayload: BillingBatchInvoiceRpcPayload = {
       id: invoiceId,
       member_id: input.memberId,
       payor_id: null,
-      invoice_number: invoiceNumber,
+      invoice_number: "",
       invoice_month: startOfMonth(period.start),
       invoice_source: "Custom",
       invoice_status: "Draft",

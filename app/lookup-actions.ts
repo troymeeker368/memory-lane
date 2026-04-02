@@ -4,7 +4,7 @@ import { requireModuleAccess, requireRoles } from "@/lib/auth";
 import { PHYSICIAN_ORDER_MODULE_ROLES } from "@/lib/permissions";
 import { searchUnscheduledAttendanceMemberOptions } from "@/lib/services/attendance";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
-import { listEnrollmentPacketEligibleLeadPicker } from "@/lib/services/leads-read";
+import { listEnrollmentPacketEligibleLeadPicker, listSalesLeadPickerOptions } from "@/lib/services/leads-read";
 import { listMemberPickerOptionsSupabase } from "@/lib/services/shared-lookups-supabase";
 
 type MemberLookupRequest = {
@@ -76,6 +76,15 @@ export async function searchAncillaryMembersAction(input: MemberLookupRequest) {
 export async function searchEnrollmentPacketEligibleLeadsAction(input: MemberLookupRequest) {
   await requireModuleAccess("sales");
   return listEnrollmentPacketEligibleLeadPicker({
+    q: input.q,
+    selectedId: input.selectedId,
+    limit: input.limit ?? 25
+  });
+}
+
+export async function searchSalesLeadsAction(input: MemberLookupRequest) {
+  await requireModuleAccess("sales");
+  return listSalesLeadPickerOptions({
     q: input.q,
     selectedId: input.selectedId,
     limit: input.limit ?? 25

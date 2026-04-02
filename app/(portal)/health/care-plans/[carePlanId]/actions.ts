@@ -3,7 +3,10 @@
 import { revalidatePath } from "next/cache";
 
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
-import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
+import {
+  buildGeneratedMemberFilePersistenceState,
+  saveGeneratedMemberPdfToFiles
+} from "@/lib/services/member-files";
 import { buildCarePlanPdfDataUrl } from "@/lib/services/care-plan-pdf";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -18,6 +21,9 @@ export async function generateCarePlanPdfAction(input: { carePlanId: string; per
   try {
     const generated = await buildCarePlanPdfDataUrl(carePlanId);
     let fileName = generated.fileName;
+    let memberFilesPersistence:
+      | ReturnType<typeof buildGeneratedMemberFilePersistenceState>
+      | null = null;
 
     if (persistToMemberFiles) {
       const saved = await saveGeneratedMemberPdfToFiles({
@@ -37,6 +43,10 @@ export async function generateCarePlanPdfAction(input: { carePlanId: string; per
       });
 
       fileName = saved.fileName;
+      memberFilesPersistence = buildGeneratedMemberFilePersistenceState({
+        documentLabel: "Care Plan",
+        verifiedPersisted: saved.verifiedPersisted
+      });
       revalidatePath(`/health/care-plans/${carePlanId}`);
       revalidatePath(`/members/${generated.carePlan.memberId}`);
       revalidatePath(`/health/member-health-profiles/${generated.carePlan.memberId}`);
@@ -46,7 +56,8 @@ export async function generateCarePlanPdfAction(input: { carePlanId: string; per
     return {
       ok: true,
       fileName,
-      dataUrl: generated.dataUrl
+      dataUrl: generated.dataUrl,
+      ...(memberFilesPersistence ?? {})
     } as const;
   } catch (error) {
     return {

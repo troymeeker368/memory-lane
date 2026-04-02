@@ -16,7 +16,10 @@ import {
   resolveIntakePostSignFollowUpTask
 } from "@/lib/services/intake-post-sign-follow-up";
 import { getAssessmentDetail } from "@/lib/services/relations";
-import { saveGeneratedMemberPdfToFiles } from "@/lib/services/member-files";
+import {
+  buildGeneratedMemberFilePersistenceState,
+  saveGeneratedMemberPdfToFiles
+} from "@/lib/services/member-files";
 import { buildIntakeAssessmentPdfDataUrl } from "@/lib/services/intake-assessment-pdf";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { toEasternISO } from "@/lib/timezone";
@@ -77,10 +80,53 @@ export async function generateAssessmentPdfAction(input: { assessmentId: string;
       });
 
       fileName = saved.fileName;
+      const memberFilesPersistence = buildGeneratedMemberFilePersistenceState({
+        documentLabel: "Intake Assessment",
+        verifiedPersisted: saved.verifiedPersisted
+      });
       revalidatePath(`/health/assessment/${assessmentId}`);
       revalidatePath(`/members/${detail.assessment.member_id}`);
       revalidatePath(`/health/member-health-profiles/${detail.assessment.member_id}`);
       revalidatePath(`/operations/member-command-center/${detail.assessment.member_id}`);
+      if (memberFilesPersistence.memberFilesStatus === "follow-up-needed") {
+        let memberFilesMessage = memberFilesPersistence.memberFilesMessage;
+        if (claimedPdfFollowUpTask) {
+          try {
+            await releaseIntakePostSignFollowUpTaskClaim({
+              assessmentId,
+              taskType: "member_file_pdf_persistence"
+            });
+          } catch (releaseError) {
+            const releaseMessage =
+              releaseError instanceof Error
+                ? releaseError.message
+                : "Unable to release the intake PDF follow-up task claim.";
+            memberFilesMessage = `${memberFilesMessage} Follow-up task release also failed (${releaseMessage}).`;
+          }
+        } else {
+          try {
+            await queueIntakePostSignFollowUpTask({
+              assessmentId,
+              memberId: detail.assessment.member_id,
+              taskType: "member_file_pdf_persistence",
+              actorUserId: profile.id,
+              actorName: profile.full_name,
+              errorMessage: memberFilesMessage ?? "Assessment PDF member-file verification is still pending."
+            });
+          } catch (queueError) {
+            const queueErrorMessage =
+              queueError instanceof Error ? queueError.message : "Unable to update intake post-sign follow-up queue.";
+            memberFilesMessage = `${memberFilesMessage} Follow-up queue update also failed (${queueErrorMessage}).`;
+          }
+        }
+        return {
+          ok: true,
+          fileName,
+          dataUrl: generated.dataUrl,
+          memberFilesStatus: "follow-up-needed",
+          memberFilesMessage
+        } as const;
+      }
       if (claimedPdfFollowUpTask) {
         try {
           await resolveIntakePostSignFollowUpTask({

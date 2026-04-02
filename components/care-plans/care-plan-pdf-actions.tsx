@@ -26,7 +26,11 @@ export function CarePlanPdfActions({ carePlanId }: { carePlanId: string }) {
         return;
       }
       triggerPdfDownload(result.dataUrl, result.fileName);
-      setStatus("PDF downloaded and saved to member files.");
+      setStatus(
+        result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
+          ? `PDF downloaded. ${result.memberFilesMessage}`
+          : "PDF downloaded and saved to member files."
+      );
     });
   }
 

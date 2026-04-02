@@ -297,7 +297,7 @@ async function cleanupFailedCarePlanCaregiverArtifacts(input: {
   }
 }
 
-async function requireCommittedSignedCarePlanReady(input: {
+async function requireCommittedSignedCarePlan(input: {
   carePlanId: string;
   expectedMemberId: string;
   expectedFinalMemberFileId?: string | null;
@@ -321,10 +321,65 @@ async function requireCommittedSignedCarePlanReady(input: {
   if (detail.carePlan.caregiverSignatureStatus !== "signed") {
     throw new Error("Caregiver signature state did not finalize to signed.");
   }
-  if (detail.carePlan.postSignReadinessStatus !== "ready") {
-    throw new Error("Care plan post-sign readiness did not finalize to ready.");
-  }
   return detail;
+}
+
+function buildCommittedCarePlanSubmitResult(input: {
+  detail: NonNullable<Awaited<ReturnType<typeof getCarePlanById>>>;
+  finalMemberFileId?: string | null;
+}) {
+  const finalMemberFileId = clean(input.finalMemberFileId) ?? clean(input.detail.carePlan.finalMemberFileId);
+  if (!finalMemberFileId) {
+    throw new Error("Final signed care plan member file is missing.");
+  }
+
+  const completedOutcome = buildCarePlanPublicCompletionOutcome(input.detail.carePlan.postSignReadinessStatus);
+  return {
+    carePlanId: input.detail.carePlan.id,
+    memberId: input.detail.carePlan.memberId,
+    finalMemberFileId,
+    actionNeeded: completedOutcome.actionNeeded,
+    actionNeededMessage: completedOutcome.actionNeededMessage
+  };
+}
+
+async function buildCommittedCarePlanPostCommitFollowUpResult(input: {
+  carePlanId: string;
+  memberId: string;
+  finalMemberFileId: string;
+  fallbackPostSignReadinessStatus: NonNullable<Awaited<ReturnType<typeof getCarePlanById>>>["carePlan"]["postSignReadinessStatus"];
+}) {
+  try {
+    const refreshed = await getCarePlanById(input.carePlanId, { serviceRole: true });
+    if (
+      refreshed &&
+      refreshed.carePlan.memberId === input.memberId &&
+      clean(refreshed.carePlan.finalMemberFileId) === input.finalMemberFileId &&
+      refreshed.carePlan.caregiverSignatureStatus === "signed" &&
+      refreshed.carePlan.postSignReadinessStatus !== "ready"
+    ) {
+      return buildCommittedCarePlanSubmitResult({
+        detail: refreshed,
+        finalMemberFileId: input.finalMemberFileId
+      });
+    }
+  } catch (error) {
+    console.error("[care-plan-esign] unable to reload committed care plan after post-sign follow-up failure", {
+      carePlanId: input.carePlanId,
+      message: error instanceof Error ? error.message : "Unknown care plan reload error."
+    });
+  }
+
+  const completedOutcome = buildCarePlanPublicCompletionOutcome(input.fallbackPostSignReadinessStatus);
+  return {
+    carePlanId: input.carePlanId,
+    memberId: input.memberId,
+    finalMemberFileId: input.finalMemberFileId,
+    actionNeeded: true,
+    actionNeededMessage:
+      completedOutcome.actionNeededMessage ??
+      "This care plan was signed, but post-sign follow-up still needs staff attention."
+  };
 }
 
 async function verifyCommittedCarePlanCaregiverSignatureAfterFinalizeError(input: {
@@ -486,20 +541,10 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
     if (!signedDetail?.carePlan.finalMemberFileId) {
       throw new Error("This signature link was already used, but the final care plan file is missing.");
     }
-    const completedOutcome = buildCarePlanPublicCompletionOutcome(signedDetail.carePlan.postSignReadinessStatus);
-    if (completedOutcome.actionNeeded) {
-      throw new Error(
-        completedOutcome.actionNeededMessage ??
-          "This care plan was already signed, but post-sign finalization is still incomplete. Staff should finish follow-up before relying on it."
-      );
-    }
-    return {
-      carePlanId: tokenRow.id,
-      memberId: tokenRow.member_id,
-      finalMemberFileId: signedDetail.carePlan.finalMemberFileId,
-      actionNeeded: false,
-      actionNeededMessage: null
-    };
+    return buildCommittedCarePlanSubmitResult({
+      detail: signedDetail,
+      finalMemberFileId: signedDetail.carePlan.finalMemberFileId
+    });
   }
   const status = await markExpiredIfNeeded({
     carePlanId: tokenRow.id,
@@ -572,18 +617,15 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         signedPdfObjectPath: signedPdfStoragePath,
         reason: "Replay-safe caregiver signature finalization reused committed signed state."
       });
-      await requireCommittedSignedCarePlanReady({
+      const committedDetail = await requireCommittedSignedCarePlan({
         carePlanId: detail.carePlan.id,
         expectedMemberId: detail.carePlan.memberId,
         expectedFinalMemberFileId: finalized.finalMemberFileId
       });
-      return {
-        carePlanId: detail.carePlan.id,
-        memberId: detail.carePlan.memberId,
-        finalMemberFileId: finalized.finalMemberFileId,
-        actionNeeded: false,
-        actionNeededMessage: null
-      };
+      return buildCommittedCarePlanSubmitResult({
+        detail: committedDetail,
+        finalMemberFileId: finalized.finalMemberFileId
+      });
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete care plan filing.";
@@ -695,7 +737,12 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
         carePlanId: detail.carePlan.id,
         message: reason
       });
-      throw error;
+      return buildCommittedCarePlanPostCommitFollowUpResult({
+        carePlanId: detail.carePlan.id,
+        memberId: detail.carePlan.memberId,
+        finalMemberFileId: finalized.finalMemberFileId,
+        fallbackPostSignReadinessStatus: detail.carePlan.postSignReadinessStatus
+      });
     }
   }
 
@@ -759,13 +806,17 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
           detail.carePlan.nurseSignedByName ??
           detail.carePlan.nurseDesigneeName ??
           detail.carePlan.caregiverName ??
-          "Care Plan Caregiver Signature"
+        "Care Plan Caregiver Signature"
       }
     });
-    await requireCommittedSignedCarePlanReady({
+    const committedDetail = await requireCommittedSignedCarePlan({
       carePlanId: detail.carePlan.id,
       expectedMemberId: detail.carePlan.memberId,
       expectedFinalMemberFileId: finalizedMemberFileId
+    });
+    return buildCommittedCarePlanSubmitResult({
+      detail: committedDetail,
+      finalMemberFileId: finalizedMemberFileId
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete post-sign readiness update.";
@@ -786,14 +837,11 @@ export async function submitPublicCarePlanSignature(input: SubmitPublicCarePlanS
       carePlanId: detail.carePlan.id,
       message: reason
     });
-    throw error;
+    return buildCommittedCarePlanPostCommitFollowUpResult({
+      carePlanId: detail.carePlan.id,
+      memberId: detail.carePlan.memberId,
+      finalMemberFileId: finalizedMemberFileId,
+      fallbackPostSignReadinessStatus: detail.carePlan.postSignReadinessStatus
+    });
   }
-
-  return {
-    carePlanId: detail.carePlan.id,
-    memberId: detail.carePlan.memberId,
-    finalMemberFileId: finalizedMemberFileId,
-    actionNeeded: false,
-    actionNeededMessage: null
-  };
 }

@@ -1,9 +1,10 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { createSalesLeadActivityAction } from "@/app/sales-lead-actions";
+import { SalesLeadSearchPicker } from "@/components/forms/sales-lead-search-picker";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +13,7 @@ import {
   LEAD_FOLLOW_UP_TYPES,
   LEAD_LOST_REASON_OPTIONS
 } from "@/lib/canonical";
+import type { SalesLeadPickerRow } from "@/lib/services/leads-read";
 import { toEasternDateTimeLocal } from "@/lib/timezone";
 
 type LeadLostReason = "" | (typeof LEAD_LOST_REASON_OPTIONS)[number];
@@ -43,36 +45,37 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 }
 
 export function SalesLeadActivityForm({
-  leads,
   partners,
   referralSources,
   initialLeadId,
   initialPartnerId,
   initialReferralSourceId,
-  lockedLeadId
+  lockedLeadId,
+  initialLeadOption
 }: {
-  leads: LeadLookup[];
   partners: PartnerLookup[];
   referralSources: ReferralSourceLookup[];
   initialLeadId?: string;
   initialPartnerId?: string;
   initialReferralSourceId?: string;
   lockedLeadId?: string;
+  initialLeadOption?: SalesLeadPickerRow | null;
 }) {
   const router = useRouter();
   const now = useMemo(() => toEasternDateTimeLocal(), []);
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = usePropSyncedStatus([initialLeadId, initialPartnerId, initialReferralSourceId, lockedLeadId], "");
-
-  const uniqueLeads = useMemo(() => {
-    const seen = new Set<string>();
-    return leads.filter((lead) => {
-      const key = lead.id?.trim();
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [leads]);
+  const [selectedLead, setSelectedLead] = useState<LeadLookup | null>(
+    initialLeadOption
+      ? {
+          id: initialLeadOption.id,
+          member_name: initialLeadOption.member_name ?? "Unnamed Lead",
+          stage: initialLeadOption.stage,
+          partner_id: initialLeadOption.partner_id,
+          referral_source_id: initialLeadOption.referral_source_id
+        }
+      : null
+  );
 
   const uniquePartners = useMemo(() => {
     const seen = new Set<string>();
@@ -94,11 +97,7 @@ export function SalesLeadActivityForm({
     });
   }, [referralSources]);
 
-  const resolvedInitialLeadId =
-    (initialLeadId && uniqueLeads.find((lead) => lead.id === initialLeadId)?.id) ??
-    (lockedLeadId && uniqueLeads.find((lead) => lead.id === lockedLeadId)?.id) ??
-    uniqueLeads[0]?.id ??
-    "";
+  const resolvedInitialLeadId = initialLeadId ?? lockedLeadId ?? "";
 
   const [form, setForm] = usePropSyncedState(
     () => ({
@@ -117,7 +116,6 @@ export function SalesLeadActivityForm({
   );
 
   const showLostReason = form.outcome === "Not a fit";
-  const selectedLead = uniqueLeads.find((lead) => lead.id === form.leadId) ?? null;
   const isLeadLocked = Boolean(lockedLeadId && selectedLead && selectedLead.id === lockedLeadId);
 
   const linkedPartnerOptionId = (() => {
@@ -135,6 +133,17 @@ export function SalesLeadActivityForm({
     );
     return match?.id ?? "";
   })();
+
+  useEffect(() => {
+    if (!initialLeadOption) return;
+    setSelectedLead({
+      id: initialLeadOption.id,
+      member_name: initialLeadOption.member_name ?? "Unnamed Lead",
+      stage: initialLeadOption.stage,
+      partner_id: initialLeadOption.partner_id,
+      referral_source_id: initialLeadOption.referral_source_id
+    });
+  }, [initialLeadOption]);
 
   useEffect(() => {
     if (!selectedLead) {
@@ -172,17 +181,23 @@ export function SalesLeadActivityForm({
               {selectedLead?.member_name || "(No member name)"} ({selectedLead?.stage || "-"})
             </div>
           ) : (
-            <select
-              className="h-11 rounded-lg border border-border px-3"
+            <SalesLeadSearchPicker
               value={form.leadId}
-              onChange={(event) => setForm((current) => ({ ...current, leadId: event.target.value }))}
-            >
-              {uniqueLeads.map((lead) => (
-                <option key={lead.id} value={lead.id}>
-                  {lead.member_name || "(No member name)"} ({lead.stage})
-                </option>
-              ))}
-            </select>
+              onChange={(nextValue) => setForm((current) => ({ ...current, leadId: nextValue }))}
+              onSelectOption={(option) =>
+                setSelectedLead(
+                  option
+                    ? {
+                        id: option.id,
+                        member_name: option.member_name ?? "Unnamed Lead",
+                        stage: option.stage,
+                        partner_id: option.partner_id,
+                        referral_source_id: option.referral_source_id
+                      }
+                    : null
+                )
+              }
+            />
           )}
         </label>
 

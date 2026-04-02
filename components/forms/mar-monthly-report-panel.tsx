@@ -88,6 +88,8 @@ export function MarMonthlyReportPanel({
     }
 
     const nextWarnings = result.reportMeta?.warnings ?? [];
+    const memberFilesFollowUpNeeded =
+      result.memberFilesStatus === "follow-up-needed" && Boolean(result.memberFilesMessage);
     setWarnings(nextWarnings);
 
     if (mode === "preview") {
@@ -95,7 +97,9 @@ export function MarMonthlyReportPanel({
       setPreviewFileName(result.fileName);
       setPreviewOpen(true);
       setStatus(
-        nextWarnings.length > 0
+        memberFilesFollowUpNeeded
+          ? `Preview ready. ${result.memberFilesMessage}`
+          : nextWarnings.length > 0
           ? `Preview ready and saved to member files with ${nextWarnings.length} data-quality warning${nextWarnings.length === 1 ? "" : "s"}.`
           : "Preview ready and saved to member files."
       );
@@ -103,7 +107,7 @@ export function MarMonthlyReportPanel({
     }
 
     triggerDownload(result.dataUrl, result.fileName);
-    setStatus("Report downloaded and saved to member files.");
+    setStatus(memberFilesFollowUpNeeded ? `Report downloaded. ${result.memberFilesMessage}` : "Report downloaded and saved to member files.");
   }
 
   return (

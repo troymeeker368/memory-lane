@@ -57,9 +57,148 @@ type ClaimedEnrollmentPacketRetryRow = Pick<
   | "latest_mapping_run_id"
 >;
 
+type EnrollmentPacketMappingRetryAlertRow = {
+  id: string;
+  member_id: string;
+  lead_id: string | null;
+  sender_user_id: string;
+  completed_at: string | null;
+  mapping_sync_attempted_at: string | null;
+  mapping_sync_error: string | null;
+  latest_mapping_run_id: string | null;
+};
+
+type EnrollmentPacketMappingStaleClaimRow = {
+  id: string;
+  member_id: string;
+  lead_id: string | null;
+  sender_user_id: string;
+  completed_at: string | null;
+  mapping_sync_attempted_at: string | null;
+  mapping_sync_error: string | null;
+  latest_mapping_run_id: string | null;
+  mapping_sync_claimed_at: string | null;
+  mapping_sync_claimed_by_name: string | null;
+};
+
 const CLAIM_ENROLLMENT_PACKET_MAPPING_RETRIES_RPC = "rpc_claim_enrollment_packet_mapping_retries";
 const CLAIM_ENROLLMENT_PACKET_MAPPING_RETRIES_MIGRATION =
   "0120_enrollment_packet_mapping_retry_claim_rpc.sql";
+const DEFAULT_ENROLLMENT_PACKET_MAPPING_ALERT_AGE_MINUTES = 30;
+const DEFAULT_ENROLLMENT_PACKET_MAPPING_STALE_CLAIM_MINUTES = 10;
+const MAX_ENROLLMENT_PACKET_MAPPING_ALERT_ROWS = 50;
+
+function getEnrollmentPacketMappingAlertAgeMinutes(
+  defaultMinutes: number,
+  configuredValue = process.env.ENROLLMENT_PACKET_MAPPING_SYNC_ALERT_AGE_MINUTES
+) {
+  const parsed = Number(configuredValue ?? defaultMinutes);
+  if (!Number.isFinite(parsed)) return defaultMinutes;
+  return Math.max(5, Math.trunc(parsed));
+}
+
+export async function emitEnrollmentPacketMappingRetryHealthAlerts(input: {
+  nowIso: string;
+  actorUserId?: string | null;
+}) {
+  const alertAgeMinutes = getEnrollmentPacketMappingAlertAgeMinutes(
+    DEFAULT_ENROLLMENT_PACKET_MAPPING_ALERT_AGE_MINUTES
+  );
+  const staleClaimAgeMinutes = DEFAULT_ENROLLMENT_PACKET_MAPPING_STALE_CLAIM_MINUTES;
+  const agedThresholdIso = new Date(Date.parse(input.nowIso) - alertAgeMinutes * 60 * 1000).toISOString();
+  const staleClaimThresholdIso = new Date(
+    Date.parse(input.nowIso) - staleClaimAgeMinutes * 60 * 1000
+  ).toISOString();
+  const admin = createSupabaseAdminClient();
+
+  const [agedQueueResult, staleClaimResult] = await Promise.all([
+    admin
+      .from("enrollment_packet_requests")
+      .select(
+        "id, member_id, lead_id, sender_user_id, completed_at, mapping_sync_attempted_at, mapping_sync_error, latest_mapping_run_id"
+      )
+      .eq("mapping_sync_status", "failed")
+      .in("status", ["completed", "filed"])
+      .lte("mapping_sync_attempted_at", agedThresholdIso)
+      .order("mapping_sync_attempted_at", { ascending: true })
+      .limit(MAX_ENROLLMENT_PACKET_MAPPING_ALERT_ROWS),
+    admin
+      .from("enrollment_packet_requests")
+      .select(
+        "id, member_id, lead_id, sender_user_id, completed_at, mapping_sync_attempted_at, mapping_sync_error, latest_mapping_run_id, mapping_sync_claimed_at, mapping_sync_claimed_by_name"
+      )
+      .eq("mapping_sync_status", "pending")
+      .in("status", ["completed", "filed"])
+      .not("mapping_sync_claimed_at", "is", null)
+      .lte("mapping_sync_claimed_at", staleClaimThresholdIso)
+      .order("mapping_sync_claimed_at", { ascending: true })
+      .limit(MAX_ENROLLMENT_PACKET_MAPPING_ALERT_ROWS)
+  ]);
+
+  if (agedQueueResult.error) {
+    throw new Error(agedQueueResult.error.message);
+  }
+  if (staleClaimResult.error) {
+    throw new Error(staleClaimResult.error.message);
+  }
+
+  let agedQueueAlertsRaised = 0;
+  for (const row of (agedQueueResult.data ?? []) as EnrollmentPacketMappingRetryAlertRow[]) {
+    const didCreateAlert = await recordImmediateSystemAlert({
+      entityType: "enrollment_packet_request",
+      entityId: row.id,
+      actorUserId: input.actorUserId ?? null,
+      severity: "high",
+      alertKey: "enrollment_packet_mapping_retry_queue_aged",
+      metadata: {
+        member_id: row.member_id,
+        lead_id: row.lead_id,
+        completed_at: row.completed_at,
+        mapping_sync_attempted_at: row.mapping_sync_attempted_at,
+        mapping_sync_error: row.mapping_sync_error,
+        mapping_run_id: row.latest_mapping_run_id,
+        alert_age_minutes: alertAgeMinutes
+      }
+    });
+    if (didCreateAlert) {
+      agedQueueAlertsRaised += 1;
+    }
+  }
+
+  let staleClaimAlertsRaised = 0;
+  for (const row of (staleClaimResult.data ?? []) as EnrollmentPacketMappingStaleClaimRow[]) {
+    const didCreateAlert = await recordImmediateSystemAlert({
+      entityType: "enrollment_packet_request",
+      entityId: row.id,
+      actorUserId: input.actorUserId ?? null,
+      severity: "high",
+      alertKey: "enrollment_packet_mapping_retry_claim_stale",
+      metadata: {
+        member_id: row.member_id,
+        lead_id: row.lead_id,
+        completed_at: row.completed_at,
+        mapping_sync_attempted_at: row.mapping_sync_attempted_at,
+        mapping_sync_error: row.mapping_sync_error,
+        mapping_run_id: row.latest_mapping_run_id,
+        mapping_sync_claimed_at: row.mapping_sync_claimed_at,
+        mapping_sync_claimed_by_name: row.mapping_sync_claimed_by_name,
+        stale_claim_age_minutes: staleClaimAgeMinutes
+      }
+    });
+    if (didCreateAlert) {
+      staleClaimAlertsRaised += 1;
+    }
+  }
+
+  return {
+    alertAgeMinutes,
+    agedQueueRows: (agedQueueResult.data ?? []).length,
+    agedQueueAlertsRaised,
+    staleClaimAgeMinutes,
+    staleClaimRows: (staleClaimResult.data ?? []).length,
+    staleClaimAlertsRaised
+  };
+}
 
 export async function loadEnrollmentPacketArtifactOps() {
   return import("@/lib/services/enrollment-packet-artifacts");
@@ -585,6 +724,7 @@ export async function retryFailedEnrollmentPacketMappings(input?: { limit?: numb
   const limit = Math.min(100, Math.max(1, input?.limit ?? 25));
   const artifactOps = await loadEnrollmentPacketArtifactOps();
   const admin = createSupabaseAdminClient();
+  const now = toEasternISO();
   const releaseEnrollmentPacketMappingClaimSafely = async (
     request: ClaimedEnrollmentPacketRetryRow,
     actorLabel = "Enrollment Packet Mapping Retry Runner"
@@ -618,7 +758,7 @@ export async function retryFailedEnrollmentPacketMappings(input?: { limit?: numb
   try {
     const claimed = await invokeSupabaseRpcOrThrow<unknown>(admin, CLAIM_ENROLLMENT_PACKET_MAPPING_RETRIES_RPC, {
       p_limit: limit,
-      p_now: toEasternISO(),
+      p_now: now,
       p_actor_user_id: null,
       p_actor_name: "Enrollment Packet Mapping Retry Runner"
     });
@@ -712,9 +852,20 @@ export async function retryFailedEnrollmentPacketMappings(input?: { limit?: numb
     }
   }
 
+  const healthSummary = await emitEnrollmentPacketMappingRetryHealthAlerts({
+    nowIso: now,
+    actorUserId: null
+  });
+
   return {
     processed,
     succeeded,
-    failed
+    failed,
+    agedQueueRows: healthSummary.agedQueueRows,
+    agedQueueAlertsRaised: healthSummary.agedQueueAlertsRaised,
+    agedQueueAlertAgeMinutes: healthSummary.alertAgeMinutes,
+    staleClaimRows: healthSummary.staleClaimRows,
+    staleClaimAlertsRaised: healthSummary.staleClaimAlertsRaised,
+    staleClaimAgeMinutes: healthSummary.staleClaimAgeMinutes
   };
 }

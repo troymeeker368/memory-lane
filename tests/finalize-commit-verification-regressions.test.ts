@@ -26,6 +26,15 @@ test("public care plan caregiver signing preserves committed files by reloading 
   assert.equal(source.includes("finalized = {"), true);
 });
 
+test("public care plan caregiver signing keeps committed caregiver success when post-sign follow-up fails", () => {
+  const source = readWorkspaceFile("lib/services/care-plan-esign-public.ts");
+
+  assert.equal(source.includes("async function buildCommittedCarePlanPostCommitFollowUpResult"), true);
+  assert.equal(source.includes('actionNeeded: true,'), true);
+  assert.equal(source.includes('return buildCommittedCarePlanPostCommitFollowUpResult({'), true);
+  assert.equal(source.includes('fallbackPostSignReadinessStatus: detail.carePlan.postSignReadinessStatus'), true);
+});
+
 test("intake signature finalization reloads canonical signature state before deleting captured artifacts", () => {
   const source = readWorkspaceFile("lib/services/intake-assessment-esign.ts");
 

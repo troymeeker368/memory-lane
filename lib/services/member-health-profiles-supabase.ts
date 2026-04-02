@@ -3,7 +3,10 @@ import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { toIntakeDraftPofStatus } from "@/lib/services/intake-draft-pof-readiness";
-import { listIntakePostSignFollowUpTasksByAssessmentIds } from "@/lib/services/intake-post-sign-follow-up";
+import {
+  listIntakePostSignFollowUpTasksByAssessmentIds,
+  type IntakePostSignFollowUpTask
+} from "@/lib/services/intake-post-sign-follow-up";
 import { resolveIntakePostSignReadiness, type IntakePostSignReadinessStatus } from "@/lib/services/intake-post-sign-readiness";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -121,6 +124,11 @@ type MemberHealthProfileDetailOptions = {
   includeProviders?: boolean;
   includeEquipment?: boolean;
   includeNotes?: boolean;
+};
+
+type MemberHealthProfileAssessmentOptions = {
+  includeAll?: boolean;
+  supabase?: Awaited<ReturnType<typeof createClient>>;
 };
 
 type MemberRow = {
@@ -495,17 +503,17 @@ function resolveMemberHealthProfileDetailReadPlan(options?: MemberHealthProfileD
   const tabPlan =
     !tab
       ? defaultPlan
-      : {
-          includeProviderDirectory: tab === "medical",
-          includeHospitalPreferenceDirectory: tab === "legal",
-          includeAssessments: tab === "overview",
-          includeDiagnoses: tab === "medical",
-          includeMedications: tab === "medical",
-          includeAllergies: tab === "medical",
-          includeProviders: tab === "medical",
-          includeEquipment: tab === "equipment",
-          includeNotes: tab === "notes"
-        };
+        : {
+            includeProviderDirectory: tab === "medical",
+            includeHospitalPreferenceDirectory: tab === "legal",
+            includeAssessments: false,
+            includeDiagnoses: tab === "medical",
+            includeMedications: tab === "medical",
+            includeAllergies: tab === "medical",
+            includeProviders: tab === "medical",
+            includeEquipment: tab === "equipment",
+            includeNotes: tab === "notes"
+          };
 
   return {
     includeProviderDirectory: options?.includeProviderDirectory ?? tabPlan.includeProviderDirectory,
@@ -682,6 +690,44 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   };
 }
 
+async function loadMemberHealthProfileAssessments(
+  canonicalMemberId: string,
+  options?: MemberHealthProfileAssessmentOptions
+) {
+  const supabase = options?.supabase ?? (await createClient());
+  const query = supabase
+    .from("intake_assessments")
+    .select("id, member_id, assessment_date, total_score, recommended_track, completed_by, signature_status, draft_pof_status, created_at")
+    .eq("member_id", canonicalMemberId)
+    .order("assessment_date", { ascending: false })
+    .order("created_at", { ascending: false });
+  const { data, error } = await (options?.includeAll ? query : query.limit(1));
+  if (error) throw new Error(error.message);
+
+  const rawAssessments = sortDesc((data ?? []) as IntakeAssessmentRow[], (row) => row.created_at);
+  const openFollowUpTasksByAssessmentId: Map<string, IntakePostSignFollowUpTask[]> = options?.includeAll
+    ? await listIntakePostSignFollowUpTasksByAssessmentIds({
+        assessmentIds: rawAssessments.map((row) => row.id)
+      })
+    : new Map<string, IntakePostSignFollowUpTask[]>();
+
+  return options?.includeAll
+    ? rawAssessments.map((row) => {
+        const openFollowUpTaskTypes = (openFollowUpTasksByAssessmentId.get(row.id) ?? [])
+          .filter((task) => task.status === "action_required")
+          .map((task) => task.taskType);
+        return {
+          ...row,
+          post_sign_readiness_status: resolveIntakePostSignReadiness({
+            signatureStatus: row.signature_status,
+            draftPofStatus: toIntakeDraftPofStatus(row.draft_pof_status),
+            openFollowUpTaskTypes
+          })
+        };
+      })
+    : rawAssessments;
+}
+
 export async function getMemberHealthProfileDetailSupabase(
   memberId: string,
   options?: MemberHealthProfileDetailOptions
@@ -740,15 +786,10 @@ export async function getMemberHealthProfileDetailSupabase(
     readPlan.includeNotes
       ? supabase.from("member_notes").select(MEMBER_NOTE_SELECT).eq("member_id", canonicalMemberId)
       : Promise.resolve({ data: [], error: null }),
-    (() => {
-      const query = supabase
-        .from("intake_assessments")
-        .select("id, member_id, assessment_date, total_score, recommended_track, completed_by, signature_status, draft_pof_status, created_at")
-        .eq("member_id", canonicalMemberId)
-        .order("assessment_date", { ascending: false })
-        .order("created_at", { ascending: false });
-      return readPlan.includeAssessments ? query : query.limit(1);
-    })(),
+    loadMemberHealthProfileAssessments(canonicalMemberId, {
+      includeAll: readPlan.includeAssessments,
+      supabase
+    }),
     supabase.from("member_command_centers").select("member_id, profile_image_url").eq("member_id", canonicalMemberId).maybeSingle()
   ]);
 
@@ -761,7 +802,6 @@ export async function getMemberHealthProfileDetailSupabase(
   if (hospitalPreferenceDirectoryResult.error) throw new Error(hospitalPreferenceDirectoryResult.error.message);
   if (equipmentResult.error) throw new Error(equipmentResult.error.message);
   if (notesResult.error) throw new Error(notesResult.error.message);
-  if (assessmentsResult.error) throw new Error(assessmentsResult.error.message);
   if (mccResult.error) throw new Error(mccResult.error.message);
 
   const diagnoses = sortDesc((diagnosesResult.data ?? []) as MemberDiagnosisRow[], (row) => row.date_added);
@@ -778,23 +818,7 @@ export async function getMemberHealthProfileDetailSupabase(
   );
   const equipment = sortDesc((equipmentResult.data ?? []) as MemberEquipmentRow[], (row) => row.updated_at);
   const notes = sortDesc((notesResult.data ?? []) as MemberNoteRow[], (row) => row.created_at);
-  const rawAssessments = sortDesc((assessmentsResult.data ?? []) as IntakeAssessmentRow[], (row) => row.created_at);
-  const openFollowUpTasksByAssessmentId = await listIntakePostSignFollowUpTasksByAssessmentIds({
-    assessmentIds: rawAssessments.map((row) => row.id)
-  });
-  const assessments = rawAssessments.map((row) => {
-    const openFollowUpTaskTypes = (openFollowUpTasksByAssessmentId.get(row.id) ?? [])
-      .filter((task) => task.status === "action_required")
-      .map((task) => task.taskType);
-    return {
-      ...row,
-      post_sign_readiness_status: resolveIntakePostSignReadiness({
-        signatureStatus: row.signature_status,
-        draftPofStatus: toIntakeDraftPofStatus(row.draft_pof_status),
-        openFollowUpTaskTypes
-      })
-    };
-  });
+  const assessments = assessmentsResult;
   const storedProfile = (profileResult.data as MemberHealthProfileRow | null) ?? null;
   const profileNeedsBackfill = !storedProfile;
   const profile = storedProfile ?? buildEmptyMemberHealthProfileRow(canonicalMemberId);
@@ -847,6 +871,15 @@ export async function getMemberHealthProfileDetailSupabase(
       provider: providers[0]?.provider_name ?? effectiveProfile.provider_name
     }
   };
+}
+
+export async function getMemberHealthProfileAssessmentsSupabase(memberId: string) {
+  const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
+    actionLabel: "getMemberHealthProfileAssessmentsSupabase"
+  });
+  return loadMemberHealthProfileAssessments(canonicalMemberId, {
+    includeAll: true
+  });
 }
 
 export async function backfillMissingMemberHealthProfilesSupabase(memberIds: Array<string | null | undefined>) {

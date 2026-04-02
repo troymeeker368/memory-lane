@@ -68,6 +68,44 @@ function toStateFromRow(row: IntakeAssessmentSignatureRow): IntakeAssessmentSign
   };
 }
 
+async function reportIntakePostCommitTelemetryFailure(input: {
+  assessmentId: string;
+  memberId: string;
+  actorUserId: string;
+  step: string;
+  error: unknown;
+}) {
+  const reason =
+    input.error instanceof Error ? input.error.message : "Unknown post-commit intake telemetry failure.";
+  console.error("Intake assessment post-commit telemetry failed.", {
+    assessmentId: input.assessmentId,
+    memberId: input.memberId,
+    step: input.step,
+    error: input.error
+  });
+  try {
+    await recordImmediateSystemAlert({
+      entityType: "intake_assessment",
+      entityId: input.assessmentId,
+      actorUserId: input.actorUserId,
+      severity: "medium",
+      alertKey: "intake_assessment_signature_post_commit_telemetry_failed",
+      metadata: {
+        member_id: input.memberId,
+        step: input.step,
+        error: reason
+      }
+    });
+  } catch (alertError) {
+    console.error("Failed to record intake assessment post-commit telemetry alert.", {
+      assessmentId: input.assessmentId,
+      memberId: input.memberId,
+      step: input.step,
+      error: alertError
+    });
+  }
+}
+
 async function cleanupIntakeSignatureArtifactAfterFinalizeFailure(input: {
   assessmentId: string;
   memberId: string;
@@ -478,69 +516,64 @@ export async function signIntakeAssessment(input: {
 
     const state = toStateFromRow(finalizedRow);
     if (!finalizedRow.was_already_signed) {
-      await recordWorkflowEvent({
-        eventType: "intake_assessment_signed",
-        entityType: "intake_assessment",
-        entityId: assessment.id,
-        actorType: "user",
-        actorUserId: input.actor.id,
-        status: "signed",
-        severity: "low",
-        metadata: {
-          member_id: assessment.member_id,
-          signature_status: state.status,
-          signature_artifact_member_file_id: state.signatureArtifactMemberFileId
-        }
-      });
-      await recordWorkflowMilestone({
-        event: {
-          eventType: "intake_completed",
+      try {
+        await recordWorkflowEvent({
+          eventType: "intake_assessment_signed",
           entityType: "intake_assessment",
           entityId: assessment.id,
           actorType: "user",
           actorUserId: input.actor.id,
-          status: "completed",
+          status: "signed",
           severity: "low",
           metadata: {
             member_id: assessment.member_id,
             signature_status: state.status,
             signature_artifact_member_file_id: state.signatureArtifactMemberFileId
           }
-        }
-      });
+        });
+      } catch (telemetryError) {
+        await reportIntakePostCommitTelemetryFailure({
+          assessmentId: assessment.id,
+          memberId: assessment.member_id,
+          actorUserId: input.actor.id,
+          step: "recordWorkflowEvent:intake_assessment_signed",
+          error: telemetryError
+        });
+      }
+      try {
+        await recordWorkflowMilestone({
+          event: {
+            eventType: "intake_completed",
+            entityType: "intake_assessment",
+            entityId: assessment.id,
+            actorType: "user",
+            actorUserId: input.actor.id,
+            status: "completed",
+            severity: "low",
+            metadata: {
+              member_id: assessment.member_id,
+              signature_status: state.status,
+              signature_artifact_member_file_id: state.signatureArtifactMemberFileId
+            }
+          }
+        });
+      } catch (telemetryError) {
+        await reportIntakePostCommitTelemetryFailure({
+          assessmentId: assessment.id,
+          memberId: assessment.member_id,
+          actorUserId: input.actor.id,
+          step: "recordWorkflowMilestone:intake_completed",
+          error: telemetryError
+        });
+      }
     }
 
     return state;
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to sign intake assessment.";
-    await recordWorkflowEvent({
-      eventType: "intake_assessment_failed",
-      entityType: "intake_assessment",
-      entityId: assessment.id,
-      actorType: "user",
-      actorUserId: input.actor.id,
-      status: "failed",
-      severity: "high",
-      metadata: {
-        member_id: assessment.member_id,
-        phase: "signature",
-        error: reason
-      }
-    });
-    await recordImmediateSystemAlert({
-      entityType: "intake_assessment",
-      entityId: assessment.id,
-      actorUserId: input.actor.id,
-      severity: "high",
-      alertKey: "intake_assessment_signature_failed",
-      metadata: {
-        member_id: assessment.member_id,
-        error: reason
-      }
-    });
-    await recordWorkflowMilestone({
-      event: {
-        eventType: "workflow_error",
+    try {
+      await recordWorkflowEvent({
+        eventType: "intake_assessment_failed",
         entityType: "intake_assessment",
         entityId: assessment.id,
         actorType: "user",
@@ -549,12 +582,67 @@ export async function signIntakeAssessment(input: {
         severity: "high",
         metadata: {
           member_id: assessment.member_id,
-          workflow_label: "Intake assessment signature",
-          message: `Intake assessment signature failed. Review the assessment and retry the completion workflow.`,
-          action_url: `/operations/member-command-center/${assessment.member_id}`
+          phase: "signature",
+          error: reason
         }
-      }
-    });
+      });
+    } catch (telemetryError) {
+      await reportIntakePostCommitTelemetryFailure({
+        assessmentId: assessment.id,
+        memberId: assessment.member_id,
+        actorUserId: input.actor.id,
+        step: "recordWorkflowEvent:intake_assessment_failed",
+        error: telemetryError
+      });
+    }
+    try {
+      await recordImmediateSystemAlert({
+        entityType: "intake_assessment",
+        entityId: assessment.id,
+        actorUserId: input.actor.id,
+        severity: "high",
+        alertKey: "intake_assessment_signature_failed",
+        metadata: {
+          member_id: assessment.member_id,
+          error: reason
+        }
+      });
+    } catch (telemetryError) {
+      await reportIntakePostCommitTelemetryFailure({
+        assessmentId: assessment.id,
+        memberId: assessment.member_id,
+        actorUserId: input.actor.id,
+        step: "recordImmediateSystemAlert:intake_assessment_signature_failed",
+        error: telemetryError
+      });
+    }
+    try {
+      await recordWorkflowMilestone({
+        event: {
+          eventType: "workflow_error",
+          entityType: "intake_assessment",
+          entityId: assessment.id,
+          actorType: "user",
+          actorUserId: input.actor.id,
+          status: "failed",
+          severity: "high",
+          metadata: {
+            member_id: assessment.member_id,
+            workflow_label: "Intake assessment signature",
+            message: `Intake assessment signature failed. Review the assessment and retry the completion workflow.`,
+            action_url: `/operations/member-command-center/${assessment.member_id}`
+          }
+        }
+      });
+    } catch (telemetryError) {
+      await reportIntakePostCommitTelemetryFailure({
+        assessmentId: assessment.id,
+        memberId: assessment.member_id,
+        actorUserId: input.actor.id,
+        step: "recordWorkflowMilestone:workflow_error",
+        error: telemetryError
+      });
+    }
     throw error;
   }
 }

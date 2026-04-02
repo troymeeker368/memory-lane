@@ -183,11 +183,19 @@ export function NameBadgeBuilder({
       }
       if (mode === "print") {
         triggerPrint(result.dataUrl);
-        setStatus("Name badge generated, saved to member files, and sent to printer.");
+        setStatus(
+          result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
+            ? `Name badge sent to printer. ${result.memberFilesMessage}`
+            : "Name badge generated, saved to member files, and sent to printer."
+        );
         return;
       }
       await triggerDownload(result.dataUrl, result.fileName);
-      setStatus("Name badge saved to Files/Documents and downloaded.");
+      setStatus(
+        result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
+          ? `Name badge downloaded. ${result.memberFilesMessage}`
+          : "Name badge saved to Files/Documents and downloaded."
+      );
     });
   }
 
