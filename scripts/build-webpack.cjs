@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-const { rmSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 
 function runNodeScript(scriptPath, args = []) {
@@ -20,6 +19,6 @@ function runNodeScript(scriptPath, args = []) {
 }
 
 process.env.NEXT_DISABLE_WEBPACK_CACHE = "1";
+process.env.NEXT_USE_WEBPACK = "1";
 
-rmSync(".next", { recursive: true, force: true });
-runNodeScript(require.resolve("next/dist/bin/next"), ["build"]);
+runNodeScript(require.resolve("next/dist/bin/next"), ["build", "--webpack"]);

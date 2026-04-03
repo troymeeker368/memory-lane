@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-const { rmSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 
 function sleepMs(ms) {
@@ -37,7 +36,6 @@ function runNodeScript(scriptPath, args = [], options = {}) {
       console.warn(
         `[build-turbo] Windows worker spawn hit transient EPERM on attempt ${attempt}/${maxAttempts}. Retrying once...`
       );
-      rmSync(".next", { recursive: true, force: true });
       sleepMs(750);
       continue;
     }
@@ -52,6 +50,4 @@ function runNodeScript(scriptPath, args = [], options = {}) {
 }
 
 process.env.NEXT_USE_TURBOPACK = "1";
-
-rmSync(".next", { recursive: true, force: true });
 runNodeScript(require.resolve("next/dist/bin/next"), ["build", "--turbopack"], { maxAttempts: 2 });
