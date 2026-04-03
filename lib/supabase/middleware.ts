@@ -26,6 +26,10 @@ function getRequestedPathname(request: NextRequest) {
   return `${request.nextUrl.pathname}${search}`;
 }
 
+function isServerActionRequest(request: NextRequest) {
+  return typeof request.headers.get("next-action") === "string";
+}
+
 function hasSupabaseAuthCookie(request: NextRequest) {
   return request.cookies
     .getAll()
@@ -48,13 +52,14 @@ export async function updateSession(request: NextRequest) {
   const isLoginRoute = pathname === "/login";
   const isDevAuthRoute = pathname.startsWith("/dev/auth");
   const isApiRoute = pathname.startsWith("/api/");
+  const isServerAction = isServerActionRequest(request);
   const hasAuthCookie = hasSupabaseAuthCookie(request);
-  const shouldResolveSession = hasAuthCookie || isApiRoute || isLoginRoute || isDevAuthRoute;
+  const shouldResolveSession = hasAuthCookie || isApiRoute || isLoginRoute || isDevAuthRoute || isServerAction;
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-memory-lane-pathname", pathname);
   requestHeaders.set("x-memory-lane-requested-path", getRequestedPathname(request));
 
-  if (!publicRoute && !hasAuthCookie && !isApiRoute) {
+  if (!publicRoute && !hasAuthCookie && !isApiRoute && !isServerAction) {
     return buildLoginRedirect(request);
   }
 
@@ -97,6 +102,9 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user && !publicRoute) {
+    if (isServerAction) {
+      return response;
+    }
     return withAuthCookies(buildLoginRedirect(request), response);
   }
 
@@ -105,12 +113,18 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (pathname === "/login") {
+    if (isServerAction) {
+      return response;
+    }
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return withAuthCookies(NextResponse.redirect(url), response);
   }
 
   if (pathname.startsWith("/dev/auth")) {
+    if (isServerAction) {
+      return response;
+    }
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return withAuthCookies(NextResponse.redirect(url), response);
