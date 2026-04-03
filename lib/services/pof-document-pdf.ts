@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { PDFDocument, type PDFFont, type PDFPage, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, type PDFFont, type PDFImage, type PDFPage, rgb, StandardFonts } from "pdf-lib";
 
 import { buildPofDocumentSections } from "@/lib/services/pof-document-content";
 import {
@@ -118,6 +118,12 @@ function loadCenterLogoBytes() {
   return readFileSync(fullPath);
 }
 
+function resolveHeaderLogoWidth(logo: PDFImage | null, logoHeight: number, maxWidth: number) {
+  if (!logo) return 0;
+  const scaled = logo.scale(logoHeight / logo.height);
+  return Math.min(scaled.width, maxWidth);
+}
+
 function clean(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
@@ -163,19 +169,21 @@ export async function buildPofDocumentPdfBytes(input: {
 
   const drawHeader = (startY: number) => {
     const y = startY;
+    const logoHeight = 42;
+    const logoWidth = resolveHeaderLogoWidth(logoImage, logoHeight, 132);
     if (logoImage) {
-      const scaled = logoImage.scale(42 / logoImage.height);
       page.drawImage(logoImage, {
         x: marginLeft,
         y: y - 38,
-        width: Math.min(scaled.width, 150),
-        height: 42
+        width: logoWidth,
+        height: logoHeight
       });
     }
-    page.drawText(DOCUMENT_CENTER_NAME, { x: marginLeft + 158, y: y - 10, size: 10, font: bold });
-    page.drawText(DOCUMENT_CENTER_ADDRESS_LINE_1, { x: marginLeft + 158, y: y - 24, size: 9, font: regular });
-    page.drawText(DOCUMENT_CENTER_ADDRESS_LINE_2, { x: marginLeft + 158, y: y - 36, size: 9, font: regular });
-    page.drawText(DOCUMENT_CENTER_PHONE, { x: marginLeft + 158, y: y - 48, size: 9, font: regular });
+    const infoX = marginLeft + (logoWidth > 0 ? Math.max(logoWidth + 12, 142) : 0);
+    page.drawText(DOCUMENT_CENTER_NAME, { x: infoX, y: y - 10, size: 10, font: bold });
+    page.drawText(DOCUMENT_CENTER_ADDRESS_LINE_1, { x: infoX, y: y - 24, size: 9, font: regular });
+    page.drawText(DOCUMENT_CENTER_ADDRESS_LINE_2, { x: infoX, y: y - 36, size: 9, font: regular });
+    page.drawText(DOCUMENT_CENTER_PHONE, { x: infoX, y: y - 48, size: 9, font: regular });
     page.drawText(input.title, { x: marginLeft, y: y - 72, size: 14, font: bold, color: rgb(0.1, 0.24, 0.55) });
     let metaY = y - 10;
     metaLines.forEach((line) => {

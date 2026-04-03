@@ -302,3 +302,126 @@ export async function createBillingExport(input: {
     };
   }
 }
+
+export async function buildQuickBooksCsvForInvoiceIds(input: {
+  invoiceIds: string[];
+  detailLevel: "Summary" | "Detailed";
+  fileNamePrefix?: string;
+}) {
+  const invoiceIds = Array.from(new Set(input.invoiceIds.map((value) => String(value).trim()).filter(Boolean)));
+  if (invoiceIds.length === 0) {
+    throw new Error("At least one invoice id is required to build a QuickBooks CSV.");
+  }
+
+  const supabase = await createClient();
+  const { data: invoices, error: invoiceError } = await supabase
+    .from("billing_invoices")
+    .select("*")
+    .in("id", invoiceIds)
+    .order("invoice_number", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (invoiceError) {
+    throw new Error(invoiceError.message);
+  }
+
+  const invoiceRows = ((invoices ?? []) as BillingExportInvoiceRow[]).map((row) => normalizeInvoiceRow(row));
+  if (invoiceRows.length === 0) {
+    throw new Error("No invoices were found for QuickBooks export.");
+  }
+
+  const memberIds = Array.from(new Set(invoiceRows.map((row) => String(row.member_id)).filter(Boolean)));
+  const payorByMember = await listBillingPayorContactsForMembers(memberIds);
+  const { data: lines, error: linesError } = await supabase
+    .from("billing_invoice_lines")
+    .select("*")
+    .in("invoice_id", invoiceIds)
+    .order("invoice_id", { ascending: true })
+    .order("line_number", { ascending: true });
+  if (linesError) {
+    throw new Error(linesError.message);
+  }
+
+  const payorIds = Array.from(new Set(invoiceRows.map((row) => String(row.payor_id ?? "")).filter(Boolean)));
+  const minBasePeriodStart = invoiceRows
+    .map((row) => String(row.base_period_start ?? ""))
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right))[0];
+  const maxBasePeriodEnd = invoiceRows
+    .map((row) => String(row.base_period_end ?? ""))
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right))
+    .slice(-1)[0];
+
+  const [{ data: payorRows, error: payorError }, { data: attendanceRows, error: attendanceError }] = await Promise.all([
+    payorIds.length > 0
+      ? supabase.from("payors").select("id, quickbooks_customer_name").in("id", payorIds)
+      : Promise.resolve({ data: [], error: null }),
+    memberIds.length > 0 && minBasePeriodStart && maxBasePeriodEnd
+      ? supabase
+          .from("attendance_records")
+          .select("member_id, attendance_date, status")
+          .in("member_id", memberIds)
+          .eq("status", "present")
+          .gte("attendance_date", minBasePeriodStart)
+          .lte("attendance_date", maxBasePeriodEnd)
+      : Promise.resolve({ data: [], error: null })
+  ]);
+  if (payorError) {
+    throw new Error(payorError.message);
+  }
+  if (attendanceError) {
+    throw new Error(attendanceError.message);
+  }
+
+  const payorById = new Map(
+    (((payorRows ?? []) as Array<{ id: string; quickbooks_customer_name: string | null }>)).map((row) => [String(row.id), row] as const)
+  );
+  const attendanceDatesByMemberId = new Map<string, string[]>();
+  (((attendanceRows ?? []) as Array<{ member_id: string; attendance_date: string; status: string }>)).forEach((row) => {
+    const memberId = String(row.member_id ?? "");
+    const attendanceDate = String(row.attendance_date ?? "");
+    if (!memberId || !attendanceDate) return;
+    const existing = attendanceDatesByMemberId.get(memberId);
+    if (existing) {
+      existing.push(attendanceDate);
+      return;
+    }
+    attendanceDatesByMemberId.set(memberId, [attendanceDate]);
+  });
+
+  const customerNameByInvoiceId = new Map<string, string>();
+  const attendedDatesByInvoiceId = new Map<string, string[]>();
+  invoiceRows.forEach((row) => {
+    const invoiceId = String(row.id);
+    const payorRecord = row.payor_id ? payorById.get(String(row.payor_id)) ?? null : null;
+    const payorContact = payorByMember.get(String(row.member_id)) ?? null;
+    customerNameByInvoiceId.set(
+      invoiceId,
+      String(
+        payorRecord?.quickbooks_customer_name ??
+          row.bill_to_name_snapshot ??
+          (payorContact ? formatBillingPayorDisplayName(payorContact) : "No payor contact designated")
+      )
+    );
+    const periodStart = String(row.base_period_start ?? "");
+    const periodEnd = String(row.base_period_end ?? "");
+    const attendanceDates = (attendanceDatesByMemberId.get(String(row.member_id)) ?? [])
+      .filter((attendanceDate) => (!periodStart || attendanceDate >= periodStart) && (!periodEnd || attendanceDate <= periodEnd))
+      .sort((left, right) => left.localeCompare(right));
+    attendedDatesByInvoiceId.set(invoiceId, attendanceDates);
+  });
+
+  const csv = buildQuickBooksInvoiceCsv({
+    invoices: invoiceRows,
+    lines: (lines ?? []) as BillingInvoiceLineRow[],
+    detailLevel: input.detailLevel,
+    customerNameByInvoiceId,
+    attendedDatesByInvoiceId
+  });
+
+  const monthToken = startOfMonth(String(invoiceRows[0]?.invoice_month ?? ""));
+  return {
+    fileName: `${input.fileNamePrefix ?? "quickbooks-invoices"}-${monthToken}-${input.detailLevel.toLowerCase()}.csv`,
+    csv
+  };
+}

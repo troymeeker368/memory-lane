@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
-import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
+import { createEnrollmentInvoiceWorkflowAction, submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -92,6 +93,21 @@ function serializeManualItems(items: ManualItemDraft[]) {
       ].join("|")
     )
     .join("\n");
+}
+
+function downloadTextFile(text: string, fileName: string, mimeType: string) {
+  const blob = new Blob([text], { type: mimeType });
+  const blobUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = blobUrl;
+  anchor.download = fileName;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 }
 
 function Section({
@@ -498,19 +514,51 @@ export function BillingEnrollmentProratedForm({
   today,
   endOfMonth
 }: BillingCustomInvoiceFormsProps) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [memberId, setMemberId] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const payorDisplay = useMemo(() => getPayorDisplay(memberId, payorByMember), [memberId, payorByMember]);
   const payorNote = useMemo(() => getPayorStatusNote(memberId, payorByMember), [memberId, payorByMember]);
 
+  function handleSubmit(formData: FormData) {
+    startTransition(async () => {
+      setStatus(null);
+      setError(null);
+
+      const result = await createEnrollmentInvoiceWorkflowAction({
+        memberId: String(formData.get("memberId") ?? "").trim(),
+        effectiveStartDate: String(formData.get("effectiveStartDate") ?? "").trim(),
+        periodEndDate: String(formData.get("periodEndDate") ?? "").trim() || null,
+        includeTransportation: String(formData.get("includeTransportation") ?? "").trim() === "true",
+        includeAncillary: String(formData.get("includeAncillary") ?? "").trim() === "true",
+        includeAdjustments: String(formData.get("includeAdjustments") ?? "").trim() === "true",
+        notes: String(formData.get("notes") ?? "").trim() || null
+      });
+
+      if (!result.ok) {
+        setError(result.error ?? "Unable to create enrollment invoice.");
+        return;
+      }
+
+      downloadTextFile(result.csvContent, result.csvFileName, "text/csv;charset=utf-8;");
+      router.refresh();
+      setStatus(
+        result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
+          ? `QuickBooks CSV downloaded. Invoice ${result.invoiceNumber} was finalized, but Member Files needs follow-up: ${result.memberFilesMessage}`
+          : `QuickBooks CSV downloaded. Invoice ${result.invoiceNumber} was finalized and ${result.pdfFileName} was saved to Member Files.`
+      );
+    });
+  }
+
   return (
-    <form action={submitPayorAction} className="mt-5 space-y-5">
-      <input type="hidden" name="intent" value="createEnrollmentInvoice" />
-      <input type="hidden" name="returnPath" value="/operations/payor/custom-invoices?tab=prorated-enrollment" />
+    <form action={handleSubmit} className="mt-5 space-y-5">
 
       <Section
         title="Enrollment Proration"
-        description="Create a compact enrollment-period draft using the member's existing daily billing setup."
+        description="Create a finalized enrollment-period invoice, download the QuickBooks CSV immediately, and save the PDF to Member Files."
       >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Field label="Member" className="space-y-1.5 xl:col-span-2">
@@ -560,19 +608,26 @@ export function BillingEnrollmentProratedForm({
         </div>
       </Section>
 
-      <Section title="Notes" description="Optional note saved with the enrollment invoice draft.">
+      <Section title="Notes" description="Optional note saved with the enrollment invoice.">
         <Field label="Notes">
           <textarea name="notes" placeholder="Add any enrollment proration notes." className={TEXTAREA_CLASS_NAME} />
         </Field>
       </Section>
 
+      {error ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
+      ) : null}
+      {status ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{status}</div>
+      ) : null}
+
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-slate-50/40 p-4 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="text-sm font-semibold text-fg">Create Enrollment Invoice</p>
-          <p className="text-xs text-muted">This keeps the enrollment workflow separate from one-off custom invoice drafting.</p>
+          <p className="text-xs text-muted">This workflow finalizes the invoice, downloads the QuickBooks CSV, and saves the PDF to Member Files.</p>
         </div>
-        <Button type="submit" className="md:min-w-[220px]">
-          Create Enrollment Invoice
+        <Button type="submit" className="md:min-w-[220px]" disabled={isPending}>
+          {isPending ? "Creating Export..." : "Create Enrollment Invoice"}
         </Button>
       </div>
     </form>

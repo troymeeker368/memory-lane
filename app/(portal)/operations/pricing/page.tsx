@@ -153,15 +153,11 @@ export default async function OperationsPricingPage({
                 <p className="text-muted">Active Community Fee</p>
                 <p className="text-lg font-semibold text-fg">{money(overview.activeCommunityFee?.amount ?? null)}</p>
               </div>
-              <div className="rounded border border-border px-3 py-2">
-                <p className="text-muted">Active Daily Rate Tiers</p>
-                <p className="text-lg font-semibold text-fg">{overview.activeDailyRates.length}</p>
-              </div>
-              <div className="rounded border border-border px-3 py-2">
-                <p className="text-muted">Edit Access</p>
-                <p className="text-lg font-semibold text-fg">{canEdit ? "Admin/Director" : "Read-only"}</p>
-              </div>
-            </div>
+          <div className="rounded border border-border px-3 py-2">
+            <p className="text-muted">Active Daily Rate Tiers</p>
+            <p className="text-lg font-semibold text-fg">{overview.activeDailyRates.length}</p>
+          </div>
+        </div>
             <div className="mt-3 flex flex-wrap gap-2 text-sm">
               <Link href="/operations/pricing?tab=community-fee" className="font-semibold text-brand">
                 Edit Community Fee

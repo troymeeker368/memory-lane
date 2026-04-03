@@ -1,10 +1,10 @@
 ﻿import Link from "next/link";
 
 import { CarePlanStatusLink } from "@/components/care-plans/care-plan-status-link";
+import { MemberIdFilterField } from "@/components/forms/member-id-filter-field";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import { getCarePlanTracks, getCarePlans } from "@/lib/services/care-plans";
-import { listMemberPickerOptionsSupabase } from "@/lib/services/shared-lookups-supabase";
 import { formatDate, formatOptionalDate } from "@/lib/utils";
 
 function parsePage(value: string | string[] | undefined) {
@@ -24,21 +24,14 @@ export default async function CarePlanDueReportPage({
   const params = await searchParams;
   const status = typeof params.status === "string" ? params.status : "All";
   const track = typeof params.track === "string" ? params.track : "All";
-  const memberId = typeof params.memberId === "string" ? params.memberId : "All";
-  const memberSearch = typeof params.memberSearch === "string" ? params.memberSearch : "";
+  const memberId = typeof params.memberId === "string" ? params.memberId : "";
   const page = parsePage(params.page);
-  const [tracks, members, result] = await Promise.all([
+  const [tracks, result] = await Promise.all([
     getCarePlanTracks(),
-    listMemberPickerOptionsSupabase({
-      q: memberSearch,
-      selectedId: memberId === "All" ? null : memberId,
-      status: "active",
-      limit: 25
-    }),
     getCarePlans({
       status,
       track: track === "All" ? undefined : track,
-      memberId: memberId === "All" ? undefined : memberId,
+      memberId: memberId || undefined,
       page,
       pageSize: 25
     })
@@ -47,8 +40,7 @@ export default async function CarePlanDueReportPage({
     const search = new URLSearchParams();
     if (status !== "All") search.set("status", status);
     if (track !== "All") search.set("track", track);
-    if (memberSearch) search.set("memberSearch", memberSearch);
-    if (memberId !== "All") search.set("memberId", memberId);
+    if (memberId) search.set("memberId", memberId);
     if (targetPage > 1) search.set("page", String(targetPage));
     return `/health/care-plans/due-report?${search.toString()}`;
   };
@@ -58,7 +50,13 @@ export default async function CarePlanDueReportPage({
       <Card>
         <CardTitle>Care Plan Due Report</CardTitle>
         <form className="mt-3 grid gap-2 md:grid-cols-5">
-          <input name="memberSearch" defaultValue={memberSearch} placeholder="Search member name" className="h-10 rounded-lg border border-border px-3 text-sm" />
+          <MemberIdFilterField
+            name="memberId"
+            scope="care-plan"
+            defaultValue={memberId}
+            label="Member"
+            searchPlaceholder="Search member name"
+          />
           <select name="status" defaultValue={status} className="h-10 rounded-lg border border-border px-3 text-sm">
             <option>All</option>
             <option>Due Soon</option>
@@ -70,16 +68,11 @@ export default async function CarePlanDueReportPage({
             <option>All</option>
             {tracks.map((value) => <option key={value}>{value}</option>)}
           </select>
-          <select name="memberId" defaultValue={memberId} className="h-10 rounded-lg border border-border px-3 text-sm">
-            <option value="All">All Members</option>
-            {members.map((member) => <option key={member.id} value={member.id}>{member.display_name}</option>)}
-          </select>
           <button type="submit" className="h-10 rounded-lg bg-brand px-3 text-sm font-semibold text-white">Apply</button>
           <Link href="/health/care-plans/due-report" className="h-10 rounded-lg border border-border px-3 text-sm font-semibold leading-10 text-center text-brand">
             Clear Filters
           </Link>
         </form>
-        <p className="mt-2 text-xs text-muted">Search at least 2 letters to load a limited active-member picker.</p>
       </Card>
 
       <Card className="table-wrap">

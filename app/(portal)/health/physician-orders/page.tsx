@@ -1,10 +1,11 @@
 import Link from "next/link";
 
+import { MemberIdFilterField } from "@/components/forms/member-id-filter-field";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requirePhysicianOrdersAccess } from "@/lib/auth";
 import { canAccessMemberCommandCenter, canManagePhysicianOrders } from "@/lib/permissions";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
-import { listPhysicianOrderMemberLookup, listPhysicianOrdersPage } from "@/lib/services/physician-orders-read";
+import { listPhysicianOrdersPage } from "@/lib/services/physician-orders-read";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
@@ -20,14 +21,12 @@ function parsePageNumber(value: string | string[] | undefined) {
 
 function buildPhysicianOrdersHref(input: {
   memberId: string;
-  memberSearch: string;
   status: string;
   q: string;
   page: number;
 }) {
   const params = new URLSearchParams();
   if (input.memberId) params.set("memberId", input.memberId);
-  if (input.memberSearch) params.set("memberSearch", input.memberSearch);
   if (input.status && input.status !== "all") params.set("status", input.status);
   if (input.q) params.set("q", input.q);
   if (input.page > 1) params.set("page", String(input.page));
@@ -45,19 +44,13 @@ export default async function PhysicianOrdersIndexPage({
   const canViewCommandCenter = canAccessMemberCommandCenter(profile);
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";
-  const memberSearch = firstString(query.memberSearch) ?? "";
   const status = firstString(query.status) ?? "all";
   const q = firstString(query.q) ?? "";
   const page = parsePageNumber(query.page);
   const canonicalMemberIdPromise = memberId
     ? resolveCanonicalMemberId(memberId, { actionLabel: "PhysicianOrdersIndexPage" })
     : Promise.resolve(memberId);
-  const [members, canonicalMemberId, result] = await Promise.all([
-    listPhysicianOrderMemberLookup({
-      q: memberSearch,
-      selectedId: memberId,
-      limit: 25
-    }),
+  const [canonicalMemberId, result] = await Promise.all([
     canonicalMemberIdPromise,
     canonicalMemberIdPromise.then((resolvedMemberId) =>
       listPhysicianOrdersPage({
@@ -107,20 +100,14 @@ export default async function PhysicianOrdersIndexPage({
 
       <Card>
         <form className="grid gap-2 md:grid-cols-6" action="/health/physician-orders">
-          <input
-            name="memberSearch"
-            defaultValue={memberSearch}
-            placeholder="Search member name"
-            className="h-10 rounded-lg border border-border px-3 text-sm"
+          <MemberIdFilterField
+            name="memberId"
+            scope="physician-orders"
+            defaultValue={canonicalMemberId}
+            label="Member"
+            searchPlaceholder="Search member name"
+            helperText="Clear the field to search across all members."
           />
-          <select name="memberId" defaultValue={canonicalMemberId} className="h-10 rounded-lg border border-border px-3 text-sm">
-            <option value="">All members</option>
-            {members.map((member) => (
-              <option key={member.id} value={member.id}>
-                {member.display_name}
-              </option>
-            ))}
-          </select>
           <select name="status" defaultValue={status} className="h-10 rounded-lg border border-border px-3 text-sm">
             <option value="all">All statuses</option>
             <option value="Draft">Draft</option>
@@ -147,9 +134,6 @@ export default async function PhysicianOrdersIndexPage({
             </Link>
           </div>
         </form>
-        <p className="mt-2 text-xs text-muted">
-          Search at least 2 letters to load a limited active-member picker for physician-order filters.
-        </p>
         <p className="mt-1 text-xs text-muted">
           Showing {rangeStart}-{rangeEnd} of {totalRows} physician orders
         </p>
@@ -224,7 +208,7 @@ export default async function PhysicianOrdersIndexPage({
           <div className="flex items-center gap-2">
             {hasPreviousPage ? (
               <Link
-                href={buildPhysicianOrdersHref({ memberId: canonicalMemberId, memberSearch, status, q, page: currentPage - 1 })}
+                href={buildPhysicianOrdersHref({ memberId: canonicalMemberId, status, q, page: currentPage - 1 })}
                 className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
               >
                 Previous Page
@@ -232,7 +216,7 @@ export default async function PhysicianOrdersIndexPage({
             ) : null}
             {hasNextPage ? (
               <Link
-                href={buildPhysicianOrdersHref({ memberId: canonicalMemberId, memberSearch, status, q, page: currentPage + 1 })}
+                href={buildPhysicianOrdersHref({ memberId: canonicalMemberId, status, q, page: currentPage + 1 })}
                 className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
               >
                 Next Page

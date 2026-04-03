@@ -6,11 +6,5 @@ export default async function MonthlyAncillaryPage() {
   await requireNavItemAccess("/reports/monthly-ancillary");
   const summary = await getAncillarySummary();
 
-  return (
-    <MonthlyAncillaryReport
-      availableMonths={summary.availableMonths}
-      selectedMonth={summary.selectedMonth}
-      logs={summary.logs}
-    />
-  );
+  return <MonthlyAncillaryReport summary={summary} />;
 }

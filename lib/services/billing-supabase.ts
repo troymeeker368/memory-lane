@@ -416,6 +416,33 @@ export async function finalizeInvoice(input: { invoiceId: string; finalizedBy: s
   }
 }
 
+export async function finalizeInvoices(input: { invoiceIds: string[]; finalizedBy: string }) {
+  try {
+    const uniqueInvoiceIds = Array.from(
+      new Set(input.invoiceIds.map((value) => String(value ?? "").trim()).filter(Boolean))
+    );
+    if (uniqueInvoiceIds.length === 0) {
+      return { ok: false as const, error: "Select at least one invoice to finalize." };
+    }
+
+    let finalizedCount = 0;
+    for (const invoiceId of uniqueInvoiceIds) {
+      const result = await finalizeInvoice({ invoiceId, finalizedBy: input.finalizedBy });
+      if (!result.ok) {
+        return result;
+      }
+      finalizedCount += 1;
+    }
+
+    return { ok: true as const, finalizedCount };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : "Unable to finalize invoices."
+    };
+  }
+}
+
 export async function setVariableChargeBillingStatus(input: {
   table: "transportationLogs" | "ancillaryLogs" | "billingAdjustments";
   id: string;

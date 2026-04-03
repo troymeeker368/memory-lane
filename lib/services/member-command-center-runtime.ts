@@ -623,24 +623,47 @@ export async function backfillMissingMemberCommandCenterRowsSupabase(memberIds: 
 
 export async function getTransportationAddRiderMemberOptionsSupabase(filters?: {
   q?: string;
+  selectedId?: string | null;
   limit?: number;
 }) {
   const supabase = await createClient();
   const q = (filters?.q ?? "").trim();
+  const selectedId = String(filters?.selectedId ?? "").trim();
   const limit =
     Number.isFinite(filters?.limit) && Number(filters?.limit) > 0 ? Math.min(50, Math.floor(Number(filters?.limit))) : 25;
-  if (q.length < 2) {
+  if (q.length < 2 && !selectedId) {
     return [];
   }
-  const { data: membersData, error: membersError } = await supabase
-    .from("members")
-    .select("id, display_name, status")
-    .eq("status", "active")
-    .ilike("display_name", buildSupabaseIlikePattern(q))
-    .order("display_name", { ascending: true })
-    .range(0, limit - 1);
-  if (membersError) throw new Error(membersError.message);
-  const members = (membersData ?? []) as Array<{ id: string; display_name: string; status: "active" | "inactive" }>;
+  const [selectedMemberResult, searchMembersResult] = await Promise.all([
+    selectedId
+      ? supabase
+          .from("members")
+          .select("id, display_name, status")
+          .eq("status", "active")
+          .eq("id", selectedId)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    q.length >= 2
+      ? supabase
+          .from("members")
+          .select("id, display_name, status")
+          .eq("status", "active")
+          .ilike("display_name", buildSupabaseIlikePattern(q))
+          .order("display_name", { ascending: true })
+          .range(0, limit - 1)
+      : Promise.resolve({ data: [], error: null })
+  ]);
+  if (selectedMemberResult.error) throw new Error(selectedMemberResult.error.message);
+  if (searchMembersResult.error) throw new Error(searchMembersResult.error.message);
+  const memberMap = new Map<string, { id: string; display_name: string; status: "active" | "inactive" }>();
+  const selectedMember = selectedMemberResult.data as { id: string; display_name: string; status: "active" | "inactive" } | null;
+  if (selectedMember?.id) {
+    memberMap.set(selectedMember.id, selectedMember);
+  }
+  for (const member of (searchMembersResult.data ?? []) as Array<{ id: string; display_name: string; status: "active" | "inactive" }>) {
+    memberMap.set(member.id, member);
+  }
+  const members = Array.from(memberMap.values()).sort((left, right) => left.display_name.localeCompare(right.display_name));
   if (members.length === 0) return [];
   const memberIds = members.map((row) => row.id);
   const [commandCentersResult, contactsResult] = await Promise.all([

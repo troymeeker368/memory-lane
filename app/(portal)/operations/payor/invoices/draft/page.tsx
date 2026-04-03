@@ -4,6 +4,10 @@ import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getBillingMemberPayorLookups, getDraftInvoices } from "@/lib/services/billing-read";
 
+function money(value: number) {
+  return `$${value.toFixed(2)}`;
+}
+
 export default async function DraftInvoicesPage({
   searchParams
 }: {
@@ -13,6 +17,7 @@ export default async function DraftInvoicesPage({
   const errorMessage = Array.isArray(params.error) ? params.error[0] : params.error;
   const [invoices, lookups] = await Promise.all([getDraftInvoices(), getBillingMemberPayorLookups()]);
   const memberName = new Map(lookups.members.map((row) => [row.id, row.displayName] as const));
+  const totalAmount = invoices.reduce((sum, invoice) => sum + invoice.total_amount, 0);
 
   return (
     <div className="space-y-4">
@@ -23,25 +28,57 @@ export default async function DraftInvoicesPage({
         </Card>
       ) : null}
 
-      <Card className="table-wrap">
+      <Card>
         <CardTitle>Draft Invoices</CardTitle>
-        <p className="mt-1 text-sm text-muted">Draft invoices can be reviewed individually, finalized when ready, or regenerated before batch finalization.</p>
-        <table className="mt-3">
+        <p className="mt-1 text-sm text-muted">
+          Review the drafts below, select the ones that are ready, or finalize all drafts in one batch without scrolling through a wide table.
+        </p>
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="rounded-lg border border-border bg-slate-50/60 px-3 py-2">
+            <p className="text-xs text-muted">Draft count</p>
+            <p className="text-lg font-semibold text-fg">{invoices.length}</p>
+          </div>
+          <div className="rounded-lg border border-border bg-slate-50/60 px-3 py-2">
+            <p className="text-xs text-muted">Draft total</p>
+            <p className="text-lg font-semibold text-fg">{money(totalAmount)}</p>
+          </div>
+          <div className="rounded-lg border border-border bg-slate-50/60 px-3 py-2">
+            <p className="text-xs text-muted">Batch actions</p>
+            <p className="text-sm font-semibold text-fg">Finalize selected or finalize all drafts</p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <form id="draft-selected-finalize-form" action={submitPayorAction} className="flex flex-wrap gap-2">
+            <input type="hidden" name="intent" value="finalizeDraftInvoices" />
+            <input type="hidden" name="returnPath" value="/operations/payor/invoices/draft" />
+            <button type="submit" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
+              Finalize Selected
+            </button>
+          </form>
+          <form action={submitPayorAction} className="flex flex-wrap gap-2">
+            <input type="hidden" name="intent" value="finalizeDraftInvoices" />
+            <input type="hidden" name="returnPath" value="/operations/payor/invoices/draft" />
+            {invoices.map((invoice) => (
+              <input key={invoice.id} type="hidden" name="invoiceIds" value={invoice.id} />
+            ))}
+            <button type="submit" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold text-brand">
+              Finalize All Drafts
+            </button>
+          </form>
+        </div>
+      </Card>
+
+      <Card className="table-wrap">
+        <table>
           <thead>
             <tr>
-              <th>Invoice #</th>
-              <th>Month</th>
-              <th>Source</th>
-              <th>Mode</th>
-              <th>Member</th>
-              <th>Payor</th>
-              <th>Base Period</th>
-              <th>Variable Period</th>
-              <th>Base</th>
-              <th>Transport</th>
-              <th>Ancillary</th>
-              <th>Adjustments</th>
-              <th>Total</th>
+              <th className="w-10">
+                <span className="sr-only">Select</span>
+              </th>
+              <th>Invoice / Member</th>
+              <th>Periods</th>
+              <th>Summary</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -49,42 +86,81 @@ export default async function DraftInvoicesPage({
           <tbody>
             {invoices.length === 0 ? (
               <tr>
-                <td colSpan={15} className="text-sm text-muted">No draft invoices.</td>
+                <td colSpan={6} className="text-sm text-muted">
+                  No draft invoices.
+                </td>
               </tr>
             ) : (
-              invoices.map((invoice) => (
-                <tr key={invoice.id}>
-                  <td>{invoice.invoice_number}</td>
-                  <td>{invoice.invoice_month}</td>
-                  <td>{invoice.invoice_source}</td>
-                  <td>{invoice.billing_mode_snapshot}</td>
-                  <td>{memberName.get(invoice.member_id) ?? "Unknown"}</td>
-                  <td>{lookups.payorByMember[invoice.member_id]?.displayName ?? "No payor contact designated"}</td>
-                  <td>{invoice.base_period_start} - {invoice.base_period_end}</td>
-                  <td>{invoice.variable_charge_period_start} - {invoice.variable_charge_period_end}</td>
-                  <td>${invoice.base_program_amount.toFixed(2)}</td>
-                  <td>${invoice.transportation_amount.toFixed(2)}</td>
-                  <td>${invoice.ancillary_amount.toFixed(2)}</td>
-                  <td>${invoice.adjustment_amount.toFixed(2)}</td>
-                  <td>${invoice.total_amount.toFixed(2)}</td>
-                  <td>{invoice.invoice_status}</td>
-                  <td>
-                    <div className="flex flex-wrap gap-2">
-                      <form action={submitPayorAction}>
-                        <input type="hidden" name="intent" value="finalizeInvoice" />
-                        <input type="hidden" name="invoiceId" value={invoice.id} />
-                        <input type="hidden" name="returnPath" value="/operations/payor/invoices/draft" />
-                        <button type="submit" className="text-xs font-semibold text-brand">
-                          Finalize
-                        </button>
-                      </form>
-                      <Link href={`/operations/payor/invoices/${invoice.id}/pdf`} className="text-xs font-semibold text-brand" target="_blank">
-                        PDF
-                      </Link>
-                    </div>
-                  </td>
-                </tr>
-              ))
+              invoices.map((invoice) => {
+                const payorDisplay = lookups.payorByMember[invoice.member_id]?.displayName ?? "No payor contact designated";
+                return (
+                  <tr key={invoice.id}>
+                    <td className="align-top">
+                      <input
+                        type="checkbox"
+                        name="invoiceIds"
+                        value={invoice.id}
+                        form="draft-selected-finalize-form"
+                        className="mt-1 h-4 w-4"
+                      />
+                    </td>
+                    <td className="align-top">
+                      <div className="space-y-1">
+                        <p className="font-semibold text-fg">{invoice.invoice_number}</p>
+                        <p className="text-sm text-muted">{memberName.get(invoice.member_id) ?? "Unknown"}</p>
+                        <p className="text-xs text-muted">{payorDisplay}</p>
+                        <p className="text-xs text-muted">
+                          {invoice.invoice_source} | {invoice.billing_mode_snapshot}
+                        </p>
+                      </div>
+                    </td>
+                    <td className="align-top">
+                      <div className="space-y-1 text-sm">
+                        <p>
+                          Base: {invoice.base_period_start} - {invoice.base_period_end}
+                        </p>
+                        <p>
+                          Variable: {invoice.variable_charge_period_start} - {invoice.variable_charge_period_end}
+                        </p>
+                      </div>
+                    </td>
+                    <td className="align-top">
+                      <div className="space-y-1 text-sm">
+                        <p>Base {money(invoice.base_program_amount)}</p>
+                        <p>Transport {money(invoice.transportation_amount)}</p>
+                        <p>Ancillary {money(invoice.ancillary_amount)}</p>
+                        <p>Adjustments {money(invoice.adjustment_amount)}</p>
+                        <p className="font-semibold text-fg">Total {money(invoice.total_amount)}</p>
+                      </div>
+                    </td>
+                    <td className="align-top">
+                      <div className="space-y-1 text-sm">
+                        <p className="font-semibold text-fg">{invoice.invoice_status}</p>
+                        <p className="text-xs text-muted">Ready for review or finalization</p>
+                      </div>
+                    </td>
+                    <td className="align-top">
+                      <div className="flex flex-wrap gap-2">
+                        <form action={submitPayorAction}>
+                          <input type="hidden" name="intent" value="finalizeInvoice" />
+                          <input type="hidden" name="invoiceId" value={invoice.id} />
+                          <input type="hidden" name="returnPath" value="/operations/payor/invoices/draft" />
+                          <button type="submit" className="text-xs font-semibold text-brand">
+                            Finalize
+                          </button>
+                        </form>
+                        <Link
+                          href={`/operations/payor/invoices/${invoice.id}/pdf`}
+                          className="text-xs font-semibold text-brand"
+                          target="_blank"
+                        >
+                          PDF
+                        </Link>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

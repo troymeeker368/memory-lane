@@ -6,9 +6,8 @@ import { requireNavItemAccess } from "@/lib/auth";
 
 const TABS = [
   { href: "/operations/payor", label: "Billing Hub" },
-  { href: "/operations/payor/billing-agreements", label: "Billing Agreements" },
+  { href: "/operations/payor/settings", label: "Billing Settings" },
   { href: "/operations/payor/center-closures", label: "Center Closures" },
-  { href: "/operations/payor/schedule-templates", label: "Schedule Templates" },
   { href: "/operations/payor/variable-charges", label: "Variable Charges Queue" },
   { href: "/operations/payor/billing-batches", label: "Billing Batches" },
   { href: "/operations/payor/custom-invoices", label: "Custom Invoices" },

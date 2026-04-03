@@ -109,18 +109,14 @@ export default async function CenterClosuresPage() {
             <input name="closureDate" type="date" defaultValue={todayDate()} className="h-10 w-full rounded-lg border border-border px-3" required />
           </label>
           <label className="space-y-1 text-xs">
-            <span className="font-semibold text-muted">Reason</span>
-            <input name="closureName" placeholder="Weather Closure" className="h-10 w-full rounded-lg border border-border px-3" required />
-          </label>
-          <label className="space-y-1 text-xs">
-            <span className="font-semibold text-muted">Type</span>
+            <span className="font-semibold text-muted">Closure Classification</span>
             <select name="closureType" className="h-10 w-full rounded-lg border border-border px-3">
               {CENTER_CLOSURE_TYPE_OPTIONS.map((option) => (
                 <option key={option} value={option}>{option}</option>
               ))}
             </select>
           </label>
-          <label className="space-y-1 text-xs md:col-span-2">
+          <label className="space-y-1 text-xs md:col-span-3">
             <span className="font-semibold text-muted">Notes</span>
             <input name="notes" placeholder="Optional context" className="h-10 w-full rounded-lg border border-border px-3" />
           </label>

@@ -4,6 +4,7 @@ import {
   saveAndDispatchPofSignatureRequestFromEditorAction,
   savePhysicianOrderFormAction
 } from "@/app/(portal)/health/physician-orders/actions";
+import { MemberIdFilterField } from "@/components/forms/member-id-filter-field";
 import { PofAllergiesEditor } from "@/components/forms/pof-allergies-editor";
 import { PofDiagnosesEditor } from "@/components/forms/pof-diagnoses-editor";
 import { POF_DNR_FLAG_INPUT_ID, POF_DNR_SELECTED_INPUT_ID, PofDnrSync } from "@/components/forms/pof-dnr-sync";
@@ -35,7 +36,7 @@ import {
   POF_STANDING_ORDER_OPTIONS,
 } from "@/lib/services/physician-order-config";
 import { buildNewPhysicianOrderDraft } from "@/lib/services/physician-orders-supabase";
-import { getPhysicianOrderById, listPhysicianOrderMemberLookup } from "@/lib/services/physician-orders-read";
+import { getPhysicianOrderById } from "@/lib/services/physician-orders-read";
 import { formatDateTime, formatOptionalDate } from "@/lib/utils";
 
 function firstString(value: string | string[] | undefined) {
@@ -100,21 +101,9 @@ export default async function NewPhysicianOrderPage({
   const profile = await getCurrentProfile();
   const query = await searchParams;
   const memberId = firstString(query.memberId) ?? "";
-  const memberSearch = firstString(query.memberSearch) ?? "";
   const pofId = firstString(query.pofId) ?? "";
   const saveError = firstString(query.saveError) ?? "";
-  const shouldLoadMemberOptions = !memberId && !pofId;
-  const memberLookupPromise = shouldLoadMemberOptions
-    ? listPhysicianOrderMemberLookup({
-        q: memberSearch,
-        selectedId: memberId,
-        limit: 25
-      })
-    : Promise.resolve([] as Awaited<ReturnType<typeof listPhysicianOrderMemberLookup>>);
-  const [actorDisplayName, members] = await Promise.all([
-    getManagedUserSignoffLabel(profile.id, profile.full_name),
-    memberLookupPromise
-  ]);
+  const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
   const editingPromise = pofId ? getPhysicianOrderById(pofId) : Promise.resolve(null);
   let canonicalMemberId = memberId;
   let identityError: string | null = null;
@@ -144,26 +133,18 @@ export default async function NewPhysicianOrderPage({
             <BackArrowButton fallbackHref="/health/physician-orders" forceFallback ariaLabel="Back to physician orders list" />
             <CardTitle>Select Member for New Physician Order</CardTitle>
           </div>
-          <form action="/health/physician-orders/new" className="mt-3 flex flex-wrap items-center gap-2">
-            <input
-              name="memberSearch"
-              defaultValue={memberSearch}
-              placeholder="Search active member name"
-              className="h-10 min-w-[220px] rounded-lg border border-border px-3 text-sm"
+          <form action="/health/physician-orders/new" className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+            <MemberIdFilterField
+              name="memberId"
+              scope="physician-orders"
+              label="Member"
+              searchPlaceholder="Search active member name"
+              helperText="Select a member from the live results to start the physician order."
             />
-            <select name="memberId" className="h-10 min-w-[280px] rounded-lg border border-border px-3 text-sm" required>
-              <option value="">Select member</option>
-              {members.map((member) => (
-                <option key={member.id} value={member.id}>
-                  {member.display_name}
-                </option>
-              ))}
-            </select>
             <button type="submit" className="h-10 rounded-lg bg-brand px-3 text-sm font-semibold text-white">
               Start POF
             </button>
           </form>
-          <p className="mt-2 text-xs text-muted">Search at least 2 letters to load a limited active-member picker.</p>
         </Card>
       </div>
     );

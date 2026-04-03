@@ -191,6 +191,7 @@ async function upsertRows(
   }
   const normalizedRows = [...dedupedById.values(), ...withoutId];
   const conflictTargetByTable: Record<string, string> = {
+    ancillary_charge_categories: "name",
     physician_orders: "member_id,version_number",
     enrollment_packet_sender_signatures: "user_id",
     intake_assessment_signatures: "assessment_id",
@@ -1957,6 +1958,16 @@ function buildBillingRows(db: SeededDb, staffMap: Map<string, string>) {
 
   const settingsByMember = new Map(db.memberBillingSettings.map((row) => [row.member_id, row] as const));
   const scheduleByMember = new Map(db.memberAttendanceSchedules.map((row) => [row.member_id, row] as const));
+  const payorContactsByMember = new Map<string, SeededDb["memberContacts"]>();
+  db.memberContacts.forEach((row) => {
+    if (!row.is_payor) return;
+    const existing = payorContactsByMember.get(row.member_id);
+    if (existing) {
+      existing.push(row);
+      return;
+    }
+    payorContactsByMember.set(row.member_id, [row]);
+  });
   const activeMembers = db.members.filter((row) => row.status === "active").slice(0, TARGET_MEMBER_COUNT);
   const billedMemberIds = new Set(activeMembers.map((row) => row.id));
 
@@ -1966,10 +1977,44 @@ function buildBillingRows(db: SeededDb, staffMap: Map<string, string>) {
   const billingCoverages: Record<string, unknown>[] = [];
   let invoiceTotal = 0;
 
+  const buildBillToSnapshot = (memberId: string) => {
+    const payorContacts = [...(payorContactsByMember.get(memberId) ?? [])].sort((left, right) =>
+      String(right.updated_at ?? right.created_at ?? "").localeCompare(String(left.updated_at ?? left.created_at ?? ""))
+    );
+    const payorContact = payorContacts[0] ?? null;
+    const cityStatePostal = [cleanText(payorContact?.city), cleanText(payorContact?.state), cleanText(payorContact?.zip)]
+      .filter((value): value is string => Boolean(value))
+      .join(", ");
+
+    if (!payorContact) {
+      return {
+        bill_to_name_snapshot: "No payor contact designated",
+        bill_to_address_line_1_snapshot: null,
+        bill_to_address_line_2_snapshot: null,
+        bill_to_address_line_3_snapshot: null,
+        bill_to_email_snapshot: null,
+        bill_to_phone_snapshot: null,
+        bill_to_message_snapshot: "No payor contact designated"
+      };
+    }
+
+    return {
+      bill_to_name_snapshot: cleanText(payorContact.contact_name),
+      bill_to_address_line_1_snapshot: cleanText(payorContact.street_address),
+      bill_to_address_line_2_snapshot: null,
+      bill_to_address_line_3_snapshot: cleanText(cityStatePostal),
+      bill_to_email_snapshot: cleanText(payorContact.email),
+      bill_to_phone_snapshot:
+        cleanText(payorContact.cellular_number) ?? cleanText(payorContact.work_number) ?? cleanText(payorContact.home_number),
+      bill_to_message_snapshot: null
+    };
+  };
+
   activeMembers.forEach((member, idx) => {
     const invoiceId = stableUuid(`billing-invoice:${member.id}:${invoiceMonth}`);
     const settings = settingsByMember.get(member.id);
     const schedule = scheduleByMember.get(member.id);
+    const billToSnapshot = buildBillToSnapshot(member.id);
     const attendanceDays = db.attendanceRecords.filter(
       (row) => row.member_id === member.id && row.status === "present" && row.attendance_date >= invoicePeriodStart && row.attendance_date <= invoicePeriodEnd
     ).length;
@@ -2054,6 +2099,13 @@ function buildBillingRows(db: SeededDb, staffMap: Map<string, string>) {
       ancillary_amount: ancillaryAmount,
       adjustment_amount: adjustmentAmount,
       total_amount: totalAmount,
+      bill_to_name_snapshot: billToSnapshot.bill_to_name_snapshot,
+      bill_to_address_line_1_snapshot: billToSnapshot.bill_to_address_line_1_snapshot,
+      bill_to_address_line_2_snapshot: billToSnapshot.bill_to_address_line_2_snapshot,
+      bill_to_address_line_3_snapshot: billToSnapshot.bill_to_address_line_3_snapshot,
+      bill_to_email_snapshot: billToSnapshot.bill_to_email_snapshot,
+      bill_to_phone_snapshot: billToSnapshot.bill_to_phone_snapshot,
+      bill_to_message_snapshot: billToSnapshot.bill_to_message_snapshot,
       notes: "Seeded invoice for billing workflow validation.",
       created_by_user_id: actorUserId,
       created_by_name: actorName,

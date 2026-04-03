@@ -2,94 +2,47 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { runDocumentationUpdateAction } from "@/app/documentation-update-actions";
-import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
-import { MutationNotice } from "@/components/ui/mutation-notice";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
-import { formatDate } from "@/lib/utils";
+import type { AncillaryCategoryColumn, AncillarySummary, MonthlyAncillaryMemberRow } from "@/lib/services/ancillary";
 
-type AncillaryLog = {
-  id: string;
-  service_date: string;
-  member_name: string;
-  category_name: string;
-  quantity?: number | null;
-  amount_cents: number;
-  source_entity?: string | null;
-  source_entity_id?: string | null;
-  reconciliation_status?: "open" | "reconciled" | "void" | null;
-  reconciled_by?: string | null;
-  reconciled_at?: string | null;
-  reconciliation_note?: string | null;
-};
+type WorkbookRow = MonthlyAncillaryMemberRow;
 
-type MemberRow = {
-  member_name: string;
-  subtotal_cents: number;
-  items: Array<{
-    id: string;
-    service_date: string;
-    category_name: string;
-    quantity: number;
-    unit_amount_cents: number;
-    total_amount_cents: number;
-    source_entity: string | null;
-    source_entity_id: string | null;
-    reconciliation_status: "open" | "reconciled" | "void";
-    reconciled_by: string | null;
-    reconciled_at: string | null;
-    reconciliation_note: string | null;
-  }>;
-};
-
-function monthKeyFromDate(date: string) {
-  const d = new Date(date);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+function normalizeMonthKey(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (/^\d{4}-\d{2}$/.test(raw)) {
+    return raw;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw.slice(0, 7);
+  }
+  return "";
 }
 
-function buildMemberRows(logs: AncillaryLog[], month: string, statusFilter: "all" | "open" | "reconciled" | "void"): MemberRow[] {
-  const monthLogs = logs.filter((log) => monthKeyFromDate(log.service_date) === month);
-  const scopedLogs =
-    statusFilter === "all" ? monthLogs : monthLogs.filter((log) => (log.reconciliation_status ?? "open") === statusFilter);
+function monthLabel(monthKey: string) {
+  const normalized = normalizeMonthKey(monthKey);
+  if (!normalized) return monthKey;
 
-  const perMember = new Map<string, MemberRow>();
+  const [yearPart, monthPart] = normalized.split("-");
+  const year = Number(yearPart);
+  const monthIndex = Number(monthPart) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex)) {
+    return monthKey;
+  }
 
-  scopedLogs.forEach((log) => {
-    const existing = perMember.get(log.member_name) ?? {
-      member_name: log.member_name,
-      subtotal_cents: 0,
-      items: []
-    };
-
-    const qty = log.quantity && log.quantity > 0 ? log.quantity : 1;
-    const total = log.amount_cents;
-
-    existing.items.push({
-      id: log.id,
-      service_date: log.service_date,
-      category_name: log.category_name,
-      quantity: qty,
-      unit_amount_cents: Math.round(total / qty),
-      total_amount_cents: total,
-      source_entity: log.source_entity ?? null,
-      source_entity_id: log.source_entity_id ?? null,
-      reconciliation_status: log.reconciliation_status ?? "open",
-      reconciled_by: log.reconciled_by ?? null,
-      reconciled_at: log.reconciled_at ?? null,
-      reconciliation_note: log.reconciliation_note ?? null
-    });
-
-    existing.subtotal_cents += total;
-    perMember.set(log.member_name, existing);
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC"
   });
+  return formatter.format(new Date(Date.UTC(year, monthIndex, 1)));
+}
 
-  return Array.from(perMember.values())
-    .map((member) => ({
-      ...member,
-      items: member.items.sort((a, b) => (a.service_date < b.service_date ? 1 : -1))
-    }))
-    .sort((a, b) => (a.member_name > b.member_name ? 1 : -1));
+function money(cents: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD"
+  }).format((Number(cents) || 0) / 100);
 }
 
 function csvEscape(value: string | number | null | undefined) {
@@ -100,131 +53,188 @@ function csvEscape(value: string | number | null | undefined) {
   return text;
 }
 
-function downloadMonthlyCsv(month: string, memberRows: MemberRow[], grandTotal: number) {
-  const header = [
-    "Month",
-    "Member",
-    "Service Date",
-    "Charge Item",
-    "Quantity",
-    "Unit Amount",
-    "Line Total",
-    "Source Module",
-    "Source Record",
-    "Reconciliation Status",
-    "Reconciled By",
-    "Reconciled At",
-    "Reconciliation Note"
-  ];
+function amountText(cents: number) {
+  return (Number(cents) || 0) / 100;
+}
 
-  const lines = [header.join(",")];
+function monthKeyFromDate(date: string | null | undefined) {
+  return normalizeMonthKey(date);
+}
 
-  memberRows.forEach((member) => {
-    member.items.forEach((item) => {
-      lines.push(
-        [
-          month,
-          member.member_name,
-          item.service_date,
-          item.category_name,
-          item.quantity,
-          (item.unit_amount_cents / 100).toFixed(2),
-          (item.total_amount_cents / 100).toFixed(2),
-          item.source_entity ?? "Manual",
-          item.source_entity_id ?? "",
-          item.reconciliation_status,
-          item.reconciled_by ?? "",
-          item.reconciled_at ?? "",
-          item.reconciliation_note ?? ""
-        ]
-          .map((value) => csvEscape(value))
-          .join(",")
-      );
+function buildWorkbookState(summary: AncillarySummary, selectedMonth: string) {
+  const month = normalizeMonthKey(selectedMonth) || summary.selectedMonth;
+  const categories = summary.categoryColumns.filter((category) => !category.isSynthetic);
+  const categoryLookupById = new Map(categories.map((category) => [category.id, category]));
+  const categoryLookupByName = new Map(categories.map((category) => [String(category.name ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " "), category]));
+
+  const rowsByMember = new Map<string, WorkbookRow>();
+  const categoryTotals = new Map<string, { id: string; name: string; amountCents: number; count: number; isSynthetic?: boolean }>();
+  let uncategorizedPresent = false;
+
+  for (const category of categories) {
+    categoryTotals.set(category.id, {
+      id: category.id,
+      name: category.name,
+      amountCents: 0,
+      count: 0
     });
+  }
 
-    lines.push([
-      csvEscape(month),
-      csvEscape(member.member_name),
-      "",
-      "Member Subtotal",
-      "",
-      "",
-      csvEscape((member.subtotal_cents / 100).toFixed(2)),
-      "",
-      "",
-      "",
-      "",
-      "",
-      ""
-    ].join(","));
+  const monthlyLogs = summary.logs.filter((row) => monthKeyFromDate(row.service_date) === month);
+  let grandTotalCents = 0;
+  let entryCount = 0;
+
+  for (const log of monthlyLogs) {
+    const amountCents = Number.isFinite(Number(log.amount_cents)) ? Math.round(Number(log.amount_cents)) : 0;
+    const categoryMatch =
+      (log.category_id ? categoryLookupById.get(log.category_id) : null) ||
+      categoryLookupByName.get(String(log.category_name ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ")) ||
+      null;
+    const categoryId = categoryMatch?.id ?? "__uncategorized__";
+    const categoryName = categoryMatch?.name ?? "Uncategorized";
+
+    if (!categoryMatch) {
+      uncategorizedPresent = true;
+    }
+
+    grandTotalCents += amountCents;
+    entryCount += 1;
+
+    const memberKey = log.member_id ?? log.member_name ?? "unknown-member";
+    const memberName = log.member_name ?? "Unknown Member";
+    const row = rowsByMember.get(memberKey) ?? {
+      memberId: log.member_id ?? null,
+      memberName,
+      entryCount: 0,
+      subtotalCents: 0,
+      categoryAmounts: {},
+      categoryCounts: {},
+      uncategorizedAmountCents: 0,
+      uncategorizedEntryCount: 0
+    };
+
+    row.entryCount += 1;
+    row.subtotalCents += amountCents;
+    if (categoryId === "__uncategorized__") {
+      row.uncategorizedAmountCents += amountCents;
+      row.uncategorizedEntryCount += 1;
+    } else {
+      row.categoryAmounts[categoryId] = (row.categoryAmounts[categoryId] ?? 0) + amountCents;
+      row.categoryCounts[categoryId] = (row.categoryCounts[categoryId] ?? 0) + 1;
+    }
+    rowsByMember.set(memberKey, row);
+
+    const currentCategoryTotal = categoryTotals.get(categoryId);
+    if (currentCategoryTotal) {
+      currentCategoryTotal.amountCents += amountCents;
+      currentCategoryTotal.count += 1;
+    } else {
+      categoryTotals.set(categoryId, {
+        id: categoryId,
+        name: categoryName,
+        amountCents,
+        count: 1,
+        isSynthetic: true
+      });
+    }
+  }
+
+  const categoryColumns: AncillaryCategoryColumn[] = categories.map((category) => ({
+    id: category.id,
+    name: category.name
+  }));
+  if (uncategorizedPresent) {
+    categoryColumns.push({
+      id: "__uncategorized__",
+      name: "Uncategorized",
+      isSynthetic: true
+    });
+    if (!categoryTotals.has("__uncategorized__")) {
+      categoryTotals.set("__uncategorized__", {
+        id: "__uncategorized__",
+        name: "Uncategorized",
+        amountCents: 0,
+        count: 0,
+        isSynthetic: true
+      });
+    }
+  }
+
+  const rows = Array.from(rowsByMember.values()).sort((a, b) => {
+    const compare = a.memberName.localeCompare(b.memberName);
+    if (compare !== 0) return compare;
+    return b.subtotalCents - a.subtotalCents;
   });
 
+  const totals = categoryColumns.map((category) => {
+    const total = categoryTotals.get(category.id);
+    return total ?? { id: category.id, name: category.name, amountCents: 0, count: 0, isSynthetic: category.isSynthetic };
+  });
+
+  return {
+    month,
+    rows,
+    categoryColumns,
+    totals,
+    grandTotalCents,
+    entryCount
+  };
+}
+
+function downloadSummaryCsv(month: string, rows: WorkbookRow[], categoryColumns: AncillaryCategoryColumn[], totals: Array<{ id: string; name: string; amountCents: number; count: number }>, grandTotalCents: number, entryCount: number) {
+  const header = ["Member", "Entry Count", ...categoryColumns.map((category) => category.name), "Total"];
+  const lines = [header.map(csvEscape).join(",")];
+
+  for (const row of rows) {
+    const values = [
+      row.memberName,
+      String(row.entryCount),
+      ...categoryColumns.map((category) => amountText(row.categoryAmounts[category.id] ?? 0).toFixed(2)),
+      amountText(row.subtotalCents).toFixed(2)
+    ];
+    lines.push(values.map((value) => csvEscape(value)).join(","));
+  }
+
   lines.push([
-    csvEscape(month),
-    "ALL MEMBERS",
-    "",
-    "Monthly Grand Total",
-    "",
-    "",
-    csvEscape((grandTotal / 100).toFixed(2)),
-    "",
-    "",
-    "",
-    "",
-    "",
-    ""
+    csvEscape("Monthly Total"),
+    csvEscape(entryCount),
+    ...categoryColumns.map((category) => csvEscape(amountText(totals.find((total) => total.id === category.id)?.amountCents ?? 0).toFixed(2))),
+    csvEscape(amountText(grandTotalCents).toFixed(2))
   ].join(","));
 
   const blob = new Blob([`\uFEFF${lines.join("\n")}`], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `monthly-ancillary-charges-${month}.csv`;
+  link.download = `monthly-ancillary-summary-${month}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
 
-function downloadMonthlyExcelXml(month: string, memberRows: MemberRow[], grandTotal: number) {
-  const headers = [
-    "Month",
-    "Member",
-    "Service Date",
-    "Charge Item",
-    "Quantity",
-    "Unit Amount",
-    "Line Total",
-    "Source Module",
-    "Source Record",
-    "Reconciliation Status",
-    "Reconciled By",
-    "Reconciled At",
-    "Reconciliation Note"
-  ];
+function downloadSummaryExcelXml(month: string, rows: WorkbookRow[], categoryColumns: AncillaryCategoryColumn[], totals: Array<{ id: string; name: string; amountCents: number; count: number }>, grandTotalCents: number, entryCount: number) {
+  const escapeXml = (value: string | number) =>
+    String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
 
-  const rows: Array<Array<string | number>> = [];
-  memberRows.forEach((member) => {
-    member.items.forEach((item) => {
-      rows.push([
-        month,
-        member.member_name,
-        item.service_date,
-        item.category_name,
-        item.quantity,
-        (item.unit_amount_cents / 100).toFixed(2),
-        (item.total_amount_cents / 100).toFixed(2),
-        item.source_entity ?? "Manual",
-        item.source_entity_id ?? "",
-        item.reconciliation_status,
-        item.reconciled_by ?? "",
-        item.reconciled_at ?? "",
-        item.reconciliation_note ?? ""
-      ]);
-    });
-    rows.push([month, member.member_name, "", "Member Subtotal", "", "", (member.subtotal_cents / 100).toFixed(2), "", "", "", "", "", ""]);
-  });
-  rows.push([month, "ALL MEMBERS", "", "Monthly Grand Total", "", "", (grandTotal / 100).toFixed(2), "", "", "", "", "", ""]);
+  const headers = ["Member", "Entry Count", ...categoryColumns.map((category) => category.name), "Total"];
+  const bodyRows = rows.map((row) => [
+    { type: "String", value: row.memberName },
+    { type: "Number", value: row.entryCount },
+    ...categoryColumns.map((category) => ({ type: "Number", value: amountText(row.categoryAmounts[category.id] ?? 0) })),
+    { type: "Number", value: amountText(row.subtotalCents) }
+  ]);
+  bodyRows.push([
+    { type: "String", value: "Monthly Total" },
+    { type: "Number", value: entryCount },
+    ...categoryColumns.map((category) => ({ type: "Number", value: amountText(totals.find((total) => total.id === category.id)?.amountCents ?? 0) })),
+    { type: "Number", value: amountText(grandTotalCents) }
+  ]);
 
   const xmlHeader = `<?xml version="1.0"?>
 <?mso-application progid="Excel.Sheet"?>
@@ -236,363 +246,239 @@ function downloadMonthlyExcelXml(month: string, memberRows: MemberRow[], grandTo
 <Table>`;
   const xmlFooter = `</Table></Worksheet></Workbook>`;
 
-  const escapeXml = (value: string | number) =>
-    String(value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&apos;");
-
-  const headerRow = `<Row>${headers.map((h) => `<Cell><Data ss:Type="String">${escapeXml(h)}</Data></Cell>`).join("")}</Row>`;
-  const bodyRows = rows
-    .map((row) => `<Row>${row.map((cell) => `<Cell><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`).join("")}</Row>`)
+  const headerRow = `<Row>${headers.map((header) => `<Cell><Data ss:Type="String">${escapeXml(header)}</Data></Cell>`).join("")}</Row>`;
+  const dataRows = bodyRows
+    .map(
+      (row) =>
+        `<Row>${row
+          .map((cell) => `<Cell><Data ss:Type="${cell.type}">${cell.type === "Number" ? escapeXml(cell.value) : escapeXml(cell.value)}</Data></Cell>`)
+          .join("")}</Row>`
+    )
     .join("");
 
-  const xml = `${xmlHeader}${headerRow}${bodyRows}${xmlFooter}`;
+  const xml = `${xmlHeader}${headerRow}${dataRows}${xmlFooter}`;
   const blob = new Blob([xml], { type: "application/vnd.ms-excel;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `monthly-ancillary-charges-${month}.xls`;
+  link.download = `monthly-ancillary-summary-${month}.xls`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
 
-export function MonthlyAncillaryReport({
-  availableMonths,
-  selectedMonth,
-  logs
-}: {
-  availableMonths: string[];
-  selectedMonth: string;
-  logs: AncillaryLog[];
-}) {
-  const [entries, setEntries] = useState(logs);
-  const [month, setMonth] = useState(selectedMonth);
-  const [reconciliationFilter, setReconciliationFilter] = useState<"all" | "open" | "reconciled" | "void">("all");
-  const [status, setStatus] = useState<string | null>(null);
-  const { isSaving, run } = useScopedMutation();
+export function MonthlyAncillaryReport({ summary }: { summary: AncillarySummary }) {
+  const [selectedMonth, setSelectedMonth] = useState(summary.selectedMonth);
 
   useEffect(() => {
-    setEntries(logs);
-  }, [logs]);
+    setSelectedMonth(summary.selectedMonth);
+  }, [summary.selectedMonth]);
 
-  const memberRows = useMemo(() => buildMemberRows(entries, month, reconciliationFilter), [entries, month, reconciliationFilter]);
-  const grandTotal = useMemo(() => memberRows.reduce((sum, row) => sum + row.subtotal_cents, 0), [memberRows]);
-  const monthEntryIdsToReconcile = useMemo(
-    () =>
-      entries
-        .filter((log) => monthKeyFromDate(log.service_date) === month)
-        .filter((log) => (log.reconciliation_status ?? "open") !== "reconciled")
-        .filter((log) => (log.reconciliation_status ?? "open") !== "void")
-        .map((log) => log.id),
-    [entries, month]
-  );
-
-  function handleDelete(entryId: string) {
-    if (!window.confirm("Delete this ancillary charge entry? This cannot be undone.")) {
-      return;
-    }
-
-    void run(
-      async () =>
-        runDocumentationUpdateAction({
-          kind: "deleteWorkflowRecord",
-          payload: { entity: "ancillaryLogs", id: entryId }
-        }),
-      {
-        successMessage: "Ancillary charge entry deleted.",
-        onSuccess: async (result) => {
-          setEntries((current) => current.filter((entry) => entry.id !== entryId));
-          setStatus(result.message);
-        },
-        onError: async (result) => {
-          setStatus(`Error: ${result.error}`);
-        }
-      }
-    );
-  }
-
-  function handleReconciliation(entryId: string, nextStatus: "open" | "reconciled" | "void") {
-    const label = nextStatus === "reconciled" ? "mark as reconciled" : nextStatus === "void" ? "mark as void" : "mark as open";
-    if (!window.confirm(`Are you sure you want to ${label}?`)) {
-      return;
-    }
-
-    void run(
-      async () =>
-        runDocumentationUpdateAction({
-          kind: "setAncillaryReconciliation",
-          payload: { id: entryId, status: nextStatus }
-        }),
-      {
-        successMessage: `Entry updated to ${nextStatus}.`,
-        onSuccess: async (result) => {
-          setEntries((current) =>
-            current.map((entry) =>
-              entry.id === entryId
-                ? {
-                    ...entry,
-                    reconciliation_status: nextStatus
-                  }
-                : entry
-            )
-          );
-          setStatus(result.message);
-        },
-        onError: async (result) => {
-          setStatus(`Error: ${result.error}`);
-        }
-      }
-    );
-  }
-
-  function handleMarkAllReconciled() {
-    if (monthEntryIdsToReconcile.length === 0) {
-      setStatus("No unreconciled entries for the selected month.");
-      return;
-    }
-
-    if (!window.confirm(`Mark all ${monthEntryIdsToReconcile.length} eligible entries for ${month} as reconciled?`)) {
-      return;
-    }
-
-    void run(async () => {
-      let successCount = 0;
-      let failureCount = 0;
-      const updatedIds: string[] = [];
-
-      for (const entryId of monthEntryIdsToReconcile) {
-        const result = await runDocumentationUpdateAction({
-          kind: "setAncillaryReconciliation",
-          payload: { id: entryId, status: "reconciled" }
-        });
-        if ("error" in result) {
-          failureCount += 1;
-        } else {
-          successCount += 1;
-          updatedIds.push(entryId);
-        }
-      }
-
-      setEntries((current) =>
-        current.map((entry) =>
-          updatedIds.includes(entry.id)
-            ? {
-                ...entry,
-                reconciliation_status: "reconciled"
-              }
-            : entry
-        )
-      );
-
-      if (failureCount === 0) {
-        return { ok: true, message: `Marked ${successCount} entries as reconciled for ${month}.` };
-      }
-
-      return {
-        ok: false,
-        error: `Marked ${successCount} reconciled; ${failureCount} failed. Retry the remaining entries.`
-      };
-    }, {
-      onSuccess: async (result) => {
-        setStatus(result.message);
-      },
-      onError: async (result) => {
-        setStatus(`Error: ${result.error}`);
-      }
-    });
-  }
+  const workbookState = useMemo(() => buildWorkbookState(summary, selectedMonth), [selectedMonth, summary]);
+  const monthOptions = useMemo(() => {
+    const base = Array.from(new Set([summary.selectedMonth, ...summary.availableMonths])).filter(Boolean);
+    return base.sort((a, b) => b.localeCompare(a));
+  }, [summary.availableMonths, summary.selectedMonth]);
+  const selectedLabel = monthLabel(workbookState.month);
+  const categoryCount = workbookState.categoryColumns.length;
+  const memberCount = workbookState.rows.length;
+  const nonZeroCategories = workbookState.totals.filter((category) => category.amountCents > 0).length;
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardTitle>Monthly Ancillary Charges by Member</CardTitle>
-        <div className="mt-3 grid gap-3 md:grid-cols-4">
-          <label className="space-y-1 text-sm">
+      <Card className="overflow-hidden">
+        <div className="border-b border-border/60 px-4 py-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted">Operational workbook</p>
+              <CardTitle className="text-2xl">Monthly Ancillary Charges</CardTitle>
+              <p className="max-w-2xl text-sm text-muted">
+                Table-first monthly summary grouped by member and ancillary category, built from canonical ancillary log data.
+              </p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg border border-border bg-muted/20 px-3 py-2">
+                <p className="text-xs text-muted">Selected month</p>
+                <p className="text-sm font-semibold">{selectedLabel}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 px-3 py-2">
+                <p className="text-xs text-muted">Members</p>
+                <p className="text-sm font-semibold">{memberCount}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 px-3 py-2">
+                <p className="text-xs text-muted">Entries</p>
+                <p className="text-sm font-semibold">{workbookState.entryCount}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 px-3 py-2">
+                <p className="text-xs text-muted">Total</p>
+                <p className="text-sm font-semibold">{money(workbookState.grandTotalCents)}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-4 px-4 py-4 lg:grid-cols-[280px_1fr] lg:items-end">
+          <label className="space-y-2 text-sm">
             <span className="font-semibold">Month</span>
-            <select className="h-11 w-full rounded-lg border border-border px-3" value={month} onChange={(e) => setMonth(e.target.value)}>
-              {availableMonths.map((m) => (
-                <option key={m} value={m}>{m}</option>
+            <select
+              className="h-11 w-full rounded-lg border border-border bg-background px-3 text-sm"
+              value={selectedMonth}
+              onChange={(event) => setSelectedMonth(event.target.value)}
+            >
+              {monthOptions.map((month) => (
+                <option key={month} value={month}>
+                  {monthLabel(month)}
+                </option>
               ))}
             </select>
           </label>
-          <label className="space-y-1 text-sm">
-            <span className="font-semibold">Reconciliation</span>
-            <select className="h-11 w-full rounded-lg border border-border px-3" value={reconciliationFilter} onChange={(e) => setReconciliationFilter(e.target.value as "all" | "open" | "reconciled" | "void")}>
-              <option value="all">All</option>
-              <option value="open">Open</option>
-              <option value="reconciled">Reconciled</option>
-              <option value="void">Void</option>
-            </select>
-          </label>
-          <div className="rounded-lg border border-border p-3">
-            <p className="text-xs text-muted">Members with Charges</p>
-            <p className="text-lg font-semibold">{memberRows.length}</p>
+
+          <div className="flex flex-col gap-3 lg:items-end">
+            <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-5">
+              <div className="rounded-lg border border-border px-3 py-2">
+                <p className="text-xs text-muted">Category columns</p>
+                <p className="text-sm font-semibold">{categoryCount}</p>
+              </div>
+              <div className="rounded-lg border border-border px-3 py-2">
+                <p className="text-xs text-muted">Columns with activity</p>
+                <p className="text-sm font-semibold">{nonZeroCategories}</p>
+              </div>
+              <div className="rounded-lg border border-border px-3 py-2">
+                <p className="text-xs text-muted">Available months</p>
+                <p className="text-sm font-semibold">{summary.availableMonths.length}</p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                onClick={() =>
+                  downloadSummaryCsv(
+                    workbookState.month,
+                    workbookState.rows,
+                    workbookState.categoryColumns,
+                    workbookState.totals,
+                    workbookState.grandTotalCents,
+                    workbookState.entryCount
+                  )
+                }
+              >
+                Export CSV
+              </Button>
+              <Button
+                type="button"
+                onClick={() =>
+                  downloadSummaryExcelXml(
+                    workbookState.month,
+                    workbookState.rows,
+                    workbookState.categoryColumns,
+                    workbookState.totals,
+                    workbookState.grandTotalCents,
+                    workbookState.entryCount
+                  )
+                }
+              >
+                Export Excel (.xls)
+              </Button>
+            </div>
           </div>
-          <div className="rounded-lg border border-border p-3">
-            <p className="text-xs text-muted">Grand Total</p>
-            <p className="text-lg font-semibold">${(grandTotal / 100).toFixed(2)}</p>
-          </div>
-        </div>
-        <div className="mt-3">
-          <Button
-            type="button"
-            onClick={handleMarkAllReconciled}
-            disabled={isSaving || monthEntryIdsToReconcile.length === 0}
-          >
-            Mark All as Reconciled ({monthEntryIdsToReconcile.length})
-          </Button>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button type="button" onClick={() => downloadMonthlyCsv(month, memberRows, grandTotal)}>
-            Export CSV
-          </Button>
-          <Button type="button" onClick={() => downloadMonthlyExcelXml(month, memberRows, grandTotal)}>
-            Export Excel (.xls)
-          </Button>
-          <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} className="self-center" />
         </div>
       </Card>
 
-      <div className="grid gap-3 md:hidden">
-        {memberRows.map((member) => (
-          <Card key={member.member_name}>
-            <CardTitle>{member.member_name} - Subtotal ${(member.subtotal_cents / 100).toFixed(2)}</CardTitle>
-            <div className="mt-2 space-y-2">
-              {member.items.map((item) => (
-                <div key={item.id} className="rounded-lg border border-border p-2 text-xs">
-                  <p className="font-semibold text-fg">{formatDate(item.service_date)} - {item.category_name}</p>
-                  <p className="text-muted">Qty {item.quantity} | ${ (item.unit_amount_cents / 100).toFixed(2) } each | Line ${ (item.total_amount_cents / 100).toFixed(2) }</p>
-                  <p className="text-muted">Source: {item.source_entity ?? "Manual"}</p>
-                  <p className="text-muted">Reconciliation: {item.reconciliation_status}</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {item.reconciliation_status === "open" ? (
-                      <button
-                        type="button"
-                        className="rounded border border-green-300 px-2 py-1 font-semibold text-green-700"
-                        onClick={() => handleReconciliation(item.id, "reconciled")}
-                        disabled={isSaving}
-                      >
-                        Reconcile
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="rounded border border-slate-300 px-2 py-1 font-semibold text-slate-700"
-                        onClick={() => handleReconciliation(item.id, "open")}
-                        disabled={isSaving}
-                      >
-                        Mark Open
-                      </button>
-                    )}
-                    {item.reconciliation_status === "open" || item.reconciliation_status === "reconciled" ? (
-                      <button
-                        type="button"
-                        className="rounded border border-amber-300 px-2 py-1 font-semibold text-amber-700"
-                        onClick={() => handleReconciliation(item.id, "void")}
-                        disabled={isSaving}
-                      >
-                        Void
-                      </button>
-                    ) : null}
-                  </div>
-                  <button
-                    type="button"
-                    className="mt-2 rounded border border-red-300 px-2 py-1 font-semibold text-red-700"
-                    onClick={() => handleDelete(item.id)}
-                    disabled={isSaving}
-                  >
-                    Delete Entry
-                  </button>
-                </div>
-              ))}
-            </div>
-          </Card>
-        ))}
-      </div>
+      <Card className="overflow-hidden">
+        <div className="border-b border-border/60 px-4 py-3">
+          <CardTitle className="text-lg">{selectedLabel} summary</CardTitle>
+          <p className="text-sm text-muted">
+            Nonzero cells are highlighted so coordinators can scan member activity and category totals quickly.
+          </p>
+        </div>
 
-      {memberRows.map((member) => (
-        <Card key={member.member_name} className="table-wrap hidden md:block">
-          <CardTitle>{member.member_name} - Subtotal ${(member.subtotal_cents / 100).toFixed(2)}</CardTitle>
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Charge Item</th>
-                <th>Qty</th>
-                <th>Per Item</th>
-                <th>Line Total</th>
-                <th>Source</th>
-                <th>Reconciliation</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {member.items.map((item) => (
-                <tr key={item.id}>
-                  <td>{formatDate(item.service_date)}</td>
-                  <td>{item.category_name}</td>
-                  <td>{item.quantity}</td>
-                  <td>${(item.unit_amount_cents / 100).toFixed(2)}</td>
-                  <td>${(item.total_amount_cents / 100).toFixed(2)}</td>
-                  <td>{item.source_entity ?? "Manual"}</td>
-                  <td>
-                    <div className="space-y-1 text-xs">
-                      <p className="font-semibold">{item.reconciliation_status}</p>
-                      {item.reconciled_by ? <p className="text-muted">{item.reconciled_by}</p> : null}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="flex flex-wrap gap-1">
-                      {item.reconciliation_status === "open" ? (
-                        <button
-                          type="button"
-                          className="rounded border border-green-300 px-2 py-1 text-xs font-semibold text-green-700"
-                          onClick={() => handleReconciliation(item.id, "reconciled")}
-                          disabled={isSaving}
-                        >
-                          Reconcile
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700"
-                          onClick={() => handleReconciliation(item.id, "open")}
-                          disabled={isSaving}
-                        >
-                          Mark Open
-                        </button>
-                      )}
-                      {item.reconciliation_status === "open" || item.reconciliation_status === "reconciled" ? (
-                        <button
-                          type="button"
-                          className="rounded border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-700"
-                          onClick={() => handleReconciliation(item.id, "void")}
-                          disabled={isSaving}
-                        >
-                          Void
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="rounded border border-red-300 px-2 py-1 text-xs font-semibold text-red-700"
-                        onClick={() => handleDelete(item.id)}
-                        disabled={isSaving}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
+        {workbookState.rows.length === 0 ? (
+          <div className="px-4 py-10 text-sm text-muted">No ancillary charges were logged for {selectedLabel}.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-separate border-spacing-0 text-sm">
+              <thead>
+                <tr className="text-left">
+                  <th className="sticky left-0 z-20 border-b border-border bg-background px-4 py-3 font-semibold">Member</th>
+                  <th className="border-b border-border px-3 py-3 text-right font-semibold">Entries</th>
+                  {workbookState.categoryColumns.map((category) => (
+                    <th key={category.id} className="border-b border-border px-3 py-3 text-right font-semibold">
+                      <span className="block max-w-[140px] text-pretty">{category.name}</span>
+                    </th>
+                  ))}
+                  <th className="border-b border-border px-4 py-3 text-right font-semibold">Total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {workbookState.rows.map((row) => (
+                  <tr key={row.memberId ?? row.memberName} className="align-top">
+                    <td className="sticky left-0 z-10 border-b border-border bg-background px-4 py-3">
+                      <div className="font-semibold text-fg">{row.memberName}</div>
+                      <div className="text-xs text-muted">{row.memberId ? `Member ID ${row.memberId}` : "Member summary"}</div>
+                    </td>
+                    <td className="border-b border-border px-3 py-3 text-right tabular-nums text-muted">{row.entryCount}</td>
+                    {workbookState.categoryColumns.map((category) => {
+                      const value = row.categoryAmounts[category.id] ?? 0;
+                      const isActive = value > 0;
+                      return (
+                        <td
+                          key={category.id}
+                          className={[
+                            "border-b border-border px-3 py-3 text-right tabular-nums",
+                            isActive ? "bg-emerald-50 font-semibold text-emerald-900" : "text-muted/80"
+                          ].join(" ")}
+                        >
+                          {isActive ? money(value) : "—"}
+                        </td>
+                      );
+                    })}
+                    <td className="border-b border-border px-4 py-3 text-right tabular-nums font-semibold text-fg">
+                      {money(row.subtotalCents)}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="bg-muted/30 align-top font-semibold">
+                  <td className="sticky left-0 z-10 border-t border-border bg-muted/30 px-4 py-3">Monthly Total</td>
+                  <td className="border-t border-border px-3 py-3 text-right tabular-nums">{workbookState.entryCount}</td>
+                  {workbookState.categoryColumns.map((category) => {
+                    const total = workbookState.totals.find((item) => item.id === category.id)?.amountCents ?? 0;
+                    return (
+                      <td key={category.id} className="border-t border-border px-3 py-3 text-right tabular-nums">
+                        {total > 0 ? money(total) : "—"}
+                      </td>
+                    );
+                  })}
+                  <td className="border-t border-border px-4 py-3 text-right tabular-nums">{money(workbookState.grandTotalCents)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <Card>
+          <CardTitle className="text-base">Workbook notes</CardTitle>
+          <p className="mt-2 text-sm text-muted">
+            This view is intentionally summary-first. It keeps the operational month snapshot readable for center staff and exports the
+            same summary structure to CSV or Excel.
+          </p>
         </Card>
-      ))}
+        <Card>
+          <CardTitle className="text-base">Date basis</CardTitle>
+          <p className="mt-2 text-sm text-muted">
+            Rows are grouped by the ancillary service date so the month selection stays aligned with the canonical ancillary log data.
+          </p>
+        </Card>
+        <Card>
+          <CardTitle className="text-base">Detail access</CardTitle>
+          <p className="mt-2 text-sm text-muted">
+            Use the member ancillary screen for entry-level detail. This report is the high-level monthly workbook view.
+          </p>
+        </Card>
+      </div>
     </div>
   );
 }

@@ -2,7 +2,11 @@
 
 import { useMemo, useState, useTransition } from "react";
 
-import { copyForwardTransportationDetailsAction } from "@/app/(portal)/operations/transportation-station/actions";
+import {
+  copyForwardTransportationDetailsAction,
+  searchTransportationAddRiderMembersAction
+} from "@/app/(portal)/operations/transportation-station/actions";
+import { LiveSearchSelect } from "@/components/forms/live-search-select";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { formatPhoneInput } from "@/lib/phone";
 
@@ -24,13 +28,11 @@ export function TransportationStationAddRiderForm({
   action,
   selectedDate,
   defaultShift,
-  members,
   busNumberOptions
 }: {
   action: (formData: FormData) => void | Promise<void>;
   selectedDate: string;
   defaultShift: ShiftOption;
-  members: MemberPrefillOption[];
   busNumberOptions: string[];
 }) {
   const previousDateDefault = useMemo(() => {
@@ -41,6 +43,7 @@ export function TransportationStationAddRiderForm({
   }, [selectedDate]);
   const [isCopyPending, startCopyTransition] = useTransition();
   const [memberId, setMemberId] = useState("");
+  const [selectedMember, setSelectedMember] = useState<MemberPrefillOption | null>(null);
   const [shift, setShift] = usePropSyncedState<ShiftOption>(defaultShift, [defaultShift, selectedDate]);
   const [copySourceDate, setCopySourceDate] = usePropSyncedState(previousDateDefault, [previousDateDefault]);
   const [transportType, setTransportType] = useState<TransportType>("Door to Door");
@@ -52,12 +55,11 @@ export function TransportationStationAddRiderForm({
   const [caregiverContactAddress, setCaregiverContactAddress] = useState("");
   const [copyStatus, setCopyStatus] = usePropSyncedStatus([selectedDate, defaultShift], "");
 
-  const selectedMember = useMemo(() => members.find((row) => row.id === memberId) ?? null, [members, memberId]);
   const activeMemberId = selectedMember?.id ?? "";
 
-  const setMemberWithPrefills = (nextMemberId: string) => {
-    setMemberId(nextMemberId);
-    const nextMember = members.find((row) => row.id === nextMemberId) ?? null;
+  const setMemberWithPrefills = (nextMember: MemberPrefillOption | null) => {
+    setMemberId(nextMember?.id ?? "");
+    setSelectedMember(nextMember);
     setDoorToDoorAddress(nextMember?.defaultDoorToDoorAddress ?? "");
     setCaregiverContactName(nextMember?.defaultContactName ?? "");
     setCaregiverContactPhone(formatPhoneInput(nextMember?.defaultContactPhone));
@@ -114,21 +116,33 @@ export function TransportationStationAddRiderForm({
       <input type="hidden" name="caregiverContactId" value={selectedMember?.defaultContactId ?? ""} />
 
       <label className="space-y-1 text-sm">
-        <span className="text-xs font-semibold text-muted">Member</span>
-        <select
-          name="memberId"
-          required
-          value={activeMemberId}
-          onChange={(event) => setMemberWithPrefills(event.target.value)}
-          className="h-10 w-full rounded-lg border border-border px-3"
-        >
-          <option value="">Select member</option>
-          {members.map((member) => (
-            <option key={member.id} value={member.id}>
-              {member.displayName}
-            </option>
-          ))}
-        </select>
+        <input type="hidden" name="memberId" value={activeMemberId} />
+        <LiveSearchSelect<MemberPrefillOption>
+          label="Member"
+          value={memberId}
+          onChange={setMemberId}
+          onSelectOption={setMemberWithPrefills}
+          searchPlaceholder="Search active member name"
+          searchHint="Search at least 2 letters to find an active member for same-day rider add."
+          noMatchesMessage="No active members matched that search."
+          search={({ query, selectedId }) =>
+            searchTransportationAddRiderMembersAction({
+              q: query,
+              selectedId,
+              limit: 25
+            })
+          }
+          getOptionId={(option) => option.id}
+          getOptionLabel={(option) => option.displayName}
+          renderOption={(option) => (
+            <div className="min-w-0">
+              <p className="truncate font-medium text-fg">{option.displayName}</p>
+              <p className="truncate text-xs text-muted">
+                {option.defaultDoorToDoorAddress ?? option.defaultContactName ?? "No saved transportation defaults"}
+              </p>
+            </div>
+          )}
+        />
       </label>
 
       <label className="space-y-1 text-sm">
@@ -256,7 +270,11 @@ export function TransportationStationAddRiderForm({
       </label>
 
       <div className="md:col-span-3">
-        <button type="submit" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
+        <button
+          type="submit"
+          className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          disabled={!activeMemberId}
+        >
           Add Rider
         </button>
       </div>

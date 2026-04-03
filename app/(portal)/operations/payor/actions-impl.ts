@@ -41,6 +41,7 @@ import {
   createEnrollmentProratedInvoice,
   finalizeBillingBatch,
   finalizeInvoice,
+  finalizeInvoices,
   generateBillingBatch,
   reopenBillingBatch,
   setVariableChargeBillingStatus
@@ -105,6 +106,7 @@ async function requireReopenRole() {
 
 function revalidateBillingPaths() {
   revalidatePath("/operations/payor");
+  revalidatePath("/operations/payor/settings");
   revalidatePath("/operations/payor/billing-agreements");
   revalidatePath("/operations/payor/center-closures");
   revalidatePath("/operations/payor/schedule-templates");
@@ -176,7 +178,7 @@ async function handleSaveCenterClosure(formData: FormData) {
 
   const payload = {
     closure_date: asDateOnly(formData, "closureDate"),
-    closure_name: asString(formData, "closureName") || "Center Closure",
+    closure_name: asString(formData, "closureName") || closureType,
     closure_type: closureType,
     billable_override: asBoolean(formData, "billableOverride", false),
     notes: asNullableString(formData, "notes"),
@@ -556,6 +558,33 @@ async function handleFinalizeInvoice(formData: FormData) {
   }
 }
 
+async function handleFinalizeDraftInvoices(formData: FormData) {
+  const returnPath = asString(formData, "returnPath") || "/operations/payor/invoices/draft";
+  try {
+    const access = await requireFinalizeRole();
+    if (!access.ok) {
+      redirectWithError(returnPath, access.error);
+    }
+    const invoiceIds = formData
+      .getAll("invoiceIds")
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean);
+    const result = await finalizeInvoices({
+      invoiceIds,
+      finalizedBy: access.profile.full_name
+    });
+    if (!result.ok) {
+      redirectWithError(returnPath, result.error);
+    }
+    revalidateBillingPaths();
+  } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
+    redirectWithError(returnPath, error instanceof Error ? error.message : "Unable to finalize selected invoices.");
+  }
+}
+
 async function handleSetVariableChargeStatus(formData: FormData) {
   await requireBillingProfile();
   const table = asString(formData, "table");
@@ -714,6 +743,7 @@ const payorActionIntentSchema = [
   "finalizeBillingBatch",
   "reopenBillingBatch",
   "finalizeInvoice",
+  "finalizeDraftInvoices",
   "setVariableChargeStatus",
   "createBillingExport",
   "createCustomInvoice",
@@ -760,6 +790,8 @@ export async function submitPayorActionImpl(formData: FormData) {
       return handleReopenBillingBatch(formData);
     case "finalizeInvoice":
       return handleFinalizeInvoice(formData);
+    case "finalizeDraftInvoices":
+      return handleFinalizeDraftInvoices(formData);
     case "setVariableChargeStatus":
       return handleSetVariableChargeStatus(formData);
     case "createBillingExport":

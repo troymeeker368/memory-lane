@@ -177,21 +177,22 @@ async function loadLogo(pdf: PDFDocument) {
 function drawHeader(state: PdfLayoutState) {
   const { page, font, fontBold, logo, report } = state;
   let y = PAGE_TOP;
+  const logoHeight = 36;
+  const logoWidth = logo ? Math.min(logo.scale(logoHeight / logo.height).width, 160) : 0;
 
   if (logo) {
-    const logoHeight = 36;
-    const scaled = logo.scale(logoHeight / logo.height);
     page.drawImage(logo, {
       x: PAGE_MARGIN_X,
       y: y - logoHeight + 2,
-      width: Math.min(scaled.width, 160),
+      width: logoWidth,
       height: logoHeight
     });
   }
 
+  const facilityX = PAGE_MARGIN_X + (logoWidth > 0 ? Math.max(logoWidth + 12, 170) : 0);
   const facilityName = report.facility.name;
   page.drawText(facilityName, {
-    x: PAGE_MARGIN_X + 170,
+    x: facilityX,
     y,
     size: 13,
     font: fontBold,
@@ -201,7 +202,7 @@ function drawHeader(state: PdfLayoutState) {
 
   if (report.facility.address) {
     page.drawText(report.facility.address, {
-      x: PAGE_MARGIN_X + 170,
+      x: facilityX,
       y,
       size: 9,
       font,
@@ -212,7 +213,7 @@ function drawHeader(state: PdfLayoutState) {
 
   if (report.facility.phone) {
     page.drawText(report.facility.phone, {
-      x: PAGE_MARGIN_X + 170,
+      x: facilityX,
       y,
       size: 9,
       font,

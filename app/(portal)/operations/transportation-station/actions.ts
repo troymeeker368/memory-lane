@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
@@ -23,7 +22,6 @@ import {
 import { toEasternISO } from "@/lib/timezone";
 
 type Shift = "AM" | "PM";
-type TransportationStationShift = Shift | "Both";
 type TransportMode = "Bus Stop" | "Door to Door";
 type BusNumber = string;
 
@@ -53,28 +51,6 @@ function normalizeBusNumber(raw: string | null | undefined, busNumberOptions: st
   const normalized = String(raw ?? "").trim();
   if (busNumberOptions.includes(normalized)) return normalized;
   return null;
-}
-
-function normalizeBusFilter(raw: string | null | undefined, busNumberOptions: string[]): "all" | "unassigned" | string {
-  if (raw === "all" || raw === "unassigned") return raw;
-  if (busNumberOptions.includes(String(raw ?? "").trim())) return String(raw ?? "").trim();
-  return "all";
-}
-
-function buildStationHref(input: {
-  selectedDate: string;
-  shift: TransportationStationShift;
-  busFilter: "all" | "unassigned" | string;
-  error?: string;
-  success?: string;
-}): `/operations/transportation-station?${string}` {
-  const params = new URLSearchParams();
-  params.set("date", input.selectedDate);
-  params.set("shift", input.shift);
-  params.set("bus", input.busFilter);
-  if (input.error) params.set("error", input.error);
-  if (input.success) params.set("success", input.success);
-  return `/operations/transportation-station?${params.toString()}`;
 }
 
 async function requireTransportationEditor() {
@@ -206,6 +182,16 @@ export async function addTransportationManifestRiderAction(formData: FormData) {
   revalidateTransportationStation();
 }
 
+export async function searchTransportationAddRiderMembersAction(input: { q?: string; selectedId?: string | null; limit?: number }) {
+  await requireTransportationEditor();
+  const { getTransportationAddRiderMembers } = await import("@/lib/services/transportation-read");
+  return getTransportationAddRiderMembers({
+    q: String(input.q ?? "").trim(),
+    selectedId: String(input.selectedId ?? "").trim() || null,
+    limit: typeof input.limit === "number" ? input.limit : undefined
+  });
+}
+
 export async function excludeTransportationManifestRiderAction(formData: FormData) {
   const actor = await requireTransportationEditor();
   const busNumberOptions = await getConfiguredBusNumbers();
@@ -249,9 +235,6 @@ export async function reassignTransportationManifestBusAction(formData: FormData
   const busNumberOptions = await getConfiguredBusNumbers();
   const selectedDate = normalizeDateOnly(asString(formData, "selectedDate"));
   const shift = normalizeShift(asString(formData, "shift"));
-  const busFilter = normalizeBusFilter(asString(formData, "busFilter"), busNumberOptions);
-  const failureHref = (message: string) =>
-    buildStationHref({ selectedDate, shift, busFilter, error: message });
   const actor = await requireTransportationEditor();
   const memberId = await resolveCanonicalMemberId(asString(formData, "memberId"), {
     actionLabel: "reassignTransportationManifestBusAction"
@@ -267,10 +250,10 @@ export async function reassignTransportationManifestBusAction(formData: FormData
   const notes = asNullableString(formData, "notes");
 
   if (!busNumber) {
-    redirect(failureHref("Bus assignment is required."));
+    return { ok: false as const, error: "Bus assignment is required." };
   }
   if (!transportType) {
-    redirect(failureHref("Transport type is required."));
+    return { ok: false as const, error: "Transport type is required." };
   }
 
   const exclusion = await findTransportationManifestAdjustmentSupabase({
@@ -304,14 +287,7 @@ export async function reassignTransportationManifestBusAction(formData: FormData
   });
 
   revalidateTransportationStation();
-  redirect(
-    buildStationHref({
-      selectedDate,
-      shift,
-      busFilter,
-      success: "Bus assignment updated."
-    })
-  );
+  return { ok: true as const, success: "Bus assignment updated." };
 }
 
 export async function undoTransportationManifestAdjustmentAction(formData: FormData) {

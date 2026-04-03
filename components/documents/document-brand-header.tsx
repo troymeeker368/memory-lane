@@ -21,13 +21,13 @@ export function DocumentBrandHeader({
     <header className={cn("border-b border-black/20 pb-3", className)}>
       <div className="flex flex-col gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-start sm:gap-x-4 sm:gap-y-3">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="relative h-[42px] w-[132px] shrink-0 overflow-hidden">
+          <div className="relative h-[42px] w-[160px] shrink-0">
             <Image
               src={DOCUMENT_CENTER_LOGO_PUBLIC_PATH}
               alt="Town Square logo"
               fill
-              sizes="132px"
-              className="object-cover object-left"
+              sizes="160px"
+              className="object-contain object-left"
               priority
             />
           </div>

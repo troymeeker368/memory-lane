@@ -101,6 +101,12 @@ async function loadCenterLogoImage(pdf: PDFDocumentType) {
   }
 }
 
+function resolveHeaderLogoWidth(logo: PDFImage | null, logoHeight: number, maxWidth: number) {
+  if (!logo) return 0;
+  const scaled = logo.scale(logoHeight / logo.height);
+  return Math.min(scaled.width, maxWidth);
+}
+
 function wrapText(text: string, width: number, font: PDFFont, size: number) {
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length === 0) return [""];
@@ -188,11 +194,10 @@ function drawPageHeader(input: {
 }) {
   const { page, font, bold, logo, left, right, brand, text, divider } = input;
   let y = 748;
+  const logoHeight = 42;
+  const logoWidth = resolveHeaderLogoWidth(logo, logoHeight, 132);
 
   if (logo) {
-    const logoHeight = 42;
-    const scaled = logo.scale(logoHeight / logo.height);
-    const logoWidth = Math.min(scaled.width, 180);
     page.drawImage(logo, {
       x: left,
       y: y - logoHeight + 8,
@@ -200,6 +205,8 @@ function drawPageHeader(input: {
       height: logoHeight
     });
   }
+
+  const infoX = left + (logoWidth > 0 ? Math.max(logoWidth + 12, 144) : 0);
 
   page.drawText("INVOICE", {
     x: right - bold.widthOfTextAtSize("INVOICE", 22),
@@ -211,7 +218,7 @@ function drawPageHeader(input: {
 
   y -= 4;
   page.drawText(DOCUMENT_CENTER_NAME, {
-    x: left,
+    x: infoX,
     y,
     size: 13,
     font: bold,
@@ -219,7 +226,7 @@ function drawPageHeader(input: {
   });
   y -= 15;
   page.drawText(DOCUMENT_CENTER_ADDRESS_LINE_1, {
-    x: left,
+    x: infoX,
     y,
     size: 9.5,
     font,
@@ -227,7 +234,7 @@ function drawPageHeader(input: {
   });
   y -= 12;
   page.drawText(DOCUMENT_CENTER_ADDRESS_LINE_2, {
-    x: left,
+    x: infoX,
     y,
     size: 9.5,
     font,
@@ -235,7 +242,7 @@ function drawPageHeader(input: {
   });
   y -= 12;
   page.drawText(DOCUMENT_CENTER_PHONE, {
-    x: left,
+    x: infoX,
     y,
     size: 9.5,
     font,

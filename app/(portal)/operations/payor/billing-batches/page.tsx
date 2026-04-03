@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Fragment } from "react";
 
 import { BillingManualAdjustmentForm } from "@/components/forms/billing-manual-adjustment-form";
 import { Card, CardTitle } from "@/components/ui/card";
@@ -12,9 +13,7 @@ import {
 import { normalizeRoleKey } from "@/lib/permissions";
 import { toEasternDate } from "@/lib/timezone";
 
-import {
-  submitPayorAction
-} from "@/app/(portal)/operations/payor/actions";
+import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 import { firstSearchParam, parseDateOnlySearchParam, parseEnumSearchParam } from "@/lib/search-params";
 
 function nextMonthStart() {
@@ -22,6 +21,10 @@ function nextMonthStart() {
   now.setUTCDate(1);
   now.setUTCMonth(now.getUTCMonth() + 1);
   return now.toISOString().slice(0, 10);
+}
+
+function money(amount: number) {
+  return `$${amount.toFixed(2)}`;
 }
 
 export default async function BillingBatchesPage({
@@ -54,6 +57,7 @@ export default async function BillingBatchesPage({
   const role = normalizeRoleKey(profile.role);
   const canReopenBatch = role === "admin" || role === "manager";
   const today = toEasternDate();
+  const reviewTotal = reviewRows.reduce((sum, row) => sum + row.totalAmount, 0);
 
   return (
     <div className="space-y-4">
@@ -99,7 +103,7 @@ export default async function BillingBatchesPage({
           </label>
           <div className="rounded-lg border border-border px-3 py-2 text-xs">
             <p className="font-semibold text-muted">Draft Preview Total</p>
-            <p className="mt-1 text-lg font-semibold text-fg">${preview.totalAmount.toFixed(2)}</p>
+            <p className="mt-1 text-lg font-semibold text-fg">{money(preview.totalAmount)}</p>
             <p className="text-muted">{preview.rows.length} member invoice(s)</p>
           </div>
           <div className="flex items-end">
@@ -137,7 +141,9 @@ export default async function BillingBatchesPage({
           <tbody>
             {batches.length === 0 ? (
               <tr>
-                <td colSpan={8} className="text-sm text-muted">No billing batches yet.</td>
+                <td colSpan={8} className="text-sm text-muted">
+                  No billing batches yet.
+                </td>
               </tr>
             ) : (
               batches.map((batch) => (
@@ -147,10 +153,12 @@ export default async function BillingBatchesPage({
                   <td>{batch.run_date}</td>
                   <td>{batch.batch_status}</td>
                   <td>{batch.invoice_count}</td>
-                  <td>${batch.total_amount.toFixed(2)}</td>
+                  <td>{money(batch.total_amount)}</td>
                   <td>
                     {batch.completion_date ? (
-                      <span>{batch.completion_date} / {batch.next_due_date ?? "-"}</span>
+                      <span>
+                        {batch.completion_date} / {batch.next_due_date ?? "-"}
+                      </span>
                     ) : (
                       <span>{batch.dueState}</span>
                     )}
@@ -165,7 +173,9 @@ export default async function BillingBatchesPage({
                           <input type="hidden" name="intent" value="finalizeBillingBatch" />
                           <input type="hidden" name="billingBatchId" value={batch.id} />
                           <input type="hidden" name="returnPath" value="/operations/payor/billing-batches" />
-                          <button type="submit" className="text-xs font-semibold text-brand">Finalize</button>
+                          <button type="submit" className="text-xs font-semibold text-brand">
+                            Finalize
+                          </button>
                         </form>
                       ) : null}
                       {canReopenBatch &&
@@ -176,7 +186,9 @@ export default async function BillingBatchesPage({
                           <input type="hidden" name="intent" value="reopenBillingBatch" />
                           <input type="hidden" name="billingBatchId" value={batch.id} />
                           <input type="hidden" name="returnPath" value="/operations/payor/billing-batches" />
-                          <button type="submit" className="text-xs font-semibold text-brand">Reopen</button>
+                          <button type="submit" className="text-xs font-semibold text-brand">
+                            Reopen
+                          </button>
                         </form>
                       ) : null}
                     </div>
@@ -189,64 +201,166 @@ export default async function BillingBatchesPage({
       </Card>
 
       {selectedBatch ? (
-        <Card className="table-wrap">
-          <CardTitle>Coordinator Review - {selectedBatch.billing_month}</CardTitle>
-          <p className="mt-1 text-xs text-muted">
-            Review draft invoices, add/exclude variable charges from the queue page, and finalize when ready.
-          </p>
-          <table className="mt-3">
+        <Card className="space-y-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-1">
+              <CardTitle>Coordinator Review - {selectedBatch.billing_month}</CardTitle>
+              <p className="text-sm text-muted">
+                A compact batch review surface that keeps the important fields visible and pushes lower-priority detail into expandable rows.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {selectedBatch.batch_status === "Draft" || selectedBatch.batch_status === "Reviewed" ? (
+                <form action={submitPayorAction}>
+                  <input type="hidden" name="intent" value="finalizeBillingBatch" />
+                  <input type="hidden" name="billingBatchId" value={selectedBatch.id} />
+                  <input type="hidden" name="returnPath" value="/operations/payor/billing-batches" />
+                  <button type="submit" className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">
+                    Finalize Batch
+                  </button>
+                </form>
+              ) : null}
+              {canReopenBatch &&
+              (selectedBatch.batch_status === "Finalized" ||
+                selectedBatch.batch_status === "Exported" ||
+                selectedBatch.batch_status === "Closed") ? (
+                <form action={submitPayorAction}>
+                  <input type="hidden" name="intent" value="reopenBillingBatch" />
+                  <input type="hidden" name="billingBatchId" value={selectedBatch.id} />
+                  <input type="hidden" name="returnPath" value="/operations/payor/billing-batches" />
+                  <button type="submit" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold text-brand">
+                    Reopen Batch
+                  </button>
+                </form>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-lg border border-border bg-slate-50/60 px-3 py-2">
+              <p className="text-xs text-muted">Invoice count</p>
+              <p className="text-lg font-semibold text-fg">{selectedBatch.invoice_count}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-slate-50/60 px-3 py-2">
+              <p className="text-xs text-muted">Batch total</p>
+              <p className="text-lg font-semibold text-fg">{money(selectedBatch.total_amount)}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-slate-50/60 px-3 py-2">
+              <p className="text-xs text-muted">Batch status</p>
+              <p className="text-lg font-semibold text-fg">{selectedBatch.batch_status}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-slate-50/60 px-3 py-2">
+              <p className="text-xs text-muted">Review total</p>
+              <p className="text-lg font-semibold text-fg">{money(reviewTotal)}</p>
+            </div>
+          </div>
+
+          <table>
             <thead>
               <tr>
                 <th>Member</th>
-                <th>Payor</th>
-              <th>Source</th>
-              <th>Billing Mode</th>
-              <th>Base Program</th>
-              <th>Base Detail</th>
-              <th>Prior-Month Transport</th>
-              <th>Prior-Month Ancillary</th>
-              <th>Prior-Month Adjustments</th>
-              <th>Billing Periods</th>
-              <th>Total</th>
-              <th>Method</th>
-              <th>Invoice Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {reviewRows.length === 0 ? (
-              <tr>
-                <td colSpan={13} className="text-sm text-muted">No invoices in selected batch.</td>
+                <th>Payor / Source</th>
+                <th>Periods</th>
+                <th>Total</th>
+                <th>Status</th>
+                <th>Actions</th>
               </tr>
-            ) : (
-              reviewRows.map((row) => (
-                <tr key={row.invoiceId}>
-                  <td>{row.memberName}</td>
-                  <td>{row.payorName}</td>
-                  <td>{row.invoiceSource}</td>
-                  <td>{row.billingMode}</td>
-                  <td>${row.baseProgramAmount.toFixed(2)}</td>
-                  <td>
-                    <div className="text-xs">
-                      <p>{row.baseProgramBilledDays} day(s)</p>
-                      <p>
-                        Rate: $
-                        {(row.baseProgramDayRate ?? row.memberDailyRateSnapshot ?? 0).toFixed(2)}
-                      </p>
-                      <p className="text-muted">Transport: {row.transportationBillingStatusSnapshot}</p>
-                    </div>
+            </thead>
+            <tbody>
+              {reviewRows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="text-sm text-muted">
+                    No invoices in selected batch.
                   </td>
-                  <td>${row.transportationAmount.toFixed(2)}</td>
-                  <td>${row.ancillaryAmount.toFixed(2)}</td>
-                  <td>${row.adjustmentAmount.toFixed(2)}</td>
-                  <td className="text-xs">
-                    <p>Base: {row.basePeriodStart} to {row.basePeriodEnd}</p>
-                    <p>Variable: {row.variableChargePeriodStart} to {row.variableChargePeriodEnd}</p>
-                  </td>
-                  <td>${row.totalAmount.toFixed(2)}</td>
-                  <td>{row.billingMethod}</td>
-                  <td>{row.invoiceStatus}</td>
                 </tr>
-              ))
+              ) : (
+                reviewRows.map((row) => (
+                  <Fragment key={row.invoiceId}>
+                    <tr>
+                      <td className="align-top">
+                        <div className="space-y-1">
+                          <p className="font-semibold text-fg">{row.memberName}</p>
+                          <p className="text-xs text-muted">{row.billingMode}</p>
+                        </div>
+                      </td>
+                      <td className="align-top">
+                        <div className="space-y-1">
+                          <p className="text-sm text-fg">{row.payorName}</p>
+                          <p className="text-xs text-muted">{row.invoiceSource}</p>
+                        </div>
+                      </td>
+                      <td className="align-top text-sm">
+                        <p>
+                          Base {row.basePeriodStart} - {row.basePeriodEnd}
+                        </p>
+                        <p>
+                          Variable {row.variableChargePeriodStart} - {row.variableChargePeriodEnd}
+                        </p>
+                      </td>
+                      <td className="align-top">
+                        <div className="space-y-1 text-sm">
+                          <p className="font-semibold text-fg">{money(row.totalAmount)}</p>
+                          <p className="text-xs text-muted">Base {money(row.baseProgramAmount)}</p>
+                          <p className="text-xs text-muted">Transport {money(row.transportationAmount)}</p>
+                          <p className="text-xs text-muted">Ancillary {money(row.ancillaryAmount)}</p>
+                          <p className="text-xs text-muted">Adjustments {money(row.adjustmentAmount)}</p>
+                        </div>
+                      </td>
+                      <td className="align-top">
+                        <div className="space-y-1 text-sm">
+                          <p className="font-semibold text-fg">{row.invoiceStatus}</p>
+                          <p className="text-xs text-muted">{row.billingMethod}</p>
+                        </div>
+                      </td>
+                      <td className="align-top">
+                        <div className="flex flex-wrap gap-2">
+                          <Link href={`/operations/payor/invoices/${row.invoiceId}/pdf`} className="text-xs font-semibold text-brand" target="_blank">
+                            PDF
+                          </Link>
+                          {row.invoiceStatus === "Draft" ? (
+                            <form action={submitPayorAction}>
+                              <input type="hidden" name="intent" value="finalizeInvoice" />
+                              <input type="hidden" name="invoiceId" value={row.invoiceId} />
+                              <input type="hidden" name="returnPath" value="/operations/payor/billing-batches" />
+                              <button type="submit" className="text-xs font-semibold text-brand">
+                                Finalize
+                              </button>
+                            </form>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td colSpan={6} className="border-b border-border bg-slate-50/40 px-4 py-3">
+                        <details className="group">
+                          <summary className="cursor-pointer list-none text-xs font-semibold uppercase tracking-wide text-muted">
+                            Open review detail
+                          </summary>
+                          <div className="mt-3 grid gap-3 md:grid-cols-3">
+                            <div className="rounded-lg border border-border bg-white px-3 py-2 text-sm">
+                              <p className="text-xs text-muted">Base detail</p>
+                              <p>{row.baseProgramBilledDays} day(s)</p>
+                              <p>Rate {money(row.baseProgramDayRate ?? row.memberDailyRateSnapshot ?? 0)}</p>
+                              <p className="text-xs text-muted">Transport billing: {row.transportationBillingStatusSnapshot}</p>
+                            </div>
+                            <div className="rounded-lg border border-border bg-white px-3 py-2 text-sm">
+                              <p className="text-xs text-muted">Variable totals</p>
+                              <p>Transport {money(row.transportationAmount)}</p>
+                              <p>Ancillary {money(row.ancillaryAmount)}</p>
+                              <p>Adjustments {money(row.adjustmentAmount)}</p>
+                            </div>
+                            <div className="rounded-lg border border-border bg-white px-3 py-2 text-sm">
+                              <p className="text-xs text-muted">Invoice status</p>
+                              <p>{row.invoiceStatus}</p>
+                              <p>{row.billingMethod}</p>
+                              <p className="text-xs text-muted">Batch review uses canonical invoice snapshots.</p>
+                            </div>
+                          </div>
+                        </details>
+                      </td>
+                    </tr>
+                  </Fragment>
+                ))
               )}
             </tbody>
           </table>

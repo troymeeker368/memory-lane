@@ -11,13 +11,7 @@ import { requireModuleAccess } from "@/lib/auth";
 import { normalizeRoleKey } from "@/lib/permissions/core";
 import { getOperationsTodayDate } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
-import {
-  getTransportationAddRiderMembers,
-  getTransportationManifest,
-  getTransportationRunManifest,
-  type TransportationManifestBusFilter,
-  type TransportationStationShift
-} from "@/lib/services/transportation-read";
+import { getTransportationManifest, getTransportationRunManifest, type TransportationManifestBusFilter, type TransportationStationShift } from "@/lib/services/transportation-read";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 type Shift = "AM" | "PM";
@@ -36,23 +30,6 @@ function normalizeBusFilter(value: string | undefined, options: string[]): Trans
   if (value === "all" || value === "unassigned") return value;
   if (options.includes(value)) return value;
   return "all";
-}
-
-function buildSearchHref(input: {
-  selectedDate: string;
-  selectedShift: TransportationStationShift;
-  selectedBusFilter: TransportationManifestBusFilter;
-  memberSearch?: string | null;
-}) {
-  const params = new URLSearchParams();
-  params.set("date", input.selectedDate);
-  params.set("shift", input.selectedShift);
-  params.set("bus", input.selectedBusFilter);
-  const memberSearch = (input.memberSearch ?? "").trim();
-  if (memberSearch) {
-    params.set("memberSearch", memberSearch);
-  }
-  return `/operations/transportation-station?${params.toString()}`;
 }
 
 function busFilterLabel(busFilter: TransportationManifestBusFilter) {
@@ -89,20 +66,14 @@ export default async function TransportationStationPage({
   const query = await searchParams;
   const selectedDate = firstString(query.date) ?? getOperationsTodayDate();
   const selectedShift = normalizeShift(firstString(query.shift));
-  const memberSearch = firstString(query.memberSearch)?.trim() ?? "";
   const successMessage = firstString(query.success)?.trim() ?? "";
   const errorMessage = firstString(query.error)?.trim() ?? "";
   const selectedBusFilterPromise = busNumberOptionsPromise.then((busNumberOptions) =>
     normalizeBusFilter(firstString(query.bus), busNumberOptions)
   );
-  const addRiderMemberOptionsPromise =
-    canManageManifest && memberSearch.length >= 2
-      ? getTransportationAddRiderMembers({ q: memberSearch, limit: 25 })
-      : Promise.resolve([]);
-  const [busNumberOptions, selectedBusFilter, addRiderMemberOptions] = await Promise.all([
+  const [busNumberOptions, selectedBusFilter] = await Promise.all([
     busNumberOptionsPromise,
-    selectedBusFilterPromise,
-    addRiderMemberOptionsPromise
+    selectedBusFilterPromise
   ]);
   const selectedRunShift: Shift | null = selectedShift === "AM" || selectedShift === "PM" ? selectedShift : null;
   const selectedRunBus =
@@ -227,47 +198,10 @@ export default async function TransportationStationPage({
           <p className="mt-1 text-xs text-muted">
             Use this only for real same-day transportation additions. It adds the rider to the selected run without changing the recurring MCC schedule.
           </p>
-          <form method="get" className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
-            <input type="hidden" name="date" value={runManifest?.selectedDate ?? manifestOverview.selectedDate} />
-            <input type="hidden" name="shift" value={runManifest?.selectedShift ?? manifestOverview.selectedShift} />
-            <input type="hidden" name="bus" value={selectedBusFilter} />
-            <label className="space-y-1 text-sm">
-              <span className="text-xs font-semibold text-muted">Find Member</span>
-              <input
-                type="text"
-                name="memberSearch"
-                defaultValue={memberSearch}
-                placeholder="Search active member name"
-                className="h-10 w-full rounded-lg border border-border px-3"
-              />
-            </label>
-            <button type="submit" className="h-10 self-end rounded-lg border border-border px-3 text-sm font-semibold">
-              Search
-            </button>
-            <Link
-              href={buildSearchHref({
-                selectedDate: runManifest?.selectedDate ?? manifestOverview.selectedDate,
-                selectedShift: runManifest?.selectedShift ?? manifestOverview.selectedShift,
-                selectedBusFilter,
-                memberSearch: null
-              })}
-              className="h-10 self-end rounded-lg border border-border px-3 text-center text-sm font-semibold leading-10"
-            >
-              Clear
-            </Link>
-          </form>
-          <p className="mt-2 text-xs text-muted">
-            {memberSearch.length < 2
-              ? "Search at least 2 letters to load a limited active-member list for same-day rider add."
-              : addRiderMemberOptions.length === 0
-                ? "No active members matched that search."
-                : `Showing ${addRiderMemberOptions.length} matching active member${addRiderMemberOptions.length === 1 ? "" : "s"} for add-rider.`}
-          </p>
           <TransportationStationAddRiderForm
             action={addTransportationManifestRiderAction}
             selectedDate={runManifest?.selectedDate ?? manifestOverview.selectedDate}
             defaultShift={runManifest?.selectedShift ?? manifestOverview.selectedShift}
-            members={addRiderMemberOptions}
             busNumberOptions={busNumberOptions}
           />
         </Card>
