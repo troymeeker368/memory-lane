@@ -35,14 +35,6 @@ function buildPhysicianOrdersHref(input: {
   return query ? `/health/physician-orders?${query}` : "/health/physician-orders";
 }
 
-function clinicalSyncLabel(status: "not_signed" | "pending" | "queued" | "failed" | "synced") {
-  if (status === "synced") return "Synced";
-  if (status === "failed") return "Failed";
-  if (status === "queued") return "Queued";
-  if (status === "pending") return "Pending";
-  return "-";
-}
-
 export default async function PhysicianOrdersIndexPage({
   searchParams
 }: {
@@ -199,7 +191,16 @@ export default async function PhysicianOrdersIndexPage({
                   <td>{row.nextRenewalDueDate ? formatDate(row.nextRenewalDueDate) : "-"}</td>
                   <td>{row.renewalStatus}</td>
                   <td>{row.signedDate ? formatDate(row.signedDate) : "-"}</td>
-                  <td>{clinicalSyncLabel(row.clinicalSyncStatus)}</td>
+                  <td>
+                    <div className="space-y-1">
+                      <p>{row.clinicalSyncDetail?.label ?? "-"}</p>
+                      {row.clinicalSyncDetail?.message ? (
+                        <p className={`max-w-xs text-xs ${row.clinicalSyncDetail.actionNeeded ? "text-amber-800" : "text-muted"}`}>
+                          {row.clinicalSyncDetail.message}
+                        </p>
+                      ) : null}
+                    </div>
+                  </td>
                   <td>{formatDateTime(row.updatedAt)}</td>
                   <td>
                     <Link href={`/health/physician-orders/${row.id}?from=list`} className="font-semibold text-brand">

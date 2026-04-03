@@ -210,6 +210,7 @@ const SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT = [
   "caregiver_email",
   "member_start_date"
 ].join(", ");
+const ENROLLMENT_PACKET_ELIGIBLE_LEAD_STAGES = [...getEnrollmentPacketEligibleLeadQueryStages()];
 
 const SALES_LEAD_LOOKUP_SELECT = "id, member_name, caregiver_name, stage, status, created_at, partner_id, referral_source_id";
 const SALES_PARTNER_LOOKUP_SELECT =
@@ -436,26 +437,29 @@ export async function listEnrollmentPacketEligibleLeadPickerSupabase(input?: {
         .select(SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT)
         .eq("id", selectedId)
         .eq("status", "open")
-        .in("stage", [...getEnrollmentPacketEligibleLeadQueryStages()])
+        .in("stage", ENROLLMENT_PACKET_ELIGIBLE_LEAD_STAGES)
         .maybeSingle()
     : Promise.resolve({ data: null, error: null } as const);
   const matchesPromise =
     q && q.length >= minQueryLength
-      ? supabase
-          .from("leads")
-          .select(SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT)
-          .eq("status", "open")
-          .in("stage", [...getEnrollmentPacketEligibleLeadQueryStages()])
-          .or(
-            [
-              `member_name.ilike.${buildSupabaseIlikePattern(q)}`,
-              `caregiver_name.ilike.${buildSupabaseIlikePattern(q)}`,
-              `caregiver_email.ilike.${buildSupabaseIlikePattern(q)}`
-            ].join(",")
-          )
-          .order("inquiry_date", { ascending: false, nullsFirst: false })
-          .order("member_name", { ascending: true })
-          .limit(limit)
+      ? (() => {
+          const pattern = buildSupabaseIlikePattern(q);
+          return supabase
+            .from("leads")
+            .select(SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT)
+            .eq("status", "open")
+            .in("stage", ENROLLMENT_PACKET_ELIGIBLE_LEAD_STAGES)
+            .or(
+              [
+                `member_name.ilike.${pattern}`,
+                `caregiver_name.ilike.${pattern}`,
+                `caregiver_email.ilike.${pattern}`
+              ].join(",")
+            )
+            .order("inquiry_date", { ascending: false, nullsFirst: false })
+            .order("member_name", { ascending: true })
+            .limit(limit);
+        })()
       : Promise.resolve({ data: [] as SalesEnrollmentPacketEligibleLeadFilterRow[], error: null } as const);
 
   const [selectedLeadResult, matchesResult] = await Promise.all([selectedLeadPromise, matchesPromise]);

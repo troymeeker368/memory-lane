@@ -9,6 +9,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requirePhysicianOrdersAccess } from "@/lib/auth";
 import { canManagePhysicianOrders } from "@/lib/permissions";
 import { getConfiguredClinicalSenderEmail, listPofTimelineForPhysicianOrder } from "@/lib/services/pof-read";
+import { getPhysicianOrderClinicalSyncLabel } from "@/lib/services/physician-order-clinical-sync";
 import {
   getPhysicianOrderById,
   getPhysicianOrdersForMember
@@ -37,14 +38,6 @@ function resolveNurseDefaultName(fullName: string | null | undefined, email: str
   const fromEmail = toDisplayNameFromEmail(email);
   if (fromEmail) return fromEmail;
   return normalizedFullName || "Nurse";
-}
-
-function clinicalSyncLabel(status: "not_signed" | "pending" | "queued" | "failed" | "synced") {
-  if (status === "synced") return "Synced";
-  if (status === "failed") return "Failed";
-  if (status === "queued") return "Queued";
-  if (status === "pending") return "Pending Clinical Sync";
-  return "-";
 }
 
 export default async function PhysicianOrderDetailPage({
@@ -98,11 +91,16 @@ export default async function PhysicianOrderDetailPage({
         <div className="mt-2 grid gap-2 text-xs text-muted sm:grid-cols-2 lg:grid-cols-4">
           <p>Status: <span className="font-semibold text-primary-text">{form.status}</span></p>
           <p>Workflow Status: <span className="font-semibold text-primary-text">{latestRequest?.status ?? "draft"}</span></p>
-          <p>Clinical Sync: <span className="font-semibold text-primary-text">{clinicalSyncLabel(form.clinicalSyncStatus)}</span></p>
+          <p>Operational Readiness: <span className="font-semibold text-primary-text">{form.clinicalSyncDetail?.label ?? getPhysicianOrderClinicalSyncLabel(form.clinicalSyncStatus)}</span></p>
           <p>Sent: <span className="font-semibold text-primary-text">{form.completedDate ? formatDate(form.completedDate) : "-"}</span></p>
           <p>Next Renewal Due: <span className="font-semibold text-primary-text">{form.nextRenewalDueDate ? formatDate(form.nextRenewalDueDate) : "-"}</span></p>
           <p>Signed: <span className="font-semibold text-primary-text">{form.signedDate ? formatDate(form.signedDate) : "-"}</span></p>
         </div>
+        {form.clinicalSyncDetail?.message ? (
+          <p className={`mt-2 text-xs ${form.clinicalSyncDetail.actionNeeded ? "text-amber-800" : "text-muted"}`}>
+            {form.clinicalSyncDetail.message}
+          </p>
+        ) : null}
         <div className="mt-3 flex flex-wrap gap-2">
           {canEditThisOrder ? (
             <Link href={`/health/physician-orders/new?pofId=${form.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
@@ -180,8 +178,12 @@ export default async function PhysicianOrderDetailPage({
                 <td>{row.status}</td>
                 <td>
                   <div className="space-y-1">
-                    <p>{row.clinicalSyncDetail?.label ?? clinicalSyncLabel(row.clinicalSyncStatus)}</p>
-                    {row.clinicalSyncDetail?.message ? <p className="max-w-xs text-xs text-muted">{row.clinicalSyncDetail.message}</p> : null}
+                    <p>{row.clinicalSyncDetail?.label ?? getPhysicianOrderClinicalSyncLabel(row.clinicalSyncStatus)}</p>
+                    {row.clinicalSyncDetail?.message ? (
+                      <p className={`max-w-xs text-xs ${row.clinicalSyncDetail.actionNeeded ? "text-amber-800" : "text-muted"}`}>
+                        {row.clinicalSyncDetail.message}
+                      </p>
+                    ) : null}
                   </div>
                 </td>
                 <td>{row.providerName ?? "-"}</td>

@@ -374,12 +374,12 @@ export async function generateMemberNameBadgePdfAction(input: {
 }) {
   const profile = await getCurrentProfile();
   if (!canGenerateMemberDocumentForRole(profile.role)) {
-    return { ok: false, error: "You do not have access to generate member badges." } as const;
+    return { ok: false, status: "error" as const, error: "You do not have access to generate member badges." } as const;
   }
 
   const memberId = String(input.memberId ?? "").trim();
   if (!memberId) {
-    return { ok: false, error: "Member is required." } as const;
+    return { ok: false, status: "error" as const, error: "Member is required." } as const;
   }
 
   let built: Awaited<ReturnType<typeof buildNameBadgePdfBytes>>;
@@ -391,10 +391,10 @@ export async function generateMemberNameBadgePdfAction(input: {
       memberId,
       message
     });
-    return { ok: false, error: message } as const;
+    return { ok: false, status: "error" as const, error: message } as const;
   }
   if ("error" in built) {
-    return { ok: false, error: built.error } as const;
+    return { ok: false, status: "error" as const, error: built.error } as const;
   }
 
   let saved: Awaited<ReturnType<typeof saveGeneratedMemberPdfToFiles>>;
@@ -419,7 +419,7 @@ export async function generateMemberNameBadgePdfAction(input: {
       memberId,
       message
     });
-    return { ok: false, error: message } as const;
+    return { ok: false, status: "error" as const, error: message } as const;
   }
 
   revalidatePath(`/members/${memberId}/name-badge`);
@@ -427,9 +427,13 @@ export async function generateMemberNameBadgePdfAction(input: {
   revalidatePath(`/health/member-health-profiles/${memberId}`);
 
   return {
-    ok: true,
+    ok: saved.verifiedPersisted,
+    status: saved.verifiedPersisted ? ("verified" as const) : ("follow-up-needed" as const),
     fileName: saved.fileName,
     downloadUrl: saved.downloadUrl,
+    pdfGenerated: true as const,
+    storageUploaded: true as const,
+    memberFilesVerified: saved.verifiedPersisted,
     ...buildGeneratedMemberFilePersistenceState({
       documentLabel: "Name Badge",
       verifiedPersisted: saved.verifiedPersisted

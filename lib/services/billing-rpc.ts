@@ -18,7 +18,7 @@ import { resolveInvoiceProductOrService } from "@/lib/services/billing-invoice-f
 import { addMonths, buildInvoiceNumber, normalizeDateOnly, startOfMonth } from "@/lib/services/billing-utils";
 
 const BILLING_ATOMIC_WORKFLOW_MIGRATION = "0173_billing_invoice_snapshot_itemization.sql";
-const CUSTOM_INVOICE_ATOMIC_WORKFLOW_MIGRATION = "0178_harden_custom_invoice_rpc_atomicity.sql";
+const CUSTOM_INVOICE_ATOMIC_WORKFLOW_MIGRATION = "0185_custom_invoice_rpc_source_materialization.sql";
 const RPC_GENERATE_BILLING_BATCH = "rpc_generate_billing_batch";
 const RPC_CREATE_BILLING_EXPORT = "rpc_create_billing_export";
 const RPC_CREATE_CUSTOM_INVOICE = "rpc_create_custom_invoice";

@@ -18,6 +18,14 @@ function formatFailedStep(step: string | null | undefined) {
   return "clinical sync";
 }
 
+export function getPhysicianOrderClinicalSyncLabel(status: PhysicianOrderClinicalSyncStatus) {
+  if (status === "synced") return "Operationally Ready";
+  if (status === "failed") return "Signed, Downstream Retry Queued";
+  if (status === "queued") return "Signed, Downstream Sync Queued";
+  if (status === "pending") return "Signed, Waiting for Downstream Sync";
+  return "-";
+}
+
 export function resolvePhysicianOrderClinicalSyncStatus(input: {
   status: string | null | undefined;
   queueStatus?: PhysicianOrderPostSignQueueStatus | null;
@@ -47,8 +55,8 @@ export function buildPhysicianOrderClinicalSyncDetail(input: {
   if (resolvedStatus === "not_signed") return null;
   if (resolvedStatus === "synced") {
     return {
-      label: "Synced",
-      message: "Clinical sync completed. MHP and MAR should be current.",
+      label: getPhysicianOrderClinicalSyncLabel(resolvedStatus),
+      message: "Provider signature is durable and downstream MHP/MCC and MAR sync completed.",
       actionNeeded: false,
       attemptCount: input.attemptCount ?? null,
       nextRetryAt: input.nextRetryAt ?? null,
@@ -61,8 +69,8 @@ export function buildPhysicianOrderClinicalSyncDetail(input: {
     const failedStepLabel = formatFailedStep(input.lastFailedStep);
     const retryText = input.nextRetryAt ? " Retry is queued." : " Retry timing is not available yet.";
     return {
-      label: "Retry queued after failure",
-      message: `${failedStepLabel} failed after signing.${retryText}`,
+      label: getPhysicianOrderClinicalSyncLabel(resolvedStatus),
+      message: `${failedStepLabel} failed after provider signature. Do not treat this order as operationally ready until downstream sync finishes.${retryText}`,
       actionNeeded: true,
       attemptCount: input.attemptCount ?? null,
       nextRetryAt: input.nextRetryAt ?? null,
@@ -73,9 +81,9 @@ export function buildPhysicianOrderClinicalSyncDetail(input: {
 
   if (resolvedStatus === "queued") {
     return {
-      label: "Queued",
-      message: "Signed order is queued for downstream clinical sync.",
-      actionNeeded: false,
+      label: getPhysicianOrderClinicalSyncLabel(resolvedStatus),
+      message: "Provider signature is durable, but downstream MHP/MCC and MAR sync is still queued. Do not treat this order as operationally ready yet.",
+      actionNeeded: true,
       attemptCount: input.attemptCount ?? null,
       nextRetryAt: input.nextRetryAt ?? null,
       lastFailedStep: input.lastFailedStep ?? null,
@@ -84,9 +92,9 @@ export function buildPhysicianOrderClinicalSyncDetail(input: {
   }
 
   return {
-    label: "Pending clinical sync",
-    message: "Signed order is waiting for downstream clinical sync to start.",
-    actionNeeded: false,
+    label: getPhysicianOrderClinicalSyncLabel(resolvedStatus),
+    message: "Provider signature is durable, but downstream MHP/MCC and MAR sync has not started yet. Do not treat this order as operationally ready yet.",
+    actionNeeded: true,
     attemptCount: input.attemptCount ?? null,
     nextRetryAt: input.nextRetryAt ?? null,
     lastFailedStep: input.lastFailedStep ?? null,

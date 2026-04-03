@@ -785,18 +785,18 @@ async function buildFaceSheetPdf(memberId: string) {
 export async function generateMemberFaceSheetPdfAction(input: { memberId: string }) {
   const profile = await getCurrentProfile();
   if (!canGenerateMemberDocumentForRole(profile.role)) {
-    return { ok: false, error: "You do not have access to generate face sheets." } as const;
+    return { ok: false, status: "error" as const, error: "You do not have access to generate face sheets." } as const;
   }
 
   const memberId = String(input.memberId ?? "").trim();
   if (!memberId) {
-    return { ok: false, error: "Member is required." } as const;
+    return { ok: false, status: "error" as const, error: "Member is required." } as const;
   }
 
   try {
     const built = await buildFaceSheetPdf(memberId);
     if ("error" in built) {
-      return { ok: false, error: built.error } as const;
+      return { ok: false, status: "error" as const, error: built.error } as const;
     }
 
     const saved = await saveGeneratedMemberPdfToFiles({
@@ -820,9 +820,13 @@ export async function generateMemberFaceSheetPdfAction(input: { memberId: string
     revalidatePath(`/health/member-health-profiles/${memberId}`);
 
     return {
-      ok: true,
+      ok: saved.verifiedPersisted,
+      status: saved.verifiedPersisted ? ("verified" as const) : ("follow-up-needed" as const),
       fileName: saved.fileName,
       downloadUrl: saved.downloadUrl,
+      pdfGenerated: true as const,
+      storageUploaded: true as const,
+      memberFilesVerified: saved.verifiedPersisted,
       ...buildGeneratedMemberFilePersistenceState({
         documentLabel: "Face Sheet",
         verifiedPersisted: saved.verifiedPersisted
@@ -831,6 +835,7 @@ export async function generateMemberFaceSheetPdfAction(input: { memberId: string
   } catch (error) {
     return {
       ok: false,
+      status: "error" as const,
       error: error instanceof Error ? error.message : "Unable to generate face sheet PDF."
     } as const;
   }

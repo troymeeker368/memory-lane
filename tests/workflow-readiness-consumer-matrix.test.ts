@@ -8,6 +8,7 @@ function readWorkspaceFile(relativePath: string) {
 
 test("public completed/signed readers use canonical readiness helpers instead of raw terminal states", () => {
   const enrollmentRuntimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const enrollmentActionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
   const enrollmentConfirmationSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/confirmation/page.tsx");
   const pofRuntimeSource = readWorkspaceFile("lib/services/pof-esign-public.ts");
   const pofPageSource = readWorkspaceFile("app/sign/pof/[token]/page.tsx");
@@ -17,6 +18,11 @@ test("public completed/signed readers use canonical readiness helpers instead of
   const carePlanFormSource = readWorkspaceFile("components/care-plans/care-plan-public-sign-form.tsx");
 
   assert.equal(enrollmentRuntimeSource.includes("buildPublicEnrollmentPacketSubmitResult({"), true);
+  assert.equal(enrollmentActionSource.includes("if (result.actionNeeded) {"), true);
+  assert.equal(
+    enrollmentActionSource.includes("operationallyReady: result.operationalReadinessStatus === \"operationally_ready\" && !result.actionNeeded"),
+    true
+  );
   assert.equal(enrollmentConfirmationSource.includes("const followUpRequired = queryIndicatesFollowUp || context.actionNeeded;"), true);
   assert.equal(enrollmentConfirmationSource.includes("context.actionNeededMessage ??"), true);
 

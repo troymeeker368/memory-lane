@@ -15,6 +15,16 @@ export type MemberLookupRow = {
   latest_assessment_track?: string | null;
 };
 
+type MemberPickerLookupFilters = {
+  q?: string;
+  selectedId?: string | null;
+  status?: "all" | "active" | "inactive";
+  limit?: number;
+  minQueryLength?: number;
+  canonicalSelectedId?: boolean;
+  serviceRole?: boolean;
+};
+
 const DEFAULT_MEMBER_LOOKUP_LIMIT = 200;
 const DEFAULT_MEMBER_PICKER_LIMIT = 25;
 const DEFAULT_MEMBER_PICKER_MIN_QUERY_LENGTH = 2;
@@ -138,15 +148,7 @@ export async function listMemberLookupByIdsSupabase(memberIds: string[]): Promis
   }));
 }
 
-export async function listMemberPickerOptionsSupabase(filters?: {
-  q?: string;
-  selectedId?: string | null;
-  status?: "all" | "active" | "inactive";
-  limit?: number;
-  minQueryLength?: number;
-  canonicalSelectedId?: boolean;
-  serviceRole?: boolean;
-}): Promise<MemberLookupRow[]> {
+export async function listMemberPickerOptionsSupabase(filters?: MemberPickerLookupFilters): Promise<MemberLookupRow[]> {
   const q = String(filters?.q ?? "").trim();
   const limit =
     Number.isFinite(filters?.limit) && Number(filters?.limit) > 0
@@ -184,12 +186,22 @@ export async function listMemberPickerOptionsSupabase(filters?: {
   return [...selectedRows, ...searchedRows.filter((row) => !selectedRowIds.has(row.id))];
 }
 
-export async function listActiveMemberLookupSupabase(): Promise<MemberLookupRow[]> {
-  return listMemberLookupSupabase({ status: "active" });
+export async function listActiveMemberLookupSupabase(
+  filters?: Omit<MemberPickerLookupFilters, "status">
+): Promise<MemberLookupRow[]> {
+  return listMemberPickerOptionsSupabase({
+    ...filters,
+    status: "active"
+  });
 }
 
-export async function listAllActiveMemberLookupSupabase(): Promise<MemberLookupRow[]> {
-  return listAllMemberLookupSupabase({ status: "active" });
+export async function listAllActiveMemberLookupSupabase(
+  filters?: Omit<MemberPickerLookupFilters, "status">
+): Promise<MemberLookupRow[]> {
+  return listMemberPickerOptionsSupabase({
+    ...filters,
+    status: "active"
+  });
 }
 
 export async function getStaffNameByIdSupabase(staffId: string): Promise<string | null> {

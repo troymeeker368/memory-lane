@@ -17,10 +17,10 @@ export function DietCardActions({ memberId }: { memberId: string }) {
         title="Uses your browser print dialog. Choose Save as PDF."
         disabled={isPending}
         onClick={() =>
-          startTransition(async () => {
+            startTransition(async () => {
             setStatus("");
             const result = await generateMemberDietCardPdfAction({ memberId });
-            if (!result?.ok) {
+            if (result.status === "error") {
               setStatus(`Error: ${result?.error ?? "Unable to generate diet card PDF."}`);
               return;
             }
@@ -31,7 +31,7 @@ export function DietCardActions({ memberId }: { memberId: string }) {
             await triggerPdfDownloadFromUrl(result.downloadUrl, result.fileName);
             await triggerPdfPrintFromUrl(result.downloadUrl);
             setStatus(
-              result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
+              result.status === "follow-up-needed" && result.memberFilesMessage
                 ? `Diet card downloaded and print dialog opened. ${result.memberFilesMessage}`
                 : "Diet card downloaded and print dialog opened."
             );

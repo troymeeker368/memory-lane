@@ -10,9 +10,9 @@ export async function POST(
   const result = await generateMemberFaceSheetPdfAction({ memberId });
   const status = !result.ok && typeof result.error === "string" && result.error.toLowerCase().includes("access")
     ? 403
-    : result.ok
-      ? 200
-      : 400;
+    : result.status === "error"
+      ? 400
+      : 200;
 
   return NextResponse.json(result, { status });
 }

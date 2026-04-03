@@ -37,6 +37,10 @@ type ResolvePhysicianOrderMemberOptions = {
   serviceRole?: boolean;
 };
 
+type PhysicianOrderMemberHistoryOptions = ResolvePhysicianOrderMemberOptions & {
+  limit?: number;
+};
+
 async function resolvePhysicianOrderMemberId(
   rawMemberId: string,
   actionLabel: string,
@@ -268,15 +272,22 @@ export async function getPhysicianOrders(filters?: PhysicianOrderIndexFilters): 
 
 export async function getPhysicianOrdersForMember(
   memberId: string,
-  options?: ResolvePhysicianOrderMemberOptions
+  options?: PhysicianOrderMemberHistoryOptions
 ): Promise<PhysicianOrderMemberHistoryRow[]> {
   const canonicalMemberId = await resolvePhysicianOrderMemberId(memberId, "getPhysicianOrdersForMember", options);
   const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
-  const { data, error } = await supabase
+  let query = supabase
     .from("physician_orders")
     .select(PHYSICIAN_ORDER_MEMBER_HISTORY_SELECT)
     .eq("member_id", canonicalMemberId)
     .order("updated_at", { ascending: false });
+  const requestedLimit = options?.limit;
+  const limit =
+    Number.isFinite(requestedLimit) && Number(requestedLimit) > 0 ? Math.floor(Number(requestedLimit)) : null;
+  if (limit) {
+    query = query.limit(limit);
+  }
+  const { data, error } = await query;
   if (error) {
     if (isMissingPhysicianOrdersTableError(error)) {
       throw physicianOrdersTableRequiredError();

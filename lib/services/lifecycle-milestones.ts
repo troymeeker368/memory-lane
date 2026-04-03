@@ -4,6 +4,7 @@ import {
   dispatchNotification,
   type DispatchNotificationEventInput
 } from "@/lib/services/notifications";
+import { canonicalizeNotificationEventType } from "@/lib/services/notifications-runtime";
 import {
   recordImmediateSystemAlert,
   recordWorkflowEvent
@@ -20,6 +21,14 @@ export type WorkflowMilestoneResult = {
   followUpNeeded: boolean;
   deliveryState: "delivered" | "follow_up_needed" | "failed";
 };
+
+const CORE_DELIVERY_TRUTH_EVENT_TYPES = new Set([
+  "enrollment_packet_submitted",
+  "intake_completed",
+  "pof_sent",
+  "pof_signed",
+  "care_plan_signed"
+]);
 
 function normalizeText(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
@@ -48,8 +57,14 @@ function getMilestoneEventType(event: DispatchNotificationEventInput) {
 }
 
 function requiresExplicitDeliveryTruth(event: DispatchNotificationEventInput) {
-  const eventType = getMilestoneEventType(event).toLowerCase();
-  return eventType === "action_required" || eventType.endsWith("_failed") || eventType === "workflow_error";
+  const sourceEventType = getMilestoneEventType(event);
+  const canonicalEventType = canonicalizeNotificationEventType(sourceEventType) ?? sourceEventType.toLowerCase();
+  return (
+    canonicalEventType === "action_required" ||
+    canonicalEventType.endsWith("_failed") ||
+    canonicalEventType === "workflow_error" ||
+    CORE_DELIVERY_TRUTH_EVENT_TYPES.has(canonicalEventType)
+  );
 }
 
 async function recordNotificationFollowUpNeeded(input: {

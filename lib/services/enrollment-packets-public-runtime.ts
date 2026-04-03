@@ -158,6 +158,73 @@ async function buildCommittedEnrollmentPacketReplayResult(input: {
   return submitResult;
 }
 
+function buildEnrollmentPacketPostCommitFollowUpMessage(input: {
+  existingMessage?: string | null;
+  reason: string;
+}) {
+  const existingMessage = clean(input.existingMessage);
+  if (existingMessage) return existingMessage;
+
+  const reason = clean(input.reason);
+  return reason
+    ? `Enrollment packet was completed, but post-commit follow-up still needs staff review (${reason}). Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.`
+    : "Enrollment packet was completed, but post-commit follow-up still needs staff review. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.";
+}
+
+async function recordEnrollmentPacketPostCommitFollowUpFailure(input: {
+  request: EnrollmentPacketRequestRow;
+  memberId: string;
+  reason: string;
+  mappingSyncStatus: string | null | undefined;
+  completionFollowUpError: string;
+  mappingRunId: string | null;
+  uploadBatchId: string | null;
+}) {
+  try {
+    await recordWorkflowEvent({
+      eventType: "enrollment_packet_post_commit_follow_up_failed",
+      entityType: "enrollment_packet_request",
+      entityId: input.request.id,
+      actorType: "user",
+      actorUserId: input.request.sender_user_id,
+      status: "failed",
+      severity: "high",
+      metadata: {
+        member_id: input.memberId,
+        lead_id: input.request.lead_id,
+        error: input.reason,
+        mapping_sync_status: input.mappingSyncStatus ?? null,
+        completion_follow_up_error: input.completionFollowUpError,
+        mapping_run_id: input.mappingRunId,
+        upload_batch_id: input.uploadBatchId
+      }
+    });
+  } catch (workflowEventError) {
+    console.error("[enrollment-packets] unable to record post-commit follow-up workflow event", workflowEventError);
+  }
+
+  try {
+    await recordImmediateSystemAlert({
+      entityType: "enrollment_packet_request",
+      entityId: input.request.id,
+      actorUserId: input.request.sender_user_id,
+      severity: "high",
+      alertKey: "enrollment_packet_post_commit_follow_up_failed",
+      metadata: {
+        member_id: input.memberId,
+        lead_id: input.request.lead_id,
+        error: input.reason,
+        mapping_sync_status: input.mappingSyncStatus ?? null,
+        completion_follow_up_error: input.completionFollowUpError,
+        mapping_run_id: input.mappingRunId,
+        upload_batch_id: input.uploadBatchId
+      }
+    });
+  } catch (alertError) {
+    console.error("[enrollment-packets] unable to persist post-commit follow-up alert", alertError);
+  }
+}
+
 async function verifyCommittedEnrollmentPacketFinalizeAfterError(input: {
   packetId: string;
   expectedMemberId: string;
@@ -1176,65 +1243,114 @@ export async function submitPublicEnrollmentPacket(input: {
     throw error;
   }
 
-  const refreshedRequest = await loadRequestById(request.id);
-  const refreshedFields = await loadPacketFields(request.id);
+  try {
+    const refreshedRequest = await loadRequestById(request.id);
+    const refreshedFields = await loadPacketFields(request.id);
 
-  if (refreshedRequest && refreshedFields) {
-    try {
-      const cascadeSummary = await runEnrollmentPacketCompletionCascade({
-        request: refreshedRequest,
-        member,
-        fields: refreshedFields,
-        senderSignatureName,
-        caregiverEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
-        memberFileArtifacts: uploadedArtifacts.map((artifact) => ({
-          uploadCategory: artifact.uploadCategory,
-          memberFileId: artifact.memberFileId
-        })),
-        actorType: "user",
-        ensureCompletedPacketArtifact: false
-      });
-      mappingSummary = {
-        mappingRunId: cascadeSummary.mappingRunId,
-        status: cascadeSummary.mappingStatus
-      };
-      completionCascadeSummary = {
-        senderNotificationDelivered: cascadeSummary.senderNotificationDelivered,
-        leadActivitySynced: cascadeSummary.leadActivitySynced,
-        completedPacketArtifactLinked: cascadeSummary.completedPacketArtifactLinked,
-        operationalShellsReady: cascadeSummary.operationalShellsReady
-      };
-      failedMappingRunId = cascadeSummary.mappingRunId;
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : "Unable to run enrollment packet completion cascade.";
+    if (refreshedRequest && refreshedFields) {
+      try {
+        const cascadeSummary = await runEnrollmentPacketCompletionCascade({
+          request: refreshedRequest,
+          member,
+          fields: refreshedFields,
+          senderSignatureName,
+          caregiverEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
+          memberFileArtifacts: uploadedArtifacts.map((artifact) => ({
+            uploadCategory: artifact.uploadCategory,
+            memberFileId: artifact.memberFileId
+          })),
+          actorType: "user",
+          ensureCompletedPacketArtifact: false
+        });
+        mappingSummary = {
+          mappingRunId: cascadeSummary.mappingRunId,
+          status: cascadeSummary.mappingStatus
+        };
+        completionCascadeSummary = {
+          senderNotificationDelivered: cascadeSummary.senderNotificationDelivered,
+          leadActivitySynced: cascadeSummary.leadActivitySynced,
+          completedPacketArtifactLinked: cascadeSummary.completedPacketArtifactLinked,
+          operationalShellsReady: cascadeSummary.operationalShellsReady
+        };
+        failedMappingRunId = cascadeSummary.mappingRunId;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "Unable to run enrollment packet completion cascade.";
+        const cascadeFollowUpMessage =
+          "Enrollment packet was completed, but downstream sync could not start. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.";
+        mappingSummary = {
+          mappingRunId: null,
+          status: "failed",
+          error: reason
+        };
+        failedMappingRunId = null;
+        completionFollowUpStatus = "action_required";
+        completionFollowUpError = cascadeFollowUpMessage;
+        try {
+          await artifactOps.updateEnrollmentPacketMappingSyncState({
+            packetId: request.id,
+            status: "failed",
+            attemptedAt: toEasternISO(),
+            error: reason,
+            mappingRunId: null
+          });
+        } catch (syncStateError) {
+          console.error("[enrollment-packets] unable to persist cascade failure mapping state", syncStateError);
+        }
+        await recordImmediateSystemAlert({
+          entityType: "enrollment_packet_request",
+          entityId: request.id,
+          actorUserId: request.sender_user_id,
+          severity: "medium",
+          alertKey: "enrollment_packet_completion_cascade_failed",
+          metadata: {
+            member_id: member.id,
+            lead_id: request.lead_id,
+            error: reason,
+            upload_batch_id: uploadBatchId
+          }
+        });
+        await recordEnrollmentPacketActionRequired({
+          packetId: request.id,
+          memberId: member.id,
+          leadId: request.lead_id,
+          actorUserId: request.sender_user_id,
+          title: "Enrollment Packet Sync Blocked",
+          message: cascadeFollowUpMessage,
+          actionUrl: `/sales/pipeline/enrollment-packets`,
+          eventKeySuffix: "mapping-cascade-failed"
+        });
+      }
+    } else {
+      const missingFieldsMessage =
+        "Enrollment packet was completed, but downstream sync could not start because the packet fields could not be reloaded. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.";
       mappingSummary = {
         mappingRunId: null,
         status: "failed",
-        error: reason
+        error: "Enrollment packet fields are missing after filing."
       };
       failedMappingRunId = null;
+      completionFollowUpStatus = "action_required";
+      completionFollowUpError = missingFieldsMessage;
       try {
         await artifactOps.updateEnrollmentPacketMappingSyncState({
           packetId: request.id,
           status: "failed",
           attemptedAt: toEasternISO(),
-          error: reason,
+          error: mappingSummary.error,
           mappingRunId: null
         });
       } catch (syncStateError) {
-        console.error("[enrollment-packets] unable to persist cascade failure mapping state", syncStateError);
+        console.error("[enrollment-packets] unable to persist missing-fields mapping failure state", syncStateError);
       }
       await recordImmediateSystemAlert({
         entityType: "enrollment_packet_request",
         entityId: request.id,
         actorUserId: request.sender_user_id,
-        severity: "medium",
-        alertKey: "enrollment_packet_completion_cascade_failed",
+        severity: "high",
+        alertKey: "enrollment_packet_mapping_missing_fields",
         metadata: {
           member_id: member.id,
-          lead_id: request.lead_id,
-          error: reason,
-          upload_batch_id: uploadBatchId
+          lead_id: request.lead_id
         }
       });
       await recordEnrollmentPacketActionRequired({
@@ -1243,166 +1359,165 @@ export async function submitPublicEnrollmentPacket(input: {
         leadId: request.lead_id,
         actorUserId: request.sender_user_id,
         title: "Enrollment Packet Sync Blocked",
-        message:
-          "The enrollment packet was completed, but downstream sync could not start. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.",
+        message: missingFieldsMessage,
         actionUrl: `/sales/pipeline/enrollment-packets`,
-        eventKeySuffix: "mapping-cascade-failed"
+        eventKeySuffix: "mapping-missing-fields"
       });
-      completionFollowUpStatus = "action_required";
-      completionFollowUpError =
-        "Enrollment packet was completed, but downstream sync could not start. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.";
     }
-  } else {
-    mappingSummary = {
-      mappingRunId: null,
-      status: "failed",
-      error: "Enrollment packet fields are missing after filing."
-    };
-    failedMappingRunId = null;
-    try {
-      await artifactOps.updateEnrollmentPacketMappingSyncState({
-        packetId: request.id,
-        status: "failed",
-        attemptedAt: toEasternISO(),
-        error: mappingSummary.error,
-        mappingRunId: null
+
+    const reviewableUploads = uploadedArtifacts.filter(
+      (artifact) => artifact.uploadCategory !== "completed_packet" && artifact.uploadCategory !== "signature_artifact"
+    );
+
+    if (reviewableUploads.length > 0) {
+      await recordWorkflowMilestone({
+        event: {
+          eventType: "document_uploaded",
+          entityType: "enrollment_packet_request",
+          entityId: request.id,
+          actorType: "user",
+          actorUserId: request.sender_user_id,
+          status: "completed",
+          severity: "low",
+          metadata: {
+            member_id: member.id,
+            lead_id: request.lead_id,
+            document_label:
+              reviewableUploads.length === 1
+                ? `Enrollment ${reviewableUploads[0].uploadCategory.replaceAll("_", " ")} document`
+                : `${reviewableUploads.length} enrollment documents`
+          }
+        }
       });
-    } catch (syncStateError) {
-      console.error("[enrollment-packets] unable to persist missing-fields mapping failure state", syncStateError);
+    } else {
+      await recordWorkflowMilestone({
+        event: {
+          eventType: "missing_required_document",
+          entityType: "enrollment_packet_request",
+          entityId: request.id,
+          actorType: "system",
+          actorUserId: request.sender_user_id,
+          status: "open",
+          severity: "high",
+          metadata: {
+            member_id: member.id,
+            lead_id: request.lead_id
+          }
+        }
+      });
     }
-    await recordImmediateSystemAlert({
-      entityType: "enrollment_packet_request",
-      entityId: request.id,
-      actorUserId: request.sender_user_id,
-      severity: "high",
-      alertKey: "enrollment_packet_mapping_missing_fields",
-      metadata: {
-        member_id: member.id,
-        lead_id: request.lead_id
-      }
-    });
-    await recordEnrollmentPacketActionRequired({
+
+    const provisionalSubmitResult = buildPublicEnrollmentPacketSubmitResult({
       packetId: request.id,
       memberId: member.id,
-      leadId: request.lead_id,
-      actorUserId: request.sender_user_id,
-      title: "Enrollment Packet Sync Blocked",
-      message:
-        "The enrollment packet was completed, but downstream sync could not start because the packet fields could not be reloaded. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.",
-      actionUrl: `/sales/pipeline/enrollment-packets`,
-      eventKeySuffix: "mapping-missing-fields"
+      mappingSyncStatus: mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending",
+      completionFollowUpStatus,
+      completionFollowUpError,
+      wasAlreadyFiled: false
     });
-    completionFollowUpStatus = "action_required";
-    completionFollowUpError =
-      "Enrollment packet was completed, but downstream sync could not start because the packet fields could not be reloaded. Review the packet and complete the downstream handoff before relying on MCC/MHP/POF data.";
-  }
+    const completionAgreementMessage =
+      mappingSummary?.status === "completed" && completionCascadeSummary
+        ? await recordEnrollmentPacketCompletionAgreementGap({
+            request,
+            operationalReadinessStatus: provisionalSubmitResult.operationalReadinessStatus,
+            senderNotificationDelivered: completionCascadeSummary.senderNotificationDelivered,
+            leadActivitySynced: completionCascadeSummary.leadActivitySynced,
+            completedPacketArtifactLinked: completionCascadeSummary.completedPacketArtifactLinked,
+            operationalShellsReady: completionCascadeSummary.operationalShellsReady,
+            source: "submitPublicEnrollmentPacket.preReturn"
+          })
+        : null;
 
-  const reviewableUploads = uploadedArtifacts.filter(
-    (artifact) => artifact.uploadCategory !== "completed_packet" && artifact.uploadCategory !== "signature_artifact"
-  );
+    if (completionAgreementMessage) {
+      completionFollowUpStatus = "action_required";
+      completionFollowUpError = completionAgreementMessage;
+    } else if (completionFollowUpStatus === "pending" && mappingSummary?.status === "completed") {
+      completionFollowUpStatus = "completed";
+      completionFollowUpError = null;
+    }
 
-  if (reviewableUploads.length > 0) {
-    await recordWorkflowMilestone({
-      event: {
-        eventType: "document_uploaded",
+    try {
+      await artifactOps.updateEnrollmentPacketCompletionFollowUpState({
+        packetId: request.id,
+        status: completionFollowUpStatus,
+        checkedAt: toEasternISO(),
+        error: completionFollowUpError
+      });
+    } catch (followUpStateError) {
+      const message =
+        followUpStateError instanceof Error
+          ? followUpStateError.message
+          : "Unable to persist enrollment packet completion follow-up state.";
+      console.error("[enrollment-packets] unable to persist completion follow-up state", followUpStateError);
+      await recordImmediateSystemAlert({
         entityType: "enrollment_packet_request",
         entityId: request.id,
-        actorType: "user",
         actorUserId: request.sender_user_id,
-        status: "completed",
-        severity: "low",
+        severity: "high",
+        alertKey: "enrollment_packet_completion_follow_up_state_failed",
         metadata: {
           member_id: member.id,
           lead_id: request.lead_id,
-          document_label:
-            reviewableUploads.length === 1
-              ? `Enrollment ${reviewableUploads[0].uploadCategory.replaceAll("_", " ")} document`
-              : `${reviewableUploads.length} enrollment documents`
+          status: completionFollowUpStatus,
+          error: message
         }
-      }
-    });
-  } else {
-    await recordWorkflowMilestone({
-      event: {
-        eventType: "missing_required_document",
-        entityType: "enrollment_packet_request",
-        entityId: request.id,
-        actorType: "system",
-        actorUserId: request.sender_user_id,
-        status: "open",
-        severity: "high",
-        metadata: {
-          member_id: member.id,
-          lead_id: request.lead_id
-        }
-      }
-    });
-  }
+      });
+    }
 
-  const provisionalSubmitResult = buildPublicEnrollmentPacketSubmitResult({
-    packetId: request.id,
-    memberId: member.id,
-    mappingSyncStatus: mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending",
-    completionFollowUpStatus,
-    completionFollowUpError,
-    wasAlreadyFiled: false
-  });
-  const completionAgreementMessage =
-    mappingSummary?.status === "completed" && completionCascadeSummary
-      ? await recordEnrollmentPacketCompletionAgreementGap({
-          request,
-          operationalReadinessStatus: provisionalSubmitResult.operationalReadinessStatus,
-          senderNotificationDelivered: completionCascadeSummary.senderNotificationDelivered,
-          leadActivitySynced: completionCascadeSummary.leadActivitySynced,
-          completedPacketArtifactLinked: completionCascadeSummary.completedPacketArtifactLinked,
-          operationalShellsReady: completionCascadeSummary.operationalShellsReady,
-          source: "submitPublicEnrollmentPacket.preReturn"
-        })
-      : null;
-
-  if (completionAgreementMessage) {
-    completionFollowUpStatus = "action_required";
-    completionFollowUpError = completionAgreementMessage;
-  } else if (completionFollowUpStatus === "pending" && mappingSummary?.status === "completed") {
-    completionFollowUpStatus = "completed";
-    completionFollowUpError = null;
-  }
-
-  try {
-    await artifactOps.updateEnrollmentPacketCompletionFollowUpState({
+    const submitResult = buildPublicEnrollmentPacketSubmitResult({
       packetId: request.id,
-      status: completionFollowUpStatus,
-      checkedAt: toEasternISO(),
-      error: completionFollowUpError
+      memberId: member.id,
+      mappingSyncStatus: mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending",
+      completionFollowUpStatus,
+      completionFollowUpError,
+      wasAlreadyFiled: false
     });
-  } catch (followUpStateError) {
-    const message =
-      followUpStateError instanceof Error
-        ? followUpStateError.message
-        : "Unable to persist enrollment packet completion follow-up state.";
-    console.error("[enrollment-packets] unable to persist completion follow-up state", followUpStateError);
-    await recordImmediateSystemAlert({
-      entityType: "enrollment_packet_request",
-      entityId: request.id,
-      actorUserId: request.sender_user_id,
-      severity: "high",
-      alertKey: "enrollment_packet_completion_follow_up_state_failed",
-      metadata: {
-        member_id: member.id,
-        lead_id: request.lead_id,
-        status: completionFollowUpStatus,
-        error: message
-      }
+    return submitResult;
+  } catch (error) {
+    const reason =
+      error instanceof Error ? error.message : "Unable to complete enrollment packet post-commit follow-up.";
+    const followUpMessage = buildEnrollmentPacketPostCommitFollowUpMessage({
+      existingMessage: completionFollowUpError,
+      reason
+    });
+    const mappingSyncStatus = mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending";
+
+    completionFollowUpStatus = "action_required";
+    completionFollowUpError = followUpMessage;
+
+    console.error("[enrollment-packets] post-commit follow-up failed after enrollment packet finalization", {
+      packetId: request.id,
+      message: reason
+    });
+
+    try {
+      await artifactOps.updateEnrollmentPacketCompletionFollowUpState({
+        packetId: request.id,
+        status: "action_required",
+        checkedAt: toEasternISO(),
+        error: followUpMessage
+      });
+    } catch (followUpStateError) {
+      console.error("[enrollment-packets] unable to persist committed post-commit follow-up state", followUpStateError);
+    }
+
+    await recordEnrollmentPacketPostCommitFollowUpFailure({
+      request,
+      memberId: member.id,
+      reason,
+      mappingSyncStatus,
+      completionFollowUpError: followUpMessage,
+      mappingRunId: failedMappingRunId,
+      uploadBatchId
+    });
+
+    return buildPublicEnrollmentPacketSubmitResult({
+      packetId: request.id,
+      memberId: member.id,
+      mappingSyncStatus,
+      completionFollowUpStatus: "action_required",
+      completionFollowUpError: followUpMessage,
+      wasAlreadyFiled: false
     });
   }
-
-  const submitResult = buildPublicEnrollmentPacketSubmitResult({
-    packetId: request.id,
-    memberId: member.id,
-    mappingSyncStatus: mappingSummary?.status ?? finalizedSubmission?.mappingSyncStatus ?? "pending",
-    completionFollowUpStatus,
-    completionFollowUpError,
-    wasAlreadyFiled: false
-  });
-  return submitResult;
 }

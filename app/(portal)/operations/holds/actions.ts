@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { getCurrentProfile } from "@/lib/auth";
 import { MEMBER_HOLD_REASON_OPTIONS } from "@/lib/canonical";
+import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { createMemberHoldSupabase, endMemberHoldSupabase } from "@/lib/services/holds-supabase";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 
@@ -38,7 +39,9 @@ function revalidateHoldsWorkflows(memberId?: string | null) {
 
 export async function createMemberHoldAction(formData: FormData) {
   const actor = await requireHoldEditor();
-  const memberId = asString(formData, "memberId");
+  const memberId = await resolveCanonicalMemberId(asString(formData, "memberId"), {
+    actionLabel: "createMemberHoldAction"
+  });
   const startDate = normalizeOperationalDateOnly(asString(formData, "startDate"));
   const endDateRaw = asNullableString(formData, "endDate");
   const endDate = endDateRaw ? normalizeOperationalDateOnly(endDateRaw) : null;
@@ -67,8 +70,7 @@ export async function createMemberHoldAction(formData: FormData) {
     reasonOther,
     notes,
     actorUserId: actor.id,
-    actorName: actor.full_name,
-    canonicalInput: true
+    actorName: actor.full_name
   });
 
   revalidateHoldsWorkflows(created.member_id);

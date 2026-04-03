@@ -16,7 +16,7 @@ export function CarePlanPdfActions({ carePlanId }: { carePlanId: string }) {
         carePlanId,
         persistToMemberFiles: mode === "download"
       });
-      if (!result.ok) {
+      if (result.status === "error") {
         setStatus(`Error: ${result.error}`);
         return;
       }
@@ -27,7 +27,7 @@ export function CarePlanPdfActions({ carePlanId }: { carePlanId: string }) {
       }
       triggerPdfDownload(result.dataUrl, result.fileName);
       setStatus(
-        result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
+        result.status === "follow-up-needed" && result.memberFilesMessage
           ? `PDF downloaded. ${result.memberFilesMessage}`
           : "PDF downloaded and saved to member files."
       );

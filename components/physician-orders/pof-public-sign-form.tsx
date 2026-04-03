@@ -132,7 +132,7 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
         actionNeeded: result.actionNeeded,
         actionNeededMessage: result.actionNeededMessage
       });
-      setStatus(result.actionNeededMessage ?? "Signing successful.");
+      setStatus(result.actionNeededMessage ?? "Signature recorded.");
     });
   }
 
@@ -146,17 +146,20 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
               : "border border-emerald-200 bg-emerald-50 text-emerald-700"
           }`}
         >
-          {submittedOutcome?.actionNeeded ? "Signature Received" : "Signing Successful"}
+          {submittedOutcome?.actionNeeded ? "Signature Recorded, Downstream Sync Pending" : "Signature Recorded"}
         </p>
         <p className="text-sm text-muted">
           {submittedOutcome?.actionNeededMessage ??
-            "Thank you. The signed form has been received and recorded successfully."}
+            "Thank you. The signed form has been received and downstream sync is complete."}
         </p>
         {submittedOutcome ? (
           <p className="text-xs text-muted">
-            Post-sign sync: {submittedOutcome.postSignStatus === "queued" ? "Queued for follow-up" : "Synced"}
+            Downstream status:{" "}
+            {submittedOutcome.postSignStatus === "queued"
+              ? "Queued, not yet operationally ready"
+              : "Synced and operationally ready"}
             {submittedOutcome.retry.nextRetryAt
-              ? ` • Next retry: ${new Date(submittedOutcome.retry.nextRetryAt).toLocaleString()}`
+              ? ` | Next retry: ${new Date(submittedOutcome.retry.nextRetryAt).toLocaleString()}`
               : ""}
           </p>
         ) : null}
@@ -190,7 +193,12 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
           onPointerLeave={onPointerUp}
         />
         <div className="mt-2 flex justify-end">
-          <button type="button" className="rounded-lg border border-border px-3 py-2 text-xs font-semibold" onClick={clearSignature} disabled={isPending}>
+          <button
+            type="button"
+            className="rounded-lg border border-border px-3 py-2 text-xs font-semibold"
+            onClick={clearSignature}
+            disabled={isPending}
+          >
             Clear Signature
           </button>
         </div>
@@ -208,7 +216,12 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
       </label>
 
       <div className="flex justify-end">
-        <button type="button" className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white" onClick={submitSignature} disabled={isPending}>
+        <button
+          type="button"
+          className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white"
+          onClick={submitSignature}
+          disabled={isPending}
+        >
           {isPending ? "Submitting..." : "Sign and Submit"}
         </button>
       </div>

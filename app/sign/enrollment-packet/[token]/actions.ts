@@ -357,7 +357,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       ]
     });
     const redirectParams = new URLSearchParams();
-    if (result.operationalReadinessStatus !== "operationally_ready") {
+    if (result.actionNeeded) {
       redirectParams.set("status", "follow-up-required");
     }
     if (result.wasAlreadyFiled) {
@@ -368,7 +368,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       ok: true,
       ...buildCommittedWorkflowActionState({
         operationalStatus: result.operationalReadinessStatus,
-        operationallyReady: result.operationalReadinessStatus === "operationally_ready",
+        operationallyReady: result.operationalReadinessStatus === "operationally_ready" && !result.actionNeeded,
         actionNeededMessage: result.actionNeededMessage
       }),
       redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation${redirectSuffix}`

@@ -21,12 +21,12 @@ import { requireMemberHealthProfilesAccess } from "@/lib/auth";
 import { canAccessMemberCommandCenter, canAccessPhysicianOrders } from "@/lib/permissions";
 import { formatBillingPayorDisplayName } from "@/lib/services/billing-payor-contacts";
 import { getCarePlanPostSignReadinessLabel } from "@/lib/services/care-plans";
+import { getPhysicianOrderClinicalSyncLabel } from "@/lib/services/physician-order-clinical-sync";
 import {
   MHP_TABS,
   type MhpTab,
   getMemberHealthProfileDetailSupabase,
-  getMemberHealthProfileAssessmentsSupabase,
-  getMemberHealthProfileOverviewSupplement
+  getMemberHealthProfileOverviewSummaryReadModel
 } from "@/lib/services/member-health-profiles-read";
 import {
   MHP_AMBULATION_OPTIONS,
@@ -84,11 +84,7 @@ const DIET_TEXTURE_OPTIONS = ["Regular", "Mechanical Soft", "Chopped", "Ground",
 const NOTE_TYPE_OPTIONS = ["Clinical", "Behavioral", "Caregiver Communication", "Incident Follow-up", "Care Plan", "General"] as const;
 
 function clinicalSyncLabel(status: "not_signed" | "pending" | "queued" | "failed" | "synced") {
-  if (status === "synced") return "Synced";
-  if (status === "failed") return "Failed";
-  if (status === "queued") return "Queued";
-  if (status === "pending") return "Pending";
-  return "-";
+  return getPhysicianOrderClinicalSyncLabel(status);
 }
 
 function intakeReadinessLabel(
@@ -109,6 +105,7 @@ function intakeReadinessLabel(
 }
 const EQUIPMENT_STATUS_OPTIONS = ["Active", "Inactive"] as const;
 const MEDICATION_ROUTE_OPTIONS = ["PO", "SQ", "IM", "TD", "INH", "Topical", "Ophthalmic", "Otic"] as const;
+const OVERVIEW_DEFERRED_BILLING_PLACEHOLDER = "Loads with the overview summary panels below";
 
 function Field({ label, name, defaultValue }: { label: string; name: string; defaultValue?: string }) {
   return (
@@ -196,33 +193,25 @@ function OverviewTabFallback() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardTitle>Overview</CardTitle>
+        <CardTitle>Overview Summaries</CardTitle>
         <p className="mt-2 text-sm text-muted">
-          Loading care plan, progress note, billing payor, and physician order summary data.
+          Loading care plan, progress note, billing payor, physician order, and intake summary data.
         </p>
       </Card>
     </div>
   );
 }
 
-async function MemberHealthProfileOverviewTab({
-  detail,
-  genderDefault,
-  profileUpdatedBy,
+async function MemberHealthProfileOverviewSummaryPanels({
+  memberId,
   canViewPhysicianOrders
 }: {
-  detail: MemberHealthProfileDetail;
-  genderDefault: string;
-  profileUpdatedBy: string | null;
+  memberId: string;
   canViewPhysicianOrders: boolean;
 }) {
-  const { member, profile } = detail;
-  const [overviewData, assessments] = await Promise.all([
-    getMemberHealthProfileOverviewSupplement(member.id, {
-      canonicalInput: true
-    }),
-    getMemberHealthProfileAssessmentsSupabase(member.id)
-  ]);
+  const overviewData = await getMemberHealthProfileOverviewSummaryReadModel(memberId, {
+    canonicalInput: true
+  });
   const carePlanSummary = overviewData.carePlanSummary;
   const progressNoteSummary = overviewData.progressNoteSummary;
   const relatedCarePlans = overviewData.carePlanSnapshot.rows ?? [];
@@ -235,13 +224,13 @@ async function MemberHealthProfileOverviewTab({
     (row) => row.updatedAt,
     (row) => row.updatedByName
   );
+  const assessments = overviewData.assessments;
   const assessmentsUpdatedAt = latestTimestamp(assessments.map((row) => row.created_at));
   const assessmentsUpdatedBy = latestUpdatedBy(assessments, (row) => row.created_at, (row) => row.completed_by);
 
   return (
     <div className="space-y-4">
       <Card>
-        <SectionHeading title="Overview" lastUpdatedAt={profile.updated_at} lastUpdatedBy={profileUpdatedBy} />
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <div className="rounded-lg border border-border p-3 text-center">
             <p className="text-xs text-muted">Next Care Plan Due</p>
@@ -263,44 +252,33 @@ async function MemberHealthProfileOverviewTab({
                 (progressNoteSummary ? progressNoteSummary.complianceStatus.replaceAll("_", " ") : "No enrollment date")}
             </p>
           </div>
+          <div className="rounded-lg border border-border p-3 text-center sm:col-span-2">
+            <p className="text-xs text-muted">Billing Payor Contact</p>
+            <p className="font-semibold">
+              {overviewData.billingPayor
+                ? formatBillingPayorDisplayName(overviewData.billingPayor)
+                : "No payor contact designated"}
+            </p>
+          </div>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <Link href={carePlanSummary.actionHref} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
             {carePlanSummary.actionLabel}
           </Link>
           <Link
-            href={`/health/progress-notes?memberId=${member.id}`}
+            href={`/health/progress-notes?memberId=${memberId}`}
             className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
           >
             Open Progress Notes
           </Link>
           {canViewPhysicianOrders ? (
             <Link
-              href={`/health/physician-orders?memberId=${member.id}`}
+              href={`/health/physician-orders?memberId=${memberId}`}
               className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
             >
               Open Physician Orders
             </Link>
           ) : null}
-        </div>
-        <div className="mt-4">
-          <MhpOverviewForm
-            memberId={member.id}
-            memberDob={member.dob ?? ""}
-            genderDefault={genderDefault}
-            billingPayorDisplay={
-              overviewData.billingPayor
-                ? formatBillingPayorDisplayName(overviewData.billingPayor)
-                : "No payor contact designated"
-            }
-            originalReferralSource={profile.original_referral_source ?? ""}
-            photoConsent={profile.photo_consent}
-            primaryCaregiverName={profile.primary_caregiver_name ?? ""}
-            primaryCaregiverPhone={profile.primary_caregiver_phone ?? ""}
-            responsiblePartyName={profile.responsible_party_name ?? ""}
-            responsiblePartyPhone={profile.responsible_party_phone ?? ""}
-            importantAlerts={profile.important_alerts ?? ""}
-          />
         </div>
       </Card>
 
@@ -363,12 +341,12 @@ async function MemberHealthProfileOverviewTab({
         />
         <div className="mt-2 flex flex-wrap gap-2">
           {canViewPhysicianOrders ? (
-            <Link href={`/health/physician-orders?memberId=${member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
+            <Link href={`/health/physician-orders?memberId=${memberId}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
               Open Member POF List
             </Link>
           ) : null}
           {canViewPhysicianOrders ? (
-            <Link href={`/health/physician-orders/new?memberId=${member.id}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
+            <Link href={`/health/physician-orders/new?memberId=${memberId}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
               New Physician Order
             </Link>
           ) : null}
@@ -387,7 +365,11 @@ async function MemberHealthProfileOverviewTab({
                   <td>
                     <div className="space-y-1">
                       <p>{row.clinicalSyncDetail?.label ?? clinicalSyncLabel(row.clinicalSyncStatus)}</p>
-                      {row.clinicalSyncDetail?.message ? <p className="max-w-xs text-xs text-muted">{row.clinicalSyncDetail.message}</p> : null}
+                      {row.clinicalSyncDetail?.message ? (
+                        <p className={`max-w-xs text-xs ${row.clinicalSyncDetail.actionNeeded ? "text-amber-800" : "text-muted"}`}>
+                          {row.clinicalSyncDetail.message}
+                        </p>
+                      ) : null}
                     </div>
                   </td>
                   <td>{row.providerName ?? "-"}</td>
@@ -401,6 +383,50 @@ async function MemberHealthProfileOverviewTab({
           </tbody>
         </table>
       </Card>
+    </div>
+  );
+}
+
+function MemberHealthProfileOverviewTab({
+  detail,
+  genderDefault,
+  profileUpdatedBy,
+  canViewPhysicianOrders
+}: {
+  detail: MemberHealthProfileDetail;
+  genderDefault: string;
+  profileUpdatedBy: string | null;
+  canViewPhysicianOrders: boolean;
+}) {
+  const { member, profile } = detail;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <SectionHeading title="Overview" lastUpdatedAt={profile.updated_at} lastUpdatedBy={profileUpdatedBy} />
+        <div className="mt-4">
+          <MhpOverviewForm
+            memberId={member.id}
+            memberDob={member.dob ?? ""}
+            genderDefault={genderDefault}
+            billingPayorDisplay={OVERVIEW_DEFERRED_BILLING_PLACEHOLDER}
+            originalReferralSource={profile.original_referral_source ?? ""}
+            photoConsent={profile.photo_consent}
+            primaryCaregiverName={profile.primary_caregiver_name ?? ""}
+            primaryCaregiverPhone={profile.primary_caregiver_phone ?? ""}
+            responsiblePartyName={profile.responsible_party_name ?? ""}
+            responsiblePartyPhone={profile.responsible_party_phone ?? ""}
+            importantAlerts={profile.important_alerts ?? ""}
+          />
+        </div>
+      </Card>
+
+      <Suspense fallback={<OverviewTabFallback />}>
+        <MemberHealthProfileOverviewSummaryPanels
+          memberId={member.id}
+          canViewPhysicianOrders={canViewPhysicianOrders}
+        />
+      </Suspense>
     </div>
   );
 }

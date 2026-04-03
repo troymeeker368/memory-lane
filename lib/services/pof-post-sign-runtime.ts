@@ -65,7 +65,7 @@ function buildPublicPofPostSignOutcome(input: {
       },
       actionNeeded: true,
       actionNeededMessage:
-        "Signature was received, but downstream clinical sync is still queued for follow-up. Staff should review before treating the order as fully synced."
+        "Signature was durably recorded, but downstream MHP/MCC and MAR sync is still queued. Staff should not treat this order as operationally ready yet."
     };
   }
 

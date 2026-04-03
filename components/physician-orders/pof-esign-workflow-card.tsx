@@ -312,7 +312,7 @@ export function PofEsignWorkflowCard({
           </p>
           {clinicalSyncDetail ? (
             <div className={`mt-3 rounded-lg border p-3 ${clinicalSyncDetail.actionNeeded ? "border-amber-300 bg-amber-50 text-amber-900" : "border-slate-200 bg-white text-slate-800"}`}>
-              <p className="font-semibold">Clinical Sync: {clinicalSyncDetail.label}</p>
+              <p className="font-semibold">Operational Readiness: {clinicalSyncDetail.label}</p>
               {clinicalSyncDetail.message ? <p className="mt-1 text-xs">{clinicalSyncDetail.message}</p> : null}
               {clinicalSyncDetail.nextRetryAt ? (
                 <p className="mt-1 text-xs">

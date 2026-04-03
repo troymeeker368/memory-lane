@@ -82,14 +82,13 @@ export function MarMonthlyReportPanel({
       saveToMemberFiles: true
     });
 
-    if (!result.ok) {
+    if (result.status === "error") {
       setStatus(`Error: ${result.error}`);
       return;
     }
 
     const nextWarnings = result.reportMeta?.warnings ?? [];
-    const memberFilesFollowUpNeeded =
-      result.memberFilesStatus === "follow-up-needed" && Boolean(result.memberFilesMessage);
+    const memberFilesFollowUpNeeded = result.status === "follow-up-needed";
     setWarnings(nextWarnings);
 
     if (mode === "preview") {

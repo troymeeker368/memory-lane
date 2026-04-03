@@ -128,6 +128,7 @@ type MemberHealthProfileDetailOptions = {
 
 type MemberHealthProfileAssessmentOptions = {
   includeAll?: boolean;
+  limit?: number;
   supabase?: Awaited<ReturnType<typeof createClient>>;
 };
 
@@ -613,13 +614,21 @@ async function loadMemberHealthProfileAssessments(
   options?: MemberHealthProfileAssessmentOptions
 ) {
   const supabase = options?.supabase ?? (await createClient());
-  const query = supabase
+  let query = supabase
     .from("intake_assessments")
     .select("id, member_id, assessment_date, total_score, recommended_track, completed_by, signature_status, draft_pof_status, created_at")
     .eq("member_id", canonicalMemberId)
     .order("assessment_date", { ascending: false })
     .order("created_at", { ascending: false });
-  const { data, error } = await (options?.includeAll ? query : query.limit(1));
+  const requestedLimit = options?.limit;
+  const explicitLimit =
+    Number.isFinite(requestedLimit) && Number(requestedLimit) > 0 ? Math.floor(Number(requestedLimit)) : null;
+  if (explicitLimit) {
+    query = query.limit(explicitLimit);
+  } else if (!options?.includeAll) {
+    query = query.limit(1);
+  }
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
 
   const rawAssessments = sortDesc((data ?? []) as IntakeAssessmentRow[], (row) => row.created_at);
@@ -793,12 +802,13 @@ export async function getMemberHealthProfileDetailSupabase(
   };
 }
 
-export async function getMemberHealthProfileAssessmentsSupabase(memberId: string) {
+export async function getMemberHealthProfileAssessmentsSupabase(memberId: string, options?: { limit?: number }) {
   const canonicalMemberId = await resolveCanonicalMemberId(memberId, {
     actionLabel: "getMemberHealthProfileAssessmentsSupabase"
   });
   return loadMemberHealthProfileAssessments(canonicalMemberId, {
-    includeAll: true
+    includeAll: true,
+    limit: options?.limit
   });
 }
 

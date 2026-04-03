@@ -15,7 +15,7 @@ export async function generateCarePlanPdfAction(input: { carePlanId: string; per
   const carePlanId = String(input.carePlanId ?? "").trim();
   const persistToMemberFiles = input.persistToMemberFiles !== false;
   if (!carePlanId) {
-    return { ok: false, error: "Care plan is required." } as const;
+    return { ok: false, status: "error", error: "Care plan is required." } as const;
   }
 
   try {
@@ -24,6 +24,7 @@ export async function generateCarePlanPdfAction(input: { carePlanId: string; per
     let memberFilesPersistence:
       | ReturnType<typeof buildGeneratedMemberFilePersistenceState>
       | null = null;
+    let verifiedPersisted = false;
 
     if (persistToMemberFiles) {
       const saved = await saveGeneratedMemberPdfToFiles({
@@ -47,21 +48,40 @@ export async function generateCarePlanPdfAction(input: { carePlanId: string; per
         documentLabel: "Care Plan",
         verifiedPersisted: saved.verifiedPersisted
       });
+      verifiedPersisted = saved.verifiedPersisted;
       revalidatePath(`/health/care-plans/${carePlanId}`);
       revalidatePath(`/members/${generated.carePlan.memberId}`);
       revalidatePath(`/health/member-health-profiles/${generated.carePlan.memberId}`);
       revalidatePath(`/operations/member-command-center/${generated.carePlan.memberId}`);
     }
 
+    if (persistToMemberFiles && memberFilesPersistence && !verifiedPersisted) {
+      return {
+        ok: false,
+        status: "follow-up-needed",
+        fileName,
+        dataUrl: generated.dataUrl,
+        pdfGenerated: true as const,
+        storageUploaded: true as const,
+        memberFilesVerified: false as const,
+        ...memberFilesPersistence
+      } as const;
+    }
+
     return {
       ok: true,
+      status: "verified",
       fileName,
       dataUrl: generated.dataUrl,
+      pdfGenerated: true as const,
+      storageUploaded: persistToMemberFiles,
+      memberFilesVerified: verifiedPersisted,
       ...(memberFilesPersistence ?? {})
     } as const;
   } catch (error) {
     return {
       ok: false,
+      status: "error",
       error: error instanceof Error ? error.message : "Unable to generate care plan PDF."
     } as const;
   }

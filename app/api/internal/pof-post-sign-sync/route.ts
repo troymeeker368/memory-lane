@@ -30,6 +30,35 @@ function isHealthMode(request: NextRequest) {
   return mode.trim().toLowerCase() === "health";
 }
 
+function resolveRunnerHealth(input: {
+  runnerConfigured: boolean;
+  agedQueueRows?: number;
+  queuedRows?: number;
+}) {
+  if (!input.runnerConfigured) {
+    return {
+      healthStatus: "missing_config" as const,
+      healthReason: "runner_not_configured" as const
+    };
+  }
+  if ((input.queuedRows ?? 0) > 0) {
+    return {
+      healthStatus: "degraded" as const,
+      healthReason: "retry_queued" as const
+    };
+  }
+  if ((input.agedQueueRows ?? 0) > 0) {
+    return {
+      healthStatus: "degraded" as const,
+      healthReason: "aged_queue" as const
+    };
+  }
+  return {
+    healthStatus: "healthy" as const,
+    healthReason: null
+  };
+}
+
 async function handleRunnerRequest(request: NextRequest) {
   const acceptedSecrets = getAcceptedRunnerSecrets();
   if (acceptedSecrets.length === 0) {
@@ -52,7 +81,8 @@ async function handleRunnerRequest(request: NextRequest) {
       {
         ok: false,
         error: getDefaultConfigError(),
-        runnerConfigured: false
+        runnerConfigured: false,
+        ...resolveRunnerHealth({ runnerConfigured: false })
       },
       { status: 503 }
     );
@@ -70,13 +100,15 @@ async function handleRunnerRequest(request: NextRequest) {
       serviceRole: true,
       actorUserId: null
     });
-    const healthStatus = agedQueueSummary.agedQueueRows > 0 ? "degraded" : "healthy";
     return NextResponse.json({
       ok: true,
       timestamp: now,
       runnerConfigured: true,
       mode: "health",
-      healthStatus,
+      ...resolveRunnerHealth({
+        runnerConfigured: true,
+        agedQueueRows: agedQueueSummary.agedQueueRows
+      }),
       agedQueueRows: agedQueueSummary.agedQueueRows,
       agedQueueAlertsRaised: agedQueueSummary.alertsRaised,
       agedQueueAlertAgeMinutes: agedQueueSummary.alertAgeMinutes
@@ -105,7 +137,11 @@ async function handleRunnerRequest(request: NextRequest) {
     timestamp: now,
     runnerConfigured: true,
     mode: "run",
-    healthStatus: result.agedQueueRows > 0 ? "degraded" : "healthy",
+    ...resolveRunnerHealth({
+      runnerConfigured: true,
+      agedQueueRows: result.agedQueueRows,
+      queuedRows: result.queued
+    }),
     ...result
   });
 }

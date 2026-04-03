@@ -421,7 +421,7 @@ function marReportTypeLabel(reportType: z.infer<typeof monthlyMarReportSchema>["
 
 export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof monthlyMarReportSchema>) {
   const payload = monthlyMarReportSchema.safeParse(raw);
-  if (!payload.success) return { ok: false, error: "Invalid MAR monthly report input." } as const;
+  if (!payload.success) return { ok: false, status: "error", error: "Invalid MAR monthly report input." } as const;
 
   const profile = await requireMarDocumentation();
   const generatedAtIso = toEasternISO();
@@ -471,10 +471,35 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
       });
 
       revalidateMarRoutes(generated.report.member.id);
+      const persistenceTruth = {
+        pdfGenerated: true as const,
+        storageUploaded: true as const,
+        memberFilesVerified: saved.verifiedPersisted
+      };
+
+      if (!saved.verifiedPersisted) {
+        return {
+          ok: false,
+          status: "follow-up-needed",
+          fileName: saved.fileName,
+          dataUrl: generated.dataUrl,
+          ...persistenceTruth,
+          ...memberFilesPersistence,
+          reportMeta: {
+            hasMedicationRecords: generated.report.dataQuality.hasMedicationRecords,
+            hasMarDataForMonth: generated.report.dataQuality.hasMarDataForMonth,
+            partialRecordsDetected: generated.report.dataQuality.partialRecordsDetected,
+            warnings: generated.report.dataQuality.warnings
+          }
+        } as const;
+      }
+
       return {
         ok: true,
+        status: "verified",
         fileName: saved.fileName,
         dataUrl: generated.dataUrl,
+        ...persistenceTruth,
         ...memberFilesPersistence,
         reportMeta: {
           hasMedicationRecords: generated.report.dataQuality.hasMedicationRecords,
@@ -486,6 +511,7 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
     } catch (error) {
       return {
         ok: false,
+        status: "error",
         error:
           error instanceof Error
             ? `MAR report generation succeeded, but saving to member files failed: ${error.message}`
@@ -495,6 +521,7 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
   } catch (error) {
     return {
       ok: false,
+      status: "error",
       error: error instanceof Error ? error.message : "Unable to generate monthly MAR report."
     } as const;
   }

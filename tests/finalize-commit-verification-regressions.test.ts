@@ -65,3 +65,20 @@ test("public enrollment packet completion verifies finalized batch rows before s
   assert.equal(source.includes("finalizeVerification?.kind !== \"unverified\""), true);
   assert.equal(source.includes("return buildCommittedEnrollmentPacketReplayResult({"), true);
 });
+
+test("public enrollment packet completion returns a committed follow-up result when post-commit writes fail", () => {
+  const source = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+
+  assert.equal(source.includes("function buildEnrollmentPacketPostCommitFollowUpMessage"), true);
+  assert.equal(source.includes("async function recordEnrollmentPacketPostCommitFollowUpFailure"), true);
+  assert.equal(source.includes('alertKey: "enrollment_packet_post_commit_follow_up_failed"'), true);
+  assert.equal(source.includes("completionFollowUpStatus = \"action_required\";"), true);
+  assert.equal(
+    source.includes("post-commit follow-up failed after enrollment packet finalization"),
+    true
+  );
+  assert.equal(
+    source.includes("completionFollowUpStatus: \"action_required\""),
+    true
+  );
+});

@@ -83,7 +83,7 @@ export function NameBadgeBuilder({
         memberId,
         selectedIndicatorKeys: selectedKeys
       });
-      if (!result?.ok) {
+      if (result.status === "error") {
         setStatus(`Error: ${result?.error ?? "Unable to generate badge."}`);
         return;
       }
@@ -94,7 +94,7 @@ export function NameBadgeBuilder({
       if (mode === "print") {
         await triggerPdfPrintFromUrl(result.downloadUrl);
         setStatus(
-          result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
+          result.status === "follow-up-needed" && result.memberFilesMessage
             ? `Name badge sent to printer. ${result.memberFilesMessage}`
             : "Name badge generated, saved to member files, and sent to printer."
         );
@@ -102,7 +102,7 @@ export function NameBadgeBuilder({
       }
       await triggerPdfDownloadFromUrl(result.downloadUrl, result.fileName);
       setStatus(
-        result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
+        result.status === "follow-up-needed" && result.memberFilesMessage
           ? `Name badge downloaded. ${result.memberFilesMessage}`
           : "Name badge saved to Files/Documents and downloaded."
       );

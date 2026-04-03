@@ -311,6 +311,24 @@ function mapRunRow(row: TransportationRunRow): TransportationRunHistoryEntry {
   };
 }
 
+function assertManifestMemberCoverage(input: {
+  requestedMemberIds: string[];
+  memberById: Map<string, MemberRow>;
+  selectedDate: string;
+  selectedShift: Shift;
+  selectedBusNumber: string;
+}) {
+  const missingMemberIds = input.requestedMemberIds.filter((memberId) => !input.memberById.has(memberId));
+  if (missingMemberIds.length === 0) return;
+
+  const previewIds = missingMemberIds.slice(0, 5).join(", ");
+  const remainder = missingMemberIds.length > 5 ? ` (+${missingMemberIds.length - 5} more)` : "";
+  throw new Error(
+    `Transportation manifest cannot be built because ${missingMemberIds.length} member id(s) referenced by schedule/adjustment data are missing from members: ${previewIds}${remainder}. ` +
+      `Run \`npm run repair:historical-drift -- --apply\` before posting runs (date ${input.selectedDate}, shift ${input.selectedShift}, bus ${input.selectedBusNumber}).`
+  );
+}
+
 export async function getTransportationRunManifestSupabase(input: {
   selectedDate: string;
   shift: Shift;
@@ -406,6 +424,13 @@ export async function getTransportationRunManifestSupabase(input: {
     recentRunRows.find((row) => row.shift === selectedShift && row.bus_number === selectedBusNumber) ?? null;
   const recentRuns = recentRunRows.map(mapRunRow);
   const memberById = new Map(((membersData ?? []) as MemberRow[]).map((row) => [row.id, row] as const));
+  assertManifestMemberCoverage({
+    requestedMemberIds: memberIds,
+    memberById,
+    selectedDate,
+    selectedShift,
+    selectedBusNumber
+  });
   const attendanceByMemberId = new Map(
     ((attendanceData ?? []) as AttendanceRow[]).map((row) => [String(row.member_id), row] as const)
   );

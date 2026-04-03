@@ -580,17 +580,18 @@ export async function generatePhysicianOrderPdfAction(input: { pofId: string; pe
   const actorDisplayName = await getManagedUserSignoffLabel(profile.id, profile.full_name);
   const persistToMemberFiles = input.persistToMemberFiles !== false;
   if (!canManagePhysicianOrders(profile)) {
-    return { ok: false, error: "You do not have access to generate POF PDFs." } as const;
+    return { ok: false, status: "error", error: "You do not have access to generate POF PDFs." } as const;
   }
 
   const pofId = String(input.pofId ?? "").trim();
-  if (!pofId) return { ok: false, error: "POF is required." } as const;
+  if (!pofId) return { ok: false, status: "error", error: "POF is required." } as const;
 
   try {
     const generated = await buildPhysicianOrderPdfDataUrl(pofId);
     let memberFilesPersistence:
       | ReturnType<typeof buildGeneratedMemberFilePersistenceState>
       | null = null;
+    let verifiedPersisted = false;
     if (persistToMemberFiles) {
       const saved = await savePofPdfToMemberFiles({
         memberId: generated.form.memberId,
@@ -605,17 +606,36 @@ export async function generatePhysicianOrderPdfAction(input: { pofId: string; pe
         documentLabel: "POF",
         verifiedPersisted: saved.verifiedPersisted
       });
+      verifiedPersisted = saved.verifiedPersisted;
       revalidatePofRoutes(generated.form.memberId, generated.form.id);
     }
+    if (persistToMemberFiles && memberFilesPersistence && !verifiedPersisted) {
+      return {
+        ok: false,
+        status: "follow-up-needed",
+        fileName: generated.fileName,
+        dataUrl: generated.dataUrl,
+        pdfGenerated: true as const,
+        storageUploaded: true as const,
+        memberFilesVerified: false as const,
+        ...memberFilesPersistence
+      } as const;
+    }
+
     return {
       ok: true,
+      status: "verified",
       fileName: generated.fileName,
       dataUrl: generated.dataUrl,
+      pdfGenerated: true as const,
+      storageUploaded: persistToMemberFiles,
+      memberFilesVerified: verifiedPersisted,
       ...(memberFilesPersistence ?? {})
     } as const;
   } catch (error) {
     return {
       ok: false,
+      status: "error",
       error: error instanceof Error ? error.message : "Unable to generate POF PDF."
     } as const;
   }

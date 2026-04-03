@@ -4,6 +4,21 @@ import { useState, useTransition } from "react";
 
 import { triggerPdfDownloadFromUrl, triggerPdfPrintFromUrl } from "@/components/documents/pdf-client";
 
+type FaceSheetPdfResult =
+  | {
+      ok: false;
+      status: "error";
+      error: string;
+    }
+  | {
+      ok: boolean;
+      status: "verified" | "follow-up-needed";
+      fileName: string;
+      downloadUrl: string | null;
+      memberFilesStatus?: "verified" | "follow-up-needed";
+      memberFilesMessage?: string | null;
+    };
+
 export function FaceSheetActions({ memberId }: { memberId: string }) {
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState("");
@@ -25,15 +40,7 @@ export function FaceSheetActions({ memberId }: { memberId: string }) {
               }
             });
 
-            let result:
-              | {
-                  ok: true;
-                  fileName: string;
-                  downloadUrl: string | null;
-                  memberFilesStatus?: "verified" | "follow-up-needed";
-                  memberFilesMessage?: string | null;
-                }
-              | { ok: false; error: string };
+            let result: FaceSheetPdfResult;
 
             try {
               result = (await response.json()) as typeof result;
@@ -42,7 +49,7 @@ export function FaceSheetActions({ memberId }: { memberId: string }) {
               return;
             }
 
-            if (!result?.ok) {
+            if (result.status === "error") {
               setStatus(`Error: ${result.error}`);
               return;
             }
@@ -53,7 +60,7 @@ export function FaceSheetActions({ memberId }: { memberId: string }) {
             await triggerPdfDownloadFromUrl(result.downloadUrl, result.fileName);
             await triggerPdfPrintFromUrl(result.downloadUrl);
             setStatus(
-              result.memberFilesStatus === "follow-up-needed" && result.memberFilesMessage
+              result.status === "follow-up-needed" && result.memberFilesMessage
                 ? `Face sheet PDF downloaded and print dialog opened. ${result.memberFilesMessage}`
                 : "Face sheet PDF downloaded and print dialog opened."
             );

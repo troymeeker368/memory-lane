@@ -44,12 +44,20 @@ test("send enrollment packet flows use the shared eligible lead list and backend
   const standaloneActionSource = readWorkspaceFile("components/sales/sales-enrollment-packet-standalone-action.tsx");
   const leadPageSource = readWorkspaceFile("app/(portal)/sales/leads/[leadId]/page.tsx");
   const leadsReadSource = readWorkspaceFile("lib/services/leads-read.ts");
+  const crmSource = readWorkspaceFile("lib/services/sales-crm-read-model.ts");
+  const migrationSource = readWorkspaceFile("supabase/migrations/0184_enrollment_packet_eligible_lead_sort_index.sql");
   const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-send-runtime.ts");
 
   assert.equal(pageSource.includes("SalesEnrollmentPacketStandaloneAction"), true);
   assert.equal(standaloneActionSource.includes("EligibleLeadSearchPicker"), true);
   assert.equal(leadsReadSource.includes("listEnrollmentPacketEligibleLeadPickerSupabase"), true);
   assert.equal(pageSource.includes("listEnrollmentPacketEligibleLeads({ limit: 500 })"), false);
+  assert.equal(crmSource.includes("SALES_ENROLLMENT_PACKET_ELIGIBLE_SELECT"), true);
+  assert.equal(crmSource.includes("ENROLLMENT_PACKET_ELIGIBLE_LEAD_STAGES"), true);
+  assert.equal(crmSource.includes('.order("inquiry_date", { ascending: false, nullsFirst: false })'), true);
+  assert.equal(crmSource.includes("caregiver_email"), true);
+  assert.equal(migrationSource.includes("inquiry_date desc, member_name"), true);
+  assert.equal(migrationSource.includes("where status = 'open'"), true);
   assert.equal(leadPageSource.includes("isEnrollmentPacketEligibleLeadState({"), true);
   assert.equal(runtimeSource.includes("isEnrollmentPacketEligibleLeadState({"), true);
   assert.equal(
