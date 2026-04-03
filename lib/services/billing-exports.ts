@@ -3,21 +3,50 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
+import { buildCsvRows, normalizeInvoiceRow, toDataUrl } from "@/lib/services/billing-core";
+import { buildQuickBooksInvoiceCsv } from "@/lib/services/billing-quickbooks-export";
+import {
+  formatBillingPayorDisplayName,
+  listBillingPayorContactsForMembers
+} from "@/lib/services/billing-payor-contacts";
+import { invokeCreateBillingExportRpc } from "@/lib/services/billing-rpc";
+import { isMissingSchemaObjectError } from "@/lib/services/billing-schema-errors";
 import { BILLING_EXPORT_TYPES } from "@/lib/services/billing-types";
 import { asNumber, startOfMonth, toAmount } from "@/lib/services/billing-utils";
-import { buildCsvRows, normalizeInvoiceRow, toDataUrl } from "@/lib/services/billing-core";
-import { invokeCreateBillingExportRpc } from "@/lib/services/billing-rpc";
 import { buildIdempotencyHash } from "@/lib/services/idempotency";
-import { formatBillingPayorDisplayName, listBillingPayorContactsForMembers } from "@/lib/services/billing-payor-contacts";
-import { isMissingSchemaObjectError } from "@/lib/services/billing-schema-errors";
 import { recordImmediateSystemAlert, recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
+import type { Database } from "@/types/supabase-types";
 
 type BillingBatchRow = {
   billing_month: string;
 };
 
 type BillingExportInvoiceRow = ReturnType<typeof normalizeInvoiceRow>;
+type BillingInvoiceLineRow = Database["public"]["Tables"]["billing_invoice_lines"]["Row"];
+
+function buildBillingExportIdempotencyKey(input: {
+  billingBatchId: string;
+  exportType: (typeof BILLING_EXPORT_TYPES)[number];
+  quickbooksDetailLevel: "Summary" | "Detailed";
+}) {
+  return buildIdempotencyHash("billing-export:create", {
+    billingBatchId: input.billingBatchId,
+    exportType: input.exportType,
+    quickbooksDetailLevel: input.quickbooksDetailLevel,
+    quickbooksTemplateVersion: input.exportType === "QuickBooksCSV" ? "invoice-import-template-v1" : "legacy"
+  });
+}
+
+function buildMissingSchemaResponse(error: { message: string }, migration: string, objectName: string) {
+  if (isMissingSchemaObjectError(error)) {
+    return {
+      ok: false as const,
+      error: `${objectName} schema is not available yet. Apply Supabase migration ${migration} first.`
+    };
+  }
+  throw new Error(error.message);
+}
 
 export async function createBillingExport(input: {
   billingBatchId: string;
@@ -28,11 +57,7 @@ export async function createBillingExport(input: {
   try {
     const supabase = await createClient();
     const now = toEasternISO();
-    const idempotencyKey = buildIdempotencyHash("billing-export:create", {
-      billingBatchId: input.billingBatchId,
-      exportType: input.exportType,
-      quickbooksDetailLevel: input.quickbooksDetailLevel
-    });
+    const idempotencyKey = buildBillingExportIdempotencyKey(input);
     const [{ data: batch, error: batchError }, { data: invoices, error: invoiceError }] = await Promise.all([
       supabase.from("billing_batches").select("*").eq("id", input.billingBatchId).maybeSingle(),
       supabase
@@ -40,18 +65,14 @@ export async function createBillingExport(input: {
         .select("*")
         .eq("billing_batch_id", input.billingBatchId)
         .in("invoice_status", ["Finalized", "Sent", "Paid", "PartiallyPaid", "Void"])
+        .order("invoice_number", { ascending: true })
+        .order("created_at", { ascending: true })
     ]);
     if (batchError) {
-      if (isMissingSchemaObjectError(batchError)) {
-        return { ok: false as const, error: "Billing execution schema is not available yet. Apply Supabase migration 0013 first." };
-      }
-      throw new Error(batchError.message);
+      return buildMissingSchemaResponse(batchError, "0013", "Billing execution");
     }
     if (invoiceError) {
-      if (isMissingSchemaObjectError(invoiceError)) {
-        return { ok: false as const, error: "Billing execution schema is not available yet. Apply Supabase migration 0013 first." };
-      }
-      throw new Error(invoiceError.message);
+      return buildMissingSchemaResponse(invoiceError, "0013", "Billing execution");
     }
     if (!batch) return { ok: false as const, error: "Billing batch not found." };
 
@@ -61,10 +82,7 @@ export async function createBillingExport(input: {
       .eq("idempotency_key", idempotencyKey)
       .maybeSingle();
     if (existingExportError) {
-      if (isMissingSchemaObjectError(existingExportError)) {
-        return { ok: false as const, error: "Billing execution schema is not available yet. Apply Supabase migration 0013 first." };
-      }
-      throw new Error(existingExportError.message);
+      return buildMissingSchemaResponse(existingExportError, "0013", "Billing execution");
     }
     if (existingExport?.id) {
       return { ok: true as const, billingExportId: String(existingExport.id), duplicateSafe: true as const };
@@ -74,19 +92,23 @@ export async function createBillingExport(input: {
     if (invoiceRows.length === 0) {
       return { ok: false as const, error: "No finalized invoices available for export." };
     }
-    const payorByMember = await listBillingPayorContactsForMembers(invoiceRows.map((row) => String(row.member_id)));
+
+    const memberIds = Array.from(new Set(invoiceRows.map((row) => String(row.member_id)).filter(Boolean)));
+    const payorByMember = await listBillingPayorContactsForMembers(memberIds);
 
     const invoiceIds = invoiceRows.map((row) => String(row.id));
-    const { data: lines, error: linesError } = await supabase.from("billing_invoice_lines").select("*").in("invoice_id", invoiceIds);
+    const { data: lines, error: linesError } = await supabase
+      .from("billing_invoice_lines")
+      .select("*")
+      .in("invoice_id", invoiceIds)
+      .order("invoice_id", { ascending: true })
+      .order("line_number", { ascending: true });
     if (linesError) {
-      if (isMissingSchemaObjectError(linesError)) {
-        return { ok: false as const, error: "Billing execution schema is not available yet. Apply Supabase migration 0013 first." };
-      }
-      throw new Error(linesError.message);
+      return buildMissingSchemaResponse(linesError, "0013", "Billing execution");
     }
 
     let csv = "";
-    if (input.exportType === "InvoiceSummaryCSV" || input.quickbooksDetailLevel === "Summary") {
+    if (input.exportType === "InvoiceSummaryCSV") {
       const header = [
         "InvoiceNumber",
         "InvoiceMonth",
@@ -114,7 +136,7 @@ export async function createBillingExport(input: {
     } else if (input.exportType === "InternalReviewCSV") {
       const header = ["InvoiceNumber", "LineNumber", "ProductOrService", "LineType", "Description", "ServiceDate", "Quantity", "UnitRate", "Amount"];
       const invoiceById = new Map(invoiceRows.map((row) => [String(row.id), row] as const));
-      const body = ((lines ?? []) as Array<{ invoice_id: string; line_number?: number | null; product_or_service?: string | null; line_type: string; description: string; service_date: string | null; quantity: number; unit_rate: number; amount: number }>).map((line) => [
+      const body = ((lines ?? []) as BillingInvoiceLineRow[]).map((line) => [
         invoiceById.get(String(line.invoice_id))?.invoice_number ?? "",
         asNumber(line.line_number ?? 0),
         line.product_or_service ?? "",
@@ -127,20 +149,84 @@ export async function createBillingExport(input: {
       ]);
       csv = buildCsvRows(header, body);
     } else {
-      const header = ["Customer", "CustomerContactId", "QuickBooksCustomerId", "InvoiceNumber", "Date", "DueDate", "Amount"];
-      const body = invoiceRows.map((row) => {
-        const payor = payorByMember.get(String(row.member_id)) ?? null;
-        return [
-          payor ? formatBillingPayorDisplayName(payor) : "No payor contact designated",
-          payor?.contact_id ?? "",
-          payor?.quickbooks_customer_id ?? "",
-          row.invoice_number,
-          row.invoice_date ?? row.created_at,
-          row.due_date ?? "",
-          toAmount(row.total_amount)
-        ];
+      const payorIds = Array.from(new Set(invoiceRows.map((row) => String(row.payor_id ?? "")).filter(Boolean)));
+      const minBasePeriodStart = invoiceRows
+        .map((row) => String(row.base_period_start ?? ""))
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right))[0];
+      const maxBasePeriodEnd = invoiceRows
+        .map((row) => String(row.base_period_end ?? ""))
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right))
+        .slice(-1)[0];
+
+      const [{ data: payorRows, error: payorError }, { data: attendanceRows, error: attendanceError }] = await Promise.all([
+        payorIds.length > 0
+          ? supabase.from("payors").select("id, quickbooks_customer_name").in("id", payorIds)
+          : Promise.resolve({ data: [], error: null }),
+        memberIds.length > 0 && minBasePeriodStart && maxBasePeriodEnd
+          ? supabase
+              .from("attendance_records")
+              .select("member_id, attendance_date, status")
+              .in("member_id", memberIds)
+              .eq("status", "present")
+              .gte("attendance_date", minBasePeriodStart)
+              .lte("attendance_date", maxBasePeriodEnd)
+          : Promise.resolve({ data: [], error: null })
+      ]);
+
+      if (payorError) {
+        return buildMissingSchemaResponse(payorError, "0011", "Payor");
+      }
+      if (attendanceError) {
+        return buildMissingSchemaResponse(attendanceError, "0012", "Attendance");
+      }
+
+      const payorById = new Map(
+        (((payorRows ?? []) as Array<{ id: string; quickbooks_customer_name: string | null }>)).map((row) => [String(row.id), row] as const)
+      );
+      const attendanceDatesByMemberId = new Map<string, string[]>();
+      (((attendanceRows ?? []) as Array<{ member_id: string; attendance_date: string; status: string }>)).forEach((row) => {
+        const memberId = String(row.member_id ?? "");
+        const attendanceDate = String(row.attendance_date ?? "");
+        if (!memberId || !attendanceDate) return;
+        const existing = attendanceDatesByMemberId.get(memberId);
+        if (existing) {
+          existing.push(attendanceDate);
+          return;
+        }
+        attendanceDatesByMemberId.set(memberId, [attendanceDate]);
       });
-      csv = buildCsvRows(header, body);
+
+      const customerNameByInvoiceId = new Map<string, string>();
+      const attendedDatesByInvoiceId = new Map<string, string[]>();
+      invoiceRows.forEach((row) => {
+        const invoiceId = String(row.id);
+        const payorRecord = row.payor_id ? payorById.get(String(row.payor_id)) ?? null : null;
+        const payorContact = payorByMember.get(String(row.member_id)) ?? null;
+        customerNameByInvoiceId.set(
+          invoiceId,
+          String(
+            payorRecord?.quickbooks_customer_name ??
+              row.bill_to_name_snapshot ??
+              (payorContact ? formatBillingPayorDisplayName(payorContact) : "No payor contact designated")
+          )
+        );
+        const periodStart = String(row.base_period_start ?? "");
+        const periodEnd = String(row.base_period_end ?? "");
+        const attendanceDates = (attendanceDatesByMemberId.get(String(row.member_id)) ?? [])
+          .filter((attendanceDate) => (!periodStart || attendanceDate >= periodStart) && (!periodEnd || attendanceDate <= periodEnd))
+          .sort((left, right) => left.localeCompare(right));
+        attendedDatesByInvoiceId.set(invoiceId, attendanceDates);
+      });
+
+      csv = buildQuickBooksInvoiceCsv({
+        invoices: invoiceRows,
+        lines: (lines ?? []) as BillingInvoiceLineRow[],
+        detailLevel: input.quickbooksDetailLevel,
+        customerNameByInvoiceId,
+        attendedDatesByInvoiceId
+      });
     }
 
     const fileName = `${input.exportType}-${startOfMonth(String((batch as BillingBatchRow).billing_month))}-${input.quickbooksDetailLevel.toLowerCase()}-${idempotencyKey.slice(0, 8)}.csv`;
@@ -183,11 +269,7 @@ export async function createBillingExport(input: {
     return { ok: true as const, billingExportId, duplicateSafe: false as const };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to generate billing export.";
-    const idempotencyKey = buildIdempotencyHash("billing-export:create", {
-      billingBatchId: input.billingBatchId,
-      exportType: input.exportType,
-      quickbooksDetailLevel: input.quickbooksDetailLevel
-    });
+    const idempotencyKey = buildBillingExportIdempotencyKey(input);
     await recordWorkflowEvent({
       eventType: "billing_export_failed",
       entityType: "billing_batch",
