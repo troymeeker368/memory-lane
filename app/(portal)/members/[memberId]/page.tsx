@@ -5,7 +5,12 @@ import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { Card, CardTitle } from "@/components/ui/card";
 import { RelatedSection } from "@/components/ui/related-section";
 import { requireModuleAccess } from "@/lib/auth";
-import { canAccessClinicalDocumentationForRole, canAccessMemberHealthProfiles } from "@/lib/permissions";
+import {
+  canAccessClinicalDocumentationForRole,
+  canAccessMemberCommandCenter,
+  canAccessMemberHealthProfiles
+} from "@/lib/permissions";
+import { memberRoutes } from "@/lib/routes";
 import { canAccessCarePlansForRole } from "@/lib/services/care-plan-authorization";
 import { getMemberDetailById } from "@/lib/services/members-read";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
@@ -13,6 +18,7 @@ import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
 export default async function MemberDetailPage({ params }: { params: Promise<{ memberId: string }> }) {
   const profile = await requireModuleAccess("documentation");
   const canManage = profile.role === "admin" || profile.role === "manager";
+  const canViewCommandCenter = canAccessMemberCommandCenter(profile);
   const canViewMhp = canAccessMemberHealthProfiles(profile);
   const canViewCarePlans = canAccessCarePlansForRole(profile.role);
   const canViewAssessments = canAccessClinicalDocumentationForRole(profile.role);
@@ -25,7 +31,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
     <div className="space-y-4">
       <Card>
         <div className="flex items-center justify-center gap-3">
-          <CardTitle>{detail.member.display_name}</CardTitle>
+          <CardTitle>{detail.member.display_name} Documentation Summary</CardTitle>
         </div>
         {canManage ? (
           <div id="discharge-actions" className="mt-2 flex justify-center">
@@ -46,13 +52,18 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
             <p className="text-muted">Recorded By: {detail.member.discharged_by ?? "-"}</p>
           </div>
         ) : null}
-        {canViewMhp ? (
-          <div className="mt-3">
-            <Link className="font-semibold text-brand" href={`/health/member-health-profiles/${detail.member.id}`}>
+        <div className="mt-3 flex flex-wrap justify-center gap-3">
+          {canViewCommandCenter ? (
+            <Link className="font-semibold text-brand" href={memberRoutes.commandCenterDetail(detail.member.id)}>
+              Open Member Command Center
+            </Link>
+          ) : null}
+          {canViewMhp ? (
+            <Link className="font-semibold text-brand" href={memberRoutes.healthProfileDetail(detail.member.id)}>
               Open Member Health Profile
             </Link>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </Card>
 
       <RelatedSection title="Toilet Log" count={detail.counts.toilets} viewAllHref="/documentation/toilet" addHref="/documentation/toilet">

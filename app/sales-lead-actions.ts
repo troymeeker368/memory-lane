@@ -14,6 +14,7 @@ import {
   resolveCanonicalLeadState
 } from "@/lib/canonical";
 import { normalizeRoleKey } from "@/lib/permissions";
+import { memberRoutes, salesRoutes } from "@/lib/routes";
 import { createSalesLeadActivity, salesLeadActivityInputSchema } from "@/lib/services/sales-lead-activities";
 import { createLeadWithMemberConversionSupabase } from "@/lib/services/sales-lead-conversion-supabase";
 import {
@@ -503,12 +504,12 @@ export async function enrollMemberFromLeadAction(raw: z.infer<typeof enrollLeadS
   }
 
   revalidateSalesLeadViews(lead.id);
-  revalidatePath("/members");
-  revalidatePath(`/members/${memberId}`);
-  revalidatePath("/operations/member-command-center");
-  revalidatePath(`/operations/member-command-center/${memberId}`);
-  revalidatePath("/health/member-health-profiles");
-  revalidatePath(`/health/member-health-profiles/${memberId}`);
+  revalidatePath(memberRoutes.directory);
+  revalidatePath(memberRoutes.detail(memberId));
+  revalidatePath(memberRoutes.commandCenterIndex);
+  revalidatePath(memberRoutes.commandCenterDetail(memberId));
+  revalidatePath(memberRoutes.healthProfileIndex);
+  revalidatePath(memberRoutes.healthProfileDetail(memberId));
   return { ok: true, leadId: lead.id, memberId };
 }
 
@@ -535,11 +536,11 @@ export async function createSalesLeadActivityAction(raw: z.infer<typeof salesLea
     return { error: error instanceof Error ? error.message : "Unable to create lead activity." };
   }
 
-  revalidatePath("/sales/activities");
-  revalidatePath("/sales/new-entries/log-lead-activity");
-  revalidatePath(`/sales/leads/${created.leadId}`);
-  revalidatePath("/sales/pipeline/leads-table");
-  revalidatePath("/sales/pipeline/by-stage");
+  revalidatePath(salesRoutes.activities);
+  revalidatePath(salesRoutes.newEntriesLogLeadActivity);
+  revalidatePath(salesRoutes.leadDetail(created.leadId));
+  revalidatePath(salesRoutes.pipelineLeadsTable);
+  revalidatePath(salesRoutes.pipelineByStage);
   return { ok: true };
 }
 
@@ -592,10 +593,10 @@ export async function createLeadQuickContactActivityAction(raw: z.infer<typeof q
     return { error: error instanceof Error ? error.message : "Unable to create quick contact activity." };
   }
 
-  revalidatePath("/sales/activities");
-  revalidatePath("/sales/new-entries/log-lead-activity");
-  revalidatePath("/sales/pipeline/follow-up-dashboard");
-  revalidatePath(`/sales/leads/${created.leadId}`);
+  revalidatePath(salesRoutes.activities);
+  revalidatePath(salesRoutes.newEntriesLogLeadActivity);
+  revalidatePath(salesRoutes.pipelineFollowUpDashboard);
+  revalidatePath(salesRoutes.leadDetail(created.leadId));
 
   return { ok: true, id: created.activityId };
 }

@@ -2,17 +2,18 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { salesRoutes } from "@/lib/routes";
 import { getLeadSummarySnapshot } from "@/lib/services/leads-read";
 
 function stageHref(stage: string) {
-  if (stage === "Inquiry") return "/sales/pipeline/leads-table?stage=Inquiry";
-  if (stage === "Tour") return "/sales/pipeline/leads-table?stage=Tour";
-  if (stage === "Enrollment in Progress") return "/sales/pipeline/leads-table?stage=Enrollment%20in%20Progress";
-  if (stage === "Nurture") return "/sales/pipeline/leads-table?stage=Nurture";
-  if (stage === "Referrals Only") return "/sales/pipeline/leads-table?lead_source=Referral";
-  if (stage === "Closed - Won") return "/sales/pipeline/closed-won";
-  if (stage === "Closed - Lost") return "/sales/pipeline/closed-lost";
-  return "/sales/pipeline/leads-table";
+  if (stage === "Inquiry") return `${salesRoutes.pipelineLeadsTable}?stage=Inquiry`;
+  if (stage === "Tour") return `${salesRoutes.pipelineLeadsTable}?stage=Tour`;
+  if (stage === "Enrollment in Progress") return `${salesRoutes.pipelineLeadsTable}?stage=Enrollment%20in%20Progress`;
+  if (stage === "Nurture") return `${salesRoutes.pipelineLeadsTable}?stage=Nurture`;
+  if (stage === "Referrals Only") return `${salesRoutes.pipelineLeadsTable}?lead_source=Referral`;
+  if (stage === "Closed - Won") return salesRoutes.pipelineClosedWon;
+  if (stage === "Closed - Lost") return salesRoutes.pipelineClosedLost;
+  return salesRoutes.pipelineLeadsTable;
 }
 
 export default async function PipelineByStagePage() {

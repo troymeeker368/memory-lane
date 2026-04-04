@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { NameBadgeBuilder } from "@/components/name-badge/name-badge-builder";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireRoles } from "@/lib/auth";
+import { memberRoutes } from "@/lib/routes";
 import { getMemberNameBadgeDetail } from "@/lib/services/member-name-badge";
 
 function firstString(value: string | string[] | undefined) {
@@ -37,8 +38,8 @@ export default async function MemberNameBadgePage({
   const source = firstString(query.from);
   const backHref =
     source === "mhp"
-      ? `/health/member-health-profiles/${memberId}`
-      : `/operations/member-command-center/${memberId}?tab=overview`;
+      ? memberRoutes.healthProfileDetail(memberId)
+      : memberRoutes.commandCenterTab(memberId, "overview");
 
   let badge: Awaited<ReturnType<typeof getMemberNameBadgeDetail>> = null;
   let loadError = "";

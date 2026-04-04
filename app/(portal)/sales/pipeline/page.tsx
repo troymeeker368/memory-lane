@@ -2,19 +2,20 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { salesRoutes } from "@/lib/routes";
 
 const pipelineLinks = [
-  { label: "Pipeline by Stage", href: "/sales/pipeline/by-stage" },
-  { label: "Leads Pipeline Table", href: "/sales/pipeline/leads-table" },
-  { label: "Follow Up Dashboard", href: "/sales/pipeline/follow-up-dashboard" },
-  { label: "Enrollment Packets", href: "/sales/pipeline/enrollment-packets" },
-  { label: "Leads - Inquiry", href: "/sales/pipeline/inquiry" },
-  { label: "Leads - Tour", href: "/sales/pipeline/tour" },
-  { label: "Leads - Enrollment in Progress", href: "/sales/pipeline/eip" },
-  { label: "Leads - Nurture", href: "/sales/pipeline/nurture" },
-  { label: "Leads - Referrals Only", href: "/sales/pipeline/referrals-only" },
-  { label: "Closed - Won", href: "/sales/pipeline/closed-won" },
-  { label: "Closed - Lost", href: "/sales/pipeline/closed-lost" }
+  { label: "Pipeline by Stage", href: salesRoutes.pipelineByStage },
+  { label: "Leads Pipeline Table", href: salesRoutes.pipelineLeadsTable },
+  { label: "Follow Up Dashboard", href: salesRoutes.pipelineFollowUpDashboard },
+  { label: "Enrollment Packets", href: salesRoutes.pipelineEnrollmentPackets },
+  { label: "Leads - Inquiry", href: salesRoutes.pipelineInquiry },
+  { label: "Leads - Tour", href: salesRoutes.pipelineTour },
+  { label: "Leads - Enrollment in Progress", href: salesRoutes.pipelineEip },
+  { label: "Leads - Nurture", href: salesRoutes.pipelineNurture },
+  { label: "Leads - Referrals Only", href: salesRoutes.pipelineReferralsOnly },
+  { label: "Closed - Won", href: salesRoutes.pipelineClosedWon },
+  { label: "Closed - Lost", href: salesRoutes.pipelineClosedLost }
 ];
 
 export default async function SalesPipelineMenuPage() {

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { MEMBER_DISCHARGE_REASON_OPTIONS, MEMBER_DISPOSITION_OPTIONS } from "@/lib/canonical";
+import { memberRoutes } from "@/lib/routes";
 import { updateMemberStatusSupabase } from "@/lib/services/member-status-supabase";
 
 import { type ActionErrorResult, type ActionSuccessResult, insertAudit, requireManagerAdminEditor } from "@/app/action-helpers";
@@ -71,17 +72,17 @@ export async function setMemberStatusAction(raw: {
     dischargeDisposition: payload.data.dischargeDisposition ?? null
   });
 
-  revalidatePath("/members");
-  revalidatePath(`/members/${payload.data.memberId}`);
+  revalidatePath(memberRoutes.directory);
+  revalidatePath(memberRoutes.detail(payload.data.memberId));
   revalidatePath("/reports/member-summary");
-  revalidatePath("/operations/member-command-center");
-  revalidatePath(`/operations/member-command-center/${payload.data.memberId}`);
+  revalidatePath(memberRoutes.commandCenterIndex);
+  revalidatePath(memberRoutes.commandCenterDetail(payload.data.memberId));
   revalidatePath("/operations/holds");
   revalidatePath("/operations/attendance");
   revalidatePath("/operations/transportation-station");
   revalidatePath("/operations/transportation-station/print");
   revalidatePath("/operations/locker-assignments");
-  revalidatePath("/health/member-health-profiles");
-  revalidatePath(`/health/member-health-profiles/${payload.data.memberId}`);
+  revalidatePath(memberRoutes.healthProfileIndex);
+  revalidatePath(memberRoutes.healthProfileDetail(payload.data.memberId));
   return { ok: true };
 }

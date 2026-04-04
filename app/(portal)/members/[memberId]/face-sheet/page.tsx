@@ -5,6 +5,7 @@ import { DocumentBrandHeader } from "@/components/documents/document-brand-heade
 import { FaceSheetActions } from "@/components/face-sheet/face-sheet-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireRoles } from "@/lib/auth";
+import { memberRoutes } from "@/lib/routes";
 import { formatPhoneDisplay } from "@/lib/phone";
 import { getMemberFaceSheet } from "@/lib/services/member-face-sheet";
 import { formatDate, formatDateTime, formatOptionalDate } from "@/lib/utils";
@@ -32,10 +33,10 @@ export default async function MemberFaceSheetPage({
   const source = firstString(query.from);
   const backHref =
     source === "mhp"
-      ? `/health/member-health-profiles/${memberId}`
+      ? memberRoutes.healthProfileDetail(memberId)
       : source === "mcc"
-        ? `/operations/member-command-center/${memberId}`
-        : `/members/${memberId}`;
+        ? memberRoutes.commandCenterDetail(memberId)
+        : memberRoutes.detail(memberId);
 
   const faceSheet = await getMemberFaceSheet(memberId);
   if (!faceSheet) notFound();

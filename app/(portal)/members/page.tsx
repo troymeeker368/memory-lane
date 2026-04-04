@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
+import { memberRoutes } from "@/lib/routes";
 import { listMembersPageSupabase } from "@/lib/services/member-command-center-read";
 import { formatOptionalDate } from "@/lib/utils";
 
@@ -26,7 +27,7 @@ function buildMembersHref(input: {
   if (input.statusFilter && input.statusFilter !== "all") params.set("status", input.statusFilter);
   if (input.page > 1) params.set("page", String(input.page));
   const query = params.toString();
-  return query ? `/members?${query}` : "/members";
+  return query ? `${memberRoutes.directory}?${query}` : memberRoutes.directory;
 }
 
 export default async function MembersPage({
@@ -68,7 +69,7 @@ export default async function MembersPage({
         <button type="submit" className="h-10 rounded-lg bg-[#1B3E93] px-3 font-semibold text-white">
           Filter
         </button>
-        <Link href="/members" className="h-10 rounded-lg border border-border px-3 font-semibold leading-10 text-center">
+        <Link href={memberRoutes.directory} className="h-10 rounded-lg border border-border px-3 font-semibold leading-10 text-center">
           Clear Filters
         </Link>
       </form>
@@ -99,8 +100,8 @@ export default async function MembersPage({
               <td>{member.discharge_reason ?? "-"}</td>
               <td>{member.discharge_disposition ?? "-"}</td>
               <td>
-                <Link href={`/members/${member.id}`} className="font-semibold text-brand">
-                  Details
+                <Link href={memberRoutes.detail(member.id)} className="font-semibold text-brand">
+                  Documentation Summary
                 </Link>
               </td>
             </tr>

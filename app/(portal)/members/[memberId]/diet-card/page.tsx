@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
-
+import Link from "next/link";
 import { DietCardActions } from "@/components/diet-card/diet-card-actions";
 import { BackArrowButton } from "@/components/ui/back-arrow-button";
 import { requireModuleAccess } from "@/lib/auth";
+import { memberRoutes } from "@/lib/routes";
 import { getMemberDietCard } from "@/lib/services/member-diet-card";
 import { formatDateTime } from "@/lib/utils";
 
@@ -25,10 +26,10 @@ export default async function MemberDietCardPage({
   const source = firstString(query.from);
   const backHref =
     source === "mcc"
-      ? `/operations/member-command-center/${memberId}?tab=diet-allergies`
+      ? memberRoutes.commandCenterTab(memberId, "diet-allergies")
       : source === "mhp"
-        ? `/health/member-health-profiles/${memberId}?tab=medical`
-        : `/operations/member-command-center/${memberId}?tab=diet-allergies`;
+        ? memberRoutes.healthProfileTab(memberId, "medical")
+        : memberRoutes.commandCenterTab(memberId, "diet-allergies");
 
   const dietCard = await getMemberDietCard(memberId);
   if (!dietCard) notFound();
@@ -40,9 +41,9 @@ export default async function MemberDietCardPage({
       <div className="print-hide flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <BackArrowButton fallbackHref={backHref} ariaLabel="Back to member record" />
-          <a href={backHref} className="text-sm font-semibold text-brand">
+          <Link href={backHref} className="text-sm font-semibold text-brand">
             Back to Member Record
-          </a>
+          </Link>
         </div>
         <DietCardActions memberId={memberId} />
       </div>

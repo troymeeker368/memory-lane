@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { requireModuleAction } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
+import { salesCanonicalLeadViewPaths, salesRoutes } from "@/lib/routes";
 import { resolveCanonicalLeadRef } from "@/lib/services/canonical-person-ref";
 import { applyLeadStageTransitionWithMemberUpsertSupabase } from "@/lib/services/sales-lead-conversion-supabase";
 
@@ -17,30 +18,11 @@ export async function requireSalesRoles() {
 }
 
 export function revalidateSalesLeadViews(leadId?: string) {
-  const basePaths = [
-    "/sales",
-    "/sales/activities",
-    "/sales/pipeline",
-    "/sales/pipeline/enrollment-packets",
-    "/sales/pipeline/leads-table",
-    "/sales/pipeline/by-stage",
-    "/sales/pipeline/follow-up-dashboard",
-    "/sales/pipeline/inquiry",
-    "/sales/pipeline/tour",
-    "/sales/pipeline/eip",
-    "/sales/pipeline/nurture",
-    "/sales/pipeline/closed-won",
-    "/sales/pipeline/closed-lost",
-    "/sales/pipeline-table",
-    "/sales/pipeline-by-stage",
-    "/sales/summary"
-  ];
-
-  basePaths.forEach((path) => revalidatePath(path));
+  salesCanonicalLeadViewPaths.forEach((path) => revalidatePath(path));
 
   if (leadId) {
-    revalidatePath(`/sales/leads/${leadId}`);
-    revalidatePath(`/sales/leads/${leadId}/edit`);
+    revalidatePath(salesRoutes.leadDetail(leadId));
+    revalidatePath(salesRoutes.leadEdit(leadId));
   }
 }
 

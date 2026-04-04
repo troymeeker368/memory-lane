@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getCurrentProfile } from "@/lib/auth";
+import { memberRoutes, salesRoutes } from "@/lib/routes";
 import {
   ActiveEnrollmentPacketConflictError,
   sendEnrollmentPacketRequest,
@@ -41,13 +42,13 @@ function revalidateEnrollmentPacketRoutes(input: {
   packetId?: string | null;
 }) {
   revalidateSalesLeadViews(input.leadId ?? undefined);
-  revalidatePath("/sales/pipeline/enrollment-packets");
-  revalidatePath("/sales/new-entries/send-enrollment-packet");
-  revalidatePath("/operations/member-command-center");
-  revalidatePath(`/operations/member-command-center/${input.memberId}`);
-  revalidatePath(`/members/${input.memberId}`);
+  revalidatePath(salesRoutes.pipelineEnrollmentPackets);
+  revalidatePath(salesRoutes.newEntriesSendEnrollmentPacket);
+  revalidatePath(memberRoutes.commandCenterIndex);
+  revalidatePath(memberRoutes.commandCenterDetail(input.memberId));
+  revalidatePath(memberRoutes.detail(input.memberId));
   if (input.packetId) {
-    revalidatePath(`/sales/pipeline/enrollment-packets/${input.packetId}`);
+    revalidatePath(`${salesRoutes.pipelineEnrollmentPackets}/${input.packetId}`);
   }
 }
 

@@ -7,6 +7,7 @@ import { CarePlanSignatureBlock } from "@/components/care-plans/care-plan-signat
 import { DocumentBrandHeader } from "@/components/documents/document-brand-header";
 import { CarePlanReviewFormShell } from "@/components/forms/care-plan-form-shells";
 import { Card, CardTitle } from "@/components/ui/card";
+import { memberRoutes } from "@/lib/routes";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
 import {
   CARE_PLAN_LONG_TERM_LABEL,
@@ -101,7 +102,7 @@ export default async function CarePlanDetailPage({
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Next Due</p><p className="font-semibold">{formatDate(detail.carePlan.nextDueDate)}</p></div>
         </div>
         <div className="print-hide mt-3 text-sm">
-          <Link href={`/members/${detail.carePlan.memberId}`} className="font-semibold text-brand">Open Member Detail</Link>
+          <Link href={memberRoutes.detail(detail.carePlan.memberId)} className="font-semibold text-brand">Open Documentation Summary</Link>
         </div>
         {detail.carePlan.designeeCleanupRequired ? (
           <p className="print-hide mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">

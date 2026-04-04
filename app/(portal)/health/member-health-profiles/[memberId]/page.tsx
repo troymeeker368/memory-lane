@@ -19,6 +19,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { MemberStatusToggle } from "@/components/forms/member-status-toggle";
 import { requireMemberHealthProfilesAccess } from "@/lib/auth";
 import { canAccessMemberCommandCenter, canAccessPhysicianOrders } from "@/lib/permissions";
+import { memberRoutes } from "@/lib/routes";
 import { formatBillingPayorDisplayName } from "@/lib/services/billing-payor-contacts";
 import { getCarePlanPostSignReadinessLabel } from "@/lib/services/care-plans";
 import { getPhysicianOrderClinicalSyncLabel } from "@/lib/services/physician-order-clinical-sync";
@@ -496,14 +497,14 @@ export default async function MemberHealthProfileDetailPage({
         </div>
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <BackArrowButton
-            fallbackHref="/health/member-health-profiles"
+            fallbackHref={memberRoutes.healthProfileIndex}
             forceFallback
             ariaLabel="Back to member health profile list"
           />
           {canViewCommandCenter ? (
-            <Link href={`/operations/member-command-center/${member.id}`} className="font-semibold text-brand">Member Command Center</Link>
+            <Link href={memberRoutes.commandCenterDetail(member.id)} className="font-semibold text-brand">Member Command Center</Link>
           ) : null}
-          <Link href={`/members/${member.id}`} className="font-semibold text-brand">Member Detail</Link>
+          <Link href={memberRoutes.detail(member.id)} className="font-semibold text-brand">Documentation Summary</Link>
           <Link href={`/health/assessment?memberId=${member.id}`} className="font-semibold text-brand">New Intake Assessment</Link>
           <Link href={`/health/care-plans?memberId=${member.id}`} className="font-semibold text-brand">Care Plans</Link>
           <Link href={`/health/progress-notes?memberId=${member.id}`} className="font-semibold text-brand">Progress Notes</Link>

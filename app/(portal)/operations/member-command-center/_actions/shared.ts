@@ -8,6 +8,7 @@ import {
   requireMemberCommandCenterEdit
 } from "@/lib/auth";
 import { normalizePhoneForStorage } from "@/lib/phone";
+import { memberRoutes } from "@/lib/routes";
 
 export type CommandCenterEditor = Awaited<ReturnType<typeof requireMemberCommandCenterEdit>>;
 export type CommandCenterViewer = Awaited<ReturnType<typeof requireMemberCommandCenterAccess>>;
@@ -91,8 +92,8 @@ export function toAuthorizedActor<T extends { id: string; full_name: string; rol
 }
 
 export function revalidateCommandCenter(memberId: string) {
-  revalidatePath("/operations/member-command-center");
-  revalidatePath(`/operations/member-command-center/${memberId}`);
+  revalidatePath(memberRoutes.commandCenterIndex);
+  revalidatePath(memberRoutes.commandCenterDetail(memberId));
   revalidatePath("/operations/payor");
   revalidatePath("/operations/payor/billing-agreements");
   revalidatePath("/operations/payor/schedule-templates");
@@ -102,7 +103,7 @@ export function revalidateCommandCenter(memberId: string) {
   revalidatePath("/operations/transportation-station");
   revalidatePath("/operations/transportation-station/print");
   revalidatePath("/operations/locker-assignments");
-  revalidatePath("/health/member-health-profiles");
-  revalidatePath(`/health/member-health-profiles/${memberId}`);
-  revalidatePath(`/members/${memberId}`);
+  revalidatePath(memberRoutes.healthProfileIndex);
+  revalidatePath(memberRoutes.healthProfileDetail(memberId));
+  revalidatePath(memberRoutes.detail(memberId));
 }

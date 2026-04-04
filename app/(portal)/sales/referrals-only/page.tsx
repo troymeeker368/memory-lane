@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
+import { salesRoutes } from "@/lib/routes";
 
 export default function RedirectPage() {
-  redirect("/sales/pipeline/referrals-only");
+  redirect(salesRoutes.pipelineReferralsOnly);
 }

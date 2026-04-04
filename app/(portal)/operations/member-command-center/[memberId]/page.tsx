@@ -50,6 +50,7 @@ import {
   getMemberCommandCenterDetailSupabase,
   listMemberBillingSettingsSupabase
 } from "@/lib/services/member-command-center-read";
+import { memberRoutes } from "@/lib/routes";
 import { getOperationsTodayDate, normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import type { PhysicianOrderMemberHistoryRow } from "@/lib/services/physician-order-model";
@@ -457,13 +458,13 @@ export default async function MemberCommandCenterDetailPage({
         </div>
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <BackArrowButton
-            fallbackHref="/operations/member-command-center"
+            fallbackHref={memberRoutes.commandCenterIndex}
             forceFallback
             ariaLabel="Back to member command center list"
           />
-          <Link href={`/members/${detail.member.id}`} className="font-semibold text-brand">Member Detail</Link>
+          <Link href={memberRoutes.detail(detail.member.id)} className="font-semibold text-brand">Documentation Summary</Link>
           {canViewMhpFromMcc ? (
-            <Link href={`/health/member-health-profiles/${detail.member.id}`} className="font-semibold text-brand">Member Health Profile</Link>
+            <Link href={memberRoutes.healthProfileDetail(detail.member.id)} className="font-semibold text-brand">Member Health Profile</Link>
           ) : null}
           {canViewPhysicianOrders ? (
             <Link href={`/health/physician-orders?memberId=${detail.member.id}`} className="font-semibold text-brand">Physician Orders</Link>
@@ -698,7 +699,7 @@ export default async function MemberCommandCenterDetailPage({
           {canViewPhysicianOrders ? (
             <Link href={`/health/physician-orders?memberId=${detail.member.id}`} className="rounded-lg border border-border px-3 py-2 font-semibold text-brand">Orders / Physician Order Forms</Link>
           ) : null}
-          <Link href={`/members/${detail.member.id}`} className="rounded-lg border border-border px-3 py-2 font-semibold text-brand">Documentation</Link>
+          <Link href={memberRoutes.detail(detail.member.id)} className="rounded-lg border border-border px-3 py-2 font-semibold text-brand">Documentation Summary</Link>
           <Link href={`/operations/member-command-center/${detail.member.id}?tab=diet-allergies#diet-allergies`} className="rounded-lg border border-border px-3 py-2 font-semibold text-brand">Notes</Link>
         </div>
       </Card>

@@ -3,6 +3,7 @@ import "server-only";
 import { revalidatePath } from "next/cache";
 
 import { requireMemberHealthProfilesManagement } from "@/lib/auth";
+import { memberRoutes } from "@/lib/routes";
 
 export function asString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
@@ -149,11 +150,11 @@ export function buildMhpUpdatedByPatch(actor: Pick<MhpActionActor, "id" | "full_
 }
 
 export function revalidateMhp(memberId: string, options?: { mar?: boolean }) {
-  revalidatePath("/health/member-health-profiles");
-  revalidatePath(`/health/member-health-profiles/${memberId}`);
-  revalidatePath("/operations/member-command-center");
-  revalidatePath(`/operations/member-command-center/${memberId}`);
-  revalidatePath(`/members/${memberId}`);
+  revalidatePath(memberRoutes.healthProfileIndex);
+  revalidatePath(memberRoutes.healthProfileDetail(memberId));
+  revalidatePath(memberRoutes.commandCenterIndex);
+  revalidatePath(memberRoutes.commandCenterDetail(memberId));
+  revalidatePath(memberRoutes.detail(memberId));
   revalidatePath("/health");
   if (options?.mar) {
     revalidatePath("/health/mar");
