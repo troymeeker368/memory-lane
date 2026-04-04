@@ -4,6 +4,7 @@ import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { toEasternDate } from "@/lib/timezone";
 import {
   computeCarePlanStatus,
+  resolveCarePlanPostSignReadiness,
   resolveCarePlanSections,
   toCarePlan,
   toCarePlanVersion
@@ -31,6 +32,8 @@ export interface MemberCarePlanOverview {
 type LatestCarePlanSummaryRow = {
   id: string;
   next_due_date: string | null;
+  caregiver_signature_status: string | null;
+  final_member_file_id: string | null;
   post_sign_readiness_status: string | null;
   post_sign_readiness_reason: string | null;
 };
@@ -111,6 +114,8 @@ type CarePlanListPageRow = {
   next_due_date?: unknown;
   status?: unknown;
   completed_by?: unknown;
+  caregiver_signature_status?: unknown;
+  final_member_file_id?: unknown;
   post_sign_readiness_status?: unknown;
   post_sign_readiness_reason?: unknown;
 };
@@ -120,18 +125,18 @@ function clean(value: string | null | undefined) {
   return normalized.length > 0 ? normalized : null;
 }
 
-function toListPostSignReadinessStatus(
-  value: string | null | undefined
-): "not_started" | "signed_pending_snapshot" | "signed_pending_caregiver_dispatch" | "ready" {
-  if (
-    value === "not_started" ||
-    value === "signed_pending_snapshot" ||
-    value === "signed_pending_caregiver_dispatch" ||
-    value === "ready"
-  ) {
-    return value;
-  }
-  return "not_started";
+function resolveCarePlanReadModelPostSignReadiness(input: {
+  status: string | null | undefined;
+  reason: string | null | undefined;
+  caregiverSignatureStatus?: string | null | undefined;
+  finalMemberFileId?: string | null | undefined;
+}) {
+  return resolveCarePlanPostSignReadiness({
+    status: input.status,
+    reason: input.reason,
+    caregiverSignatureStatus: input.caregiverSignatureStatus,
+    finalMemberFileId: input.finalMemberFileId
+  });
 }
 
 function addDays(date: string, days: number) {
@@ -146,7 +151,7 @@ async function getLatestCarePlanSummaryRow(
 ): Promise<LatestCarePlanSummaryRow | null> {
   const { data, error } = await supabase
     .from("care_plans")
-    .select("id, next_due_date, post_sign_readiness_status, post_sign_readiness_reason")
+    .select("id, next_due_date, caregiver_signature_status, final_member_file_id, post_sign_readiness_status, post_sign_readiness_reason")
     .eq("member_id", canonicalMemberId)
     .order("review_date", { ascending: false })
     .order("updated_at", { ascending: false })
@@ -252,25 +257,33 @@ async function resolveCarePlanQueryMemberIds(queryText?: string | null) {
 
 function mapCarePlanListRows(payload: unknown) {
   const rows = Array.isArray(payload) ? (payload as CarePlanListPageRow[]) : [];
-  return rows.map((plan) => ({
-    id: String(plan.id ?? ""),
-    memberId: String(plan.member_id ?? ""),
-    memberName: clean(typeof plan.member_name === "string" ? plan.member_name : null) ?? "Unknown Member",
-    track: String(plan.track ?? "") as CarePlanTrack,
-    enrollmentDate: String(plan.enrollment_date ?? ""),
-    reviewDate: String(plan.review_date ?? ""),
-    lastCompletedDate: typeof plan.last_completed_date === "string" ? plan.last_completed_date : null,
-    nextDueDate: String(plan.next_due_date ?? ""),
-    status: String(plan.status ?? "Completed") as CarePlanStatus,
-    completedBy: clean(typeof plan.completed_by === "string" ? plan.completed_by : null),
-    postSignReadinessStatus: toListPostSignReadinessStatus(
-      typeof plan.post_sign_readiness_status === "string" ? plan.post_sign_readiness_status : null
-    ),
-    postSignReadinessReason: clean(typeof plan.post_sign_readiness_reason === "string" ? plan.post_sign_readiness_reason : null),
-    hasExistingPlan: true,
-    actionHref: `/health/care-plans/${String(plan.id ?? "")}?view=review`,
-    openHref: `/health/care-plans/${String(plan.id ?? "")}`
-  }));
+  return rows.map((plan) => {
+    const postSignReadiness = resolveCarePlanReadModelPostSignReadiness({
+      status: typeof plan.post_sign_readiness_status === "string" ? plan.post_sign_readiness_status : null,
+      reason: typeof plan.post_sign_readiness_reason === "string" ? plan.post_sign_readiness_reason : null,
+      caregiverSignatureStatus:
+        typeof plan.caregiver_signature_status === "string" ? plan.caregiver_signature_status : null,
+      finalMemberFileId: typeof plan.final_member_file_id === "string" ? plan.final_member_file_id : null
+    });
+
+    return {
+      id: String(plan.id ?? ""),
+      memberId: String(plan.member_id ?? ""),
+      memberName: clean(typeof plan.member_name === "string" ? plan.member_name : null) ?? "Unknown Member",
+      track: String(plan.track ?? "") as CarePlanTrack,
+      enrollmentDate: String(plan.enrollment_date ?? ""),
+      reviewDate: String(plan.review_date ?? ""),
+      lastCompletedDate: typeof plan.last_completed_date === "string" ? plan.last_completed_date : null,
+      nextDueDate: String(plan.next_due_date ?? ""),
+      status: String(plan.status ?? "Completed") as CarePlanStatus,
+      completedBy: clean(typeof plan.completed_by === "string" ? plan.completed_by : null),
+      postSignReadinessStatus: postSignReadiness.status,
+      postSignReadinessReason: postSignReadiness.reason,
+      hasExistingPlan: true,
+      actionHref: `/health/care-plans/${String(plan.id ?? "")}?view=review`,
+      openHref: `/health/care-plans/${String(plan.id ?? "")}`
+    };
+  });
 }
 
 export async function getCarePlans(filters?: {
@@ -477,14 +490,19 @@ function buildMemberCarePlanSummaryFromLatestRow(
     return buildMemberCarePlanSummary(canonicalMemberId, null);
   }
 
+  const postSignReadiness = resolveCarePlanReadModelPostSignReadiness({
+    status: latest.post_sign_readiness_status,
+    reason: latest.post_sign_readiness_reason,
+    caregiverSignatureStatus: latest.caregiver_signature_status,
+    finalMemberFileId: latest.final_member_file_id
+  });
+
   return {
     hasExistingPlan: true,
     nextDueDate: latest.next_due_date,
     status: latest.next_due_date ? computeCarePlanStatus(latest.next_due_date) : null,
-    postSignReadinessStatus: latest.post_sign_readiness_status
-      ? toListPostSignReadinessStatus(latest.post_sign_readiness_status)
-      : null,
-    postSignReadinessReason: clean(latest.post_sign_readiness_reason),
+    postSignReadinessStatus: postSignReadiness.status,
+    postSignReadinessReason: postSignReadiness.reason,
     actionHref: `/health/care-plans/${latest.id}?view=review`,
     actionLabel: "Review Care Plan",
     planId: latest.id
@@ -502,14 +520,21 @@ function buildMemberCarePlanOverviewFromLatest(
     };
   }
 
+  const postSignReadiness = resolveCarePlanReadModelPostSignReadiness({
+    status: latest.post_sign_readiness_status,
+    reason: latest.post_sign_readiness_reason,
+    caregiverSignatureStatus: latest.caregiver_signature_status,
+    finalMemberFileId: latest.final_member_file_id
+  });
+
   return {
     carePlanCount: 1,
     carePlanSummary: {
       hasExistingPlan: true,
       nextDueDate: latest.next_due_date,
       status: latest.next_due_date ? computeCarePlanStatus(latest.next_due_date) : null,
-      postSignReadinessStatus: null,
-      postSignReadinessReason: null,
+      postSignReadinessStatus: postSignReadiness.status,
+      postSignReadinessReason: postSignReadiness.reason,
       actionHref: `/health/care-plans/${latest.id}?view=review`,
       actionLabel: "Review Care Plan",
       planId: latest.id
