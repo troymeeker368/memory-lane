@@ -3,6 +3,15 @@ import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
+import {
+  MEMBER_ALLERGY_SELECT,
+  MEMBER_DIAGNOSIS_SELECT,
+  MEMBER_EQUIPMENT_SELECT,
+  MEMBER_HEALTH_PROFILE_SELECT,
+  MEMBER_MEDICATION_SELECT,
+  MEMBER_NOTE_SELECT,
+  MEMBER_PROVIDER_SELECT
+} from "@/lib/services/member-health-profiles-supabase";
 
 type DbRow = Record<string, unknown>;
 const PROVIDER_DIRECTORY_UPSERT_SELECT =
@@ -11,6 +20,7 @@ const HOSPITAL_DIRECTORY_UPSERT_SELECT = "id, hospital_name";
 const LOOKUP_PROVIDER_DIRECTORY_NORMALIZED_RPC = "rpc_lookup_provider_directory_normalized";
 const LOOKUP_HOSPITAL_DIRECTORY_NORMALIZED_RPC = "rpc_lookup_hospital_preference_directory_normalized";
 const MHP_DIRECTORY_LOOKUP_RPC_MIGRATION = "0172_mhp_directory_normalized_lookup_rpcs.sql";
+const MEMBER_MHP_WRITE_RETURN_SELECT = "id, display_name, latest_assessment_track, updated_at";
 
 export type MhpWriteActor = {
   actorUserId?: string | null;
@@ -150,18 +160,19 @@ export async function updateMemberHealthProfileByMemberIdSupabase(input: {
     .from("member_health_profiles")
     .update(input.patch)
     .eq("id", profile.id)
-    .select("*")
+    .select(MEMBER_HEALTH_PROFILE_SELECT)
     .single();
   if (error) throw new Error(error.message);
+  const updatedProfile = (data as unknown as DbRow | null) ?? null;
   await recordMhpWriteEvent({
     eventType: "member_health_profile_updated",
     entityType: "member_health_profile",
-    entityId: String(data.id ?? profile.id),
+    entityId: String(updatedProfile?.id ?? profile.id),
     memberId: input.memberId,
     actor: input.actor,
     status: "updated"
   });
-  return data as DbRow;
+  return (updatedProfile ?? {}) as DbRow;
 }
 
 export async function touchMemberHealthProfileSupabase(input: {
@@ -190,7 +201,7 @@ export async function updateMemberFromMhpSupabase(input: {
     .from("members")
     .update(input.patch)
     .eq("id", input.memberId)
-    .select("*")
+    .select(MEMBER_MHP_WRITE_RETURN_SELECT)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as DbRow | null) ?? null;
@@ -224,7 +235,7 @@ export async function countMemberDiagnosesSupabase(memberId: string) {
 
 export async function createMemberDiagnosisSupabase(record: Record<string, unknown>) {
   const supabase = await createClient({ serviceRole: true });
-  const { data, error } = await supabase.from("member_diagnoses").insert(record).select("*").single();
+  const { data, error } = await supabase.from("member_diagnoses").insert(record).select(MEMBER_DIAGNOSIS_SELECT).single();
   if (error) throw new Error(error.message);
   await recordMhpWriteEvent({
     eventType: "member_diagnosis_created",
@@ -242,7 +253,7 @@ export async function updateMemberDiagnosisSupabase(id: string, patch: Record<st
     .from("member_diagnoses")
     .update(patch)
     .eq("id", id)
-    .select("*")
+    .select(MEMBER_DIAGNOSIS_SELECT)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (data?.id && data?.member_id) {
@@ -259,7 +270,12 @@ export async function updateMemberDiagnosisSupabase(id: string, patch: Record<st
 
 export async function deleteMemberDiagnosisSupabase(id: string) {
   const supabase = await createClient({ serviceRole: true });
-  const { data, error } = await supabase.from("member_diagnoses").delete().eq("id", id).select("*").maybeSingle();
+  const { data, error } = await supabase
+    .from("member_diagnoses")
+    .delete()
+    .eq("id", id)
+    .select(MEMBER_DIAGNOSIS_SELECT)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   if (data?.id && data?.member_id) {
     await recordMhpWriteEvent({
@@ -275,7 +291,11 @@ export async function deleteMemberDiagnosisSupabase(id: string) {
 
 export async function createMemberMedicationSupabase(record: Record<string, unknown>) {
   const supabase = await createClient({ serviceRole: true });
-  const { data, error } = await supabase.from("member_medications").insert(record).select("*").single();
+  const { data, error } = await supabase
+    .from("member_medications")
+    .insert(record)
+    .select(MEMBER_MEDICATION_SELECT)
+    .single();
   if (error) throw new Error(error.message);
   await recordMhpWriteEvent({
     eventType: "member_medication_created",
@@ -293,7 +313,7 @@ export async function updateMemberMedicationSupabase(id: string, patch: Record<s
     .from("member_medications")
     .update(patch)
     .eq("id", id)
-    .select("*")
+    .select(MEMBER_MEDICATION_SELECT)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (data?.id && data?.member_id) {
@@ -310,7 +330,12 @@ export async function updateMemberMedicationSupabase(id: string, patch: Record<s
 
 export async function deleteMemberMedicationSupabase(id: string) {
   const supabase = await createClient({ serviceRole: true });
-  const { data, error } = await supabase.from("member_medications").delete().eq("id", id).select("*").maybeSingle();
+  const { data, error } = await supabase
+    .from("member_medications")
+    .delete()
+    .eq("id", id)
+    .select(MEMBER_MEDICATION_SELECT)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   if (data?.id && data?.member_id) {
     await recordMhpWriteEvent({
@@ -326,7 +351,7 @@ export async function deleteMemberMedicationSupabase(id: string) {
 
 export async function createMemberAllergySupabase(record: Record<string, unknown>) {
   const supabase = await createClient({ serviceRole: true });
-  const { data, error } = await supabase.from("member_allergies").insert(record).select("*").single();
+  const { data, error } = await supabase.from("member_allergies").insert(record).select(MEMBER_ALLERGY_SELECT).single();
   if (error) throw new Error(error.message);
   await recordMhpWriteEvent({
     eventType: "member_allergy_created",
@@ -344,7 +369,7 @@ export async function updateMemberAllergySupabase(id: string, patch: Record<stri
     .from("member_allergies")
     .update(patch)
     .eq("id", id)
-    .select("*")
+    .select(MEMBER_ALLERGY_SELECT)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (data?.id && data?.member_id) {
@@ -361,7 +386,12 @@ export async function updateMemberAllergySupabase(id: string, patch: Record<stri
 
 export async function deleteMemberAllergySupabase(id: string) {
   const supabase = await createClient({ serviceRole: true });
-  const { data, error } = await supabase.from("member_allergies").delete().eq("id", id).select("*").maybeSingle();
+  const { data, error } = await supabase
+    .from("member_allergies")
+    .delete()
+    .eq("id", id)
+    .select(MEMBER_ALLERGY_SELECT)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   if (data?.id && data?.member_id) {
     await recordMhpWriteEvent({
@@ -377,7 +407,7 @@ export async function deleteMemberAllergySupabase(id: string) {
 
 export async function createMemberProviderSupabase(record: Record<string, unknown>) {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("member_providers").insert(record).select("*").single();
+  const { data, error } = await supabase.from("member_providers").insert(record).select(MEMBER_PROVIDER_SELECT).single();
   if (error) throw new Error(error.message);
   return data as DbRow;
 }
@@ -388,7 +418,7 @@ export async function updateMemberProviderSupabase(id: string, patch: Record<str
     .from("member_providers")
     .update(patch)
     .eq("id", id)
-    .select("*")
+    .select(MEMBER_PROVIDER_SELECT)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as DbRow | null) ?? null;
@@ -396,14 +426,23 @@ export async function updateMemberProviderSupabase(id: string, patch: Record<str
 
 export async function deleteMemberProviderSupabase(id: string) {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("member_providers").delete().eq("id", id).select("*").maybeSingle();
+  const { data, error } = await supabase
+    .from("member_providers")
+    .delete()
+    .eq("id", id)
+    .select(MEMBER_PROVIDER_SELECT)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as DbRow | null) ?? null;
 }
 
 export async function createMemberEquipmentSupabase(record: Record<string, unknown>) {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("member_equipment").insert(record).select("*").single();
+  const { data, error } = await supabase
+    .from("member_equipment")
+    .insert(record)
+    .select(MEMBER_EQUIPMENT_SELECT)
+    .single();
   if (error) throw new Error(error.message);
   return data as DbRow;
 }
@@ -414,7 +453,7 @@ export async function updateMemberEquipmentSupabase(id: string, patch: Record<st
     .from("member_equipment")
     .update(patch)
     .eq("id", id)
-    .select("*")
+    .select(MEMBER_EQUIPMENT_SELECT)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as DbRow | null) ?? null;
@@ -422,14 +461,19 @@ export async function updateMemberEquipmentSupabase(id: string, patch: Record<st
 
 export async function deleteMemberEquipmentSupabase(id: string) {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("member_equipment").delete().eq("id", id).select("*").maybeSingle();
+  const { data, error } = await supabase
+    .from("member_equipment")
+    .delete()
+    .eq("id", id)
+    .select(MEMBER_EQUIPMENT_SELECT)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as DbRow | null) ?? null;
 }
 
 export async function createMemberNoteSupabase(record: Record<string, unknown>) {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("member_notes").insert(record).select("*").single();
+  const { data, error } = await supabase.from("member_notes").insert(record).select(MEMBER_NOTE_SELECT).single();
   if (error) throw new Error(error.message);
   return data as DbRow;
 }
@@ -440,7 +484,7 @@ export async function updateMemberNoteSupabase(id: string, patch: Record<string,
     .from("member_notes")
     .update(patch)
     .eq("id", id)
-    .select("*")
+    .select(MEMBER_NOTE_SELECT)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as DbRow | null) ?? null;
@@ -448,7 +492,12 @@ export async function updateMemberNoteSupabase(id: string, patch: Record<string,
 
 export async function deleteMemberNoteSupabase(id: string) {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("member_notes").delete().eq("id", id).select("*").maybeSingle();
+  const { data, error } = await supabase
+    .from("member_notes")
+    .delete()
+    .eq("id", id)
+    .select(MEMBER_NOTE_SELECT)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as DbRow | null) ?? null;
 }

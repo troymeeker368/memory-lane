@@ -23,7 +23,7 @@ export const MHP_TABS = [
 
 const MHP_SUMMARY_COUNTS_RPC = "rpc_get_member_health_profile_summary_counts";
 const MHP_SUMMARY_COUNTS_RPC_MIGRATION = "0102_mhp_summary_counts_rpc.sql";
-const MEMBER_HEALTH_PROFILE_SELECT = [
+export const MEMBER_HEALTH_PROFILE_SELECT = [
   "id",
   "member_id",
   "gender",
@@ -96,20 +96,20 @@ const MEMBER_HEALTH_PROFILE_SELECT = [
   "created_at",
   "updated_at"
 ].join(", ");
-const MEMBER_DIAGNOSIS_SELECT =
+export const MEMBER_DIAGNOSIS_SELECT =
   "id, member_id, diagnosis_type, diagnosis_name, diagnosis_code, date_added, comments, created_by_name, updated_at";
-const MEMBER_MEDICATION_SELECT =
+export const MEMBER_MEDICATION_SELECT =
   "id, member_id, medication_name, date_started, medication_status, inactivated_at, dose, quantity, form, frequency, route, route_laterality, given_at_center, prn, prn_instructions, scheduled_times, comments, created_by_name, updated_at";
-const MEMBER_ALLERGY_SELECT =
+export const MEMBER_ALLERGY_SELECT =
   "id, member_id, allergy_group, allergy_name, severity, comments, created_by_name, updated_at";
-const MEMBER_PROVIDER_SELECT =
+export const MEMBER_PROVIDER_SELECT =
   "id, member_id, provider_name, specialty, specialty_other, practice_name, provider_phone, created_by_name, updated_at";
-const PROVIDER_DIRECTORY_SELECT =
+export const PROVIDER_DIRECTORY_SELECT =
   "id, provider_name, specialty, specialty_other, practice_name, provider_phone, updated_at";
-const HOSPITAL_PREFERENCE_DIRECTORY_SELECT = "id, hospital_name, updated_at";
-const MEMBER_EQUIPMENT_SELECT =
+export const HOSPITAL_PREFERENCE_DIRECTORY_SELECT = "id, hospital_name, updated_at";
+export const MEMBER_EQUIPMENT_SELECT =
   "id, member_id, equipment_type, provider_source, status, comments, created_by_name, updated_at";
-const MEMBER_NOTE_SELECT =
+export const MEMBER_NOTE_SELECT =
   "id, member_id, note_type, note_text, created_by_name, created_at, updated_at";
 
 export type MhpTab = (typeof MHP_TABS)[number];

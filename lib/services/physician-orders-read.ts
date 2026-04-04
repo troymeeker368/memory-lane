@@ -9,6 +9,7 @@ import {
   PHYSICIAN_ORDER_MEMBER_HISTORY_SELECT,
   PHYSICIAN_ORDER_WITH_MEMBER_SELECT
 } from "@/lib/services/physician-orders-selects";
+import { MEMBER_HEALTH_PROFILE_SELECT } from "@/lib/services/member-health-profiles-supabase";
 import {
   buildPhysicianOrderClinicalSyncDetail,
   resolvePhysicianOrderClinicalSyncStatus,
@@ -428,7 +429,7 @@ export async function getMemberHealthProfile(memberId: string, options?: Resolve
   const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
   const { data, error } = await supabase
     .from("member_health_profiles")
-    .select("*")
+    .select(MEMBER_HEALTH_PROFILE_SELECT)
     .eq("member_id", canonicalMemberId)
     .maybeSingle();
   if (error) throw new Error(error.message);

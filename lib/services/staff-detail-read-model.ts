@@ -14,6 +14,8 @@ import { getCurrentPayPeriod } from "@/lib/pay-period";
 import { createClient } from "@/lib/supabase/server";
 
 const STAFF_DETAIL_HISTORY_LIMIT = 250;
+const STAFF_DETAIL_PROFILE_SELECT =
+  "id, auth_user_id, full_name, email, phone, role, role_id, title, department, status, active, is_active, has_custom_permissions, default_landing, staff_id, credentials, invited_at, password_set_at, last_sign_in_at, disabled_at, created_at, updated_at";
 
 function summarizePunches(punches: { punch_type: "in" | "out"; punch_at: string }[]) {
   const ordered = [...punches].sort((a, b) => (a.punch_at > b.punch_at ? 1 : -1));
@@ -49,7 +51,11 @@ function summarizePunches(punches: { punch_type: "in" | "out"; punch_at: string 
 
 export async function getStaffDetail(staffId: string) {
   const supabase = await createClient();
-  const { data: staff, error: staffError } = await supabase.from("profiles").select("*").eq("id", staffId).maybeSingle();
+  const { data: staff, error: staffError } = await supabase
+    .from("profiles")
+    .select(STAFF_DETAIL_PROFILE_SELECT)
+    .eq("id", staffId)
+    .maybeSingle();
   if (staffError) throw new Error(staffError.message);
   if (!staff) return null;
 
@@ -122,7 +128,11 @@ export async function getStaffDetail(staffId: string) {
 
 export async function getTimeReviewDetail(staffId: string) {
   const supabase = await createClient();
-  const { data: staff, error: staffError } = await supabase.from("profiles").select("*").eq("id", staffId).maybeSingle();
+  const { data: staff, error: staffError } = await supabase
+    .from("profiles")
+    .select(STAFF_DETAIL_PROFILE_SELECT)
+    .eq("id", staffId)
+    .maybeSingle();
   if (staffError) throw new Error(staffError.message);
   if (!staff) return null;
 

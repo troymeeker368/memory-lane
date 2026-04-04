@@ -2,10 +2,14 @@ import { cache } from "react";
 
 import { createClient } from "@/lib/supabase/server";
 import {
+  BILLING_ADJUSTMENT_SELECT,
   BILLING_CENTER_SETTING_SELECT,
+  BILLING_CENTER_CLOSURE_SELECT,
+  BILLING_CLOSURE_RULE_SELECT,
   BILLING_MEMBER_LOOKUP_SELECT,
   BILLING_MEMBER_RATE_SCHEDULE_SELECT,
   BILLING_MEMBER_SETTING_SELECT,
+  BILLING_PAYOR_SELECT,
   BILLING_SCHEDULE_TEMPLATE_SELECT
 } from "@/lib/services/billing-selects";
 import {
@@ -94,7 +98,7 @@ export async function getActiveCenterSettingForDate(dateOnly: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("center_billing_settings")
-    .select("*")
+    .select(BILLING_CENTER_SETTING_SELECT)
     .eq("active", true)
     .lte("effective_start_date", normalizedDate)
     .or(`effective_end_date.is.null,effective_end_date.gte.${normalizedDate}`)
@@ -110,7 +114,7 @@ export async function getActiveMemberSettingForDate(memberId: string, dateOnly: 
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("member_billing_settings")
-    .select("*")
+    .select(BILLING_MEMBER_SETTING_SELECT)
     .eq("member_id", memberId)
     .eq("active", true)
     .lte("effective_start_date", normalizedDate)
@@ -127,7 +131,7 @@ export async function getActiveScheduleTemplateForDate(memberId: string, dateOnl
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("billing_schedule_templates")
-    .select("*")
+    .select(BILLING_SCHEDULE_TEMPLATE_SELECT)
     .eq("member_id", memberId)
     .eq("active", true)
     .lte("effective_start_date", normalizedDate)
@@ -160,7 +164,10 @@ export async function getNonBillableCenterClosureSet(range: DateRange) {
 
 export async function listClosureRules() {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("closure_rules").select("*").order("name", { ascending: true });
+  const { data, error } = await supabase
+    .from("closure_rules")
+    .select(BILLING_CLOSURE_RULE_SELECT)
+    .order("name", { ascending: true });
   if (error) {
     handleNonCriticalMissingSchemaError(error, {
       objectName: "closure_rules",
@@ -176,7 +183,7 @@ export async function generateClosuresForYear(year: number, input?: { generatedB
   const targetYear = normalizeYear(year);
   const { data: rulesData, error: ruleError } = await supabase
     .from("closure_rules")
-    .select("*")
+    .select(BILLING_CLOSURE_RULE_SELECT)
     .eq("active", true);
   if (ruleError) {
     handleNonCriticalMissingSchemaError(ruleError, {
@@ -358,7 +365,10 @@ export async function validateScheduleTemplateOverlap(input: {
 
 export async function listPayors() {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("payors").select("*").order("payor_name", { ascending: true });
+  const { data, error } = await supabase
+    .from("payors")
+    .select(BILLING_PAYOR_SELECT)
+    .order("payor_name", { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as PayorRow[];
 }
@@ -366,7 +376,10 @@ export async function listPayors() {
 export async function listCenterClosures(input?: { includeInactive?: boolean }) {
   await ensureCenterClosuresForCurrentAndNextYear();
   const supabase = await createClient();
-  let query = supabase.from("center_closures").select("*").order("closure_date", { ascending: false });
+  let query = supabase
+    .from("center_closures")
+    .select(BILLING_CENTER_CLOSURE_SELECT)
+    .order("closure_date", { ascending: false });
   if (!input?.includeInactive) {
     query = query.eq("active", true);
   }
@@ -539,7 +552,7 @@ export async function upsertCenterClosure(input: {
         updated_by_name: input.updated_by_name
       })
       .eq("id", input.id)
-      .select("*")
+      .select(BILLING_CENTER_CLOSURE_SELECT)
       .maybeSingle();
     if (error) throw new Error(error.message);
     return data;
@@ -560,7 +573,7 @@ export async function upsertCenterClosure(input: {
       updated_by_user_id: input.updated_by_user_id,
       updated_by_name: input.updated_by_name
     })
-    .select("*")
+    .select(BILLING_CENTER_CLOSURE_SELECT)
     .single();
   if (error) throw new Error(error.message);
   return data;
@@ -570,7 +583,7 @@ export async function deleteCenterClosure(input: { id: string; actorUserId: stri
   const supabase = await createClient();
   const { data: existing, error: existingError } = await supabase
     .from("center_closures")
-    .select("*")
+    .select(BILLING_CENTER_CLOSURE_SELECT)
     .eq("id", input.id)
     .maybeSingle();
   if (existingError) throw new Error(existingError.message);
@@ -628,7 +641,7 @@ export async function upsertClosureRule(input: {
       updated_by_name: input.updated_by_name
     })
     .eq("id", input.id)
-    .select("*")
+    .select(BILLING_CLOSURE_RULE_SELECT)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return data;
@@ -671,7 +684,7 @@ export async function upsertPayor(input: {
         updated_by_name: input.updated_by_name
       })
       .eq("id", input.id)
-      .select("*")
+      .select(BILLING_PAYOR_SELECT)
       .maybeSingle();
     if (error) throw new Error(error.message);
     return data;
@@ -697,7 +710,7 @@ export async function upsertPayor(input: {
       updated_by_user_id: input.updated_by_user_id,
       updated_by_name: input.updated_by_name
     })
-    .select("*")
+    .select(BILLING_PAYOR_SELECT)
     .single();
   if (error) throw new Error(error.message);
   return data;
@@ -713,7 +726,7 @@ export async function upsertMemberBillingSetting(input: {
       .from("member_billing_settings")
       .update({ ...input.row, updated_at: toEasternISO() })
       .eq("id", input.id)
-      .select("*")
+      .select(BILLING_MEMBER_SETTING_SELECT)
       .maybeSingle();
     if (error) throw new Error(error.message);
     return data;
@@ -727,7 +740,7 @@ export async function upsertMemberBillingSetting(input: {
       created_at: toEasternISO(),
       updated_at: toEasternISO()
     })
-    .select("*")
+    .select(BILLING_MEMBER_SETTING_SELECT)
     .single();
   if (error) throw new Error(error.message);
   return data;
@@ -743,7 +756,7 @@ export async function upsertBillingScheduleTemplate(input: {
       .from("billing_schedule_templates")
       .update({ ...input.row, updated_at: toEasternISO() })
       .eq("id", input.id)
-      .select("*")
+      .select(BILLING_SCHEDULE_TEMPLATE_SELECT)
       .maybeSingle();
     if (error) throw new Error(error.message);
     return data;
@@ -757,7 +770,7 @@ export async function upsertBillingScheduleTemplate(input: {
       created_at: toEasternISO(),
       updated_at: toEasternISO()
     })
-    .select("*")
+    .select(BILLING_SCHEDULE_TEMPLATE_SELECT)
     .single();
   if (error) throw new Error(error.message);
   return data;
@@ -790,7 +803,7 @@ export async function upsertBillingAdjustment(input: {
       .from("billing_adjustments")
       .update({ ...input.row, updated_at: toEasternISO() })
       .eq("id", input.id)
-      .select("*")
+      .select(BILLING_ADJUSTMENT_SELECT)
       .maybeSingle();
     if (error) throw new Error(error.message);
     return data;
@@ -799,7 +812,7 @@ export async function upsertBillingAdjustment(input: {
   const { data, error } = await supabase
     .from("billing_adjustments")
     .insert({ ...input.row, created_at: toEasternISO(), updated_at: toEasternISO() })
-    .select("*")
+    .select(BILLING_ADJUSTMENT_SELECT)
     .single();
   if (error) throw new Error(error.message);
   return data;
