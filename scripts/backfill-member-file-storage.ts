@@ -42,7 +42,7 @@ function loadEnvFiles() {
 }
 
 function resolveSupabaseHost() {
-  const raw = String(process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "").trim();
+  const raw = String(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
   if (!raw) return { host: "", isLocal: false };
   try {
     const host = new URL(raw).host;

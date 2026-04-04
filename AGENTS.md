@@ -19,6 +19,11 @@ Windows helpers:
 - `npm run dev:clean`
 - `netstat -ano | findstr :3001`
 - `taskkill /PID <PID> /F`
+- Correct Supabase project ref for this repo: `dcnyjtfyftamcdsaxrsz`
+- Canonical Supabase env names: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+- Canonical linked project command: `cmd /c npx supabase link --project-ref dcnyjtfyftamcdsaxrsz`
+- Canonical generated types file: `types/supabase-types.d.ts`
+- Canonical type regeneration command: `cmd /c npm run db:types`
 
 ## Build Performance Guardrails
 

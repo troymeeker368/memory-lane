@@ -1,5 +1,7 @@
 "use strict";
 
+const fs = require("node:fs");
+
 const {
   assertDatabaseUpToDate,
   buildTypesFileContent,
@@ -10,6 +12,21 @@ const {
   readCanonicalTypesFile
 } = require("./lib/db-sync.cjs");
 
+function resolveBody(argv) {
+  if (argv.includes("--stdin")) {
+    const body = fs.readFileSync(0, "utf8");
+    if (!String(body).trim()) {
+      throw new Error(
+        "Supabase type generation returned no output on stdin. If the Supabase CLI reported \"Access token not provided\", run `npx supabase login` or set SUPABASE_ACCESS_TOKEN before running db:check."
+      );
+    }
+    return body;
+  }
+
+  assertDatabaseUpToDate("linked");
+  return generateTypesBody("linked");
+}
+
 function main() {
   const schemaMetadata = getSchemaMetadata();
   const actualContent = readCanonicalTypesFile();
@@ -18,12 +35,10 @@ function main() {
     throw new Error(`Generated Supabase types file is missing at ${canonicalTypesFile}. Run npm run db:sync.`);
   }
 
-  assertDatabaseUpToDate("linked");
-
   const expectedContent = buildTypesFileContent({
     mode: "linked",
     ...schemaMetadata,
-    body: generateTypesBody("linked")
+    body: resolveBody(process.argv.slice(2))
   });
 
   if (normalizeNewlines(actualContent) !== normalizeNewlines(expectedContent)) {

@@ -687,7 +687,8 @@ export async function saveCommandCenterMemberFileUpload(input: {
   memberId: string;
   fileName: string;
   fileType?: string | null;
-  fileDataUrl: string;
+  fileDataUrl?: string | null;
+  fileBytes?: Buffer | null;
   category: MemberFileCategory;
   categoryOther?: string | null;
   documentSource?: string | null;
@@ -704,7 +705,20 @@ export async function saveCommandCenterMemberFileUpload(input: {
   const now = toEasternISO();
   const fileName = safeFileName(input.fileName) || `member-file-${uploadToken}`;
   const categoryOther = input.category === "Other" ? String(input.categoryOther ?? "").trim() || null : null;
-  const parsed = parseDataUrlPayload(input.fileDataUrl, "Unable to read uploaded member file.");
+  const fileBytes = input.fileBytes ?? null;
+  const fileDataUrl = String(input.fileDataUrl ?? "").trim();
+  const parsed =
+    fileBytes && fileBytes.length > 0
+      ? {
+          bytes: fileBytes,
+          contentType: String(input.fileType ?? "").trim() || "application/octet-stream"
+        }
+      : fileDataUrl
+        ? parseDataUrlPayload(fileDataUrl, "Unable to read uploaded member file.")
+        : null;
+  if (!parsed) {
+    throw new Error("Uploaded member file content is required.");
+  }
   const contentType = String(input.fileType ?? "").trim() || parsed.contentType || "application/octet-stream";
   const objectName = slugifyMemberFileSegment(fileName) || `member-file-${uploadToken}`;
   const objectPath = `members/${memberId}/member-files/manual/${uploadToken}-${objectName}`;

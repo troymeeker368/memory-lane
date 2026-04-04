@@ -61,7 +61,7 @@ as $$
      and user_permissions.module_key = p_module_key
     left join public.roles
       on public.roles.id = current_profile.role_id
-      or public.roles.key = current_profile.role
+      or public.roles.key = current_profile.role::text
     left join public.role_permissions
       on role_permissions.role_id = public.roles.id
      and role_permissions.module_key = p_module_key

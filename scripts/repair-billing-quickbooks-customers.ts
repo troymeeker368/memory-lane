@@ -52,7 +52,7 @@ function clean(value: unknown) {
 }
 
 function resolveSupabaseHost() {
-  const raw = clean(process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL);
+  const raw = clean(process.env.NEXT_PUBLIC_SUPABASE_URL);
   if (!raw) return { host: "", isLocal: false };
   try {
     const host = new URL(raw).host;

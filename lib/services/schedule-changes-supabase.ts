@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import { getRequiredMemberAttendanceScheduleSupabase } from "@/lib/services/member-command-center-write";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
 import { listCanonicalMemberLinksForLeadIds, resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import {
@@ -281,6 +282,7 @@ export async function saveScheduleChangeWithAttendanceSyncSupabase(input: {
   actorUserId: string;
 }) {
   const canonicalMemberId = await resolveScheduleMemberId(input.memberId, "saveScheduleChangeWithAttendanceSyncSupabase");
+  await getRequiredMemberAttendanceScheduleSupabase(canonicalMemberId, { canonicalInput: true });
   const supabase = await createClient();
   const now = toEasternISO();
   const normalizedId = String(input.id ?? "").trim() || null;
@@ -326,6 +328,11 @@ export async function updateScheduleChangeStatusWithAttendanceSyncSupabase(input
   actorName: string;
   actorUserId: string;
 }) {
+  const existing = await getScheduleChangeSupabase(input.id);
+  if (!existing) {
+    return null;
+  }
+  await getRequiredMemberAttendanceScheduleSupabase(existing.member_id, { canonicalInput: true });
   const supabase = await createClient();
   try {
     const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, UPDATE_SCHEDULE_CHANGE_STATUS_WITH_ATTENDANCE_SYNC_RPC, {

@@ -23,6 +23,14 @@ type UpdateToiletLogWithAncillarySyncInput = {
   actorUserId: string;
 };
 
+export type AttendanceLatePickupChargePlan = {
+  categoryId: string;
+  latePickupTime: string | null;
+  shouldHaveCharge: boolean;
+  unitRate: number;
+  amount: number;
+};
+
 function isPostgresColumnMissingError(error: unknown, columnName: string) {
   const candidate = error as { code?: string; message?: string } | null;
   return (
@@ -72,6 +80,31 @@ async function getLatePickupCategorySupabase() {
   };
 }
 
+export async function resolveAttendanceLatePickupChargePlanSupabase(input: {
+  checkOutAt: string | null;
+}): Promise<AttendanceLatePickupChargePlan> {
+  const category = await getLatePickupCategorySupabase();
+  const latePickupTime = toLatePickupTimeFromIso(input.checkOutAt);
+  const settings = await getOperationalSettings();
+  const fee = latePickupTime
+    ? calculateLatePickupFee({
+        latePickupTime,
+        rules: settings.latePickupRules
+      })
+    : null;
+
+  const shouldHaveCharge = Boolean(fee && fee.amountCents > 0);
+  const unitRate = shouldHaveCharge ? Number((((fee?.amountCents ?? 0) / 100)).toFixed(2)) : 0;
+
+  return {
+    categoryId: category.id,
+    latePickupTime,
+    shouldHaveCharge,
+    unitRate,
+    amount: unitRate
+  };
+}
+
 export async function syncAttendanceLatePickupAncillaryChargeSupabase(input: {
   attendanceRecordId: string;
   memberId: string;
@@ -80,12 +113,14 @@ export async function syncAttendanceLatePickupAncillaryChargeSupabase(input: {
   actorUserId: string;
 }) {
   const supabase = await createClient();
-  const category = await getLatePickupCategorySupabase();
+  const plan = await resolveAttendanceLatePickupChargePlanSupabase({
+    checkOutAt: input.checkOutAt
+  });
   const { sourceEntity, sourceEntityId } = attendanceLatePickupSource(input.attendanceRecordId);
   const { data: existingRows, error: existingError } = await supabase
     .from("ancillary_charge_logs")
     .select("id, billing_status, invoice_id, unit_rate, amount, late_pickup_time")
-    .eq("category_id", category.id)
+    .eq("category_id", plan.categoryId)
     .eq("source_entity", sourceEntity)
     .eq("source_entity_id", sourceEntityId);
   if (existingError) {
@@ -105,17 +140,7 @@ export async function syncAttendanceLatePickupAncillaryChargeSupabase(input: {
   }
 
   const existing = existingRows?.[0] ?? null;
-  const latePickupTime = toLatePickupTimeFromIso(input.checkOutAt);
-  const settings = await getOperationalSettings();
-  const fee = latePickupTime
-    ? calculateLatePickupFee({
-        latePickupTime,
-        rules: settings.latePickupRules
-      })
-    : null;
-
-  const shouldHaveCharge = Boolean(fee && fee.amountCents > 0);
-  if (!shouldHaveCharge) {
+  if (!plan.shouldHaveCharge) {
     if (!existing) {
       return { action: "none" as const, ancillaryChargeId: null };
     }
@@ -128,16 +153,16 @@ export async function syncAttendanceLatePickupAncillaryChargeSupabase(input: {
     return { action: "deleted" as const, ancillaryChargeId: String(existing.id) };
   }
 
-  const unitRate = Number(((fee?.amountCents ?? 0) / 100).toFixed(2));
-  const amount = unitRate;
+  const unitRate = plan.unitRate;
+  const amount = plan.amount;
   if (existing) {
     const status = String(existing.billing_status ?? "Unbilled");
     const existingAmount = Number(existing.amount ?? 0);
     const existingTime = String(existing.late_pickup_time ?? "");
-    if ((status === "Billed" || existing.invoice_id) && (existingAmount !== amount || existingTime !== latePickupTime)) {
+    if ((status === "Billed" || existing.invoice_id) && (existingAmount !== amount || existingTime !== plan.latePickupTime)) {
       throw new Error("Late pick-up charge has already been billed and cannot be changed automatically.");
     }
-    if (existingAmount === amount && existingTime === latePickupTime && status === "Unbilled") {
+    if (existingAmount === amount && existingTime === plan.latePickupTime && status === "Unbilled") {
       return { action: "unchanged" as const, ancillaryChargeId: String(existing.id) };
     }
 
@@ -145,9 +170,9 @@ export async function syncAttendanceLatePickupAncillaryChargeSupabase(input: {
       .from("ancillary_charge_logs")
       .update({
         member_id: input.memberId,
-        category_id: category.id,
+        category_id: plan.categoryId,
         service_date: input.attendanceDate,
-        late_pickup_time: latePickupTime,
+        late_pickup_time: plan.latePickupTime,
         staff_user_id: input.actorUserId,
         notes: "Auto-generated from attendance checkout.",
         quantity: 1,
@@ -164,9 +189,9 @@ export async function syncAttendanceLatePickupAncillaryChargeSupabase(input: {
 
   const created = await createAncillaryChargeSupabase({
     memberId: input.memberId,
-    categoryId: category.id,
+    categoryId: plan.categoryId,
     serviceDate: input.attendanceDate,
-    latePickupTime,
+    latePickupTime: plan.latePickupTime,
     notes: "Auto-generated from attendance checkout.",
     sourceEntity,
     sourceEntityId,

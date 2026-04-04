@@ -1,8 +1,8 @@
 import {
   backfillMissingMemberCommandCenterRowsSupabase,
   deleteMemberContactSupabase,
-  ensureMemberAttendanceScheduleSupabase,
-  ensureMemberCommandCenterProfileSupabase,
+  getRequiredMemberAttendanceScheduleSupabase,
+  getRequiredMemberCommandCenterProfileSupabase,
   upsertMemberContactSupabase,
   updateMemberSupabase
 } from "@/lib/services/member-command-center-write";
@@ -44,12 +44,12 @@ export async function getAvailableLockerNumbersForMember(memberId: string) {
   return getAvailableLockerNumbersForMemberSupabase(memberId);
 }
 
-export async function ensureMemberCommandCenterProfile(memberId: string) {
-  return ensureMemberCommandCenterProfileSupabase(memberId);
+export async function getRequiredMemberCommandCenterProfile(memberId: string) {
+  return getRequiredMemberCommandCenterProfileSupabase(memberId);
 }
 
-export async function ensureMemberAttendanceSchedule(memberId: string) {
-  return ensureMemberAttendanceScheduleSupabase(memberId);
+export async function getRequiredMemberAttendanceSchedule(memberId: string) {
+  return getRequiredMemberAttendanceScheduleSupabase(memberId);
 }
 
 export async function getMemberCommandCenterIndex(filters?: { q?: string; status?: "all" | "active" | "inactive" }) {
@@ -90,6 +90,7 @@ export async function prefillMemberCommandCenterFromAssessment(input: {
   actorUserId: string;
   actorName: string;
 }) {
+  await getRequiredMemberCommandCenterProfileSupabase(input.memberId);
   const supabase = await createClient();
   try {
     await invokeSupabaseRpcOrThrow<unknown>(supabase, PREFILL_MEMBER_COMMAND_CENTER_RPC, {
@@ -109,7 +110,7 @@ export async function prefillMemberCommandCenterFromAssessment(input: {
     throw error;
   }
 
-  return ensureMemberCommandCenterProfileSupabase(input.memberId);
+  return getRequiredMemberCommandCenterProfileSupabase(input.memberId);
 }
 
 export async function saveMemberCommandCenterBundle(input: {
@@ -119,6 +120,7 @@ export async function saveMemberCommandCenterBundle(input: {
   actor: { id: string; fullName: string };
   now?: string;
 }) {
+  await getRequiredMemberCommandCenterProfileSupabase(input.memberId);
   const supabase = await createClient();
   try {
     await invokeSupabaseRpcOrThrow<unknown>(supabase, UPDATE_MEMBER_COMMAND_CENTER_BUNDLE_RPC, {
@@ -149,6 +151,7 @@ export async function saveMemberCommandCenterAttendanceBillingWorkflow(input: {
   actor: { id: string; fullName: string };
   now?: string;
 }) {
+  await getRequiredMemberAttendanceScheduleSupabase(input.memberId);
   const supabase = await createClient();
   try {
     await invokeSupabaseRpcOrThrow<unknown>(supabase, SAVE_MEMBER_COMMAND_CENTER_ATTENDANCE_BILLING_RPC, {
@@ -179,6 +182,7 @@ export async function saveMemberCommandCenterTransportationWorkflow(input: {
   actor: { id: string; fullName: string };
   now?: string;
 }) {
+  await getRequiredMemberAttendanceScheduleSupabase(input.memberId);
   const supabase = await createClient();
   try {
     await invokeSupabaseRpcOrThrow<unknown>(supabase, SAVE_MEMBER_COMMAND_CENTER_TRANSPORTATION_RPC, {

@@ -5,7 +5,10 @@ import {
 } from "@/lib/canonical";
 import { saveMemberCommandCenterTransportationWorkflow } from "@/lib/services/member-command-center";
 import { resolveTransportPeriod } from "@/lib/services/member-schedule-selectors";
-import { ensureMemberAttendanceScheduleSupabase, ensureMemberCommandCenterProfileSupabase } from "@/lib/services/member-command-center-write";
+import {
+  getRequiredMemberAttendanceScheduleSupabase,
+  getRequiredMemberCommandCenterProfileSupabase
+} from "@/lib/services/member-command-center-write";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -24,10 +27,9 @@ export async function saveMemberCommandCenterTransportationAction(formData: Form
     const memberId = asString(formData, "memberId");
     if (!memberId) return { ok: false, error: "Member is required." };
 
-    const schedule = await ensureMemberAttendanceScheduleSupabase(memberId);
-    if (!schedule) return { ok: false, error: "Attendance schedule not found." };
+    const schedule = await getRequiredMemberAttendanceScheduleSupabase(memberId);
 
-    const commandCenterProfile = await ensureMemberCommandCenterProfileSupabase(memberId);
+    const commandCenterProfile = await getRequiredMemberCommandCenterProfileSupabase(memberId);
     const now = toEasternISO();
     const defaultDoorToDoorAddress =
       [

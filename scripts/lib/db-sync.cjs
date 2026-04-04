@@ -8,9 +8,18 @@ const { spawnSync } = require("node:child_process");
 const repoRoot = path.resolve(__dirname, "..", "..");
 const migrationsDir = path.join(repoRoot, "supabase", "migrations");
 const canonicalTypesFile = path.join(repoRoot, "types", "supabase-types.d.ts");
+const localSupabaseExe = path.join(repoRoot, "node_modules", "supabase", "bin", "supabase.exe");
 
 function getSupabaseExecutable() {
   return process.platform === "win32" ? "supabase.cmd" : "supabase";
+}
+
+function resolveSupabaseCommand() {
+  if (process.platform === "win32" && fs.existsSync(localSupabaseExe)) {
+    return localSupabaseExe;
+  }
+
+  return getSupabaseExecutable();
 }
 
 function normalizeNewlines(value) {
@@ -66,30 +75,16 @@ function buildTypesFileContent(input) {
 }
 
 function formatCommand(args) {
-  return `${getSupabaseExecutable()} ${args.join(" ")}`;
-}
-
-function escapeWindowsArg(value) {
-  if (/^[A-Za-z0-9_:\\/.=-]+$/.test(value)) {
-    return value;
-  }
-
-  return `"${String(value).replace(/"/g, '\\"')}"`;
+  return `${path.basename(resolveSupabaseCommand())} ${args.join(" ")}`;
 }
 
 function runSupabase(args) {
-  const result =
-    process.platform === "win32"
-      ? spawnSync("cmd.exe", ["/d", "/s", "/c", [getSupabaseExecutable(), ...args].map(escapeWindowsArg).join(" ")], {
-          cwd: repoRoot,
-          encoding: "utf8",
-          stdio: "pipe"
-        })
-      : spawnSync(getSupabaseExecutable(), args, {
-          cwd: repoRoot,
-          encoding: "utf8",
-          stdio: "pipe"
-        });
+  const command = resolveSupabaseCommand();
+  const result = spawnSync(command, args, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: "pipe"
+  });
 
   if (result.error) {
     throw new Error(`Failed to run ${formatCommand(args)}: ${result.error.message}`);
@@ -141,6 +136,12 @@ function assertDatabaseUpToDate(mode) {
 }
 
 function generateTypesBody(mode) {
+  if (mode === "linked" && !String(process.env.SUPABASE_ACCESS_TOKEN ?? "").trim()) {
+    throw new Error(
+      "Linked Supabase type generation requires SUPABASE_ACCESS_TOKEN. Run `npx supabase login` or set SUPABASE_ACCESS_TOKEN before running db:types."
+    );
+  }
+
   const scopeFlag = mode === "local" ? "--local" : "--linked";
   const result = runSupabase(["gen", "types", "typescript", scopeFlag, "--schema", "public"]);
 

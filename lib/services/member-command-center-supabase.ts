@@ -32,11 +32,8 @@ import type {
 } from "@/lib/services/member-command-center-types";
 import {
   coerceMemberContactWriteError,
-  defaultAttendanceSchedule,
-  defaultCommandCenter,
   getMccClient,
   isMissingTableError,
-  isUniqueConstraintError,
   mapMemberContactRow,
   missingMccStorageError,
   normalizeBusStopName,
@@ -177,14 +174,21 @@ export async function updateMemberSupabase(memberId: string, patch: Record<strin
   return (data as MccMemberRow | null) ?? null;
 }
 
-export async function ensureMemberCommandCenterProfileSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "ensureMemberCommandCenterProfileSupabase");
+export async function getRequiredMemberCommandCenterProfileSupabase(
+  memberId: string,
+  options?: EnsureCanonicalMemberOptions
+) {
+  const canonicalMemberId = await resolveMccMemberId(
+    memberId,
+    "getRequiredMemberCommandCenterProfileSupabase",
+    options
+  );
   const supabase = await getMccClient(options);
   const { data, error } = await supabase
     .from("member_command_centers")
     .select("*")
     .eq("member_id", canonicalMemberId)
-    .limit(1);
+    .maybeSingle();
   if (error) {
     if (isMissingTableError(error, "member_command_centers")) {
       throw missingMccStorageError({
@@ -194,78 +198,34 @@ export async function ensureMemberCommandCenterProfileSupabase(memberId: string,
     }
     throw new Error(error.message);
   }
-  const existing = Array.isArray(data) ? data[0] : null;
-  if (existing) return existing as MemberCommandCenterRow;
-
-  const created = {
-    ...defaultCommandCenter(canonicalMemberId),
-    updated_by_user_id: options?.actor?.userId ?? null,
-    updated_by_name: options?.actor?.name ?? null
-  };
-  const { data: inserted, error: insertError } = await supabase
-    .from("member_command_centers")
-    .insert(created)
-    .select("*")
-    .single();
-  if (insertError) {
-    if (isMissingTableError(insertError, "member_command_centers")) {
-      throw missingMccStorageError({
-        objectName: "member_command_centers",
-        migration: "0011_member_command_center_aux_schema.sql"
-      });
-    }
-    if (isUniqueConstraintError(insertError)) {
-      const { data: recovered, error: recoverError } = await supabase
-        .from("member_command_centers")
-        .select("*")
-        .eq("member_id", canonicalMemberId)
-        .limit(1);
-      if (recoverError) {
-        if (isMissingTableError(recoverError, "member_command_centers")) {
-          throw missingMccStorageError({
-            objectName: "member_command_centers",
-            migration: "0011_member_command_center_aux_schema.sql"
-          });
-        }
-        throw new Error(recoverError.message);
-      }
-      const recoveredRow = Array.isArray(recovered) ? recovered[0] : null;
-      if (recoveredRow) return recoveredRow as MemberCommandCenterRow;
-
-      const { data: recoveredById, error: recoverByIdError } = await supabase
-        .from("member_command_centers")
-        .select("*")
-        .eq("id", created.id)
-        .limit(1);
-      if (recoverByIdError) {
-        if (isMissingTableError(recoverByIdError, "member_command_centers")) {
-          throw missingMccStorageError({
-            objectName: "member_command_centers",
-            migration: "0011_member_command_center_aux_schema.sql"
-          });
-        }
-        throw new Error(recoverByIdError.message);
-      }
-      const recoveredByIdRow = Array.isArray(recoveredById) ? recoveredById[0] : null;
-      if (recoveredByIdRow) return recoveredByIdRow as MemberCommandCenterRow;
-    }
-    throw new Error(insertError.message);
+  if (!data) {
+    throw buildMissingCanonicalMemberShellError({
+      memberId: canonicalMemberId,
+      table: "member_command_centers"
+    });
   }
-  return inserted as MemberCommandCenterRow;
+  return data as MemberCommandCenterRow;
 }
 
-export async function ensureMemberAttendanceScheduleSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "ensureMemberAttendanceScheduleSupabase");
+export async function getRequiredMemberAttendanceScheduleSupabase(
+  memberId: string,
+  options?: EnsureCanonicalMemberOptions
+) {
+  const canonicalMemberId = await resolveMccMemberId(
+    memberId,
+    "getRequiredMemberAttendanceScheduleSupabase",
+    options
+  );
   const supabase = await getMccClient(options);
   const member = await getMemberSupabase(canonicalMemberId, options);
   if (!member) {
-    throw new Error(`ensureMemberAttendanceScheduleSupabase could not find member ${canonicalMemberId}.`);
+    throw new Error(`getRequiredMemberAttendanceScheduleSupabase could not find member ${canonicalMemberId}.`);
   }
   const { data, error } = await supabase
     .from("member_attendance_schedules")
     .select("*")
     .eq("member_id", canonicalMemberId)
-    .limit(1);
+    .maybeSingle();
   if (error) {
     if (isMissingTableError(error, "member_attendance_schedules")) {
       throw missingMccStorageError({
@@ -275,64 +235,13 @@ export async function ensureMemberAttendanceScheduleSupabase(memberId: string, o
     }
     throw new Error(error.message);
   }
-  const existing = Array.isArray(data) ? data[0] : null;
-  if (existing) return existing as MemberAttendanceScheduleRow;
-
-  const created = {
-    ...defaultAttendanceSchedule(member),
-    updated_by_user_id: options?.actor?.userId ?? null,
-    updated_by_name: options?.actor?.name ?? null
-  };
-  const { data: inserted, error: insertError } = await supabase
-    .from("member_attendance_schedules")
-    .insert(created)
-    .select("*")
-    .single();
-  if (insertError) {
-    if (isMissingTableError(insertError, "member_attendance_schedules")) {
-      throw missingMccStorageError({
-        objectName: "member_attendance_schedules",
-        migration: "0011_member_command_center_aux_schema.sql"
-      });
-    }
-    if (isUniqueConstraintError(insertError)) {
-      const { data: recovered, error: recoverError } = await supabase
-        .from("member_attendance_schedules")
-        .select("*")
-        .eq("member_id", canonicalMemberId)
-        .limit(1);
-      if (recoverError) {
-        if (isMissingTableError(recoverError, "member_attendance_schedules")) {
-          throw missingMccStorageError({
-            objectName: "member_attendance_schedules",
-            migration: "0011_member_command_center_aux_schema.sql"
-          });
-        }
-        throw new Error(recoverError.message);
-      }
-      const recoveredRow = Array.isArray(recovered) ? recovered[0] : null;
-      if (recoveredRow) return recoveredRow as MemberAttendanceScheduleRow;
-
-      const { data: recoveredById, error: recoverByIdError } = await supabase
-        .from("member_attendance_schedules")
-        .select("*")
-        .eq("id", created.id)
-        .limit(1);
-      if (recoverByIdError) {
-        if (isMissingTableError(recoverByIdError, "member_attendance_schedules")) {
-          throw missingMccStorageError({
-            objectName: "member_attendance_schedules",
-            migration: "0011_member_command_center_aux_schema.sql"
-          });
-        }
-        throw new Error(recoverByIdError.message);
-      }
-      const recoveredByIdRow = Array.isArray(recoveredById) ? recoveredById[0] : null;
-      if (recoveredByIdRow) return recoveredByIdRow as MemberAttendanceScheduleRow;
-    }
-    throw new Error(insertError.message);
+  if (!data) {
+    throw buildMissingCanonicalMemberShellError({
+      memberId: canonicalMemberId,
+      table: "member_attendance_schedules"
+    });
   }
-  return inserted as MemberAttendanceScheduleRow;
+  return data as MemberAttendanceScheduleRow;
 }
 
 export async function updateMemberCommandCenterProfileSupabase(id: string, patch: Record<string, unknown>) {

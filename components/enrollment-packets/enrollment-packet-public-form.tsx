@@ -16,6 +16,7 @@ import {
 } from "@/app/sign/enrollment-packet/[token]/actions";
 import { EnrollmentPacketPublicFormAgreements } from "@/components/enrollment-packets/enrollment-packet-public-form-agreements";
 import { EnrollmentPacketPublicFormLegal } from "@/components/enrollment-packets/enrollment-packet-public-form-legal";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 import { formatPhoneInput } from "@/lib/phone";
 import {
   ENROLLMENT_PACKET_ADL_AMBULATION_OPTIONS,
@@ -76,6 +77,13 @@ type PublicEnrollmentPacketFields = {
 
 type UploadKey = (typeof ENROLLMENT_PACKET_UPLOAD_FIELDS)[number]["key"];
 type UploadState = Record<UploadKey, File[]>;
+
+type PublicFormFeedback =
+  | {
+      kind: "success" | "error";
+      message: string;
+    }
+  | null;
 
 const ADL_FIELD_LABELS: Record<string, string> = {
   adlMobilityLevel: "Ambulation",
@@ -250,7 +258,7 @@ export function EnrollmentPacketPublicForm({
   fields: PublicEnrollmentPacketFields;
 }) {
   const [payload, setPayload] = useState<EnrollmentPacketIntakePayload>(() => toInitialPayload(fields));
-  const [status, setStatus] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<PublicFormFeedback>(null);
   const [isPending, setIsPending] = useState(false);
   const [attested, setAttested] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
@@ -283,7 +291,7 @@ export function EnrollmentPacketPublicForm({
 
   const navigateToConfirmation = (rawRedirectUrl: string) => {
     const redirectUrl = resolveRedirectUrl(rawRedirectUrl);
-    setStatus("Submission complete. Redirecting to confirmation page...");
+    setFeedback({ kind: "success", message: "Submission complete. Redirecting to confirmation page..." });
     console.info("[enrollment-packet] submit succeeded; redirecting to confirmation", { redirectUrl });
     window.location.href = redirectUrl;
   };
@@ -498,13 +506,17 @@ export function EnrollmentPacketPublicForm({
     const result = await savePublicEnrollmentPacketProgressAction(formData);
     if (!result.ok) {
       setAutosaveStatus("error");
-      if (mode === "manual") setStatus(result.error);
+      if (mode === "manual") {
+        setFeedback({ kind: "error", message: result.error });
+      }
       return;
     }
     const now = new Date();
     setAutosaveStatus("saved");
     setLastSavedAt(now.toLocaleString());
-    if (mode === "manual") setStatus("Progress saved.");
+    if (mode === "manual") {
+      setFeedback({ kind: "success", message: "Progress saved." });
+    }
   }
   const persistProgress = useEffectEvent((sourcePayload: EnrollmentPacketIntakePayload, mode: "auto" | "manual") => {
     void persistProgressNow(sourcePayload, mode);
@@ -524,7 +536,7 @@ export function EnrollmentPacketPublicForm({
   }, []);
 
   const saveProgress = () => {
-    setStatus(null);
+    setFeedback(null);
     setAutosaveStatus("saving");
     void persistProgressNow(payload, "manual");
   };
@@ -532,7 +544,7 @@ export function EnrollmentPacketPublicForm({
   const submitPacket = () => {
     const canvas = canvasRef.current;
     if (!canvas) {
-      setStatus("Signature pad is not ready yet. Refresh the page and try again.");
+      setFeedback({ kind: "error", message: "Signature pad is not ready yet. Refresh the page and try again." });
       return;
     }
     setSubmitAttempted(true);
@@ -543,18 +555,24 @@ export function EnrollmentPacketPublicForm({
       attested
     });
     if (submissionValidation.missingItems.length > 0) {
-      setStatus(`Complete required fields before signing: ${submissionValidation.missingItems.join(", ")}.`);
+      setFeedback({
+        kind: "error",
+        message: `Complete required fields before signing: ${submissionValidation.missingItems.join(", ")}.`
+      });
       scrollToFirstMissingField();
       return;
     }
     if (submissionValidation.signatureErrors.length > 0) {
-      setStatus(submissionValidation.signatureErrors[0] ?? "Caregiver signature is required.");
+      setFeedback({
+        kind: "error",
+        message: submissionValidation.signatureErrors[0] ?? "Caregiver signature is required."
+      });
       return;
     }
 
     const signatureImageDataUrl = canvas.toDataURL("image/png");
     const payloadToSubmit = applySignatureDefaults(payload, caregiverTypedName);
-    setStatus(null);
+    setFeedback(null);
 
     setIsPending(true);
     void (async () => {
@@ -572,13 +590,16 @@ export function EnrollmentPacketPublicForm({
         const result = await submitPublicEnrollmentPacketAction(formData);
         console.info("[enrollment-packet] submit action completed", result);
         if (!result.ok) {
-          setStatus(result.error);
+          setFeedback({ kind: "error", message: result.error });
           return;
         }
 
         navigateToConfirmation(result.redirectUrl);
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : "Unable to complete enrollment packet.");
+        setFeedback({
+          kind: "error",
+          message: error instanceof Error ? error.message : "Unable to complete enrollment packet."
+        });
       } finally {
         setIsPending(false);
       }
@@ -676,13 +697,15 @@ export function EnrollmentPacketPublicForm({
         <p><span className="font-semibold">Requested days:</span> {fields.requestedDays.length > 0 ? fields.requestedDays.join(", ") : "-"}</p>
         <p><span className="font-semibold">Daily rate:</span> ${fields.dailyRate.toFixed(2)}</p>
         <p><span className="font-semibold">Community fee:</span> ${fields.communityFee.toFixed(2)}</p>
-        <p className="mt-1 text-xs text-muted">
+        <p className={`mt-1 text-xs ${autosaveStatus === "error" ? "text-red-700" : "text-muted"}`}>
           {autosaveStatus === "saving" ? "Saving draft..." : autosaveStatus === "error" ? "Autosave failed. Please use Save Progress." : "✓ Saved automatically"}
           {lastSavedAt ? ` | Last saved: ${lastSavedAt}` : ""}
         </p>
       </div>
 
       <p className="text-xs text-muted">Fields marked with <span className="font-semibold text-red-600">*</span> are required.</p>
+      <MutationNotice kind="error" message={feedback?.kind === "error" ? feedback.message : null} />
+      <MutationNotice kind="success" message={feedback?.kind === "success" ? feedback.message : null} />
 
       <Section title="1. Member Demographics">
         <div className="grid gap-3 md:grid-cols-2">
@@ -905,7 +928,6 @@ export function EnrollmentPacketPublicForm({
         {completion.isComplete ? <button type="button" className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white" onClick={submitPacket} disabled={isPending}>{isPending ? "Submitting..." : "Sign and Submit Packet"}</button> : null}
       </div>
 
-      {status ? <p className="text-sm text-muted">{status}</p> : null}
     </div>
   );
 }

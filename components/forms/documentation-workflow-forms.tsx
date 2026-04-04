@@ -3,10 +3,13 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 
 import {
+  createPhotoUploadsFormAction,
   runDocumentationCreateAction
 } from "@/app/documentation-create-actions";
 import { MemberSearchPicker } from "@/components/forms/member-search-picker";
+import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { Button } from "@/components/ui/button";
+import { MutationNotice } from "@/components/ui/mutation-notice";
 import { easternDateTimeLocalToISO, toEasternDate, toEasternDateTimeLocal } from "@/lib/timezone";
 import {
   TOILET_USE_TYPE_OPTIONS,
@@ -21,6 +24,13 @@ type MemberOption = {
   id: string;
   display_name: string;
 };
+
+type FormFeedback =
+  | {
+      kind: "success" | "error";
+      message: string;
+    }
+  | null;
 
 function useNowIso() {
   return useMemo(() => toEasternDateTimeLocal(), []);
@@ -175,8 +185,8 @@ export function TransportationLogForm({ members }: { members: MemberOption[] }) 
 }
 
 export function PhotoUploadForm() {
-  const [isPending, startTransition] = useTransition();
-  const [status, setStatus] = useState<string | null>(null);
+  const { isSaving, run } = useScopedMutation();
+  const [feedback, setFeedback] = useState<FormFeedback>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
 
@@ -195,30 +205,17 @@ export function PhotoUploadForm() {
 
     setFiles(validFiles);
     if (oversizedFiles.length > 0) {
-      setStatus(
-        `Skipped ${oversizedFiles.length} file(s) over 5MB. Max allowed per photo is 5MB.`
-      );
+      setFeedback({
+        kind: "error",
+        message: `Skipped ${oversizedFiles.length} file(s) over 5MB. Max allowed per photo is 5MB.`
+      });
     } else {
-      setStatus(null);
+      setFeedback(null);
     }
 
     const urls = validFiles.map((file) => URL.createObjectURL(file));
     setPreviewUrls(urls);
   };
-
-  const fileToDataUrl = async (file: File) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") {
-          resolve(reader.result);
-          return;
-        }
-        reject(new Error("Could not read file."));
-      };
-      reader.onerror = () => reject(new Error("Could not read file."));
-      reader.readAsDataURL(file);
-    });
 
   return (
     <div className="space-y-3">
@@ -228,6 +225,7 @@ export function PhotoUploadForm() {
           multiple
           accept="image/*"
           className="h-11 rounded-lg border border-border bg-white px-3 py-2 text-fg"
+          disabled={isSaving}
           onChange={(e) => onFilesSelect(e.target.files)}
         />
       </div>
@@ -252,58 +250,37 @@ export function PhotoUploadForm() {
 
       <Button
         type="button"
-        disabled={isPending || files.length === 0}
+        disabled={isSaving || files.length === 0}
         onClick={() =>
-          startTransition(async () => {
-            let saved = 0;
-            const failures: string[] = [];
-
-            for (const file of files) {
-              try {
-                if (file.size > MAX_PHOTO_UPLOAD_BYTES) {
-                  failures.push(`${file.name}: exceeds 5MB limit.`);
-                  continue;
-                }
-                const fileDataUrl = await fileToDataUrl(file);
-                const res = await runDocumentationCreateAction({
-                  kind: "createPhotoUpload",
-                  payload: {
-                    fileName: file.name,
-                    fileType: file.type || "image/*",
-                    fileDataUrl
-                  }
-                });
-
-                if (res.error) {
-                  failures.push(`${file.name}: ${res.error}`);
-                } else {
-                  saved += 1;
-                }
-              } catch {
-                failures.push(`${file.name}: Unable to process file.`);
-              }
-            }
-
-            if (saved > 0 && failures.length === 0) {
-              setStatus(`Saved ${saved} photo upload${saved === 1 ? "" : "s"}.`);
-            } else if (saved > 0 && failures.length > 0) {
-              setStatus(`Saved ${saved} file(s). ${failures.length} failed.`);
-            } else {
-              setStatus(`Error: ${failures[0] ?? "No files were saved."}`);
-            }
-
-            if (saved > 0) {
+          void run(async () => {
+            const formData = new FormData();
+            files.forEach((file) => formData.append("photoFiles", file));
+            const result = await createPhotoUploadsFormAction(formData);
+            if (result.ok) {
               previewUrls.forEach((url) => URL.revokeObjectURL(url));
               setFiles([]);
               setPreviewUrls([]);
             }
+            return result;
+          }, {
+            onSuccess: (result) => {
+              const data = ((result.data ?? {}) as { failedCount?: number }) ?? {};
+              setFeedback({
+                kind: (data.failedCount ?? 0) > 0 ? "error" : "success",
+                message: result.message
+              });
+            },
+            onError: (result) => {
+              setFeedback({ kind: "error", message: result.error });
+            }
           })
         }
       >
-        Save Photo Uploads
+        {isSaving ? "Uploading..." : "Save Photo Uploads"}
       </Button>
 
-      {status ? <p className="text-sm text-muted">{status}</p> : null}
+      <MutationNotice kind="error" message={feedback?.kind === "error" ? feedback.message : null} />
+      <MutationNotice kind="success" message={feedback?.kind === "success" ? feedback.message : null} />
     </div>
   );
 }

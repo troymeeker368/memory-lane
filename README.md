@@ -162,12 +162,9 @@ Idempotency:
 
 ## Auth Environment Variables
 
-- `NEXT_PUBLIC_SUPABASE_URL` (required, preferred): public Supabase project URL used by browser and server runtimes.
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` (required, preferred): public anon key used by browser and server runtimes.
-- `SUPABASE_URL` (legacy server fallback only): accepted by server/runtime helpers if older deploy environments still use this name.
-- `SUPABASE_ANON_KEY` (legacy server fallback only): accepted by server/runtime helpers if older deploy environments still use this name.
+- `NEXT_PUBLIC_SUPABASE_URL` (required): public Supabase project URL used by browser and server runtimes.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` (required): public anon key used by browser and server runtimes.
 - `SUPABASE_SERVICE_ROLE_KEY` (required for service-role workflows): canonical server-only key for RPCs, sync jobs, and privileged writes.
-- `SUPABASE_SERVICE_KEY` (legacy fallback only): accepted as a fallback for older environments.
 - `NEXT_PUBLIC_APP_URL` (required): canonical public app URL used in invite/reset links.
 - `RESEND_API_KEY` (required for invite/reset delivery): API key for branded staff auth emails.
 - `CLINICAL_SENDER_EMAIL` (required for invite/reset delivery): sender mailbox used for branded staff auth emails.
@@ -176,7 +173,7 @@ Idempotency:
 - `DEV_AUTH_BOOTSTRAP_USERS_JSON` (optional): JSON array of `{ "email", "password", "role", "label" }` bootstrap accounts for `/dev/auth`.
 
 Production safety rules:
-- Production deployments should set the canonical `NEXT_PUBLIC_*` Supabase variables even if legacy server fallbacks are available.
+- Local and Vercel environments should use the same canonical Supabase variable names.
 - `/dev/auth` is hard-disabled when `NODE_ENV=production` even if `ENABLE_DEV_AUTH_BYPASS=true`.
 - Staff invite/reset/set-password flows always use real Supabase auth sessions and preserve canonical role/permission enforcement.
 
@@ -184,15 +181,27 @@ Production safety rules:
 
 When runtime code starts referencing a new column or RPC, apply migrations before testing the UI.
 
-- Canonical linked sync: `npm run db:sync`
-- Linked/remote project push only: `npm run db:push`
-- Generate canonical types from the linked project: `npm run db:types`
+- Correct linked Supabase project ref: `dcnyjtfyftamcdsaxrsz`
+- Link this repo to the correct project: `cmd /c npx supabase link --project-ref dcnyjtfyftamcdsaxrsz`
+- Canonical generated types path: `types/supabase-types.d.ts`
+- Do not generate to `src/types/database.types.ts` or root-level `database.types.ts`; those are not the repo-standard path.
+- If PowerShell blocks `npx` scripts on Windows, run the command through `cmd /c ...`.
+
+- Canonical linked sync: `cmd /c npm run db:sync`
+- Linked/remote project push only: `cmd /c npm run db:push`
+- Generate canonical types from the linked project: `cmd /c npm run db:types`
 - Local Supabase stack push only: `npm run db:push:local`
 - Generate canonical types from local Supabase: `npm run db:types:local`
 - Pre-push validation: `npm run prepush`
 - If PostgREST still serves stale schema after pushing migrations, restart the local Supabase stack before retrying the UI save flow.
 
 The canonical generated Supabase types file is checked in at `types/supabase-types.d.ts`. Pre-push now validates that the linked database is up to date and that this file matches the linked schema.
+
+### Vercel Env Alignment
+
+- Use one canonical Supabase env set in Vercel: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`.
+- Verify those values all belong to project ref `dcnyjtfyftamcdsaxrsz`.
+- Remove stale duplicate Supabase env names in Vercel after confirming no older deployment still depends on them.
 
 ### Troubleshooting
 

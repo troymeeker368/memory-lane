@@ -2,6 +2,7 @@
 
 import {
   addMemberFileAction as addMemberFileActionImpl,
+  addMemberFileFormAction as addMemberFileFormActionImpl,
   deleteMemberFileAction as deleteMemberFileActionImpl,
   getMemberFileDownloadUrlAction as getMemberFileDownloadUrlActionImpl
 } from "./actions-impl";
@@ -24,6 +25,10 @@ type MemberFileRefInput = {
 
 export async function addMemberFileAction(raw: AddMemberFileInput) {
   return addMemberFileActionImpl(raw);
+}
+
+export async function addMemberFileFormAction(formData: FormData) {
+  return addMemberFileFormActionImpl(formData);
 }
 
 export async function deleteMemberFileAction(raw: MemberFileRefInput) {

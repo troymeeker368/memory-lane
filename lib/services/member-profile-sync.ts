@@ -1,4 +1,5 @@
 import { runSignedPhysicianOrderPostSignWorkflow } from "@/lib/services/physician-orders-supabase";
+import { getRequiredMemberCommandCenterProfileSupabase } from "@/lib/services/member-command-center-write";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
@@ -29,6 +30,7 @@ function toNullableUuid(value: string | null | undefined) {
 }
 
 export async function syncMhpToCommandCenter(memberId: string, actor: SyncActor = {}, at?: string) {
+  await getRequiredMemberCommandCenterProfileSupabase(memberId);
   const now = at ?? toEasternISO();
   const supabase = await createClient();
   try {
@@ -50,6 +52,7 @@ export async function syncMhpToCommandCenter(memberId: string, actor: SyncActor 
 }
 
 export async function syncCommandCenterToMhp(memberId: string, actor: SyncActor = {}, at?: string) {
+  await getRequiredMemberCommandCenterProfileSupabase(memberId);
   const now = at ?? toEasternISO();
   const supabase = await createClient();
   try {

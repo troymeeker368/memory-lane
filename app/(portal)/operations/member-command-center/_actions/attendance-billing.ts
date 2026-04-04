@@ -9,8 +9,8 @@ import {
   listMemberBillingSettingsSupabase
 } from "@/lib/services/member-command-center-read";
 import {
-  ensureMemberAttendanceScheduleSupabase,
-  ensureMemberCommandCenterProfileSupabase
+  getRequiredMemberAttendanceScheduleSupabase,
+  getRequiredMemberCommandCenterProfileSupabase
 } from "@/lib/services/member-command-center-write";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -30,10 +30,9 @@ export async function saveMemberCommandCenterAttendanceAction(formData: FormData
   const memberId = asString(formData, "memberId");
   if (!memberId) return { ok: false, error: "Member is required." };
 
-  const schedule = await ensureMemberAttendanceScheduleSupabase(memberId);
-  if (!schedule) return { ok: false, error: "Attendance schedule not found." };
+  const schedule = await getRequiredMemberAttendanceScheduleSupabase(memberId);
 
-  const commandCenterProfile = await ensureMemberCommandCenterProfileSupabase(memberId);
+  const commandCenterProfile = await getRequiredMemberCommandCenterProfileSupabase(memberId);
   const now = toEasternISO();
   const enrollmentDate = asNullableString(formData, "enrollmentDate");
   const monday = asCheckbox(formData, "monday");

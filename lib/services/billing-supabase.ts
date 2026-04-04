@@ -42,18 +42,18 @@ export type { BillingDashboardSummary } from "@/lib/services/billing-read-supaba
 export { createBillingExport } from "@/lib/services/billing-exports";
 export { createCustomInvoice, createEnrollmentProratedInvoice } from "@/lib/services/billing-custom-invoices";
 
-export async function syncAttendanceBillingForDate(input: { memberId: string; attendanceDate: string; actorName: string }) {
-  const supabase = await createClient();
-  const attendanceDate = normalizeDateOnly(input.attendanceDate);
-  const { data: attendance, error: attendanceError } = await supabase
-    .from("attendance_records")
-    .select("*")
-    .eq("member_id", input.memberId)
-    .eq("attendance_date", attendanceDate)
-    .maybeSingle();
-  if (attendanceError) throw new Error(attendanceError.message);
-  if (!attendance) return;
+export type AttendanceBillingSyncPlan = {
+  isScheduledDay: boolean;
+  shouldHaveExtraDayAdjustment: boolean;
+  extraDayRate: number;
+};
 
+export async function resolveAttendanceBillingSyncPlan(input: {
+  memberId: string;
+  attendanceDate: string;
+  attendanceStatus: "present" | "absent" | null;
+}): Promise<AttendanceBillingSyncPlan> {
+  const attendanceDate = normalizeDateOnly(input.attendanceDate);
   const expectedContext = await loadExpectedAttendanceSupabaseContext({
     memberIds: [input.memberId],
     startDate: attendanceDate,
@@ -73,13 +73,36 @@ export async function syncAttendanceBillingForDate(input: { memberId: string; at
     centerSetting
   });
 
-  const shouldHaveExtraDayAdjustment =
-    attendance.status === "present" &&
-    !isScheduledDay &&
-    (memberSetting?.bill_extra_days ?? true);
+  return {
+    isScheduledDay,
+    shouldHaveExtraDayAdjustment:
+      input.attendanceStatus === "present" &&
+      !isScheduledDay &&
+      (memberSetting?.bill_extra_days ?? true),
+    extraDayRate
+  };
+}
+
+export async function syncAttendanceBillingForDate(input: { memberId: string; attendanceDate: string; actorName: string }) {
+  const supabase = await createClient();
+  const attendanceDate = normalizeDateOnly(input.attendanceDate);
+  const { data: attendance, error: attendanceError } = await supabase
+    .from("attendance_records")
+    .select("*")
+    .eq("member_id", input.memberId)
+    .eq("attendance_date", attendanceDate)
+    .maybeSingle();
+  if (attendanceError) throw new Error(attendanceError.message);
+  if (!attendance) return;
+
+  const plan = await resolveAttendanceBillingSyncPlan({
+    memberId: input.memberId,
+    attendanceDate,
+    attendanceStatus: attendance.status
+  });
 
   let linkedAdjustmentId = attendance.linked_adjustment_id ? String(attendance.linked_adjustment_id) : null;
-  if (shouldHaveExtraDayAdjustment) {
+  if (plan.shouldHaveExtraDayAdjustment) {
     if (linkedAdjustmentId) {
       const { error } = await supabase
         .from("billing_adjustments")
@@ -88,8 +111,8 @@ export async function syncAttendanceBillingForDate(input: { memberId: string; at
           adjustment_type: "ExtraDay",
           description: "Unscheduled attendance extra day charge",
           quantity: 1,
-          unit_rate: extraDayRate,
-          amount: extraDayRate,
+          unit_rate: plan.extraDayRate,
+          amount: plan.extraDayRate,
           billing_status: "Unbilled",
           created_by_system: true,
           source_table: "attendance_records",
@@ -109,8 +132,8 @@ export async function syncAttendanceBillingForDate(input: { memberId: string; at
           adjustment_type: "ExtraDay",
           description: "Unscheduled attendance extra day charge",
           quantity: 1,
-          unit_rate: extraDayRate,
-          amount: extraDayRate,
+          unit_rate: plan.extraDayRate,
+          amount: plan.extraDayRate,
           billing_status: "Unbilled",
           created_by_system: true,
           source_table: "attendance_records",
@@ -141,9 +164,9 @@ export async function syncAttendanceBillingForDate(input: { memberId: string; at
   const { error: attendanceUpdateError } = await supabase
     .from("attendance_records")
     .update({
-      scheduled_day: isScheduledDay,
-      unscheduled_day: !isScheduledDay,
-      billable_extra_day: shouldHaveExtraDayAdjustment,
+      scheduled_day: plan.isScheduledDay,
+      unscheduled_day: !plan.isScheduledDay,
+      billable_extra_day: plan.shouldHaveExtraDayAdjustment,
       billing_status: attendance.status === "present" ? "Unbilled" : "Excluded",
       linked_adjustment_id: linkedAdjustmentId,
       updated_at: toEasternISO()

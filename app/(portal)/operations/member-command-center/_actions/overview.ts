@@ -2,7 +2,7 @@ import "server-only";
 
 import { getMemberLockerConflict } from "@/lib/services/members-read";
 import { saveMemberCommandCenterBundle } from "@/lib/services/member-command-center";
-import { ensureMemberCommandCenterProfileSupabase } from "@/lib/services/member-command-center-write";
+import { getRequiredMemberCommandCenterProfileSupabase } from "@/lib/services/member-command-center-write";
 import { asUploadedImageDataUrl } from "@/lib/utils/uploaded-image-data-url";
 import { toEasternISO } from "@/lib/timezone";
 
@@ -29,7 +29,7 @@ export async function saveMemberCommandCenterSummaryAction(formData: FormData) {
   }
 
   const now = toEasternISO();
-  const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
+  const profile = await getRequiredMemberCommandCenterProfileSupabase(memberId);
   const defaultLocation = profile.location ?? "Fort Mill";
   await saveMemberCommandCenterBundle({
     memberId,
@@ -55,7 +55,7 @@ export async function updateMemberCommandCenterPhotoAction(formData: FormData) {
   if (!memberId) return { ok: false, error: "Member is required." };
 
   const now = toEasternISO();
-  const profile = await ensureMemberCommandCenterProfileSupabase(memberId);
+  const profile = await getRequiredMemberCommandCenterProfileSupabase(memberId);
   const profileImageUrl = await asUploadedImageDataUrl(formData, "photoFile", profile.profile_image_url ?? null);
   await saveMemberCommandCenterBundle({
     memberId,

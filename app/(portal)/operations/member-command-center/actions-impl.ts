@@ -22,6 +22,7 @@ export {
 } from "./_actions/contacts";
 export {
   addMemberFileAction,
+  addMemberFileFormAction,
   deleteMemberFileAction,
   getMemberFileDownloadUrlAction
 } from "./_actions/files";

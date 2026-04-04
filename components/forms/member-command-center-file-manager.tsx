@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { MEMBER_FILE_CATEGORY_OPTIONS } from "@/lib/canonical";
 import {
-  addMemberFileAction,
+  addMemberFileFormAction,
   deleteMemberFileAction,
   getMemberFileDownloadUrlAction
 } from "@/app/(portal)/operations/member-command-center/file-actions";
@@ -24,6 +24,13 @@ interface FileRow {
   uploaded_by_name: string | null;
   uploaded_at: string;
 }
+
+type FileManagerFeedback =
+  | {
+      kind: "success" | "error";
+      message: string;
+    }
+  | null;
 
 function createUploadToken() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -61,7 +68,7 @@ export function MemberCommandCenterFileManager({
   rows: FileRow[];
   canEdit: boolean;
 }) {
-  const [status, setStatus] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<FileManagerFeedback>(null);
   const [category, setCategory] = useState<(typeof MEMBER_FILE_CATEGORY_OPTIONS)[number]>("Health Unit");
   const [categoryOther, setCategoryOther] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -76,7 +83,7 @@ export function MemberCommandCenterFileManager({
   }, [rows]);
 
   useEffect(() => {
-    setStatus(null);
+    setFeedback(null);
     setSelectedFile(null);
     setUploadToken(null);
     setCategory("Health Unit");
@@ -90,50 +97,30 @@ export function MemberCommandCenterFileManager({
     setCategoryOther("");
   }
 
-  function fileToDataUrl(file: File) {
-    return new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") {
-          resolve(reader.result);
-          return;
-        }
-        reject(new Error("Could not read file."));
-      };
-      reader.onerror = () => reject(new Error("Could not read file."));
-      reader.readAsDataURL(file);
-    });
-  }
-
   async function onUpload() {
     if (!selectedFile) {
-      setStatus("Error: Please select a file.");
+      setFeedback({ kind: "error", message: "Please select a file." });
       return;
     }
     if (!uploadToken) {
-      setStatus("Error: Upload token is missing. Re-select the file and try again.");
+      setFeedback({ kind: "error", message: "Upload token is missing. Re-select the file and try again." });
       return;
     }
     if (showCustomCategory && !categoryOther.trim()) {
-      setStatus("Error: Custom category is required when category is Other.");
+      setFeedback({ kind: "error", message: "Custom category is required when category is Other." });
       return;
     }
 
     void run(async () => {
-      try {
-        const dataUrl = await fileToDataUrl(selectedFile);
-        return addMemberFileAction({
-          memberId,
-          fileName: selectedFile.name,
-          fileType: selectedFile.type || "application/octet-stream",
-          fileDataUrl: dataUrl,
-          category,
-          categoryOther: showCustomCategory ? categoryOther : "",
-          uploadToken
-        });
-      } catch {
-        return { ok: false, error: "Unable to process selected file." };
-      }
+      const formData = new FormData();
+      formData.set("memberId", memberId);
+      formData.set("fileName", selectedFile.name);
+      formData.set("fileType", selectedFile.type || "application/octet-stream");
+      formData.set("category", category);
+      formData.set("categoryOther", showCustomCategory ? categoryOther : "");
+      formData.set("uploadToken", uploadToken);
+      formData.set("file", selectedFile);
+      return addMemberFileFormAction(formData);
     }, {
       successMessage: "File uploaded.",
       errorMessage: "Unable to upload file.",
@@ -142,11 +129,11 @@ export function MemberCommandCenterFileManager({
         if (createdRow) {
           setLocalRows((current) => [createdRow, ...current.filter((row) => row.id !== createdRow.id)]);
         }
-        setStatus("File uploaded.");
+        setFeedback({ kind: "success", message: "File uploaded." });
         clearSelection();
       },
       onError: (result) => {
-        setStatus(`Error: ${result.error}`);
+        setFeedback({ kind: "error", message: result.error });
       }
     });
   }
@@ -159,10 +146,10 @@ export function MemberCommandCenterFileManager({
       errorMessage: "Unable to delete file.",
       onSuccess: () => {
         setLocalRows((current) => current.filter((row) => row.id !== fileId));
-        setStatus("File deleted.");
+        setFeedback({ kind: "success", message: "File deleted." });
       },
       onError: (result) => {
-        setStatus(`Error: ${result.error}`);
+        setFeedback({ kind: "error", message: result.error });
       }
     });
   }
@@ -173,33 +160,33 @@ export function MemberCommandCenterFileManager({
   }
 
   function onOpen(row: FileRow) {
-    setStatus(null);
+    setFeedback(null);
     void run(() => getMemberFileDownloadUrlAction({ id: row.id, memberId }), {
       successMessage: "File opened.",
       errorMessage: "Unable to open file.",
       onSuccess: (result) => {
         const data = ((result.data ?? {}) as unknown) as { signedUrl: string };
         window.open(data.signedUrl, "_blank", "noopener,noreferrer");
-        setStatus("File opened.");
+        setFeedback({ kind: "success", message: "File opened." });
       },
       onError: (result) => {
-        setStatus(`Error: ${result.error}`);
+        setFeedback({ kind: "error", message: result.error });
       }
     });
   }
 
   function onDownload(row: FileRow) {
-    setStatus(null);
+    setFeedback(null);
     void run(() => getMemberFileDownloadUrlAction({ id: row.id, memberId }), {
       successMessage: "File download started.",
       errorMessage: "Unable to download file.",
       onSuccess: (result) => {
         const data = ((result.data ?? {}) as unknown) as { signedUrl: string; fileName?: string };
         triggerDownload(data.signedUrl, data.fileName || row.file_name);
-        setStatus("File download started.");
+        setFeedback({ kind: "success", message: "File download started." });
       },
       onError: (result) => {
-        setStatus(`Error: ${result.error}`);
+        setFeedback({ kind: "error", message: result.error });
       }
     });
   }
@@ -213,11 +200,13 @@ export function MemberCommandCenterFileManager({
             <input
               type="file"
               className="h-10 rounded-lg border border-border px-3 py-1 text-sm"
+              disabled={isSaving}
               onChange={(event) => onFileSelected(event.target.files?.[0] ?? null)}
             />
             <select
               className="h-10 rounded-lg border border-border px-3"
               value={category}
+              disabled={isSaving}
               onChange={(event) => {
                 const next = event.target.value as (typeof MEMBER_FILE_CATEGORY_OPTIONS)[number];
                 setCategory(next);
@@ -237,16 +226,22 @@ export function MemberCommandCenterFileManager({
                 className="h-10 rounded-lg border border-border px-3"
                 placeholder="Custom category"
                 value={categoryOther}
+                disabled={isSaving}
                 onChange={(event) => setCategoryOther(event.target.value)}
               />
             ) : null}
           </div>
+          {selectedFile ? (
+            <p className="mt-2 text-xs text-muted">
+              Ready to upload: {selectedFile.name}
+            </p>
+          ) : null}
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
               className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white"
               onClick={onUpload}
-              disabled={isSaving}
+              disabled={isSaving || !selectedFile}
             >
               {isSaving ? "Uploading..." : "Upload File"}
             </button>
@@ -337,7 +332,8 @@ export function MemberCommandCenterFileManager({
         </table>
       </div>
 
-      <MutationNotice kind={status?.startsWith("Error") ? "error" : "success"} message={status} />
+      <MutationNotice kind="error" message={feedback?.kind === "error" ? feedback.message : null} />
+      <MutationNotice kind="success" message={feedback?.kind === "success" ? feedback.message : null} />
     </div>
   );
 }

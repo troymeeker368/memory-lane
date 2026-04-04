@@ -9,19 +9,15 @@ function parseBooleanEnv(value: string | null | undefined) {
 }
 
 function readSupabaseUrlEnv() {
-  return clean(process.env.NEXT_PUBLIC_SUPABASE_URL) ?? clean(process.env.SUPABASE_URL);
+  return clean(process.env.NEXT_PUBLIC_SUPABASE_URL);
 }
 
 function readSupabaseAnonKeyEnv() {
-  return (
-    clean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) ??
-    clean(process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY) ??
-    clean(process.env.SUPABASE_ANON_KEY)
-  );
+  return clean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 }
 
 export function getSupabaseServiceRoleKey() {
-  return clean(process.env.SUPABASE_SERVICE_ROLE_KEY) ?? clean(process.env.SUPABASE_SERVICE_KEY);
+  return clean(process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
 export function getSupabaseEnv() {
@@ -29,9 +25,7 @@ export function getSupabaseEnv() {
   const anonKey = readSupabaseAnonKeyEnv();
 
   if (!url || !anonKey) {
-    throw new Error(
-      "Missing Supabase environment variables. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY (preferred), or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY, or legacy SUPABASE_URL and SUPABASE_ANON_KEY for server/runtime contexts."
-    );
+    throw new Error("Missing Supabase environment variables. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
   }
 
   return { url, anonKey };

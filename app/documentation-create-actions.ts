@@ -4,11 +4,10 @@ import type {
   createAncillaryChargeAction as createAncillaryChargeActionImpl,
   createBloodSugarLogAction as createBloodSugarLogActionImpl,
   createDailyActivityAction as createDailyActivityActionImpl,
-  createPhotoUploadAction as createPhotoUploadActionImpl,
   createShowerLogAction as createShowerLogActionImpl,
   createToiletLogAction as createToiletLogActionImpl,
   createTransportationLogAction as createTransportationLogActionImpl
-} from "@/app/documentation-create-actions-impl";
+} from "@/app/documentation-create-core";
 
 export type DocumentationCreateActionRequest =
   | {
@@ -32,16 +31,12 @@ export type DocumentationCreateActionRequest =
       payload: Parameters<typeof createTransportationLogActionImpl>[0];
     }
   | {
-      kind: "createPhotoUpload";
-      payload: Parameters<typeof createPhotoUploadActionImpl>[0];
-    }
-  | {
       kind: "createBloodSugarLog";
       payload: Parameters<typeof createBloodSugarLogActionImpl>[0];
     };
 
 export async function runDocumentationCreateAction(request: DocumentationCreateActionRequest) {
-  const implementation = await import("@/app/documentation-create-actions-impl");
+  const implementation = await import("@/app/documentation-create-core");
 
   switch (request.kind) {
     case "createAncillaryCharge":
@@ -54,9 +49,17 @@ export async function runDocumentationCreateAction(request: DocumentationCreateA
       return implementation.createShowerLogAction(request.payload);
     case "createTransportationLog":
       return implementation.createTransportationLogAction(request.payload);
-    case "createPhotoUpload":
-      return implementation.createPhotoUploadAction(request.payload);
     case "createBloodSugarLog":
       return implementation.createBloodSugarLogAction(request.payload);
   }
+}
+
+export async function createPhotoUploadsFormAction(formData: FormData) {
+  const implementation = await import("@/app/documentation-create-core");
+  return implementation.createPhotoUploadsFormAction(formData);
+}
+
+export async function createPhotoUploadFormAction(formData: FormData) {
+  const implementation = await import("@/app/documentation-create-core");
+  return implementation.createPhotoUploadFormAction(formData);
 }

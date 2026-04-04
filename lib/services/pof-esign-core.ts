@@ -218,9 +218,7 @@ export function getPofRuntimeDiagnostics(input?: {
 }): PofRuntimeDiagnostics {
   const hasResendApiKey = Boolean(clean(process.env.RESEND_API_KEY));
   const hasClinicalSenderEmail = Boolean(getConfiguredClinicalSenderEmail());
-  const hasSupabaseServiceRoleKey = Boolean(
-    clean(process.env.SUPABASE_SERVICE_ROLE_KEY) ?? clean(process.env.SUPABASE_SERVICE_KEY)
-  );
+  const hasSupabaseServiceRoleKey = Boolean(clean(process.env.SUPABASE_SERVICE_ROLE_KEY));
   const missing: string[] = [];
   if (!hasSupabaseServiceRoleKey) missing.push("SUPABASE_SERVICE_ROLE_KEY");
   if (input?.requireResend) {

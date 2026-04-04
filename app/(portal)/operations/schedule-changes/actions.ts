@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getCurrentProfile } from "@/lib/auth";
 import { mutationError, mutationOk } from "@/lib/mutations/result";
 import {
-  ensureMemberAttendanceScheduleSupabase,
+  getRequiredMemberAttendanceScheduleSupabase,
   type MemberAttendanceScheduleRow
 } from "@/lib/services/member-command-center-write";
 import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar";
@@ -85,7 +85,7 @@ function getMccScheduleDays(schedule: MemberAttendanceScheduleRow | null | undef
 }
 
 async function getCurrentMemberScheduleDays(memberId: string) {
-  const schedule = await ensureMemberAttendanceScheduleSupabase(memberId);
+  const schedule = await getRequiredMemberAttendanceScheduleSupabase(memberId);
   return {
     memberId,
     days: getMccScheduleDays(schedule)
@@ -147,7 +147,7 @@ export async function upsertScheduleChangeAction(raw: z.infer<typeof upsertSched
     let originalDays = normalizeScheduleWeekdays(existing?.original_days ?? payload.data.originalDays);
     if (!existing) {
       try {
-        const memberSchedule = await ensureMemberAttendanceScheduleSupabase(memberId);
+        const memberSchedule = await getRequiredMemberAttendanceScheduleSupabase(memberId);
         const mccOriginalDays = getMccScheduleDays(memberSchedule);
         originalDays = mccOriginalDays.length > 0 ? mccOriginalDays : originalDays;
       } catch (error) {
