@@ -39,6 +39,8 @@ type ProgressNoteTrackerReadModelRpcRow = {
   page_rows: unknown;
 };
 
+type ProgressNoteTrackerSourceRow = Pick<DbProgressNote, "id" | "member_id" | "status" | "signed_at" | "updated_at">;
+
 function toProgressNote(row: DbProgressNote, memberName?: string | null): ProgressNote {
   const signatureMetadata =
     row.signature_metadata && typeof row.signature_metadata === "object"
@@ -95,6 +97,29 @@ export async function loadProgressNoteRows(input?: {
   return (data ?? []) as DbProgressNote[];
 }
 
+async function loadProgressNoteReminderSourceRows(input: { memberIds: string[]; serviceRole?: boolean }) {
+  const uniqueMemberIds = Array.from(new Set(input.memberIds.filter(Boolean)));
+  if (uniqueMemberIds.length === 0) return [] as ProgressNoteTrackerSourceRow[];
+
+  const supabase = await createClient({ serviceRole: Boolean(input.serviceRole) });
+  const { data, error } = await supabase
+    .from("progress_notes")
+    .select("id, member_id, status, signed_at, updated_at")
+    .in("member_id", uniqueMemberIds)
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    if (String(error.message).includes("progress_notes")) {
+      throw new Error(
+        "Progress notes schema is not available. Apply Supabase migration 0092_progress_notes_tracker.sql and refresh PostgREST schema cache."
+      );
+    }
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as ProgressNoteTrackerSourceRow[];
+}
+
 async function loadProgressNoteMembers(input?: {
   memberId?: string;
   memberIds?: string[];
@@ -133,8 +158,8 @@ export async function findDraftProgressNoteRow(memberId: string, serviceRole = f
   return rows.find((row) => normalizeProgressNoteStatus(row.status) === "draft") ?? null;
 }
 
-function buildProgressNoteTrackerRows(members: ProgressNoteMemberRow[], notes: DbProgressNote[]) {
-  const notesByMemberId = new Map<string, DbProgressNote[]>();
+function buildProgressNoteTrackerRows(members: ProgressNoteMemberRow[], notes: ProgressNoteTrackerSourceRow[]) {
+  const notesByMemberId = new Map<string, ProgressNoteTrackerSourceRow[]>();
 
   notes.forEach((row) => {
     const existing = notesByMemberId.get(row.member_id) ?? [];
@@ -412,7 +437,7 @@ export async function getProgressNoteReminderRows(memberIds: string[], options?:
   if (uniqueMemberIds.length === 0) return [] as ProgressNoteComplianceRow[];
   const [members, notes] = await Promise.all([
     loadProgressNoteMembers({ memberIds: uniqueMemberIds, serviceRole: Boolean(options?.serviceRole) }),
-    loadProgressNoteRows({ memberIds: uniqueMemberIds, serviceRole: Boolean(options?.serviceRole) })
+    loadProgressNoteReminderSourceRows({ memberIds: uniqueMemberIds, serviceRole: Boolean(options?.serviceRole) })
   ]);
   return sortProgressNoteTrackerRows(buildProgressNoteTrackerRows(members, notes));
 }

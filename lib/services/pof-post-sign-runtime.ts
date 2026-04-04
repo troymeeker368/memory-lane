@@ -1,6 +1,10 @@
 import "server-only";
 
 import {
+  getFounderWorkflowReadinessLabel,
+  type FounderWorkflowReadinessStage
+} from "@/lib/services/committed-workflow-state";
+import {
   processSignedPhysicianOrderPostSignSync
 } from "@/lib/services/physician-orders-supabase";
 import { getPhysicianOrderClinicalSyncState } from "@/lib/services/physician-orders-read";
@@ -24,6 +28,8 @@ type FinalizedPofSignatureFollowUpRow = {
 
 export type PublicPofPostSignOutcome = {
   postSignStatus: "synced" | "queued";
+  readinessStage: FounderWorkflowReadinessStage;
+  readinessLabel: string;
   retry: {
     queueId: string | null;
     attemptCount: number;
@@ -55,8 +61,11 @@ function buildPublicPofPostSignOutcome(input: {
   lastError: string | null;
 }): PublicPofPostSignOutcome {
   if (input.postSignStatus === "queued") {
+    const readinessStage = "queued_degraded" satisfies FounderWorkflowReadinessStage;
     return {
       postSignStatus: "queued",
+      readinessStage,
+      readinessLabel: getFounderWorkflowReadinessLabel(readinessStage),
       retry: {
         queueId: input.queueId,
         attemptCount: input.attemptCount,
@@ -69,8 +78,11 @@ function buildPublicPofPostSignOutcome(input: {
     };
   }
 
+  const readinessStage = "ready" satisfies FounderWorkflowReadinessStage;
   return {
     postSignStatus: "synced",
+    readinessStage,
+    readinessLabel: getFounderWorkflowReadinessLabel(readinessStage),
     retry: {
       queueId: input.queueId,
       attemptCount: input.attemptCount,

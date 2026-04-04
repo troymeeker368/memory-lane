@@ -1,5 +1,34 @@
 import { createClient } from "@/lib/supabase/server";
-import { getProgressNoteReminderRows } from "@/lib/services/progress-notes";
+import { computeProgressNoteComplianceStatus } from "@/lib/services/progress-note-model";
+
+async function loadDraftProgressNoteMemberIds(memberIds: string[]) {
+  const uniqueMemberIds = Array.from(new Set(memberIds.filter(Boolean)));
+  if (uniqueMemberIds.length === 0) {
+    return new Set<string>();
+  }
+
+  const supabase = await createClient({ serviceRole: true });
+  const { data, error } = await supabase
+    .from("progress_notes")
+    .select("member_id")
+    .in("member_id", uniqueMemberIds)
+    .eq("status", "draft");
+
+  if (error) {
+    if (String(error.message).includes("progress_notes")) {
+      throw new Error(
+        "Progress notes schema is not available. Apply Supabase migration 0092_progress_notes_tracker.sql and refresh PostgREST schema cache."
+      );
+    }
+    throw new Error(error.message);
+  }
+
+  return new Set(
+    ((data ?? []) as Array<{ member_id: string | null }>)
+      .map((row) => row.member_id)
+      .filter((value): value is string => Boolean(value))
+  );
+}
 
 export async function getReportingSnapshot() {
   const supabase = await createClient();
@@ -30,18 +59,16 @@ export async function getReportingSnapshot() {
     note_done: boolean | null;
   }>;
   const memberIds = trackerRows.map((row) => row.member_id).filter((value): value is string => Boolean(value));
-  const progressNotes = await getProgressNoteReminderRows(memberIds, { serviceRole: true });
-  const progressByMemberId = new Map(progressNotes.map((row) => [row.memberId, row] as const));
+  const draftMemberIds = await loadDraftProgressNoteMemberIds(memberIds);
 
   return {
     timelyDocs: timelyDocs ?? [],
     careTracker: trackerRows.map((row) => {
-      const progress = row.member_id ? progressByMemberId.get(row.member_id) ?? null : null;
       return {
         ...row,
-        next_progress_note_due: progress?.nextProgressNoteDueDate ?? row.next_progress_note_due ?? null,
-        progress_note_status: progress?.complianceStatus ?? "data_issue",
-        has_progress_note_draft: progress?.hasDraftInProgress ?? false
+        next_progress_note_due: row.next_progress_note_due ?? null,
+        progress_note_status: computeProgressNoteComplianceStatus(row.next_progress_note_due ?? null),
+        has_progress_note_draft: row.member_id ? draftMemberIds.has(row.member_id) : false
       };
     }),
     toileted: toileted ?? []

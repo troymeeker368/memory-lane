@@ -98,6 +98,8 @@ type CarePlanListReadModelRpcRow = {
   page_rows: unknown;
 };
 
+type CarePlanReadClient = Awaited<ReturnType<typeof createClient>>;
+
 type CarePlanListPageRow = {
   id?: unknown;
   member_id?: unknown;
@@ -136,6 +138,22 @@ function addDays(date: string, days: number) {
   const d = new Date(`${date}T00:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+async function getLatestCarePlanSummaryRow(
+  supabase: CarePlanReadClient,
+  canonicalMemberId: string
+): Promise<LatestCarePlanSummaryRow | null> {
+  const { data, error } = await supabase
+    .from("care_plans")
+    .select("id, next_due_date, post_sign_readiness_status, post_sign_readiness_reason")
+    .eq("member_id", canonicalMemberId)
+    .order("review_date", { ascending: false })
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as LatestCarePlanSummaryRow | null) ?? null;
 }
 
 async function loadCarePlanNurseEsignService() {
@@ -425,15 +443,6 @@ export async function getCarePlanDispatchState(carePlanId: string, options?: { s
   };
 }
 
-function getLatestCarePlanFromRows(rows: CarePlan[]) {
-  return (
-    [...rows].sort((a, b) => {
-      if (a.reviewDate === b.reviewDate) return a.updatedAt < b.updatedAt ? 1 : -1;
-      return a.reviewDate < b.reviewDate ? 1 : -1;
-    })[0] ?? null
-  );
-}
-
 function buildMemberCarePlanSummary(canonicalMemberId: string, latest: CarePlan | null): MemberCarePlanSummary {
   if (latest) {
     return {
@@ -484,7 +493,7 @@ function buildMemberCarePlanSummaryFromLatestRow(
 
 function buildMemberCarePlanOverviewFromLatest(
   canonicalMemberId: string,
-  latest: { id: string; next_due_date: string | null } | null
+  latest: LatestCarePlanSummaryRow | null
 ): MemberCarePlanOverview {
   if (!latest) {
     return {
@@ -514,22 +523,14 @@ export async function getMemberCarePlanOverview(
 ): Promise<MemberCarePlanOverview> {
   const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getMemberCarePlanOverview", options);
   const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
-  const [{ data: latestRows, error: latestError }, { count, error: countError }] = await Promise.all([
-    supabase
-      .from("care_plans")
-      .select("id, next_due_date, review_date, updated_at")
-      .eq("member_id", canonicalMemberId)
-      .order("review_date", { ascending: false })
-      .order("updated_at", { ascending: false })
-      .limit(1),
+  const [latestRow, { count, error: countError }] = await Promise.all([
+    getLatestCarePlanSummaryRow(supabase, canonicalMemberId),
     supabase.from("care_plans").select("id", { count: "exact", head: true }).eq("member_id", canonicalMemberId)
   ]);
-  if (latestError) throw new Error(latestError.message);
   if (countError) throw new Error(countError.message);
 
-  const latest = (latestRows ?? [])[0] as { id: string; next_due_date: string | null } | null;
   return {
-    ...buildMemberCarePlanOverviewFromLatest(canonicalMemberId, latest),
+    ...buildMemberCarePlanOverviewFromLatest(canonicalMemberId, latestRow),
     carePlanCount: Number(count ?? 0)
   };
 }
@@ -539,12 +540,16 @@ export async function getMemberCarePlanSnapshot(
   options?: ResolveCarePlanMemberOptions
 ): Promise<MemberCarePlanSnapshot> {
   const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getMemberCarePlanSnapshot", options);
-  const rows = await listCarePlanRows({
-    memberId: canonicalMemberId,
-    canonicalInput: true,
-    serviceRole: options?.serviceRole
-  });
-  const latest = getLatestCarePlanFromRows(rows);
+  const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
+  const [rows, latestRow] = await Promise.all([
+    listCarePlanRows({
+      memberId: canonicalMemberId,
+      canonicalInput: true,
+      serviceRole: options?.serviceRole
+    }),
+    getLatestCarePlanSummaryRow(supabase, canonicalMemberId)
+  ]);
+  const latest = latestRow ? rows.find((row) => row.id === latestRow.id) ?? null : null;
 
   return {
     rows,
@@ -559,16 +564,8 @@ export async function getLatestCarePlanIdForMember(
 ): Promise<string | null> {
   const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getLatestCarePlanIdForMember", options);
   const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
-  const { data, error } = await supabase
-    .from("care_plans")
-    .select("id")
-    .eq("member_id", canonicalMemberId)
-    .order("review_date", { ascending: false })
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  return data?.id ? String(data.id) : null;
+  const latestRow = await getLatestCarePlanSummaryRow(supabase, canonicalMemberId);
+  return latestRow?.id ? String(latestRow.id) : null;
 }
 
 export async function getCarePlansForMember(memberId: string, options?: ResolveCarePlanMemberOptions) {
@@ -585,20 +582,9 @@ export async function getMemberCarePlanSummary(
 ): Promise<MemberCarePlanSummary> {
   const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getMemberCarePlanSummary", options);
   const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
-  const { data, error } = await supabase
-    .from("care_plans")
-    .select("id, next_due_date, post_sign_readiness_status, post_sign_readiness_reason")
-    .eq("member_id", canonicalMemberId)
-    .order("review_date", { ascending: false })
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
+  const latestRow = await getLatestCarePlanSummaryRow(supabase, canonicalMemberId);
 
-  return buildMemberCarePlanSummaryFromLatestRow(
-    canonicalMemberId,
-    (data as LatestCarePlanSummaryRow | null) ?? null
-  );
+  return buildMemberCarePlanSummaryFromLatestRow(canonicalMemberId, latestRow);
 }
 
 export async function getCarePlanVersionById(carePlanId: string, versionId: string) {

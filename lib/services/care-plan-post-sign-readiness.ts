@@ -1,15 +1,30 @@
+import {
+  getFounderWorkflowReadinessLabel,
+  type FounderWorkflowReadinessStage
+} from "@/lib/services/committed-workflow-state";
 import type { CarePlanPostSignReadinessStatus } from "@/lib/services/care-plan-types";
 
 export type CarePlanPublicCompletionOutcome = {
+  readinessStage: FounderWorkflowReadinessStage;
+  readinessLabel: string;
   actionNeeded: boolean;
   actionNeededMessage: string | null;
 };
 
+export function resolveCarePlanPostSignWorkflowReadinessStage(
+  status: CarePlanPostSignReadinessStatus
+): FounderWorkflowReadinessStage {
+  if (status === "ready") return "ready";
+  if (status === "not_started") return "committed";
+  return "follow_up_required";
+}
+
 export function getCarePlanPostSignReadinessLabel(status: CarePlanPostSignReadinessStatus) {
-  if (status === "ready") return "Operationally Ready";
-  if (status === "signed_pending_snapshot") return "Internal Follow-up Needed";
-  if (status === "signed_pending_caregiver_dispatch") return "Caregiver Follow-up Needed";
-  return "Post-Sign Work Not Started";
+  const readinessLabel = getFounderWorkflowReadinessLabel(resolveCarePlanPostSignWorkflowReadinessStage(status));
+  if (status === "ready") return `${readinessLabel} - Care Plan Finalized`;
+  if (status === "signed_pending_snapshot") return `${readinessLabel} - Internal Snapshot`;
+  if (status === "signed_pending_caregiver_dispatch") return `${readinessLabel} - Caregiver Dispatch`;
+  return readinessLabel;
 }
 
 export function getCarePlanPostSignReadinessDetail(status: CarePlanPostSignReadinessStatus) {
@@ -26,7 +41,10 @@ export function buildCarePlanPublicCompletionOutcome(
   status: CarePlanPostSignReadinessStatus
 ): CarePlanPublicCompletionOutcome {
   const actionNeededMessage = getCarePlanPostSignReadinessDetail(status);
+  const readinessStage = resolveCarePlanPostSignWorkflowReadinessStage(status);
   return {
+    readinessStage,
+    readinessLabel: getFounderWorkflowReadinessLabel(readinessStage),
     actionNeeded: status !== "ready",
     actionNeededMessage:
       actionNeededMessage ??

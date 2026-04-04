@@ -20,6 +20,7 @@ import {
 import { getLeadRecordById } from "@/lib/services/leads-read";
 import {
   resolveIntakePostSignReadiness,
+  resolveIntakePostSignWorkflowReadinessStage,
   type IntakePostSignReadinessStatus
 } from "@/lib/services/intake-post-sign-readiness";
 import { buildCommittedWorkflowActionState } from "@/lib/services/committed-workflow-state";
@@ -302,7 +303,7 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
       ...readiness,
       ...buildCommittedWorkflowActionState({
         operationalStatus: readiness.postSignReadinessStatus,
-        operationallyReady: readiness.postSignReady,
+        readinessStage: "committed",
         actionNeededMessage:
           error instanceof Error
             ? `Intake Assessment was created, but nurse/admin e-signature finalization failed (${error.message}). Open the saved assessment and retry the signature.`
@@ -340,7 +341,11 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     ...readiness,
     ...buildCommittedWorkflowActionState({
       operationalStatus: readiness.postSignReadinessStatus,
-      operationallyReady: readiness.postSignReady,
+      readinessStage: resolveIntakePostSignWorkflowReadinessStage({
+        signatureStatus: "signed",
+        draftPofStatus: postSignWorkflow.draftPofStatus,
+        openFollowUpTaskTypes: postSignWorkflow.openFollowUpTaskTypes
+      }),
       actionNeededMessage: postSignWorkflow.actionNeededMessage
     })
   };

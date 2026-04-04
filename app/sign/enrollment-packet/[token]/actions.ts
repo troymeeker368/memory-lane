@@ -368,7 +368,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
       ok: true,
       ...buildCommittedWorkflowActionState({
         operationalStatus: result.operationalReadinessStatus,
-        operationallyReady: result.operationalReadinessStatus === "operationally_ready" && !result.actionNeeded,
+        readinessStage: result.readinessStage,
         actionNeededMessage: result.actionNeededMessage
       }),
       redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation${redirectSuffix}`

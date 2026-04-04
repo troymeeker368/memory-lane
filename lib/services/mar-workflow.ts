@@ -13,8 +13,11 @@ import {
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import {
   clean,
+  recordMarFollowUpRepairAlert,
+  type MarFollowUpAlertResult,
   normalizeGenerationWindow,
   normalizeScheduledTimes,
+  toMarFollowUpAlertResult,
   throwMarSupabaseError,
 } from "@/lib/services/mar-workflow-core";
 import { createClient } from "@/lib/supabase/server";
@@ -263,6 +266,7 @@ export async function documentScheduledMarAdministration(input: {
     throw new Error("Scheduled MAR administration RPC did not return the saved administration.");
   }
   const duplicateSafe = Boolean(row.duplicate_safe);
+  let followUpAlert: MarFollowUpAlertResult | null = null;
 
   if (!duplicateSafe) {
     await recordWorkflowEvent({
@@ -306,7 +310,7 @@ export async function documentScheduledMarAdministration(input: {
     }
     if (input.status === "Not Given") {
       try {
-        await recordWorkflowMilestone({
+        const milestone = await recordWorkflowMilestone({
           event: {
             eventType: "action_required",
             entityType: "mar_administration",
@@ -327,8 +331,42 @@ export async function documentScheduledMarAdministration(input: {
             }
           }
         });
+        followUpAlert = toMarFollowUpAlertResult(milestone);
+        if (!milestone.delivered) {
+          console.error(
+            "[mar-workflow] MAR not-given follow-up notification requires repair",
+            milestone.failureReason
+          );
+        }
       } catch (error) {
         console.error("[mar-workflow] unable to emit MAR not-given notification", error);
+        const failureReason =
+          error instanceof Error ? error.message : "Unable to emit MAR not-given follow-up notification.";
+        try {
+          followUpAlert = await recordMarFollowUpRepairAlert({
+            entityType: "mar_administration",
+            entityId: row.administration_id,
+            actorUserId: input.actor.userId,
+            alertKey: "mar_not_given_follow_up_delivery_failed",
+            failureReason,
+            metadata: {
+              member_id: scheduleRow.member_id,
+              mar_schedule_id: scheduleRow.id,
+              pof_medication_id: scheduleRow.pof_medication_id,
+              not_given_reason: reason,
+              action_url: `/health/mar?memberId=${scheduleRow.member_id}`
+            }
+          });
+        } catch (repairError) {
+          console.error("[mar-workflow] unable to persist MAR not-given repair alert", repairError);
+          followUpAlert = {
+            delivered: false,
+            followUpNeeded: true,
+            deliveryState: "failed",
+            failureReason,
+            repairRecordTable: null
+          };
+        }
       }
     }
   }
@@ -337,7 +375,8 @@ export async function documentScheduledMarAdministration(input: {
     administrationId: row.administration_id as string,
     memberId: scheduleRow.member_id,
     administeredAt: row.administered_at,
-    duplicateSafe
+    duplicateSafe,
+    followUpAlert
   };
 }
 

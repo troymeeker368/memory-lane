@@ -229,7 +229,8 @@ export async function recordScheduledMarAdministrationAction(raw: z.infer<typeof
       status: payload.data.status,
       notGivenReason: payload.data.notGivenReason ?? null,
       notes: payload.data.notes ?? null,
-      duplicateSafe: result.duplicateSafe
+      duplicateSafe: result.duplicateSafe,
+      followUpAlert: result.followUpAlert
     };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save scheduled MAR administration." };
@@ -406,7 +407,8 @@ export async function recordPrnOutcomeAction(raw: z.infer<typeof prnOutcomeSchem
       prnOutcome: payload.data.prnOutcome,
       prnFollowupNote: payload.data.prnFollowupNote ?? null,
       outcomeAssessedAt: result.outcomeAssessedAt,
-      duplicateSafe: result.duplicateSafe
+      duplicateSafe: result.duplicateSafe,
+      followUpAlert: result.followUpAlert
     };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to save PRN outcome." };

@@ -6,6 +6,8 @@ import {
   hashToken
 } from "@/lib/services/enrollment-packet-core";
 import {
+  getEnrollmentPacketWorkflowReadinessLabel,
+  resolveEnrollmentPacketWorkflowReadinessStage,
   toEnrollmentPacketCompletionFollowUpStatus,
   resolveEnrollmentPacketOperationalReadiness,
   toEnrollmentPacketMappingSyncStatus
@@ -383,7 +385,14 @@ function buildEnrollmentPacketActionNeededMessage(input: {
 }) {
   const completionFollowUpStatus = toEnrollmentPacketCompletionFollowUpStatus(input.completionFollowUpStatus);
   if (completionFollowUpStatus === "pending") {
+    const readinessStage = resolveEnrollmentPacketWorkflowReadinessStage({
+      status: input.status,
+      mappingSyncStatus: input.mappingSyncStatus,
+      completionFollowUpStatus
+    });
     return {
+      readinessStage,
+      readinessLabel: getEnrollmentPacketWorkflowReadinessLabel(readinessStage),
       operationalReadinessStatus: resolveEnrollmentPacketOperationalReadiness({
         status: input.status,
         mappingSyncStatus: input.mappingSyncStatus
@@ -394,7 +403,14 @@ function buildEnrollmentPacketActionNeededMessage(input: {
   }
 
   if (completionFollowUpStatus === "action_required") {
+    const readinessStage = resolveEnrollmentPacketWorkflowReadinessStage({
+      status: input.status,
+      mappingSyncStatus: input.mappingSyncStatus,
+      completionFollowUpStatus
+    });
     return {
+      readinessStage,
+      readinessLabel: getEnrollmentPacketWorkflowReadinessLabel(readinessStage),
       operationalReadinessStatus: resolveEnrollmentPacketOperationalReadiness({
         status: input.status,
         mappingSyncStatus: input.mappingSyncStatus
@@ -411,7 +427,14 @@ function buildEnrollmentPacketActionNeededMessage(input: {
   });
 
   if (operationalReadinessStatus === "filed_pending_mapping") {
+    const readinessStage = resolveEnrollmentPacketWorkflowReadinessStage({
+      status: input.status,
+      mappingSyncStatus: input.mappingSyncStatus,
+      completionFollowUpStatus
+    });
     return {
+      readinessStage,
+      readinessLabel: getEnrollmentPacketWorkflowReadinessLabel(readinessStage),
       operationalReadinessStatus,
       actionNeededMessage:
         "Enrollment packet was completed, but downstream setup is still pending. Staff should wait for mapping completion before treating the member as operationally ready."
@@ -419,14 +442,28 @@ function buildEnrollmentPacketActionNeededMessage(input: {
   }
 
   if (operationalReadinessStatus === "mapping_failed") {
+    const readinessStage = resolveEnrollmentPacketWorkflowReadinessStage({
+      status: input.status,
+      mappingSyncStatus: input.mappingSyncStatus,
+      completionFollowUpStatus
+    });
     return {
+      readinessStage,
+      readinessLabel: getEnrollmentPacketWorkflowReadinessLabel(readinessStage),
       operationalReadinessStatus,
       actionNeededMessage:
         "Enrollment packet was completed, but downstream sync still needs staff follow-up before the member is operationally ready."
     } as const;
   }
 
+  const readinessStage = resolveEnrollmentPacketWorkflowReadinessStage({
+    status: input.status,
+    mappingSyncStatus: input.mappingSyncStatus,
+    completionFollowUpStatus
+  });
   return {
+    readinessStage,
+    readinessLabel: getEnrollmentPacketWorkflowReadinessLabel(readinessStage),
     operationalReadinessStatus,
     actionNeededMessage: null
   } as const;
@@ -455,6 +492,8 @@ export function buildPublicEnrollmentPacketSubmitResult(input: {
     status: "completed" as const,
     mappingSyncStatus,
     completionFollowUpStatus,
+    readinessStage: readiness.readinessStage,
+    readinessLabel: readiness.readinessLabel,
     operationalReadinessStatus: readiness.operationalReadinessStatus,
     actionNeeded: readiness.actionNeededMessage !== null,
     actionNeededMessage: readiness.actionNeededMessage,

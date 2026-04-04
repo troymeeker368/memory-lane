@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
-  emitEnrollmentPacketMappingRetryHealthAlerts,
   retryFailedEnrollmentPacketMappings
 } from "@/lib/services/enrollment-packet-mapping-runtime";
-import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
+import {
+  getAcceptedEnrollmentPacketMappingRunnerSecrets,
+  getEnrollmentPacketMappingRunnerConfigError,
+  getEnrollmentPacketMappingRunnerHealth
+} from "@/lib/services/internal-runner-health";
 import { toEasternISO } from "@/lib/timezone";
 
 function readBearerToken(request: NextRequest) {
@@ -14,17 +17,11 @@ function readBearerToken(request: NextRequest) {
 }
 
 function getAcceptedRunnerSecrets() {
-  return [
-    ...new Set(
-      [process.env.ENROLLMENT_PACKET_MAPPING_SYNC_SECRET, process.env.CRON_SECRET]
-        .map((value) => String(value ?? "").trim())
-        .filter(Boolean)
-    )
-  ];
+  return getAcceptedEnrollmentPacketMappingRunnerSecrets();
 }
 
 function getDefaultConfigError() {
-  return "Enrollment packet mapping retry runner is not configured. Set ENROLLMENT_PACKET_MAPPING_SYNC_SECRET for manual callers or CRON_SECRET for Vercel cron before scheduling this endpoint.";
+  return getEnrollmentPacketMappingRunnerConfigError();
 }
 
 function parseLimitValue(value: string | number | null | undefined) {
@@ -41,26 +38,12 @@ function isHealthMode(request: NextRequest) {
 async function handleRunnerRequest(request: NextRequest) {
   const acceptedSecrets = getAcceptedRunnerSecrets();
   if (acceptedSecrets.length === 0) {
-    try {
-      await recordImmediateSystemAlert({
-        entityType: "enrollment_packet_request",
-        entityId: null,
-        actorUserId: null,
-        severity: "high",
-        alertKey: "enrollment_packet_mapping_sync_runner_not_configured",
-        metadata: {
-          route: "/api/internal/enrollment-packet-mapping-sync",
-          message: getDefaultConfigError()
-        }
-      });
-    } catch (alertError) {
-      console.error("[enrollment-packet-mapping-sync-route] unable to persist missing-config alert", alertError);
-    }
+    const health = await getEnrollmentPacketMappingRunnerHealth({ actorUserId: null });
     return NextResponse.json(
       {
         ok: false,
         error: getDefaultConfigError(),
-        runnerConfigured: false
+        ...health
       },
       { status: 503 }
     );
@@ -73,24 +56,11 @@ async function handleRunnerRequest(request: NextRequest) {
 
   const now = toEasternISO();
   if (isHealthMode(request)) {
-    const healthSummary = await emitEnrollmentPacketMappingRetryHealthAlerts({
-      nowIso: now,
-      actorUserId: null
-    });
-    const healthStatus =
-      healthSummary.agedQueueRows > 0 || healthSummary.staleClaimRows > 0 ? "degraded" : "healthy";
+    const health = await getEnrollmentPacketMappingRunnerHealth({ nowIso: now, actorUserId: null });
     return NextResponse.json({
       ok: true,
-      timestamp: now,
-      runnerConfigured: true,
       mode: "health",
-      healthStatus,
-      agedQueueRows: healthSummary.agedQueueRows,
-      agedQueueAlertsRaised: healthSummary.agedQueueAlertsRaised,
-      agedQueueAlertAgeMinutes: healthSummary.alertAgeMinutes,
-      staleClaimRows: healthSummary.staleClaimRows,
-      staleClaimAlertsRaised: healthSummary.staleClaimAlertsRaised,
-      staleClaimAgeMinutes: healthSummary.staleClaimAgeMinutes
+      ...health
     });
   }
 
@@ -107,13 +77,26 @@ async function handleRunnerRequest(request: NextRequest) {
   }
 
   const result = await retryFailedEnrollmentPacketMappings({ limit });
+  const health = await getEnrollmentPacketMappingRunnerHealth({
+    nowIso: now,
+    actorUserId: null,
+    summary: {
+      agedQueueRows: result.agedQueueRows,
+      agedQueueAlertsRaised: result.agedQueueAlertsRaised,
+      agedQueueAlertAgeMinutes: result.agedQueueAlertAgeMinutes,
+      staleClaimRows: result.staleClaimRows,
+      staleClaimAlertsRaised: result.staleClaimAlertsRaised,
+      staleClaimAgeMinutes: result.staleClaimAgeMinutes
+    }
+  });
 
   return NextResponse.json({
     ok: true,
     timestamp: now,
     runnerConfigured: true,
     mode: "run",
-    healthStatus: result.agedQueueRows > 0 || result.staleClaimRows > 0 ? "degraded" : "healthy",
+    healthStatus: health.healthStatus,
+    healthReason: health.healthReason,
     ...result
   });
 }

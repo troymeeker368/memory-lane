@@ -12,6 +12,8 @@ import {
   isMissingSchemaColumnError,
   isMissingSchemaObjectError
 } from "@/lib/supabase/schema-errors";
+import type { WorkflowMilestoneResult } from "@/lib/services/lifecycle-milestones";
+import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { toEasternDate } from "@/lib/timezone";
 
 const TIME_24H_PATTERN = /^(\d{1,2}):(\d{2})$/;
@@ -26,6 +28,14 @@ const MHP_MEDICATIONS_MIGRATION = "0012_legacy_operational_health_alignment.sql"
 export type MemberPhotoRow = {
   member_id: string;
   profile_image_url: string | null;
+};
+
+export type MarFollowUpAlertResult = {
+  delivered: boolean;
+  followUpNeeded: boolean;
+  deliveryState: WorkflowMilestoneResult["deliveryState"];
+  failureReason: string | null;
+  repairRecordTable: "system_events" | null;
 };
 
 export type MarSchemaObjectName =
@@ -55,6 +65,46 @@ function toSupabaseErrorMessage(error: unknown): string {
 export function clean(value: unknown): string | null {
   const normalized = typeof value === "string" ? value.trim() : "";
   return normalized.length > 0 ? normalized : null;
+}
+
+export function toMarFollowUpAlertResult(milestone: WorkflowMilestoneResult): MarFollowUpAlertResult {
+  return {
+    delivered: milestone.delivered,
+    followUpNeeded: milestone.followUpNeeded,
+    deliveryState: milestone.deliveryState,
+    failureReason: milestone.failureReason,
+    repairRecordTable: milestone.followUpNeeded ? "system_events" : null
+  };
+}
+
+export async function recordMarFollowUpRepairAlert(input: {
+  entityType: string;
+  entityId: string;
+  actorUserId?: string | null;
+  alertKey: string;
+  failureReason: string;
+  metadata?: Record<string, string | number | boolean | null>;
+}) {
+  await recordImmediateSystemAlert({
+    entityType: input.entityType,
+    entityId: input.entityId,
+    actorUserId: input.actorUserId ?? null,
+    severity: "high",
+    alertKey: input.alertKey,
+    metadata: {
+      source_event_type: "action_required",
+      notification_error: input.failureReason,
+      ...(input.metadata ?? {})
+    }
+  });
+
+  return {
+    delivered: false,
+    followUpNeeded: true,
+    deliveryState: "failed",
+    failureReason: input.failureReason,
+    repairRecordTable: "system_events"
+  } satisfies MarFollowUpAlertResult;
 }
 
 export function toMemberPhotoLookup(rows: MemberPhotoRow[]): Map<string, string | null> {

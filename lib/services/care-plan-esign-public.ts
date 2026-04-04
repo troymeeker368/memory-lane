@@ -338,6 +338,8 @@ function buildCommittedCarePlanSubmitResult(input: {
     carePlanId: input.detail.carePlan.id,
     memberId: input.detail.carePlan.memberId,
     finalMemberFileId,
+    readinessStage: completedOutcome.readinessStage,
+    readinessLabel: completedOutcome.readinessLabel,
     actionNeeded: completedOutcome.actionNeeded,
     actionNeededMessage: completedOutcome.actionNeededMessage
   };
@@ -375,6 +377,8 @@ async function buildCommittedCarePlanPostCommitFollowUpResult(input: {
     carePlanId: input.carePlanId,
     memberId: input.memberId,
     finalMemberFileId: input.finalMemberFileId,
+    readinessStage: completedOutcome.readinessStage,
+    readinessLabel: completedOutcome.readinessLabel,
     actionNeeded: true,
     actionNeededMessage:
       completedOutcome.actionNeededMessage ??

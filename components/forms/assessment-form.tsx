@@ -749,7 +749,10 @@ export function AssessmentForm({
             }
 
             if (res.actionNeeded) {
-              setStatus(res.actionNeededMessage ?? "Assessment was committed, but follow-up is still required.");
+              setStatus(
+                res.actionNeededMessage ??
+                  `Assessment was committed, but workflow readiness is ${res.readinessLabel.toLowerCase()}.`
+              );
               if ("assessmentId" in res && res.assessmentId) {
                 const retryPath =
                   "followUpTaskType" in res && res.followUpTaskType === "member_file_pdf_persistence"

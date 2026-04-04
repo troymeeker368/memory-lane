@@ -1,6 +1,7 @@
 import type { Buffer } from "node:buffer";
 
 import type { EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
+import type { FounderWorkflowReadinessStage } from "@/lib/services/committed-workflow-state";
 import type {
   EnrollmentPacketCompletionFollowUpStatus,
   EnrollmentPacketOperationalReadinessStatus
@@ -49,6 +50,8 @@ export type CompletedEnrollmentPacketListItem = EnrollmentPacketRequestSummary &
   leadMemberName: string | null;
   senderName: string | null;
   mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
+  readinessStage: FounderWorkflowReadinessStage;
+  readinessLabel: string;
   operationalReadinessStatus: EnrollmentPacketOperationalReadinessStatus;
   operationallyReady: boolean;
   mappingSyncError: string | null;
@@ -198,6 +201,8 @@ export type OperationalEnrollmentPacketListItem = EnrollmentPacketRequestSummary
   leadMemberName: string | null;
   senderName: string | null;
   mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
+  readinessStage: FounderWorkflowReadinessStage;
+  readinessLabel: string;
   operationalReadinessStatus: EnrollmentPacketOperationalReadinessStatus;
   operationallyReady: boolean;
   mappingSyncError: string | null;
@@ -220,6 +225,8 @@ export type PublicEnrollmentPacketContext =
       request: EnrollmentPacketRequestSummary;
       mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
       completionFollowUpStatus: EnrollmentPacketCompletionFollowUpStatus;
+      readinessStage: FounderWorkflowReadinessStage;
+      readinessLabel: string;
       operationalReadinessStatus: EnrollmentPacketOperationalReadinessStatus;
       actionNeeded: boolean;
       actionNeededMessage: string | null;

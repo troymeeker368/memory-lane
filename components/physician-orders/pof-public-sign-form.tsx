@@ -11,6 +11,8 @@ type PublicSignFormProps = {
 
 type SubmittedPofOutcome = {
   postSignStatus: "synced" | "queued";
+  readinessStage: "committed" | "ready" | "follow_up_required" | "queued_degraded";
+  readinessLabel: string;
   retry: {
     queueId: string | null;
     attemptCount: number;
@@ -128,6 +130,8 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
       setSigned(true);
       setSubmittedOutcome({
         postSignStatus: result.postSignStatus,
+        readinessStage: result.readinessStage,
+        readinessLabel: result.readinessLabel,
         retry: result.retry,
         actionNeeded: result.actionNeeded,
         actionNeededMessage: result.actionNeededMessage
@@ -146,7 +150,7 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
               : "border border-emerald-200 bg-emerald-50 text-emerald-700"
           }`}
         >
-          {submittedOutcome?.actionNeeded ? "Signature Recorded, Downstream Sync Pending" : "Signature Recorded"}
+          {submittedOutcome ? `Signature Recorded - ${submittedOutcome.readinessLabel}` : "Signature Recorded"}
         </p>
         <p className="text-sm text-muted">
           {submittedOutcome?.actionNeededMessage ??
@@ -154,10 +158,7 @@ export function PofPublicSignForm({ token, providerNameDefault }: PublicSignForm
         </p>
         {submittedOutcome ? (
           <p className="text-xs text-muted">
-            Downstream status:{" "}
-            {submittedOutcome.postSignStatus === "queued"
-              ? "Queued, not yet operationally ready"
-              : "Synced and operationally ready"}
+            Downstream status: {submittedOutcome.readinessLabel}
             {submittedOutcome.retry.nextRetryAt
               ? ` | Next retry: ${new Date(submittedOutcome.retry.nextRetryAt).toLocaleString()}`
               : ""}

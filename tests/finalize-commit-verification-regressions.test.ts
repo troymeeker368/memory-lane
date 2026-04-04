@@ -61,9 +61,39 @@ test("public enrollment packet completion verifies finalized batch rows before s
   assert.equal(source.includes("async function verifyCommittedEnrollmentPacketFinalizeAfterError"), true);
   assert.equal(source.includes('alertKey: "enrollment_packet_finalize_verification_pending"'), true);
   assert.equal(source.includes("hasExpectedFinalizedArtifacts"), true);
+  assert.equal(source.includes("expectedArtifacts.length === 0 || hasExpectedFinalizedArtifacts"), true);
   assert.equal(source.includes("finalizeAttempted = true;"), true);
   assert.equal(source.includes("finalizeVerification?.kind !== \"unverified\""), true);
   assert.equal(source.includes("return buildCommittedEnrollmentPacketReplayResult({"), true);
+});
+
+test("public enrollment packet completion finalizes before staging artifacts so replay losers avoid pre-finalize upload work", () => {
+  const source = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const finalizeIndex = source.indexOf("finalizedSubmission = await invokeFinalizeEnrollmentPacketCompletionRpc({");
+  const replayIndex = source.indexOf("if (finalizedSubmission.wasAlreadyFiled) {");
+  const signatureArtifactIndex = source.indexOf("const signatureArtifact = await artifactOps.insertUploadAndFile({");
+  const batchIndex = source.indexOf("uploadBatchId = randomUUID();");
+
+  assert.equal(finalizeIndex > -1, true);
+  assert.equal(replayIndex > -1, true);
+  assert.equal(signatureArtifactIndex > -1, true);
+  assert.equal(batchIndex > -1, true);
+  assert.equal(finalizeIndex < batchIndex, true);
+  assert.equal(replayIndex < signatureArtifactIndex, true);
+  assert.equal(batchIndex < signatureArtifactIndex, true);
+});
+
+test("post-commit enrollment packet artifacts persist as finalized rows after the RPC commit", () => {
+  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const artifactSource = readWorkspaceFile("lib/services/enrollment-packet-artifacts.ts");
+
+  assert.equal(runtimeSource.includes('finalizationStatus: "finalized"'), true);
+  assert.equal(artifactSource.includes('finalizationStatus?: "staged" | "finalized";'), true);
+  assert.equal(artifactSource.includes("finalization_status: finalizationStatus,"), true);
+  assert.equal(
+    artifactSource.includes('if (finalizationStatus === "finalized" && existingFinalizationStatus !== "finalized") {'),
+    true
+  );
 });
 
 test("public enrollment packet completion returns a committed follow-up result when post-commit writes fail", () => {

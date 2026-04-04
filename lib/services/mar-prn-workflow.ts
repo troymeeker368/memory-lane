@@ -2,6 +2,11 @@ import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { buildIdempotencyHash } from "@/lib/services/idempotency";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import {
+  recordMarFollowUpRepairAlert,
+  type MarFollowUpAlertResult,
+  toMarFollowUpAlertResult
+} from "@/lib/services/mar-workflow-core";
+import {
   type MarAdministrationHistoryRow,
   type MarPrnFollowupStatus,
   type MarPrnOption,
@@ -663,6 +668,7 @@ export async function documentPrnFollowupAssessment(input: {
     prnFollowupNote: clean(input.prnFollowupNote),
     outcomeAssessedAt
   });
+  let followUpAlert: MarFollowUpAlertResult | null = null;
   if (!row.duplicate_safe) {
     await recordWorkflowEvent({
       eventType: "mar_prn_followup_completed",
@@ -681,7 +687,7 @@ export async function documentPrnFollowupAssessment(input: {
     });
     if (input.prnOutcome === "Ineffective") {
       try {
-        await recordWorkflowMilestone({
+        const milestone = await recordWorkflowMilestone({
           event: {
             eventType: "action_required",
             entityType: "med_administration_log",
@@ -700,8 +706,40 @@ export async function documentPrnFollowupAssessment(input: {
             }
           }
         });
+        followUpAlert = toMarFollowUpAlertResult(milestone);
+        if (!milestone.delivered) {
+          console.error(
+            "[mar-prn-workflow] PRN ineffective follow-up notification requires repair",
+            milestone.failureReason
+          );
+        }
       } catch (error) {
         console.error("[mar-prn-workflow] unable to emit PRN follow-up notification", error);
+        const failureReason =
+          error instanceof Error ? error.message : "Unable to emit PRN ineffective follow-up notification.";
+        try {
+          followUpAlert = await recordMarFollowUpRepairAlert({
+            entityType: "med_administration_log",
+            entityId: row.log_id,
+            actorUserId: input.actor.userId,
+            alertKey: "mar_prn_ineffective_follow_up_delivery_failed",
+            failureReason,
+            metadata: {
+              member_id: row.member_id,
+              medication_order_id: row.medication_order_id,
+              action_url: `/health/mar?memberId=${row.member_id}`
+            }
+          });
+        } catch (repairError) {
+          console.error("[mar-prn-workflow] unable to persist PRN follow-up repair alert", repairError);
+          followUpAlert = {
+            delivered: false,
+            followUpNeeded: true,
+            deliveryState: "failed",
+            failureReason,
+            repairRecordTable: null
+          };
+        }
       }
     }
   }
@@ -712,6 +750,7 @@ export async function documentPrnFollowupAssessment(input: {
     followupDueAt: row.followup_due_at,
     followupStatus: row.followup_status,
     outcomeAssessedAt,
-    duplicateSafe: Boolean(row.duplicate_safe)
+    duplicateSafe: Boolean(row.duplicate_safe),
+    followUpAlert
   };
 }

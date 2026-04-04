@@ -36,10 +36,12 @@ export async function submitPublicPofSignatureAction(formData: FormData) {
       signedPdfUrl: signed.signedPdfUrl,
       ...buildCommittedWorkflowActionState({
         operationalStatus: signed.postSignStatus,
-        operationallyReady: signed.postSignStatus === "synced",
+        readinessStage: signed.readinessStage,
         actionNeededMessage: signed.actionNeededMessage
       }),
       postSignStatus: signed.postSignStatus,
+      readinessStage: signed.readinessStage,
+      readinessLabel: signed.readinessLabel,
       retry: signed.retry,
       actionNeeded: signed.actionNeeded,
       actionNeededMessage: signed.actionNeededMessage

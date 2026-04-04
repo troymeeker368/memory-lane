@@ -19,6 +19,8 @@ export function CarePlanPublicSignForm({
   const [status, setStatus] = useState<string | null>(null);
   const [signed, setSigned] = useState(false);
   const [signedOutcome, setSignedOutcome] = useState<{
+    readinessStage: "committed" | "ready" | "follow_up_required" | "queued_degraded";
+    readinessLabel: string;
     actionNeeded: boolean;
     actionNeededMessage: string | null;
     finalMemberFileId: string | null;
@@ -120,6 +122,8 @@ export function CarePlanPublicSignForm({
       }
       setSigned(true);
       setSignedOutcome({
+        readinessStage: result.readinessStage,
+        readinessLabel: result.readinessLabel,
         actionNeeded: result.actionNeeded,
         actionNeededMessage: result.actionNeededMessage,
         finalMemberFileId: result.finalMemberFileId ?? null
@@ -137,7 +141,9 @@ export function CarePlanPublicSignForm({
             : "border-emerald-200 bg-emerald-50 text-emerald-700"
         }`}
       >
-        <p className="font-semibold">{signedOutcome?.actionNeeded ? "Signature Received" : "Signing Successful"}</p>
+        <p className="font-semibold">
+          {signedOutcome ? `Signature Received - ${signedOutcome.readinessLabel}` : "Signature Received"}
+        </p>
         <p>{signedOutcome?.actionNeededMessage ?? "Thank you. The signed care plan has been received."}</p>
         {signedOutcome?.finalMemberFileId ? (
           <p className="mt-2 text-xs">Member file reference: {signedOutcome.finalMemberFileId}</p>

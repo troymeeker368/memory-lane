@@ -6,6 +6,10 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireRoles } from "@/lib/auth";
 import { CLINICAL_DOCUMENTATION_ACCESS_ROLES } from "@/lib/permissions";
 import { getAssessmentDetail } from "@/lib/services/relations";
+import {
+  getIntakePostSignReadinessDetail,
+  getIntakePostSignReadinessLabel
+} from "@/lib/services/intake-post-sign-readiness";
 import { toEasternISO } from "@/lib/timezone";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
@@ -30,23 +34,6 @@ function draftPofReadinessLabel(status: "not_signed" | "signed_pending_draft_pof
   if (status === "draft_pof_ready") return "Ready";
   if (status === "draft_pof_failed") return "Failed";
   if (status === "signed_pending_draft_pof") return "Pending";
-  return "Not signed";
-}
-
-function postSignReadinessLabel(
-  status:
-    | "not_signed"
-    | "signed_pending_draft_pof"
-    | "signed_pending_draft_pof_readback"
-    | "draft_pof_failed"
-    | "signed_pending_member_file_pdf"
-    | "post_sign_ready"
-) {
-  if (status === "post_sign_ready") return "Operationally Ready";
-  if (status === "signed_pending_draft_pof_readback") return "Draft POF Verification Needed";
-  if (status === "signed_pending_member_file_pdf") return "PDF Follow-up Needed";
-  if (status === "draft_pof_failed") return "Draft POF Failed";
-  if (status === "signed_pending_draft_pof") return "Draft POF Pending";
   return "Not signed";
 }
 
@@ -125,19 +112,14 @@ export default async function HealthAssessmentDetailPage({
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">E-Sign Status</p><p className="font-semibold">{assessment.signature_status ?? "unsigned"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed By</p><p className="font-semibold">{assessment.signed_by ?? "-"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed At</p><p className="font-semibold">{assessment.signed_at ? formatDateTime(assessment.signed_at) : "-"}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Post-Sign Readiness</p><p className="font-semibold">{postSignReadinessLabel(assessment.post_sign_readiness_status)}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Post-Sign Readiness</p><p className="font-semibold">{getIntakePostSignReadinessLabel(assessment.post_sign_readiness_status)}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Draft POF Readiness</p><p className="font-semibold">{draftPofReadinessLabel(assessment.draft_pof_readiness_status)}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Draft POF Status</p><p className="font-semibold">{assessment.draft_pof_status ?? "pending"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Draft POF Attempted</p><p className="font-semibold">{assessment.draft_pof_attempted_at ? formatDateTime(assessment.draft_pof_attempted_at) : "-"}</p></div>
         </div>
-        {assessment.post_sign_readiness_status === "signed_pending_member_file_pdf" ? (
+        {getIntakePostSignReadinessDetail(assessment.post_sign_readiness_status) ? (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            Intake Assessment is signed and draft POF is ready, but the branded PDF still needs to be saved to Member Files before this intake is operationally complete.
-          </div>
-        ) : null}
-        {assessment.post_sign_readiness_status === "signed_pending_draft_pof_readback" ? (
-          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            Intake Assessment is signed and the draft POF was committed, but staff still need to verify the saved draft from Physician Orders before treating this intake as operationally complete.
+            {getIntakePostSignReadinessDetail(assessment.post_sign_readiness_status)}
           </div>
         ) : null}
         {assessment.draft_pof_readiness_status === "draft_pof_failed" ? (

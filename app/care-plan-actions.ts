@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
-import { buildCommittedWorkflowActionState } from "@/lib/services/committed-workflow-state";
+import {
+  buildCommittedWorkflowActionState,
+  type FounderWorkflowReadinessStage
+} from "@/lib/services/committed-workflow-state";
 import { CARE_PLAN_SECTION_TYPES } from "@/lib/services/care-plan-track-definitions";
 
 async function loadCarePlanWriteService() {
@@ -16,12 +19,12 @@ async function loadCarePlanEsignService() {
 }
 
 function buildCommittedCarePlanActionState(input: {
-  operationallyReady: boolean;
+  readinessStage: FounderWorkflowReadinessStage;
   actionNeededMessage?: string | null;
 }) {
   return buildCommittedWorkflowActionState({
-    operationalStatus: input.operationallyReady ? "ready" : "follow_up_required",
-    operationallyReady: input.operationallyReady,
+    operationalStatus: input.readinessStage === "ready" ? "ready" : "follow_up_required",
+    readinessStage: input.readinessStage,
     actionNeededMessage: input.actionNeededMessage
   });
 }
@@ -118,7 +121,7 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
       ok: Boolean(carePlanId) as true | false,
       ...(carePlanId
         ? buildCommittedCarePlanActionState({
-            operationallyReady: false,
+            readinessStage: "committed",
             actionNeededMessage: error instanceof Error ? error.message : "Unable to create care plan."
           })
         : {}),
@@ -139,7 +142,7 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
     error: null,
     id: createdCarePlan.id,
     ...buildCommittedCarePlanActionState({
-      operationallyReady: true
+      readinessStage: "ready"
     })
   };
 }
@@ -227,7 +230,7 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
       error: null,
       id: carePlanId,
       ...buildCommittedCarePlanActionState({
-        operationallyReady: false,
+        readinessStage: "committed",
         actionNeededMessage: error instanceof Error ? error.message : "Unable to review care plan."
       })
     } as const;
@@ -245,7 +248,7 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
     ok: true as const,
     error: null,
     ...buildCommittedCarePlanActionState({
-      operationallyReady: true
+      readinessStage: "ready"
     })
   };
 }
@@ -302,7 +305,7 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
       error: null,
       id: carePlanId,
       ...buildCommittedCarePlanActionState({
-        operationallyReady: false,
+        readinessStage: "committed",
         actionNeededMessage: error instanceof Error ? error.message : "Unable to sign care plan."
       })
     } as const;
@@ -316,7 +319,7 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
     error: null,
     status: signedCarePlan.caregiverSignatureStatus,
     ...buildCommittedCarePlanActionState({
-      operationallyReady: true
+      readinessStage: "ready"
     })
   };
 }

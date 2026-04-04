@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import {
+  getAcceptedPofPostSignSyncRunnerSecrets,
+  getPofPostSignSyncRunnerConfigError,
+  getPofPostSignSyncRunnerHealth
+} from "@/lib/services/internal-runner-health";
 import { retryQueuedPhysicianOrderPostSignSync } from "@/lib/services/physician-orders-supabase";
-import { emitAgedPostSignSyncQueueAlerts } from "@/lib/services/physician-order-post-sign-runtime";
-import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 
 function readBearerToken(request: NextRequest) {
@@ -12,11 +15,11 @@ function readBearerToken(request: NextRequest) {
 }
 
 function getAcceptedRunnerSecrets() {
-  return [...new Set([process.env.POF_POST_SIGN_SYNC_SECRET, process.env.CRON_SECRET].map((value) => String(value ?? "").trim()).filter(Boolean))];
+  return getAcceptedPofPostSignSyncRunnerSecrets();
 }
 
 function getDefaultConfigError() {
-  return "POF post-sign sync runner is not configured. Set POF_POST_SIGN_SYNC_SECRET for manual callers or CRON_SECRET for Vercel cron before scheduling this endpoint.";
+  return getPofPostSignSyncRunnerConfigError();
 }
 
 function parseLimitValue(value: string | number | null | undefined) {
@@ -41,16 +44,16 @@ function resolveRunnerHealth(input: {
       healthReason: "runner_not_configured" as const
     };
   }
-  if ((input.queuedRows ?? 0) > 0) {
-    return {
-      healthStatus: "degraded" as const,
-      healthReason: "retry_queued" as const
-    };
-  }
   if ((input.agedQueueRows ?? 0) > 0) {
     return {
       healthStatus: "degraded" as const,
       healthReason: "aged_queue" as const
+    };
+  }
+  if ((input.queuedRows ?? 0) > 0) {
+    return {
+      healthStatus: "degraded" as const,
+      healthReason: "retry_queued" as const
     };
   }
   return {
@@ -62,27 +65,12 @@ function resolveRunnerHealth(input: {
 async function handleRunnerRequest(request: NextRequest) {
   const acceptedSecrets = getAcceptedRunnerSecrets();
   if (acceptedSecrets.length === 0) {
-    try {
-      await recordImmediateSystemAlert({
-        entityType: "physician_order",
-        entityId: null,
-        actorUserId: null,
-        severity: "high",
-        alertKey: "pof_post_sign_sync_runner_not_configured",
-        metadata: {
-          route: "/api/internal/pof-post-sign-sync",
-          message: getDefaultConfigError()
-        }
-      });
-    } catch (alertError) {
-      console.error("[pof-post-sign-sync-route] unable to persist missing-config alert", alertError);
-    }
+    const health = await getPofPostSignSyncRunnerHealth({ actorUserId: null });
     return NextResponse.json(
       {
         ok: false,
         error: getDefaultConfigError(),
-        runnerConfigured: false,
-        ...resolveRunnerHealth({ runnerConfigured: false })
+        ...health
       },
       { status: 503 }
     );
@@ -95,23 +83,11 @@ async function handleRunnerRequest(request: NextRequest) {
 
   const now = toEasternISO();
   if (isHealthMode(request)) {
-    const agedQueueSummary = await emitAgedPostSignSyncQueueAlerts({
-      nowIso: now,
-      serviceRole: true,
-      actorUserId: null
-    });
+    const health = await getPofPostSignSyncRunnerHealth({ nowIso: now, actorUserId: null });
     return NextResponse.json({
       ok: true,
-      timestamp: now,
-      runnerConfigured: true,
       mode: "health",
-      ...resolveRunnerHealth({
-        runnerConfigured: true,
-        agedQueueRows: agedQueueSummary.agedQueueRows
-      }),
-      agedQueueRows: agedQueueSummary.agedQueueRows,
-      agedQueueAlertsRaised: agedQueueSummary.alertsRaised,
-      agedQueueAlertAgeMinutes: agedQueueSummary.alertAgeMinutes
+      ...health
     });
   }
 
@@ -131,17 +107,33 @@ async function handleRunnerRequest(request: NextRequest) {
     limit,
     serviceRole: true
   });
+  const health = await getPofPostSignSyncRunnerHealth({
+    nowIso: now,
+    actorUserId: null,
+    summary: {
+      agedQueueRows: result.agedQueueRows,
+      agedQueueAlertsRaised: result.agedQueueAlertsRaised,
+      agedQueueAlertAgeMinutes: result.agedQueueAlertAgeMinutes
+    }
+  });
+  const responseHealth =
+    health.agedQueueRows > 0
+      ? {
+          healthStatus: health.healthStatus,
+          healthReason: health.healthReason
+        }
+      : resolveRunnerHealth({
+          runnerConfigured: true,
+          agedQueueRows: result.agedQueueRows,
+          queuedRows: result.queued
+        });
 
   return NextResponse.json({
     ok: true,
     timestamp: now,
     runnerConfigured: true,
     mode: "run",
-    ...resolveRunnerHealth({
-      runnerConfigured: true,
-      agedQueueRows: result.agedQueueRows,
-      queuedRows: result.queued
-    }),
+    ...responseHealth,
     ...result
   });
 }

@@ -379,7 +379,10 @@ export function NewCarePlanForm({
                 router.push(`/health/care-plans/${response.id}?followUp=required&sourceAction=create`);
                 return;
               }
-              setStatus(response.actionNeededMessage ?? "Care plan was saved, but follow-up is still required.");
+              setStatus(
+                response.actionNeededMessage ??
+                  `Care plan was saved, but workflow readiness is ${(response.readinessLabel ?? "committed").toLowerCase()}.`
+              );
               return;
             }
             setStatus("Care plan created.");
@@ -596,7 +599,10 @@ export function CarePlanReviewForm({
                 router.push(`/health/care-plans/${response.id}?followUp=required&sourceAction=review`);
                 return;
               }
-              setStatus(response.actionNeededMessage ?? "Care plan review was saved, but follow-up is still required.");
+              setStatus(
+                response.actionNeededMessage ??
+                  `Care plan review was saved, but workflow readiness is ${(response.readinessLabel ?? "committed").toLowerCase()}.`
+              );
               return;
             }
             setStatus("Care plan review saved.");

@@ -2,7 +2,9 @@ import "server-only";
 
 import { clean, toSummary } from "@/lib/services/enrollment-packet-core";
 import {
+  getEnrollmentPacketWorkflowReadinessLabel,
   isEnrollmentPacketOperationallyReady,
+  resolveEnrollmentPacketWorkflowReadinessStage,
   resolveEnrollmentPacketOperationalReadiness,
   toEnrollmentPacketMappingSyncStatus
 } from "@/lib/services/enrollment-packet-readiness";
@@ -38,7 +40,10 @@ export const ENROLLMENT_PACKET_REQUEST_LIST_SELECT = [
   "mapping_sync_status",
   "mapping_sync_error",
   "mapping_sync_attempted_at",
-  "latest_mapping_run_id"
+  "latest_mapping_run_id",
+  "completion_follow_up_status",
+  "completion_follow_up_error",
+  "completion_follow_up_checked_at"
 ].join(", ");
 
 type EnrollmentPacketRelatedNames = {
@@ -157,6 +162,11 @@ export function buildEnrollmentPacketListPresentation(
 ) {
   const summary = toSummary(row);
   const mappingSyncStatus = toEnrollmentPacketMappingSyncStatus(row.mapping_sync_status);
+  const readinessStage = resolveEnrollmentPacketWorkflowReadinessStage({
+    status: row.status,
+    mappingSyncStatus: row.mapping_sync_status,
+    completionFollowUpStatus: row.completion_follow_up_status
+  });
 
   return {
     ...summary,
@@ -164,6 +174,8 @@ export function buildEnrollmentPacketListPresentation(
     leadMemberName: row.lead_id ? names.leadNames.get(row.lead_id) ?? null : null,
     senderName: names.senderNames.get(row.sender_user_id) ?? null,
     mappingSyncStatus,
+    readinessStage,
+    readinessLabel: getEnrollmentPacketWorkflowReadinessLabel(readinessStage),
     operationalReadinessStatus: resolveEnrollmentPacketOperationalReadiness({
       status: row.status,
       mappingSyncStatus: row.mapping_sync_status

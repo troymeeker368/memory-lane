@@ -5,6 +5,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getAssessmentMembers } from "@/lib/services/documentation";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
+import { getIntakePostSignReadinessLabel } from "@/lib/services/intake-post-sign-readiness";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { formatDate } from "@/lib/utils";
 
@@ -14,23 +15,6 @@ function draftPofReadinessLabel(status: "not_signed" | "signed_pending_draft_pof
   if (status === "draft_pof_ready") return "Ready";
   if (status === "draft_pof_failed") return "Failed";
   if (status === "signed_pending_draft_pof") return "Pending";
-  return "Not signed";
-}
-
-function postSignReadinessLabel(
-  status:
-    | "not_signed"
-    | "signed_pending_draft_pof"
-    | "signed_pending_draft_pof_readback"
-    | "draft_pof_failed"
-    | "signed_pending_member_file_pdf"
-    | "post_sign_ready"
-) {
-  if (status === "post_sign_ready") return "Operationally Ready";
-  if (status === "signed_pending_draft_pof_readback") return "Draft POF Verification Needed";
-  if (status === "signed_pending_member_file_pdf") return "PDF Follow-up Needed";
-  if (status === "draft_pof_failed") return "Draft POF Failed";
-  if (status === "signed_pending_draft_pof") return "Draft POF Pending";
   return "Not signed";
 }
 
@@ -97,7 +81,7 @@ export default async function HealthAssessmentPage({
                 <td>{row.transport_appropriate == null ? "-" : row.transport_appropriate ? "Yes" : "No"}</td>
                 <td>{row.completed_by ?? row.reviewer_name ?? row.created_by_name ?? "-"}</td>
                 <td>{row.signature_status ?? "unsigned"}</td>
-                <td>{postSignReadinessLabel(row.post_sign_readiness_status)}</td>
+                <td>{getIntakePostSignReadinessLabel(row.post_sign_readiness_status)}</td>
                 <td>{draftPofReadinessLabel(row.draft_pof_readiness_status)}</td>
                 <td>{row.signed_by ?? "-"}</td>
                 <td>{row.complete ? "Yes" : "No"}</td>

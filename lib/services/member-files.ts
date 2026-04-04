@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import { canAccessClinicalDocumentationForRole, canAccessModule, canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
+import { logSystemEvent } from "@/lib/services/system-event-service";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
@@ -13,6 +14,8 @@ export const MEMBER_DOCUMENTS_BUCKET = "member-documents";
 const UPSERT_MEMBER_FILE_BY_SOURCE_RPC = "rpc_upsert_member_file_by_source";
 const DELETE_MEMBER_FILE_RECORD_RPC = "rpc_delete_member_file_record";
 const MEMBER_FILE_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
+const MEMBER_FILE_ROW_SELECT =
+  "id, member_id, file_name, file_type, storage_object_path, category, category_other, document_source, pof_request_id, uploaded_by_user_id, uploaded_by_name, uploaded_at, updated_at" as const;
 
 export type MemberFileCategory =
   | "Health Unit"
@@ -184,7 +187,7 @@ async function loadMemberFileRowById(memberFileId: string) {
   if (!normalized) return null;
 
   const admin = createSupabaseAdminClient();
-  const { data, error } = await admin.from("member_files").select("*").eq("id", normalized).maybeSingle();
+  const { data, error } = await admin.from("member_files").select(MEMBER_FILE_ROW_SELECT).eq("id", normalized).maybeSingle();
   if (error) throw new Error(error.message);
   return data;
 }
@@ -200,7 +203,7 @@ async function loadMemberFileRowByDocumentSource(input: {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("member_files")
-    .select("*")
+    .select(MEMBER_FILE_ROW_SELECT)
     .eq("member_id", memberId)
     .eq("document_source", documentSource)
     .order("updated_at", { ascending: false })
@@ -394,6 +397,25 @@ export async function deleteMemberFileRecord(memberFileId: string) {
   }
 }
 
+async function clearMemberFileStoragePointer(memberFileId: string) {
+  const normalized = String(memberFileId ?? "").trim();
+  if (!normalized) return { outcome: "skipped" as const };
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("member_files")
+    .update({
+      storage_object_path: null
+    })
+    .eq("id", normalized)
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data?.id) return { outcome: "row_missing" as const };
+  return { outcome: "cleared" as const };
+}
+
 export async function deleteMemberFileRecordAndStorage(input: {
   memberFileId: string;
   storageObjectPath?: string | null;
@@ -436,24 +458,65 @@ export async function deleteMemberFileRecordAndStorage(input: {
     await deleteMemberFileRecord(memberFileId);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to delete member file record.";
-    await recordImmediateSystemAlert({
-      entityType: input.entityType,
-      entityId: input.entityId ?? memberFileId,
-      actorUserId: input.actorUserId ?? null,
-      severity: "high",
-      alertKey: `${input.alertKey}_record_delete_failed`,
-      metadata: {
-        member_file_id: memberFileId,
-        storage_object_path: storageObjectPath,
-        delete_phase: "record_delete",
-        error: message,
-        ...(input.metadata ?? {})
+    let repairOutcome: "cleared" | "row_missing" | "failed" = "row_missing";
+    let repairError: string | null = null;
+
+    if (storageObjectPath) {
+      try {
+        const repair = await clearMemberFileStoragePointer(memberFileId);
+        repairOutcome = repair.outcome === "cleared" ? "cleared" : "row_missing";
+      } catch (repairFailure) {
+        repairOutcome = "failed";
+        repairError =
+          repairFailure instanceof Error ? repairFailure.message : "Unable to clear member file storage pointer.";
       }
-    });
+    }
+
+    try {
+      await logSystemEvent({
+        event_type: "system_alert",
+        entity_type: input.entityType,
+        entity_id: input.entityId ?? memberFileId,
+        actor_type: "system",
+        actor_user_id: input.actorUserId ?? null,
+        status: "open",
+        severity: "high",
+        correlation_id: `alert:${input.alertKey}_record_delete_failed:${input.entityType}:${input.entityId ?? memberFileId}`,
+        dedupe_key: `member_file_delete_record_failure:${memberFileId}`,
+        metadata: {
+          alert_type: `${input.alertKey}_record_delete_failed`,
+          member_file_id: memberFileId,
+          storage_object_path: storageObjectPath,
+          delete_phase: "record_delete",
+          error: message,
+          repair_action: storageObjectPath ? "clear_storage_object_path" : "none",
+          repair_outcome: repairOutcome,
+          repair_error: repairError,
+          ...(input.metadata ?? {})
+        }
+      });
+    } catch (alertFailure) {
+      const alertMessage =
+        alertFailure instanceof Error ? alertFailure.message : "Unable to persist member file delete repair alert.";
+      throw new Error(
+        storageObjectPath
+          ? `Member file storage was deleted, the database row could not be removed, and the durable repair alert could not be persisted. ${alertMessage}`
+          : `Member file database row could not be removed, and the durable repair alert could not be persisted. ${alertMessage}`
+      );
+    }
+
+    if (!storageObjectPath) {
+      throw new Error("Member file database row could not be removed.");
+    }
+
+    if (repairOutcome === "failed") {
+      throw new Error(
+        "Member file storage was deleted, the database row could not be removed, and the surviving row still may reference a missing object. A durable repair alert was recorded for reconciliation."
+      );
+    }
+
     throw new Error(
-      storageObjectPath
-        ? "Member file storage was deleted, but the database row could not be removed. Review operational alerts before considering the delete complete."
-        : "Member file database row could not be removed."
+      "Member file storage was deleted, the database row could not be removed, and the surviving row was marked as missing its storage object. A durable repair alert was recorded for reconciliation."
     );
   }
 

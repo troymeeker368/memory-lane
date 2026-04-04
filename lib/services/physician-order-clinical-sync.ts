@@ -1,6 +1,12 @@
+import {
+  getFounderWorkflowReadinessLabel,
+  type FounderWorkflowReadinessStage
+} from "@/lib/services/committed-workflow-state";
+
 export type PhysicianOrderClinicalSyncStatus = "not_signed" | "pending" | "queued" | "failed" | "synced";
 export type PhysicianOrderPostSignQueueStatus = "queued" | "processing" | "completed";
 export type PhysicianOrderClinicalSyncDetail = {
+  readinessStage: FounderWorkflowReadinessStage;
   label: string;
   message: string | null;
   actionNeeded: boolean;
@@ -19,10 +25,9 @@ function formatFailedStep(step: string | null | undefined) {
 }
 
 export function getPhysicianOrderClinicalSyncLabel(status: PhysicianOrderClinicalSyncStatus) {
-  if (status === "synced") return "Operationally Ready";
-  if (status === "failed") return "Signed, Downstream Retry Queued";
-  if (status === "queued") return "Signed, Downstream Sync Queued";
-  if (status === "pending") return "Signed, Waiting for Downstream Sync";
+  if (status === "synced") return getFounderWorkflowReadinessLabel("ready");
+  if (status === "failed") return getFounderWorkflowReadinessLabel("follow_up_required");
+  if (status === "queued" || status === "pending") return getFounderWorkflowReadinessLabel("queued_degraded");
   return "-";
 }
 
@@ -54,8 +59,10 @@ export function buildPhysicianOrderClinicalSyncDetail(input: {
   const resolvedStatus = resolvePhysicianOrderClinicalSyncStatus(input);
   if (resolvedStatus === "not_signed") return null;
   if (resolvedStatus === "synced") {
+    const readinessStage = "ready" satisfies FounderWorkflowReadinessStage;
     return {
-      label: getPhysicianOrderClinicalSyncLabel(resolvedStatus),
+      readinessStage,
+      label: getFounderWorkflowReadinessLabel(readinessStage),
       message: "Provider signature is durable and downstream MHP/MCC and MAR sync completed.",
       actionNeeded: false,
       attemptCount: input.attemptCount ?? null,
@@ -68,8 +75,10 @@ export function buildPhysicianOrderClinicalSyncDetail(input: {
   if (resolvedStatus === "failed") {
     const failedStepLabel = formatFailedStep(input.lastFailedStep);
     const retryText = input.nextRetryAt ? " Retry is queued." : " Retry timing is not available yet.";
+    const readinessStage = "follow_up_required" satisfies FounderWorkflowReadinessStage;
     return {
-      label: getPhysicianOrderClinicalSyncLabel(resolvedStatus),
+      readinessStage,
+      label: getFounderWorkflowReadinessLabel(readinessStage),
       message: `${failedStepLabel} failed after provider signature. Do not treat this order as operationally ready until downstream sync finishes.${retryText}`,
       actionNeeded: true,
       attemptCount: input.attemptCount ?? null,
@@ -80,8 +89,10 @@ export function buildPhysicianOrderClinicalSyncDetail(input: {
   }
 
   if (resolvedStatus === "queued") {
+    const readinessStage = "queued_degraded" satisfies FounderWorkflowReadinessStage;
     return {
-      label: getPhysicianOrderClinicalSyncLabel(resolvedStatus),
+      readinessStage,
+      label: getFounderWorkflowReadinessLabel(readinessStage),
       message: "Provider signature is durable, but downstream MHP/MCC and MAR sync is still queued. Do not treat this order as operationally ready yet.",
       actionNeeded: true,
       attemptCount: input.attemptCount ?? null,
@@ -91,8 +102,10 @@ export function buildPhysicianOrderClinicalSyncDetail(input: {
     };
   }
 
+  const readinessStage = "queued_degraded" satisfies FounderWorkflowReadinessStage;
   return {
-    label: getPhysicianOrderClinicalSyncLabel(resolvedStatus),
+    readinessStage,
+    label: getFounderWorkflowReadinessLabel(readinessStage),
     message: "Provider signature is durable, but downstream MHP/MCC and MAR sync has not started yet. Do not treat this order as operationally ready yet.",
     actionNeeded: true,
     attemptCount: input.attemptCount ?? null,

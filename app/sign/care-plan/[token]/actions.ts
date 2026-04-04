@@ -33,6 +33,8 @@ export async function submitPublicCarePlanSignatureAction(formData: FormData) {
     return {
       ok: true,
       finalMemberFileId: signed.finalMemberFileId,
+      readinessStage: signed.readinessStage,
+      readinessLabel: signed.readinessLabel,
       actionNeeded: signed.actionNeeded,
       actionNeededMessage: signed.actionNeededMessage
     } as const;

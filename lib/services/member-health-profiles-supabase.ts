@@ -140,7 +140,10 @@ type MemberRow = {
   enrollment_date: string | null;
   city: string | null;
   code_status: string | null;
+  latest_assessment_id: string | null;
+  latest_assessment_date: string | null;
   latest_assessment_track: string | null;
+  latest_assessment_admission_review_required: boolean | null;
 };
 
 export interface MemberHealthProfileIndexResult {
@@ -339,8 +342,32 @@ type IntakeAssessmentRow = {
   draft_pof_status: string | null;
   post_sign_readiness_status?: IntakePostSignReadinessStatus;
   admission_review_required: boolean | null;
-  created_at: string;
+  created_at: string | null;
 };
+
+function toLatestMemberAssessmentSummary(member: MemberRow): IntakeAssessmentRow | null {
+  if (
+    !member.latest_assessment_id &&
+    !member.latest_assessment_date &&
+    !member.latest_assessment_track &&
+    member.latest_assessment_admission_review_required == null
+  ) {
+    return null;
+  }
+
+  return {
+    id: member.latest_assessment_id ?? "",
+    member_id: member.id,
+    assessment_date: member.latest_assessment_date ?? "",
+    total_score: null,
+    recommended_track: member.latest_assessment_track ?? null,
+    completed_by: null,
+    signature_status: null,
+    draft_pof_status: null,
+    admission_review_required: member.latest_assessment_admission_review_required ?? null,
+    created_at: null
+  };
+}
 
 function sortDesc<T>(rows: T[], getValue: (row: T) => string | null | undefined) {
   return [...rows].sort((a, b) => {
@@ -486,7 +513,10 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
 
   let membersQuery = supabase
     .from("members")
-    .select("id, display_name, status, dob, enrollment_date, city, code_status, latest_assessment_track", { count: "exact" })
+    .select(
+      "id, display_name, status, dob, enrollment_date, city, code_status, latest_assessment_id, latest_assessment_date, latest_assessment_track, latest_assessment_admission_review_required",
+      { count: "exact" }
+    )
     .order("display_name", { ascending: true })
     .range((page - 1) * pageSize, page * pageSize - 1);
   if (status !== "all") {
@@ -541,23 +571,16 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   }
   const memberIds = members.map((member) => member.id);
 
-  const [profilesResult, mccResult, assessmentsResult] = await Promise.all([
+  const [profilesResult, mccResult] = await Promise.all([
     supabase
       .from("member_health_profiles")
       .select("member_id, profile_image_url, important_alerts, code_status")
       .in("member_id", memberIds),
-    supabase.from("member_command_centers").select("member_id, profile_image_url").in("member_id", memberIds),
-    supabase
-      .from("intake_assessments")
-      .select("id, member_id, assessment_date, admission_review_required, recommended_track, created_at")
-      .in("member_id", memberIds)
-      .order("assessment_date", { ascending: false })
-      .order("created_at", { ascending: false })
+    supabase.from("member_command_centers").select("member_id, profile_image_url").in("member_id", memberIds)
   ]);
 
   if (profilesResult.error) throw new Error(profilesResult.error.message);
   if (mccResult.error) throw new Error(mccResult.error.message);
-  if (assessmentsResult.error) throw new Error(assessmentsResult.error.message);
 
   const profileByMemberId = new Map((profilesResult.data ?? []).map((row) => [String(row.member_id), row as Partial<MemberHealthProfileRow>] as const));
   const mccPhotoByMemberId = new Map((mccResult.data ?? []).map((row) => [String(row.member_id), (row.profile_image_url as string | null) ?? null] as const));
@@ -566,20 +589,13 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
     throw buildMissingMemberHealthProfileShellError(missingProfileMemberIds[0]);
   }
 
-  const latestAssessmentByMemberId = new Map<string, IntakeAssessmentRow>();
-  ((assessmentsResult.data ?? []) as IntakeAssessmentRow[]).forEach((row) => {
-    if (!latestAssessmentByMemberId.has(row.member_id)) {
-      latestAssessmentByMemberId.set(row.member_id, row);
-    }
-  });
-
   const rows = members
     .map((member) => {
       const storedProfile = profileByMemberId.get(member.id) as MemberHealthProfileRow | undefined;
       if (!storedProfile) {
         throw buildMissingMemberHealthProfileShellError(member.id);
       }
-      const latestAssessment = latestAssessmentByMemberId.get(member.id) ?? null;
+      const latestAssessment = toLatestMemberAssessmentSummary(member);
       const effectiveProfile = {
         ...storedProfile,
         profile_image_url: storedProfile.profile_image_url ?? mccPhotoByMemberId.get(member.id) ?? null

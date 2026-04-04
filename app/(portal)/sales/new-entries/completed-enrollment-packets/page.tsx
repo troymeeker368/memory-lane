@@ -19,17 +19,10 @@ function syncStatusLabel(status: "not_started" | "pending" | "completed" | "fail
   return "Pending";
 }
 
-function readinessLabel(status: "not_filed" | "filed_pending_mapping" | "mapping_failed" | "operationally_ready") {
-  if (status === "operationally_ready") return "Operationally Ready";
-  if (status === "mapping_failed") return "Mapping Failed";
-  if (status === "filed_pending_mapping") return "Filed, Mapping Pending";
-  return "Not Filed";
-}
-
-function readinessClassName(status: "not_filed" | "filed_pending_mapping" | "mapping_failed" | "operationally_ready") {
-  if (status === "operationally_ready") return "bg-emerald-100 text-emerald-800";
-  if (status === "mapping_failed") return "bg-rose-100 text-rose-800";
-  if (status === "filed_pending_mapping") return "bg-amber-100 text-amber-800";
+function readinessClassName(status: "committed" | "ready" | "follow_up_required" | "queued_degraded") {
+  if (status === "ready") return "bg-emerald-100 text-emerald-800";
+  if (status === "follow_up_required") return "bg-rose-100 text-rose-800";
+  if (status === "queued_degraded") return "bg-amber-100 text-amber-800";
   return "bg-slate-100 text-slate-700";
 }
 
@@ -137,8 +130,8 @@ export default async function CompletedEnrollmentPacketsPage({
                   <td className="capitalize">{packet.status.replace("_", " ")}</td>
                   <td>
                     <div className="space-y-1">
-                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${readinessClassName(packet.operationalReadinessStatus)}`}>
-                        {readinessLabel(packet.operationalReadinessStatus)}
+                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${readinessClassName(packet.readinessStage)}`}>
+                        {packet.readinessLabel}
                       </span>
                       <p className="text-xs text-muted">Mapping sync: {syncStatusLabel(packet.mappingSyncStatus)}</p>
                       {packet.mappingSyncError ? (

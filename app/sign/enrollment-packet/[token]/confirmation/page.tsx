@@ -117,6 +117,7 @@ export default async function EnrollmentPacketConfirmationPage({
         <div className="mt-3 space-y-2 text-sm">
           <p><span className="font-semibold">Member:</span> {memberName}</p>
           <p><span className="font-semibold">Caregiver:</span> {caregiverName}</p>
+          <p><span className="font-semibold">Workflow Readiness:</span> {context.readinessLabel}</p>
           <p><span className="font-semibold">Recreation interests:</span> {formatEnrollmentPacketRecreationInterests(intakePayload?.recreationInterests)}</p>
         </div>
         {followUpRequired ? (

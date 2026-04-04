@@ -250,7 +250,7 @@ export async function repairEnrollmentPacketUploadMemberFileLinks(packetId: stri
 export async function insertUploadAndFile(input: {
   packetId: string;
   memberId: string;
-  batchId: string;
+  batchId?: string | null;
   fileName: string;
   contentType: string;
   bytes: Buffer;
@@ -259,8 +259,16 @@ export async function insertUploadAndFile(input: {
   uploadedByName: string | null;
   dataUrl?: string | null;
   clientUploadId?: string | null;
+  finalizationStatus?: "staged" | "finalized";
+  finalizedAt?: string | null;
 }) {
   const safeName = safeFileName(input.fileName) || `upload-${randomUUID()}`;
+  const batchId = String(input.batchId ?? "").trim() || null;
+  const finalizationStatus = input.finalizationStatus === "finalized" ? "finalized" : "staged";
+  const finalizedAt =
+    finalizationStatus === "finalized"
+      ? String(input.finalizedAt ?? "").trim() || toEasternISO()
+      : null;
   const uploadFingerprint = buildEnrollmentPacketUploadFingerprint({
     packetId: input.packetId,
     uploadCategory: input.uploadCategory,
@@ -273,7 +281,7 @@ export async function insertUploadAndFile(input: {
   const admin = createSupabaseAdminClient();
   const { data: existingUpload, error: existingUploadError } = await admin
     .from("enrollment_packet_uploads")
-    .select("file_path, member_file_id")
+    .select("file_path, member_file_id, finalization_status")
     .eq("packet_id", input.packetId)
     .eq("upload_category", input.uploadCategory)
     .eq("upload_fingerprint", uploadFingerprint)
@@ -291,7 +299,25 @@ export async function insertUploadAndFile(input: {
   }
   const existingStorageUri = String((existingUpload as { file_path?: string | null } | null)?.file_path ?? "").trim();
   const existingMemberFileId = String((existingUpload as { member_file_id?: string | null } | null)?.member_file_id ?? "").trim();
+  const existingFinalizationStatus = String(
+    (existingUpload as { finalization_status?: string | null } | null)?.finalization_status ?? ""
+  ).trim();
   if (existingStorageUri && existingMemberFileId) {
+    if (finalizationStatus === "finalized" && existingFinalizationStatus !== "finalized") {
+      const { error: finalizeExistingError } = await admin
+        .from("enrollment_packet_uploads")
+        .update({
+          finalization_batch_id: batchId,
+          finalization_status: "finalized",
+          finalized_at: finalizedAt
+        })
+        .eq("packet_id", input.packetId)
+        .eq("upload_category", input.uploadCategory)
+        .eq("upload_fingerprint", uploadFingerprint);
+      if (finalizeExistingError) {
+        throw new Error(finalizeExistingError.message);
+      }
+    }
     return {
       storageUri: existingStorageUri,
       objectPath: parseMemberDocumentStorageUri(existingStorageUri) ?? objectPath,
@@ -345,8 +371,9 @@ export async function insertUploadAndFile(input: {
         upload_category: input.uploadCategory,
         upload_fingerprint: uploadFingerprint,
         member_file_id: memberFile.id,
-        finalization_batch_id: input.batchId,
-        finalization_status: "staged",
+        finalization_batch_id: batchId,
+        finalization_status: finalizationStatus,
+        finalized_at: finalizedAt,
         uploaded_at: toEasternISO()
       },
       {

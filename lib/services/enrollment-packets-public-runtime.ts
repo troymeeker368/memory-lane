@@ -312,12 +312,14 @@ async function verifyCommittedEnrollmentPacketFinalizeAfterError(input: {
   const tokenConsumed =
     clean(refreshedRequest.last_consumed_submission_token_hash) === input.consumedSubmissionTokenHash;
   const requestStatus = toStatus(refreshedRequest.status);
+  const hasRequiredCommitEvidence =
+    requestStatus === "completed" && tokenConsumed && (expectedArtifacts.length === 0 || hasExpectedFinalizedArtifacts);
 
-  if (requestStatus === "completed" && hasExpectedFinalizedArtifacts) {
+  if (hasRequiredCommitEvidence) {
     return { kind: "committed" as const, request: refreshedRequest };
   }
 
-  if (requestStatus !== "completed" && !tokenConsumed && stagedOnly) {
+  if (requestStatus !== "completed" && !tokenConsumed && (expectedArtifacts.length === 0 || stagedOnly)) {
     return { kind: "not_committed" as const, request: refreshedRequest };
   }
 
@@ -421,7 +423,7 @@ async function invokeFinalizeEnrollmentPacketCompletionRpc(input: {
   ipAddress: string | null;
   actorUserId: string;
   actorEmail: string | null;
-  uploadBatchId: string;
+  uploadBatchId: string | null;
   completedMetadata: Record<string, unknown>;
   filedMetadata: Record<string, unknown>;
 }) {
@@ -672,6 +674,8 @@ export async function getPublicEnrollmentPacketContext(
       request: toSummary(completedRequest),
       mappingSyncStatus: completedResult.mappingSyncStatus,
       completionFollowUpStatus: completedResult.completionFollowUpStatus,
+      readinessStage: completedResult.readinessStage,
+      readinessLabel: completedResult.readinessLabel,
       operationalReadinessStatus: completedResult.operationalReadinessStatus,
       actionNeeded: completedResult.actionNeeded,
       actionNeededMessage: completedResult.actionNeededMessage
@@ -953,6 +957,7 @@ export async function submitPublicEnrollmentPacket(input: {
   let completionFollowUpError: string | null = null;
   const consumedSubmissionTokenHash = hashToken(normalizedToken);
   let finalizeAttempted = false;
+  let validatedFieldsSnapshot: EnrollmentPacketFieldsRow | null = null;
   const stagedUploads: Array<{
     uploadCategory: EnrollmentPacketUploadCategory;
     objectPath: string;
@@ -993,9 +998,9 @@ export async function submitPublicEnrollmentPacket(input: {
       intakePayload: input.intakePayload
     });
 
-    const fieldsForValidation = await loadPacketFields(request.id);
-    if (!fieldsForValidation) throw new Error("Enrollment packet fields were not found.");
-    const validationPayload = normalizeStoredIntakePayload(fieldsForValidation);
+    validatedFieldsSnapshot = await loadPacketFields(request.id);
+    if (!validatedFieldsSnapshot) throw new Error("Enrollment packet fields were not found.");
+    const validationPayload = normalizeStoredIntakePayload(validatedFieldsSnapshot);
     const { validateEnrollmentPacketSubmission } = await loadEnrollmentPacketCompletionValidator();
     const completionValidation = validateEnrollmentPacketSubmission({
       payload: validationPayload,
@@ -1013,7 +1018,6 @@ export async function submitPublicEnrollmentPacket(input: {
     const now = toEasternISO();
     const admin = createSupabaseAdminClient();
     const rotatedToken = hashToken(generateSigningToken());
-    uploadBatchId = randomUUID();
 
     const senderSignature = await admin
       .from("enrollment_packet_signatures")
@@ -1030,90 +1034,6 @@ export async function submitPublicEnrollmentPacket(input: {
       ? String((senderSignature.data as { signer_name: string }).signer_name)
       : "Staff";
 
-    const signatureArtifact = await artifactOps.insertUploadAndFile({
-      packetId: request.id,
-      memberId: member.id,
-      batchId: uploadBatchId,
-      fileName: `Enrollment Packet Signature - ${toEasternDate(now)}.png`,
-      contentType: signature.contentType,
-      bytes: signature.bytes,
-      uploadCategory: "signature_artifact",
-      uploadedByUserId: null,
-      uploadedByName: caregiverTypedName,
-      dataUrl: input.caregiverSignatureImageDataUrl.trim()
-    });
-    stagedUploads.push({
-      uploadCategory: "signature_artifact",
-      objectPath: signatureArtifact.objectPath,
-      memberFileId: signatureArtifact.memberFileId,
-      memberFileCreated: signatureArtifact.memberFileCreated
-    });
-    uploadedArtifacts.push({
-      uploadCategory: "signature_artifact",
-      memberFileId: signatureArtifact.memberFileId
-    });
-
-    for (const upload of input.uploads ?? []) {
-      const artifact = await artifactOps.insertUploadAndFile({
-        packetId: request.id,
-        memberId: member.id,
-        batchId: uploadBatchId,
-        fileName: upload.fileName,
-        contentType: upload.contentType,
-        bytes: upload.bytes,
-        uploadCategory: upload.category,
-        uploadedByUserId: null,
-        uploadedByName: caregiverTypedName
-      });
-      stagedUploads.push({
-        uploadCategory: upload.category,
-        objectPath: artifact.objectPath,
-        memberFileId: artifact.memberFileId,
-        memberFileCreated: artifact.memberFileCreated
-      });
-      uploadedArtifacts.push({
-        uploadCategory: upload.category,
-        memberFileId: artifact.memberFileId
-      });
-    }
-
-    const refreshedFields = await loadPacketFields(request.id);
-    if (!refreshedFields) throw new Error("Enrollment packet fields are missing.");
-    const packetDocx = await artifactOps.buildCompletedPacketArtifactData({
-      memberName: member.display_name,
-      request,
-      fields: refreshedFields,
-      intakePayload: normalizeStoredIntakePayload(refreshedFields),
-      caregiverSignatureName: caregiverTypedName,
-      senderSignatureName,
-      uploadedDocuments: (input.uploads ?? []).map((upload) => ({
-        category: upload.category,
-        fileName: upload.fileName
-      }))
-    });
-    const finalPacketArtifact = await artifactOps.insertUploadAndFile({
-      packetId: request.id,
-      memberId: member.id,
-      batchId: uploadBatchId,
-      fileName: packetDocx.fileName,
-      contentType: packetDocx.contentType,
-      bytes: packetDocx.bytes,
-      uploadCategory: "completed_packet",
-      uploadedByUserId: null,
-      uploadedByName: caregiverTypedName,
-      dataUrl: packetDocx.dataUrl
-    });
-    stagedUploads.push({
-      uploadCategory: "completed_packet",
-      objectPath: finalPacketArtifact.objectPath,
-      memberFileId: finalPacketArtifact.memberFileId,
-      memberFileCreated: finalPacketArtifact.memberFileCreated
-    });
-    uploadedArtifacts.push({
-      uploadCategory: "completed_packet",
-      memberFileId: finalPacketArtifact.memberFileId
-    });
-
     finalizedAt = toEasternISO();
     finalizeAttempted = true;
     finalizedSubmission = await invokeFinalizeEnrollmentPacketCompletionRpc({
@@ -1128,12 +1048,10 @@ export async function submitPublicEnrollmentPacket(input: {
       ipAddress: clean(input.caregiverIp),
       actorUserId: request.sender_user_id,
       actorEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
-      uploadBatchId,
+      uploadBatchId: null,
       completedMetadata: {
         caregiverSignatureName: caregiverTypedName,
-        completedAt: now,
-        signatureArtifactMemberFileId: signatureArtifact.memberFileId,
-        finalPacketMemberFileId: finalPacketArtifact.memberFileId
+        completedAt: now
       },
       filedMetadata: {
         caregiverSignatureName: caregiverTypedName,
@@ -1146,14 +1064,6 @@ export async function submitPublicEnrollmentPacket(input: {
     });
 
     if (finalizedSubmission.wasAlreadyFiled) {
-      await artifactOps.cleanupEnrollmentPacketUploadArtifacts({
-        packetId: request.id,
-        memberId: member.id,
-        actorUserId: request.sender_user_id,
-        reason: "Replay-safe enrollment packet finalization reused committed completed state.",
-        batchId: uploadBatchId,
-        uploads: stagedUploads
-      });
       return buildCommittedEnrollmentPacketReplayResult({
         request: (await loadRequestById(request.id)) ?? request
       });
@@ -1244,6 +1154,98 @@ export async function submitPublicEnrollmentPacket(input: {
   }
 
   try {
+    uploadBatchId = randomUUID();
+    const artifactFields = (await loadPacketFields(request.id)) ?? validatedFieldsSnapshot;
+    if (!artifactFields) throw new Error("Enrollment packet fields are missing.");
+
+    const signatureArtifact = await artifactOps.insertUploadAndFile({
+      packetId: request.id,
+      memberId: member.id,
+      batchId: uploadBatchId,
+      fileName: `Enrollment Packet Signature - ${toEasternDate(finalizedAt ?? toEasternISO())}.png`,
+      contentType: signature.contentType,
+      bytes: signature.bytes,
+      uploadCategory: "signature_artifact",
+      uploadedByUserId: null,
+      uploadedByName: caregiverTypedName,
+      dataUrl: input.caregiverSignatureImageDataUrl.trim(),
+      finalizationStatus: "finalized",
+      finalizedAt
+    });
+    stagedUploads.push({
+      uploadCategory: "signature_artifact",
+      objectPath: signatureArtifact.objectPath,
+      memberFileId: signatureArtifact.memberFileId,
+      memberFileCreated: signatureArtifact.memberFileCreated
+    });
+    uploadedArtifacts.push({
+      uploadCategory: "signature_artifact",
+      memberFileId: signatureArtifact.memberFileId
+    });
+
+    for (const upload of input.uploads ?? []) {
+      const artifact = await artifactOps.insertUploadAndFile({
+        packetId: request.id,
+        memberId: member.id,
+        batchId: uploadBatchId,
+        fileName: upload.fileName,
+        contentType: upload.contentType,
+        bytes: upload.bytes,
+        uploadCategory: upload.category,
+        uploadedByUserId: null,
+        uploadedByName: caregiverTypedName,
+        finalizationStatus: "finalized",
+        finalizedAt
+      });
+      stagedUploads.push({
+        uploadCategory: upload.category,
+        objectPath: artifact.objectPath,
+        memberFileId: artifact.memberFileId,
+        memberFileCreated: artifact.memberFileCreated
+      });
+      uploadedArtifacts.push({
+        uploadCategory: upload.category,
+        memberFileId: artifact.memberFileId
+      });
+    }
+
+    const packetDocx = await artifactOps.buildCompletedPacketArtifactData({
+      memberName: member.display_name,
+      request,
+      fields: artifactFields,
+      intakePayload: normalizeStoredIntakePayload(artifactFields),
+      caregiverSignatureName: caregiverTypedName,
+      senderSignatureName,
+      uploadedDocuments: (input.uploads ?? []).map((upload) => ({
+        category: upload.category,
+        fileName: upload.fileName
+      }))
+    });
+    const finalPacketArtifact = await artifactOps.insertUploadAndFile({
+      packetId: request.id,
+      memberId: member.id,
+      batchId: uploadBatchId,
+      fileName: packetDocx.fileName,
+      contentType: packetDocx.contentType,
+      bytes: packetDocx.bytes,
+      uploadCategory: "completed_packet",
+      uploadedByUserId: null,
+      uploadedByName: caregiverTypedName,
+      dataUrl: packetDocx.dataUrl,
+      finalizationStatus: "finalized",
+      finalizedAt
+    });
+    stagedUploads.push({
+      uploadCategory: "completed_packet",
+      objectPath: finalPacketArtifact.objectPath,
+      memberFileId: finalPacketArtifact.memberFileId,
+      memberFileCreated: finalPacketArtifact.memberFileCreated
+    });
+    uploadedArtifacts.push({
+      uploadCategory: "completed_packet",
+      memberFileId: finalPacketArtifact.memberFileId
+    });
+
     const refreshedRequest = await loadRequestById(request.id);
     const refreshedFields = await loadPacketFields(request.id);
 

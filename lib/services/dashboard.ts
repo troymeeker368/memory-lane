@@ -1,6 +1,10 @@
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { createClient } from "@/lib/supabase/server";
 import { listMemberHolds } from "@/lib/services/holds-supabase";
+import {
+  getEnrollmentPacketMappingRunnerHealth,
+  getPofPostSignSyncRunnerHealth
+} from "@/lib/services/internal-runner-health";
 import { listMemberLookupByIdsSupabase } from "@/lib/services/shared-lookups-supabase";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
@@ -71,7 +75,9 @@ export async function getDashboardAlerts() {
 
   const [
     { data: overdueCarePlan, error: overdueCarePlanError },
-    { data: clockIssues, error: clockIssuesError }
+    { data: clockIssues, error: clockIssuesError },
+    pofRunnerHealth,
+    enrollmentPacketMappingRunnerHealth
   ] = await Promise.all([
     supabase
       .from("documentation_tracker")
@@ -83,7 +89,9 @@ export async function getDashboardAlerts() {
       .from("time_punch_exceptions")
       .select("id")
       .eq("resolved", false)
-      .limit(1)
+      .limit(1),
+    getPofPostSignSyncRunnerHealth(),
+    getEnrollmentPacketMappingRunnerHealth()
   ]);
   if (overdueCarePlanError) throw new Error(`Unable to load overdue care plan alerts: ${overdueCarePlanError.message}`);
   if (clockIssuesError) throw new Error(`Unable to load clock issue alerts: ${clockIssuesError.message}`);
@@ -107,6 +115,55 @@ export async function getDashboardAlerts() {
       message: "Manager review needed for unresolved time exceptions.",
       actionLabel: "Review Time Card",
       actionHref: "/time-card"
+    });
+  }
+
+  if (pofRunnerHealth.healthStatus === "missing_config") {
+    alerts.push({
+      id: "pof-post-sign-sync-runner-missing-config",
+      severity: "critical",
+      message:
+        "POF post-sign sync runner is not configured. Signed POF downstream sync is not release-safe until the runner secret is fixed.",
+      actionLabel: "Open Notifications",
+      actionHref: "/notifications"
+    });
+  } else if (pofRunnerHealth.healthStatus === "degraded") {
+    alerts.push({
+      id: "pof-post-sign-sync-runner-aged-queue",
+      severity: "critical",
+      message: `${pofRunnerHealth.agedQueueRows} signed POF sync queue item(s) are older than ${pofRunnerHealth.agedQueueAlertAgeMinutes} minute(s).`,
+      actionLabel: "Open Notifications",
+      actionHref: "/notifications"
+    });
+  }
+
+  if (enrollmentPacketMappingRunnerHealth.healthStatus === "missing_config") {
+    alerts.push({
+      id: "enrollment-packet-mapping-runner-missing-config",
+      severity: "critical",
+      message:
+        "Enrollment packet mapping retry runner is not configured. Enrollment downstream follow-up is not release-safe until the runner secret is fixed.",
+      actionLabel: "Open Notifications",
+      actionHref: "/notifications"
+    });
+  } else if (enrollmentPacketMappingRunnerHealth.healthStatus === "degraded") {
+    const messageParts: string[] = [];
+    if (enrollmentPacketMappingRunnerHealth.agedQueueRows > 0) {
+      messageParts.push(
+        `${enrollmentPacketMappingRunnerHealth.agedQueueRows} aged mapping retry item(s)`
+      );
+    }
+    if (enrollmentPacketMappingRunnerHealth.staleClaimRows > 0) {
+      messageParts.push(
+        `${enrollmentPacketMappingRunnerHealth.staleClaimRows} stale claimed retry item(s)`
+      );
+    }
+    alerts.push({
+      id: "enrollment-packet-mapping-runner-delayed",
+      severity: "critical",
+      message: `${messageParts.join(" and ")} need runner review before enrollment follow-up is treated as complete.`,
+      actionLabel: "Open Notifications",
+      actionHref: "/notifications"
     });
   }
 
