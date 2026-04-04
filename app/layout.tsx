@@ -1,6 +1,7 @@
 import type React from "react";
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 
 import { DevSchemaSyncBanner } from "@/components/dev/dev-schema-sync-banner";
 import "./globals.css";
@@ -22,6 +23,7 @@ export default async function RootLayout({
           <DevSchemaSyncBanner />
         </Suspense>
         {children}
+        <SpeedInsights />
       </body>
     </html>
   );
