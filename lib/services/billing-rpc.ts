@@ -18,10 +18,14 @@ import { resolveInvoiceProductOrService } from "@/lib/services/billing-invoice-f
 import { addMonths, buildInvoiceNumber, normalizeDateOnly, startOfMonth } from "@/lib/services/billing-utils";
 
 const BILLING_ATOMIC_WORKFLOW_MIGRATION = "0173_billing_invoice_snapshot_itemization.sql";
+const BILLING_FINALIZATION_WORKFLOW_MIGRATION = "0190_billing_finalize_reopen_atomicity.sql";
 const CUSTOM_INVOICE_ATOMIC_WORKFLOW_MIGRATION = "0185_custom_invoice_rpc_source_materialization.sql";
 const RPC_GENERATE_BILLING_BATCH = "rpc_generate_billing_batch";
 const RPC_CREATE_BILLING_EXPORT = "rpc_create_billing_export";
 const RPC_CREATE_CUSTOM_INVOICE = "rpc_create_custom_invoice";
+const RPC_FINALIZE_BILLING_BATCH = "rpc_finalize_billing_batch";
+const RPC_REOPEN_BILLING_BATCH = "rpc_reopen_billing_batch";
+const RPC_FINALIZE_BILLING_INVOICES = "rpc_finalize_billing_invoices";
 
 function mapCoverageTypeForLineType(
   lineType: "BaseProgram" | "Transportation" | "Ancillary" | "Adjustment" | "Credit" | "PriorBalance"
@@ -34,6 +38,10 @@ function mapCoverageTypeForLineType(
 
 export function buildMissingBillingAtomicWorkflowMessage(functionName: string) {
   return `Billing atomic workflow RPC ${functionName} is not available in the connected Supabase API. Apply Supabase migration ${BILLING_ATOMIC_WORKFLOW_MIGRATION} and refresh the PostgREST schema cache.`;
+}
+
+export function buildMissingBillingFinalizationWorkflowMessage(functionName: string) {
+  return `Billing finalization RPC ${functionName} is not available in the connected Supabase API. Apply Supabase migration ${BILLING_FINALIZATION_WORKFLOW_MIGRATION} and refresh the PostgREST schema cache.`;
 }
 
 export function buildMissingCustomInvoiceAtomicWorkflowMessage(functionName: string) {
@@ -343,6 +351,80 @@ export async function invokeCreateCustomInvoiceRpc(input: {
   } catch (error) {
     if (isMissingRpcFunctionError(error, RPC_CREATE_CUSTOM_INVOICE)) {
       throw new Error(buildMissingCustomInvoiceAtomicWorkflowMessage(RPC_CREATE_CUSTOM_INVOICE) + buildRpcDiagnosticSuffix(error));
+    }
+    throw error;
+  }
+}
+
+export async function invokeFinalizeBillingBatchRpc(input: {
+  billingBatchId: string;
+  finalizedBy: string;
+  now: string;
+  today: string;
+}) {
+  const supabase = await createClient({ serviceRole: true });
+  try {
+    const result = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_FINALIZE_BILLING_BATCH, {
+      p_billing_batch_id: input.billingBatchId,
+      p_finalized_by: input.finalizedBy,
+      p_now: input.now,
+      p_today: input.today
+    });
+    return Array.isArray(result) ? String(result[0] ?? input.billingBatchId) : String(result ?? input.billingBatchId);
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, RPC_FINALIZE_BILLING_BATCH)) {
+      throw new Error(
+        buildMissingBillingFinalizationWorkflowMessage(RPC_FINALIZE_BILLING_BATCH) + buildRpcDiagnosticSuffix(error)
+      );
+    }
+    throw error;
+  }
+}
+
+export async function invokeReopenBillingBatchRpc(input: {
+  billingBatchId: string;
+  reopenedBy: string;
+  now: string;
+}) {
+  const supabase = await createClient({ serviceRole: true });
+  try {
+    const result = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_REOPEN_BILLING_BATCH, {
+      p_billing_batch_id: input.billingBatchId,
+      p_reopened_by: input.reopenedBy,
+      p_now: input.now
+    });
+    return Array.isArray(result) ? String(result[0] ?? input.billingBatchId) : String(result ?? input.billingBatchId);
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, RPC_REOPEN_BILLING_BATCH)) {
+      throw new Error(
+        buildMissingBillingFinalizationWorkflowMessage(RPC_REOPEN_BILLING_BATCH) + buildRpcDiagnosticSuffix(error)
+      );
+    }
+    throw error;
+  }
+}
+
+export async function invokeFinalizeBillingInvoicesRpc(input: {
+  invoiceIds: string[];
+  finalizedBy: string;
+  now: string;
+  today: string;
+}) {
+  const supabase = await createClient({ serviceRole: true });
+  try {
+    const result = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_FINALIZE_BILLING_INVOICES, {
+      p_invoice_ids: input.invoiceIds,
+      p_finalized_by: input.finalizedBy,
+      p_now: input.now,
+      p_today: input.today
+    });
+    const finalizedCount = Array.isArray(result) ? Number(result[0] ?? input.invoiceIds.length) : Number(result);
+    return Number.isFinite(finalizedCount) ? finalizedCount : input.invoiceIds.length;
+  } catch (error) {
+    if (isMissingRpcFunctionError(error, RPC_FINALIZE_BILLING_INVOICES)) {
+      throw new Error(
+        buildMissingBillingFinalizationWorkflowMessage(RPC_FINALIZE_BILLING_INVOICES) + buildRpcDiagnosticSuffix(error)
+      );
     }
     throw error;
   }

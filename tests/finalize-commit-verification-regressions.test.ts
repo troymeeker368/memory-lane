@@ -56,35 +56,39 @@ test("care plan nurse signature finalization reloads canonical signature state b
 });
 
 test("public enrollment packet completion verifies finalized batch rows before staged cleanup on finalize errors", () => {
-  const source = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const finalizeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-finalize.ts");
 
-  assert.equal(source.includes("async function verifyCommittedEnrollmentPacketFinalizeAfterError"), true);
-  assert.equal(source.includes('alertKey: "enrollment_packet_finalize_verification_pending"'), true);
-  assert.equal(source.includes("hasExpectedFinalizedArtifacts"), true);
-  assert.equal(source.includes("expectedArtifacts.length === 0 || hasExpectedFinalizedArtifacts"), true);
-  assert.equal(source.includes("finalizeAttempted = true;"), true);
-  assert.equal(source.includes("finalizeVerification?.kind !== \"unverified\""), true);
-  assert.equal(source.includes("return buildCommittedEnrollmentPacketReplayResult({"), true);
+  assert.equal(finalizeSource.includes("export async function verifyCommittedEnrollmentPacketFinalizeAfterError"), true);
+  assert.equal(finalizeSource.includes('alertKey: "enrollment_packet_finalize_verification_pending"'), true);
+  assert.equal(finalizeSource.includes("hasExpectedFinalizedArtifacts"), true);
+  assert.equal(finalizeSource.includes("expectedArtifacts.length === 0 || hasExpectedFinalizedArtifacts"), true);
+  assert.equal(runtimeSource.includes("finalizeAttempted = true;"), true);
+  assert.equal(runtimeSource.includes("verifyCommittedEnrollmentPacketFinalizeAfterError({"), true);
+  assert.equal(runtimeSource.includes("return buildCommittedEnrollmentPacketReplayResult({"), true);
 });
 
 test("public enrollment packet completion finalizes before staging artifacts so replay losers avoid pre-finalize upload work", () => {
-  const source = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
-  const finalizeIndex = source.indexOf("finalizedSubmission = await invokeFinalizeEnrollmentPacketCompletionRpc({");
-  const replayIndex = source.indexOf("if (finalizedSubmission.wasAlreadyFiled) {");
-  const signatureArtifactIndex = source.indexOf("const signatureArtifact = await artifactOps.insertUploadAndFile({");
-  const batchIndex = source.indexOf("uploadBatchId = randomUUID();");
+  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const artifactSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-artifacts.ts");
+  const finalizeIndex = runtimeSource.indexOf("finalizedSubmission = await invokeFinalizeEnrollmentPacketCompletionRpc({");
+  const replayIndex = runtimeSource.indexOf("if (finalizedSubmission.wasAlreadyFiled) {");
+  const postCommitIndex = runtimeSource.indexOf("return completeCommittedPublicEnrollmentPacketPostCommitWork({");
+  const signatureArtifactIndex = artifactSource.indexOf("const signatureArtifact = await artifactOps.insertUploadAndFile({");
+  const batchIndex = artifactSource.indexOf("const uploadBatchId = randomUUID();");
 
   assert.equal(finalizeIndex > -1, true);
   assert.equal(replayIndex > -1, true);
+  assert.equal(postCommitIndex > -1, true);
   assert.equal(signatureArtifactIndex > -1, true);
   assert.equal(batchIndex > -1, true);
-  assert.equal(finalizeIndex < batchIndex, true);
-  assert.equal(replayIndex < signatureArtifactIndex, true);
+  assert.equal(finalizeIndex < postCommitIndex, true);
+  assert.equal(replayIndex < postCommitIndex, true);
   assert.equal(batchIndex < signatureArtifactIndex, true);
 });
 
 test("post-commit enrollment packet artifacts persist as finalized rows after the RPC commit", () => {
-  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-artifacts.ts");
   const artifactSource = readWorkspaceFile("lib/services/enrollment-packet-artifacts.ts");
 
   assert.equal(runtimeSource.includes('finalizationStatus: "finalized"'), true);
@@ -97,18 +101,19 @@ test("post-commit enrollment packet artifacts persist as finalized rows after th
 });
 
 test("public enrollment packet completion returns a committed follow-up result when post-commit writes fail", () => {
-  const source = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const orchestratorSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-post-commit.ts");
+  const followUpSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-follow-up.ts");
 
-  assert.equal(source.includes("function buildEnrollmentPacketPostCommitFollowUpMessage"), true);
-  assert.equal(source.includes("async function recordEnrollmentPacketPostCommitFollowUpFailure"), true);
-  assert.equal(source.includes('alertKey: "enrollment_packet_post_commit_follow_up_failed"'), true);
-  assert.equal(source.includes("completionFollowUpStatus = \"action_required\";"), true);
+  assert.equal(followUpSource.includes("export function buildEnrollmentPacketPostCommitFollowUpMessage"), true);
+  assert.equal(followUpSource.includes("export async function recordEnrollmentPacketPostCommitFollowUpFailure"), true);
+  assert.equal(followUpSource.includes('alertKey: "enrollment_packet_post_commit_follow_up_failed"'), true);
+  assert.equal(followUpSource.includes("completionFollowUpStatus: \"action_required\""), true);
   assert.equal(
-    source.includes("post-commit follow-up failed after enrollment packet finalization"),
+    followUpSource.includes("post-commit follow-up failed after enrollment packet finalization"),
     true
   );
   assert.equal(
-    source.includes("completionFollowUpStatus: \"action_required\""),
+    orchestratorSource.includes("buildEnrollmentPacketPostCommitFailureResult({"),
     true
   );
 });

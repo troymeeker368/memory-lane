@@ -209,6 +209,64 @@ function runMigrationChecks() {
   }
 }
 
+function runImplicitServiceRoleChecks() {
+  const allowedImplicitDefaults = new Map([
+    ["lib/services/care-plan-nurse-esign.ts", 2],
+    ["lib/services/mar-member-options.ts", 1],
+    ["lib/services/mar-monthly-report.ts", 1],
+    ["lib/services/mar-prn-workflow.ts", 9],
+    ["lib/services/mar-workflow-read.ts", 4],
+    ["lib/services/mar-workflow.ts", 3],
+    ["lib/services/notifications.ts", 2],
+    ["lib/services/physician-order-post-sign-runtime.ts", 6],
+    ["lib/services/physician-orders-supabase.ts", 1]
+  ]);
+  const foundImplicitDefaults = new Map();
+  const roots = [path.join(repoRoot, "app"), path.join(repoRoot, "lib")];
+  const pattern = /serviceRole\s*\?\?\s*true/g;
+
+  function walk(currentDir) {
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    entries.forEach((entry) => {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        return;
+      }
+      if (!entry.isFile() || !/\.(ts|tsx|js|jsx)$/.test(entry.name)) return;
+
+      const source = fs.readFileSync(fullPath, "utf8");
+      const matches = source.match(pattern);
+      if (!matches?.length) return;
+
+      const relativePath = path.relative(repoRoot, fullPath).split(path.sep).join("/");
+      foundImplicitDefaults.set(relativePath, matches.length);
+    });
+  }
+
+  roots.forEach((root) => {
+    if (fs.existsSync(root)) walk(root);
+  });
+
+  for (const [relativePath, count] of foundImplicitDefaults.entries()) {
+    const allowedCount = allowedImplicitDefaults.get(relativePath);
+    check(
+      allowedCount === count,
+      allowedCount == null
+        ? `New implicit service-role default found: ${relativePath} (${count} match${count === 1 ? "" : "es"}). Use an explicit session-scoped default or the approved service-role gateway instead.`
+        : `Implicit service-role defaults changed in ${relativePath}: expected ${allowedCount}, found ${count}. Migrate the call site or update the allowlist intentionally.`
+    );
+  }
+
+  for (const [relativePath, allowedCount] of allowedImplicitDefaults.entries()) {
+    if (!foundImplicitDefaults.has(relativePath)) continue;
+    check(
+      foundImplicitDefaults.get(relativePath) === allowedCount,
+      `Implicit service-role defaults changed in ${relativePath}: expected ${allowedCount}, found ${foundImplicitDefaults.get(relativePath)}.`
+    );
+  }
+}
+
 function main() {
   try {
     compileGateTargets();
@@ -221,6 +279,7 @@ function main() {
     runTimeCalculationChecks(workflow);
     runRouteChecks(navItems);
     runMigrationChecks();
+    runImplicitServiceRoleChecks();
   } catch (error) {
     fail(`Quality gate runtime failure: ${error instanceof Error ? error.message : String(error)}`);
   } finally {

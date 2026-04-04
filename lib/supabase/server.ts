@@ -6,6 +6,10 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseEnv, getSupabaseServiceRoleKey } from "@/lib/runtime";
 
 type CreateClientOptions = {
+  /**
+   * @deprecated Prefer `createServiceRoleClient()` from `@/lib/supabase/service-role`
+   * so privileged access is explicit, narrow, and auditable.
+   */
   serviceRole?: boolean;
 };
 
@@ -13,6 +17,8 @@ export async function createClient(options: CreateClientOptions = {}) {
   const { url, anonKey } = getSupabaseEnv();
   const serviceRoleKey = getSupabaseServiceRoleKey();
   if (options.serviceRole) {
+    // New code should prefer createServiceRoleClient(useCase) so privilege elevation
+    // stays explicit and reviewable at the call site.
     if (!serviceRoleKey) {
       throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY. Service-role client cannot be created.");
     }

@@ -1,6 +1,7 @@
 import type { MarTodayRow } from "@/lib/services/mar-shared";
 import { mapMarTodayRow, throwMarSupabaseError } from "@/lib/services/mar-workflow-core";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 // Dashboard needs only today's MAR timing and lightweight administered metadata.
 // Keep this intentionally narrow so we do not over-fetch MAR workflow fields.
@@ -12,8 +13,12 @@ function getDashboardTimeHorizon(hoursAhead: number) {
   return new Date(Date.now() + safeHoursAhead * 60 * 60 * 1000).toISOString();
 }
 
+async function getMarDashboardClient(options?: { serviceRole?: boolean }) {
+  return options?.serviceRole === true ? createServiceRoleClient("dashboard_mar_read") : createClient();
+}
+
 export async function getHealthDashboardMarTodayRows(options?: { serviceRole?: boolean }) {
-  const supabase = await createClient({ serviceRole: options?.serviceRole ?? true });
+  const supabase = await getMarDashboardClient(options);
   const { data, error } = await supabase
     .from("v_mar_today")
     .select(MAR_DASHBOARD_TODAY_SELECT)
@@ -30,7 +35,7 @@ export async function getHealthDashboardMarActionRows(options?: {
   serviceRole?: boolean;
   hoursAhead?: number;
 }) {
-  const supabase = await createClient({ serviceRole: options?.serviceRole ?? true });
+  const supabase = await getMarDashboardClient(options);
   const { data, error } = await supabase
     .from("v_mar_today")
     .select(MAR_DASHBOARD_TODAY_SELECT)
@@ -50,7 +55,7 @@ export async function getHealthDashboardMarRecentRows(options?: {
   limit?: number;
 }) {
   const safeLimit = Number.isFinite(options?.limit) && Number(options?.limit) > 0 ? Math.floor(Number(options?.limit)) : 8;
-  const supabase = await createClient({ serviceRole: options?.serviceRole ?? true });
+  const supabase = await getMarDashboardClient(options);
   const { data, error } = await supabase
     .from("v_mar_today")
     .select(MAR_DASHBOARD_TODAY_SELECT)

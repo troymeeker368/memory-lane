@@ -9,6 +9,7 @@ import {
 } from "@/lib/services/intake-post-sign-follow-up";
 import { resolveIntakePostSignReadiness, type IntakePostSignReadinessStatus } from "@/lib/services/intake-post-sign-readiness";
 import { toEasternISO } from "@/lib/timezone";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 export const MHP_TABS = [
   "overview",
@@ -485,7 +486,10 @@ function buildMissingMemberHealthProfileShellError(memberId: string) {
 
 export async function ensureMemberHealthProfileSupabase(memberId: string, options?: { serviceRole?: boolean }) {
   const canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "ensureMemberHealthProfileSupabase" });
-  const supabase = await createClient({ serviceRole: options?.serviceRole ?? true });
+  const supabase =
+    options?.serviceRole === true
+      ? createServiceRoleClient("member_health_profile_write_guard_read")
+      : await createClient();
   const { data: existing, error: existingError } = await supabase
     .from("member_health_profiles")
     .select(MEMBER_HEALTH_PROFILE_SELECT)
@@ -839,7 +843,8 @@ export async function backfillMissingMemberHealthProfilesSupabase(memberIds: Arr
   if (normalizedMemberIds.length === 0) return { inserted: 0 };
 
   const now = toEasternISO();
-  const supabase = await createClient({ serviceRole: true });
+  // Historical shell backfill writes bypass authenticated write policies by design.
+  const supabase = createServiceRoleClient("member_health_profile_backfill");
   const { data: existingRows, error: existingError } = await supabase
     .from("member_health_profiles")
     .select("member_id")

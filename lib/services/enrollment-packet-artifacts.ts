@@ -1,7 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 
-import { buildCompletedEnrollmentPacketDocxData } from "@/lib/services/enrollment-packet-docx";
 import { buildIdempotencyHash } from "@/lib/services/idempotency";
 import { type EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 import {
@@ -19,6 +18,11 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { toEasternISO } from "@/lib/timezone";
 
 const ENROLLMENT_PACKET_UPLOAD_SCHEMA_MIGRATION = "0027_enrollment_packet_intake_mapping.sql";
+
+async function loadCompletedEnrollmentPacketDocumentBuilder() {
+  const { buildCompletedEnrollmentPacketDocxData } = await import("@/lib/services/enrollment-packet-docx");
+  return buildCompletedEnrollmentPacketDocxData;
+}
 
 type EnrollmentPacketRequestLike = {
   id: string;
@@ -138,6 +142,7 @@ export async function buildCompletedPacketArtifactData(input: {
     fileName: string;
   }>;
 }) {
+  const buildCompletedEnrollmentPacketDocxData = await loadCompletedEnrollmentPacketDocumentBuilder();
   return buildCompletedEnrollmentPacketDocxData({
     memberName: input.memberName,
     packetId: input.request.id,

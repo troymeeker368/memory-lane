@@ -6,15 +6,17 @@ import {
   type ReopenBatchInput
 } from "@/lib/services/billing-types";
 import {
-  addDays,
   addMonths,
   normalizeDateOnly,
-  startOfMonth,
+  startOfMonth
 } from "@/lib/services/billing-utils";
 import { getBillingGenerationPreview } from "@/lib/services/billing-read-supabase";
 import {
   buildBillingBatchWritePlan,
-  invokeGenerateBillingBatchRpc
+  invokeFinalizeBillingBatchRpc,
+  invokeFinalizeBillingInvoicesRpc,
+  invokeGenerateBillingBatchRpc,
+  invokeReopenBillingBatchRpc
 } from "@/lib/services/billing-rpc";
 import { getActiveCenterBillingSetting, getActiveMemberBillingSetting } from "@/lib/services/billing-configuration";
 export {
@@ -35,7 +37,6 @@ import {
 import type { Database } from "@/types/supabase-types";
 
 type Tables = Database["public"]["Tables"];
-type BillingInvoiceLineRow = Tables["billing_invoice_lines"]["Row"];
 type BillingInvoiceRow = Tables["billing_invoices"]["Row"];
 export type { BillingDashboardSummary } from "@/lib/services/billing-read-supabase";
 export { createBillingExport } from "@/lib/services/billing-exports";
@@ -243,41 +244,13 @@ export async function generateBillingBatch(input: BatchGenerationInput) {
 
 export async function finalizeBillingBatch(input: FinalizeBatchInput) {
   try {
-    const supabase = await createClient();
     const now = toEasternISO();
-    const { data: batch, error: batchError } = await supabase
-      .from("billing_batches")
-      .select("*")
-      .eq("id", input.billingBatchId)
-      .maybeSingle();
-    if (batchError) throw new Error(batchError.message);
-    if (!batch) return { ok: false as const, error: "Billing batch not found." };
-    if (!["Draft", "Reviewed"].includes(String(batch.batch_status))) {
-      return { ok: false as const, error: "Only Draft/Reviewed batches can be finalized." };
-    }
-
-    const { data: invoices, error: invoiceError } = await supabase
-      .from("billing_invoices")
-      .select("id")
-      .eq("billing_batch_id", input.billingBatchId);
-    if (invoiceError) throw new Error(invoiceError.message);
-    for (const invoice of (invoices ?? []) as Pick<BillingInvoiceRow, "id">[]) {
-      const finalized = await finalizeInvoice({ invoiceId: String(invoice.id), finalizedBy: input.finalizedBy });
-      if (!finalized.ok) return finalized;
-    }
-
-    const { error: updateError } = await supabase
-      .from("billing_batches")
-      .update({
-        batch_status: "Finalized",
-        finalized_by: input.finalizedBy,
-        finalized_at: now,
-        completion_date: normalizeDateOnly(now),
-        next_due_date: addMonths(startOfMonth(String(batch.billing_month)), 1),
-        updated_at: now
-      })
-      .eq("id", input.billingBatchId);
-    if (updateError) throw new Error(updateError.message);
+    await invokeFinalizeBillingBatchRpc({
+      billingBatchId: input.billingBatchId,
+      finalizedBy: input.finalizedBy,
+      now,
+      today: toEasternDate()
+    });
     return { ok: true as const };
   } catch (error) {
     return {
@@ -289,88 +262,12 @@ export async function finalizeBillingBatch(input: FinalizeBatchInput) {
 
 export async function reopenBillingBatch(input: ReopenBatchInput) {
   try {
-    const supabase = await createClient();
     const now = toEasternISO();
-    const { data: batch, error: batchError } = await supabase
-      .from("billing_batches")
-      .select("*")
-      .eq("id", input.billingBatchId)
-      .maybeSingle();
-    if (batchError) throw new Error(batchError.message);
-    if (!batch) return { ok: false as const, error: "Billing batch not found." };
-
-    const { data: invoices, error: invoiceError } = await supabase
-      .from("billing_invoices")
-      .select("id")
-      .eq("billing_batch_id", input.billingBatchId);
-    if (invoiceError) throw new Error(invoiceError.message);
-    const invoiceIds = ((invoices ?? []) as Pick<BillingInvoiceRow, "id">[]).map((row) => String(row.id));
-
-    if (invoiceIds.length > 0) {
-      const { data: sourceLines, error: sourceLineError } = await supabase
-        .from("billing_invoice_lines")
-        .select("id, source_table, source_record_id")
-        .in("invoice_id", invoiceIds);
-      if (sourceLineError) throw new Error(sourceLineError.message);
-
-      for (const line of (sourceLines ?? []) as Pick<BillingInvoiceLineRow, "source_table" | "source_record_id">[]) {
-        const sourceTable = String(line.source_table ?? "");
-        const sourceRecordId = String(line.source_record_id ?? "");
-        if (!sourceTable || !sourceRecordId) continue;
-        if (sourceTable === "transportation_logs") {
-          const { error: sourceUpdateError } = await supabase
-            .from("transportation_logs")
-            .update({ billing_status: "Unbilled", invoice_id: null, updated_at: now })
-            .eq("id", sourceRecordId);
-          if (sourceUpdateError) throw new Error(sourceUpdateError.message);
-        } else if (sourceTable === "ancillary_charge_logs") {
-          const { error: sourceUpdateError } = await supabase
-            .from("ancillary_charge_logs")
-            .update({ billing_status: "Unbilled", invoice_id: null, updated_at: now })
-            .eq("id", sourceRecordId);
-          if (sourceUpdateError) throw new Error(sourceUpdateError.message);
-        } else if (sourceTable === "billing_adjustments") {
-          const { error: sourceUpdateError } = await supabase
-            .from("billing_adjustments")
-            .update({ billing_status: "Unbilled", invoice_id: null, updated_at: now })
-            .eq("id", sourceRecordId);
-          if (sourceUpdateError) throw new Error(sourceUpdateError.message);
-        }
-      }
-
-      const { error: coverageDeleteError } = await supabase.from("billing_coverages").delete().in("source_invoice_id", invoiceIds);
-      if (coverageDeleteError) throw new Error(coverageDeleteError.message);
-      const { error: invoiceLineResetError } = await supabase
-        .from("billing_invoice_lines")
-        .update({ billing_status: "Unbilled", updated_at: now })
-        .in("invoice_id", invoiceIds);
-      if (invoiceLineResetError) throw new Error(invoiceLineResetError.message);
-      const { error: invoiceResetError } = await supabase
-        .from("billing_invoices")
-        .update({
-          invoice_status: "Draft",
-          export_status: "NotExported",
-          finalized_by: null,
-          finalized_at: null,
-          updated_at: now
-        })
-        .in("id", invoiceIds);
-      if (invoiceResetError) throw new Error(invoiceResetError.message);
-    }
-
-    const { error: batchUpdateError } = await supabase
-      .from("billing_batches")
-      .update({
-        batch_status: "Reviewed",
-        reopened_by: input.reopenedBy,
-        reopened_at: now,
-        finalized_by: null,
-        finalized_at: null,
-        completion_date: null,
-        updated_at: now
-      })
-      .eq("id", input.billingBatchId);
-    if (batchUpdateError) throw new Error(batchUpdateError.message);
+    await invokeReopenBillingBatchRpc({
+      billingBatchId: input.billingBatchId,
+      reopenedBy: input.reopenedBy,
+      now
+    });
     return { ok: true as const };
   } catch (error) {
     return {
@@ -382,31 +279,13 @@ export async function reopenBillingBatch(input: ReopenBatchInput) {
 
 export async function finalizeInvoice(input: { invoiceId: string; finalizedBy: string }) {
   try {
-    const supabase = await createClient();
     const now = toEasternISO();
-    const { data: invoice, error: invoiceError } = await supabase
-      .from("billing_invoices")
-      .select("*")
-      .eq("id", input.invoiceId)
-      .maybeSingle();
-    if (invoiceError) throw new Error(invoiceError.message);
-    if (!invoice) return { ok: false as const, error: "Invoice not found." };
-    if (String(invoice.invoice_status) === "Finalized") return { ok: true as const };
-
-    const invoiceDate = normalizeDateOnly(invoice.invoice_date, toEasternDate());
-    const dueDate = normalizeDateOnly(invoice.due_date, addDays(invoiceDate, 30));
-    const { error: updateError } = await supabase
-      .from("billing_invoices")
-      .update({
-        invoice_status: "Finalized",
-        finalized_by: input.finalizedBy,
-        finalized_at: now,
-        invoice_date: invoiceDate,
-        due_date: dueDate,
-        updated_at: now
-      })
-      .eq("id", input.invoiceId);
-    if (updateError) throw new Error(updateError.message);
+    await invokeFinalizeBillingInvoicesRpc({
+      invoiceIds: [input.invoiceId],
+      finalizedBy: input.finalizedBy,
+      now,
+      today: toEasternDate()
+    });
     return { ok: true as const };
   } catch (error) {
     return {
@@ -425,14 +304,12 @@ export async function finalizeInvoices(input: { invoiceIds: string[]; finalizedB
       return { ok: false as const, error: "Select at least one invoice to finalize." };
     }
 
-    let finalizedCount = 0;
-    for (const invoiceId of uniqueInvoiceIds) {
-      const result = await finalizeInvoice({ invoiceId, finalizedBy: input.finalizedBy });
-      if (!result.ok) {
-        return result;
-      }
-      finalizedCount += 1;
-    }
+    const finalizedCount = await invokeFinalizeBillingInvoicesRpc({
+      invoiceIds: uniqueInvoiceIds,
+      finalizedBy: input.finalizedBy,
+      now: toEasternISO(),
+      today: toEasternDate()
+    });
 
     return { ok: true as const, finalizedCount };
   } catch (error) {

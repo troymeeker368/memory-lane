@@ -18,6 +18,7 @@ import {
   toUserNotificationRow,
   resolveWorkflowRecipients
 } from "@/lib/services/notifications-runtime";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { toEasternISO } from "@/lib/timezone";
 
 export { NOTIFICATION_EVENT_TYPES };
@@ -80,8 +81,13 @@ function mapNotificationError(error: unknown) {
   return text || "Unknown notification service error.";
 }
 
+function createNotificationWriteClient() {
+  // Notification inserts are service-only by RLS, so writes must go through the explicit gateway.
+  return createServiceRoleClient("notification_dispatch_write");
+}
+
 async function getExistingNotificationByEventKey(eventKey: string, serviceRole = true) {
-  const supabase = await createClient({ serviceRole });
+  const supabase = serviceRole ? createNotificationWriteClient() : await createClient();
   const { data, error } = await supabase.from("user_notifications").select("*").eq("event_key", eventKey).maybeSingle();
   if (error) throw new Error(mapNotificationError(error));
   return data ? toUserNotificationRow(data) : null;
@@ -96,8 +102,8 @@ export async function createNotification(input: CreateNotificationInput) {
   if (!title) throw new Error("Notification title is required.");
   if (!message) throw new Error("Notification message is required.");
 
-  const serviceRole = input.serviceRole ?? true;
-  const supabase = await createClient({ serviceRole });
+  const serviceRole = input.serviceRole !== false;
+  const supabase = serviceRole ? createNotificationWriteClient() : await createClient();
   const eventKey =
     normalizeText(input.eventKey) ??
     buildNotificationEventKey({
@@ -169,7 +175,7 @@ export async function createUserNotification(input: CreateUserNotificationInput)
     priority: input.priority ?? "medium",
     actionUrl: input.actionUrl ?? null,
     metadata: input.metadata,
-    serviceRole: input.serviceRole ?? true
+    serviceRole: input.serviceRole
   });
 }
 
@@ -357,7 +363,7 @@ export async function dispatchReminderNotifications(input?: {
   pofWindowHours?: number;
   carePlanWindowDays?: number;
 }) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createNotificationWriteClient();
   const now = new Date(input?.nowIso ?? toEasternISO());
   const enrollmentWindowHours = Math.max(12, input?.enrollmentWindowHours ?? 48);
   const pofWindowHours = Math.max(6, input?.pofWindowHours ?? 24);

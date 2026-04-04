@@ -5,9 +5,9 @@ import { canAccessClinicalDocumentationForRole, canAccessModule, canPerformModul
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { logSystemEvent } from "@/lib/services/system-event-service";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { toEasternDate, toEasternISO } from "@/lib/timezone";
 
 export const MEMBER_DOCUMENTS_BUCKET = "member-documents";
@@ -182,12 +182,28 @@ function buildManualUploadDocumentSource(uploadToken: string) {
   return `mcc_manual_upload:${uploadToken}`;
 }
 
-async function loadMemberFileRowById(memberFileId: string) {
+type MemberFilesClient = Awaited<ReturnType<typeof createClient>> | ReturnType<typeof createServiceRoleClient>;
+
+function createMemberFilesRecordClient() {
+  // Member file RPC/database mutations are service-only so storage and row state stay aligned.
+  return createServiceRoleClient("member_file_record_rpc");
+}
+
+function createMemberFilesStorageClient() {
+  // Signed URLs and object mutations must stay server-only and outside uploader-scoped RLS.
+  return createServiceRoleClient("member_file_storage");
+}
+
+async function loadMemberFileRowById(memberFileId: string, options?: { supabase?: MemberFilesClient }) {
   const normalized = String(memberFileId ?? "").trim();
   if (!normalized) return null;
 
-  const admin = createSupabaseAdminClient();
-  const { data, error } = await admin.from("member_files").select(MEMBER_FILE_ROW_SELECT).eq("id", normalized).maybeSingle();
+  const supabase = options?.supabase ?? (await createClient());
+  const { data, error } = await supabase
+    .from("member_files")
+    .select(MEMBER_FILE_ROW_SELECT)
+    .eq("id", normalized)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   return data;
 }
@@ -195,13 +211,14 @@ async function loadMemberFileRowById(memberFileId: string) {
 async function loadMemberFileRowByDocumentSource(input: {
   memberId: string;
   documentSource: string;
+  supabase?: MemberFilesClient;
 }) {
   const memberId = String(input.memberId ?? "").trim();
   const documentSource = String(input.documentSource ?? "").trim();
   if (!memberId || !documentSource) return null;
 
-  const admin = createSupabaseAdminClient();
-  const { data, error } = await admin
+  const supabase = input.supabase ?? (await createClient());
+  const { data, error } = await supabase
     .from("member_files")
     .select(MEMBER_FILE_ROW_SELECT)
     .eq("member_id", memberId)
@@ -217,7 +234,7 @@ export async function createSignedMemberDocumentUrl(objectPath: string, expiresI
   const normalized = String(objectPath ?? "").trim();
   if (!normalized) throw new Error("Storage object path is required.");
 
-  const admin = createSupabaseAdminClient();
+  const admin = createMemberFilesStorageClient();
   const { data, error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).createSignedUrl(normalized, expiresInSeconds);
   if (error || !data?.signedUrl) {
     throw new Error(error?.message ?? "Unable to create member file download URL.");
@@ -260,7 +277,7 @@ export async function backfillLegacyMemberFileStorage(row: LegacyMemberFileBackf
     });
   }
 
-  const admin = createSupabaseAdminClient();
+  const admin = createMemberFilesRecordClient();
   try {
     await invokeSupabaseRpcOrThrow<unknown>(admin, UPSERT_MEMBER_FILE_BY_SOURCE_RPC, {
       p_member_id: row.member_id,
@@ -311,7 +328,7 @@ export async function backfillLegacyMemberFileStorageBatch(input?: {
   actorUserId?: string | null;
 }) {
   const limit = Math.max(1, Math.min(500, Number(input?.limit ?? 100)));
-  const admin = createSupabaseAdminClient();
+  const admin = createMemberFilesRecordClient();
   const { data, error } = await admin
     .from("member_files")
     .select("id, member_id, file_name, file_type, file_data_url, storage_object_path")
@@ -359,7 +376,7 @@ export async function uploadMemberDocumentObject(input: {
   bytes: Buffer;
   contentType: string;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createMemberFilesStorageClient();
   const { error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).upload(input.objectPath, input.bytes, {
     contentType: input.contentType,
     upsert: true
@@ -372,7 +389,7 @@ export async function deleteMemberDocumentObject(objectPath: string) {
   const normalized = String(objectPath ?? "").trim();
   if (!normalized) return;
 
-  const admin = createSupabaseAdminClient();
+  const admin = createMemberFilesStorageClient();
   const { error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).remove([normalized]);
   if (error) throw new Error(error.message);
 }
@@ -381,7 +398,7 @@ export async function deleteMemberFileRecord(memberFileId: string) {
   const normalized = String(memberFileId ?? "").trim();
   if (!normalized) return;
 
-  const admin = createSupabaseAdminClient();
+  const admin = createMemberFilesRecordClient();
   try {
     await invokeSupabaseRpcOrThrow<unknown>(admin, DELETE_MEMBER_FILE_RECORD_RPC, {
       p_member_file_id: normalized
@@ -401,7 +418,7 @@ async function clearMemberFileStoragePointer(memberFileId: string) {
   const normalized = String(memberFileId ?? "").trim();
   if (!normalized) return { outcome: "skipped" as const };
 
-  const admin = createSupabaseAdminClient();
+  const admin = createMemberFilesRecordClient();
   const { data, error } = await admin
     .from("member_files")
     .update({
@@ -541,10 +558,10 @@ export async function upsertMemberFileByDocumentSource(input: {
   uploadedAtIso?: string | null;
   updatedAtIso?: string | null;
   additionalColumns?: Record<string, unknown>;
-  supabase?: Awaited<ReturnType<typeof createClient>>;
+  supabase?: MemberFilesClient;
 }) {
   const now = input.updatedAtIso ?? input.uploadedAtIso ?? toEasternISO();
-  const admin = input.supabase ?? createSupabaseAdminClient();
+  const admin = input.supabase ?? createMemberFilesRecordClient();
   type UpsertResultRow = {
     member_file_id: string;
     was_created: boolean;
@@ -613,12 +630,14 @@ async function loadPersistedMemberFileOrReturnVerificationPending(input: {
   uploadedByName?: string | null;
   uploadedAtIso: string;
   alertKey: string;
+  supabase?: MemberFilesClient;
 }) {
   const persisted =
-    (await loadMemberFileRowById(input.memberFileId)) ??
+    (await loadMemberFileRowById(input.memberFileId, { supabase: input.supabase })) ??
     (await loadMemberFileRowByDocumentSource({
       memberId: input.memberId,
-      documentSource: input.documentSource
+      documentSource: input.documentSource,
+      supabase: input.supabase
     }));
   if (persisted) {
     return {
@@ -823,7 +842,7 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
   const memberId = await resolveCanonicalMemberId(input.memberId, {
     actionLabel: "saveGeneratedMemberPdfToFiles"
   });
-  const admin = createSupabaseAdminClient();
+  const admin = createMemberFilesRecordClient();
   const defaultName =
     safeFileName(input.fileNameOverride ?? "") || buildDatedPdfFileName(input.documentLabel, input.memberName, now);
   const categoryOther = input.category === "Other" ? input.categoryOther ?? null : null;
@@ -925,7 +944,8 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
         uploadedByUserId: input.uploadedBy.id,
         uploadedByName: input.uploadedBy.name,
         uploadedAtIso: now,
-        alertKey: "generated_member_file_verification_pending"
+        alertKey: "generated_member_file_verification_pending",
+        supabase: admin
       });
       return {
         created: updated,
@@ -1007,7 +1027,8 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     uploadedByUserId: input.uploadedBy.id,
     uploadedByName: input.uploadedBy.name,
     uploadedAtIso: now,
-    alertKey: "generated_member_file_verification_pending"
+    alertKey: "generated_member_file_verification_pending",
+    supabase: admin
   });
 
   return {

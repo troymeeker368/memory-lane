@@ -24,6 +24,7 @@ import {
 } from "@/lib/permissions/core";
 import { canAccessNavItem, getNavItemByHref } from "@/lib/permissions/nav";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 type ProfileTimingOptions = {
   traceLabel?: string;
@@ -106,10 +107,6 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
   const supabase = await createClient();
   logTiming(traceLabel, "create-user-client", userClientStartedAt);
 
-  const serviceClientStartedAt = timingNow();
-  const serviceSupabase = await createClient({ serviceRole: true });
-  logTiming(traceLabel, "create-service-client", serviceClientStartedAt);
-
   const authStartedAt = timingNow();
   const {
     data: { user }
@@ -130,7 +127,7 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
   const legacySelect = "id, email, full_name, role, active, staff_id";
 
   const profileLookupStartedAt = timingNow();
-  const profileLookup = await serviceSupabase.from("profiles").select(baseSelect).eq("id", user.id).maybeSingle();
+  const profileLookup = await supabase.from("profiles").select(baseSelect).eq("id", user.id).maybeSingle();
   logTiming(traceLabel, "profile-role-lookup", profileLookupStartedAt);
 
   const { data: enrichedData, error: enrichedError } = profileLookup;
@@ -156,7 +153,7 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
 
   if (error) {
     const legacyLookupStartedAt = timingNow();
-    const fallback = await serviceSupabase.from("profiles").select(legacySelect).eq("id", user.id).maybeSingle();
+    const fallback = await supabase.from("profiles").select(legacySelect).eq("id", user.id).maybeSingle();
     logTiming(traceLabel, "profile-legacy-lookup", legacyLookupStartedAt);
     if (fallback.error) {
       throw new Error(`Failed to load profile row for authenticated user: ${getErrorMessage(error)}`);
@@ -203,8 +200,20 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
   const hasProfileLevelCustomPermissions = shouldLookupCustomPermissions;
 
   if (hasProfileLevelCustomPermissions) {
+    const permissionsSupabase =
+      role === "admin"
+        ? supabase
+        : (() => {
+            // Non-admin custom permission rows are intentionally not broadly readable via RLS.
+            const serviceClientStartedAt = timingNow();
+            const client = createServiceRoleClient("auth_custom_permissions_read");
+            logTiming(traceLabel, "create-service-client", serviceClientStartedAt, {
+              useCase: "auth_custom_permissions_read"
+            });
+            return client;
+          })();
     const permissionsStartedAt = timingNow();
-    const permissionsLookup = await serviceSupabase
+    const permissionsLookup = await permissionsSupabase
       .from("user_permissions")
       .select("module_key, can_view, can_create, can_edit, can_admin")
       .eq("user_id", user.id);

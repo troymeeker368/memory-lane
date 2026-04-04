@@ -16,6 +16,7 @@ import {
   MEMBER_FILE_CONTEXT_SELECT,
   POF_REQUEST_CONTEXT_SELECT
 } from "@/lib/services/notifications-selects";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 type JoinedNotificationRow = {
   display_name?: string | null;
@@ -68,6 +69,12 @@ type NotificationDbRow = {
 
 function normalizeMetadata(value: unknown) {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function createNotificationPrivilegedClient() {
+  // Recipient resolution crosses staff-owned workflow rows and user inbox rows that
+  // are intentionally hidden from arbitrary staff sessions by RLS.
+  return createServiceRoleClient("notification_workflow_context_read");
 }
 
 function requireNotificationContextRow(
@@ -175,14 +182,14 @@ export function toUserNotificationRow(row: NotificationDbRow): UserNotification 
 async function getActiveProfileIds(profileIds: string[]) {
   const ids = uniqueStrings(profileIds);
   if (ids.length === 0) return [] as string[];
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createNotificationPrivilegedClient();
   const { data, error } = await supabase.from("profiles").select("id").in("id", ids).eq("active", true);
   if (error) throw new Error(error.message);
   return uniqueStrings((data ?? []).map((row) => String(row.id)));
 }
 
 async function listFallbackAdminRecipientIds() {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createNotificationPrivilegedClient();
   const { data, error } = await supabase
     .from("profiles")
     .select("id")
@@ -195,7 +202,7 @@ async function listFallbackAdminRecipientIds() {
 async function queryOperationsRecipients(input: { memberId?: string | null }) {
   const memberId = normalizeText(input.memberId);
   if (!memberId) return [] as string[];
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createNotificationPrivilegedClient();
   const { data, error } = await supabase
     .from("documentation_tracker")
     .select("assigned_staff_user_id")
@@ -228,7 +235,7 @@ export async function resolveOperationsRecipients(input: { memberId?: string | n
 }
 
 async function loadEnrollmentContext(entityId: string, metadata: Record<string, JsonValue>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createNotificationPrivilegedClient();
   const { data, error } = await supabase
     .from("enrollment_packet_requests")
     .select(ENROLLMENT_PACKET_RECIPIENT_SELECT)
@@ -271,7 +278,7 @@ async function loadEnrollmentContext(entityId: string, metadata: Record<string, 
 }
 
 async function loadPofContext(entityType: string, entityId: string, metadata: Record<string, JsonValue>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createNotificationPrivilegedClient();
   if (entityType === "pof_request") {
     const { data, error } = await supabase
       .from("pof_requests")
@@ -364,7 +371,7 @@ async function loadPofContext(entityType: string, entityId: string, metadata: Re
 }
 
 async function loadCarePlanContext(entityId: string, metadata: Record<string, JsonValue>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createNotificationPrivilegedClient();
   const { data, error } = await supabase
     .from("care_plans")
     .select(CARE_PLAN_CONTEXT_SELECT)
@@ -404,7 +411,7 @@ async function loadCarePlanContext(entityId: string, metadata: Record<string, Js
 }
 
 async function loadIntakeContext(entityId: string, metadata: Record<string, JsonValue>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createNotificationPrivilegedClient();
   const { data, error } = await supabase
     .from("intake_assessments")
     .select(INTAKE_CONTEXT_SELECT)
@@ -446,7 +453,7 @@ async function loadIntakeContext(entityId: string, metadata: Record<string, Json
 }
 
 async function loadMemberFileContext(entityId: string, metadata: Record<string, JsonValue>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createNotificationPrivilegedClient();
   const { data, error } = await supabase
     .from("member_files")
     .select(MEMBER_FILE_CONTEXT_SELECT)
@@ -651,7 +658,10 @@ export async function listUserNotificationsForUser(
   const normalizedUserId = normalizeText(userId);
   if (!normalizedUserId) throw new Error("User ID is required.");
   const limit = Math.max(1, Math.min(options?.limit ?? 50, 200));
-  const supabase = await createClient({ serviceRole: options?.serviceRole });
+  const supabase =
+    options?.serviceRole === true
+      ? createServiceRoleClient("notification_user_inbox_read")
+      : await createClient();
 
   let query = supabase
     .from("user_notifications")

@@ -557,13 +557,18 @@ test("successful public submit redirects with absolute URL normalization", () =>
 
 test("already-filed public enrollment packet submissions use the replay-safe confirmation path", () => {
   const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const finalizeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-finalize.ts");
 
   assert.equal(
     runtimeSource.includes('throw new Error("This enrollment packet has already been submitted.");'),
     false
   );
   assert.equal(
-    runtimeSource.includes("return buildCommittedEnrollmentPacketReplayResult({ request });"),
+    finalizeSource.includes("export async function buildCommittedEnrollmentPacketReplayResult"),
+    true
+  );
+  assert.equal(
+    runtimeSource.includes("return buildCommittedEnrollmentPacketReplayResult({"),
     true
   );
 });
@@ -581,25 +586,27 @@ test("public submit guard uses a uuid-safe entity id for ip-scoped system events
 test("completed enrollment packet artifact can be downloaded from the public confirmation flow", () => {
   const publicServiceSource = readWorkspaceFile("lib/services/enrollment-packets-public.ts");
   const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const artifactRuntimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-artifacts.ts");
   const routeSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/completed-packet/route.ts");
 
   assert.equal(publicServiceSource.includes("getPublicCompletedEnrollmentPacketArtifact"), true);
-  assert.equal(runtimeSource.includes("export async function getPublicCompletedEnrollmentPacketArtifact"), true);
-  assert.equal(runtimeSource.includes('.eq("upload_category", "completed_packet")'), true);
+  assert.equal(runtimeSource.includes("getPublicCompletedEnrollmentPacketArtifact"), true);
+  assert.equal(artifactRuntimeSource.includes("export async function getPublicCompletedEnrollmentPacketArtifact"), true);
+  assert.equal(artifactRuntimeSource.includes('.eq("upload_category", "completed_packet")'), true);
   assert.equal(routeSource.includes(".download(artifact.objectPath)"), true);
   assert.equal(routeSource.includes("attachment; filename="), true);
 });
 
 test("completion cascade centralizes submitted notification and downstream repair-safe sync", () => {
   const cascadeSource = readWorkspaceFile("lib/services/enrollment-packet-completion-cascade.ts");
-  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const cascadeRuntimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-cascade.ts");
   const mappingRuntimeSource = readWorkspaceFile("lib/services/enrollment-packet-mapping-runtime.ts");
 
   assert.equal(cascadeSource.includes("repairCommittedEnrollmentPacketCompletions"), true);
   assert.equal(cascadeSource.includes("runEnrollmentPacketDownstreamMapping({"), true);
   assert.equal(cascadeSource.includes("recordEnrollmentPacketSubmittedMilestone({"), true);
   assert.equal(cascadeSource.includes("syncEnrollmentPacketLeadActivityOrQueue({"), true);
-  assert.equal(runtimeSource.includes("runEnrollmentPacketCompletionCascade({"), true);
+  assert.equal(cascadeRuntimeSource.includes("runEnrollmentPacketCompletionCascade({"), true);
   assert.equal(
     mappingRuntimeSource.includes('.eq("event_type", "enrollment_packet_submitted")'),
     true
@@ -649,11 +656,15 @@ test("lead conversion canonical SQL restores member health profile shell creatio
 
 test("canonical enrollment packet submit path emits the submitted workflow milestone and relies on strict lead conversion RPC shells", () => {
   const publicRuntimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const postCommitSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-post-commit.ts");
+  const cascadeRuntimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-cascade.ts");
   const completionCascadeSource = readWorkspaceFile("lib/services/enrollment-packet-completion-cascade.ts");
   const leadConversionSource = readWorkspaceFile("lib/services/sales-lead-conversion-supabase.ts");
   const mappingRuntimeSource = readWorkspaceFile("lib/services/enrollment-packet-mapping-runtime.ts");
 
-  assert.equal(publicRuntimeSource.includes("runEnrollmentPacketCompletionCascade"), true);
+  assert.equal(publicRuntimeSource.includes("completeCommittedPublicEnrollmentPacketPostCommitWork"), true);
+  assert.equal(postCommitSource.includes("runEnrollmentPacketCascadeAndBuildResult"), true);
+  assert.equal(cascadeRuntimeSource.includes("runEnrollmentPacketCompletionCascade"), true);
   assert.equal(completionCascadeSource.includes("recordEnrollmentPacketSubmittedMilestone"), true);
   assert.equal(mappingRuntimeSource.includes('eventType: "enrollment_packet_submitted"'), true);
   assert.equal(leadConversionSource.includes("ensureLeadConversionMemberShellRows"), false);
@@ -676,6 +687,7 @@ test("historical enrollment packet repair is exposed only through the canonical 
   const memberFileSource = readWorkspaceFile("lib/services/member-files.ts");
   const scriptSource = readWorkspaceFile("scripts/repair-enrollment-packet-completions.ts");
   const publicRuntimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const finalizeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-finalize.ts");
   const packageSource = readWorkspaceFile("package.json");
   const replayMigrationSource = readWorkspaceFile(
     "supabase/migrations/0149_enrollment_packet_contact_replay_idempotency.sql"
@@ -735,7 +747,7 @@ test("historical enrollment packet repair is exposed only through the canonical 
     true
   );
   assert.equal(
-    publicRuntimeSource.includes("repairEnrollmentPacketCompletionCascade"),
+    finalizeSource.includes("buildCommittedEnrollmentPacketReplayResult"),
     true
   );
   assert.equal(

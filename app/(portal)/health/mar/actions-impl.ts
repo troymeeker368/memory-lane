@@ -10,7 +10,6 @@ import {
   saveGeneratedMemberPdfToFiles
 } from "@/lib/services/member-files";
 import { MAR_MONTHLY_REPORT_TYPES } from "@/lib/services/mar-monthly-report";
-import { buildMarMonthlyReportPdfDataUrl } from "@/lib/services/mar-monthly-report-pdf";
 import { refreshMarWorkflowData } from "@/lib/services/mar-workflow-read";
 import {
   createPrnOrderAndAdministration,
@@ -119,6 +118,11 @@ const monthlyMarReportSchema = z.object({
   reportType: z.enum(MAR_MONTHLY_REPORT_TYPES),
   saveToMemberFiles: z.boolean().optional().default(true)
 });
+
+async function loadMarMonthlyReportPdfBuilder() {
+  const { buildMarMonthlyReportPdfDataUrl } = await import("@/lib/documents/mar/mar-monthly-report-pdf");
+  return buildMarMonthlyReportPdfDataUrl;
+}
 
 async function insertAudit(
   action: string,
@@ -429,6 +433,7 @@ export async function generateMonthlyMarReportPdfAction(raw: z.infer<typeof mont
   const generatedAtIso = toEasternISO();
 
   try {
+    const buildMarMonthlyReportPdfDataUrl = await loadMarMonthlyReportPdfBuilder();
     const generated = await buildMarMonthlyReportPdfDataUrl({
       memberId: payload.data.memberId,
       month: payload.data.month,

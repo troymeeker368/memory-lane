@@ -113,8 +113,8 @@ export async function getHealthDashboardData(options?: {
 
   const [marActionRows, marRecentRows, bloodSugarResult, activeMemberCountResult, carePlans, incidents, progressNotes, careAlertRows] =
     await Promise.all([
-      getHealthDashboardMarActionRows({ serviceRole: true, hoursAhead: 12 }),
-      getHealthDashboardMarRecentRows({ serviceRole: true, limit: 8 }),
+      getHealthDashboardMarActionRows({ hoursAhead: 12 }),
+      getHealthDashboardMarRecentRows({ limit: 8 }),
       supabase
         .from("v_blood_sugar_logs_detailed")
         .select("id, checked_at, member_id, member_name, reading_mg_dl, nurse_name, notes")
