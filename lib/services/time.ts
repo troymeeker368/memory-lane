@@ -135,13 +135,12 @@ async function loadSupabaseCanonicalPunchRows(input: {
   period?: PayPeriod;
   limit?: number;
 }) {
-  let supabase = await createClient();
-  let { data: punchesData, error: punchesError } = await buildPunchesQuery(supabase, input);
+  const supabase = await createClient();
+  const { data: punchesData, error: punchesError } = await buildPunchesQuery(supabase, input);
   if (punchesError && isStackDepthLimitError(punchesError)) {
-    supabase = await createClient({ serviceRole: true });
-    const retry = await buildPunchesQuery(supabase, input);
-    punchesData = retry.data;
-    punchesError = retry.error;
+    throw new Error(
+      "Time punch history hit a Postgres stack depth limit under user-scoped access. Fix the underlying RLS/read model path instead of retrying with service_role."
+    );
   }
   if (punchesError) throw new Error(punchesError.message);
   const punchRows = (punchesData ?? []) as SupabasePunchRow[];
@@ -151,18 +150,14 @@ async function loadSupabaseCanonicalPunchRows(input: {
     .filter((value): value is string => Boolean(value));
   const geofenceByLinkedId = new Map<string, { within_fence: boolean; distance_meters: number | null; note: string | null }>();
   if (linkedIds.length > 0) {
-    let { data: geofenceRows, error: geofenceError } = await supabase
+    const { data: geofenceRows, error: geofenceError } = await supabase
       .from("time_punches")
       .select("id, within_fence, distance_meters, note")
       .in("id", linkedIds);
     if (geofenceError && isStackDepthLimitError(geofenceError)) {
-      const serviceSupabase = await createClient({ serviceRole: true });
-      const retry = await serviceSupabase
-        .from("time_punches")
-        .select("id, within_fence, distance_meters, note")
-        .in("id", linkedIds);
-      geofenceRows = retry.data;
-      geofenceError = retry.error;
+      throw new Error(
+        "Time punch geofence lookups hit a Postgres stack depth limit under user-scoped access. Fix the underlying RLS/read model path instead of retrying with service_role."
+      );
     }
     if (geofenceError) throw new Error(geofenceError.message);
     (geofenceRows ?? []).forEach((row) => {

@@ -33,6 +33,7 @@ import {
   selectMemberWithFallback
 } from "@/lib/services/member-command-center-member-queries";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 
 const MEMBER_COMMAND_CENTER_INDEX_PROFILE_SELECT = "member_id, profile_image_url";
@@ -714,7 +715,7 @@ export async function backfillMissingMemberCommandCenterRowsSupabase(memberIds: 
     };
   }
 
-  const writeSupabase = await createClient({ serviceRole: true });
+  const writeSupabase = createServiceRoleClient("member_command_center_service_write");
   const targetMemberIds = targetMembers.map((member) => member.id);
   const [{ data: existingCommandCenters, error: commandCentersError }, { data: existingSchedules, error: schedulesError }] =
     await Promise.all([

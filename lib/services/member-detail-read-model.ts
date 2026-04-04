@@ -114,6 +114,12 @@ function isStackDepthLimitError(message: string | null | undefined) {
   return /stack depth limit exceeded/i.test(String(message ?? ""));
 }
 
+function memberDetailRlsBoundaryError() {
+  return new Error(
+    "Member detail read hit a recursive RLS path. Fix the underlying Supabase policy/current_role boundary instead of retrying with service_role."
+  );
+}
+
 function toCount(value: number | string | null | undefined) {
   return Number(value ?? 0);
 }
@@ -240,17 +246,7 @@ export async function getMemberDetail(
   ].some((message) => isStackDepthLimitError(message));
 
   if (hasStackDepthResult) {
-    const serviceSupabase = await createClient({ serviceRole: true });
-    [
-      dailyActivitiesResult,
-      toiletsResult,
-      showersResult,
-      transportationResult,
-      bloodSugarResult,
-      ancillaryResult,
-      assessmentsResult,
-      photosResult
-    ] = await loadMemberRelations(serviceSupabase);
+    throw memberDetailRlsBoundaryError();
   }
 
   if (dailyActivitiesResult.error) throw new Error(dailyActivitiesResult.error.message);

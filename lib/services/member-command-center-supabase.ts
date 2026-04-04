@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { MEMBER_CONTACT_SELECT_WITH_PAYOR } from "@/lib/services/member-contact-payor-schema";
 import {
   backfillMissingMemberCommandCenterRowsSupabase,
@@ -489,7 +490,7 @@ export async function deleteMemberContactSupabase(id: string) {
 
 export async function addMemberAllergySupabase(input: Omit<MemberAllergyRow, "id">) {
   const canonicalMemberId = await resolveMccMemberId(input.member_id, "addMemberAllergySupabase");
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("member_command_center_service_write");
   const { data, error } = await supabase
     .from("member_allergies")
     .insert({ ...input, member_id: canonicalMemberId, id: toId("allergy") })
@@ -500,14 +501,14 @@ export async function addMemberAllergySupabase(input: Omit<MemberAllergyRow, "id
 }
 
 export async function updateMemberAllergySupabase(id: string, patch: Partial<MemberAllergyRow>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("member_command_center_service_write");
   const { data, error } = await supabase.from("member_allergies").update(patch).eq("id", id).select("*").maybeSingle();
   if (error) throw new Error(error.message);
   return (data as MemberAllergyRow | null) ?? null;
 }
 
 export async function deleteMemberAllergySupabase(id: string) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("member_command_center_service_write");
   const { error } = await supabase.from("member_allergies").delete().eq("id", id);
   if (error) throw new Error(error.message);
   return true;

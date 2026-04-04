@@ -47,7 +47,7 @@ async function resolveScheduleMemberIdsBulk(rawIds: Array<string | null | undefi
   const normalizedIds = normalizeDistinctUuidIds(rawIds);
   if (normalizedIds.length === 0) return [] as string[];
 
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = await createClient();
   const { data: memberRows, error: memberRowsError } = await supabase.from("members").select("id").in("id", normalizedIds);
   if (memberRowsError) {
     throw new Error(`${actionLabel} failed member.id lookup: ${memberRowsError.message}`);
@@ -64,8 +64,7 @@ async function resolveScheduleMemberIdsBulk(rawIds: Array<string | null | undefi
   const unresolvedIds = normalizedIds.filter((id) => !resolvedMemberIdsByInput.has(id));
   if (unresolvedIds.length > 0) {
     const leadLinks = await listCanonicalMemberLinksForLeadIds(unresolvedIds, {
-      actionLabel: `${actionLabel}:lead-links`,
-      serviceRole: true
+      actionLabel: `${actionLabel}:lead-links`
     });
     unresolvedIds.forEach((id) => {
       const memberId = leadLinks.get(id)?.memberId ?? null;
@@ -87,7 +86,7 @@ async function resolveScheduleMemberIdsBulk(rawIds: Array<string | null | undefi
 
 
 async function resolveScheduleMemberId(rawMemberId: string, actionLabel: string) {
-  return resolveCanonicalMemberId(rawMemberId, { actionLabel, serviceRole: true });
+  return resolveCanonicalMemberId(rawMemberId, { actionLabel });
 }
 
 type PostgrestErrorLike = {

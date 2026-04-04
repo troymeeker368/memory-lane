@@ -85,12 +85,8 @@ export async function resolveCurrentHomeLanding(
     "id, email, full_name, role, active, is_active, status, password_set_at, has_custom_permissions";
   const legacySelect = "id, email, full_name, role, active";
 
-  const serviceClientStartedAt = timingNow();
-  const serviceSupabase = await createClient({ serviceRole: true });
-  logTiming(traceLabel, "create-service-client", serviceClientStartedAt);
-
   const profileLookupStartedAt = timingNow();
-  const profileLookup = await serviceSupabase.from("profiles").select(baseSelect).eq("id", user.id).maybeSingle();
+  const profileLookup = await supabase.from("profiles").select(baseSelect).eq("id", user.id).maybeSingle();
   logTiming(traceLabel, "profile-role-lookup", profileLookupStartedAt);
 
   const { data: enrichedData, error: enrichedError } = profileLookup;
@@ -112,7 +108,7 @@ export async function resolveCurrentHomeLanding(
 
   if (error) {
     const legacyLookupStartedAt = timingNow();
-    const fallback = await serviceSupabase.from("profiles").select(legacySelect).eq("id", user.id).maybeSingle();
+    const fallback = await supabase.from("profiles").select(legacySelect).eq("id", user.id).maybeSingle();
     logTiming(traceLabel, "profile-legacy-lookup", legacyLookupStartedAt);
     if (fallback.error) {
       throw new Error(`Failed to load profile row for authenticated user: ${getErrorMessage(error)}`);
@@ -153,10 +149,10 @@ export async function resolveCurrentHomeLanding(
 
   if (hasProfileLevelCustomPermissions) {
     const permissionsLookupStartedAt = timingNow();
-    const result = await serviceSupabase
+    const result = await supabase
       .from("user_permissions")
       .select("module_key, can_view")
-      .eq("user_id", user.id);
+      .eq("user_id", data.id);
     logTiming(traceLabel, "permission-row-lookup", permissionsLookupStartedAt);
     permissionRows = result.data as typeof permissionRows;
     permissionsError = result.error;

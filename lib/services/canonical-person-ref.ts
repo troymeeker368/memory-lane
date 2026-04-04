@@ -2,6 +2,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { assertCanonicalMemberResolverInput } from "@/lib/services/canonical-member-ref-input";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { toEasternDate } from "@/lib/timezone";
 import type {
   CanonicalExpectedIdentity,
@@ -27,13 +28,6 @@ type MemberIdentityRow = {
   enrollment_date?: string | null;
   dob?: string | null;
   source_lead_id: string | null;
-};
-
-type PostgrestErrorLike = {
-  code?: string | null;
-  message?: string | null;
-  details?: string | null;
-  hint?: string | null;
 };
 
 export type CanonicalMemberLink = {
@@ -75,17 +69,6 @@ function duplicateLeadLinkError(actionLabel: string, leadId: string, memberIds: 
   const normalizedIds = memberIds.filter(Boolean).join(", ");
   return new Error(
     `${actionLabel} found multiple members linked to lead ${leadId}. Clean duplicate members.source_lead_id rows before continuing. Conflicting member ids: ${normalizedIds}.`
-  );
-}
-
-function isRlsRecursionOrTimeoutError(error: PostgrestErrorLike | null | undefined) {
-  const code = String(error?.code ?? "");
-  const text = [error?.message, error?.details, error?.hint].filter(Boolean).join(" ").toLowerCase();
-  return (
-    code === "54001" ||
-    code === "57014" ||
-    text.includes("stack depth limit exceeded") ||
-    text.includes("canceling statement due to statement timeout")
   );
 }
 
@@ -145,51 +128,43 @@ function toCanonicalPersonRef(input: {
   };
 }
 
+async function getCanonicalIdentityClient(serviceRole = false) {
+  if (serviceRole) {
+    return createServiceRoleClient("canonical_identity_resolution_read");
+  }
+  return createClient();
+}
+
 async function getMemberById(memberId: string, serviceRole = false) {
-  const supabase = await createClient({ serviceRole });
+  const supabase = await getCanonicalIdentityClient(serviceRole);
   const { data, error } = await supabase
     .from("members")
     .select("id, display_name, status, source_lead_id")
     .eq("id", memberId)
     .maybeSingle();
-  if (error) {
-    if (!serviceRole && isRlsRecursionOrTimeoutError(error)) {
-      return await getMemberById(memberId, true);
-    }
-    throw new Error(error.message);
-  }
+  if (error) throw new Error(error.message);
   return (data as MemberIdentityRow | null) ?? null;
 }
 
 async function getLeadById(leadId: string, serviceRole = false) {
-  const supabase = await createClient({ serviceRole });
+  const supabase = await getCanonicalIdentityClient(serviceRole);
   const { data, error } = await supabase
     .from("leads")
     .select("id, member_name, stage, status")
     .eq("id", leadId)
     .maybeSingle();
-  if (error) {
-    if (!serviceRole && isRlsRecursionOrTimeoutError(error)) {
-      return await getLeadById(leadId, true);
-    }
-    throw new Error(error.message);
-  }
+  if (error) throw new Error(error.message);
   return (data as LeadIdentityRow | null) ?? null;
 }
 
 async function getMemberByLeadId(leadId: string, serviceRole = false) {
-  const supabase = await createClient({ serviceRole });
+  const supabase = await getCanonicalIdentityClient(serviceRole);
   const { data, error } = await supabase
     .from("members")
     .select("id, display_name, status, enrollment_date, dob, source_lead_id")
     .eq("source_lead_id", leadId)
     .limit(2);
-  if (error) {
-    if (!serviceRole && isRlsRecursionOrTimeoutError(error)) {
-      return await getMemberByLeadId(leadId, true);
-    }
-    throw new Error(error.message);
-  }
+  if (error) throw new Error(error.message);
   const rows = (data ?? []) as MemberIdentityRow[];
   if (rows.length > 1) {
     throw duplicateLeadLinkError("getMemberByLeadId", leadId, rows.map((row) => row.id));
@@ -221,7 +196,7 @@ export async function ensureCanonicalMemberForLead(
   }
 
   const serviceRole = Boolean(input.serviceRole);
-  const supabase = await createClient({ serviceRole });
+  const supabase = await getCanonicalIdentityClient(serviceRole);
   const existingMember = await getMemberByLeadId(canonicalLead.leadId, serviceRole);
   const { data: leadRow, error: leadError } = await supabase
     .from("leads")
@@ -276,7 +251,7 @@ export async function listCanonicalMemberLinksForLeadIds(
     return new Map<string, CanonicalMemberLink>();
   }
 
-  const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
+  const supabase = await getCanonicalIdentityClient(Boolean(options?.serviceRole));
   const { data, error } = await supabase
     .from("members")
     .select("id, display_name, status, source_lead_id")

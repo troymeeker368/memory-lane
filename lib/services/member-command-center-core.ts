@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createClient } from "@/lib/supabase/server";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import {
   buildMemberContactsSchemaOutOfDateError,
@@ -33,7 +33,7 @@ export type EnsureCanonicalMemberOptions = {
 
 export async function getMccClient(options?: EnsureCanonicalMemberOptions) {
   if (options?.serviceRole) {
-    return createSupabaseAdminClient();
+    return createServiceRoleClient("member_command_center_service_write");
   }
   return createClient();
 }

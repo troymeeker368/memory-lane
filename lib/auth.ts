@@ -24,7 +24,6 @@ import {
 } from "@/lib/permissions/core";
 import { canAccessNavItem, getNavItemByHref } from "@/lib/permissions/nav";
 import { createClient } from "@/lib/supabase/server";
-import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 type ProfileTimingOptions = {
   traceLabel?: string;
@@ -200,23 +199,11 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
   const hasProfileLevelCustomPermissions = shouldLookupCustomPermissions;
 
   if (hasProfileLevelCustomPermissions) {
-    const permissionsSupabase =
-      role === "admin"
-        ? supabase
-        : (() => {
-            // Non-admin custom permission rows are intentionally not broadly readable via RLS.
-            const serviceClientStartedAt = timingNow();
-            const client = createServiceRoleClient("auth_custom_permissions_read");
-            logTiming(traceLabel, "create-service-client", serviceClientStartedAt, {
-              useCase: "auth_custom_permissions_read"
-            });
-            return client;
-          })();
     const permissionsStartedAt = timingNow();
-    const permissionsLookup = await permissionsSupabase
+    const permissionsLookup = await supabase
       .from("user_permissions")
       .select("module_key, can_view, can_create, can_edit, can_admin")
-      .eq("user_id", user.id);
+      .eq("user_id", data.id);
     logTiming(traceLabel, "permission-row-lookup", permissionsStartedAt);
     permissionsRows = permissionsLookup.data as typeof permissionsRows;
     permissionsError = permissionsLookup.error;

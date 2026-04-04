@@ -1,6 +1,7 @@
 import { ensureMemberHealthProfileSupabase } from "@/lib/services/member-health-profiles-supabase";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
 import {
@@ -26,6 +27,10 @@ export type MhpWriteActor = {
   actorUserId?: string | null;
   actorName?: string | null;
 };
+
+function getMemberHealthProfileWriteClient() {
+  return createServiceRoleClient("member_health_profile_domain_write");
+}
 
 function isUuid(value: string | null | undefined) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value ?? ""));
@@ -155,7 +160,7 @@ export async function updateMemberHealthProfileByMemberIdSupabase(input: {
   actor?: MhpWriteActor;
 }) {
   const profile = await ensureMemberHealthProfileSupabase(input.memberId, { serviceRole: true });
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = getMemberHealthProfileWriteClient();
   const { data, error } = await supabase
     .from("member_health_profiles")
     .update(input.patch)
@@ -234,7 +239,7 @@ export async function countMemberDiagnosesSupabase(memberId: string) {
 }
 
 export async function createMemberDiagnosisSupabase(record: Record<string, unknown>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = getMemberHealthProfileWriteClient();
   const { data, error } = await supabase.from("member_diagnoses").insert(record).select(MEMBER_DIAGNOSIS_SELECT).single();
   if (error) throw new Error(error.message);
   await recordMhpWriteEvent({
@@ -248,7 +253,7 @@ export async function createMemberDiagnosisSupabase(record: Record<string, unkno
 }
 
 export async function updateMemberDiagnosisSupabase(id: string, patch: Record<string, unknown>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = getMemberHealthProfileWriteClient();
   const { data, error } = await supabase
     .from("member_diagnoses")
     .update(patch)
@@ -269,7 +274,7 @@ export async function updateMemberDiagnosisSupabase(id: string, patch: Record<st
 }
 
 export async function deleteMemberDiagnosisSupabase(id: string) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = getMemberHealthProfileWriteClient();
   const { data, error } = await supabase
     .from("member_diagnoses")
     .delete()
@@ -290,7 +295,7 @@ export async function deleteMemberDiagnosisSupabase(id: string) {
 }
 
 export async function createMemberMedicationSupabase(record: Record<string, unknown>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = getMemberHealthProfileWriteClient();
   const { data, error } = await supabase
     .from("member_medications")
     .insert(record)
@@ -308,7 +313,7 @@ export async function createMemberMedicationSupabase(record: Record<string, unkn
 }
 
 export async function updateMemberMedicationSupabase(id: string, patch: Record<string, unknown>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = getMemberHealthProfileWriteClient();
   const { data, error } = await supabase
     .from("member_medications")
     .update(patch)
@@ -329,7 +334,7 @@ export async function updateMemberMedicationSupabase(id: string, patch: Record<s
 }
 
 export async function deleteMemberMedicationSupabase(id: string) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = getMemberHealthProfileWriteClient();
   const { data, error } = await supabase
     .from("member_medications")
     .delete()
@@ -350,7 +355,7 @@ export async function deleteMemberMedicationSupabase(id: string) {
 }
 
 export async function createMemberAllergySupabase(record: Record<string, unknown>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = getMemberHealthProfileWriteClient();
   const { data, error } = await supabase.from("member_allergies").insert(record).select(MEMBER_ALLERGY_SELECT).single();
   if (error) throw new Error(error.message);
   await recordMhpWriteEvent({
@@ -364,7 +369,7 @@ export async function createMemberAllergySupabase(record: Record<string, unknown
 }
 
 export async function updateMemberAllergySupabase(id: string, patch: Record<string, unknown>) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = getMemberHealthProfileWriteClient();
   const { data, error } = await supabase
     .from("member_allergies")
     .update(patch)
@@ -385,7 +390,7 @@ export async function updateMemberAllergySupabase(id: string, patch: Record<stri
 }
 
 export async function deleteMemberAllergySupabase(id: string) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = getMemberHealthProfileWriteClient();
   const { data, error } = await supabase
     .from("member_allergies")
     .delete()
