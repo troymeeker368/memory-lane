@@ -191,7 +191,7 @@ export async function listBillingPayorContactsForMembers(
   const results = new Map<string, BillingPayorContact>();
   if (canonicalMemberIds.length === 0) return results;
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("billing_payor_contact_workflow");
   const { data, error } = await admin
     .from("member_contacts")
     .select("id, member_id, contact_name, relationship_to_member, email, cellular_number, work_number, home_number, street_address, city, state, zip, is_payor")
@@ -257,7 +257,7 @@ export async function setBillingPayorContact(input: {
   reason?: string | null;
 }) {
   const canonicalMemberId = await resolveBillingMemberId(input.memberId, "setBillingPayorContact");
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("billing_payor_contact_workflow");
   const contactId = clean(input.contactId);
   try {
     await invokeSupabaseRpcOrThrow<unknown>(admin, SET_MEMBER_CONTACT_PAYOR_RPC, {

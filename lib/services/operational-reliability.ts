@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { toEasternISO } from "@/lib/timezone";
 import { sendEnrollmentPacketRequest } from "@/lib/services/enrollment-packets-sender";
 import { sendCarePlanToCaregiverForSignature } from "@/lib/services/care-plan-esign";
@@ -185,7 +185,7 @@ export async function listStuckEnrollmentPacketRequests(options?: {
   olderThanMinutes?: number;
   limit?: number;
 }) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("operational_reliability_read");
   const olderThanMinutes = Math.max(5, options?.olderThanMinutes ?? 15);
   const limit = Math.min(100, Math.max(1, options?.limit ?? 25));
   const { data, error } = await supabase
@@ -212,7 +212,7 @@ export async function listStuckPofRequests(options?: {
   olderThanMinutes?: number;
   limit?: number;
 }) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("operational_reliability_read");
   const olderThanMinutes = Math.max(5, options?.olderThanMinutes ?? 15);
   const limit = Math.min(100, Math.max(1, options?.limit ?? 25));
   const { data, error } = await supabase
@@ -239,7 +239,7 @@ export async function listStuckCarePlanRequests(options?: {
   olderThanMinutes?: number;
   limit?: number;
 }) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("operational_reliability_read");
   const olderThanMinutes = Math.max(5, options?.olderThanMinutes ?? 30);
   const limit = Math.min(100, Math.max(1, options?.limit ?? 25));
   const { data, error } = await supabase
@@ -266,7 +266,7 @@ export async function listRecentBillingWorkflowFailures(options?: {
   lookbackHours?: number;
   limit?: number;
 }) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("operational_reliability_read");
   const lookbackHours = Math.max(1, options?.lookbackHours ?? 72);
   const limit = Math.min(100, Math.max(1, options?.limit ?? 25));
   const since = new Date(Date.now() - lookbackHours * 60 * 60 * 1000).toISOString();
@@ -289,7 +289,7 @@ export async function listRecentBillingWorkflowFailures(options?: {
 }
 
 export async function getOperationalReliabilitySummary(): Promise<OperationalReliabilitySummary> {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("operational_reliability_read");
   const [
     { count: pendingEnrollmentPackets, error: pendingEnrollmentError },
     { count: failedEnrollmentPackets, error: failedEnrollmentError },

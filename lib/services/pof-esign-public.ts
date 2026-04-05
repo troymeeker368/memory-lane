@@ -414,7 +414,7 @@ export async function submitPublicPofSignature(input: SubmitPublicPofSignatureIn
     const rotatedToken = hashToken(generateSigningToken());
     const consumedTokenHash = hashToken(token);
     const expectedMemberFileId = nextMemberFileId();
-    const admin = createSupabaseAdminClient();
+    const admin = createSupabaseAdminClient("pof_signature_workflow");
     let finalizedRaw: unknown;
     try {
       finalizedRaw = await invokeSupabaseRpcOrThrow<unknown>(admin, "rpc_finalize_pof_signature", {

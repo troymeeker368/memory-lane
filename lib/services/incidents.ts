@@ -30,7 +30,7 @@ import {
   type IncidentStatus
 } from "@/lib/services/incident-shared";
 import { logSystemEvent } from "@/lib/services/system-event-service";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { toEasternISO } from "@/lib/timezone";
 export {
   INCIDENT_CATEGORY_OPTIONS,
@@ -116,7 +116,7 @@ function mapIncidentDetail(row: IncidentRow, history: IncidentHistoryRow[]): Inc
 }
 
 async function getServiceClient() {
-  return createClient({ serviceRole: true });
+  return createServiceRoleClient("incident_workflow");
 }
 
 async function loadIncidentRow(incidentId: string) {

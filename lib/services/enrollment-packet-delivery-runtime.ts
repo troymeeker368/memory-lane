@@ -17,7 +17,7 @@ export async function markEnrollmentPacketDeliveryState(input: {
   attemptAt: string;
   expectedCurrentStatus?: EnrollmentPacketStatus | null;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   try {
     type TransitionResultRow = {
       packet_id: string;

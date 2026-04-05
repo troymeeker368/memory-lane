@@ -65,7 +65,7 @@ async function listMembersMissingEnrollmentPacketOperationalShells(memberIds: st
   );
   if (normalizedMemberIds.length === 0) return new Set<string>();
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const [{ data: mccRows, error: mccError }, { data: attendanceRows, error: attendanceError }, { data: mhpRows, error: mhpError }] =
     await Promise.all([
       admin.from("member_command_centers").select("member_id").in("member_id", normalizedMemberIds),
@@ -94,7 +94,7 @@ async function hasLeadCompletionActivity(input: {
   leadId: string;
   packetId: string;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("lead_activities")
     .select("id")
@@ -115,7 +115,7 @@ async function listPacketsMissingSubmittedSenderNotifications(input: {
   );
   if (normalizedPacketIds.length === 0) return new Set<string>();
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("user_notifications")
     .select("entity_id, recipient_user_id")
@@ -148,7 +148,7 @@ async function listPacketsMissingLeadCompletionActivity(input: {
   const leadIds = Array.from(input.packetIdsByLeadId.keys());
   if (leadIds.length === 0) return new Set<string>();
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("lead_activities")
     .select("lead_id, notes")
@@ -188,7 +188,7 @@ async function listPacketsMissingEnrollmentPacketMemberFileLinks(input: {
   );
   if (normalizedPacketIds.length === 0) return new Set<string>();
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data: uploadRows, error: uploadError } = await admin
     .from("enrollment_packet_uploads")
     .select("packet_id, member_file_id")
@@ -233,7 +233,7 @@ async function resolveCaregiverSignatureName(input: {
   packetId: string;
   fallbackName: string | null | undefined;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_signatures")
     .select("signer_name")
@@ -499,7 +499,7 @@ export async function repairCommittedEnrollmentPacketCompletions(input?: {
 export async function listCommittedEnrollmentPacketCompletionRepairCandidates(input?: {
   limit?: number;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const limit = Math.max(1, Math.min(100, Number(input?.limit ?? 25)));
   const candidateIds = new Set<string>();
   const pageSize = Math.max(25, Math.min(100, limit));

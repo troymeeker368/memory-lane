@@ -179,7 +179,7 @@ function buildNormalizedPayload(fields: EnrollmentPacketFieldsForMapping): Enrol
   };
 }
 export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMappingRequest): Promise<EnrollmentPacketMappingSummary> {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const now = toEasternISO();
   const payload = buildNormalizedPayload(input.fields);
   const records: MappingRecord[] = [];

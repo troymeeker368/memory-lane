@@ -81,7 +81,7 @@ export async function listOperationalEnrollmentPackets(input?: {
   limit?: number;
   includeCompleted?: boolean;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const normalizedStatus = normalizeStatusFilter(input);
   const searchNeedle = clean(input?.search)?.toLowerCase() ?? null;
   const normalizedLeadId = clean(input?.leadId);
@@ -140,7 +140,7 @@ export async function listEnrollmentPacketAuditEvents(packetId: string): Promise
   const normalizedPacketId = clean(packetId);
   if (!normalizedPacketId) return [];
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_events")
     .select("id, packet_id, event_type, actor_user_id, actor_email, timestamp, metadata")
@@ -220,7 +220,7 @@ export async function voidEnrollmentPacketRequest(input: {
   if (!actorUserId) throw new Error("Actor user is required.");
   if (!reason) throw new Error("A void reason is required.");
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   await invokeSupabaseRpcOrThrow<unknown>(admin, VOID_ENROLLMENT_PACKET_RPC, {
     p_packet_id: packetId,
     p_actor_user_id: actorUserId,

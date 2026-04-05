@@ -30,6 +30,22 @@ export {
   listMembersPageSupabase,
   listMembersSupabase
 } from "@/lib/services/member-command-center-runtime";
+export type {
+  MemberCommandCenterAttendanceBillingViewModel,
+  MemberCommandCenterActiveBillingSetting,
+  MemberCommandCenterBaseViewModel,
+  MemberCommandCenterDetailPageData,
+  MemberCommandCenterDetailPageReadModel,
+  MemberCommandCenterDetailPageTab,
+  MemberCommandCenterPofSectionViewModel,
+  MemberCommandCenterTransportationLookupViewModel,
+  MemberCommandCenterWorkspaceViewModel
+} from "@/lib/services/member-command-center-detail-read-model";
+export {
+  buildMemberCommandCenterBaseViewModel,
+  getMemberCommandCenterDetailPageData,
+  getMemberCommandCenterDetailPageReadModel
+} from "@/lib/services/member-command-center-detail-read-model";
 export {
   listActivePayorsSupabase,
   listBillingScheduleTemplatesSupabase,

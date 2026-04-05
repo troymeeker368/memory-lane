@@ -119,7 +119,7 @@ function isCarePlanStatusTransitionRaceError(error: unknown) {
 }
 
 async function loadCarePlanStatusById(carePlanId: string): Promise<CaregiverSignatureStatus | null> {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("care_plan_signature_workflow");
   const { data, error } = await admin
     .from("care_plans")
     .select("caregiver_signature_status")
@@ -131,7 +131,7 @@ async function loadCarePlanStatusById(carePlanId: string): Promise<CaregiverSign
 
 async function loadCarePlanRowByToken(token: string): Promise<CarePlanTokenMatch | null> {
   const hashed = hashToken(token);
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("care_plan_signature_workflow");
   const { data, error } = await admin
     .from("care_plans")
     .select("id, member_id, caregiver_signature_status, caregiver_signature_expires_at")
@@ -220,7 +220,7 @@ async function invokeFinalizeCarePlanCaregiverSignatureRpc(input: {
   actorUserAgent: string | null;
   signatureImageUrl: string;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("care_plan_signature_workflow");
   try {
     const data = await invokeSupabaseRpcOrThrow<unknown>(admin, CARE_PLAN_CAREGIVER_FINALIZATION_RPC, {
       p_care_plan_id: input.carePlanId,

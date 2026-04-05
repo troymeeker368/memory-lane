@@ -1,5 +1,7 @@
 import "server-only";
 
+import { cache } from "react";
+
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 
@@ -55,8 +57,7 @@ async function loadMarMemberOptionRows(serviceRole: boolean) {
   }));
 }
 
-export async function getMarMemberOptionSets(options?: { serviceRole?: boolean }) {
-  const serviceRole = options?.serviceRole ?? true;
+const getMarMemberOptionSetsCached = cache(async (serviceRole: boolean) => {
   const rows = await loadMarMemberOptionRows(serviceRole);
 
   return {
@@ -76,6 +77,10 @@ export async function getMarMemberOptionSets(options?: { serviceRole?: boolean }
         memberStatus: row.memberStatus
       })) satisfies MarMonthlyReportMemberOption[]
   };
+});
+
+export async function getMarMemberOptionSets(options?: { serviceRole?: boolean }) {
+  return getMarMemberOptionSetsCached(Boolean(options?.serviceRole));
 }
 
 export async function listMarWorkflowMemberOptions(options?: { serviceRole?: boolean }) {

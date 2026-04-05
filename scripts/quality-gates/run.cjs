@@ -267,6 +267,41 @@ function runImplicitServiceRoleChecks() {
   }
 }
 
+function runPrivilegedClientBoundaryChecks() {
+  const roots = [path.join(repoRoot, "app"), path.join(repoRoot, "lib"), path.join(repoRoot, "scripts")];
+  const deprecatedCreateClientPattern = /createClient\(\{\s*serviceRole:\s*true\s*\}\)/;
+  const unlabeledAdminPattern = /createSupabaseAdminClient\(\s*\)/;
+
+  function walk(currentDir) {
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    entries.forEach((entry) => {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        return;
+      }
+      if (!entry.isFile() || !/\.(ts|tsx|js|jsx)$/.test(entry.name)) return;
+
+      const source = fs.readFileSync(fullPath, "utf8");
+      const relativePath = path.relative(repoRoot, fullPath).split(path.sep).join("/");
+      if (deprecatedCreateClientPattern.test(source)) {
+        fail(
+          `Deprecated privileged client pattern found in ${relativePath}. Replace createClient({ serviceRole: true }) with a named service-role use case.`
+        );
+      }
+      if (unlabeledAdminPattern.test(source)) {
+        fail(
+          `Unlabeled privileged admin client found in ${relativePath}. createSupabaseAdminClient() must always receive a named use case.`
+        );
+      }
+    });
+  }
+
+  roots.forEach((root) => {
+    if (fs.existsSync(root)) walk(root);
+  });
+}
+
 function main() {
   try {
     compileGateTargets();
@@ -280,6 +315,7 @@ function main() {
     runRouteChecks(navItems);
     runMigrationChecks();
     runImplicitServiceRoleChecks();
+    runPrivilegedClientBoundaryChecks();
   } catch (error) {
     fail(`Quality gate runtime failure: ${error instanceof Error ? error.message : String(error)}`);
   } finally {

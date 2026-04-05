@@ -70,7 +70,7 @@ function toPublicContext(
 
 export async function loadRequestByToken(rawToken: string): Promise<EnrollmentPacketTokenMatch | null> {
   const hashed = hashToken(rawToken);
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select("*")
@@ -103,7 +103,7 @@ async function markEnrollmentPacketOpened(input: {
 }) {
   if (input.request.opened_at) return false;
   const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .update({
@@ -155,7 +155,7 @@ export async function recordEnrollmentPacketExpiredIfNeeded(request: EnrollmentP
     }
   }
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("system_events")
     .select("id")

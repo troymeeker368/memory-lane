@@ -112,7 +112,7 @@ type MemberShellStatus = {
 
 async function loadMemberShellStatus(memberIds: string[]): Promise<MemberShellStatus> {
   const { createSupabaseAdminClient } = await import("../lib/supabase/admin");
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("historical_drift_repair");
 
   const normalizedIds = Array.from(new Set(memberIds.map((value) => clean(value)).filter((value): value is string => Boolean(value))));
   const membersQuery = normalizedIds.length > 0
@@ -149,7 +149,7 @@ async function loadMemberShellStatus(memberIds: string[]): Promise<MemberShellSt
 
 async function loadOperationsSettingsStatus() {
   const { createSupabaseAdminClient } = await import("../lib/supabase/admin");
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("historical_drift_repair");
   const { data, error } = await admin.from("operations_settings").select("id").eq("id", "default").maybeSingle();
   if (error) throw new Error(`Unable to load operations settings singleton: ${error.message}`);
   return {
@@ -159,7 +159,7 @@ async function loadOperationsSettingsStatus() {
 
 async function loadPendingMemberFileBackfillPreview(limit: number) {
   const { createSupabaseAdminClient } = await import("../lib/supabase/admin");
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("historical_drift_repair");
   const { data, error, count } = await admin
     .from("member_files")
     .select("id, member_id, file_name, file_type, file_data_url, storage_object_path", { count: "exact" })

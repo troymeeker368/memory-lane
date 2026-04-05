@@ -65,7 +65,7 @@ export async function loadIncidentSubmitterSignatureDataUrl(storagePath: string 
   const normalized = clean(storagePath);
   if (!normalized) return null;
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("incident_artifact_workflow");
   const { data, error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).download(normalized);
   if (error || !data) {
     throw new Error(error?.message ?? "Unable to load incident signature artifact.");

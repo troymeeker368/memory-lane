@@ -85,7 +85,7 @@ export async function verifyCommittedEnrollmentPacketFinalizeAfterError(input: {
     return { kind: "unverified" as const, request: refreshedRequest };
   }
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const batchId = String(input.uploadBatchId ?? "").trim();
   let uploadRows: Array<{
     upload_category: EnrollmentPacketUploadCategory;
@@ -171,7 +171,7 @@ export async function invokeFinalizeEnrollmentPacketCompletionRpc(input: {
   completedMetadata: Record<string, unknown>;
   filedMetadata: Record<string, unknown>;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   try {
     const data = await invokeSupabaseRpcOrThrow<unknown>(admin, ENROLLMENT_PACKET_COMPLETION_RPC, {
       p_packet_id: input.packetId,

@@ -151,7 +151,7 @@ export async function createCarePlanSignatureEvent(input: {
   actorUserAgent?: string | null;
   metadata?: Record<string, unknown>;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("care_plan_signature_workflow");
   const { error } = await admin.from("care_plan_signature_events").insert({
     care_plan_id: input.carePlanId,
     member_id: input.memberId,
@@ -203,7 +203,7 @@ async function prepareCarePlanCaregiverRequest(input: {
   actorName: string;
   updatedAt: string;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("care_plan_signature_workflow");
   try {
     await invokeSupabaseRpcOrThrow<unknown>(admin, PREPARE_CARE_PLAN_CAREGIVER_REQUEST_RPC, {
       p_care_plan_id: input.carePlanId,
@@ -237,7 +237,7 @@ export async function transitionCarePlanCaregiverStatus(input: {
   caregiverSignatureError?: string | null;
   expectedCurrentStatuses?: CaregiverSignatureStatus[] | null;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("care_plan_signature_workflow");
   try {
     await invokeSupabaseRpcOrThrow<unknown>(admin, TRANSITION_CARE_PLAN_CAREGIVER_STATUS_RPC, {
       p_care_plan_id: input.carePlanId,

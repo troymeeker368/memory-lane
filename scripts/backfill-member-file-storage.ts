@@ -133,7 +133,7 @@ function isDataUrl(value: string | null | undefined) {
 }
 
 async function uploadMemberDocumentObject(objectPath: string, bytes: Buffer, contentType: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("member_file_backfill");
   const { error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).upload(objectPath, bytes, {
     contentType,
     upsert: true
@@ -142,7 +142,7 @@ async function uploadMemberDocumentObject(objectPath: string, bytes: Buffer, con
 }
 
 async function deleteMemberDocumentObject(objectPath: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("member_file_backfill");
   const { error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).remove([objectPath]);
   if (error) throw new Error(error.message);
 }
@@ -169,7 +169,7 @@ async function backfillLegacyRow(row: LegacyMemberFileRow) {
     );
   }
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("member_file_backfill");
   const { error: updateError } = await admin
     .from("member_files")
     .update({
@@ -213,7 +213,7 @@ async function backfillLegacyMemberFileStorageBatch(limit: number) {
 }
 
 async function listPendingRows(limit: number) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("member_file_backfill");
   const { data, error, count } = await admin
     .from("member_files")
     .select("id, member_id, file_name, file_type, file_data_url, storage_object_path", {

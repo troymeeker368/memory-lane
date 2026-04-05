@@ -119,7 +119,7 @@ async function main() {
   const { createSupabaseAdminClient } = await import("../lib/supabase/admin");
   const { toEasternDate } = await import("../lib/timezone");
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("live_e2e_pof_signing");
   const senderEmail = getConfiguredClinicalSenderEmail();
   if (!senderEmail) {
     throw new Error("Missing clinical sender email. Set CLINICAL_SENDER_EMAIL.");

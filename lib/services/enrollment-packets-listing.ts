@@ -45,7 +45,7 @@ export async function listEnrollmentPacketRequestsForMember(memberId: string) {
     actionLabel: "listEnrollmentPacketRequestsForMember",
     serviceRole: true
   });
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select(ENROLLMENT_PACKET_REQUEST_LIST_SELECT)
@@ -56,7 +56,7 @@ export async function listEnrollmentPacketRequestsForMember(memberId: string) {
 }
 
 export async function listActivePacketRows(memberId: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select(ENROLLMENT_PACKET_REQUEST_LIST_SELECT)
@@ -74,7 +74,7 @@ export async function listActivePacketRows(memberId: string) {
 export async function listActivePacketRowsForLead(leadId: string) {
   const normalizedLeadId = clean(leadId);
   if (!normalizedLeadId) return [];
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select(ENROLLMENT_PACKET_REQUEST_LIST_SELECT)
@@ -112,7 +112,7 @@ export async function listEnrollmentPacketRequestsForLead(leadId: string) {
   if (!canonical.leadId) {
     throw new Error("listEnrollmentPacketRequestsForLead expected lead.id but canonical lead resolution returned empty leadId.");
   }
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select(ENROLLMENT_PACKET_REQUEST_LIST_SELECT)
@@ -138,7 +138,7 @@ export async function listCompletedEnrollmentPacketRequests(
   const toDate = clean(filters.toDate);
   const searchNeedle = clean(filters.search)?.toLowerCase() ?? null;
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   let query = admin
     .from("enrollment_packet_requests")
     .select(ENROLLMENT_PACKET_REQUEST_LIST_SELECT)

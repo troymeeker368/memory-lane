@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { isPostgresUniqueViolation } from "@/lib/services/idempotency";
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -37,7 +37,7 @@ export async function logSystemEvent(
   options?: LogSystemEventOptions
 ) {
   const required = options?.required ?? true;
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("system_event_write");
   const actorUserId =
     input.actor_user_id ?? ((input.actor_type ?? "").trim().toLowerCase() === "user" ? input.actor_id ?? null : null);
   const { error } = await supabase.from("system_events").insert({

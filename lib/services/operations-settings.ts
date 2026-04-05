@@ -1,5 +1,6 @@
 import { MEMBER_BUS_NUMBER_OPTIONS } from "@/lib/canonical";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import type { Database } from "@/types/supabase-types";
 
 export interface OperationalSettings {
@@ -127,7 +128,7 @@ export async function getOperationalSettings(): Promise<OperationalSettings> {
 }
 
 export async function repairOperationalSettingsSingleton() {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("operations_settings_repair");
   const { data, error } = await supabase
     .from("operations_settings")
     .upsert(defaultOperationalSettingsRow(), { onConflict: "id" })

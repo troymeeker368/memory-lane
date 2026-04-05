@@ -1,5 +1,6 @@
 import { buildMissingSchemaMessage, isMissingSchemaObjectError } from "@/lib/supabase/schema-errors";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { listMemberHolds } from "@/lib/services/holds-supabase";
 import {
   getEnrollmentPacketMappingRunnerHealth,
@@ -27,7 +28,7 @@ export async function getDashboardStats(
     includeLatestPunches?: boolean;
   }
 ) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("dashboard_admin_read");
 
   const today = new Date();
   const start = new Date(today);
@@ -71,7 +72,7 @@ export async function getDashboardStats(
 }
 
 export async function getDashboardAlerts() {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("dashboard_admin_read");
 
   const [
     { data: overdueCarePlan, error: overdueCarePlanError },

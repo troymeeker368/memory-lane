@@ -17,7 +17,7 @@ export async function GET(
   try {
     const { getPublicCompletedEnrollmentPacketArtifact } = await import("@/lib/services/enrollment-packets-public");
     const artifact = await getPublicCompletedEnrollmentPacketArtifact({ token });
-    const admin = createSupabaseAdminClient();
+    const admin = createSupabaseAdminClient("enrollment_packet_artifact_download");
     const { data, error } = await admin.storage
       .from(MEMBER_DOCUMENTS_BUCKET)
       .download(artifact.objectPath);

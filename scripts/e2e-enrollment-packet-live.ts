@@ -162,7 +162,7 @@ async function main() {
   } = await import("../lib/services/enrollment-packets-sender");
   const { createSupabaseAdminClient } = await import("../lib/supabase/admin");
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("live_e2e_enrollment_packet");
 
   const { data: actorRows, error: actorError } = await admin
     .from("profiles")

@@ -95,7 +95,7 @@ export async function upsertEnrollmentPacketSenderSignatureProfile(input: {
     throw new Error("Sender signature image must be a valid image.");
   }
   const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_sender_signatures")
     .upsert(
@@ -180,7 +180,7 @@ async function prepareEnrollmentPacketRequestForDelivery(input: {
   eventMetadata: Record<string, unknown>;
   preparedAt: string;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const packetId = input.existingRequest?.id ?? null;
   let preparedPacketId = packetId;
 

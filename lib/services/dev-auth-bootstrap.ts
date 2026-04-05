@@ -1,6 +1,6 @@
 import { normalizeRoleKey } from "@/lib/permissions/core";
 import { getDevAuthBootstrapPassword, getDevAuthBootstrapUsersJson, isDevAuthBypassEnabled } from "@/lib/runtime";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import type { AppRole } from "@/types/app";
 
 export interface DevAuthBootstrapAccount {
@@ -93,7 +93,7 @@ export async function listDevAuthBootstrapAccounts(): Promise<DevAuthBootstrapAc
     );
   }
 
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("dev_auth_bootstrap_read");
   const { data, error } = await supabase
     .from("profiles")
     .select("email, full_name, role, active, is_active, status")

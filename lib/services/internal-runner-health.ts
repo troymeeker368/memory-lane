@@ -304,11 +304,18 @@ export async function getPofPostSignSyncRunnerHealth(input?: {
   const timestamp = clean(input?.nowIso) ?? toEasternISO();
   if (getAcceptedPofPostSignSyncRunnerSecrets().length === 0) {
     await recordPofRunnerConfigMissingSignal({ actorUserId: input?.actorUserId ?? null });
+    const releaseSafety = resolveInternalRunnerReleaseSafety({
+      runnerConfigured: false,
+      healthStatus: "missing_config",
+      healthReason: "runner_not_configured",
+      workflowLabel: "POF post-sign sync"
+    });
     return {
       timestamp,
       runnerConfigured: false,
       healthStatus: "missing_config" as const,
       healthReason: "runner_not_configured" as const,
+      ...releaseSafety,
       agedQueueRows: 0,
       agedQueueAlertsRaised: 0,
       agedQueueAlertAgeMinutes: 0
@@ -338,11 +345,21 @@ export async function getPofPostSignSyncRunnerHealth(input?: {
     });
   }
 
+  const healthStatus = summary.agedQueueRows > 0 ? "degraded" : "healthy";
+  const healthReason = summary.agedQueueRows > 0 ? ("aged_queue" as const) : null;
+  const releaseSafety = resolveInternalRunnerReleaseSafety({
+    runnerConfigured: true,
+    healthStatus,
+    healthReason,
+    workflowLabel: "POF post-sign sync"
+  });
+
   return {
     timestamp,
     runnerConfigured: true,
-    healthStatus: summary.agedQueueRows > 0 ? "degraded" : "healthy",
-    healthReason: summary.agedQueueRows > 0 ? "aged_queue" : null,
+    healthStatus,
+    healthReason,
+    ...releaseSafety,
     ...summary
   } satisfies PofPostSignSyncRunnerHealth;
 }
@@ -357,11 +374,18 @@ export async function getEnrollmentPacketMappingRunnerHealth(input?: {
     await recordEnrollmentPacketMappingRunnerConfigMissingSignal({
       actorUserId: input?.actorUserId ?? null
     });
+    const releaseSafety = resolveInternalRunnerReleaseSafety({
+      runnerConfigured: false,
+      healthStatus: "missing_config",
+      healthReason: "runner_not_configured",
+      workflowLabel: "Enrollment packet mapping"
+    });
     return {
       timestamp,
       runnerConfigured: false,
       healthStatus: "missing_config" as const,
       healthReason: "runner_not_configured" as const,
+      ...releaseSafety,
       agedQueueRows: 0,
       agedQueueAlertsRaised: 0,
       agedQueueAlertAgeMinutes: 0,
@@ -408,19 +432,29 @@ export async function getEnrollmentPacketMappingRunnerHealth(input?: {
     });
   }
 
+  const healthStatus =
+    summary.agedQueueRows > 0 || summary.followUpAgedQueueRows > 0 || summary.staleClaimRows > 0
+      ? "degraded"
+      : "healthy";
+  const healthReason =
+    summary.staleClaimRows > 0
+      ? ("stale_claim" as const)
+      : summary.agedQueueRows > 0 || summary.followUpAgedQueueRows > 0
+        ? ("aged_queue" as const)
+        : null;
+  const releaseSafety = resolveInternalRunnerReleaseSafety({
+    runnerConfigured: true,
+    healthStatus,
+    healthReason,
+    workflowLabel: "Enrollment packet mapping"
+  });
+
   return {
     timestamp,
     runnerConfigured: true,
-    healthStatus:
-      summary.agedQueueRows > 0 || summary.followUpAgedQueueRows > 0 || summary.staleClaimRows > 0
-        ? "degraded"
-        : "healthy",
-    healthReason:
-      summary.staleClaimRows > 0
-        ? "stale_claim"
-        : summary.agedQueueRows > 0 || summary.followUpAgedQueueRows > 0
-          ? "aged_queue"
-          : null,
+    healthStatus,
+    healthReason,
+    ...releaseSafety,
     ...summary
   } satisfies EnrollmentPacketMappingRunnerHealth;
 }

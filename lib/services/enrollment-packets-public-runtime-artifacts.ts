@@ -37,7 +37,7 @@ export type PersistedPublicEnrollmentPacketArtifact = {
 
 async function loadCompletedPacketDownloadAuthorizedRequest(rawToken: string) {
   const claims = verifyCompletedPacketDownloadToken(rawToken);
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select("*")
@@ -56,7 +56,7 @@ async function loadCompletedPacketDownloadAuthorizedRequest(rawToken: string) {
 }
 
 async function loadLatestCompletedPacketArtifact(packetId: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_uploads")
     .select("file_path, file_name, file_type, uploaded_at")

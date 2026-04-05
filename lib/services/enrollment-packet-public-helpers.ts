@@ -84,7 +84,7 @@ async function countRecentSystemEvents(input: {
   status?: string | null;
   sinceIso: string;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   let query = admin
     .from("system_events")
     .select("id", { count: "exact", head: true })
@@ -337,7 +337,7 @@ export async function insertPacketEvent(input: {
   actorEmail?: string | null;
   metadata?: Record<string, unknown>;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { error } = await admin.from("enrollment_packet_events").insert({
     packet_id: input.packetId,
     event_type: input.eventType,

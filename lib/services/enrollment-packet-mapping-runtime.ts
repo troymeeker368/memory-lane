@@ -109,7 +109,7 @@ export async function emitEnrollmentPacketMappingRetryHealthAlerts(input: {
   const staleClaimThresholdIso = new Date(
     Date.parse(input.nowIso) - staleClaimAgeMinutes * 60 * 1000
   ).toISOString();
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
 
   const [agedQueueResult, staleClaimResult] = await Promise.all([
     admin
@@ -205,7 +205,7 @@ export async function loadEnrollmentPacketArtifactOps() {
 }
 
 export async function getMemberById(memberId: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { ENROLLMENT_PACKET_MEMBER_LOOKUP_SELECT } = await import("@/lib/services/enrollment-packet-selects");
   const { data, error } = await admin
     .from("members")
@@ -217,7 +217,7 @@ export async function getMemberById(memberId: string) {
 }
 
 export async function getLeadById(leadId: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { ENROLLMENT_PACKET_LEAD_LOOKUP_SELECT } = await import("@/lib/services/enrollment-packet-selects");
   const { data, error } = await admin
     .from("leads")
@@ -229,7 +229,7 @@ export async function getLeadById(leadId: string) {
 }
 
 export async function loadRequestById(packetId: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select("*")
@@ -240,7 +240,7 @@ export async function loadRequestById(packetId: string) {
 }
 
 export async function loadPacketFields(packetId: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_fields")
     .select("*")
@@ -260,7 +260,7 @@ export async function addLeadActivity(input: {
   completedByName: string;
   activityAt?: string;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const requestedActivityAt = clean(input.activityAt);
   const activityAt = requestedActivityAt ?? toEasternISO();
   const normalizedReplayInput = normalizeLeadActivityReplayInput({
@@ -331,7 +331,7 @@ async function addLeadActivityStrict(input: {
   completedByName: string;
   activityAt?: string;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const requestedActivityAt = clean(input.activityAt);
   const activityAt = requestedActivityAt ?? toEasternISO();
   const normalizedReplayInput = normalizeLeadActivityReplayInput({
@@ -506,7 +506,7 @@ export async function recordEnrollmentPacketSubmittedMilestone(input: {
     action_url: input.actionUrl
   };
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data: existingSubmittedEvent, error: existingSubmittedEventError } = await admin
     .from("system_events")
     .select("id")
@@ -549,7 +549,7 @@ export async function recordEnrollmentPacketSubmittedMilestone(input: {
 }
 
 export async function listEnrollmentPacketMemberFileArtifacts(packetId: string): Promise<EnrollmentPacketMemberFileArtifact[]> {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_uploads")
     .select("upload_category, member_file_id")
@@ -710,7 +710,7 @@ export async function runEnrollmentPacketDownstreamMapping(input: {
 export async function getEnrollmentPacketSenderSignatureProfile(userId: string) {
   const normalizedUserId = clean(userId);
   if (!normalizedUserId) throw new Error("User ID is required.");
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_sender_signatures")
     .select("*")
@@ -723,7 +723,7 @@ export async function getEnrollmentPacketSenderSignatureProfile(userId: string) 
 export async function retryFailedEnrollmentPacketMappings(input?: { limit?: number }) {
   const limit = Math.min(100, Math.max(1, input?.limit ?? 25));
   const artifactOps = await loadEnrollmentPacketArtifactOps();
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const now = toEasternISO();
   const releaseEnrollmentPacketMappingClaimSafely = async (
     request: ClaimedEnrollmentPacketRetryRow,

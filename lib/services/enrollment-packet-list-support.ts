@@ -85,7 +85,7 @@ export async function buildEnrollmentPacketSearchClauses(searchText: string) {
   const normalizedSearch = clean(searchText);
   if (!normalizedSearch || !canUsePacketSqlSearch(normalizedSearch)) return [];
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const clauses = [`caregiver_email.ilike.${buildSupabaseIlikePattern(normalizedSearch)}`];
   if (isUuid(normalizedSearch)) {
     clauses.push(`member_id.eq.${normalizedSearch}`, `lead_id.eq.${normalizedSearch}`, `sender_user_id.eq.${normalizedSearch}`);
@@ -120,7 +120,7 @@ export async function buildEnrollmentPacketSearchClauses(searchText: string) {
 }
 
 export async function resolveEnrollmentPacketRelatedNames(rows: EnrollmentPacketRequestRow[]): Promise<EnrollmentPacketRelatedNames> {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const memberIds = Array.from(new Set(rows.map((row) => row.member_id).filter(Boolean)));
   const leadIds = Array.from(new Set(rows.map((row) => row.lead_id).filter((value): value is string => Boolean(value))));
   const senderIds = Array.from(new Set(rows.map((row) => row.sender_user_id).filter(Boolean)));

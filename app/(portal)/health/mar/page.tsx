@@ -9,33 +9,40 @@ import { canAccessPhysicianOrders, canDocumentMar } from "@/lib/permissions";
 import { getMarMemberOptionSets } from "@/lib/services/mar-member-options";
 import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow-read";
 
+// MAR is session-scoped and time-sensitive; today's/overdue views depend on current time.
 export const dynamic = "force-dynamic";
 
 export default async function MarWorkflowPage() {
   const profile = await requireMarAccess();
   const canDocument = canDocumentMar(profile);
   const canViewPhysicianOrders = canAccessPhysicianOrders(profile);
+  const memberOptionSetsPromise = getMarMemberOptionSets({ serviceRole: false });
+  const snapshotPromise = getMarWorkflowSnapshot({
+    historyLimit: 250,
+    prnLimit: 250,
+    serviceRole: false,
+    memberOptionsFallback: []
+  });
+  const [memberOptionSetsResult, snapshotResult] = await Promise.allSettled([
+    memberOptionSetsPromise,
+    snapshotPromise
+  ]);
   let reportMemberOptions: Awaited<ReturnType<typeof getMarMemberOptionSets>>["reportOptions"] = [];
-  let workflowMemberOptions: Awaited<ReturnType<typeof getMarMemberOptionSets>>["workflowOptions"] = [];
   let reportOptionsLoadError: string | null = null;
-  try {
-    const optionSets = await getMarMemberOptionSets({ serviceRole: true });
-    reportMemberOptions = optionSets.reportOptions;
-    workflowMemberOptions = optionSets.workflowOptions;
-  } catch (error) {
-    reportOptionsLoadError = error instanceof Error ? error.message : "Unable to load MAR report member options.";
+  if (memberOptionSetsResult.status === "fulfilled") {
+    reportMemberOptions = memberOptionSetsResult.value.reportOptions;
+  } else {
+    reportOptionsLoadError =
+      memberOptionSetsResult.reason instanceof Error
+        ? memberOptionSetsResult.reason.message
+        : "Unable to load MAR report member options.";
   }
   let snapshot: Awaited<ReturnType<typeof getMarWorkflowSnapshot>> | null = null;
   let loadError: string | null = null;
-  try {
-    snapshot = await getMarWorkflowSnapshot({
-      historyLimit: 250,
-      prnLimit: 250,
-      serviceRole: true,
-      memberOptions: workflowMemberOptions
-    });
-  } catch (error) {
-    loadError = error instanceof Error ? error.message : "Unable to load MAR workflow.";
+  if (snapshotResult.status === "fulfilled") {
+    snapshot = snapshotResult.value;
+  } else {
+    loadError = snapshotResult.reason instanceof Error ? snapshotResult.reason.message : "Unable to load MAR workflow.";
   }
   const isSchemaDependencyError = Boolean(loadError && loadError.toLowerCase().includes("missing supabase schema object"));
 

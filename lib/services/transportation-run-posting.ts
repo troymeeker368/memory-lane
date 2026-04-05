@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { getActiveCenterBillingSetting } from "@/lib/services/billing-configuration";
 import {
@@ -228,7 +228,7 @@ export async function postTransportationRunSupabase(input: {
     })
   );
 
-  const admin = await createClient({ serviceRole: true });
+  const admin = createServiceRoleClient("transportation_run_posting");
   let rpcResult: RpcResultPayload;
   try {
     rpcResult = await invokeSupabaseRpcOrThrow<RpcResultPayload>(admin, POST_TRANSPORTATION_RUN_RPC, {

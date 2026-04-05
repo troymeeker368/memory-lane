@@ -114,7 +114,7 @@ async function createDocumentEvent(input: {
   actorUserAgent?: string | null;
   metadata?: Record<string, unknown>;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   const { error } = await admin.from("document_events").insert({
     document_type: "pof_request",
     document_id: input.documentId,
@@ -134,7 +134,7 @@ async function createDocumentEvent(input: {
 
 async function markRequestExpired(input: { request: PofRequestRow; actorName: string }) {
   const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   const { error } = await admin
     .from("pof_requests")
     .update({

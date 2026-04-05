@@ -1,40 +1,54 @@
-import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
+import type { Buffer } from "node:buffer";
 
 import { canAccessClinicalDocumentationForRole, canAccessModule, canPerformModuleAction, normalizeRoleKey } from "@/lib/permissions";
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
+import {
+  buildDatedPdfFileName,
+  isClinicalMemberFileCategory,
+  nextMemberFileId,
+  parseDataUrlPayload,
+  parseMemberDocumentStorageUri,
+  safeFileName,
+  slugifyMemberFileSegment,
+  withDuplicateFileSuffix,
+  type MemberFileCategory
+} from "@/lib/services/member-files-core";
+import {
+  createMemberFilesRecordClient,
+  createSignedMemberDocumentUrl,
+  deleteMemberDocumentObject,
+  loadMemberFileRowByDocumentSource,
+  loadMemberFileRowById,
+  type MemberFilesClient,
+  uploadMemberDocumentObject
+} from "@/lib/services/member-files-repository";
 import { logSystemEvent } from "@/lib/services/system-event-service";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
-import { createServiceRoleClient } from "@/lib/supabase/service-role";
-import { toEasternDate, toEasternISO } from "@/lib/timezone";
+import { toEasternISO } from "@/lib/timezone";
 
-export const MEMBER_DOCUMENTS_BUCKET = "member-documents";
+export {
+  buildDatedPdfFileName,
+  buildGeneratedMemberFilePersistenceState,
+  buildMemberDocumentStorageUri,
+  MEMBER_DOCUMENTS_BUCKET,
+  nextMemberFileId,
+  parseDataUrlPayload,
+  parseMemberDocumentStorageUri,
+  safeFileName,
+  type GeneratedMemberFilePersistenceState,
+  type MemberFileCategory,
+  withDuplicateFileSuffix
+} from "@/lib/services/member-files-core";
+export {
+  createSignedMemberDocumentUrl,
+  deleteMemberDocumentObject,
+  uploadMemberDocumentObject
+} from "@/lib/services/member-files-repository";
 const UPSERT_MEMBER_FILE_BY_SOURCE_RPC = "rpc_upsert_member_file_by_source";
 const DELETE_MEMBER_FILE_RECORD_RPC = "rpc_delete_member_file_record";
 const MEMBER_FILE_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
-const MEMBER_FILE_ROW_SELECT =
-  "id, member_id, file_name, file_type, storage_object_path, category, category_other, document_source, pof_request_id, uploaded_by_user_id, uploaded_by_name, uploaded_at, updated_at" as const;
-
-export type MemberFileCategory =
-  | "Health Unit"
-  | "Legal"
-  | "Admin"
-  | "Enrollment Packet"
-  | "Assessment"
-  | "Care Plan"
-  | "Orders / POF"
-  | "Billing"
-  | "Name Badge"
-  | "Other";
-
-const CLINICAL_MEMBER_FILE_CATEGORIES = new Set<MemberFileCategory>([
-  "Assessment",
-  "Care Plan",
-  "Orders / POF",
-  "Health Unit"
-]);
 
 type SaveGeneratedMemberPdfInput = {
   memberId: string;
@@ -55,89 +69,6 @@ type SaveGeneratedMemberPdfInput = {
   generatedAtIso?: string;
   replaceExistingByDocumentSource?: boolean;
 };
-
-export type GeneratedMemberFilePersistenceState = {
-  memberFilesStatus: "verified" | "follow-up-needed";
-  memberFilesMessage: string | null;
-};
-
-export function buildGeneratedMemberFilePersistenceState(input: {
-  documentLabel: string;
-  verifiedPersisted: boolean;
-}): GeneratedMemberFilePersistenceState {
-  if (input.verifiedPersisted) {
-    return {
-      memberFilesStatus: "verified",
-      memberFilesMessage: null
-    };
-  }
-
-  return {
-    memberFilesStatus: "follow-up-needed",
-    memberFilesMessage:
-      `${input.documentLabel} PDF was generated and uploaded to storage, but the canonical Member Files record could not be verified yet. ` +
-      "Staff should treat this as follow-up needed until the document appears in Member Files."
-  };
-}
-
-export function safeFileName(value: string) {
-  return value.replace(/[<>:"/\\|?*]/g, "").trim();
-}
-
-export function buildDatedPdfFileName(documentLabel: string, memberName: string, whenIso: string, extension = ".pdf") {
-  const day = toEasternDate(whenIso);
-  return `${safeFileName(documentLabel)} - ${safeFileName(memberName)} - ${day}${extension}`;
-}
-
-export function withDuplicateFileSuffix(fileName: string, timestampIso: string) {
-  const extension = ".pdf";
-  if (!fileName.toLowerCase().endsWith(extension)) return fileName;
-  const root = fileName.slice(0, -extension.length);
-  const suffix = timestampIso.slice(11, 19).replaceAll(":", "");
-  return `${root} - ${suffix}${extension}`;
-}
-
-export function nextMemberFileId() {
-  return `mf_${randomUUID().replace(/-/g, "")}`;
-}
-
-export function parseDataUrlPayload(dataUrl: string, errorMessage = "Invalid data URL payload.") {
-  const normalized = dataUrl.trim();
-  const base64Match = /^data:([^;,]+)(?:;charset=[^;,]+)?;base64,(.+)$/i.exec(normalized);
-  if (base64Match) {
-    return {
-      contentType: base64Match[1],
-      bytes: Buffer.from(base64Match[2], "base64")
-    };
-  }
-  const plainMatch = /^data:([^;,]+)(?:;charset=[^;,]+)?,(.*)$/i.exec(normalized);
-  if (!plainMatch) throw new Error(errorMessage);
-  return {
-    contentType: plainMatch[1],
-    bytes: Buffer.from(decodeURIComponent(plainMatch[2]), "utf8")
-  };
-}
-
-export function buildMemberDocumentStorageUri(objectPath: string) {
-  return `storage://${MEMBER_DOCUMENTS_BUCKET}/${objectPath}`;
-}
-
-export function parseMemberDocumentStorageUri(storageUri: string | null | undefined) {
-  const normalized = String(storageUri ?? "").trim();
-  if (!normalized) return null;
-  const prefix = `storage://${MEMBER_DOCUMENTS_BUCKET}/`;
-  if (!normalized.startsWith(prefix)) return null;
-  return normalized.slice(prefix.length);
-}
-
-function slugifyMemberFileSegment(value: string) {
-  return safeFileName(value)
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9._-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
 
 function isUniqueViolation(error: unknown) {
   if (!error || typeof error !== "object") return false;
@@ -167,79 +98,18 @@ function assertAuthorizedMemberFileDownloader(
   const normalizedRole = normalizeRoleKey(actor.role);
   const hasOperationsView = canAccessModule(normalizedRole, "operations", actor.permissions);
   const hasClinicalAccess = canAccessClinicalDocumentationForRole(normalizedRole);
-  const normalizedCategory = String(category ?? "").trim() as MemberFileCategory;
 
   if (!hasOperationsView && !hasClinicalAccess) {
     throw new Error("You do not have access to member files.");
   }
 
-  if (CLINICAL_MEMBER_FILE_CATEGORIES.has(normalizedCategory) && !hasClinicalAccess) {
+  if (isClinicalMemberFileCategory(category) && !hasClinicalAccess) {
     throw new Error("You do not have access to clinical member files.");
   }
 }
 
 function buildManualUploadDocumentSource(uploadToken: string) {
   return `mcc_manual_upload:${uploadToken}`;
-}
-
-type MemberFilesClient = Awaited<ReturnType<typeof createClient>> | ReturnType<typeof createServiceRoleClient>;
-
-function createMemberFilesRecordClient() {
-  // Member file RPC/database mutations are service-only so storage and row state stay aligned.
-  return createServiceRoleClient("member_file_record_rpc");
-}
-
-function createMemberFilesStorageClient() {
-  // Signed URLs and object mutations must stay server-only and outside uploader-scoped RLS.
-  return createServiceRoleClient("member_file_storage");
-}
-
-async function loadMemberFileRowById(memberFileId: string, options?: { supabase?: MemberFilesClient }) {
-  const normalized = String(memberFileId ?? "").trim();
-  if (!normalized) return null;
-
-  const supabase = options?.supabase ?? (await createClient());
-  const { data, error } = await supabase
-    .from("member_files")
-    .select(MEMBER_FILE_ROW_SELECT)
-    .eq("id", normalized)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  return data;
-}
-
-async function loadMemberFileRowByDocumentSource(input: {
-  memberId: string;
-  documentSource: string;
-  supabase?: MemberFilesClient;
-}) {
-  const memberId = String(input.memberId ?? "").trim();
-  const documentSource = String(input.documentSource ?? "").trim();
-  if (!memberId || !documentSource) return null;
-
-  const supabase = input.supabase ?? (await createClient());
-  const { data, error } = await supabase
-    .from("member_files")
-    .select(MEMBER_FILE_ROW_SELECT)
-    .eq("member_id", memberId)
-    .eq("document_source", documentSource)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  return data;
-}
-
-export async function createSignedMemberDocumentUrl(objectPath: string, expiresInSeconds = 60 * 15) {
-  const normalized = String(objectPath ?? "").trim();
-  if (!normalized) throw new Error("Storage object path is required.");
-
-  const admin = createMemberFilesStorageClient();
-  const { data, error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).createSignedUrl(normalized, expiresInSeconds);
-  if (error || !data?.signedUrl) {
-    throw new Error(error?.message ?? "Unable to create member file download URL.");
-  }
-  return data.signedUrl;
 }
 
 function isDataUrl(value: string | null | undefined) {
@@ -369,29 +239,6 @@ export async function backfillLegacyMemberFileStorageBatch(input?: {
     repaired,
     failures
   };
-}
-
-export async function uploadMemberDocumentObject(input: {
-  objectPath: string;
-  bytes: Buffer;
-  contentType: string;
-}) {
-  const admin = createMemberFilesStorageClient();
-  const { error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).upload(input.objectPath, input.bytes, {
-    contentType: input.contentType,
-    upsert: true
-  });
-  if (error) throw new Error(error.message);
-  return buildMemberDocumentStorageUri(input.objectPath);
-}
-
-export async function deleteMemberDocumentObject(objectPath: string) {
-  const normalized = String(objectPath ?? "").trim();
-  if (!normalized) return;
-
-  const admin = createMemberFilesStorageClient();
-  const { error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).remove([normalized]);
-  if (error) throw new Error(error.message);
 }
 
 export async function deleteMemberFileRecord(memberFileId: string) {

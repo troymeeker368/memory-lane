@@ -122,7 +122,7 @@ export async function maybeCreateSignedPofAccessUrl(input: {
 }
 
 export async function loadPublicPofPostSignOutcome(request: PofRequestRow): Promise<PublicPofPostSignOutcome> {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   const { data, error } = await admin
     .from("pof_post_sign_sync_queue")
     .select("id, status, attempt_count, next_retry_at, last_error")

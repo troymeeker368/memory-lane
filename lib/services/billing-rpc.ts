@@ -2,8 +2,8 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
-import { createClient } from "@/lib/supabase/server";
 import type {
   BillingBatchCoverageRpcPayload,
   BillingBatchInvoiceLineRpcPayload,
@@ -295,7 +295,7 @@ export function buildBillingBatchWritePlan(input: {
 }
 
 export async function invokeGenerateBillingBatchRpc(plan: BillingBatchWritePlan) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("billing_rpc_workflow");
   try {
     await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_GENERATE_BILLING_BATCH, {
       p_batch: plan.batchPayload,
@@ -316,7 +316,7 @@ export async function invokeCreateBillingExportRpc(input: {
   exportJobPayload: BillingExportRpcPayload;
   invoiceIds: string[];
 }) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("billing_rpc_workflow");
   try {
     const result = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_CREATE_BILLING_EXPORT, {
       p_export_job: input.exportJobPayload,
@@ -339,7 +339,7 @@ export async function invokeCreateCustomInvoiceRpc(input: {
   coveragePayloads: BillingBatchCoverageRpcPayload[];
   sourceUpdates: BillingBatchSourceUpdateRpcPayload[];
 }) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("billing_rpc_workflow");
   try {
     const result = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_CREATE_CUSTOM_INVOICE, {
       p_invoice: input.invoicePayload,
@@ -362,7 +362,7 @@ export async function invokeFinalizeBillingBatchRpc(input: {
   now: string;
   today: string;
 }) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("billing_rpc_workflow");
   try {
     const result = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_FINALIZE_BILLING_BATCH, {
       p_billing_batch_id: input.billingBatchId,
@@ -386,7 +386,7 @@ export async function invokeReopenBillingBatchRpc(input: {
   reopenedBy: string;
   now: string;
 }) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("billing_rpc_workflow");
   try {
     const result = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_REOPEN_BILLING_BATCH, {
       p_billing_batch_id: input.billingBatchId,
@@ -410,7 +410,7 @@ export async function invokeFinalizeBillingInvoicesRpc(input: {
   now: string;
   today: string;
 }) {
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("billing_rpc_workflow");
   try {
     const result = await invokeSupabaseRpcOrThrow<unknown>(supabase, RPC_FINALIZE_BILLING_INVOICES, {
       p_invoice_ids: input.invoiceIds,

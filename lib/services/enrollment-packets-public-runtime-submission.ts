@@ -103,7 +103,7 @@ export async function savePublicEnrollmentPacketProgress(input: PublicEnrollment
   const progressSnapshot = buildPublicEnrollmentPacketProgressSnapshot(mergedPayload);
   const requestWasAlreadyInProgress = toStatus(context.request.status) === "in_progress";
   const now = toEasternISO();
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   try {
     await invokeSupabaseRpcOrThrow<unknown>(admin, SAVE_ENROLLMENT_PACKET_PROGRESS_RPC, {
       p_packet_id: context.request.id,
@@ -193,7 +193,7 @@ export async function preparePublicEnrollmentPacketSubmission(
     );
   }
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const senderSignature = await admin
     .from("enrollment_packet_signatures")
     .select("signer_name, signature_blob")

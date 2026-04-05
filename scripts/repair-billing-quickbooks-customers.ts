@@ -315,7 +315,7 @@ async function main() {
   }
 
   const { createSupabaseAdminClient } = await import("../lib/supabase/admin");
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("billing_quickbooks_repair");
   const invoiceScopedQuery =
     args.invoiceNumbers.length > 0
       ? admin

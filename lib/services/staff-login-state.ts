@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { toEasternISO } from "@/lib/timezone";
 import type { AppRole } from "@/types/app";
@@ -42,7 +42,7 @@ function toStaffAuthProfile(row: ProfileRow): StaffAuthProfile {
 }
 
 async function getServiceClient() {
-  return await createClient({ serviceRole: true });
+  return createServiceRoleClient("staff_login_state_read");
 }
 
 async function getStaffAuthProfileById(staffUserId: string): Promise<StaffAuthProfile> {

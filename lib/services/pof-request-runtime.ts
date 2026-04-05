@@ -43,7 +43,7 @@ async function recordPofAlertSafely(
 }
 
 export async function loadPofRequestById(requestId: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   const { data, error } = await admin.from("pof_requests").select("*").eq("id", requestId).maybeSingle();
   if (error) throw new Error(error.message);
   return (data as PofRequestRow | null) ?? null;
@@ -51,7 +51,7 @@ export async function loadPofRequestById(requestId: string) {
 
 export async function loadPofRequestByToken(token: string): Promise<PofTokenMatch | null> {
   const hashed = hashToken(token);
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   const { data, error } = await admin
     .from("pof_requests")
     .select("*")
@@ -146,7 +146,7 @@ export async function createPofDocumentEvent(input: {
   actorUserAgent?: string | null;
   metadata?: Record<string, unknown>;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   const { error } = await admin.from("document_events").insert({
     document_type: "pof_request",
     document_id: input.documentId,
@@ -200,7 +200,7 @@ export async function markPofRequestDeliveryState(input: {
   expectedCurrentDeliveryStatus?: SendWorkflowDeliveryStatus | null;
   requireOpenedAtNull?: boolean;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   try {
     type TransitionResultRow = {
       request_id: string;
@@ -295,7 +295,7 @@ export async function refreshExpiredPofRequests(rows: PofRequestRow[]) {
 
 export async function listPofRequestsByPhysicianOrderIdsWithAdmin(memberId: string, physicianOrderIds: string[]) {
   if (physicianOrderIds.length === 0) return [] as PofRequestRow[];
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   const { data, error } = await admin
     .from("pof_requests")
     .select("*")

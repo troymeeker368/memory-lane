@@ -1,6 +1,7 @@
 import { normalizeRoleKey } from "@/lib/permissions";
 import { insertAuditLogEntry } from "@/lib/services/audit-log-service";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getPublicAppUrl } from "@/lib/runtime";
 import { buildStaffAuthEmailTemplate } from "@/lib/email/templates/staff-auth";
 import { buildDocumentCenterSenderHeader } from "@/lib/services/document-branding";
@@ -106,7 +107,7 @@ function isMissingRelationError(error: unknown, relationName: string) {
 }
 
 async function getServiceClient() {
-  return await createClient({ serviceRole: true });
+  return createServiceRoleClient("staff_auth_admin");
 }
 
 async function getStaffAuthProfileById(staffUserId: string): Promise<StaffAuthProfile> {

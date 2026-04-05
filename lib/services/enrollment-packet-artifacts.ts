@@ -204,7 +204,7 @@ export async function repairEnrollmentPacketUploadMemberFileLinks(packetId: stri
   const normalizedPacketId = String(packetId ?? "").trim();
   if (!normalizedPacketId) return 0;
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_uploads")
     .select("packet_id, member_id, member_file_id, file_name, file_type, file_path, upload_category")
@@ -283,7 +283,7 @@ export async function insertUploadAndFile(input: {
     clientUploadId: input.clientUploadId ?? null
   });
   const objectPath = `members/${input.memberId}/enrollment-packets/${input.packetId}/${input.uploadCategory}/${uploadFingerprint}-${slugify(safeName)}`;
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data: existingUpload, error: existingUploadError } = await admin
     .from("enrollment_packet_uploads")
     .select("file_path, member_file_id, finalization_status")
@@ -476,7 +476,7 @@ export async function cleanupEnrollmentPacketUploadArtifacts(input: {
   }
 
   if (batchId) {
-    const admin = createSupabaseAdminClient();
+    const admin = createSupabaseAdminClient("enrollment_packet_workflow");
     const { error } = await admin
       .from("enrollment_packet_uploads")
       .delete()
@@ -546,7 +546,7 @@ export async function updateEnrollmentPacketMappingSyncState(input: {
   mappingRunId?: string | null;
   clearClaim?: boolean;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const shouldClearClaim = input.clearClaim ?? input.status !== "pending";
   const { error } = await admin
     .from("enrollment_packet_requests")
@@ -570,7 +570,7 @@ export async function updateEnrollmentPacketCompletionFollowUpState(input: {
   checkedAt: string;
   error?: string | null;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { error } = await admin
     .from("enrollment_packet_requests")
     .update({
@@ -587,7 +587,7 @@ export async function releaseEnrollmentPacketMappingClaim(input: {
   packetId: string;
   updatedAt: string;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { error } = await admin
     .from("enrollment_packet_requests")
     .update({

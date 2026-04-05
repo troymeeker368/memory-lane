@@ -375,7 +375,7 @@ export function isExpired(expiresAt: string) {
 export async function createSignedStorageUrl(storageUri: string, expiresInSeconds = 60 * 15) {
   const objectPath = parseMemberDocumentStorageUri(storageUri);
   if (!objectPath) throw new Error("Storage object path is invalid.");
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   const { data, error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).createSignedUrl(objectPath, expiresInSeconds);
   if (error || !data?.signedUrl) throw new Error(error?.message ?? "Unable to create signed document URL.");
   return data.signedUrl;
@@ -386,7 +386,7 @@ export async function downloadStorageAssetOrThrow(storageUri: string, label: str
   if (!objectPath) {
     throw new Error(`${label} storage path is invalid.`);
   }
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   const { data, error } = await admin.storage.from(MEMBER_DOCUMENTS_BUCKET).download(objectPath);
   if (error || !data) {
     throw new Error(`${label} is missing in storage. Unable to generate signed PDF artifact.`);

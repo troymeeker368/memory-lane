@@ -32,142 +32,21 @@ import {
   selectMembersWithFallback,
   selectMemberWithFallback
 } from "@/lib/services/member-command-center-member-queries";
+import {
+  BUS_STOP_DIRECTORY_SELECT,
+  LEGACY_INLINE_MEMBER_FILE_SENTINEL,
+  MEMBER_ALLERGY_LIST_SELECT,
+  MEMBER_ATTENDANCE_SCHEDULE_DETAIL_SELECT,
+  MEMBER_COMMAND_CENTER_ADD_RIDER_ADDRESS_SELECT,
+  MEMBER_COMMAND_CENTER_DETAIL_SELECT,
+  MEMBER_COMMAND_CENTER_INDEX_PROFILE_SELECT,
+  MEMBER_COMMAND_CENTER_INDEX_SCHEDULE_SELECT,
+  toMemberCommandCenterIndexProfileRow,
+  toMemberCommandCenterIndexScheduleRow
+} from "@/lib/services/member-command-center-selects";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
-
-const MEMBER_COMMAND_CENTER_INDEX_PROFILE_SELECT = "member_id, profile_image_url";
-const MEMBER_COMMAND_CENTER_INDEX_SCHEDULE_SELECT =
-  "member_id, enrollment_date, monday, tuesday, wednesday, thursday, friday, make_up_days_available";
-const MEMBER_COMMAND_CENTER_ADD_RIDER_ADDRESS_SELECT = "member_id, street_address, city, state, zip";
-// MCC detail screens intentionally hydrate the full canonical shell rows in one read.
-const MEMBER_COMMAND_CENTER_DETAIL_SELECT = [
-  "id",
-  "member_id",
-  "gender",
-  "payor",
-  "original_referral_source",
-  "photo_consent",
-  "profile_image_url",
-  "location",
-  "street_address",
-  "city",
-  "state",
-  "zip",
-  "marital_status",
-  "primary_language",
-  "secondary_language",
-  "religion",
-  "ethnicity",
-  "is_veteran",
-  "veteran_branch",
-  "code_status",
-  "dnr",
-  "dni",
-  "polst_molst_colst",
-  "hospice",
-  "advanced_directives_obtained",
-  "power_of_attorney",
-  "funeral_home",
-  "legal_comments",
-  "diet_type",
-  "dietary_preferences_restrictions",
-  "swallowing_difficulty",
-  "supplements",
-  "food_dislikes",
-  "foods_to_omit",
-  "diet_texture",
-  "no_known_allergies",
-  "medication_allergies",
-  "food_allergies",
-  "environmental_allergies",
-  "command_center_notes",
-  "source_assessment_id",
-  "source_assessment_at",
-  "updated_by_user_id",
-  "updated_by_name",
-  "created_at",
-  "updated_at"
-].join(", ");
-// Attendance detail uses the full schedule row because transport and billing editors share this read path.
-const MEMBER_ATTENDANCE_SCHEDULE_DETAIL_SELECT = [
-  "id",
-  "member_id",
-  "enrollment_date",
-  "monday",
-  "tuesday",
-  "wednesday",
-  "thursday",
-  "friday",
-  "full_day",
-  "transportation_required",
-  "transportation_mode",
-  "transport_bus_number",
-  "transportation_bus_stop",
-  "transport_monday_period",
-  "transport_tuesday_period",
-  "transport_wednesday_period",
-  "transport_thursday_period",
-  "transport_friday_period",
-  "transport_monday_am_mode",
-  "transport_monday_am_door_to_door_address",
-  "transport_monday_am_bus_number",
-  "transport_monday_am_bus_stop",
-  "transport_monday_pm_mode",
-  "transport_monday_pm_door_to_door_address",
-  "transport_monday_pm_bus_number",
-  "transport_monday_pm_bus_stop",
-  "transport_tuesday_am_mode",
-  "transport_tuesday_am_door_to_door_address",
-  "transport_tuesday_am_bus_number",
-  "transport_tuesday_am_bus_stop",
-  "transport_tuesday_pm_mode",
-  "transport_tuesday_pm_door_to_door_address",
-  "transport_tuesday_pm_bus_number",
-  "transport_tuesday_pm_bus_stop",
-  "transport_wednesday_am_mode",
-  "transport_wednesday_am_door_to_door_address",
-  "transport_wednesday_am_bus_number",
-  "transport_wednesday_am_bus_stop",
-  "transport_wednesday_pm_mode",
-  "transport_wednesday_pm_door_to_door_address",
-  "transport_wednesday_pm_bus_number",
-  "transport_wednesday_pm_bus_stop",
-  "transport_thursday_am_mode",
-  "transport_thursday_am_door_to_door_address",
-  "transport_thursday_am_bus_number",
-  "transport_thursday_am_bus_stop",
-  "transport_thursday_pm_mode",
-  "transport_thursday_pm_door_to_door_address",
-  "transport_thursday_pm_bus_number",
-  "transport_thursday_pm_bus_stop",
-  "transport_friday_am_mode",
-  "transport_friday_am_door_to_door_address",
-  "transport_friday_am_bus_number",
-  "transport_friday_am_bus_stop",
-  "transport_friday_pm_mode",
-  "transport_friday_pm_door_to_door_address",
-  "transport_friday_pm_bus_number",
-  "transport_friday_pm_bus_stop",
-  "daily_rate",
-  "transportation_billing_status",
-  "billing_rate_effective_date",
-  "billing_notes",
-  "attendance_days_per_week",
-  "default_daily_rate",
-  "use_custom_daily_rate",
-  "custom_daily_rate",
-  "make_up_days_available",
-  "attendance_notes",
-  "updated_by_user_id",
-  "updated_by_name",
-  "created_at",
-  "updated_at"
-].join(", ");
-const MEMBER_ALLERGY_LIST_SELECT =
-  "id, member_id, allergy_group, allergy_name, severity, comments, created_by_user_id, created_by_name, created_at, updated_at";
-const BUS_STOP_DIRECTORY_SELECT = "id, bus_stop_name, created_by_user_id, created_by_name, created_at, updated_at";
-const LEGACY_INLINE_MEMBER_FILE_SENTINEL = "__legacy_inline_member_file__";
 const MEMBER_FILE_LIST_RPC = "rpc_list_member_files";
 const MEMBER_FILE_LIST_MIGRATION = "0145_reports_and_member_files_read_rpcs.sql";
 const DEFAULT_MEMBER_LOOKUP_LIMIT = 200;
@@ -199,33 +78,6 @@ type MemberFileRpcRow = {
   updated_at: string;
   has_legacy_inline_data: boolean | null;
 };
-
-function toMemberCommandCenterIndexProfileRow(
-  row: Pick<MemberCommandCenterRow, "member_id" | "profile_image_url">
-): MemberCommandCenterIndexProfileRow {
-  return {
-    member_id: row.member_id,
-    profile_image_url: row.profile_image_url ?? null
-  };
-}
-
-function toMemberCommandCenterIndexScheduleRow(
-  row: Pick<
-    MemberAttendanceScheduleRow,
-    "member_id" | "enrollment_date" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "make_up_days_available"
-  >
-): MemberCommandCenterIndexScheduleRow {
-  return {
-    member_id: row.member_id,
-    enrollment_date: row.enrollment_date ?? null,
-    monday: Boolean(row.monday),
-    tuesday: Boolean(row.tuesday),
-    wednesday: Boolean(row.wednesday),
-    thursday: Boolean(row.thursday),
-    friday: Boolean(row.friday),
-    make_up_days_available: Number.isFinite(row.make_up_days_available) ? row.make_up_days_available : 0
-  };
-}
 
 export async function listMembersSupabase(filters?: {
   q?: string;
@@ -612,21 +464,11 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string, opt
       import("@/lib/services/care-plans-read"),
       import("@/lib/services/enrollment-packet-intake-staging")
     ]);
-  const [
-    storedProfile,
-    storedSchedule,
-    contacts,
-    files,
-    busStopDirectory,
-    mhpAllergies,
-    carePlanOverview,
-    enrollmentPacketIntakeAlert
-  ] = await Promise.all([
+  const [storedProfile, storedSchedule, contacts, files, mhpAllergies, carePlanOverview, enrollmentPacketIntakeAlert] = await Promise.all([
     getMemberCommandCenterProfileReadOnlySupabase(canonicalMemberId, canonicalOptions),
     getMemberAttendanceScheduleReadOnlySupabase(canonicalMemberId, canonicalOptions),
     listMemberContactsSupabase(canonicalMemberId, canonicalOptions),
     listMemberFilesSupabase(canonicalMemberId, canonicalOptions),
-    listBusStopDirectorySupabase(),
     listMemberAllergiesSupabase(canonicalMemberId, canonicalOptions),
     getMemberCarePlanOverview(canonicalMemberId, { canonicalInput: true }),
     getLatestEnrollmentPacketPofStagingSummary(canonicalMemberId, { canonicalInput: true })
@@ -670,7 +512,6 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string, opt
     schedule,
     contacts,
     files,
-    busStopDirectory,
     mhpAllergies,
     makeupBalance: schedule.make_up_days_available ?? 0,
     makeupLedger: [] as MakeupLedgerRow[],

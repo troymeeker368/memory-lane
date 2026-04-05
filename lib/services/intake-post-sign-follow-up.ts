@@ -99,7 +99,7 @@ function mapQueueRow(row: IntakePostSignFollowUpQueueRow): IntakePostSignFollowU
 }
 
 async function loadAssessmentMemberId(assessmentId: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("intake_follow_up_workflow");
   const { data, error } = await admin
     .from("intake_assessments")
     .select("id, member_id")
@@ -120,7 +120,7 @@ async function loadIntakePostSignFollowUpQueueRow(input: {
   assessmentId: string;
   taskType: IntakePostSignFollowUpTaskType;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("intake_follow_up_workflow");
   const { data, error } = await admin
     .from("intake_post_sign_follow_up_queue")
     .select(INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT)
@@ -138,7 +138,7 @@ export async function claimIntakePostSignFollowUpTask(input: {
   actorName?: string | null;
   claimedAt?: string | null;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("intake_follow_up_workflow");
   try {
     const data = await invokeSupabaseRpcOrThrow<unknown>(admin, RPC_CLAIM_INTAKE_POST_SIGN_FOLLOW_UP_TASK, {
       p_assessment_id: input.assessmentId,
@@ -163,7 +163,7 @@ export async function releaseIntakePostSignFollowUpTaskClaim(input: {
   taskType: IntakePostSignFollowUpTaskType;
   updatedAt?: string | null;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("intake_follow_up_workflow");
   const existing = await loadIntakePostSignFollowUpQueueRow({
     assessmentId: input.assessmentId,
     taskType: input.taskType
@@ -211,7 +211,7 @@ export async function listIntakePostSignFollowUpTasks(input: {
   assessmentId: string;
   includeCompleted?: boolean;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("intake_follow_up_workflow");
   let query = admin
     .from("intake_post_sign_follow_up_queue")
     .select(INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT)
@@ -236,7 +236,7 @@ export async function listIntakePostSignFollowUpTasksByAssessmentIds(input: {
     return new Map<string, IntakePostSignFollowUpTask[]>();
   }
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("intake_follow_up_workflow");
   let query = admin
     .from("intake_post_sign_follow_up_queue")
     .select(INTAKE_POST_SIGN_FOLLOW_UP_QUEUE_SELECT)
@@ -273,7 +273,7 @@ export async function queueIntakePostSignFollowUpTask(input: {
   titleOverride?: string | null;
   messageOverride?: string | null;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("intake_follow_up_workflow");
   const now = toEasternISO();
   const canonicalMemberId = await loadAssessmentMemberId(input.assessmentId);
   const requestedMemberId = clean(input.memberId);
@@ -423,7 +423,7 @@ export async function resolveIntakePostSignFollowUpTask(input: {
   actorName?: string | null;
   resolutionNote?: string | null;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("intake_follow_up_workflow");
   const now = toEasternISO();
   const actorUserId = clean(input.actorUserId);
   const actorName = clean(input.actorName);

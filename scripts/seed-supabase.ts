@@ -4382,7 +4382,7 @@ async function main() {
   const parsed = parseArgs(process.argv.slice(2));
   assertSafeEnvironment(parsed.reset);
   const db = buildSeededMockDb();
-  const supabase = createSupabaseAdminClient();
+  const supabase = createSupabaseAdminClient("seed_runtime_bootstrap");
   const staffMap = await ensureAuthProfiles(supabase, db);
   const rows = buildRows(db, staffMap);
 

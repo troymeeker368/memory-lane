@@ -25,7 +25,7 @@ test("transportation run posting stays on the canonical RPC boundary", () => {
   const migrationSource = readWorkspaceFile("supabase/migrations/0081_transportation_run_posting.sql");
 
   assert.equal(serviceSource.includes('const POST_TRANSPORTATION_RUN_RPC = "rpc_post_transportation_run";'), true);
-  assert.equal(serviceSource.includes('createClient({ serviceRole: true })'), true);
+  assert.equal(serviceSource.includes('createServiceRoleClient("transportation_run_posting")'), true);
   assert.equal(serviceSource.includes("invokeSupabaseRpcOrThrow"), true);
   assert.equal(migrationSource.includes("create table if not exists public.transportation_runs"), true);
   assert.equal(migrationSource.includes("create table if not exists public.transportation_run_results"), true);

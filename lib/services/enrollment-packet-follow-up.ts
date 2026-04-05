@@ -116,7 +116,7 @@ function mapQueueRow(row: EnrollmentPacketFollowUpQueueRow): EnrollmentPacketFol
 }
 
 async function loadEnrollmentPacketLineage(packetId: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_requests")
     .select("id, member_id, lead_id")
@@ -140,7 +140,7 @@ async function loadEnrollmentPacketFollowUpQueueRow(input: {
   packetId: string;
   taskType: EnrollmentPacketFollowUpTaskType;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_follow_up_queue")
     .select(ENROLLMENT_PACKET_FOLLOW_UP_QUEUE_SELECT)
@@ -158,7 +158,7 @@ export async function claimEnrollmentPacketFollowUpTask(input: {
   actorName?: string | null;
   claimedAt?: string | null;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   try {
     const data = await invokeSupabaseRpcOrThrow<unknown>(admin, RPC_CLAIM_ENROLLMENT_PACKET_FOLLOW_UP_TASK, {
       p_packet_id: input.packetId,
@@ -183,7 +183,7 @@ export async function releaseEnrollmentPacketFollowUpTaskClaim(input: {
   taskType: EnrollmentPacketFollowUpTaskType;
   updatedAt?: string | null;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const existing = await loadEnrollmentPacketFollowUpQueueRow({
     packetId: input.packetId,
     taskType: input.taskType
@@ -241,7 +241,7 @@ export async function queueEnrollmentPacketFollowUpTask(input: {
   payload?: Record<string, unknown>;
   emitMilestone?: boolean;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const now = toEasternISO();
   const canonicalLineage = await loadEnrollmentPacketLineage(input.packetId);
   const requestedMemberId = clean(input.memberId);
@@ -396,7 +396,7 @@ export async function emitAgedEnrollmentPacketFollowUpQueueAlerts(input: {
     DEFAULT_ENROLLMENT_PACKET_FOLLOW_UP_ALERT_AGE_MINUTES
   );
   const thresholdIso = new Date(Date.parse(input.nowIso) - alertAgeMinutes * 60 * 1000).toISOString();
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("enrollment_packet_follow_up_queue")
     .select(
@@ -461,7 +461,7 @@ export async function resolveEnrollmentPacketFollowUpTask(input: {
   actorName?: string | null;
   resolutionNote?: string | null;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const now = toEasternISO();
   const actorUserId = clean(input.actorUserId);
   const actorName = clean(input.actorName);

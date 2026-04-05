@@ -222,7 +222,7 @@ export async function sendNewPofSignatureRequest(input: SendPofSignatureInput) {
   const token = generateSigningToken();
   const hashedToken = hashToken(token);
   const signatureRequestUrl = `${buildAppBaseUrl(input.appBaseUrl)}/sign/pof/${token}`;
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   let requestId: string = provisionalRequestId;
   try {
     const prepared = toRpcPreparePofRequestDeliveryRow(
@@ -535,7 +535,7 @@ export async function resendPofSignatureRequest(input: ResendPofSignatureInput) 
   });
 
   const preSendUpdatedAt = toEasternISO();
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
   try {
     await invokeSupabaseRpcOrThrow<unknown>(admin, PREPARE_POF_REQUEST_DELIVERY_RPC, {
       p_request_id: input.requestId,

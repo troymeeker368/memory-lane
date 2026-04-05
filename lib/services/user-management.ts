@@ -301,7 +301,7 @@ function sanitizeManagedUserInput(input: ManagedUserInput): ManagedUserInput {
 }
 
 async function replaceUserPermissions(userId: string, permissions: PermissionSet | null) {
-  const supabase = createSupabaseAdminClient();
+  const supabase = createSupabaseAdminClient("user_management_admin");
   const { error: deleteError } = await supabase.from("user_permissions").delete().eq("user_id", userId);
   if (deleteError) throw new Error(deleteError.message);
   const { error: profileUpdateError } = await supabase
@@ -412,7 +412,7 @@ export async function createManagedUser(input: ManagedUserInput): Promise<Manage
   const role = normalizeRoleKey(cleaned.role);
   const now = toEasternISO();
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("user_management_admin");
   const tempPassword = randomBytes(18).toString("base64url");
   const { data: createdAuthUser, error: authError } = await admin.auth.admin.createUser({
     email: cleaned.email,
@@ -492,7 +492,7 @@ export async function updateManagedUser(userId: string, patch: ManagedUserInput)
   const now = toEasternISO();
   const shouldSyncAuth = current.email !== cleaned.email || current.displayName !== cleaned.displayName;
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("user_management_admin");
   if (shouldSyncAuth) {
     const { error: authError } = await admin.auth.admin.updateUserById(current.authUserId || userId, {
       email: cleaned.email,
@@ -562,7 +562,7 @@ export async function setManagedUserStatus(userId: string, status: UserStatus): 
   const current = await getManagedUserById(userId);
   if (!current) return null;
   const now = toEasternISO();
-  const supabase = createSupabaseAdminClient();
+  const supabase = createSupabaseAdminClient("user_management_admin");
   const { error } = await supabase
     .from("profiles")
     .update({ active: status === "active", is_active: status === "active", updated_at: now })

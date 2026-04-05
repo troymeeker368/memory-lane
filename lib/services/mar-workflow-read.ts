@@ -197,23 +197,49 @@ export async function getMarWorkflowSnapshot(options?: {
   historyLimit?: number;
   prnLimit?: number;
   memberOptions?: MarWorkflowMemberOption[];
+  memberOptionsFallback?: MarWorkflowMemberOption[];
 }) {
-  const serviceRole = options?.serviceRole ?? true;
+  const serviceRole = options?.serviceRole ?? false;
 
   const historyLimit = Math.max(10, Math.min(options?.historyLimit ?? 200, 500));
   const prnLimit = Math.max(10, Math.min(options?.prnLimit ?? 200, 500));
   const supabase = await createClient({ serviceRole });
+  const memberOptionsFallback = options?.memberOptionsFallback;
 
-  const [
-    { data: todayRowsRaw, error: todayError },
-    { data: overdueRowsRaw, error: overdueError },
-    { data: notGivenRowsRaw, error: notGivenError },
-    { data: historyRowsRaw, error: historyError }
-  ] = await Promise.all([
+  const viewQueriesPromise = Promise.all([
     supabase.from("v_mar_today").select(MAR_TODAY_SELECT).order("scheduled_time", { ascending: true }),
     supabase.from("v_mar_overdue_today").select(MAR_TODAY_SELECT).order("scheduled_time", { ascending: true }),
     supabase.from("v_mar_not_given_today").select(MAR_HISTORY_SELECT).order("administered_at", { ascending: false }),
-    supabase.from("v_mar_administration_history").select(MAR_HISTORY_SELECT).order("administered_at", { ascending: false }).limit(historyLimit)
+    supabase
+      .from("v_mar_administration_history")
+      .select(MAR_HISTORY_SELECT)
+      .order("administered_at", { ascending: false })
+      .limit(historyLimit)
+  ]);
+  const prnSnapshotPromise = getPrnHistorySnapshot({ limit: prnLimit, serviceRole });
+  const prnMedicationOptionsPromise = listActivePrnMedicationOptions({ serviceRole });
+  const memberOptionsPromise = options?.memberOptions
+    ? Promise.resolve(options.memberOptions)
+    : listMarWorkflowMemberOptions({ serviceRole }).catch((error) => {
+        if (memberOptionsFallback) return memberOptionsFallback;
+        throw error;
+      });
+
+  const [
+    [
+      { data: todayRowsRaw, error: todayError },
+      { data: overdueRowsRaw, error: overdueError },
+      { data: notGivenRowsRaw, error: notGivenError },
+      { data: historyRowsRaw, error: historyError }
+    ],
+    prnSnapshot,
+    prnMedicationOptions,
+    memberOptions
+  ] = await Promise.all([
+    viewQueriesPromise,
+    prnSnapshotPromise,
+    prnMedicationOptionsPromise,
+    memberOptionsPromise
   ]);
 
   if (todayError) throwMarSupabaseError(todayError, "v_mar_today");
@@ -233,8 +259,6 @@ export async function getMarWorkflowSnapshot(options?: {
   const history = (historyRowsRaw ?? [])
     .map((row: unknown) => mapMarHistoryRow((row ?? {}) as Record<string, unknown>))
     .filter((row): row is MarAdministrationHistoryRow => Boolean(row));
-  const prnSnapshot = await getPrnHistorySnapshot({ limit: prnLimit, serviceRole });
-  const prnMedicationOptions: MarPrnOption[] = await listActivePrnMedicationOptions({ serviceRole });
   const scheduledHistory = history.filter((row) => row.source !== "prn");
   const mergedHistory = [...prnSnapshot.log, ...scheduledHistory]
     .sort((left, right) => new Date(right.administeredAt).getTime() - new Date(left.administeredAt).getTime())
@@ -267,6 +291,6 @@ export async function getMarWorkflowSnapshot(options?: {
     prnEffective: prnSnapshot.effective,
     prnIneffective: prnSnapshot.ineffective,
     prnMedicationOptions,
-    memberOptions: options?.memberOptions ?? (await listMarWorkflowMemberOptions({ serviceRole }))
+    memberOptions
   } satisfies MarWorkflowSnapshot;
 }

@@ -192,7 +192,7 @@ function validateDateWindow(startDate: string, endDate: string | null) {
 }
 
 async function listActiveCommunityFeesForDate(effectiveDate: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_pricing_workflow");
   const { data, error } = await admin
     .from("enrollment_pricing_community_fees")
     .select(
@@ -218,7 +218,7 @@ async function listActiveCommunityFeesForDate(effectiveDate: string) {
 }
 
 async function listActiveDailyRatesForDate(effectiveDate: string) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_pricing_workflow");
   const { data, error } = await admin
     .from("enrollment_pricing_daily_rates")
     .select(
@@ -245,7 +245,7 @@ async function listActiveDailyRatesForDate(effectiveDate: string) {
 }
 
 export async function listEnrollmentPricingCommunityFees() {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_pricing_workflow");
   const { data, error } = await admin
     .from("enrollment_pricing_community_fees")
     .select(
@@ -269,7 +269,7 @@ export async function listEnrollmentPricingCommunityFees() {
 }
 
 export async function listEnrollmentPricingDailyRates() {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_pricing_workflow");
   const { data, error } = await admin
     .from("enrollment_pricing_daily_rates")
     .select(
@@ -462,7 +462,7 @@ export async function createEnrollmentPricingCommunityFee(input: {
   const effectiveEndDate = clean(input.effectiveEndDate) ? asDateOnly(input.effectiveEndDate ?? null) : null;
   validateDateWindow(effectiveStartDate, effectiveEndDate);
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_pricing_workflow");
   const { data, error } = await admin
     .from("enrollment_pricing_community_fees")
     .insert({
@@ -520,7 +520,7 @@ export async function updateEnrollmentPricingCommunityFee(input: {
   const effectiveEndDate = clean(input.effectiveEndDate) ? asDateOnly(input.effectiveEndDate ?? null) : null;
   validateDateWindow(effectiveStartDate, effectiveEndDate);
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_pricing_workflow");
   const { data, error } = await admin
     .from("enrollment_pricing_community_fees")
     .update({
@@ -574,7 +574,7 @@ export async function setEnrollmentPricingCommunityFeeActive(input: {
   isActive: boolean;
   actorUserId: string;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_pricing_workflow");
   const { data: current, error: currentError } = await admin
     .from("enrollment_pricing_community_fees")
     .select(
@@ -631,7 +631,7 @@ export async function createEnrollmentPricingDailyRate(input: {
   const effectiveEndDate = clean(input.effectiveEndDate) ? asDateOnly(input.effectiveEndDate ?? null) : null;
   validateDateWindow(effectiveStartDate, effectiveEndDate);
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_pricing_workflow");
   const { data, error } = await admin
     .from("enrollment_pricing_daily_rates")
     .insert({
@@ -684,7 +684,7 @@ export async function updateEnrollmentPricingDailyRate(input: {
   const effectiveEndDate = clean(input.effectiveEndDate) ? asDateOnly(input.effectiveEndDate ?? null) : null;
   validateDateWindow(effectiveStartDate, effectiveEndDate);
 
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_pricing_workflow");
   const { data, error } = await admin
     .from("enrollment_pricing_daily_rates")
     .update({
@@ -729,7 +729,7 @@ export async function setEnrollmentPricingDailyRateActive(input: {
   isActive: boolean;
   actorUserId: string;
 }) {
-  const admin = createSupabaseAdminClient();
+  const admin = createSupabaseAdminClient("enrollment_pricing_workflow");
   const { data, error } = await admin
     .from("enrollment_pricing_daily_rates")
     .update({

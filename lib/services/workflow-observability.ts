@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { logSystemEvent } from "@/lib/services/system-event-service";
 
 export type WorkflowEventSeverity = "low" | "medium" | "high" | "critical";
@@ -79,7 +79,7 @@ export async function maybeRecordRepeatedFailureAlert(input: {
   const lookbackHours = Math.max(1, input.lookbackHours ?? 24);
   const entityId = normalizeText(input.entityId);
   const sinceIso = new Date(Date.now() - lookbackHours * 60 * 60 * 1000).toISOString();
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("workflow_observability_read");
 
   let failuresQuery = supabase
     .from("system_events")
@@ -157,7 +157,7 @@ export async function recordImmediateSystemAlert(input: {
     entityType: input.entityType,
     entityId: input.entityId
   });
-  const supabase = await createClient({ serviceRole: true });
+  const supabase = createServiceRoleClient("workflow_observability_read");
   let existingAlertQuery = supabase
     .from("system_events")
     .select("id")

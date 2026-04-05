@@ -26,6 +26,7 @@ export default function MemberCommandCenterTransportationTab({
   configuredTransportTrips,
   expectedTransportSlots,
   defaultDoorToDoorAddress,
+  busStopOptions,
   busNumberOptions
 }: {
   canEdit: boolean;
@@ -36,6 +37,7 @@ export default function MemberCommandCenterTransportationTab({
   configuredTransportTrips: number;
   expectedTransportSlots: number;
   defaultDoorToDoorAddress: string;
+  busStopOptions: string[];
   busNumberOptions: string[];
 }) {
   return (
@@ -146,7 +148,7 @@ export default function MemberCommandCenterTransportationTab({
           transportFridayPmDoorToDoorAddress={detail.schedule.transport_friday_pm_door_to_door_address}
           transportFridayPmBusNumber={detail.schedule.transport_friday_pm_bus_number}
           transportFridayPmBusStop={detail.schedule.transport_friday_pm_bus_stop}
-          busStopOptions={detail.busStopDirectory.map((entry) => entry.bus_stop_name)}
+          busStopOptions={busStopOptions}
           busNumberOptions={busNumberOptions}
         />
       ) : null}
