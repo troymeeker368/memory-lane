@@ -26,11 +26,43 @@ const DOCUMENTATION_ENTRY_LINKS = [
 
 type DocumentationDashboardHomeProps = {
   normalizedRole: CanonicalAppRole;
+  searchParams: Record<string, string | string[] | undefined>;
 };
 
 type DocumentationSummary = Awaited<ReturnType<typeof getDocumentationSummary>>;
-type DocumentationTrackerRow = Awaited<ReturnType<typeof getDocumentationTracker>>[number];
+type DocumentationTrackerPage = Awaited<ReturnType<typeof getDocumentationTracker>>;
+type DocumentationTrackerRow = DocumentationTrackerPage["rows"][number];
 type DocumentationWorkflowCounts = Awaited<ReturnType<typeof getRecentDocumentationWorkflowCounts>>;
+
+function firstString(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+function parsePage(value: string | string[] | undefined) {
+  const parsed = Number(firstString(value));
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.floor(parsed);
+}
+
+function buildDocumentationHref(searchParams: Record<string, string | string[] | undefined>, targetPage: number) {
+  const search = new URLSearchParams();
+
+  Object.entries(searchParams).forEach(([key, value]) => {
+    if (key === "page") return;
+    const normalized = firstString(value);
+    if (normalized) {
+      search.set(key, normalized);
+    }
+  });
+
+  if (targetPage > 1) {
+    search.set("page", String(targetPage));
+  }
+
+  const query = search.toString();
+  return query ? `/documentation?${query}` : "/documentation";
+}
 
 function DocumentationTodayMobileList({ today }: { today: DocumentationSummary["today"] }) {
   return (
@@ -188,16 +220,21 @@ function RecentWorkflowCountsTable({ counts }: { counts: DocumentationWorkflowCo
   );
 }
 
-export async function DocumentationDashboardHome({ normalizedRole }: DocumentationDashboardHomeProps) {
+export async function DocumentationDashboardHome({ normalizedRole, searchParams }: DocumentationDashboardHomeProps) {
   const documentationEntryLinks = DOCUMENTATION_ENTRY_LINKS.filter((item) =>
     item.href === "/documentation/incidents" ? canAccessIncidentReportsForRole(normalizedRole) : true
   );
+  const trackerPageNumber = parsePage(searchParams.page);
 
-  const [summary, tracker, workflowCounts] = await Promise.all([
+  const [summary, trackerPage, workflowCounts] = await Promise.all([
     getDocumentationSummary(),
-    getDocumentationTracker(),
+    getDocumentationTracker({ page: trackerPageNumber, pageSize: 50 }),
     getRecentDocumentationWorkflowCounts()
   ]);
+  const hasPreviousTrackerPage = trackerPage.page > 1;
+  const hasNextTrackerPage = trackerPage.page < trackerPage.totalPages;
+  const trackerRangeStart = trackerPage.rows.length === 0 ? 0 : (trackerPage.page - 1) * trackerPage.pageSize + 1;
+  const trackerRangeEnd = trackerPage.rows.length === 0 ? 0 : trackerRangeStart + trackerPage.rows.length - 1;
 
   return (
     <div className="space-y-4">
@@ -236,7 +273,32 @@ export async function DocumentationDashboardHome({ normalizedRole }: Documentati
       <DocumentationTodayMobileList today={summary.today} />
       <DocumentationDashboardTable today={summary.today} />
       <TimelyDocumentationTable timely={summary.timely} />
-      <CareTrackerTable tracker={tracker} />
+      <CareTrackerTable tracker={trackerPage.rows} />
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
+          <span>
+            Showing {trackerRangeStart}-{trackerRangeEnd} of {trackerPage.totalRows} care tracker rows
+          </span>
+          <div className="flex items-center gap-2">
+            {hasPreviousTrackerPage ? (
+              <Link
+                href={buildDocumentationHref(searchParams, trackerPage.page - 1)}
+                className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
+              >
+                Previous Page
+              </Link>
+            ) : null}
+            {hasNextTrackerPage ? (
+              <Link
+                href={buildDocumentationHref(searchParams, trackerPage.page + 1)}
+                className="rounded-lg border border-border px-3 py-2 font-semibold text-primary-text"
+              >
+                Next Page
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      </Card>
       <RecentWorkflowCountsTable counts={workflowCounts} />
     </div>
   );

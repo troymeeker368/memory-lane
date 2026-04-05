@@ -36,6 +36,7 @@ import {
   recordWorkflowEvent
 } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
+import type { EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 import type { PacketFileUpload } from "@/lib/services/enrollment-packet-types";
 
 export {
@@ -53,30 +54,7 @@ export async function submitPublicEnrollmentPacket(input: {
   attested: boolean;
   caregiverIp: string | null;
   caregiverUserAgent: string | null;
-  caregiverName?: string | null;
-  caregiverPhone?: string | null;
-  caregiverEmail?: string | null;
-  primaryContactAddress?: string | null;
-  primaryContactAddressLine1?: string | null;
-  primaryContactCity?: string | null;
-  primaryContactState?: string | null;
-  primaryContactZip?: string | null;
-  caregiverAddressLine1?: string | null;
-  caregiverAddressLine2?: string | null;
-  caregiverCity?: string | null;
-  caregiverState?: string | null;
-  caregiverZip?: string | null;
-  secondaryContactName?: string | null;
-  secondaryContactPhone?: string | null;
-  secondaryContactEmail?: string | null;
-  secondaryContactRelationship?: string | null;
-  secondaryContactAddress?: string | null;
-  secondaryContactAddressLine1?: string | null;
-  secondaryContactCity?: string | null;
-  secondaryContactState?: string | null;
-  secondaryContactZip?: string | null;
-  notes?: string | null;
-  intakePayload?: Partial<Record<string, unknown>> | null;
+  intakePayload: EnrollmentPacketIntakePayload;
   uploads?: PacketFileUpload[];
 }) {
   const normalizedToken = clean(input.token);
@@ -126,29 +104,6 @@ export async function submitPublicEnrollmentPacket(input: {
       attested: input.attested,
       caregiverIp: input.caregiverIp,
       caregiverUserAgent: input.caregiverUserAgent,
-      caregiverName: input.caregiverName,
-      caregiverPhone: input.caregiverPhone,
-      caregiverEmail: input.caregiverEmail,
-      primaryContactAddress: input.primaryContactAddress,
-      primaryContactAddressLine1: input.primaryContactAddressLine1,
-      primaryContactCity: input.primaryContactCity,
-      primaryContactState: input.primaryContactState,
-      primaryContactZip: input.primaryContactZip,
-      caregiverAddressLine1: input.caregiverAddressLine1,
-      caregiverAddressLine2: input.caregiverAddressLine2,
-      caregiverCity: input.caregiverCity,
-      caregiverState: input.caregiverState,
-      caregiverZip: input.caregiverZip,
-      secondaryContactName: input.secondaryContactName,
-      secondaryContactPhone: input.secondaryContactPhone,
-      secondaryContactEmail: input.secondaryContactEmail,
-      secondaryContactRelationship: input.secondaryContactRelationship,
-      secondaryContactAddress: input.secondaryContactAddress,
-      secondaryContactAddressLine1: input.secondaryContactAddressLine1,
-      secondaryContactCity: input.secondaryContactCity,
-      secondaryContactState: input.secondaryContactState,
-      secondaryContactZip: input.secondaryContactZip,
-      notes: input.notes,
       intakePayload: input.intakePayload,
       uploads
     });
@@ -165,11 +120,11 @@ export async function submitPublicEnrollmentPacket(input: {
       completedAt,
       filedAt: finalizedAt,
       signerName: caregiverTypedName,
-      signerEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
+      signerEmail: cleanEmail(preparedSubmission.validatedPayload.primaryContactEmail) ?? request.caregiver_email,
       signatureBlob: input.caregiverSignatureImageDataUrl.trim(),
       ipAddress: clean(input.caregiverIp),
       actorUserId: request.sender_user_id,
-      actorEmail: cleanEmail(input.caregiverEmail) ?? request.caregiver_email,
+      actorEmail: cleanEmail(preparedSubmission.validatedPayload.primaryContactEmail) ?? request.caregiver_email,
       uploadBatchId: null,
       completedMetadata: {
         caregiverSignatureName: caregiverTypedName,
@@ -197,7 +152,7 @@ export async function submitPublicEnrollmentPacket(input: {
       validatedFieldsSnapshot: preparedSubmission.validatedFieldsSnapshot,
       caregiverTypedName,
       senderSignatureName: preparedSubmission.senderSignatureName,
-      caregiverEmail: input.caregiverEmail,
+      caregiverEmail: preparedSubmission.validatedPayload.primaryContactEmail,
       caregiverSignatureDataUrl: input.caregiverSignatureImageDataUrl.trim(),
       caregiverSignature: signature,
       uploads,

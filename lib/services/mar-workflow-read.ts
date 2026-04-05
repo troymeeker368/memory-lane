@@ -13,7 +13,6 @@ import {
 import { listMarWorkflowMemberOptions, type MarWorkflowMemberOption } from "@/lib/services/mar-member-options";
 import {
   clean,
-  isDateWithinMedicationWindow,
   mapMarHistoryRow,
   mapMarTodayRow,
   normalizeGenerationWindow,
@@ -45,8 +44,6 @@ type MarSyncMedicationRow = {
   member_id: string | null;
   updated_at: string | null;
   scheduled_times: unknown;
-  start_date: string | null;
-  end_date: string | null;
 };
 
 type MarScheduleFreshnessRow = {
@@ -58,6 +55,15 @@ function addDaysDateOnly(dateValue: string, days: number) {
   const date = new Date(`${dateValue}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function buildMedicationActiveOnDateFilter(dateValue: string) {
+  return [
+    "and(start_date.is.null,end_date.is.null)",
+    `and(start_date.is.null,end_date.gte.${dateValue})`,
+    `and(start_date.lte.${dateValue},end_date.is.null)`,
+    `and(start_date.lte.${dateValue},end_date.gte.${dateValue})`
+  ].join(",");
 }
 
 async function resolveMarMemberId(memberId: string, actionLabel: string, serviceRole?: boolean) {
@@ -110,24 +116,26 @@ export async function syncTodayMarSchedules(options?: { serviceRole?: boolean })
   const [{ data: medicationRowsRaw, error: medicationError }, { data: scheduleRowsRaw, error: scheduleError }] = await Promise.all([
     supabase
       .from("pof_medications")
-      .select("member_id, updated_at, scheduled_times, start_date, end_date")
+      .select("member_id, updated_at, scheduled_times")
       .eq("active", true)
       .eq("given_at_center", true)
       .eq("prn", false)
-      .like("source_medication_id", `${MAR_MHP_SOURCE_PREFIX}%`),
+      .like("source_medication_id", `${MAR_MHP_SOURCE_PREFIX}%`)
+      .not("member_id", "is", null)
+      .not("scheduled_times", "is", null)
+      .or(buildMedicationActiveOnDateFilter(today)),
     supabase
       .from("mar_schedules")
       .select("member_id, updated_at")
       .eq("active", true)
+      .not("member_id", "is", null)
       .gte("scheduled_time", todayStart)
       .lt("scheduled_time", todayEndExclusive)
   ]);
   if (medicationError) throwMarSupabaseError(medicationError, "pof_medications");
   if (scheduleError) throwMarSupabaseError(scheduleError, "mar_schedules");
 
-  const medicationRows = ((medicationRowsRaw ?? []) as MarSyncMedicationRow[]).filter((row) =>
-    row.member_id && isDateWithinMedicationWindow(today, row.start_date, row.end_date)
-  );
+  const medicationRows = (medicationRowsRaw ?? []) as MarSyncMedicationRow[];
   const scheduleRows = (scheduleRowsRaw ?? []) as MarScheduleFreshnessRow[];
 
   const expectedScheduleCountByMember = new Map<string, number>();

@@ -21,6 +21,22 @@ test("member file delete removes storage before the database row", () => {
   );
 });
 
+test("member file delete records durable repair state when storage is gone but row delete fails", () => {
+  const source = readWorkspaceFile("lib/services/member-files.ts");
+
+  assert.equal(source.includes("async function clearMemberFileStoragePointer"), true);
+  assert.equal(source.includes("storage_object_path: null"), true);
+  assert.equal(source.includes("dedupe_key: `member_file_delete_record_failure:${memberFileId}`"), true);
+  assert.equal(source.includes('repair_action: storageObjectPath ? "clear_storage_object_path" : "none"'), true);
+  assert.equal(source.includes("repair_outcome: repairOutcome"), true);
+  assert.equal(
+    source.includes(
+      "Member file storage was deleted, the database row could not be removed, and the surviving row was marked as missing its storage object. A durable repair alert was recorded for reconciliation."
+    ),
+    true
+  );
+});
+
 test("MAR actions keep local service-role audit logging but make it non-throwing", () => {
   const source = readWorkspaceFile("app/(portal)/health/mar/actions-impl.ts");
 

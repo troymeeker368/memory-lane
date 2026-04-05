@@ -47,6 +47,10 @@ export type SalesDashboardSummaryRpcRow = {
   partner_count: number | string | null;
   referral_source_count: number | string | null;
   partner_activity_count: number | string | null;
+  follow_up_overdue_count: number | string | null;
+  follow_up_due_today_count: number | string | null;
+  follow_up_upcoming_count: number | string | null;
+  follow_up_missing_date_count: number | string | null;
   stage_counts: unknown;
   recent_inquiries: unknown;
 };
@@ -66,7 +70,7 @@ const PIPELINE_STAGE_ORDER = [
   "Closed - Lost"
 ] as const;
 const SALES_DASHBOARD_SUMMARY_RPC = "rpc_get_sales_dashboard_summary";
-const SALES_DASHBOARD_SUMMARY_MIGRATION = "0129_sales_dashboard_rpc_consolidation.sql";
+const SALES_DASHBOARD_SUMMARY_MIGRATION = "0197_sales_dashboard_follow_up_summary_rpc.sql";
 
 function resolveCanonicalLeadStageStatus(lead: Pick<LeadSummaryLike, "stage" | "status">) {
   return resolveCanonicalLeadState({
@@ -150,11 +154,12 @@ export function normalizeSalesPipelineStageCounts(payload: unknown): LeadPipelin
 
 export async function fetchSalesDashboardSummarySupabase(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  input?: { recentInquiryStartDate?: string | null }
+  input?: { recentInquiryStartDate?: string | null; followUpAsOfDate?: string | null }
 ) {
   try {
     const rows = await invokeSupabaseRpcOrThrow<SalesDashboardSummaryRpcRow[]>(supabase, SALES_DASHBOARD_SUMMARY_RPC, {
-      p_recent_inquiry_start_date: input?.recentInquiryStartDate ?? null
+      p_recent_inquiry_start_date: input?.recentInquiryStartDate ?? null,
+      p_follow_up_as_of_date: input?.followUpAsOfDate ?? null
     });
     return rows?.[0] ?? null;
   } catch (error) {
@@ -168,7 +173,10 @@ export async function fetchSalesDashboardSummarySupabase(
   }
 }
 
-export async function getSalesDashboardSummarySupabase(input?: { recentInquiryStartDate?: string | null }) {
+export async function getSalesDashboardSummarySupabase(input?: {
+  recentInquiryStartDate?: string | null;
+  followUpAsOfDate?: string | null;
+}) {
   const supabase = await createClient();
   return fetchSalesDashboardSummarySupabase(supabase, input);
 }

@@ -163,13 +163,14 @@ export async function persistFinalizedPublicEnrollmentPacketArtifacts(input: {
   });
 
   for (const upload of input.uploads) {
+    const uploadBytes = await upload.readBytes();
     const artifact = await artifactOps.insertUploadAndFile({
       packetId: input.request.id,
       memberId: input.member.id,
       batchId: uploadBatchId,
       fileName: upload.fileName,
       contentType: upload.contentType,
-      bytes: upload.bytes,
+      bytes: uploadBytes,
       uploadCategory: upload.category,
       uploadedByUserId: null,
       uploadedByName: input.caregiverTypedName,

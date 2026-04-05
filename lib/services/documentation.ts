@@ -1,7 +1,9 @@
 import { listCanonicalMemberLinksForLeadIds } from "@/lib/services/canonical-person-ref";
-import { getProgressNoteReminderRows } from "@/lib/services/progress-notes";
+import { enrichDocumentationTrackerProgressRows } from "@/lib/services/documentation-tracker-progress";
 import { createClient } from "@/lib/supabase/server";
 import type { CanonicalPersonRef } from "@/types/identity";
+
+const DEFAULT_DOCUMENTATION_TRACKER_PAGE_SIZE = 50;
 
 function toCount(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -153,12 +155,23 @@ export async function getDocumentationSummary() {
   };
 }
 
-export async function getDocumentationTracker() {
+export async function getDocumentationTracker(input?: { page?: number; pageSize?: number }) {
+  const page = Number.isFinite(input?.page) && Number(input?.page) > 0 ? Math.floor(Number(input?.page)) : 1;
+  const pageSize =
+    Number.isFinite(input?.pageSize) && Number(input?.pageSize) > 0
+      ? Math.min(100, Math.floor(Number(input?.pageSize)))
+      : DEFAULT_DOCUMENTATION_TRACKER_PAGE_SIZE;
+  const rangeStart = (page - 1) * pageSize;
+  const rangeEnd = rangeStart + pageSize - 1;
   const supabase = await createClient();
-  const { data, error } = await supabase
+  const { data, count, error } = await supabase
     .from("documentation_tracker")
-    .select("id, member_id, member_name, assigned_staff_name, next_care_plan_due, next_progress_note_due, care_plan_done, note_done")
-    .order("next_care_plan_due");
+    .select("id, member_id, member_name, assigned_staff_name, next_care_plan_due, next_progress_note_due, care_plan_done, note_done", {
+      count: "exact"
+    })
+    .order("next_care_plan_due")
+    .order("member_name")
+    .range(rangeStart, rangeEnd);
   if (error) throw new Error(`Unable to load documentation_tracker: ${error.message}`);
 
   const trackerRows = (data ?? []) as Array<{
@@ -171,19 +184,16 @@ export async function getDocumentationTracker() {
     care_plan_done: boolean | null;
     note_done: boolean | null;
   }>;
-  const memberIds = trackerRows.map((row) => row.member_id).filter((value): value is string => Boolean(value));
-  const progressNotes = await getProgressNoteReminderRows(memberIds, { serviceRole: true });
-  const progressByMemberId = new Map(progressNotes.map((row) => [row.memberId, row] as const));
+  const rows = await enrichDocumentationTrackerProgressRows(trackerRows, { serviceRole: true });
+  const totalRows = count ?? rows.length;
 
-  return trackerRows.map((row) => {
-    const progress = row.member_id ? progressByMemberId.get(row.member_id) ?? null : null;
-    return {
-      ...row,
-      next_progress_note_due: progress?.nextProgressNoteDueDate ?? row.next_progress_note_due ?? null,
-      progress_note_status: progress?.complianceStatus ?? "data_issue",
-      has_progress_note_draft: progress?.hasDraftInProgress ?? false
-    };
-  });
+  return {
+    rows,
+    page,
+    pageSize,
+    totalRows,
+    totalPages: Math.max(1, Math.ceil(totalRows / pageSize))
+  };
 }
 
 export async function getRecentDocumentationWorkflowCounts() {

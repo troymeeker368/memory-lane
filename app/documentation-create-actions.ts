@@ -8,6 +8,7 @@ import type {
   createToiletLogAction as createToiletLogActionImpl,
   createTransportationLogAction as createTransportationLogActionImpl
 } from "@/app/documentation-create-core";
+import { loadDocumentationCreateCore } from "@/app/documentation-action-loaders";
 
 export type DocumentationCreateActionRequest =
   | {
@@ -36,7 +37,7 @@ export type DocumentationCreateActionRequest =
     };
 
 export async function runDocumentationCreateAction(request: DocumentationCreateActionRequest) {
-  const implementation = await import("@/app/documentation-create-core");
+  const implementation = await loadDocumentationCreateCore();
 
   switch (request.kind) {
     case "createAncillaryCharge":
@@ -55,11 +56,11 @@ export async function runDocumentationCreateAction(request: DocumentationCreateA
 }
 
 export async function createPhotoUploadsFormAction(formData: FormData) {
-  const implementation = await import("@/app/documentation-create-core");
+  const implementation = await loadDocumentationCreateCore();
   return implementation.createPhotoUploadsFormAction(formData);
 }
 
 export async function createPhotoUploadFormAction(formData: FormData) {
-  const implementation = await import("@/app/documentation-create-core");
+  const implementation = await loadDocumentationCreateCore();
   return implementation.createPhotoUploadFormAction(formData);
 }

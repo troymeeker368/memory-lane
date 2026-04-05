@@ -68,6 +68,22 @@ function todayDateString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function buildStaticPacketUpload(
+  fileName: string,
+  contentType: string,
+  text: string,
+  category: "insurance" | "poa" | "supporting"
+) {
+  const bytes = Buffer.from(text, "utf8");
+  return {
+    fileName,
+    contentType,
+    byteSize: bytes.length,
+    readBytes: async () => bytes,
+    category
+  };
+}
+
 function installServerOnlyShim() {
   type ModuleLoad = (request: string, parent: NodeModule | null, isMain: boolean) => unknown;
   const moduleShim = Module as typeof Module & { _load: ModuleLoad };
@@ -137,6 +153,9 @@ async function main() {
     getPublicEnrollmentPacketContext,
     submitPublicEnrollmentPacket,
   } = await import("../lib/services/enrollment-packets-public");
+  const { normalizeEnrollmentPacketIntakePayload } = await import(
+    "../lib/services/enrollment-packet-intake-payload"
+  );
   const {
     sendEnrollmentPacketRequest,
     upsertEnrollmentPacketSenderSignatureProfile
@@ -349,7 +368,7 @@ async function main() {
   const secondaryContactCity = "Tampa";
   const secondaryContactState = "FL";
   const secondaryContactZip = "33602";
-  const intakePayload = {
+  const intakePayload = normalizeEnrollmentPacketIntakePayload({
     memberGender: "Female",
     primaryContactAddress: primaryContactAddressLine1,
     primaryContactAddressLine1,
@@ -385,7 +404,7 @@ async function main() {
     ancillaryChargesAcknowledgmentSignatureName: caregiverTypedName,
     ancillaryChargesAcknowledgmentSignatureDate: signatureDate,
     photoConsentChoice: "Do Permit"
-  };
+  });
 
   await submitPublicEnrollmentPacket({
     token: created.token,
@@ -394,49 +413,26 @@ async function main() {
     attested: true,
     caregiverIp: "127.0.0.1",
     caregiverUserAgent: "enrollment-e2e-live-script/1.0",
-    caregiverName: caregiverTypedName,
-    caregiverPhone: "555-0101",
-    caregiverEmail: created.caregiverEmail,
-    primaryContactAddress: primaryContactAddressLine1,
-    primaryContactAddressLine1,
-    primaryContactCity,
-    primaryContactState,
-    primaryContactZip,
-    caregiverAddressLine1: primaryContactAddressLine1,
-    caregiverAddressLine2: "Apt 4",
-    caregiverCity: primaryContactCity,
-    caregiverState: primaryContactState,
-    caregiverZip: primaryContactZip,
-    secondaryContactName: "Secondary Contact",
-    secondaryContactPhone: "555-0102",
-    secondaryContactEmail: "secondary.contact@example.com",
-    secondaryContactRelationship: "Family",
-    secondaryContactAddress: secondaryContactAddressLine1,
-    secondaryContactAddressLine1,
-    secondaryContactCity,
-    secondaryContactState,
-    secondaryContactZip,
-    notes: "Enrollment E2E completion",
     intakePayload,
     uploads: [
-      {
-        fileName: "insurance-e2e.txt",
-        contentType: "text/plain",
-        bytes: Buffer.from("Insurance placeholder for enrollment packet E2E.", "utf8"),
-        category: "insurance"
-      },
-      {
-        fileName: "poa-e2e.txt",
-        contentType: "text/plain",
-        bytes: Buffer.from("POA placeholder for enrollment packet E2E.", "utf8"),
-        category: "poa"
-      },
-      {
-        fileName: "supporting-e2e.txt",
-        contentType: "text/plain",
-        bytes: Buffer.from("Supporting file placeholder for enrollment packet E2E.", "utf8"),
-        category: "supporting"
-      }
+      buildStaticPacketUpload(
+        "insurance-e2e.txt",
+        "text/plain",
+        "Insurance placeholder for enrollment packet E2E.",
+        "insurance"
+      ),
+      buildStaticPacketUpload(
+        "poa-e2e.txt",
+        "text/plain",
+        "POA placeholder for enrollment packet E2E.",
+        "poa"
+      ),
+      buildStaticPacketUpload(
+        "supporting-e2e.txt",
+        "text/plain",
+        "Supporting file placeholder for enrollment packet E2E.",
+        "supporting"
+      )
     ]
   });
 
@@ -448,7 +444,8 @@ async function main() {
       caregiverSignatureImageDataUrl: caregiverSignatureDataUrl,
       attested: true,
       caregiverIp: "127.0.0.1",
-      caregiverUserAgent: "enrollment-e2e-live-script/1.0"
+      caregiverUserAgent: "enrollment-e2e-live-script/1.0",
+      intakePayload
     });
   } catch {
     tokenReuseBlocked = true;

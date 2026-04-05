@@ -10,6 +10,7 @@ import type {
   updateToiletLogAction as updateToiletLogActionImpl,
   updateTransportationLogAction as updateTransportationLogActionImpl
 } from "@/app/documentation-actions-impl";
+import { loadDocumentationActionsImpl } from "@/app/documentation-action-loaders";
 
 export type DocumentationUpdateActionRequest =
   | {
@@ -46,7 +47,7 @@ export type DocumentationUpdateActionRequest =
     };
 
 export async function runDocumentationUpdateAction(request: DocumentationUpdateActionRequest) {
-  const implementation = await import("@/app/documentation-actions-impl");
+  const implementation = await loadDocumentationActionsImpl();
 
   switch (request.kind) {
     case "updateDailyActivity":

@@ -19,6 +19,8 @@ export type EnrollmentPacketFollowUpStatus = "action_required" | "completed";
 
 const RPC_CLAIM_ENROLLMENT_PACKET_FOLLOW_UP_TASK = "rpc_claim_enrollment_packet_follow_up_task";
 const ENROLLMENT_PACKET_FOLLOW_UP_CLAIM_MIGRATION = "0128_intake_follow_up_retry_claims.sql";
+const DEFAULT_ENROLLMENT_PACKET_FOLLOW_UP_ALERT_AGE_MINUTES = 30;
+const MAX_ENROLLMENT_PACKET_FOLLOW_UP_ALERT_ROWS = 50;
 
 type EnrollmentPacketFollowUpQueueRow = {
   id: string;
@@ -71,6 +73,15 @@ const ENROLLMENT_PACKET_FOLLOW_UP_QUEUE_UNIQUE_CONSTRAINT = "enrollment_packet_f
 function clean(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function getEnrollmentPacketFollowUpAlertAgeMinutes(
+  defaultMinutes: number,
+  configuredValue = process.env.ENROLLMENT_PACKET_FOLLOW_UP_ALERT_AGE_MINUTES
+) {
+  const parsed = Number(configuredValue ?? defaultMinutes);
+  if (!Number.isFinite(parsed)) return defaultMinutes;
+  return Math.max(5, Math.trunc(parsed));
 }
 
 function isUniqueConstraintError(error: { code?: string | null; message?: string | null; details?: string | null } | null) {
@@ -375,6 +386,72 @@ export async function queueEnrollmentPacketFollowUpTask(input: {
   });
 
   return savedRow ? mapQueueRow(savedRow) : null;
+}
+
+export async function emitAgedEnrollmentPacketFollowUpQueueAlerts(input: {
+  nowIso: string;
+  actorUserId?: string | null;
+}) {
+  const alertAgeMinutes = getEnrollmentPacketFollowUpAlertAgeMinutes(
+    DEFAULT_ENROLLMENT_PACKET_FOLLOW_UP_ALERT_AGE_MINUTES
+  );
+  const thresholdIso = new Date(Date.parse(input.nowIso) - alertAgeMinutes * 60 * 1000).toISOString();
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("enrollment_packet_follow_up_queue")
+    .select(
+      "packet_id, member_id, lead_id, task_type, attempt_count, last_error, last_attempted_at, action_url, updated_at, claimed_at, claimed_by_name"
+    )
+    .eq("status", "action_required")
+    .lte("updated_at", thresholdIso)
+    .order("updated_at", { ascending: true })
+    .limit(MAX_ENROLLMENT_PACKET_FOLLOW_UP_ALERT_ROWS);
+  if (error) throw new Error(error.message);
+
+  let alertsRaised = 0;
+  for (const row of (data ?? []) as Array<{
+    packet_id: string;
+    member_id: string;
+    lead_id: string | null;
+    task_type: EnrollmentPacketFollowUpTaskType;
+    attempt_count: number | null;
+    last_error: string | null;
+    last_attempted_at: string | null;
+    action_url: string | null;
+    updated_at: string | null;
+    claimed_at: string | null;
+    claimed_by_name: string | null;
+  }>) {
+    const didCreateAlert = await recordImmediateSystemAlert({
+      entityType: "enrollment_packet_request",
+      entityId: row.packet_id,
+      actorUserId: input.actorUserId ?? null,
+      severity: "high",
+      alertKey: `enrollment_packet_follow_up_queue_aged:${row.task_type}`,
+      metadata: {
+        member_id: row.member_id,
+        lead_id: row.lead_id,
+        follow_up_task_type: row.task_type,
+        attempt_count: Math.max(0, Number(row.attempt_count ?? 0)),
+        last_error: clean(row.last_error),
+        last_attempted_at: clean(row.last_attempted_at),
+        action_url: clean(row.action_url),
+        updated_at: clean(row.updated_at),
+        claimed_at: clean(row.claimed_at),
+        claimed_by_name: clean(row.claimed_by_name),
+        alert_age_minutes: alertAgeMinutes
+      }
+    });
+    if (didCreateAlert) {
+      alertsRaised += 1;
+    }
+  }
+
+  return {
+    alertAgeMinutes,
+    agedQueueRows: (data ?? []).length,
+    alertsRaised
+  };
 }
 
 export async function resolveEnrollmentPacketFollowUpTask(input: {

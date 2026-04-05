@@ -1,8 +1,7 @@
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 
-import { resolveCurrentUserAccess } from "@/lib/current-user-access";
+import { resolveCurrentUserAuthState } from "@/lib/current-user-auth-state";
 import type { AppRole, ModuleKey, UserProfile } from "@/types/app";
 import type { PermissionAction } from "@/lib/permissions/core";
 import {
@@ -21,6 +20,7 @@ import {
   normalizeRoleKey
 } from "@/lib/permissions/core";
 import { canAccessNavItem, getNavItemByHref } from "@/lib/permissions/nav";
+import { logServerTiming, timingNowMs } from "@/lib/server-timing";
 import { createClient } from "@/lib/supabase/server";
 
 type ProfileTimingOptions = {
@@ -31,31 +31,6 @@ type ProfileTimingOptions = {
 const getCurrentProfileCached = cache(async (): Promise<UserProfile> => {
   return getCurrentProfile({ skipCache: true });
 });
-
-async function getRequestedPathForLoginRedirect() {
-  const headerStore = await headers();
-  const requestedPath = String(headerStore.get("x-memory-lane-requested-path") ?? "").trim();
-  if (!requestedPath || requestedPath === "/" || !requestedPath.startsWith("/") || requestedPath.startsWith("//")) {
-    return null;
-  }
-  return requestedPath;
-}
-
-function timingNow() {
-  return Number(process.hrtime.bigint()) / 1_000_000;
-}
-
-function logTiming(traceLabel: string | undefined, step: string, startedAtMs: number, details?: Record<string, unknown>) {
-  if (!traceLabel) return;
-  const elapsedMs = (timingNow() - startedAtMs).toFixed(1);
-  const detailsText = details
-    ? Object.entries(details)
-        .map(([key, value]) => `${key}=${String(value)}`)
-        .join(" ")
-    : "";
-  const suffix = detailsText ? ` ${detailsText}` : "";
-  console.info(`[timing] ${traceLabel} ${step} ${elapsedMs}ms${suffix}`);
-}
 
 export async function getSession() {
   const supabase = await createClient();
@@ -70,29 +45,17 @@ export async function getCurrentProfile(options?: ProfileTimingOptions): Promise
   if (!options?.traceLabel && !options?.skipCache) {
     return getCurrentProfileCached();
   }
-  const totalStartedAt = timingNow();
-  const resolution = await resolveCurrentUserAccess({
-    traceLabel: options?.traceLabel
+  const totalStartedAt = timingNowMs();
+  const resolution = await resolveCurrentUserAuthState({
+    traceLabel: options?.traceLabel,
+    includeRequestedPathForLogin: true
   });
 
   if (resolution.status !== "authenticated") {
-    if (resolution.status === "no-auth-user") {
-      const requestedPath = await getRequestedPathForLoginRedirect();
-      const params = new URLSearchParams({ reason: resolution.status });
-      if (requestedPath) {
-        params.set("next", requestedPath);
-      }
-      redirect(`/login?${params.toString()}`);
-    }
-
-    if (resolution.status === "invited-password-setup") {
-      redirect("/auth/set-password");
-    }
-
-    redirect(`/login?reason=${resolution.status}`);
+    redirect(resolution.defaultPath);
   }
 
-  logTiming(options?.traceLabel, "profile-total", totalStartedAt, {
+  logServerTiming(options?.traceLabel, "profile-total", totalStartedAt, {
     role: resolution.profile.role,
     hasCustomPermissions: resolution.profile.has_custom_permissions ?? false
   });

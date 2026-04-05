@@ -26,9 +26,15 @@ test("required MCC shell accessors fail explicitly instead of inserting runtime 
 
 test("runtime MCC and attendance service entry points require canonical shells before writes", () => {
   const memberCommandCenterSource = readWorkspaceFile("lib/services/member-command-center.ts");
+  const memberCommandCenterWriteSource = readWorkspaceFile("lib/services/member-command-center-write.ts");
+  const memberCommandCenterSupabaseSource = readWorkspaceFile("lib/services/member-command-center-supabase.ts");
   const scheduleChangesSource = readWorkspaceFile("lib/services/schedule-changes-supabase.ts");
   const profileSyncSource = readWorkspaceFile("lib/services/member-profile-sync.ts");
 
+  assert.equal(memberCommandCenterSource.includes("backfillMissingMemberCommandCenterRowsSupabase"), false);
+  assert.equal(memberCommandCenterSource.includes("export async function backfillMissingMemberCommandCenterRows"), false);
+  assert.equal(memberCommandCenterWriteSource.includes("backfillMissingMemberCommandCenterRowsSupabase"), false);
+  assert.equal(memberCommandCenterSupabaseSource.includes("backfillMissingMemberCommandCenterRowsSupabase"), false);
   assert.equal(
     memberCommandCenterSource.includes("await getRequiredMemberCommandCenterProfileSupabase(input.memberId);"),
     true
@@ -49,7 +55,7 @@ test("runtime MCC and attendance service entry points require canonical shells b
 
 test("MCC write-path hardening migration removes shell inserts from live runtime RPCs", () => {
   const runtimeAssertionSource = readWorkspaceFile(
-    "supabase/migrations/0193_member_command_center_shell_runtime_assertions.sql"
+    "supabase/migrations/0195_member_command_center_shell_runtime_assertions.sql"
   );
   const writeHardeningSource = readWorkspaceFile(
     "supabase/migrations/0194_member_command_center_shell_write_path_hardening.sql"
@@ -86,4 +92,23 @@ test("MCC write-path hardening migration removes shell inserts from live runtime
   assert.equal(writeHardeningSource.includes("rpc_update_schedule_change_status_with_attendance_sync_internal("), true);
   assert.equal(runtimeAssertionSource.includes("Missing canonical member_command_centers row"), true);
   assert.equal(runtimeAssertionSource.includes("Missing canonical member_attendance_schedules row"), true);
+});
+
+test("enrollment packet downstream mapping fails explicitly instead of synthesizing missing shells", () => {
+  const mappingSource = readWorkspaceFile("lib/services/enrollment-packet-intake-mapping.ts");
+  const configSource = readWorkspaceFile("lib/services/enrollment-packet-intake-mapping-config.ts");
+
+  assert.equal(mappingSource.includes("buildDefaultCommandCenterSnapshot"), false);
+  assert.equal(mappingSource.includes("buildDefaultAttendanceScheduleSnapshot"), false);
+  assert.equal(mappingSource.includes("buildDefaultMhpSnapshot"), false);
+  assert.equal(mappingSource.includes("Missing canonical member_command_centers row"), true);
+  assert.equal(mappingSource.includes("Missing canonical member_attendance_schedules row"), true);
+  assert.equal(mappingSource.includes("Missing canonical member_health_profiles row"), true);
+  assert.equal(configSource.includes("buildDefaultCommandCenterSnapshot"), false);
+  assert.equal(configSource.includes("buildDefaultAttendanceScheduleSnapshot"), false);
+  assert.equal(configSource.includes("buildDefaultMhpSnapshot"), false);
+});
+
+test("runtime MCC shell repair helper is not exposed through normal service entry points", () => {
+  assert.equal(fs.existsSync(path.join(process.cwd(), "lib/services/member-operational-shell.ts")), false);
 });

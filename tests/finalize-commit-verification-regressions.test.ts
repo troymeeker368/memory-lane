@@ -87,6 +87,21 @@ test("public enrollment packet completion finalizes before staging artifacts so 
   assert.equal(batchIndex < signatureArtifactIndex, true);
 });
 
+test("near-simultaneous enrollment packet replay losers can return before any upload bytes are materialized", () => {
+  const actionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
+  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const artifactRuntimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-artifacts.ts");
+  const helperSource = readWorkspaceFile("lib/services/enrollment-packet-public-helpers.ts");
+
+  assert.equal(actionSource.includes("byteSize: entry.size,"), true);
+  assert.equal(actionSource.includes("readBytes: async () => Buffer.from(await entry.arrayBuffer()),"), true);
+  assert.equal(actionSource.includes("const bytes = Buffer.from(await entry.arrayBuffer());"), false);
+  assert.equal(helperSource.includes("upload.byteSize ?? 0"), true);
+  assert.equal(runtimeSource.includes("if (finalizedSubmission.wasAlreadyFiled) {"), true);
+  assert.equal(runtimeSource.includes("return buildCommittedEnrollmentPacketReplayResult({"), true);
+  assert.equal(artifactRuntimeSource.includes("const uploadBytes = await upload.readBytes();"), true);
+});
+
 test("post-commit enrollment packet artifacts persist as finalized rows after the RPC commit", () => {
   const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-artifacts.ts");
   const artifactSource = readWorkspaceFile("lib/services/enrollment-packet-artifacts.ts");

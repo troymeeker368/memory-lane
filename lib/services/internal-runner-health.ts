@@ -1,5 +1,6 @@
 import "server-only";
 
+import { emitAgedEnrollmentPacketFollowUpQueueAlerts } from "@/lib/services/enrollment-packet-follow-up";
 import { emitEnrollmentPacketMappingRetryHealthAlerts } from "@/lib/services/enrollment-packet-mapping-runtime";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import type { JsonValue } from "@/lib/services/notification-types";
@@ -8,7 +9,18 @@ import { recordImmediateSystemAlert } from "@/lib/services/workflow-observabilit
 import { toEasternISO } from "@/lib/timezone";
 
 export type InternalRunnerHealthStatus = "healthy" | "degraded" | "missing_config";
-export type InternalRunnerHealthReason = "runner_not_configured" | "aged_queue" | "stale_claim" | null;
+export type InternalRunnerHealthReason =
+  | "runner_not_configured"
+  | "aged_queue"
+  | "stale_claim"
+  | "retry_queued"
+  | null;
+export type InternalRunnerReleaseSafetyStatus = "release_safe" | "action_required";
+
+export type InternalRunnerReleaseSafetySignal = {
+  releaseSafetyMessage: string;
+  releaseSafetyStatus: InternalRunnerReleaseSafetyStatus;
+};
 
 type RunnerActionRequiredInput = {
   actorUserId?: string | null;
@@ -29,6 +41,9 @@ type EnrollmentPacketMappingRunnerHealthSummary = {
   agedQueueAlertAgeMinutes: number;
   agedQueueAlertsRaised: number;
   agedQueueRows: number;
+  followUpAgedQueueAlertAgeMinutes: number;
+  followUpAgedQueueAlertsRaised: number;
+  followUpAgedQueueRows: number;
   staleClaimAgeMinutes: number;
   staleClaimAlertsRaised: number;
   staleClaimRows: number;
@@ -37,6 +52,8 @@ type EnrollmentPacketMappingRunnerHealthSummary = {
 export type PofPostSignSyncRunnerHealth = PofRunnerHealthSummary & {
   healthReason: InternalRunnerHealthReason;
   healthStatus: InternalRunnerHealthStatus;
+  releaseSafetyMessage: string;
+  releaseSafetyStatus: InternalRunnerReleaseSafetyStatus;
   runnerConfigured: boolean;
   timestamp: string;
 };
@@ -44,6 +61,8 @@ export type PofPostSignSyncRunnerHealth = PofRunnerHealthSummary & {
 export type EnrollmentPacketMappingRunnerHealth = EnrollmentPacketMappingRunnerHealthSummary & {
   healthReason: InternalRunnerHealthReason;
   healthStatus: InternalRunnerHealthStatus;
+  releaseSafetyMessage: string;
+  releaseSafetyStatus: InternalRunnerReleaseSafetyStatus;
   runnerConfigured: boolean;
   timestamp: string;
 };
@@ -102,6 +121,40 @@ export function getAcceptedEnrollmentPacketMappingRunnerSecrets() {
 
 export function getEnrollmentPacketMappingRunnerConfigError() {
   return "Enrollment packet mapping retry runner is not configured. Set ENROLLMENT_PACKET_MAPPING_SYNC_SECRET for manual callers or CRON_SECRET for Vercel cron before scheduling this endpoint.";
+}
+
+export function resolveInternalRunnerReleaseSafety(input: {
+  healthReason: InternalRunnerHealthReason;
+  healthStatus: InternalRunnerHealthStatus;
+  runnerConfigured: boolean;
+  workflowLabel: string;
+}): InternalRunnerReleaseSafetySignal {
+  const workflowLabel = clean(input.workflowLabel) ?? "Queued workflow";
+  if (!input.runnerConfigured || input.healthStatus === "missing_config") {
+    return {
+      releaseSafetyStatus: "action_required",
+      releaseSafetyMessage: `${workflowLabel} runner is not configured. Queued work is not release-safe until the runner secret is fixed.`
+    };
+  }
+
+  if (input.healthReason === "stale_claim") {
+    return {
+      releaseSafetyStatus: "action_required",
+      releaseSafetyMessage: `${workflowLabel} has stale claimed work. Do not treat queued downstream work as release-safe until the runner recovers.`
+    };
+  }
+
+  if (input.healthReason === "aged_queue" || input.healthReason === "retry_queued") {
+    return {
+      releaseSafetyStatus: "action_required",
+      releaseSafetyMessage: `${workflowLabel} has delayed queued work. Do not treat downstream completion as release-safe until the queue clears.`
+    };
+  }
+
+  return {
+    releaseSafetyStatus: "release_safe",
+    releaseSafetyMessage: `${workflowLabel} runner is configured and no delayed queued work was detected.`
+  };
 }
 
 async function recordPofRunnerConfigMissingSignal(input: {
@@ -211,6 +264,11 @@ async function recordEnrollmentPacketMappingDelayedSignal(input: {
       `${input.summary.agedQueueRows} aged retry item(s) older than ${input.summary.agedQueueAlertAgeMinutes} minute(s)`
     );
   }
+  if (input.summary.followUpAgedQueueRows > 0) {
+    messageParts.push(
+      `${input.summary.followUpAgedQueueRows} aged follow-up item(s) older than ${input.summary.followUpAgedQueueAlertAgeMinutes} minute(s)`
+    );
+  }
   if (input.summary.staleClaimRows > 0) {
     messageParts.push(
       `${input.summary.staleClaimRows} stale claimed item(s) older than ${input.summary.staleClaimAgeMinutes} minute(s)`
@@ -225,10 +283,13 @@ async function recordEnrollmentPacketMappingDelayedSignal(input: {
     message: `${messageParts.join(" and ")}. Review runner health before treating enrollment follow-up and downstream mapping as complete.`,
     metadata: {
       route: ENROLLMENT_PACKET_MAPPING_SYNC_ROUTE,
-      queue_name: "enrollment_packet_requests.mapping_sync_status",
+      mapping_queue_name: "enrollment_packet_requests.mapping_sync_status",
+      follow_up_queue_name: "enrollment_packet_follow_up_queue",
       health_reason: input.summary.staleClaimRows > 0 ? "stale_claim" : "aged_queue",
       aged_queue_rows: input.summary.agedQueueRows,
       alert_age_minutes: input.summary.agedQueueAlertAgeMinutes,
+      follow_up_aged_queue_rows: input.summary.followUpAgedQueueRows,
+      follow_up_alert_age_minutes: input.summary.followUpAgedQueueAlertAgeMinutes,
       stale_claim_rows: input.summary.staleClaimRows,
       stale_claim_age_minutes: input.summary.staleClaimAgeMinutes
     }
@@ -304,6 +365,9 @@ export async function getEnrollmentPacketMappingRunnerHealth(input?: {
       agedQueueRows: 0,
       agedQueueAlertsRaised: 0,
       agedQueueAlertAgeMinutes: 0,
+      followUpAgedQueueRows: 0,
+      followUpAgedQueueAlertsRaised: 0,
+      followUpAgedQueueAlertAgeMinutes: 0,
       staleClaimRows: 0,
       staleClaimAlertsRaised: 0,
       staleClaimAgeMinutes: 0
@@ -314,21 +378,30 @@ export async function getEnrollmentPacketMappingRunnerHealth(input?: {
   if (input?.summary) {
     summary = input.summary;
   } else {
-    const result = await emitEnrollmentPacketMappingRetryHealthAlerts({
-      nowIso: timestamp,
-      actorUserId: input?.actorUserId ?? null
-    });
+    const [result, followUpResult] = await Promise.all([
+      emitEnrollmentPacketMappingRetryHealthAlerts({
+        nowIso: timestamp,
+        actorUserId: input?.actorUserId ?? null
+      }),
+      emitAgedEnrollmentPacketFollowUpQueueAlerts({
+        nowIso: timestamp,
+        actorUserId: input?.actorUserId ?? null
+      })
+    ]);
     summary = {
       agedQueueRows: result.agedQueueRows,
       agedQueueAlertsRaised: result.agedQueueAlertsRaised,
       agedQueueAlertAgeMinutes: result.alertAgeMinutes,
+      followUpAgedQueueRows: followUpResult.agedQueueRows,
+      followUpAgedQueueAlertsRaised: followUpResult.alertsRaised,
+      followUpAgedQueueAlertAgeMinutes: followUpResult.alertAgeMinutes,
       staleClaimRows: result.staleClaimRows,
       staleClaimAlertsRaised: result.staleClaimAlertsRaised,
       staleClaimAgeMinutes: result.staleClaimAgeMinutes
     };
   }
 
-  if (summary.agedQueueRows > 0 || summary.staleClaimRows > 0) {
+  if (summary.agedQueueRows > 0 || summary.followUpAgedQueueRows > 0 || summary.staleClaimRows > 0) {
     await recordEnrollmentPacketMappingDelayedSignal({
       actorUserId: input?.actorUserId ?? null,
       summary
@@ -338,8 +411,16 @@ export async function getEnrollmentPacketMappingRunnerHealth(input?: {
   return {
     timestamp,
     runnerConfigured: true,
-    healthStatus: summary.agedQueueRows > 0 || summary.staleClaimRows > 0 ? "degraded" : "healthy",
-    healthReason: summary.staleClaimRows > 0 ? "stale_claim" : summary.agedQueueRows > 0 ? "aged_queue" : null,
+    healthStatus:
+      summary.agedQueueRows > 0 || summary.followUpAgedQueueRows > 0 || summary.staleClaimRows > 0
+        ? "degraded"
+        : "healthy",
+    healthReason:
+      summary.staleClaimRows > 0
+        ? "stale_claim"
+        : summary.agedQueueRows > 0 || summary.followUpAgedQueueRows > 0
+          ? "aged_queue"
+          : null,
     ...summary
   } satisfies EnrollmentPacketMappingRunnerHealth;
 }

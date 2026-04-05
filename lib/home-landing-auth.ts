@@ -1,4 +1,5 @@
-import { resolveCurrentUserAccess } from "@/lib/current-user-access";
+import { resolveCurrentUserAuthState } from "@/lib/current-user-auth-state";
+import { logServerTiming, timingNowMs } from "@/lib/server-timing";
 import {
   resolveHomeLandingPath,
   type HomeLandingResolution
@@ -13,37 +14,16 @@ type LandingResolutionResult = HomeLandingResolution & {
   role: AppRole;
 };
 
-function timingNow() {
-  return Number(process.hrtime.bigint()) / 1_000_000;
-}
-
-function logTiming(traceLabel: string | undefined, step: string, startedAtMs: number, details?: Record<string, unknown>) {
-  if (!traceLabel) return;
-  const elapsedMs = (timingNow() - startedAtMs).toFixed(1);
-  const detailsText = details
-    ? Object.entries(details)
-        .map(([key, value]) => `${key}=${String(value)}`)
-        .join(" ")
-    : "";
-  const suffix = detailsText ? ` ${detailsText}` : "";
-  console.info(`[timing] ${traceLabel} ${step} ${elapsedMs}ms${suffix}`);
-}
-
 export async function resolveCurrentHomeLanding(
   options?: LandingResolutionOptions
 ): Promise<LandingResolutionResult> {
   const traceLabel = options?.traceLabel;
-  const totalStartedAt = timingNow();
-  const resolution = await resolveCurrentUserAccess({ traceLabel });
+  const totalStartedAt = timingNowMs();
+  const resolution = await resolveCurrentUserAuthState({ traceLabel });
 
   if (resolution.status !== "authenticated") {
-    const path =
-      resolution.status === "invited-password-setup"
-        ? "/auth/set-password"
-        : `/login?reason=${resolution.status}`;
-
     return {
-      path,
+      path: resolution.defaultPath,
       reason: resolution.status,
       role: resolution.role
     };
@@ -51,7 +31,7 @@ export async function resolveCurrentHomeLanding(
 
   const landing = resolveHomeLandingPath(resolution.profile);
 
-  logTiming(traceLabel, "landing-resolution-complete", totalStartedAt, {
+  logServerTiming(traceLabel, "landing-resolution-complete", totalStartedAt, {
     role: resolution.profile.role,
     destination: landing.path,
     reason: landing.reason

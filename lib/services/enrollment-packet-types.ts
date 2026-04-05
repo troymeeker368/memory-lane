@@ -157,7 +157,8 @@ export type SenderProfileRow = {
 export type PacketFileUpload = {
   fileName: string;
   contentType: string;
-  bytes: Buffer;
+  byteSize: number;
+  readBytes: () => Promise<Buffer>;
   category:
     | "insurance"
     | "poa"

@@ -84,6 +84,9 @@ async function handleRunnerRequest(request: NextRequest) {
       agedQueueRows: result.agedQueueRows,
       agedQueueAlertsRaised: result.agedQueueAlertsRaised,
       agedQueueAlertAgeMinutes: result.agedQueueAlertAgeMinutes,
+      followUpAgedQueueRows: result.followUpAgedQueueRows,
+      followUpAgedQueueAlertsRaised: result.followUpAgedQueueAlertsRaised,
+      followUpAgedQueueAlertAgeMinutes: result.followUpAgedQueueAlertAgeMinutes,
       staleClaimRows: result.staleClaimRows,
       staleClaimAlertsRaised: result.staleClaimAlertsRaised,
       staleClaimAgeMinutes: result.staleClaimAgeMinutes

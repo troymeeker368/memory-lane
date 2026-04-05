@@ -6,6 +6,8 @@ import {
   PERMISSION_MODULES,
   resolveEffectivePermissionSet
 } from "@/lib/permissions/core";
+import { invokeSupabaseRpc } from "@/lib/supabase/rpc";
+import { logServerTiming, timingNowMs } from "@/lib/server-timing";
 import { createClient } from "@/lib/supabase/server";
 
 export type CurrentUserAccessOptions = {
@@ -40,27 +42,11 @@ type ProfileRow = {
 
 type PermissionRow = {
   module_key: string;
-  can_view: boolean;
-  can_create: boolean;
-  can_edit: boolean;
-  can_admin: boolean;
+  can_view: boolean | null;
+  can_create: boolean | null;
+  can_edit: boolean | null;
+  can_admin: boolean | null;
 };
-
-function timingNow() {
-  return Number(process.hrtime.bigint()) / 1_000_000;
-}
-
-function logTiming(traceLabel: string | undefined, step: string, startedAtMs: number, details?: Record<string, unknown>) {
-  if (!traceLabel) return;
-  const elapsedMs = (timingNow() - startedAtMs).toFixed(1);
-  const detailsText = details
-    ? Object.entries(details)
-        .map(([key, value]) => `${key}=${String(value)}`)
-        .join(" ")
-    : "";
-  const suffix = detailsText ? ` ${detailsText}` : "";
-  console.info(`[timing] ${traceLabel} ${step} ${elapsedMs}ms${suffix}`);
-}
 
 function extractPostgrestErrorText(error: unknown) {
   if (!error || typeof error !== "object") return "";
@@ -110,15 +96,15 @@ export async function resolveCurrentUserAccess(
 ): Promise<CurrentUserAccessResult> {
   const traceLabel = options?.traceLabel;
 
-  const userClientStartedAt = timingNow();
+  const userClientStartedAt = timingNowMs();
   const supabase = await createClient();
-  logTiming(traceLabel, "create-user-client", userClientStartedAt);
+  logServerTiming(traceLabel, "create-user-client", userClientStartedAt);
 
-  const authStartedAt = timingNow();
+  const authStartedAt = timingNowMs();
   const {
     data: { user }
   } = await supabase.auth.getUser();
-  logTiming(traceLabel, "session-auth-resolution", authStartedAt);
+  logServerTiming(traceLabel, "session-auth-resolution", authStartedAt);
 
   if (!user) {
     return { status: "no-auth-user", role: "program-assistant" };
@@ -128,9 +114,9 @@ export async function resolveCurrentUserAccess(
     "id, email, full_name, role, active, is_active, status, invited_at, password_set_at, last_sign_in_at, disabled_at, staff_id, has_custom_permissions";
   const legacySelect = "id, email, full_name, role, active, staff_id";
 
-  const profileLookupStartedAt = timingNow();
+  const profileLookupStartedAt = timingNowMs();
   const profileLookup = await supabase.from("profiles").select(baseSelect).eq("id", user.id).maybeSingle();
-  logTiming(traceLabel, "profile-role-lookup", profileLookupStartedAt);
+  logServerTiming(traceLabel, "profile-role-lookup", profileLookupStartedAt);
 
   const { data: enrichedData, error: enrichedError } = profileLookup;
 
@@ -139,9 +125,9 @@ export async function resolveCurrentUserAccess(
   let shouldLookupCustomPermissions = true;
 
   if (profileError) {
-    const legacyLookupStartedAt = timingNow();
+    const legacyLookupStartedAt = timingNowMs();
     const fallback = await supabase.from("profiles").select(legacySelect).eq("id", user.id).maybeSingle();
-    logTiming(traceLabel, "profile-legacy-lookup", legacyLookupStartedAt);
+    logServerTiming(traceLabel, "profile-legacy-lookup", legacyLookupStartedAt);
     if (fallback.error) {
       throw new Error(`Failed to load profile row for authenticated user: ${getErrorMessage(profileError)}`);
     }
@@ -176,20 +162,22 @@ export async function resolveCurrentUserAccess(
   let permissionsError: unknown = null;
 
   if (shouldLookupCustomPermissions) {
-    const permissionsLookupStartedAt = timingNow();
-    const permissionsLookup = await supabase
-      .from("user_permissions")
-      .select("module_key, can_view, can_create, can_edit, can_admin")
-      .eq("user_id", profileRow.id);
-    logTiming(traceLabel, "permission-row-lookup", permissionsLookupStartedAt);
-    permissionRows = (permissionsLookup.data as PermissionRow[] | null) ?? [];
-    permissionsError = permissionsLookup.error;
+    const permissionsLookupStartedAt = timingNowMs();
+    const permissionsLookup = await invokeSupabaseRpc<PermissionRow[]>(
+      supabase,
+      "current_profile_custom_permissions",
+      {},
+      { suppressErrorLog: true }
+    );
+    logServerTiming(traceLabel, "permission-row-lookup", permissionsLookupStartedAt);
+    permissionRows = permissionsLookup.ok ? permissionsLookup.data ?? [] : [];
+    permissionsError = permissionsLookup.ok ? null : permissionsLookup;
   }
 
   if (permissionsError) {
     if (isMissingSchemaObjectError(permissionsError)) {
       throw new Error(
-        "Missing Supabase schema object public.user_permissions. Apply migration 0002_rbac_roles_permissions.sql (and any earlier unapplied migrations), then restart Supabase/PostgREST to refresh schema cache."
+        "Missing Supabase permission boundary schema for user overrides. Apply migrations 0002_rbac_roles_permissions.sql and 0198_user_permissions_admin_boundary_hardening.sql, then refresh Supabase/PostgREST schema cache."
       );
     }
     throw new Error(`Failed to load user permissions: ${getErrorMessage(permissionsError)}`);

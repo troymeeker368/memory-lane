@@ -179,7 +179,7 @@ export function buildMissingCanonicalMemberShellError(input: {
   const shellLabel =
     input.table === "member_command_centers" ? "Member Command Center shell" : "member attendance schedule";
   return new Error(
-    `Missing canonical ${input.table} row for member ${input.memberId}. ${shellLabel} must be provisioned by the canonical lead conversion or enrollment workflow before Member Command Center reads can succeed. Run \`npm run repair:historical-drift -- --apply\` or another explicit repair workflow for historical drift instead of relying on read-time backfill.`
+    `Missing canonical ${input.table} row for member ${input.memberId}. ${shellLabel} must be provisioned by canonical lead conversion or an explicit repair workflow before Member Command Center reads can succeed. Run \`npm run repair:historical-drift -- --apply\` or another explicit repair workflow for historical drift instead of relying on read-time backfill.`
   );
 }
 
@@ -589,9 +589,7 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
         schedule,
         makeupBalance: schedule.make_up_days_available ?? 0,
         age: calculateAgeYears(member.dob),
-        monthsEnrolled: calculateMonthsEnrolled(schedule.enrollment_date ?? member.enrollment_date),
-        profileNeedsBackfill: false,
-        scheduleNeedsBackfill: false
+        monthsEnrolled: calculateMonthsEnrolled(schedule.enrollment_date ?? member.enrollment_date)
       };
     })
     .sort((a, b) => sortByLastName(a.member.display_name, b.member.display_name));
@@ -669,9 +667,7 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string, opt
   return {
     member,
     profile,
-    profileNeedsBackfill: false,
     schedule,
-    scheduleNeedsBackfill: false,
     contacts,
     files,
     busStopDirectory,

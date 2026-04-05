@@ -4,12 +4,14 @@ import { Buffer } from "node:buffer";
 
 import { headers } from "next/headers";
 
-import { normalizePhoneForStorage } from "@/lib/phone";
 import {
-  normalizeEnrollmentPacketIntakePayload,
-  normalizeEnrollmentPacketTextInput
-} from "@/lib/services/enrollment-packet-intake-payload";
+  extractPublicEnrollmentPacketActionToken,
+  parsePublicEnrollmentPacketProgressActionPayload,
+  parsePublicEnrollmentPacketSubmitActionPayload,
+  InvalidEnrollmentPacketActionPayloadError
+} from "@/lib/services/enrollment-packet-public-action-payload-schema";
 import { buildCommittedWorkflowActionState } from "@/lib/services/committed-workflow-state";
+import type { PacketFileUpload } from "@/lib/services/enrollment-packet-types";
 
 type PublicEnrollmentPacketUploadCategory =
   | "medicare_card"
@@ -78,38 +80,6 @@ async function recordUploadGuardFailure(input: {
   }
 }
 
-function asString(formData: FormData, key: string) {
-  return normalizeEnrollmentPacketTextInput(formData.get(key)) ?? "";
-}
-
-function asPhone(formData: FormData, key: string) {
-  return normalizePhoneForStorage(asString(formData, key)) ?? "";
-}
-
-class InvalidEnrollmentPacketIntakePayloadError extends Error {
-  constructor() {
-    super("Enrollment packet answers are invalid. Refresh the form and try again.");
-    this.name = "InvalidEnrollmentPacketIntakePayloadError";
-  }
-}
-
-function parseIntakePayload(formData: FormData) {
-  const raw = asString(formData, "intakePayload");
-  if (!raw) {
-    throw new InvalidEnrollmentPacketIntakePayloadError();
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new InvalidEnrollmentPacketIntakePayloadError();
-    }
-    return normalizeEnrollmentPacketIntakePayload(parsed);
-  } catch {
-    throw new InvalidEnrollmentPacketIntakePayloadError();
-  }
-}
-
 async function getPublicRequestMetadata() {
   const headerMap = await headers();
   const forwardedFor = headerMap.get("x-forwarded-for");
@@ -131,7 +101,7 @@ async function recordInvalidPayloadGuardFailure(input: {
       caregiverIp: input.caregiverIp,
       caregiverUserAgent: input.caregiverUserAgent,
       failureType: "invalid_intake_payload_json",
-      message: "Public enrollment packet submission included malformed intakePayload JSON.",
+      message: "Public enrollment packet request included invalid payload JSON.",
       severity: "medium"
     });
   } catch (loggingError) {
@@ -188,21 +158,16 @@ async function parseFileUploads(
   category: PublicEnrollmentPacketUploadCategory
 ) {
   const entries = formData.getAll(key);
-  const uploads: Array<{
-    fileName: string;
-    contentType: string;
-    bytes: Buffer;
-    category: PublicEnrollmentPacketUploadCategory;
-  }> = [];
+  const uploads: PacketFileUpload[] = [];
   for (const entry of entries) {
     if (!(entry instanceof File)) continue;
     if (entry.size <= 0) continue;
     const { fileName, contentType } = validateEnrollmentPacketUpload(entry, category);
-    const bytes = Buffer.from(await entry.arrayBuffer());
     uploads.push({
       fileName,
       contentType,
-      bytes,
+      byteSize: entry.size,
+      readBytes: async () => Buffer.from(await entry.arrayBuffer()),
       category
     });
   }
@@ -212,13 +177,13 @@ async function parseFileUploads(
 export async function savePublicEnrollmentPacketProgressAction(formData: FormData) {
   try {
     const requestMetadata = await getPublicRequestMetadata();
-    const token = asString(formData, "token");
+    const token = extractPublicEnrollmentPacketActionToken(formData);
     const { savePublicEnrollmentPacketProgress } = await loadEnrollmentPacketPublicService();
-    let intakePayload;
+    let payload;
     try {
-      intakePayload = parseIntakePayload(formData);
+      payload = parsePublicEnrollmentPacketProgressActionPayload(formData);
     } catch (error) {
-      if (error instanceof InvalidEnrollmentPacketIntakePayloadError) {
+      if (error instanceof InvalidEnrollmentPacketActionPayloadError) {
         await recordInvalidPayloadGuardFailure({
           token,
           caregiverIp: requestMetadata.caregiverIp,
@@ -228,31 +193,8 @@ export async function savePublicEnrollmentPacketProgressAction(formData: FormDat
       throw error;
     }
     await savePublicEnrollmentPacketProgress({
-      token,
-      caregiverName: asString(formData, "caregiverName"),
-      caregiverPhone: asPhone(formData, "caregiverPhone"),
-      caregiverEmail: asString(formData, "caregiverEmail"),
-      primaryContactAddress: asString(formData, "primaryContactAddress"),
-      primaryContactAddressLine1: asString(formData, "primaryContactAddressLine1"),
-      primaryContactCity: asString(formData, "primaryContactCity"),
-      primaryContactState: asString(formData, "primaryContactState"),
-      primaryContactZip: asString(formData, "primaryContactZip"),
-      caregiverAddressLine1: asString(formData, "caregiverAddressLine1"),
-      caregiverAddressLine2: asString(formData, "caregiverAddressLine2"),
-      caregiverCity: asString(formData, "caregiverCity"),
-      caregiverState: asString(formData, "caregiverState"),
-      caregiverZip: asString(formData, "caregiverZip"),
-      secondaryContactName: asString(formData, "secondaryContactName"),
-      secondaryContactPhone: asPhone(formData, "secondaryContactPhone"),
-      secondaryContactEmail: asString(formData, "secondaryContactEmail"),
-      secondaryContactRelationship: asString(formData, "secondaryContactRelationship"),
-      secondaryContactAddress: asString(formData, "secondaryContactAddress"),
-      secondaryContactAddressLine1: asString(formData, "secondaryContactAddressLine1"),
-      secondaryContactCity: asString(formData, "secondaryContactCity"),
-      secondaryContactState: asString(formData, "secondaryContactState"),
-      secondaryContactZip: asString(formData, "secondaryContactZip"),
-      notes: asString(formData, "notes"),
-      intakePayload
+      token: payload.token,
+      intakePayload: payload.intakePayload
     });
     return { ok: true } as const;
   } catch (error) {
@@ -268,12 +210,12 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
     const { submitPublicEnrollmentPacket } = await loadEnrollmentPacketPublicService();
     const requestMetadata = await getPublicRequestMetadata();
     const { caregiverIp, caregiverUserAgent } = requestMetadata;
-    const token = asString(formData, "token");
-    let intakePayload;
+    const token = extractPublicEnrollmentPacketActionToken(formData);
+    let payload;
     try {
-      intakePayload = parseIntakePayload(formData);
+      payload = parsePublicEnrollmentPacketSubmitActionPayload(formData);
     } catch (error) {
-      if (error instanceof InvalidEnrollmentPacketIntakePayloadError) {
+      if (error instanceof InvalidEnrollmentPacketActionPayloadError) {
         await recordInvalidPayloadGuardFailure({
           token,
           caregiverIp,
@@ -308,7 +250,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to validate enrollment packet uploads.";
       await recordUploadGuardFailure({
-        token,
+        token: payload.token,
         caregiverIp,
         caregiverUserAgent,
         message
@@ -317,36 +259,13 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
     }
 
     const result = await submitPublicEnrollmentPacket({
-      token,
-      caregiverTypedName: asString(formData, "caregiverTypedName"),
-      caregiverSignatureImageDataUrl: asString(formData, "caregiverSignatureImageDataUrl"),
-      attested: asString(formData, "attested") === "true",
+      token: payload.token,
+      caregiverTypedName: payload.caregiverTypedName,
+      caregiverSignatureImageDataUrl: payload.caregiverSignatureImageDataUrl,
+      attested: payload.attested,
       caregiverIp,
       caregiverUserAgent,
-      caregiverName: asString(formData, "caregiverName"),
-      caregiverPhone: asPhone(formData, "caregiverPhone"),
-      caregiverEmail: asString(formData, "caregiverEmail"),
-      primaryContactAddress: asString(formData, "primaryContactAddress"),
-      primaryContactAddressLine1: asString(formData, "primaryContactAddressLine1"),
-      primaryContactCity: asString(formData, "primaryContactCity"),
-      primaryContactState: asString(formData, "primaryContactState"),
-      primaryContactZip: asString(formData, "primaryContactZip"),
-      caregiverAddressLine1: asString(formData, "caregiverAddressLine1"),
-      caregiverAddressLine2: asString(formData, "caregiverAddressLine2"),
-      caregiverCity: asString(formData, "caregiverCity"),
-      caregiverState: asString(formData, "caregiverState"),
-      caregiverZip: asString(formData, "caregiverZip"),
-      secondaryContactName: asString(formData, "secondaryContactName"),
-      secondaryContactPhone: asPhone(formData, "secondaryContactPhone"),
-      secondaryContactEmail: asString(formData, "secondaryContactEmail"),
-      secondaryContactRelationship: asString(formData, "secondaryContactRelationship"),
-      secondaryContactAddress: asString(formData, "secondaryContactAddress"),
-      secondaryContactAddressLine1: asString(formData, "secondaryContactAddressLine1"),
-      secondaryContactCity: asString(formData, "secondaryContactCity"),
-      secondaryContactState: asString(formData, "secondaryContactState"),
-      secondaryContactZip: asString(formData, "secondaryContactZip"),
-      notes: asString(formData, "notes"),
-      intakePayload,
+      intakePayload: payload.intakePayload,
       uploads: [
         ...medicareCardUploads,
         ...primaryInsuranceCardUploads,
@@ -371,7 +290,7 @@ export async function submitPublicEnrollmentPacketAction(formData: FormData) {
         readinessStage: result.readinessStage,
         actionNeededMessage: result.actionNeededMessage
       }),
-      redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(token)}/confirmation${redirectSuffix}`
+      redirectUrl: `/sign/enrollment-packet/${encodeURIComponent(payload.token)}/confirmation${redirectSuffix}`
     } as const;
   } catch (error) {
     console.error("[enrollment-packet] public submit action failed", error);

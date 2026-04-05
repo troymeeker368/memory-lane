@@ -25,12 +25,6 @@ export type AttendanceRecordRow = {
   notes: string | null;
 };
 
-export type ApplyMakeupBalanceDeltaWithAuditResult = {
-  applied: boolean;
-  previousBalance: number | null;
-  nextBalance: number | null;
-};
-
 type AttendanceScheduleRow = {
   id: string;
   member_id: string;
@@ -65,15 +59,6 @@ function isUuid(value: string | null | undefined) {
 
 function actorUserIdOrNull(value: string | null | undefined) {
   return isUuid(value) ? String(value) : null;
-}
-
-function toFiniteNumberOrNull(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
 }
 
 function resolveAttendanceTimestamp(input: {
@@ -239,115 +224,7 @@ export async function getAttendanceRecordSupabase(memberId: string, attendanceDa
   return (data as AttendanceRecordRow | null) ?? null;
 }
 
-export async function upsertAttendanceRecordSupabase(input: {
-  existing: AttendanceRecordRow | null;
-  memberId: string;
-  attendanceDate: string;
-  status: "present" | "absent";
-  absentReason: string | null;
-  absentReasonOther: string | null;
-  checkInAt: string | null;
-  checkOutAt: string | null;
-  notes: string | null;
-  actor: { id: string; full_name: string };
-  at: string;
-}) {
-  const supabase = await createClient();
-  if (input.existing) {
-    const { data, error } = await supabase
-      .from("attendance_records")
-      .update({
-        status: input.status,
-        absent_reason: input.absentReason,
-        absent_reason_other: input.absentReasonOther,
-        check_in_at: input.checkInAt,
-        check_out_at: input.checkOutAt,
-        notes: input.notes,
-        recorded_by_user_id: actorUserIdOrNull(input.actor.id),
-        recorded_by_name: input.actor.full_name,
-        updated_at: input.at
-      })
-      .eq("id", input.existing.id)
-      .select("id, member_id, attendance_date, status, absent_reason, absent_reason_other, check_in_at, check_out_at, linked_adjustment_id, billing_status, notes")
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    return (data as AttendanceRecordRow | null) ?? null;
-  }
-
-  const { data, error } = await supabase
-    .from("attendance_records")
-    .insert({
-      member_id: input.memberId,
-      attendance_date: input.attendanceDate,
-      status: input.status,
-      absent_reason: input.absentReason,
-      absent_reason_other: input.absentReasonOther,
-      check_in_at: input.checkInAt,
-      check_out_at: input.checkOutAt,
-      notes: input.notes,
-      recorded_by_user_id: actorUserIdOrNull(input.actor.id),
-      recorded_by_name: input.actor.full_name,
-      created_at: input.at,
-      updated_at: input.at
-    })
-    .select("id, member_id, attendance_date, status, absent_reason, absent_reason_other, check_in_at, check_out_at, linked_adjustment_id, billing_status, notes")
-    .single();
-  if (error) throw new Error(error.message);
-  return data as AttendanceRecordRow;
-}
-
-export async function deleteAttendanceRecordSupabase(id: string) {
-  const supabase = await createClient();
-  const { error } = await supabase.from("attendance_records").delete().eq("id", id);
-  if (error) throw new Error(error.message);
-}
-
-export async function setBillingAdjustmentExcludedSupabase(input: { id: string; updatedAt: string }) {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("billing_adjustments")
-    .update({
-      billing_status: "Excluded",
-      invoice_id: null,
-      updated_at: input.updatedAt
-    })
-    .eq("id", input.id);
-  if (error) throw new Error(error.message);
-}
-
-export async function applyMakeupBalanceDeltaWithAuditSupabase(input: {
-  scheduleId: string;
-  memberId: string;
-  attendanceDate: string;
-  deltaDays: number;
-  source: string;
-  actor: { id: string; full_name: string; role: AppRole };
-  at: string;
-  failIfInsufficient?: boolean;
-}) {
-  const supabase = await createClient();
-  const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, "apply_makeup_balance_delta_with_audit", {
-    p_schedule_id: input.scheduleId,
-    p_member_id: input.memberId,
-    p_attendance_date: input.attendanceDate,
-    p_delta_days: input.deltaDays,
-    p_source: input.source,
-    p_actor_user_id: actorUserIdOrNull(input.actor.id),
-    p_actor_role: input.actor.role,
-    p_actor_name: input.actor.full_name,
-    p_at: input.at,
-    p_fail_if_insufficient: Boolean(input.failIfInsufficient)
-  });
-
-  const payload = data as { applied?: unknown; previousBalance?: unknown; nextBalance?: unknown } | null;
-  return {
-    applied: Boolean(payload?.applied),
-    previousBalance: toFiniteNumberOrNull(payload?.previousBalance),
-    nextBalance: toFiniteNumberOrNull(payload?.nextBalance)
-  } satisfies ApplyMakeupBalanceDeltaWithAuditResult;
-}
-
-export async function getActiveMemberIdSupabase(memberId: string) {
+async function getActiveMemberIdSupabase(memberId: string) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("members")
@@ -357,6 +234,14 @@ export async function getActiveMemberIdSupabase(memberId: string) {
     .maybeSingle();
   if (error) throw new Error(error.message);
   return data?.id ?? null;
+}
+
+function requireAttendanceRecordFromWorkflow(
+  record: AttendanceRecordRow | null,
+  operation: "present" | "absent" | "check-in" | "check-out"
+) {
+  if (record) return record;
+  throw new Error(`Attendance ${operation} workflow did not return a persisted attendance record.`);
 }
 
 export async function saveAttendanceStatusWorkflowSupabase(input: {
@@ -415,7 +300,7 @@ export async function saveAttendanceStatusWorkflowSupabase(input: {
       throw new Error("Custom absent reason is required when Other is selected.");
     }
 
-    return saveAttendanceWorkflowMutationSupabase({
+    const saved = await saveAttendanceWorkflowMutationSupabase({
       memberId: input.memberId,
       attendanceDate: input.attendanceDate,
       operation: "absent",
@@ -430,6 +315,7 @@ export async function saveAttendanceStatusWorkflowSupabase(input: {
       actor: input.actor,
       at: now
     });
+    return requireAttendanceRecordFromWorkflow(saved, "absent");
   }
 
   const checkInAt =
@@ -464,7 +350,7 @@ export async function saveAttendanceStatusWorkflowSupabase(input: {
     })
   ]);
 
-  return saveAttendanceWorkflowMutationSupabase({
+  const saved = await saveAttendanceWorkflowMutationSupabase({
     memberId: input.memberId,
     attendanceDate: input.attendanceDate,
     operation:
@@ -484,6 +370,7 @@ export async function saveAttendanceStatusWorkflowSupabase(input: {
     actor: input.actor,
     at: now
   });
+  return requireAttendanceRecordFromWorkflow(saved, requestedStatus);
 }
 
 export async function saveUnscheduledAttendanceWorkflowSupabase(input: {

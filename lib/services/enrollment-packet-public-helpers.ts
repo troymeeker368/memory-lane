@@ -74,7 +74,7 @@ function buildEnrollmentPacketPublicIpEntityId(ipAddress: string | null | undefi
 }
 
 function sumEnrollmentPacketUploadBytes(uploads: PacketFileUpload[] | null | undefined) {
-  return (uploads ?? []).reduce((total, upload) => total + (upload.bytes?.length ?? 0), 0);
+  return (uploads ?? []).reduce((total, upload) => total + (upload.byteSize ?? 0), 0);
 }
 
 async function countRecentSystemEvents(input: {

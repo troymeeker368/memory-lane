@@ -23,6 +23,7 @@ import {
   updateShowerLogSupabase
 } from "@/lib/services/documentation-write-supabase";
 import { toEasternISO } from "@/lib/timezone";
+import type { UserProfile } from "@/types/app";
 
 export {
   createAncillaryChargeAction,
@@ -45,6 +46,27 @@ type ActionSuccessResult<T extends object = object> = {
   ok: true;
   error?: undefined;
 } & T;
+
+const reviewStatusSchema = z.enum(["Pending", "Reviewed", "Needs Follow-up"]);
+
+async function reviewDocumentationQueueItem<TInput extends Record<string, unknown>>(input: {
+  raw: TInput;
+  schema: z.ZodType<TInput>;
+  invalidMessage: string;
+  entityType: string;
+  buildDetails: (payload: TInput, editor: UserProfile) => Record<string, unknown>;
+  revalidatePaths: string[];
+}): Promise<ActionErrorResult | ActionSuccessResult> {
+  const payload = input.schema.safeParse(input.raw);
+  if (!payload.success) return { error: input.invalidMessage };
+
+  const editor = await requireDocumentationManagerEditor();
+  if ("error" in editor) return editor;
+
+  await insertDocumentationAudit("manager_review", input.entityType, null, input.buildDetails(payload.data, editor));
+  input.revalidatePaths.forEach((path) => revalidatePath(path));
+  return { ok: true };
+}
 
 const updateDailyActivitySchema = z
   .object({
@@ -314,27 +336,26 @@ export async function reviewTimeCardAction(raw: {
   status: "Pending" | "Reviewed" | "Needs Follow-up";
   notes?: string;
 }) {
-  const payload = z
-    .object({
+  return reviewDocumentationQueueItem({
+    raw,
+    schema: z.object({
       staffName: z.string().min(1),
       payPeriod: z.string().min(1),
-      status: z.enum(["Pending", "Reviewed", "Needs Follow-up"]),
+      status: reviewStatusSchema,
       notes: z.string().max(500).optional()
-    })
-    .safeParse(raw);
-  if (!payload.success) return { error: "Invalid time review." };
-  const editor = await requireDocumentationManagerEditor();
-  if ("error" in editor) return editor;
-  await insertDocumentationAudit("manager_review", "time_review", null, {
-    staffName: payload.data.staffName,
-    payPeriod: payload.data.payPeriod,
-    status: payload.data.status,
-    notes: payload.data.notes ?? "",
-    reviewed_by: editor.full_name,
-    reviewed_at: toEasternISO()
+    }),
+    invalidMessage: "Invalid time review.",
+    entityType: "time_review",
+    buildDetails: (payload, editor) => ({
+      staffName: payload.staffName,
+      payPeriod: payload.payPeriod,
+      status: payload.status,
+      notes: payload.notes ?? "",
+      reviewed_by: editor.full_name,
+      reviewed_at: toEasternISO()
+    }),
+    revalidatePaths: ["/time-card"]
   });
-  revalidatePath("/time-card");
-  return { ok: true };
 }
 
 export async function reviewDocumentationAction(raw: {
@@ -343,26 +364,24 @@ export async function reviewDocumentationAction(raw: {
   status: "Pending" | "Reviewed" | "Needs Follow-up";
   notes?: string;
 }) {
-  const payload = z
-    .object({
+  return reviewDocumentationQueueItem({
+    raw,
+    schema: z.object({
       staffName: z.string().min(1),
       periodLabel: z.string().min(1),
-      status: z.enum(["Pending", "Reviewed", "Needs Follow-up"]),
+      status: reviewStatusSchema,
       notes: z.string().max(500).optional()
-    })
-    .safeParse(raw);
-  if (!payload.success) return { error: "Invalid documentation review." };
-  const editor = await requireDocumentationManagerEditor();
-  if ("error" in editor) return editor;
-  await insertDocumentationAudit("manager_review", "documentation_review", null, {
-    staffName: payload.data.staffName,
-    periodLabel: payload.data.periodLabel,
-    status: payload.data.status,
-    notes: payload.data.notes ?? "",
-    reviewed_by: editor.full_name,
-    reviewed_at: toEasternISO()
+    }),
+    invalidMessage: "Invalid documentation review.",
+    entityType: "documentation_review",
+    buildDetails: (payload, editor) => ({
+      staffName: payload.staffName,
+      periodLabel: payload.periodLabel,
+      status: payload.status,
+      notes: payload.notes ?? "",
+      reviewed_by: editor.full_name,
+      reviewed_at: toEasternISO()
+    }),
+    revalidatePaths: ["/documentation", "/reports"]
   });
-  revalidatePath("/documentation");
-  revalidatePath("/reports");
-  return { ok: true };
 }

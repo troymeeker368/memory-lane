@@ -9,17 +9,31 @@ function readWorkspaceFile(relativePath: string) {
 
 test("public enrollment packet action enforces strict intakePayload parsing", () => {
   const actionSource = readWorkspaceFile("app/sign/enrollment-packet/[token]/actions.ts");
+  const schemaSource = readWorkspaceFile("lib/services/enrollment-packet-public-action-payload-schema.ts");
+  const payloadSource = readWorkspaceFile("lib/services/enrollment-packet-public-action-payload.ts");
 
   assert.equal(
-    actionSource.includes('const raw = asString(formData, "intakePayload");'),
+    payloadSource.includes('export const ENROLLMENT_PACKET_PUBLIC_ACTION_TOKEN_KEY = "token";'),
     true
   );
   assert.equal(
-    actionSource.includes("if (!raw) {\n    throw new InvalidEnrollmentPacketIntakePayloadError();"),
+    payloadSource.includes("formData.set(ENROLLMENT_PACKET_PUBLIC_ACTION_TOKEN_KEY, payload.token);"),
     true
   );
   assert.equal(
-    actionSource.includes("if (!parsed || typeof parsed !== \"object\" || Array.isArray(parsed)) {"),
+    schemaSource.includes(
+      "const token = normalizeEnrollmentPacketTextInput(formData.get(ENROLLMENT_PACKET_PUBLIC_ACTION_TOKEN_KEY));"
+    ),
+    true
+  );
+  assert.equal(
+    schemaSource.includes(
+      "const raw = normalizeEnrollmentPacketTextInput(formData.get(ENROLLMENT_PACKET_PUBLIC_ACTION_PAYLOAD_KEY));"
+    ),
+    true
+  );
+  assert.equal(
+    schemaSource.includes("intakePayload: intakePayloadSchema"),
     true
   );
   assert.equal(
@@ -29,7 +43,7 @@ test("public enrollment packet action enforces strict intakePayload parsing", ()
 });
 
 test("public enrollment packet service rejects malformed intakePayload before persistence and logs canonical guard failure", () => {
-  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
+  const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-submission.ts");
 
   assert.equal(
     runtimeSource.includes("const validateIntakePayload = (payload: unknown): payload is Partial<Record<string, unknown>> =>"),

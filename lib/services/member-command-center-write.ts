@@ -11,7 +11,6 @@ export type {
 } from "@/lib/services/member-command-center-types";
 export {
   addMemberAllergySupabase,
-  backfillMissingMemberCommandCenterRowsSupabase,
   deleteMemberAllergySupabase,
   deleteMemberContactSupabase,
   getRequiredMemberAttendanceScheduleSupabase,

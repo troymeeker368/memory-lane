@@ -153,6 +153,11 @@ export async function getDashboardAlerts() {
         `${enrollmentPacketMappingRunnerHealth.agedQueueRows} aged mapping retry item(s)`
       );
     }
+    if (enrollmentPacketMappingRunnerHealth.followUpAgedQueueRows > 0) {
+      messageParts.push(
+        `${enrollmentPacketMappingRunnerHealth.followUpAgedQueueRows} aged enrollment follow-up item(s)`
+      );
+    }
     if (enrollmentPacketMappingRunnerHealth.staleClaimRows > 0) {
       messageParts.push(
         `${enrollmentPacketMappingRunnerHealth.staleClaimRows} stale claimed retry item(s)`

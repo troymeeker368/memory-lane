@@ -112,12 +112,7 @@ export default async function MemberCommandCenterIndexPage({
                     </td>
                     <td>{row.member.locker_number ?? "-"}</td>
                     <td className="capitalize">{row.member.status}</td>
-                    <td>
-                      {attendanceDays}
-                      {row.profileNeedsBackfill || row.scheduleNeedsBackfill ? (
-                        <p className="mt-1 text-xs text-warning">Repair needed</p>
-                      ) : null}
-                    </td>
+                    <td>{attendanceDays}</td>
                   </tr>
                 );
               })

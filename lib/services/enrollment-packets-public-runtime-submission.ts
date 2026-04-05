@@ -10,6 +10,7 @@ import {
 } from "@/lib/services/enrollment-packet-public-helpers";
 import { loadRequestByToken, getPublicEnrollmentPacketContext } from "@/lib/services/enrollment-packets-public-runtime-context";
 import {
+  buildPublicEnrollmentPacketProgressSnapshot,
   cleanEmail,
   isMissingRpcFunctionError,
   mergePublicProgressPayload,
@@ -17,6 +18,7 @@ import {
   toStatus
 } from "@/lib/services/enrollment-packet-core";
 import { loadPacketFields } from "@/lib/services/enrollment-packet-mapping-runtime";
+import type { EnrollmentPacketIntakePayload } from "@/lib/services/enrollment-packet-intake-payload";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { toEasternISO } from "@/lib/timezone";
@@ -38,30 +40,7 @@ const PUBLIC_ENROLLMENT_PACKET_IP_SUBMIT_ATTEMPT_LIMIT = 10;
 
 export type PublicEnrollmentPacketProgressInput = {
   token: string;
-  caregiverName?: string | null;
-  caregiverPhone?: string | null;
-  caregiverEmail?: string | null;
-  primaryContactAddress?: string | null;
-  primaryContactAddressLine1?: string | null;
-  primaryContactCity?: string | null;
-  primaryContactState?: string | null;
-  primaryContactZip?: string | null;
-  caregiverAddressLine1?: string | null;
-  caregiverAddressLine2?: string | null;
-  caregiverCity?: string | null;
-  caregiverState?: string | null;
-  caregiverZip?: string | null;
-  secondaryContactName?: string | null;
-  secondaryContactPhone?: string | null;
-  secondaryContactEmail?: string | null;
-  secondaryContactRelationship?: string | null;
-  secondaryContactAddress?: string | null;
-  secondaryContactAddressLine1?: string | null;
-  secondaryContactCity?: string | null;
-  secondaryContactState?: string | null;
-  secondaryContactZip?: string | null;
-  notes?: string | null;
-  intakePayload?: Partial<Record<string, unknown>> | null;
+  intakePayload: EnrollmentPacketIntakePayload;
 };
 
 type PreparePublicEnrollmentPacketSubmissionInput = PublicEnrollmentPacketProgressInput & {
@@ -80,9 +59,8 @@ async function loadEnrollmentPacketCompletionValidator() {
   return { validateEnrollmentPacketSubmission };
 }
 
-function validateIntakePayload(payload: unknown): payload is Partial<Record<string, unknown>> {
-  return Boolean(payload) && typeof payload === "object" && !Array.isArray(payload);
-}
+const validateIntakePayload = (payload: unknown): payload is Partial<Record<string, unknown>> =>
+  Boolean(payload) && typeof payload === "object" && !Array.isArray(payload);
 
 export async function recordPublicEnrollmentPacketGuardFailure(input: {
   token?: string | null;
@@ -113,58 +91,36 @@ export async function savePublicEnrollmentPacketProgress(input: PublicEnrollment
       message: "Public enrollment packet progress included malformed intakePayload JSON.",
       severity: "medium"
     }).catch(() => {
-      // Intentionally ignore logging failures here; preserve deterministic submission failure behavior.
+      // Preserve the canonical validation failure even if observability logging cannot be persisted.
     });
     throw new Error("Enrollment packet answers are invalid. Refresh the form and try again.");
   }
 
   const mergedPayload = mergePublicProgressPayload({
     storedPayload: context.fields.intakePayload,
-    intakePayload: input.intakePayload,
-    caregiverName: input.caregiverName,
-    caregiverPhone: input.caregiverPhone,
-    caregiverEmail: input.caregiverEmail,
-    primaryContactAddress: input.primaryContactAddress,
-    primaryContactAddressLine1: input.primaryContactAddressLine1,
-    primaryContactCity: input.primaryContactCity,
-    primaryContactState: input.primaryContactState,
-    primaryContactZip: input.primaryContactZip,
-    caregiverAddressLine1: input.caregiverAddressLine1,
-    caregiverAddressLine2: input.caregiverAddressLine2,
-    caregiverCity: input.caregiverCity,
-    caregiverState: input.caregiverState,
-    caregiverZip: input.caregiverZip,
-    secondaryContactName: input.secondaryContactName,
-    secondaryContactPhone: input.secondaryContactPhone,
-    secondaryContactEmail: input.secondaryContactEmail,
-    secondaryContactRelationship: input.secondaryContactRelationship,
-    secondaryContactAddress: input.secondaryContactAddress,
-    secondaryContactAddressLine1: input.secondaryContactAddressLine1,
-    secondaryContactCity: input.secondaryContactCity,
-    secondaryContactState: input.secondaryContactState,
-    secondaryContactZip: input.secondaryContactZip,
-    notes: input.notes
+    intakePayload: input.intakePayload
   });
+  const progressSnapshot = buildPublicEnrollmentPacketProgressSnapshot(mergedPayload);
   const requestWasAlreadyInProgress = toStatus(context.request.status) === "in_progress";
   const now = toEasternISO();
   const admin = createSupabaseAdminClient();
   try {
     await invokeSupabaseRpcOrThrow<unknown>(admin, SAVE_ENROLLMENT_PACKET_PROGRESS_RPC, {
       p_packet_id: context.request.id,
-      p_caregiver_name: mergedPayload.primaryContactName,
-      p_caregiver_phone: mergedPayload.primaryContactPhone,
-      p_caregiver_email: cleanEmail(mergedPayload.primaryContactEmail),
+      p_caregiver_name: progressSnapshot.caregiverName,
+      p_caregiver_phone: progressSnapshot.caregiverPhone,
+      p_caregiver_email: cleanEmail(progressSnapshot.caregiverEmail),
       p_caregiver_address_line1:
-        mergedPayload.primaryContactAddressLine1 ?? mergedPayload.primaryContactAddress ?? mergedPayload.memberAddressLine1,
-      p_caregiver_address_line2: mergedPayload.memberAddressLine2,
-      p_caregiver_city: mergedPayload.primaryContactCity ?? mergedPayload.memberCity,
-      p_caregiver_state: mergedPayload.primaryContactState ?? mergedPayload.memberState,
-      p_caregiver_zip: mergedPayload.primaryContactZip ?? mergedPayload.memberZip,
-      p_secondary_contact_name: mergedPayload.secondaryContactName,
-      p_secondary_contact_phone: mergedPayload.secondaryContactPhone,
-      p_secondary_contact_email: cleanEmail(mergedPayload.secondaryContactEmail),
-      p_secondary_contact_relationship: mergedPayload.secondaryContactRelationship,
-      p_notes: mergedPayload.additionalNotes,
+        progressSnapshot.primaryContactAddressLine1 ?? progressSnapshot.primaryContactAddress,
+      p_caregiver_address_line2: progressSnapshot.caregiverAddressLine2,
+      p_caregiver_city: progressSnapshot.primaryContactCity,
+      p_caregiver_state: progressSnapshot.primaryContactState,
+      p_caregiver_zip: progressSnapshot.primaryContactZip,
+      p_secondary_contact_name: progressSnapshot.secondaryContactName,
+      p_secondary_contact_phone: progressSnapshot.secondaryContactPhone,
+      p_secondary_contact_email: cleanEmail(progressSnapshot.secondaryContactEmail),
+      p_secondary_contact_relationship: progressSnapshot.secondaryContactRelationship,
+      p_notes: progressSnapshot.notes,
       p_intake_payload: mergedPayload,
       p_updated_at: now
     });
@@ -190,7 +146,7 @@ export async function savePublicEnrollmentPacketProgress(input: PublicEnrollment
     await insertPacketEvent({
       packetId: context.request.id,
       eventType: "in_progress",
-      actorEmail: cleanEmail(mergedPayload.primaryContactEmail) ?? context.request.caregiverEmail
+      actorEmail: cleanEmail(progressSnapshot.caregiverEmail) ?? context.request.caregiverEmail
     });
   }
   return { ok: true as const };
@@ -200,6 +156,7 @@ export async function preparePublicEnrollmentPacketSubmission(
   input: PreparePublicEnrollmentPacketSubmissionInput
 ): Promise<{
   validatedFieldsSnapshot: EnrollmentPacketFieldsRow;
+  validatedPayload: ReturnType<typeof normalizeStoredIntakePayload>;
   senderSignatureName: string;
 }> {
   await enforcePublicEnrollmentPacketSubmissionGuards({
@@ -251,6 +208,7 @@ export async function preparePublicEnrollmentPacketSubmission(
 
   return {
     validatedFieldsSnapshot,
+    validatedPayload: validationPayload,
     senderSignatureName: senderSignature.data
       ? String((senderSignature.data as { signer_name: string }).signer_name)
       : "Staff"

@@ -856,6 +856,13 @@ export async function retryFailedEnrollmentPacketMappings(input?: { limit?: numb
     nowIso: now,
     actorUserId: null
   });
+  const { emitAgedEnrollmentPacketFollowUpQueueAlerts } = await import(
+    "@/lib/services/enrollment-packet-follow-up"
+  );
+  const followUpHealthSummary = await emitAgedEnrollmentPacketFollowUpQueueAlerts({
+    nowIso: now,
+    actorUserId: null
+  });
 
   return {
     processed,
@@ -864,6 +871,9 @@ export async function retryFailedEnrollmentPacketMappings(input?: { limit?: numb
     agedQueueRows: healthSummary.agedQueueRows,
     agedQueueAlertsRaised: healthSummary.agedQueueAlertsRaised,
     agedQueueAlertAgeMinutes: healthSummary.alertAgeMinutes,
+    followUpAgedQueueRows: followUpHealthSummary.agedQueueRows,
+    followUpAgedQueueAlertsRaised: followUpHealthSummary.alertsRaised,
+    followUpAgedQueueAlertAgeMinutes: followUpHealthSummary.alertAgeMinutes,
     staleClaimRows: healthSummary.staleClaimRows,
     staleClaimAlertsRaised: healthSummary.staleClaimAlertsRaised,
     staleClaimAgeMinutes: healthSummary.staleClaimAgeMinutes

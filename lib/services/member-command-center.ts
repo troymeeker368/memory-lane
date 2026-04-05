@@ -1,5 +1,4 @@
 import {
-  backfillMissingMemberCommandCenterRowsSupabase,
   deleteMemberContactSupabase,
   getRequiredMemberAttendanceScheduleSupabase,
   getRequiredMemberCommandCenterProfileSupabase,
@@ -58,10 +57,6 @@ export async function getMemberCommandCenterIndex(filters?: { q?: string; status
 
 export async function getMemberCommandCenterDetail(memberId: string) {
   return getMemberCommandCenterDetailSupabase(memberId);
-}
-
-export async function backfillMissingMemberCommandCenterRows(memberIds: Array<string | null | undefined>) {
-  return backfillMissingMemberCommandCenterRowsSupabase(memberIds);
 }
 
 const PREFILL_MEMBER_COMMAND_CENTER_RPC = "rpc_prefill_member_command_center_from_assessment";

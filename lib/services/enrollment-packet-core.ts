@@ -100,65 +100,48 @@ export function normalizeStoredIntakePayload(fields: EnrollmentPacketFieldsRow) 
 
 export function mergePublicProgressPayload(input: {
   storedPayload: EnrollmentPacketIntakePayload;
-  intakePayload?: Partial<Record<string, unknown>> | null;
-  caregiverName?: string | null;
-  caregiverPhone?: string | null;
-  caregiverEmail?: string | null;
-  primaryContactAddress?: string | null;
-  primaryContactAddressLine1?: string | null;
-  primaryContactCity?: string | null;
-  primaryContactState?: string | null;
-  primaryContactZip?: string | null;
-  caregiverAddressLine1?: string | null;
-  caregiverAddressLine2?: string | null;
-  caregiverCity?: string | null;
-  caregiverState?: string | null;
-  caregiverZip?: string | null;
-  secondaryContactName?: string | null;
-  secondaryContactPhone?: string | null;
-  secondaryContactEmail?: string | null;
-  secondaryContactRelationship?: string | null;
-  secondaryContactAddress?: string | null;
-  secondaryContactAddressLine1?: string | null;
-  secondaryContactCity?: string | null;
-  secondaryContactState?: string | null;
-  secondaryContactZip?: string | null;
-  notes?: string | null;
+  intakePayload: EnrollmentPacketIntakePayload;
 }) {
-  return normalizeEnrollmentPacketIntakePayload({
+  const mergedPayload = normalizeEnrollmentPacketIntakePayload({
     ...input.storedPayload,
-    ...(input.intakePayload ?? {}),
-    primaryContactName: clean(input.caregiverName) ?? input.storedPayload.primaryContactName,
-    primaryContactPhone: clean(input.caregiverPhone) ?? input.storedPayload.primaryContactPhone,
-    primaryContactEmail: cleanEmail(input.caregiverEmail) ?? input.storedPayload.primaryContactEmail,
-    primaryContactAddressLine1:
-      clean(input.primaryContactAddressLine1) ??
-      clean(input.primaryContactAddress) ??
-      input.storedPayload.primaryContactAddressLine1,
-    primaryContactCity: clean(input.primaryContactCity) ?? input.storedPayload.primaryContactCity,
-    primaryContactState: clean(input.primaryContactState) ?? input.storedPayload.primaryContactState,
-    primaryContactZip: clean(input.primaryContactZip) ?? input.storedPayload.primaryContactZip,
-    primaryContactAddress: clean(input.primaryContactAddress) ?? input.storedPayload.primaryContactAddress,
-    memberAddressLine1: clean(input.caregiverAddressLine1) ?? input.storedPayload.memberAddressLine1,
-    memberAddressLine2: clean(input.caregiverAddressLine2) ?? input.storedPayload.memberAddressLine2,
-    memberCity: clean(input.caregiverCity) ?? input.storedPayload.memberCity,
-    memberState: clean(input.caregiverState) ?? input.storedPayload.memberState,
-    memberZip: clean(input.caregiverZip) ?? input.storedPayload.memberZip,
-    secondaryContactName: clean(input.secondaryContactName) ?? input.storedPayload.secondaryContactName,
-    secondaryContactPhone: clean(input.secondaryContactPhone) ?? input.storedPayload.secondaryContactPhone,
-    secondaryContactEmail: cleanEmail(input.secondaryContactEmail) ?? input.storedPayload.secondaryContactEmail,
-    secondaryContactRelationship:
-      clean(input.secondaryContactRelationship) ?? input.storedPayload.secondaryContactRelationship,
-    secondaryContactAddressLine1:
-      clean(input.secondaryContactAddressLine1) ??
-      clean(input.secondaryContactAddress) ??
-      input.storedPayload.secondaryContactAddressLine1,
-    secondaryContactCity: clean(input.secondaryContactCity) ?? input.storedPayload.secondaryContactCity,
-    secondaryContactState: clean(input.secondaryContactState) ?? input.storedPayload.secondaryContactState,
-    secondaryContactZip: clean(input.secondaryContactZip) ?? input.storedPayload.secondaryContactZip,
-    secondaryContactAddress: clean(input.secondaryContactAddress) ?? input.storedPayload.secondaryContactAddress,
-    additionalNotes: clean(input.notes) ?? input.storedPayload.additionalNotes
+    ...input.intakePayload
   });
+
+  return normalizeEnrollmentPacketIntakePayload({
+    ...mergedPayload,
+    primaryContactEmail: cleanEmail(mergedPayload.primaryContactEmail),
+    secondaryContactEmail: cleanEmail(mergedPayload.secondaryContactEmail)
+  });
+}
+
+export function buildPublicEnrollmentPacketProgressSnapshot(payload: EnrollmentPacketIntakePayload) {
+  return {
+    caregiverName: payload.primaryContactName,
+    caregiverPhone: payload.primaryContactPhone,
+    caregiverEmail: payload.primaryContactEmail,
+    primaryContactAddress:
+      payload.primaryContactAddressLine1 ?? payload.primaryContactAddress ?? payload.memberAddressLine1,
+    primaryContactAddressLine1:
+      payload.primaryContactAddressLine1 ?? payload.primaryContactAddress ?? payload.memberAddressLine1,
+    primaryContactCity: payload.primaryContactCity ?? payload.memberCity,
+    primaryContactState: payload.primaryContactState ?? payload.memberState,
+    primaryContactZip: payload.primaryContactZip ?? payload.memberZip,
+    caregiverAddressLine1: payload.memberAddressLine1,
+    caregiverAddressLine2: payload.memberAddressLine2,
+    caregiverCity: payload.memberCity,
+    caregiverState: payload.memberState,
+    caregiverZip: payload.memberZip,
+    secondaryContactName: payload.secondaryContactName,
+    secondaryContactPhone: payload.secondaryContactPhone,
+    secondaryContactEmail: payload.secondaryContactEmail,
+    secondaryContactRelationship: payload.secondaryContactRelationship,
+    secondaryContactAddress: payload.secondaryContactAddressLine1 ?? payload.secondaryContactAddress,
+    secondaryContactAddressLine1: payload.secondaryContactAddressLine1 ?? payload.secondaryContactAddress,
+    secondaryContactCity: payload.secondaryContactCity,
+    secondaryContactState: payload.secondaryContactState,
+    secondaryContactZip: payload.secondaryContactZip,
+    notes: payload.additionalNotes
+  };
 }
 
 export function isEmail(value: string | null | undefined) {

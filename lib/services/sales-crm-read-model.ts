@@ -730,37 +730,12 @@ export async function getSalesLeadListSupabase(input?: {
   };
 }
 
-async function countOpenLeadsByFollowUpBucket(input: {
-  today: string;
-  bucket: "overdue" | "due_today" | "upcoming" | "missing_date";
-}) {
-  const supabase = await createClient();
-  let query = supabase
-    .from("leads")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "open");
-
-  if (input.bucket === "overdue") {
-    query = query.lt("next_follow_up_date", input.today);
-  } else if (input.bucket === "due_today") {
-    query = query.eq("next_follow_up_date", input.today);
-  } else if (input.bucket === "upcoming") {
-    query = query.gt("next_follow_up_date", input.today);
-  } else {
-    query = query.is("next_follow_up_date", null);
-  }
-
-  const { count, error } = await query;
-  if (error) throw new Error(error.message);
-  return Number(count ?? 0);
-}
-
 export async function getSalesLeadFollowUpDashboardSupabase(input?: {
   page?: number;
   pageSize?: number;
 }): Promise<SalesLeadFollowUpDashboardResult> {
   const today = toEasternDate();
-  const [pageResult, overdue, dueToday, upcoming, missingDate] = await Promise.all([
+  const [pageResult, summary] = await Promise.all([
     getSalesLeadListSupabase({
       status: "open",
       sort: "next_follow_up",
@@ -768,19 +743,17 @@ export async function getSalesLeadFollowUpDashboardSupabase(input?: {
       page: input?.page,
       pageSize: input?.pageSize
     }),
-    countOpenLeadsByFollowUpBucket({ today, bucket: "overdue" }),
-    countOpenLeadsByFollowUpBucket({ today, bucket: "due_today" }),
-    countOpenLeadsByFollowUpBucket({ today, bucket: "upcoming" }),
-    countOpenLeadsByFollowUpBucket({ today, bucket: "missing_date" })
+    getSalesDashboardSummarySupabase({ followUpAsOfDate: today })
   ]);
+  if (!summary) throw new Error("Sales dashboard summary RPC returned no rows.");
 
   return {
     ...pageResult,
     summary: {
-      overdue,
-      dueToday,
-      upcoming,
-      missingDate
+      overdue: toNumber(summary.follow_up_overdue_count),
+      dueToday: toNumber(summary.follow_up_due_today_count),
+      upcoming: toNumber(summary.follow_up_upcoming_count),
+      missingDate: toNumber(summary.follow_up_missing_date_count)
     }
   };
 }

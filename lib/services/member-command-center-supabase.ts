@@ -4,7 +4,6 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { MEMBER_CONTACT_SELECT_WITH_PAYOR } from "@/lib/services/member-contact-payor-schema";
 import {
-  backfillMissingMemberCommandCenterRowsSupabase,
   buildMissingCanonicalMemberShellError,
   getAvailableLockerNumbersForMemberSupabase,
   getMemberCommandCenterDetailSupabase,
@@ -469,7 +468,6 @@ export async function upsertBusStopDirectoryFromValuesSupabase(input: {
 }
 
 export {
-  backfillMissingMemberCommandCenterRowsSupabase,
   getAvailableLockerNumbersForMemberSupabase,
   getMemberCommandCenterDetailSupabase,
   getMemberCommandCenterIndexSupabase,

@@ -31,9 +31,6 @@ import {
   type MappingSystem
 } from "@/lib/services/enrollment-packet-intake-mapping-core";
 import {
-  buildDefaultAttendanceScheduleSnapshot,
-  buildDefaultCommandCenterSnapshot,
-  buildDefaultMhpSnapshot,
   ENROLLMENT_PACKET_MAPPING_MEMBER_SELECT,
   MCC_STRING_MAP,
   MEMBER_STRING_MAP,
@@ -136,6 +133,25 @@ export type EnrollmentPacketMappingSummary = {
 
 const CONVERT_ENROLLMENT_PACKET_TO_MEMBER_RPC = "convert_enrollment_packet_to_member";
 
+function buildMissingOperationalShellError(input: {
+  memberId: string;
+  table: "member_command_centers" | "member_attendance_schedules" | "member_health_profiles";
+}) {
+  if (input.table === "member_command_centers") {
+    return new Error(
+      `Missing canonical member_command_centers row for member ${input.memberId}. The Member Command Center shell must be provisioned by the canonical lead conversion or enrollment workflow before enrollment packet downstream mapping can continue. Run \`npm run repair:historical-drift -- --apply\` or another explicit repair workflow for historical drift instead of relying on runtime fallback behavior.`
+    );
+  }
+  if (input.table === "member_attendance_schedules") {
+    return new Error(
+      `Missing canonical member_attendance_schedules row for member ${input.memberId}. The member attendance schedule must be provisioned by the canonical lead conversion or enrollment workflow before enrollment packet downstream mapping can continue. Run \`npm run repair:historical-drift -- --apply\` or another explicit repair workflow for historical drift instead of relying on runtime fallback behavior.`
+    );
+  }
+  return new Error(
+    `Missing canonical member_health_profiles row for member ${input.memberId}. The Member Health Profile shell must be provisioned by the canonical lead conversion or enrollment workflow before enrollment packet downstream mapping can continue. Run \`npm run repair:historical-drift -- --apply\` or another explicit repair workflow for historical drift instead of relying on runtime fallback behavior.`
+  );
+}
+
 function buildNormalizedPayload(fields: EnrollmentPacketFieldsForMapping): EnrollmentPacketIntakePayload {
   const base = normalizeEnrollmentPacketIntakePayload((fields.intake_payload ?? {}) as Record<string, unknown>);
   const requestedAttendanceDays =
@@ -187,14 +203,29 @@ export async function mapEnrollmentPacketToDownstream(input: EnrollmentPacketMap
   if (existingAttendanceResult.error) throw new Error(existingAttendanceResult.error.message);
   if (contactsResult.error) throw new Error(contactsResult.error.message);
   if (mhpResult.error) throw new Error(mhpResult.error.message);
+  if (!existingMccResult.data) {
+    throw buildMissingOperationalShellError({
+      memberId: input.memberId,
+      table: "member_command_centers"
+    });
+  }
+  if (!existingAttendanceResult.data) {
+    throw buildMissingOperationalShellError({
+      memberId: input.memberId,
+      table: "member_attendance_schedules"
+    });
+  }
+  if (!mhpResult.data) {
+    throw buildMissingOperationalShellError({
+      memberId: input.memberId,
+      table: "member_health_profiles"
+    });
+  }
 
   const memberRow = memberResult.data as Record<string, unknown>;
-  const mccProfileRecord =
-    (existingMccResult.data as Record<string, unknown> | null) ?? buildDefaultCommandCenterSnapshot(input.memberId);
-  const attendanceSchedule =
-    (existingAttendanceResult.data as Record<string, unknown> | null) ??
-    buildDefaultAttendanceScheduleSnapshot(input.memberId, toTextValue(memberRow.enrollment_date));
-  const mhpRow = (mhpResult.data as Record<string, unknown> | null) ?? buildDefaultMhpSnapshot();
+  const mccProfileRecord = existingMccResult.data as Record<string, unknown>;
+  const attendanceSchedule = existingAttendanceResult.data as Record<string, unknown>;
+  const mhpRow = mhpResult.data as Record<string, unknown>;
   const contacts = (contactsResult.data ?? []) as Array<Record<string, unknown>>;
   const existingBillingPayor = contacts.find((row) => row.is_payor === true) ?? null;
 

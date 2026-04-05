@@ -53,6 +53,11 @@ import {
   type EnrollmentPacketIntakePayload,
   type EnrollmentPacketIntakeTextKey
 } from "@/lib/services/enrollment-packet-intake-payload";
+import {
+  buildPublicEnrollmentPacketActionFormData,
+  buildPublicEnrollmentPacketProgressActionPayload,
+  buildPublicEnrollmentPacketSubmitActionPayload
+} from "@/lib/services/enrollment-packet-public-action-payload";
 
 type PublicEnrollmentPacketFields = {
   requestedDays: string[];
@@ -472,37 +477,13 @@ export function EnrollmentPacketPublicForm({
     markTouched("recreationInterests");
   };
 
-  function appendCommonFields(formData: FormData, sourcePayload: EnrollmentPacketIntakePayload) {
-    formData.set("token", token);
-    formData.set("intakePayload", JSON.stringify(sourcePayload));
-    formData.set("caregiverName", sourcePayload.primaryContactName ?? "");
-    formData.set("caregiverPhone", sourcePayload.primaryContactPhone ?? "");
-    formData.set("caregiverEmail", sourcePayload.primaryContactEmail ?? "");
-    formData.set("primaryContactAddress", sourcePayload.primaryContactAddressLine1 ?? sourcePayload.primaryContactAddress ?? "");
-    formData.set("primaryContactAddressLine1", sourcePayload.primaryContactAddressLine1 ?? "");
-    formData.set("primaryContactCity", sourcePayload.primaryContactCity ?? "");
-    formData.set("primaryContactState", sourcePayload.primaryContactState ?? "");
-    formData.set("primaryContactZip", sourcePayload.primaryContactZip ?? "");
-    formData.set("caregiverAddressLine1", sourcePayload.memberAddressLine1 ?? "");
-    formData.set("caregiverAddressLine2", sourcePayload.memberAddressLine2 ?? "");
-    formData.set("caregiverCity", sourcePayload.memberCity ?? "");
-    formData.set("caregiverState", sourcePayload.memberState ?? "");
-    formData.set("caregiverZip", sourcePayload.memberZip ?? "");
-    formData.set("secondaryContactName", sourcePayload.secondaryContactName ?? "");
-    formData.set("secondaryContactPhone", sourcePayload.secondaryContactPhone ?? "");
-    formData.set("secondaryContactEmail", sourcePayload.secondaryContactEmail ?? "");
-    formData.set("secondaryContactRelationship", sourcePayload.secondaryContactRelationship ?? "");
-    formData.set("secondaryContactAddress", sourcePayload.secondaryContactAddressLine1 ?? sourcePayload.secondaryContactAddress ?? "");
-    formData.set("secondaryContactAddressLine1", sourcePayload.secondaryContactAddressLine1 ?? "");
-    formData.set("secondaryContactCity", sourcePayload.secondaryContactCity ?? "");
-    formData.set("secondaryContactState", sourcePayload.secondaryContactState ?? "");
-    formData.set("secondaryContactZip", sourcePayload.secondaryContactZip ?? "");
-    formData.set("notes", sourcePayload.additionalNotes ?? "");
-  }
-
   async function persistProgressNow(sourcePayload: EnrollmentPacketIntakePayload, mode: "auto" | "manual") {
-    const formData = new FormData();
-    appendCommonFields(formData, sourcePayload);
+    const formData = buildPublicEnrollmentPacketActionFormData(
+      buildPublicEnrollmentPacketProgressActionPayload({
+        token,
+        intakePayload: sourcePayload
+      })
+    );
     const result = await savePublicEnrollmentPacketProgressAction(formData);
     if (!result.ok) {
       setAutosaveStatus("error");
@@ -577,15 +558,16 @@ export function EnrollmentPacketPublicForm({
     setIsPending(true);
     void (async () => {
       try {
-        const formData = new FormData();
-        appendCommonFields(formData, payloadToSubmit);
-        formData.set("caregiverTypedName", caregiverTypedName);
-        formData.set("caregiverSignatureImageDataUrl", signatureImageDataUrl);
-        formData.set("attested", "true");
-
-        ENROLLMENT_PACKET_UPLOAD_FIELDS.forEach((uploadField) => {
-          uploads[uploadField.key].forEach((file) => formData.append(uploadField.key, file));
-        });
+        const formData = buildPublicEnrollmentPacketActionFormData(
+          buildPublicEnrollmentPacketSubmitActionPayload({
+            token,
+            intakePayload: payloadToSubmit,
+            caregiverTypedName,
+            caregiverSignatureImageDataUrl: signatureImageDataUrl,
+            attested: true
+          }),
+          uploads
+        );
 
         const result = await submitPublicEnrollmentPacketAction(formData);
         console.info("[enrollment-packet] submit action completed", result);
