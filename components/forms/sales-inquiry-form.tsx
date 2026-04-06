@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { loadSalesReferralSourcesForPartnerAction } from "@/app/lookup-actions";
 import { saveSalesLeadAction } from "@/app/sales-lead-actions";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
@@ -146,11 +147,13 @@ export function SalesInquiryForm({
   const router = useRouter();
   const today = useMemo(() => toEasternDate(), []);
   const [isPending, startTransition] = useTransition();
+  const [isReferralLookupPending, startReferralLookupTransition] = useTransition();
   const syncDeps = [initialLead?.id ?? "", initialPartnerId ?? "", initialReferralSourceId ?? ""];
   const [status, setStatus] = usePropSyncedStatus(syncDeps, "");
   const [duplicateReview, setDuplicateReview] = usePropSyncedState<DuplicateReviewState | null>(null, syncDeps);
   const [mergeTargetLeadId, setMergeTargetLeadId] = usePropSyncedState("", syncDeps);
   const normalizedInitialLead = normalizeLeadFormSummary(initialLead);
+  const [loadedReferralSources, setLoadedReferralSources] = useState<ReferralSourceLookup[]>(referralSources);
 
   const defaultPartnerId =
     partners.find((partner) => partner.partner_id === (initialLead?.partner_id ?? initialPartnerId))?.id ?? "";
@@ -217,10 +220,28 @@ export function SalesInquiryForm({
     setMergeTargetLeadId("");
   }
 
+  useEffect(() => {
+    setLoadedReferralSources(referralSources);
+  }, [referralSources]);
+
   function updateForm(updater: SalesLeadFormState | ((current: SalesLeadFormState) => SalesLeadFormState)) {
     setForm((current) => (typeof updater === "function" ? updater(current) : updater));
     if (status) setStatus("");
     if (duplicateReview) clearDuplicateReview();
+  }
+
+  function loadReferralSourcesForPartner(nextPartnerId: string, selectedId?: string | null) {
+    if (!nextPartnerId) {
+      setLoadedReferralSources([]);
+      return;
+    }
+    startReferralLookupTransition(async () => {
+      const nextSources = await loadSalesReferralSourcesForPartnerAction({
+        partnerId: nextPartnerId,
+        selectedId: selectedId ?? null
+      });
+      setLoadedReferralSources(nextSources as ReferralSourceLookup[]);
+    });
   }
 
   async function submitLead(options?: { duplicateDecision?: "merge" | "keep-separate"; mergeTargetLeadId?: string }) {
@@ -274,7 +295,7 @@ export function SalesInquiryForm({
 
   const selectedPartner = partners.find((partner) => partner.id === form.partnerId) ?? null;
   const filteredReferralSources = selectedPartner
-    ? referralSources.filter((source) => source.partner_id === selectedPartner.partner_id)
+    ? loadedReferralSources.filter((source) => source.partner_id === selectedPartner.partner_id)
     : [];
   const hasSelectedPartner = Boolean(selectedPartner);
 
@@ -423,20 +444,13 @@ export function SalesInquiryForm({
             value={form.partnerId}
             onChange={(event) => {
               const nextPartnerId = event.target.value;
-              const nextPartner = partners.find((partner) => partner.id === nextPartnerId) ?? null;
-              const nextReferralIds = nextPartner
-                ? new Set(
-                    referralSources
-                      .filter((source) => source.partner_id === nextPartner.partner_id)
-                      .map((source) => source.id)
-                  )
-                : new Set<string>();
               updateForm((current) => ({
                 ...current,
                 partnerId: nextPartnerId,
-                referralSourceId: nextPartner && nextReferralIds.has(current.referralSourceId) ? current.referralSourceId : "",
-                referralName: nextPartner && nextReferralIds.has(current.referralSourceId) ? current.referralName : ""
+                referralSourceId: "",
+                referralName: ""
               }));
+              loadReferralSourcesForPartner(nextPartnerId);
             }}
           >
             <option value="">No linked Community Partner</option>
@@ -453,7 +467,7 @@ export function SalesInquiryForm({
               disabled={!hasSelectedPartner}
               onChange={(event) => {
                 const referralSourceId = event.target.value;
-                const source = referralSources.find((item) => item.id === referralSourceId);
+                const source = loadedReferralSources.find((item) => item.id === referralSourceId);
                 updateForm((current) => ({
                   ...current,
                   referralSourceId,
@@ -466,7 +480,9 @@ export function SalesInquiryForm({
               {filteredReferralSources.map((source) => <option key={source.id} value={source.id}>{source.contact_name}</option>)}
             </select>
             <p className="mt-1 text-xs text-muted">
-              {hasSelectedPartner
+              {isReferralLookupPending
+                ? "Loading referral source contacts..."
+                : hasSelectedPartner
                 ? "Referral source options are filtered by selected organization."
                 : "Select Community Partner Organization to load referral source contacts."}
             </p>

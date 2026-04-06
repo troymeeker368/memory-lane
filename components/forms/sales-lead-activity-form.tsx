@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { loadSalesPartnerReferralLabelsAction } from "@/app/lookup-actions";
 import { createSalesLeadActivityAction } from "@/app/sales-lead-actions";
 import { SalesLeadSearchPicker } from "@/components/forms/sales-lead-search-picker";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
@@ -64,6 +65,7 @@ export function SalesLeadActivityForm({
   const router = useRouter();
   const now = useMemo(() => toEasternDateTimeLocal(), []);
   const [isPending, startTransition] = useTransition();
+  const [isLinkedLookupPending, startLinkedLookupTransition] = useTransition();
   const [status, setStatus] = usePropSyncedStatus([initialLeadId, initialPartnerId, initialReferralSourceId, lockedLeadId], "");
   const [selectedLead, setSelectedLead] = useState<LeadLookup | null>(
     initialLeadOption
@@ -76,26 +78,28 @@ export function SalesLeadActivityForm({
         }
       : null
   );
+  const [linkedPartners, setLinkedPartners] = useState<PartnerLookup[]>(partners);
+  const [linkedReferralSources, setLinkedReferralSources] = useState<ReferralSourceLookup[]>(referralSources);
 
   const uniquePartners = useMemo(() => {
     const seen = new Set<string>();
-    return partners.filter((partner) => {
+    return linkedPartners.filter((partner) => {
       const key = partner.id?.trim();
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-  }, [partners]);
+  }, [linkedPartners]);
 
   const uniqueReferralSources = useMemo(() => {
     const seen = new Set<string>();
-    return referralSources.filter((source) => {
+    return linkedReferralSources.filter((source) => {
       const key = source.id?.trim();
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-  }, [referralSources]);
+  }, [linkedReferralSources]);
 
   const resolvedInitialLeadId = initialLeadId ?? lockedLeadId ?? "";
 
@@ -144,6 +148,39 @@ export function SalesLeadActivityForm({
       referral_source_id: initialLeadOption.referral_source_id
     });
   }, [initialLeadOption]);
+
+  useEffect(() => {
+    setLinkedPartners(partners);
+  }, [partners]);
+
+  useEffect(() => {
+    setLinkedReferralSources(referralSources);
+  }, [referralSources]);
+
+  useEffect(() => {
+    const partnerId = selectedLead?.partner_id ?? null;
+    const referralSourceId = selectedLead?.referral_source_id ?? null;
+    if (!partnerId && !referralSourceId) {
+      setLinkedPartners([]);
+      setLinkedReferralSources([]);
+      return;
+    }
+
+    let cancelled = false;
+    startLinkedLookupTransition(async () => {
+      const result = await loadSalesPartnerReferralLabelsAction({
+        partnerId,
+        referralSourceId
+      });
+      if (cancelled) return;
+      setLinkedPartners(result.partners as PartnerLookup[]);
+      setLinkedReferralSources(result.referralSources as ReferralSourceLookup[]);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLead?.partner_id, selectedLead?.referral_source_id]);
 
   useEffect(() => {
     if (!selectedLead) {
@@ -292,6 +329,8 @@ export function SalesLeadActivityForm({
           ) : null}
         </div>
       ) : null}
+
+      {isLinkedLookupPending ? <p className="text-xs text-muted">Loading linked partner details...</p> : null}
 
       <div className="grid gap-3 md:grid-cols-2">
         <label className="space-y-1 text-sm">

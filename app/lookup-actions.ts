@@ -3,7 +3,11 @@
 import { requireModuleAccess, requirePhysicianOrdersAccess } from "@/lib/auth";
 import { searchUnscheduledAttendanceMemberOptions } from "@/lib/services/attendance";
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
-import { listEnrollmentPacketEligibleLeadPicker, listSalesLeadPickerOptions } from "@/lib/services/leads-read";
+import {
+  getLeadFormLookups,
+  listEnrollmentPacketEligibleLeadPicker,
+  listSalesLeadPickerOptions
+} from "@/lib/services/leads-read";
 import { listMemberPickerOptionsSupabase } from "@/lib/services/shared-lookups-supabase";
 
 type MemberLookupRequest = {
@@ -88,6 +92,39 @@ export async function searchSalesLeadsAction(input: MemberLookupRequest) {
     selectedId: input.selectedId,
     limit: input.limit ?? 25
   });
+}
+
+export async function loadSalesReferralSourcesForPartnerAction(input: {
+  partnerId?: string | null;
+  selectedId?: string | null;
+}) {
+  await requireModuleAccess("sales");
+  const { referralSources } = await getLeadFormLookups({
+    includeLeads: false,
+    includePartners: false,
+    includeReferralSources: true,
+    referralPartnerId: input.partnerId,
+    includeReferralSourceId: input.selectedId
+  });
+  return referralSources;
+}
+
+export async function loadSalesPartnerReferralLabelsAction(input: {
+  partnerId?: string | null;
+  referralSourceId?: string | null;
+}) {
+  await requireModuleAccess("sales");
+  const { partners, referralSources } = await getLeadFormLookups({
+    includeLeads: false,
+    includePartners: false,
+    includeReferralSources: false,
+    includePartnerId: input.partnerId,
+    includeReferralSourceId: input.referralSourceId
+  });
+  return {
+    partners,
+    referralSources
+  };
 }
 
 export async function searchUnscheduledAttendanceMembersAction(input: MemberLookupRequest & { selectedDate: string }) {

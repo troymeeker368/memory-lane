@@ -6,6 +6,9 @@ import type { NextConfig } from "next";
 const shouldEmitBuildStats = process.env.NEXT_BUILD_STATS === "1";
 const useWebpackConfig = process.env.NEXT_USE_WEBPACK === "1";
 const shouldDisableWebpackCache = process.env.NEXT_DISABLE_WEBPACK_CACHE === "1";
+const shouldSkipBuildTypecheck = process.env.NEXT_SKIP_BUILD_TYPECHECK === "1";
+const requestedBuildCpus = Number(process.env.NEXT_BUILD_CPUS ?? "");
+const shouldUseWorkerThreads = process.env.NEXT_BUILD_WORKER_THREADS === "1";
 
 type SourceValue = string | { length: number } | Buffer;
 type WebpackSourceLike = {
@@ -235,10 +238,19 @@ class BuildStatsReportPlugin {
 
 const nextConfig: NextConfig = {
   typedRoutes: false,
+  typescript: shouldSkipBuildTypecheck
+    ? {
+        // Build wrappers run `npm run typecheck` explicitly before `next build`
+        // so local Windows spawn issues do not silently bypass type safety.
+        ignoreBuildErrors: true
+      }
+    : undefined,
   experimental: {
+    cpus: Number.isFinite(requestedBuildCpus) && requestedBuildCpus > 0 ? Math.floor(requestedBuildCpus) : undefined,
     serverActions: {
       bodySizeLimit: "8mb"
-    }
+    },
+    workerThreads: shouldUseWorkerThreads
   },
   turbopack: {}
 };

@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
+import { loadSalesReferralSourcesForPartnerAction } from "@/app/lookup-actions";
 import {
   createCommunityPartnerAction,
   createPartnerActivityAction,
@@ -44,9 +45,11 @@ export function SalesPartnerActivityForm({
 }) {
   const now = useMemo(() => toEasternDateTimeLocal(), []);
   const [isPending, startTransition] = useTransition();
+  const [isReferralLookupPending, startReferralLookupTransition] = useTransition();
   const [status, setStatus] = usePropSyncedStatus([initialLeadId, initialPartnerId, initialReferralSourceId], "");
   const [createdPartners, setCreatedPartners] = useState<PartnerLookup[]>([]);
   const [createdReferralSources, setCreatedReferralSources] = useState<ReferralSourceLookup[]>([]);
+  const [loadedReferralSources, setLoadedReferralSources] = useState<ReferralSourceLookup[]>(referralSources);
   const partnerOptions = useMemo(
     () =>
       [...partners, ...createdPartners]
@@ -56,10 +59,10 @@ export function SalesPartnerActivityForm({
   );
   const referralOptions = useMemo(
     () =>
-      [...referralSources, ...createdReferralSources].filter(
+      [...loadedReferralSources, ...createdReferralSources].filter(
         (source, index, all) => all.findIndex((candidate) => candidate.id === source.id) === index
       ),
-    [createdReferralSources, referralSources]
+    [createdReferralSources, loadedReferralSources]
   );
   const [form, setForm] = usePropSyncedState(
     () => ({
@@ -100,6 +103,24 @@ export function SalesPartnerActivityForm({
 
   const selectedReferral = filteredReferralSources.find((source) => source.id === form.referralSourceId) ?? null;
 
+  useEffect(() => {
+    setLoadedReferralSources(referralSources);
+  }, [referralSources]);
+
+  function loadReferralSourcesForPartner(nextPartnerId: string, selectedId?: string | null) {
+    if (!nextPartnerId) {
+      setLoadedReferralSources([]);
+      return;
+    }
+    startReferralLookupTransition(async () => {
+      const nextSources = await loadSalesReferralSourcesForPartnerAction({
+        partnerId: nextPartnerId,
+        selectedId: selectedId ?? null
+      });
+      setLoadedReferralSources(nextSources as ReferralSourceLookup[]);
+    });
+  }
+
   useConstrainedSelection({
     selectedId: form.partnerId,
     setSelectedId: (nextPartnerId) =>
@@ -125,13 +146,15 @@ export function SalesPartnerActivityForm({
         <select
           className="h-11 w-full rounded-lg border border-border px-3"
           value={form.partnerId}
-          onChange={(event) =>
+          onChange={(event) => {
+            const nextPartnerId = event.target.value;
             setForm((current) => ({
               ...current,
-              partnerId: event.target.value,
+              partnerId: nextPartnerId,
               referralSourceId: ""
-            }))
-          }
+            }));
+            loadReferralSourcesForPartner(nextPartnerId);
+          }}
         >
           <option value="">Select Community Partner Organization</option>
           {partnerOptions.map((partner) => <option key={partner.id} value={partner.id}>{partner.organization_name}</option>)}
@@ -184,6 +207,7 @@ export function SalesPartnerActivityForm({
                 }
 
                 setCreatedPartners((current) => [...current, response.partner]);
+                setLoadedReferralSources([]);
                 setForm((current) => ({ ...current, partnerId: response.partner.id }));
                 setShowCreateOrgInline(false);
                 setStatus(`Organization created and selected: ${response.partner.organization_name}`);
@@ -207,6 +231,9 @@ export function SalesPartnerActivityForm({
               <option value="">Select Referral Source</option>
               {filteredReferralSources.map((source) => <option key={source.id} value={source.id}>{source.contact_name}</option>)}
             </select>
+            {isReferralLookupPending ? (
+              <p className="mt-1 text-xs text-muted">Loading referral source contacts...</p>
+            ) : null}
             <button type="button" className="mt-2 text-xs font-semibold text-brand" onClick={() => setShowCreateReferralInline((current) => !current)}>
               {showCreateReferralInline ? "Hide inline referral source create" : "Add referral source inline"}
             </button>

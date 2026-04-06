@@ -13,7 +13,11 @@ function writeCapturedOutput(result) {
 
 function isTransientWindowsSpawnEperm(result) {
   const combinedOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-  return process.platform === "win32" && (result.error?.code === "EPERM" || combinedOutput.includes("Error: spawn EPERM"));
+  return process.platform === "win32" && (
+    result.error?.code === "EPERM" ||
+    combinedOutput.includes("Error: spawn EPERM") ||
+    combinedOutput.includes("spawnSync") && combinedOutput.includes("EPERM")
+  );
 }
 
 function runNodeScript(scriptPath, args = [], options = {}) {
@@ -22,14 +26,17 @@ function runNodeScript(scriptPath, args = [], options = {}) {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const result = spawnSync(process.execPath, [scriptPath, ...args], {
       stdio: "pipe",
-      env: process.env,
+      env: {
+        ...process.env,
+        ...(options.env ?? {})
+      },
       encoding: "utf8"
     });
 
     writeCapturedOutput(result);
 
     if (!result.error && result.status === 0) {
-      return;
+      return result;
     }
 
     if (isTransientWindowsSpawnEperm(result) && attempt < maxAttempts) {
@@ -41,13 +48,32 @@ function runNodeScript(scriptPath, args = [], options = {}) {
     }
 
     if (result.error) {
-      console.error(`[build-turbo] ${result.error.message}`);
-      process.exit(1);
+      const error = new Error(result.error.message);
+      error.code = result.error.code ?? null;
+      throw error;
     }
 
-    process.exit(result.status ?? 1);
+    const error = new Error(`[build-turbo] child process exited with status ${result.status ?? 1}`);
+    error.status = result.status ?? 1;
+    throw error;
   }
 }
 
 process.env.NEXT_USE_TURBOPACK = "1";
-runNodeScript(require.resolve("next/dist/bin/next"), ["build", "--turbopack"], { maxAttempts: 2 });
+
+try {
+  runNodeScript(require.resolve("next/dist/bin/next"), ["build", "--turbopack"], {
+    maxAttempts: 2,
+    env: {
+      NEXT_BUILD_CPUS: "1",
+      NEXT_BUILD_WORKER_THREADS: "1",
+      NEXT_USE_TURBOPACK: "1",
+      NEXT_SKIP_BUILD_TYPECHECK: "1"
+    }
+  });
+} catch (error) {
+  console.warn(
+    `[build-turbo] falling back to webpack build after Turbopack failure: ${error instanceof Error ? error.message : "unknown error"}`
+  );
+  require("./build-webpack.cjs");
+}

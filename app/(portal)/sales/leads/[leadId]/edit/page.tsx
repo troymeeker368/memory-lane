@@ -13,6 +13,9 @@ export default async function EditLeadPage({ params }: { params: Promise<{ leadI
 
   const { partners, referralSources } = await getLeadFormLookups({
     includeLeads: false,
+    includePartners: true,
+    includeReferralSources: true,
+    referralPartnerId: detail.lead.partner_id,
     includePartnerId: detail.lead.partner_id,
     includeReferralSourceId: detail.lead.referral_source_id
   });

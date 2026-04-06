@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { execSync } = require("node:child_process");
+const { spawnSync } = require("node:child_process");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const compiledDir = path.join(repoRoot, ".tmp-quality-gates");
@@ -15,13 +15,18 @@ function check(condition, message) {
   if (!condition) fail(message);
 }
 
-function run(command) {
-  execSync(command, {
+function runNodeScript(scriptPath, args = []) {
+  const result = spawnSync(process.execPath, [scriptPath, ...args], {
     cwd: repoRoot,
-    stdio: "pipe",
-    encoding: "utf8",
+    stdio: "inherit",
     windowsHide: true
   });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`Child process exited with status ${result.status ?? 1}.`);
+  }
 }
 
 function compileGateTargets() {
@@ -29,9 +34,21 @@ function compileGateTargets() {
     fs.rmSync(compiledDir, { recursive: true, force: true });
   }
 
-  run(
-    `npx tsc --target ES2020 --module commonjs --moduleResolution node --skipLibCheck --esModuleInterop --noEmit false --outDir "${compiledDir}" lib/services/timecard-workflow.ts`
-  );
+  runNodeScript(require.resolve("typescript/lib/tsc"), [
+    "--target",
+    "ES2020",
+    "--module",
+    "commonjs",
+    "--moduleResolution",
+    "node",
+    "--skipLibCheck",
+    "--esModuleInterop",
+    "--noEmit",
+    "false",
+    "--outDir",
+    compiledDir,
+    "lib/services/timecard-workflow.ts"
+  ]);
 }
 
 function buildAppRoutes() {

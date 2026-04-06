@@ -25,6 +25,8 @@ import {
 
 const TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC = "rpc_transition_pof_request_delivery_state";
 const POF_DELIVERY_TRANSITION_COMPARE_AND_SET_MIGRATION = "0098_false_failure_read_path_hardening.sql";
+const RECONCILE_EXPIRED_POF_REQUESTS_RPC = "rpc_reconcile_expired_pof_requests";
+const RECONCILE_EXPIRED_POF_REQUESTS_MIGRATION = "0204_pof_expiry_reconciliation_rpc.sql";
 
 async function recordPofAlertSafely(
   input: Parameters<typeof recordImmediateSystemAlert>[0],
@@ -290,6 +292,34 @@ export async function refreshExpiredPofRequests(rows: PofRequestRow[]) {
   for (const row of updates) {
     await markPofRequestExpired({ request: row, actorName: row.nurse_name });
     row.status = "expired";
+  }
+}
+
+export async function reconcileExpiredPofRequests(input?: { limit?: number }) {
+  const limit = Math.min(500, Math.max(1, Math.trunc(Number(input?.limit ?? 100))));
+  const admin = createSupabaseAdminClient("pof_signature_workflow");
+  try {
+    type ReconciledRow = {
+      request_id: string;
+      member_id: string;
+      physician_order_id: string | null;
+    };
+    const data = await invokeSupabaseRpcOrThrow<unknown>(admin, RECONCILE_EXPIRED_POF_REQUESTS_RPC, {
+      p_limit: limit
+    });
+    return ((Array.isArray(data) ? data : []) as ReconciledRow[]).map((row) => ({
+      requestId: row.request_id,
+      memberId: row.member_id,
+      physicianOrderId: row.physician_order_id ?? null
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to reconcile expired POF requests.";
+    if (message.includes(RECONCILE_EXPIRED_POF_REQUESTS_RPC)) {
+      throw new Error(
+        `POF expiry reconciliation RPC is not available. Apply Supabase migration ${RECONCILE_EXPIRED_POF_REQUESTS_MIGRATION} and refresh PostgREST schema cache.`
+      );
+    }
+    throw error;
   }
 }
 

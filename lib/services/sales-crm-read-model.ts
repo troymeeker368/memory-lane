@@ -532,28 +532,47 @@ export async function listSalesLeadPickerOptionsSupabase(input?: {
 
 export async function getSalesFormLookupsSupabase(options?: {
   includeLeads?: boolean;
+  includePartners?: boolean;
+  includeReferralSources?: boolean;
   leadLimit?: number;
   includeLeadId?: string | null;
   includePartnerId?: string | null;
   includeReferralSourceId?: string | null;
+  referralPartnerId?: string | null;
 }) {
   const leadLimit = normalizePageSize(options?.leadLimit ?? SALES_LEAD_LOOKUP_DEFAULT_LIMIT, SALES_LEAD_LOOKUP_DEFAULT_LIMIT);
   const shouldLoadLeads = options?.includeLeads !== false || Boolean(options?.includeLeadId);
+  const shouldLoadPartners = options?.includePartners !== false || Boolean(options?.includePartnerId);
+  const shouldLoadReferralSources =
+    options?.includeReferralSources !== false || Boolean(options?.includeReferralSourceId);
+  const referralPartner = shouldLoadReferralSources && options?.referralPartnerId
+    ? await getSalesPartnerByIdOrCodeSupabase(options.referralPartnerId)
+    : null;
   const supabase = await createClient();
   const [leadResult, { data: partners, error: partnersError }, { data: referralSources, error: referralSourcesError }] = await Promise.all([
     shouldLoadLeads
       ? supabase.from("leads").select(SALES_LEAD_LOOKUP_SELECT).order("created_at", { ascending: false }).limit(leadLimit)
       : Promise.resolve({ data: [] as SalesLeadLookupRow[], error: null }),
-    supabase
-      .from("community_partner_organizations")
-      .select(SALES_PARTNER_LOOKUP_SELECT)
-      .order("organization_name", { ascending: true })
-      .limit(SALES_LOOKUP_PARTNER_LIMIT),
-    supabase
-      .from("referral_sources")
-      .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT)
-      .order("organization_name", { ascending: true })
-      .limit(SALES_LOOKUP_REFERRAL_SOURCE_LIMIT)
+    shouldLoadPartners
+      ? supabase
+          .from("community_partner_organizations")
+          .select(SALES_PARTNER_LOOKUP_SELECT)
+          .order("organization_name", { ascending: true })
+          .limit(SALES_LOOKUP_PARTNER_LIMIT)
+      : Promise.resolve({ data: [] as SalesPartnerRow[], error: null } as const),
+    shouldLoadReferralSources
+      ? (() => {
+          let query = supabase
+            .from("referral_sources")
+            .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT)
+            .order("organization_name", { ascending: true })
+            .limit(SALES_LOOKUP_REFERRAL_SOURCE_LIMIT);
+          if (referralPartner?.id) {
+            query = query.eq("partner_id", referralPartner.id);
+          }
+          return query;
+        })()
+      : Promise.resolve({ data: [] as SalesReferralSourceRow[], error: null } as const)
   ]);
   if (leadResult.error) throw new Error(leadResult.error.message);
   if (partnersError) throw new Error(partnersError.message);
