@@ -8,22 +8,48 @@ const { spawnSync } = require("node:child_process");
 const repoRoot = path.resolve(__dirname, "..", "..");
 const migrationsDir = path.join(repoRoot, "supabase", "migrations");
 const canonicalTypesFile = path.join(repoRoot, "types", "supabase-types.d.ts");
-const localSupabaseExe = path.join(repoRoot, "node_modules", "supabase", "bin", "supabase.exe");
+const supabaseTempDir = path.join(repoRoot, "supabase", ".temp");
 
 function getSupabaseExecutable() {
   return process.platform === "win32" ? "supabase.cmd" : "supabase";
 }
 
 function resolveSupabaseCommand() {
-  if (process.platform === "win32" && fs.existsSync(localSupabaseExe)) {
-    return localSupabaseExe;
-  }
-
   return getSupabaseExecutable();
 }
 
 function normalizeNewlines(value) {
   return String(value ?? "").replace(/\r\n/g, "\n");
+}
+
+function readTempFile(name) {
+  const filePath = path.join(supabaseTempDir, name);
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  const value = normalizeNewlines(fs.readFileSync(filePath, "utf8")).trim();
+  return value || null;
+}
+
+function getLinkedDbUrl() {
+  const rawPoolerUrl = readTempFile("pooler-url");
+  const password = String(process.env.SUPABASE_DB_PASSWORD ?? "").trim();
+  if (!rawPoolerUrl || !password) {
+    return null;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(rawPoolerUrl);
+  } catch {
+    return null;
+  }
+
+  parsed.password = password;
+  if (!parsed.searchParams.has("sslmode")) {
+    parsed.searchParams.set("sslmode", "require");
+  }
+  return parsed.toString();
 }
 
 function getMigrationFiles() {
@@ -136,19 +162,29 @@ function assertDatabaseUpToDate(mode) {
 }
 
 function generateTypesBody(mode) {
-  if (mode === "linked" && !String(process.env.SUPABASE_ACCESS_TOKEN ?? "").trim()) {
+  const linkedDbUrl = mode === "linked" ? getLinkedDbUrl() : null;
+  const scopeArgs =
+    mode === "local"
+      ? ["--local"]
+      : linkedDbUrl
+        ? ["--db-url", linkedDbUrl]
+        : ["--linked"];
+
+  if (mode === "linked" && !linkedDbUrl && !String(process.env.SUPABASE_ACCESS_TOKEN ?? "").trim()) {
     throw new Error(
-      "Linked Supabase type generation requires SUPABASE_ACCESS_TOKEN. Run `npx supabase login` or set SUPABASE_ACCESS_TOKEN before running db:types."
+      [
+        "Linked Supabase type generation requires either a valid SUPABASE_ACCESS_TOKEN or a linked remote pooler URL plus SUPABASE_DB_PASSWORD.",
+        "Run `npx supabase login`, or set SUPABASE_DB_PASSWORD after linking the project before running db:types."
+      ].join("\n")
     );
   }
 
-  const scopeFlag = mode === "local" ? "--local" : "--linked";
-  const result = runSupabase(["gen", "types", "typescript", scopeFlag, "--schema", "public"]);
+  const result = runSupabase(["gen", "types", "typescript", ...scopeArgs, "--schema", "public"]);
 
   if (result.status !== 0) {
     throw new Error(
       [
-        `Supabase type generation failed while running ${formatCommand(["gen", "types", "typescript", scopeFlag, "--schema", "public"])}.`,
+        `Supabase type generation failed while running ${formatCommand(["gen", "types", "typescript", ...(linkedDbUrl && mode === "linked" ? ["--db-url", "<redacted>"] : scopeArgs), "--schema", "public"])}.`,
         formatSupabaseOutput(result)
       ]
         .filter(Boolean)
