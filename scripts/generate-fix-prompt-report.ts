@@ -1,5 +1,11 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import {
+  buildAuditOutputPath,
+  ensureAuditOutputDir,
+  getAuditOutputDir,
+  getProjectRoot,
+} from "../lib/config/audit-paths";
 
 type CategoryKey =
   | "rls-security"
@@ -47,10 +53,10 @@ interface AuditArtifact {
   ignoredReason?: string;
 }
 
-const repoRoot = process.cwd();
-const auditsDir = path.join(repoRoot, "docs", "audits");
+const repoRoot = getProjectRoot();
+const auditsDir = getAuditOutputDir();
 const generatedDate = new Date().toISOString().slice(0, 10);
-const outputPath = path.join(auditsDir, `fix-prompt-generator-${generatedDate}.md`);
+const outputPath = buildAuditOutputPath(`fix-prompt-generator-${generatedDate}.md`);
 const supportedExtensions = new Set([".md", ".markdown", ".mdx", ".json", ".txt", ".log"]);
 
 const categories: CategoryDefinition[] = [
@@ -318,12 +324,9 @@ function safeRead(fullPath: string) {
 }
 
 function buildArtifacts(): AuditArtifact[] {
-  if (!existsSync(auditsDir)) {
-    throw new Error(`Audit directory not found: ${auditsDir}`);
-  }
-
   const files = walk(auditsDir)
     .filter((fullPath) => supportedExtensions.has(path.extname(fullPath).toLowerCase()))
+    .filter((fullPath) => path.basename(fullPath).toLowerCase() !== "readme.md")
     .sort();
 
   return files.map((fullPath) => {
@@ -475,6 +478,8 @@ function buildReport(artifacts: AuditArtifact[]) {
 }
 
 function main() {
+  ensureAuditOutputDir();
+
   const artifacts = buildArtifacts();
   const report = buildReport(artifacts);
   writeFileSync(outputPath, report, "utf8");
