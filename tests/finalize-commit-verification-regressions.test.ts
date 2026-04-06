@@ -64,16 +64,16 @@ test("public enrollment packet completion verifies finalized batch rows before s
   assert.equal(finalizeSource.includes("hasExpectedFinalizedArtifacts"), true);
   assert.equal(finalizeSource.includes("expectedArtifacts.length === 0 || hasExpectedFinalizedArtifacts"), true);
   assert.equal(runtimeSource.includes("finalizeAttempted = true;"), true);
-  assert.equal(runtimeSource.includes("verifyCommittedEnrollmentPacketFinalizeAfterError({"), true);
-  assert.equal(runtimeSource.includes("return buildCommittedEnrollmentPacketReplayResult({"), true);
+  assert.equal(runtimeSource.includes("deps.verifyCommittedEnrollmentPacketFinalizeAfterError({"), true);
+  assert.equal(runtimeSource.includes("return deps.buildCommittedEnrollmentPacketReplayResult({"), true);
 });
 
 test("public enrollment packet completion finalizes before staging artifacts so replay losers avoid pre-finalize upload work", () => {
   const runtimeSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime.ts");
   const artifactSource = readWorkspaceFile("lib/services/enrollment-packets-public-runtime-artifacts.ts");
-  const finalizeIndex = runtimeSource.indexOf("finalizedSubmission = await invokeFinalizeEnrollmentPacketCompletionRpc({");
+  const finalizeIndex = runtimeSource.indexOf("finalizedSubmission = await deps.invokeFinalizeEnrollmentPacketCompletionRpc({");
   const replayIndex = runtimeSource.indexOf("if (finalizedSubmission.wasAlreadyFiled) {");
-  const postCommitIndex = runtimeSource.indexOf("return completeCommittedPublicEnrollmentPacketPostCommitWork({");
+  const postCommitIndex = runtimeSource.indexOf("return deps.completeCommittedPublicEnrollmentPacketPostCommitWork({");
   const signatureArtifactIndex = artifactSource.indexOf("const signatureArtifact = await artifactOps.insertUploadAndFile({");
   const batchIndex = artifactSource.indexOf("const uploadBatchId = randomUUID();");
 
@@ -98,7 +98,8 @@ test("near-simultaneous enrollment packet replay losers can return before any up
   assert.equal(actionSource.includes("const bytes = Buffer.from(await entry.arrayBuffer());"), false);
   assert.equal(helperSource.includes("upload.byteSize ?? 0"), true);
   assert.equal(runtimeSource.includes("if (finalizedSubmission.wasAlreadyFiled) {"), true);
-  assert.equal(runtimeSource.includes("return buildCommittedEnrollmentPacketReplayResult({"), true);
+  assert.equal(runtimeSource.includes("return deps.buildCommittedEnrollmentPacketReplayResult({"), true);
+  assert.equal(runtimeSource.includes("const signature = deps.parseSignatureDataUrl(caregiverSignatureDataUrl);"), true);
   assert.equal(artifactRuntimeSource.includes("const uploadBytes = await upload.readBytes();"), true);
 });
 

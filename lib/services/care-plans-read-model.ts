@@ -442,17 +442,26 @@ export async function getCarePlanDispatchState(carePlanId: string, options?: { s
   const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
   const { data, error } = await supabase
     .from("care_plans")
-    .select("id, member_id, caregiver_name, caregiver_email, caregiver_signature_status")
+    .select(
+      "id, member_id, caregiver_name, caregiver_email, caregiver_signature_status, final_member_file_id, post_sign_readiness_status, post_sign_readiness_reason"
+    )
     .eq("id", carePlanId)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return null;
+  const postSignReadiness = resolveCarePlanReadModelPostSignReadiness({
+    status: data.post_sign_readiness_status,
+    reason: data.post_sign_readiness_reason,
+    caregiverSignatureStatus: data.caregiver_signature_status,
+    finalMemberFileId: data.final_member_file_id
+  });
   return {
     id: String(data.id),
     memberId: String(data.member_id),
     caregiverName: clean(String(data.caregiver_name ?? "")),
     caregiverEmail: clean(String(data.caregiver_email ?? "")),
-    caregiverSignatureStatus: clean(String(data.caregiver_signature_status ?? "")) ?? "pending"
+    caregiverSignatureStatus: clean(String(data.caregiver_signature_status ?? "")) ?? "pending",
+    postSignReadinessStatus: postSignReadiness.status
   };
 }
 

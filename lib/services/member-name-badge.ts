@@ -53,7 +53,15 @@ export interface MemberNameBadgeDetail {
 export async function getMemberNameBadgeDetail(memberId: string): Promise<MemberNameBadgeDetail | null> {
   const [mcc, mhp] = await Promise.all([
     getMemberCommandCenterDetail(memberId),
-    getMemberHealthProfileDetail(memberId)
+    getMemberHealthProfileDetail(memberId, {
+      includeProviderDirectory: false,
+      includeHospitalPreferenceDirectory: false,
+      includeAssessments: false,
+      includeDiagnoses: false,
+      includeMedications: false,
+      includeProviders: false,
+      includeNotes: false
+    })
   ]);
   if (!mcc || !mhp) return null;
 

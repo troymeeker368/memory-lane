@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { searchMhpHospitalPreferenceDirectoryAction } from "@/app/(portal)/health/member-health-profiles/directory-actions";
 import { saveMhpLegalAction } from "@/app/(portal)/health/member-health-profiles/profile-actions";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 
@@ -162,7 +163,6 @@ export function MhpLegalForm({
   hospice,
   advancedDirectivesObtained,
   powerOfAttorney,
-  hospitalPreferenceDirectory,
   hospitalPreference,
   legalComments
 }: {
@@ -174,7 +174,6 @@ export function MhpLegalForm({
   hospice: boolean | null | undefined;
   advancedDirectivesObtained: boolean | null | undefined;
   powerOfAttorney: string | null | undefined;
-  hospitalPreferenceDirectory: Array<{ id: string; hospital_name: string; updated_at: string }>;
   hospitalPreference: string | null | undefined;
   legalComments: string | null | undefined;
 }) {
@@ -182,18 +181,38 @@ export function MhpLegalForm({
   const [codeStatusValue, setCodeStatusValue] = usePropSyncedState(codeStatus ?? "", syncDeps);
   const [dnrValue, setDnrValue] = usePropSyncedState(boolToSelectValue(dnr), syncDeps);
   const [hospitalPreferenceValue, setHospitalPreferenceValue] = usePropSyncedState(hospitalPreference ?? "", syncDeps);
+  const [hospitalOptions, setHospitalOptions] = useState<string[]>([]);
 
-  const hospitalOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          hospitalPreferenceDirectory
+  useEffect(() => {
+    let isCancelled = false;
+    const query = hospitalPreferenceValue.trim();
+
+    if (query.length < 2) {
+      setHospitalOptions([]);
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    void (async () => {
+      try {
+        const nextMatches = await searchMhpHospitalPreferenceDirectoryAction({ q: query, limit: 8 });
+        if (isCancelled) return;
+        setHospitalOptions(
+          nextMatches
             .map((entry) => entry.hospital_name.trim())
             .filter((name) => name.length > 0)
-        )
-      ).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" })),
-    [hospitalPreferenceDirectory]
-  );
+        );
+      } catch {
+        if (isCancelled) return;
+        setHospitalOptions([]);
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [hospitalPreferenceValue]);
 
   const handleCodeStatusChange = (next: string) => {
     setCodeStatusValue(next);

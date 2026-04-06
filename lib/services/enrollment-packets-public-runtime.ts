@@ -27,6 +27,8 @@ import {
 } from "@/lib/services/enrollment-packets-public-runtime-finalize";
 import { completeCommittedPublicEnrollmentPacketPostCommitWork } from "@/lib/services/enrollment-packets-public-runtime-post-commit";
 import {
+  loadPublicEnrollmentPacketPostCommitContext,
+  loadPublicEnrollmentPacketSenderSignatureName,
   preparePublicEnrollmentPacketSubmission,
   recordPublicEnrollmentPacketGuardFailure,
   savePublicEnrollmentPacketProgress
@@ -47,7 +49,7 @@ export {
   savePublicEnrollmentPacketProgress
 };
 
-export async function submitPublicEnrollmentPacket(input: {
+type SubmitPublicEnrollmentPacketInput = {
   token: string;
   caregiverTypedName: string;
   caregiverSignatureImageDataUrl: string;
@@ -56,32 +58,81 @@ export async function submitPublicEnrollmentPacket(input: {
   caregiverUserAgent: string | null;
   intakePayload: EnrollmentPacketIntakePayload;
   uploads?: PacketFileUpload[];
-}) {
+};
+
+export type SubmitPublicEnrollmentPacketDeps = {
+  buildCommittedEnrollmentPacketReplayResult: typeof buildCommittedEnrollmentPacketReplayResult;
+  completeCommittedPublicEnrollmentPacketPostCommitWork:
+    typeof completeCommittedPublicEnrollmentPacketPostCommitWork;
+  getMemberById: typeof getMemberById;
+  invokeFinalizeEnrollmentPacketCompletionRpc: typeof invokeFinalizeEnrollmentPacketCompletionRpc;
+  loadPublicEnrollmentPacketPostCommitContext: typeof loadPublicEnrollmentPacketPostCommitContext;
+  loadPublicEnrollmentPacketSenderSignatureName: typeof loadPublicEnrollmentPacketSenderSignatureName;
+  loadRequestByToken: typeof loadRequestByToken;
+  parseSignatureDataUrl: typeof parseDataUrlPayload;
+  preparePublicEnrollmentPacketSubmission: typeof preparePublicEnrollmentPacketSubmission;
+  verifyCommittedEnrollmentPacketFinalizeAfterError:
+    typeof verifyCommittedEnrollmentPacketFinalizeAfterError;
+};
+
+const defaultSubmitPublicEnrollmentPacketDeps: SubmitPublicEnrollmentPacketDeps = {
+  buildCommittedEnrollmentPacketReplayResult,
+  completeCommittedPublicEnrollmentPacketPostCommitWork,
+  getMemberById,
+  invokeFinalizeEnrollmentPacketCompletionRpc,
+  loadPublicEnrollmentPacketPostCommitContext,
+  loadPublicEnrollmentPacketSenderSignatureName,
+  loadRequestByToken,
+  parseSignatureDataUrl: parseDataUrlPayload,
+  preparePublicEnrollmentPacketSubmission,
+  verifyCommittedEnrollmentPacketFinalizeAfterError
+};
+
+function parseCaregiverSignatureContentType(dataUrl: string) {
+  const normalized = dataUrl.trim();
+  const base64Match = /^data:([^;,]+)(?:;charset=[^;,]+)?;base64,/i.exec(normalized);
+  if (base64Match) return base64Match[1];
+
+  const plainMatch = /^data:([^;,]+)(?:;charset=[^;,]+)?,/i.exec(normalized);
+  if (!plainMatch) throw new Error("Caregiver signature format is invalid.");
+  return plainMatch[1];
+}
+
+export async function submitPublicEnrollmentPacket(
+  input: SubmitPublicEnrollmentPacketInput
+) {
+  return submitPublicEnrollmentPacketWithDeps(input);
+}
+
+export async function submitPublicEnrollmentPacketWithDeps(
+  input: SubmitPublicEnrollmentPacketInput,
+  deps: SubmitPublicEnrollmentPacketDeps = defaultSubmitPublicEnrollmentPacketDeps
+) {
   const normalizedToken = clean(input.token);
   const caregiverTypedName = clean(input.caregiverTypedName);
   if (!normalizedToken) throw new Error("Signature token is required.");
   if (!caregiverTypedName) throw new Error("Typed caregiver name is required.");
   if (!input.attested) throw new Error("Electronic signature attestation is required.");
-  const signature = parseDataUrlPayload(input.caregiverSignatureImageDataUrl);
-  if (!signature.contentType.startsWith("image/")) throw new Error("Caregiver signature format is invalid.");
+  const caregiverSignatureDataUrl = input.caregiverSignatureImageDataUrl.trim();
+  const signatureContentType = parseCaregiverSignatureContentType(caregiverSignatureDataUrl);
+  if (!signatureContentType.startsWith("image/")) {
+    throw new Error("Caregiver signature format is invalid.");
+  }
 
-  const matchedRequest = await loadRequestByToken(normalizedToken);
+  const matchedRequest = await deps.loadRequestByToken(normalizedToken);
   if (!matchedRequest) throw new Error("This enrollment packet link is invalid.");
   const request = matchedRequest.request;
   const status = toStatus(request.status);
   if (matchedRequest.tokenMatch === "consumed" && status === "completed") {
-    return buildCommittedEnrollmentPacketReplayResult({ request });
+    return deps.buildCommittedEnrollmentPacketReplayResult({ request });
   }
   if (status === "completed") {
-    return buildCommittedEnrollmentPacketReplayResult({ request });
+    return deps.buildCommittedEnrollmentPacketReplayResult({ request });
   }
   if (isExpired(request.token_expires_at)) {
     await recordEnrollmentPacketExpiredIfNeeded(request);
     throw new Error("This enrollment packet link has expired.");
   }
-
-  const member = await getMemberById(request.member_id);
-  if (!member) throw new Error("Member record was not found.");
 
   const uploads = input.uploads ?? [];
   const consumedSubmissionTokenHash = hashToken(normalizedToken);
@@ -95,9 +146,11 @@ export async function submitPublicEnrollmentPacket(input: {
         wasAlreadyFiled: boolean;
       }
     | null = null;
+  let member: Awaited<ReturnType<typeof getMemberById>> | null = null;
+  let senderSignatureName = "Staff";
 
   try {
-    const preparedSubmission = await preparePublicEnrollmentPacketSubmission({
+    const preparedSubmission = await deps.preparePublicEnrollmentPacketSubmission({
       request,
       token: normalizedToken,
       caregiverTypedName,
@@ -107,13 +160,20 @@ export async function submitPublicEnrollmentPacket(input: {
       intakePayload: input.intakePayload,
       uploads
     });
+    const replayCheck = await deps.loadRequestByToken(normalizedToken);
+    if (replayCheck?.request && toStatus(replayCheck.request.status) === "completed") {
+      return deps.buildCommittedEnrollmentPacketReplayResult({
+        request: replayCheck.request
+      });
+    }
+    senderSignatureName = await deps.loadPublicEnrollmentPacketSenderSignatureName(request.id);
 
     const completedAt = toEasternISO();
     const rotatedToken = hashToken(generateSigningToken());
 
     finalizedAt = toEasternISO();
     finalizeAttempted = true;
-    finalizedSubmission = await invokeFinalizeEnrollmentPacketCompletionRpc({
+    finalizedSubmission = await deps.invokeFinalizeEnrollmentPacketCompletionRpc({
       packetId: request.id,
       rotatedToken,
       consumedSubmissionTokenHash,
@@ -121,7 +181,7 @@ export async function submitPublicEnrollmentPacket(input: {
       filedAt: finalizedAt,
       signerName: caregiverTypedName,
       signerEmail: cleanEmail(preparedSubmission.validatedPayload.primaryContactEmail) ?? request.caregiver_email,
-      signatureBlob: input.caregiverSignatureImageDataUrl.trim(),
+      signatureBlob: caregiverSignatureDataUrl,
       ipAddress: clean(input.caregiverIp),
       actorUserId: request.sender_user_id,
       actorEmail: cleanEmail(preparedSubmission.validatedPayload.primaryContactEmail) ?? request.caregiver_email,
@@ -133,7 +193,7 @@ export async function submitPublicEnrollmentPacket(input: {
       filedMetadata: {
         caregiverSignatureName: caregiverTypedName,
         initiatedByUserId: request.sender_user_id,
-        initiatedByName: preparedSubmission.senderSignatureName,
+        initiatedByName: senderSignatureName,
         completedAt,
         filedAt: finalizedAt,
         mappingSyncStatus: "pending"
@@ -141,19 +201,28 @@ export async function submitPublicEnrollmentPacket(input: {
     });
 
     if (finalizedSubmission.wasAlreadyFiled) {
-      return buildCommittedEnrollmentPacketReplayResult({
-        request: (await loadRequestByToken(normalizedToken))?.request ?? request
+      return deps.buildCommittedEnrollmentPacketReplayResult({
+        request: (await deps.loadRequestByToken(normalizedToken))?.request ?? request
       });
     }
 
-    return completeCommittedPublicEnrollmentPacketPostCommitWork({
+    member = await deps.getMemberById(request.member_id);
+    if (!member) throw new Error("Member record was not found.");
+
+    const postCommitContext = await deps.loadPublicEnrollmentPacketPostCommitContext(request.id);
+    const signature = deps.parseSignatureDataUrl(caregiverSignatureDataUrl);
+    if (!signature.contentType.startsWith("image/")) {
+      throw new Error("Caregiver signature format is invalid.");
+    }
+
+    return deps.completeCommittedPublicEnrollmentPacketPostCommitWork({
       request,
       member,
-      validatedFieldsSnapshot: preparedSubmission.validatedFieldsSnapshot,
+      validatedFieldsSnapshot: postCommitContext.validatedFieldsSnapshot,
       caregiverTypedName,
-      senderSignatureName: preparedSubmission.senderSignatureName,
+      senderSignatureName,
       caregiverEmail: preparedSubmission.validatedPayload.primaryContactEmail,
-      caregiverSignatureDataUrl: input.caregiverSignatureImageDataUrl.trim(),
+      caregiverSignatureDataUrl,
       caregiverSignature: signature,
       uploads,
       finalizedAt,
@@ -166,9 +235,9 @@ export async function submitPublicEnrollmentPacket(input: {
       | null = null;
 
     if (!finalizedSubmission && finalizeAttempted) {
-      finalizeVerification = await verifyCommittedEnrollmentPacketFinalizeAfterError({
+      finalizeVerification = await deps.verifyCommittedEnrollmentPacketFinalizeAfterError({
         packetId: request.id,
-        expectedMemberId: member.id,
+        expectedMemberId: request.member_id,
         actorUserId: request.sender_user_id,
         uploadBatchId: null,
         consumedSubmissionTokenHash,
@@ -176,7 +245,7 @@ export async function submitPublicEnrollmentPacket(input: {
         reason
       });
       if (finalizeVerification.kind === "committed" && finalizeVerification.request) {
-        return buildCommittedEnrollmentPacketReplayResult({
+        return deps.buildCommittedEnrollmentPacketReplayResult({
           request: finalizeVerification.request
         });
       }
@@ -191,7 +260,7 @@ export async function submitPublicEnrollmentPacket(input: {
       status: "failed",
       severity: "high",
       metadata: {
-        member_id: member.id,
+        member_id: request.member_id,
         lead_id: request.lead_id,
         phase: finalizedSubmission ? "post_finalize" : "finalization",
         error: reason,
@@ -208,7 +277,7 @@ export async function submitPublicEnrollmentPacket(input: {
         status: "failed",
         severity: "high",
         metadata: {
-          member_id: member.id,
+          member_id: request.member_id,
           lead_id: request.lead_id,
           phase: finalizedSubmission ? "post_finalize" : "finalization",
           error: reason
@@ -222,7 +291,7 @@ export async function submitPublicEnrollmentPacket(input: {
       severity: "high",
       alertKey: "enrollment_packet_completion_failed",
       metadata: {
-        member_id: member.id,
+        member_id: request.member_id,
         lead_id: request.lead_id,
         error: reason,
         upload_batch_id: null

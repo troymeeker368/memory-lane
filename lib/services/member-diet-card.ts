@@ -53,7 +53,16 @@ function buildAllergySummary(input: {
 export async function getMemberDietCard(memberId: string) {
   const [mcc, mhp] = await Promise.all([
     getMemberCommandCenterDetail(memberId),
-    getMemberHealthProfileDetail(memberId)
+    getMemberHealthProfileDetail(memberId, {
+      includeProviderDirectory: false,
+      includeHospitalPreferenceDirectory: false,
+      includeAssessments: false,
+      includeDiagnoses: false,
+      includeMedications: false,
+      includeProviders: false,
+      includeEquipment: false,
+      includeNotes: false
+    })
   ]);
   if (!mcc || !mhp) return null;
 

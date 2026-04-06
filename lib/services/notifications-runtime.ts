@@ -233,6 +233,21 @@ export async function resolveWorkflowRecipients(input: {
       break;
   }
 
+  if (
+    recipients.length === 0 &&
+    (
+      input.eventType === "enrollment_packet_submitted" ||
+      input.eventType === "enrollment_packet_failed" ||
+      input.eventType === "intake_completed" ||
+      input.eventType === "pof_sent" ||
+      input.eventType === "pof_signed" ||
+      input.eventType === "pof_failed" ||
+      input.eventType === "care_plan_signed"
+    )
+  ) {
+    recipients = await listFallbackAdminRecipientIds();
+  }
+
   return getActiveProfileIds(recipients);
 }
 

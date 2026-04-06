@@ -613,15 +613,6 @@ export default async function MemberHealthProfileDetailPage({
             <SectionHeading title="Providers" lastUpdatedAt={providersUpdatedAt} lastUpdatedBy={providersUpdatedBy} />
             <MhpProvidersSection
               memberId={member.id}
-              providerDirectory={detail.providerDirectory.map((row) => ({
-                id: row.id,
-                provider_name: row.provider_name,
-                specialty: row.specialty ?? null,
-                specialty_other: row.specialty_other ?? null,
-                practice_name: row.practice_name ?? null,
-                provider_phone: row.provider_phone ?? null,
-                updated_at: row.updated_at
-              }))}
               initialRows={detail.providers.map((row) => ({
                 id: row.id,
                 provider_name: row.provider_name,
@@ -859,11 +850,6 @@ export default async function MemberHealthProfileDetailPage({
             hospice={profile.hospice}
             advancedDirectivesObtained={profile.advanced_directives_obtained}
             powerOfAttorney={profile.power_of_attorney}
-            hospitalPreferenceDirectory={detail.hospitalPreferenceDirectory.map((row) => ({
-              id: row.id,
-              hospital_name: row.hospital_name,
-              updated_at: row.updated_at
-            }))}
             hospitalPreference={profile.hospital_preference}
             legalComments={profile.legal_comments}
           />

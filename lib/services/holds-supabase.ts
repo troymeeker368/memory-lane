@@ -71,12 +71,39 @@ export async function createMemberHoldSupabase(input: {
   });
   const supabase = await createClient();
   const now = toEasternISO();
+  const normalizedStartDate = normalizeOperationalDateOnly(input.startDate);
+  const normalizedEndDate = input.endDate ? normalizeOperationalDateOnly(input.endDate) : null;
+  if (normalizedEndDate && normalizedEndDate < normalizedStartDate) {
+    throw new Error("End date cannot be earlier than start date.");
+  }
+
+  const { data: activeHolds, error: activeHoldsError } = await supabase
+    .from("member_holds")
+    .select("id, start_date, end_date")
+    .eq("member_id", canonicalMemberId)
+    .eq("status", "active");
+  if (activeHoldsError) throw new Error(activeHoldsError.message);
+
+  const incomingEnd = normalizedEndDate ?? "9999-12-31";
+  const overlapsExistingActiveHold = ((activeHolds ?? []) as Array<{ id: string; start_date: string; end_date: string | null }>).some(
+    (hold) => {
+      const existingStart = normalizeOperationalDateOnly(hold.start_date);
+      const existingEnd = hold.end_date ? normalizeOperationalDateOnly(hold.end_date) : "9999-12-31";
+      return existingStart <= incomingEnd && existingEnd >= normalizedStartDate;
+    }
+  );
+  if (overlapsExistingActiveHold) {
+    throw new Error(
+      "Member already has an overlapping active hold. End the existing hold or pick a non-overlapping date range."
+    );
+  }
+
   const { data, error } = await supabase
     .from("member_holds")
     .insert({
       member_id: canonicalMemberId,
-      start_date: normalizeOperationalDateOnly(input.startDate),
-      end_date: input.endDate ? normalizeOperationalDateOnly(input.endDate) : null,
+      start_date: normalizedStartDate,
+      end_date: normalizedEndDate,
       status: "active",
       reason: input.reason,
       reason_other: input.reasonOther?.trim() || null,

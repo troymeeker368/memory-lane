@@ -46,6 +46,7 @@ type CarePlanWriteResult = {
   id: string;
   memberId: string;
   caregiverSignatureStatus: string;
+  postSignReadinessStatus: CarePlanPostSignReadinessStatus;
 };
 
 function buildCarePlanWorkflowError(message: string, carePlanId: string) {
@@ -380,7 +381,8 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
     return {
       id: sent.id,
       memberId: sent.memberId,
-      caregiverSignatureStatus: sent.caregiverSignatureStatus
+      caregiverSignatureStatus: sent.caregiverSignatureStatus,
+      postSignReadinessStatus: "ready"
     };
   }
 
@@ -399,7 +401,8 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
   return {
     id: signedCarePlan.id,
     memberId: signedCarePlan.memberId,
-    caregiverSignatureStatus: signedCarePlan.caregiverSignatureStatus
+    caregiverSignatureStatus: signedCarePlan.caregiverSignatureStatus,
+    postSignReadinessStatus: "ready"
   };
 }
 

@@ -37,8 +37,11 @@ export async function getMemberHealthProfileIndex(filters?: {
   return getMemberHealthProfileIndexSupabase(filters);
 }
 
-export async function getMemberHealthProfileDetail(memberId: string) {
-  return getMemberHealthProfileDetailSupabase(memberId);
+export async function getMemberHealthProfileDetail(
+  memberId: string,
+  options?: Parameters<typeof getMemberHealthProfileDetailSupabase>[1]
+) {
+  return getMemberHealthProfileDetailSupabase(memberId, options);
 }
 
 export async function backfillMissingMemberHealthProfiles(memberIds: Array<string | null | undefined>) {

@@ -197,7 +197,9 @@ function chunk<T>(values: T[], size: number) {
 }
 
 async function applyMemberShellRepair(memberIds: string[]) {
-  const { backfillMissingMemberCommandCenterRowsSupabase } = await import("../lib/services/member-command-center-runtime");
+  const { backfillMissingMemberCommandCenterRowsSupabase } = await import(
+    "../lib/services/member-command-center-repair-supabase"
+  );
   let commandCentersInserted = 0;
   let schedulesInserted = 0;
 

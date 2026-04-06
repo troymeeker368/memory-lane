@@ -86,7 +86,13 @@ function categorizeAllergies(
 export async function getMemberFaceSheet(memberId: string) {
   const [mcc, mhp] = await Promise.all([
     getMemberCommandCenterDetail(memberId),
-    getMemberHealthProfileDetail(memberId)
+    getMemberHealthProfileDetail(memberId, {
+      includeProviderDirectory: false,
+      includeHospitalPreferenceDirectory: false,
+      includeAssessments: false,
+      includeProviders: false,
+      includeNotes: false
+    })
   ]);
   if (!mcc || !mhp) return null;
 

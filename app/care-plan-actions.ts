@@ -4,27 +4,50 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authorization";
+import { buildCommittedWorkflowActionState } from "@/lib/services/committed-workflow-state";
 import {
-  buildCommittedWorkflowActionState,
-  type FounderWorkflowReadinessStage
-} from "@/lib/services/committed-workflow-state";
+  buildCommittedCarePlanActionState
+} from "@/lib/services/care-plan-post-sign-readiness";
 import { CARE_PLAN_SECTION_TYPES } from "@/lib/services/care-plan-track-definitions";
 
 async function loadCarePlanWriteService() {
   return import("@/lib/services/care-plans-write");
 }
 
+async function loadCarePlanReadService() {
+  return import("@/lib/services/care-plans-read");
+}
+
 async function loadCarePlanEsignService() {
   return import("@/lib/services/care-plan-esign");
 }
 
-function buildCommittedCarePlanActionState(input: {
-  readinessStage: FounderWorkflowReadinessStage;
+async function buildPersistedCarePlanActionState(input: {
+  carePlanId: string;
+  fallbackOperationalStatus: string;
   actionNeededMessage?: string | null;
+  failureRequiresStaffFollowUp?: boolean;
 }) {
+  try {
+    const { getCarePlanDispatchState } = await loadCarePlanReadService();
+    const state = await getCarePlanDispatchState(input.carePlanId, { serviceRole: true });
+    if (state?.postSignReadinessStatus) {
+      return buildCommittedCarePlanActionState({
+        status: state.postSignReadinessStatus,
+        failureRequiresStaffFollowUp: input.failureRequiresStaffFollowUp,
+        actionNeededMessage: input.actionNeededMessage
+      });
+    }
+  } catch (error) {
+    console.error("[care-plan-actions] unable to reload persisted care plan readiness", {
+      carePlanId: input.carePlanId,
+      message: error instanceof Error ? error.message : "Unknown care plan readiness reload error."
+    });
+  }
+
   return buildCommittedWorkflowActionState({
-    operationalStatus: input.readinessStage === "ready" ? "ready" : "follow_up_required",
-    readinessStage: input.readinessStage,
+    operationalStatus: input.fallbackOperationalStatus,
+    readinessStage: "follow_up_required",
     actionNeededMessage: input.actionNeededMessage
   });
 }
@@ -120,9 +143,11 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
     return {
       ok: Boolean(carePlanId) as true | false,
       ...(carePlanId
-        ? buildCommittedCarePlanActionState({
-            readinessStage: "committed",
-            actionNeededMessage: error instanceof Error ? error.message : "Unable to create care plan."
+        ? await buildPersistedCarePlanActionState({
+            carePlanId,
+            fallbackOperationalStatus: "follow_up_required",
+            actionNeededMessage: error instanceof Error ? error.message : "Unable to create care plan.",
+            failureRequiresStaffFollowUp: true
           })
         : {}),
       ...(carePlanId ? { error: null } : { error: error instanceof Error ? error.message : "Unable to create care plan." }),
@@ -141,8 +166,9 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
     ok: true as const,
     error: null,
     id: createdCarePlan.id,
-    ...buildCommittedCarePlanActionState({
-      readinessStage: "ready"
+    ...await buildPersistedCarePlanActionState({
+      carePlanId: createdCarePlan.id,
+      fallbackOperationalStatus: "ready"
     })
   };
 }
@@ -229,9 +255,11 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
       ok: true as const,
       error: null,
       id: carePlanId,
-      ...buildCommittedCarePlanActionState({
-        readinessStage: "committed",
-        actionNeededMessage: error instanceof Error ? error.message : "Unable to review care plan."
+      ...await buildPersistedCarePlanActionState({
+        carePlanId,
+        fallbackOperationalStatus: "follow_up_required",
+        actionNeededMessage: error instanceof Error ? error.message : "Unable to review care plan.",
+        failureRequiresStaffFollowUp: true
       })
     } as const;
   }
@@ -247,8 +275,9 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
   return {
     ok: true as const,
     error: null,
-    ...buildCommittedCarePlanActionState({
-      readinessStage: "ready"
+    ...await buildPersistedCarePlanActionState({
+      carePlanId: reviewedCarePlan.id,
+      fallbackOperationalStatus: "ready"
     })
   };
 }
@@ -280,7 +309,11 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
   if (!payload.data.signatureImageDataUrl.trim().startsWith("data:image/")) {
     return { ok: false, error: "A valid drawn nurse/admin signature image is required." } as const;
   }
-  let updated: { id: string; memberId: string; caregiverSignatureStatus: string } | null = null;
+  let updated: {
+    id: string;
+    memberId: string;
+    caregiverSignatureStatus: string;
+  } | null = null;
   try {
     const { signCarePlanAsNurseAdmin } = await loadCarePlanWriteService();
     updated = await signCarePlanAsNurseAdmin({
@@ -304,13 +337,19 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
       ok: true as const,
       error: null,
       id: carePlanId,
-      ...buildCommittedCarePlanActionState({
-        readinessStage: "committed",
-        actionNeededMessage: error instanceof Error ? error.message : "Unable to sign care plan."
+      ...await buildPersistedCarePlanActionState({
+        carePlanId,
+        fallbackOperationalStatus: "follow_up_required",
+        actionNeededMessage: error instanceof Error ? error.message : "Unable to sign care plan.",
+        failureRequiresStaffFollowUp: true
       })
     } as const;
   }
-  const signedCarePlan = updated as { id: string; memberId: string; caregiverSignatureStatus: string };
+  const signedCarePlan = updated as {
+    id: string;
+    memberId: string;
+    caregiverSignatureStatus: string;
+  };
   revalidatePath(`/health/care-plans/${signedCarePlan.id}`);
   revalidatePath(`/health/member-health-profiles/${signedCarePlan.memberId}`);
   revalidatePath(`/members/${signedCarePlan.memberId}`);
@@ -318,8 +357,9 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
     ok: true as const,
     error: null,
     status: signedCarePlan.caregiverSignatureStatus,
-    ...buildCommittedCarePlanActionState({
-      readinessStage: "ready"
+    ...await buildPersistedCarePlanActionState({
+      carePlanId: signedCarePlan.id,
+      fallbackOperationalStatus: "ready"
     })
   };
 }

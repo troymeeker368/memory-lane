@@ -568,7 +568,7 @@ test("already-filed public enrollment packet submissions use the replay-safe con
     true
   );
   assert.equal(
-    runtimeSource.includes("return buildCommittedEnrollmentPacketReplayResult({"),
+    runtimeSource.includes("return deps.buildCommittedEnrollmentPacketReplayResult({"),
     true
   );
 });

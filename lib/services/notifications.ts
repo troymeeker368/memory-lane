@@ -7,6 +7,7 @@ import {
   type CreateNotificationInput,
   type CreateUserNotificationInput,
   type DispatchNotificationEventInput,
+  type JsonValue,
   type NotificationStatus,
   type UserNotification
 } from "@/lib/services/notification-types";
@@ -322,6 +323,65 @@ export async function dismissUserNotification(input: {
     actedAt: input.dismissedAt,
     serviceRole: input.serviceRole
   });
+}
+
+export async function dismissWorkflowNotifications(input: {
+  entityType: string;
+  entityId: string;
+  eventType?: string | null;
+  dismissedAt: string;
+  metadataContains?: Record<string, JsonValue> | null;
+  serviceRole?: boolean;
+}) {
+  const entityType = normalizeText(input.entityType);
+  const entityId = normalizeText(input.entityId);
+  if (!entityType || !entityId) throw new Error("Entity type and entity id are required.");
+
+  const serviceRole = input.serviceRole !== false;
+  const supabase = serviceRole ? createNotificationWriteClient() : await createClient();
+  const metadataContains =
+    input.metadataContains && Object.keys(input.metadataContains).length > 0 ? input.metadataContains : null;
+
+  let query = supabase
+    .from("user_notifications")
+    .update({
+      status: "dismissed",
+      read_at: input.dismissedAt
+    })
+    .eq("entity_type", entityType)
+    .eq("entity_id", entityId)
+    .neq("status", "dismissed");
+
+  const eventType = normalizeText(input.eventType);
+  if (eventType) {
+    query = query.eq("event_type", canonicalizeNotificationEventType(eventType) ?? eventType);
+  }
+  if (metadataContains) {
+    query = query.contains("metadata", metadataContains);
+  }
+
+  let { data, error } = await query.select("id");
+  if (error && isMissingNotificationColumnError(error, "status")) {
+    let fallbackQuery = supabase
+      .from("user_notifications")
+      .update({
+        read_at: input.dismissedAt
+      })
+      .eq("entity_type", entityType)
+      .eq("entity_id", entityId)
+      .is("read_at", null);
+    if (eventType) {
+      fallbackQuery = fallbackQuery.eq("event_type", canonicalizeNotificationEventType(eventType) ?? eventType);
+    }
+    if (metadataContains) {
+      fallbackQuery = fallbackQuery.contains("metadata", metadataContains);
+    }
+    const fallback = await fallbackQuery.select("id");
+    data = fallback.data;
+    error = fallback.error;
+  }
+  if (error) throw new Error(mapNotificationError(error));
+  return (data ?? []).length;
 }
 
 export async function markAllUserNotificationsRead(input: {

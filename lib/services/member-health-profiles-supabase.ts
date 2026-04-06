@@ -248,6 +248,10 @@ type HospitalPreferenceDirectoryRow = {
   updated_at: string;
 };
 
+const DEFAULT_MHP_DIRECTORY_SEARCH_LIMIT = 8;
+const MAX_MHP_DIRECTORY_SEARCH_LIMIT = 25;
+const MHP_DIRECTORY_SEARCH_MIN_QUERY_LENGTH = 2;
+
 type MemberEquipmentRow = {
   id: string;
   member_id: string;
@@ -282,6 +286,81 @@ type IntakeAssessmentRow = {
   admission_review_required: boolean | null;
   created_at: string | null;
 };
+
+function normalizeDirectorySearchQuery(value: string | null | undefined) {
+  return String(value ?? "").trim();
+}
+
+function normalizeDirectorySearchLimit(value: number | null | undefined) {
+  if (!Number.isFinite(value) || Number(value) <= 0) {
+    return DEFAULT_MHP_DIRECTORY_SEARCH_LIMIT;
+  }
+  return Math.min(MAX_MHP_DIRECTORY_SEARCH_LIMIT, Math.floor(Number(value)));
+}
+
+function normalizeDirectoryNameKey(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+export async function searchProviderDirectoryOptionsSupabase(input?: {
+  q?: string;
+  limit?: number;
+}) {
+  const query = normalizeDirectorySearchQuery(input?.q);
+  if (query.length < MHP_DIRECTORY_SEARCH_MIN_QUERY_LENGTH) {
+    return [] as ProviderDirectoryRow[];
+  }
+
+  const limit = normalizeDirectorySearchLimit(input?.limit);
+  const fetchLimit = Math.min(limit * 5, 100);
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("provider_directory")
+    .select(PROVIDER_DIRECTORY_SELECT)
+    .ilike("provider_name", buildSupabaseIlikePattern(query))
+    .order("updated_at", { ascending: false })
+    .limit(fetchLimit);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const uniqueRows = new Map<string, ProviderDirectoryRow>();
+  for (const row of (data ?? []) as ProviderDirectoryRow[]) {
+    const key = normalizeDirectoryNameKey(row.provider_name);
+    if (!key || uniqueRows.has(key)) continue;
+    uniqueRows.set(key, row);
+  }
+
+  return Array.from(uniqueRows.values()).slice(0, limit);
+}
+
+export async function searchHospitalPreferenceDirectoryOptionsSupabase(input?: {
+  q?: string;
+  limit?: number;
+}) {
+  const query = normalizeDirectorySearchQuery(input?.q);
+  if (query.length < MHP_DIRECTORY_SEARCH_MIN_QUERY_LENGTH) {
+    return [] as HospitalPreferenceDirectoryRow[];
+  }
+
+  const limit = normalizeDirectorySearchLimit(input?.limit);
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("hospital_preference_directory")
+    .select(HOSPITAL_PREFERENCE_DIRECTORY_SELECT)
+    .ilike("hospital_name", buildSupabaseIlikePattern(query))
+    .order("hospital_name", { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return ((data ?? []) as HospitalPreferenceDirectoryRow[]).filter(
+    (row) => row.hospital_name.trim().length > 0
+  );
+}
 
 export async function ensureMemberHealthProfileSupabase(memberId: string, options?: { serviceRole?: boolean }) {
   const canonicalMemberId = await resolveCanonicalMemberId(memberId, { actionLabel: "ensureMemberHealthProfileSupabase" });
@@ -497,8 +576,6 @@ export async function getMemberHealthProfileDetailSupabase(
     medicationsResult,
     allergiesResult,
     providersResult,
-    providerDirectoryResult,
-    hospitalPreferenceDirectoryResult,
     equipmentResult,
     notesResult,
     assessmentsResult,
@@ -516,15 +593,6 @@ export async function getMemberHealthProfileDetailSupabase(
       : Promise.resolve({ data: [], error: null }),
     readPlan.includeProviders
       ? supabase.from("member_providers").select(MEMBER_PROVIDER_SELECT).eq("member_id", canonicalMemberId)
-      : Promise.resolve({ data: [], error: null }),
-    readPlan.includeProviderDirectory
-      ? supabase.from("provider_directory").select(PROVIDER_DIRECTORY_SELECT).order("updated_at", { ascending: false })
-      : Promise.resolve({ data: [], error: null }),
-    readPlan.includeHospitalPreferenceDirectory
-      ? supabase
-          .from("hospital_preference_directory")
-          .select(HOSPITAL_PREFERENCE_DIRECTORY_SELECT)
-          .order("updated_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
     readPlan.includeEquipment
       ? supabase.from("member_equipment").select(MEMBER_EQUIPMENT_SELECT).eq("member_id", canonicalMemberId)
@@ -544,8 +612,6 @@ export async function getMemberHealthProfileDetailSupabase(
   if (medicationsResult.error) throw new Error(medicationsResult.error.message);
   if (allergiesResult.error) throw new Error(allergiesResult.error.message);
   if (providersResult.error) throw new Error(providersResult.error.message);
-  if (providerDirectoryResult.error) throw new Error(providerDirectoryResult.error.message);
-  if (hospitalPreferenceDirectoryResult.error) throw new Error(hospitalPreferenceDirectoryResult.error.message);
   if (equipmentResult.error) throw new Error(equipmentResult.error.message);
   if (notesResult.error) throw new Error(notesResult.error.message);
   if (mccResult.error) throw new Error(mccResult.error.message);
@@ -554,14 +620,8 @@ export async function getMemberHealthProfileDetailSupabase(
   const medications = sortDesc((medicationsResult.data ?? []) as MemberMedicationRow[], (row) => row.updated_at);
   const allergies = sortDesc((allergiesResult.data ?? []) as MemberAllergyRow[], (row) => row.updated_at);
   const providers = sortDesc((providersResult.data ?? []) as MemberProviderRow[], (row) => row.updated_at);
-  const providerDirectory = sortDesc(
-    ((providerDirectoryResult.data ?? []) as ProviderDirectoryRow[]).filter((row) => row.provider_name.trim().length > 0),
-    (row) => row.updated_at
-  );
-  const hospitalPreferenceDirectory = sortDesc(
-    ((hospitalPreferenceDirectoryResult.data ?? []) as HospitalPreferenceDirectoryRow[]).filter((row) => row.hospital_name.trim().length > 0),
-    (row) => row.updated_at
-  );
+  const providerDirectory: ProviderDirectoryRow[] = [];
+  const hospitalPreferenceDirectory: HospitalPreferenceDirectoryRow[] = [];
   const equipment = sortDesc((equipmentResult.data ?? []) as MemberEquipmentRow[], (row) => row.updated_at);
   const notes = sortDesc((notesResult.data ?? []) as MemberNoteRow[], (row) => row.created_at);
   const assessments = assessmentsResult;

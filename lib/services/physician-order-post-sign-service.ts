@@ -14,6 +14,8 @@ import {
   computePostSignRetryAt,
   type PofPostSignSyncStep
 } from "@/lib/services/physician-order-core";
+import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
+import { dismissWorkflowNotifications } from "@/lib/services/notifications";
 import { logSystemEvent } from "@/lib/services/system-event-service";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
@@ -25,6 +27,10 @@ export type SignPhysicianOrderResult = {
   nextRetryAt: string | null;
   lastError: string | null;
 };
+
+function buildPostSignActionUrl(pofId: string) {
+  return `/health/physician-orders/${pofId}`;
+}
 
 function normalizeSignedPofPostSignFailure(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown post-sign sync error.";
@@ -122,6 +128,23 @@ export async function processSignedPhysicianOrderPostSignSync(input: {
       },
       { required: false }
     );
+    try {
+      await dismissWorkflowNotifications({
+        entityType: "physician_order",
+        entityId: input.pofId,
+        eventType: "action_required",
+        dismissedAt: input.signedAtIso,
+        metadataContains: {
+          follow_up_task_type: "pof_post_sign_sync"
+        },
+        serviceRole: true
+      });
+    } catch (notificationError) {
+      console.error("[physician-order-post-sign-service] unable to dismiss resolved post-sign follow-up notifications", {
+        physicianOrderId: input.pofId,
+        message: notificationError instanceof Error ? notificationError.message : "Unknown notification dismiss error."
+      });
+    }
     return {
       postSignStatus: "synced",
       queueId: input.queueId,
@@ -165,6 +188,41 @@ export async function processSignedPhysicianOrderPostSignSync(input: {
     },
     { required: false }
   );
+  try {
+    await recordWorkflowMilestone({
+      event: {
+        eventType: "action_required",
+        entityType: "physician_order",
+        entityId: input.pofId,
+        actorType: "user",
+        actorUserId: input.actor.id,
+        status: "open",
+        severity: attemptCount >= 3 ? "high" : "medium",
+        eventKeySuffix: "pof-post-sign-sync",
+        reopenOnConflict: true,
+        requireRecipients: true,
+        metadata: {
+          member_id: input.memberId,
+          follow_up_task_type: "pof_post_sign_sync",
+          attempt_count: attemptCount,
+          failed_step: postSign.step,
+          next_retry_at: nextRetryAt,
+          last_error: postSign.errorMessage,
+          pof_request_id: clean(input.pofRequestId),
+          title: "Signed POF Follow-up Needed",
+          message:
+            "Provider signature was recorded, but downstream MHP/MCC and MAR sync is still not complete. Do not treat this order as operationally ready yet.",
+          priority: attemptCount >= 3 ? "high" : "medium",
+          action_url: buildPostSignActionUrl(input.pofId)
+        }
+      }
+    });
+  } catch (milestoneError) {
+    console.error("[physician-order-post-sign-service] unable to emit post-sign follow-up milestone", {
+      physicianOrderId: input.pofId,
+      message: milestoneError instanceof Error ? milestoneError.message : "Unknown post-sign milestone error."
+    });
+  }
   if (attemptCount >= 3) {
     await recordImmediateSystemAlert({
       entityType: "physician_order",

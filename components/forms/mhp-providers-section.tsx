@@ -2,10 +2,11 @@
 
 import { type FormEvent, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
+import { searchMhpProviderDirectoryAction } from "@/app/(portal)/health/member-health-profiles/directory-actions";
 import {
-  addMhpProviderInlineAction,
-  deleteMhpProviderInlineAction,
-  updateMhpProviderInlineAction
+  addMhpProviderInlineAction as addMhpProviderInlineMutationAction,
+  deleteMhpProviderInlineAction as deleteMhpProviderInlineMutationAction,
+  updateMhpProviderInlineAction as updateMhpProviderInlineMutationAction
 } from "@/app/(portal)/health/member-health-profiles/provider-actions";
 import { MhpEditModal } from "@/components/forms/mhp-edit-modal";
 import { formatPhoneDisplay, formatPhoneInput } from "@/lib/phone";
@@ -131,18 +132,28 @@ function ProviderTypeahead({
   );
 }
 
+function buildProviderDirectoryByName(entries: ProviderDirectoryEntry[]) {
+  const map = new Map<string, ProviderDirectoryEntry>();
+  entries.forEach((entry) => {
+    const key = entry.provider_name.trim().toLowerCase();
+    if (!key || map.has(key)) return;
+    map.set(key, entry);
+  });
+  return map;
+}
+
 export function MhpProvidersSection({
   memberId,
-  initialRows,
-  providerDirectory
+  initialRows
 }: {
   memberId: string;
   initialRows: ProviderRow[];
-  providerDirectory: ProviderDirectoryEntry[];
 }) {
   const [rows, setRows] = useState<ProviderRow[]>(initialRows);
   const [status, setStatus] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [providerSuggestions, setProviderSuggestions] = useState<ProviderDirectoryEntry[]>([]);
+  const [editProviderSuggestions, setEditProviderSuggestions] = useState<ProviderDirectoryEntry[]>([]);
 
   const [providerName, setProviderName] = useState("");
   const [providerSpecialty, setProviderSpecialty] = useState<string>("Primary Care");
@@ -168,24 +179,68 @@ export function MhpProvidersSection({
 
   const normalizeProviderName = (value: string) => value.trim().toLowerCase();
 
-  const directoryByName = useMemo(() => {
-    const map = new Map<string, ProviderDirectoryEntry>();
-    providerDirectory.forEach((entry) => {
-      const key = normalizeProviderName(entry.provider_name);
-      if (!key) return;
-      const existing = map.get(key);
-      if (!existing) {
-        map.set(key, entry);
-        return;
+  useEffect(() => {
+    let isCancelled = false;
+    const query = providerName.trim();
+
+    if (query.length < 2) {
+      setProviderSuggestions([]);
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    void (async () => {
+      try {
+        const nextMatches = await searchMhpProviderDirectoryAction({ q: query, limit: 8 });
+        if (isCancelled) return;
+        setProviderSuggestions(nextMatches as ProviderDirectoryEntry[]);
+      } catch {
+        if (isCancelled) return;
+        setProviderSuggestions([]);
       }
-      const existingAt = Date.parse(existing.updated_at);
-      const nextAt = Date.parse(entry.updated_at);
-      if ((Number.isNaN(existingAt) ? 0 : existingAt) <= (Number.isNaN(nextAt) ? 0 : nextAt)) {
-        map.set(key, entry);
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [providerName]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const query = editProviderName.trim();
+
+    if (query.length < 2) {
+      setEditProviderSuggestions([]);
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    void (async () => {
+      try {
+        const nextMatches = await searchMhpProviderDirectoryAction({ q: query, limit: 8 });
+        if (isCancelled) return;
+        setEditProviderSuggestions(nextMatches as ProviderDirectoryEntry[]);
+      } catch {
+        if (isCancelled) return;
+        setEditProviderSuggestions([]);
       }
-    });
-    return map;
-  }, [providerDirectory]);
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [editProviderName]);
+
+  const directoryByName = useMemo(
+    () => buildProviderDirectoryByName(providerSuggestions),
+    [providerSuggestions]
+  );
+  const editDirectoryByName = useMemo(
+    () => buildProviderDirectoryByName(editProviderSuggestions),
+    [editProviderSuggestions]
+  );
 
   const directoryNameOptions = useMemo(
     () =>
@@ -195,8 +250,19 @@ export function MhpProvidersSection({
     [directoryByName]
   );
 
+  const editDirectoryNameOptions = useMemo(
+    () =>
+      Array.from(editDirectoryByName.values())
+        .map((entry) => entry.provider_name)
+        .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" })),
+    [editDirectoryByName]
+  );
+
   const applyProviderDefaults = (providerNameValue: string, mode: "add" | "edit") => {
-    const matched = directoryByName.get(normalizeProviderName(providerNameValue));
+    const matched =
+      mode === "add"
+        ? directoryByName.get(normalizeProviderName(providerNameValue))
+        : editDirectoryByName.get(normalizeProviderName(providerNameValue));
     if (!matched) return;
 
     const specialty = matched.specialty ?? "";
@@ -220,7 +286,8 @@ export function MhpProvidersSection({
 
   const applyDefaultsIfExactMatch = (providerNameValue: string, mode: "add" | "edit") => {
     const normalized = normalizeProviderName(providerNameValue);
-    if (!normalized || !directoryByName.has(normalized)) return;
+    const directoryMap = mode === "add" ? directoryByName : editDirectoryByName;
+    if (!normalized || !directoryMap.has(normalized)) return;
     applyProviderDefaults(providerNameValue, mode);
   };
 
@@ -236,7 +303,7 @@ export function MhpProvidersSection({
       formData.set("practiceName", practiceName);
       formData.set("providerPhone", providerPhone);
 
-      const result = await addMhpProviderInlineAction(formData);
+      const result = await addMhpProviderInlineMutationAction(formData);
       if (!result.ok || !result.row) {
         setStatus(result.error ?? "Unable to add provider.");
         return;
@@ -260,7 +327,7 @@ export function MhpProvidersSection({
       formData.set("memberId", memberId);
       formData.set("providerId", providerId);
 
-      const result = await deleteMhpProviderInlineAction(formData);
+      const result = await deleteMhpProviderInlineMutationAction(formData);
       if (!result.ok) {
         setStatus(result.error ?? "Unable to delete provider.");
         return;
@@ -295,7 +362,7 @@ export function MhpProvidersSection({
       formData.set("practiceName", editPracticeName);
       formData.set("providerPhone", editProviderPhone);
 
-      const result = await updateMhpProviderInlineAction(formData);
+      const result = await updateMhpProviderInlineMutationAction(formData);
       if (!result.ok || !result.row) {
         setStatus(result.error ?? "Unable to update provider.");
         return;
@@ -420,7 +487,7 @@ export function MhpProvidersSection({
                 applyProviderDefaults(next, "edit");
               }}
               onBlur={() => applyDefaultsIfExactMatch(editProviderName, "edit")}
-              options={directoryNameOptions}
+              options={editDirectoryNameOptions}
               placeholder="Provider name (type 2+ chars)"
               disabled={isPending}
             />

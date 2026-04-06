@@ -14,7 +14,6 @@ import {
   cleanEmail,
   isMissingRpcFunctionError,
   mergePublicProgressPayload,
-  normalizeStoredIntakePayload,
   toStatus
 } from "@/lib/services/enrollment-packet-core";
 import { loadPacketFields } from "@/lib/services/enrollment-packet-mapping-runtime";
@@ -149,15 +148,16 @@ export async function savePublicEnrollmentPacketProgress(input: PublicEnrollment
       actorEmail: cleanEmail(progressSnapshot.caregiverEmail) ?? context.request.caregiverEmail
     });
   }
-  return { ok: true as const };
+  return {
+    ok: true as const,
+    mergedPayload
+  };
 }
 
 export async function preparePublicEnrollmentPacketSubmission(
   input: PreparePublicEnrollmentPacketSubmissionInput
 ): Promise<{
-  validatedFieldsSnapshot: EnrollmentPacketFieldsRow;
-  validatedPayload: ReturnType<typeof normalizeStoredIntakePayload>;
-  senderSignatureName: string;
+  validatedPayload: EnrollmentPacketIntakePayload;
 }> {
   await enforcePublicEnrollmentPacketSubmissionGuards({
     request: input.request,
@@ -174,11 +174,8 @@ export async function preparePublicEnrollmentPacketSubmission(
     }
   });
 
-  await savePublicEnrollmentPacketProgress(input);
-
-  const validatedFieldsSnapshot = await loadPacketFields(input.request.id);
-  if (!validatedFieldsSnapshot) throw new Error("Enrollment packet fields were not found.");
-  const validationPayload = normalizeStoredIntakePayload(validatedFieldsSnapshot);
+  const savedProgress = await savePublicEnrollmentPacketProgress(input);
+  const validationPayload = savedProgress.mergedPayload;
   const { validateEnrollmentPacketSubmission } = await loadEnrollmentPacketCompletionValidator();
   const completionValidation = validateEnrollmentPacketSubmission({
     payload: validationPayload,
@@ -193,11 +190,17 @@ export async function preparePublicEnrollmentPacketSubmission(
     );
   }
 
+  return {
+    validatedPayload: validationPayload
+  };
+}
+
+export async function loadPublicEnrollmentPacketSenderSignatureName(packetId: string) {
   const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const senderSignature = await admin
     .from("enrollment_packet_signatures")
     .select("signer_name, signature_blob")
-    .eq("packet_id", input.request.id)
+    .eq("packet_id", packetId)
     .eq("signer_role", "sender_staff")
     .order("signed_at", { ascending: false })
     .limit(1)
@@ -206,11 +209,18 @@ export async function preparePublicEnrollmentPacketSubmission(
     throw new Error(senderSignature.error.message);
   }
 
+  return senderSignature.data
+    ? String((senderSignature.data as { signer_name: string }).signer_name)
+    : "Staff";
+}
+
+export async function loadPublicEnrollmentPacketPostCommitContext(packetId: string): Promise<{
+  validatedFieldsSnapshot: EnrollmentPacketFieldsRow;
+}> {
+  const validatedFieldsSnapshot = await loadPacketFields(packetId);
+  if (!validatedFieldsSnapshot) throw new Error("Enrollment packet fields were not found.");
+
   return {
-    validatedFieldsSnapshot,
-    validatedPayload: validationPayload,
-    senderSignatureName: senderSignature.data
-      ? String((senderSignature.data as { signer_name: string }).signer_name)
-      : "Staff"
+    validatedFieldsSnapshot
   };
 }

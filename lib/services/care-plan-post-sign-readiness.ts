@@ -1,5 +1,7 @@
 import {
+  buildCommittedWorkflowActionState,
   getFounderWorkflowReadinessLabel,
+  getFounderWorkflowReadinessMeaning,
   type FounderWorkflowReadinessStage
 } from "@/lib/services/committed-workflow-state";
 import type { CarePlanPostSignReadinessStatus } from "@/lib/services/care-plan-types";
@@ -7,16 +9,21 @@ import type { CarePlanPostSignReadinessStatus } from "@/lib/services/care-plan-t
 export type CarePlanPublicCompletionOutcome = {
   readinessStage: FounderWorkflowReadinessStage;
   readinessLabel: string;
+  readinessMeaning: string;
   actionNeeded: boolean;
   actionNeededMessage: string | null;
 };
 
 export function resolveCarePlanPostSignWorkflowReadinessStage(
-  status: CarePlanPostSignReadinessStatus
+  status: CarePlanPostSignReadinessStatus,
+  options?: {
+    failureRequiresStaffFollowUp?: boolean;
+  }
 ): FounderWorkflowReadinessStage {
   if (status === "ready") return "ready";
   if (status === "not_started") return "committed";
-  return "follow_up_required";
+  if (options?.failureRequiresStaffFollowUp) return "follow_up_required";
+  return "queued_degraded";
 }
 
 export function getCarePlanPostSignReadinessLabel(status: CarePlanPostSignReadinessStatus) {
@@ -28,28 +35,68 @@ export function getCarePlanPostSignReadinessLabel(status: CarePlanPostSignReadin
 }
 
 export function getCarePlanPostSignReadinessDetail(status: CarePlanPostSignReadinessStatus) {
+  if (status === "not_started") {
+    return getFounderWorkflowReadinessMeaning("committed");
+  }
   if (status === "signed_pending_snapshot") {
-    return "This care plan still needs internal follow-up before the workflow is fully complete.";
+    return "This care plan is committed, but internal snapshot persistence is still in post-sign processing. Do not treat it as ready yet.";
   }
   if (status === "signed_pending_caregiver_dispatch") {
-    return "The caregiver signature step still needs follow-up before this care plan is fully complete.";
+    return "This care plan is committed, but caregiver dispatch is still in post-sign processing. Do not treat it as ready yet.";
   }
   return null;
+}
+
+export function buildCarePlanPostSignOutcome(
+  status: CarePlanPostSignReadinessStatus,
+  options?: {
+    failureRequiresStaffFollowUp?: boolean;
+    actionNeededMessage?: string | null;
+  }
+): CarePlanPublicCompletionOutcome {
+  const readinessStage = resolveCarePlanPostSignWorkflowReadinessStage(status, {
+    failureRequiresStaffFollowUp: options?.failureRequiresStaffFollowUp
+  });
+  const readiness = buildCommittedWorkflowActionState({
+    operationalStatus: status,
+    readinessStage,
+    actionNeededMessage:
+      options?.actionNeededMessage ??
+      getCarePlanPostSignReadinessDetail(status) ??
+      (status === "ready"
+        ? null
+        : "This care plan is committed, but post-sign follow-up still needs attention before it is ready.")
+  });
+  return {
+    readinessStage: readiness.readinessStage,
+    readinessLabel: readiness.readinessLabel,
+    readinessMeaning: readiness.readinessMeaning,
+    actionNeeded: readiness.actionNeeded,
+    actionNeededMessage: readiness.actionNeededMessage
+  };
 }
 
 export function buildCarePlanPublicCompletionOutcome(
   status: CarePlanPostSignReadinessStatus
 ): CarePlanPublicCompletionOutcome {
-  const actionNeededMessage = getCarePlanPostSignReadinessDetail(status);
-  const readinessStage = resolveCarePlanPostSignWorkflowReadinessStage(status);
-  return {
-    readinessStage,
-    readinessLabel: getFounderWorkflowReadinessLabel(readinessStage),
-    actionNeeded: status !== "ready",
+  return buildCarePlanPostSignOutcome(status);
+}
+
+export function buildCommittedCarePlanActionState(input: {
+  status: CarePlanPostSignReadinessStatus;
+  failureRequiresStaffFollowUp?: boolean;
+  actionNeededMessage?: string | null;
+}) {
+  return buildCommittedWorkflowActionState({
+    operationalStatus: input.status,
+    readinessStage: resolveCarePlanPostSignWorkflowReadinessStage(input.status, {
+      failureRequiresStaffFollowUp: input.failureRequiresStaffFollowUp
+    }),
     actionNeededMessage:
-      actionNeededMessage ??
-      (status === "ready"
+      input.actionNeededMessage ??
+      getCarePlanPostSignReadinessDetail(input.status) ??
+      (input.status === "ready"
         ? null
-        : "This care plan was already signed, but post-sign follow-up still needs attention.")
-  };
+        : "This care plan is committed, but post-sign follow-up still needs attention before it is ready.")
+  });
 }

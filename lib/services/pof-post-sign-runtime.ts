@@ -1,12 +1,10 @@
 import "server-only";
 
 import {
-  getFounderWorkflowReadinessLabel,
   type FounderWorkflowReadinessStage
 } from "@/lib/services/committed-workflow-state";
-import {
-  processSignedPhysicianOrderPostSignSync
-} from "@/lib/services/physician-orders-supabase";
+import { buildPhysicianOrderClinicalSyncDetail } from "@/lib/services/physician-order-clinical-sync";
+import { processSignedPhysicianOrderPostSignSync } from "@/lib/services/physician-orders-supabase";
 import { getPhysicianOrderClinicalSyncState } from "@/lib/services/physician-orders-read";
 import {
   clean,
@@ -59,38 +57,29 @@ function buildPublicPofPostSignOutcome(input: {
   attemptCount: number;
   nextRetryAt: string | null;
   lastError: string | null;
+  lastFailedStep?: string | null;
 }): PublicPofPostSignOutcome {
-  if (input.postSignStatus === "queued") {
-    const readinessStage = "queued_degraded" satisfies FounderWorkflowReadinessStage;
-    return {
-      postSignStatus: "queued",
-      readinessStage,
-      readinessLabel: getFounderWorkflowReadinessLabel(readinessStage),
-      retry: {
-        queueId: input.queueId,
-        attemptCount: input.attemptCount,
-        nextRetryAt: clean(input.nextRetryAt),
-        lastError: clean(input.lastError)
-      },
-      actionNeeded: true,
-      actionNeededMessage:
-        "Signature was durably recorded, but downstream MHP/MCC and MAR sync is still queued. Staff should not treat this order as operationally ready yet."
-    };
-  }
-
-  const readinessStage = "ready" satisfies FounderWorkflowReadinessStage;
+  const syncDetail = buildPhysicianOrderClinicalSyncDetail({
+    status: "Signed",
+    queueStatus: input.postSignStatus === "synced" ? "completed" : "queued",
+    attemptCount: input.attemptCount,
+    nextRetryAt: clean(input.nextRetryAt),
+    lastError: clean(input.lastError),
+    lastFailedStep: clean(input.lastFailedStep)
+  });
+  const readinessStage = (syncDetail?.readinessStage ?? "ready") satisfies FounderWorkflowReadinessStage;
   return {
-    postSignStatus: "synced",
+    postSignStatus: input.postSignStatus,
     readinessStage,
-    readinessLabel: getFounderWorkflowReadinessLabel(readinessStage),
+    readinessLabel: syncDetail?.label ?? "Ready",
     retry: {
       queueId: input.queueId,
       attemptCount: input.attemptCount,
       nextRetryAt: clean(input.nextRetryAt),
       lastError: clean(input.lastError)
     },
-    actionNeeded: false,
-    actionNeededMessage: null
+    actionNeeded: syncDetail?.actionNeeded ?? false,
+    actionNeededMessage: syncDetail?.message ?? null
   };
 }
 
@@ -125,7 +114,7 @@ export async function loadPublicPofPostSignOutcome(request: PofRequestRow): Prom
   const admin = createSupabaseAdminClient("pof_signature_workflow");
   const { data, error } = await admin
     .from("pof_post_sign_sync_queue")
-    .select("id, status, attempt_count, next_retry_at, last_error")
+    .select("id, status, attempt_count, next_retry_at, last_error, last_failed_step")
     .eq("physician_order_id", request.physician_order_id)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -136,7 +125,8 @@ export async function loadPublicPofPostSignOutcome(request: PofRequestRow): Prom
       queueId: String(data.id),
       attemptCount: Math.max(0, Number(data.attempt_count ?? 0)),
       nextRetryAt: clean(data.next_retry_at),
-      lastError: clean(data.last_error)
+      lastError: clean(data.last_error),
+      lastFailedStep: clean(data.last_failed_step)
     });
   }
 
@@ -149,7 +139,8 @@ export async function loadPublicPofPostSignOutcome(request: PofRequestRow): Prom
     queueId: null,
     attemptCount: 0,
     nextRetryAt: null,
-    lastError: null
+    lastError: null,
+    lastFailedStep: null
   });
 }
 
@@ -248,7 +239,8 @@ export async function runBestEffortCommittedPofSignatureFollowUp(input: {
       queueId: postSignResult.queueId,
       attemptCount: postSignResult.attemptCount,
       nextRetryAt: postSignResult.nextRetryAt,
-      lastError: postSignResult.lastError
+      lastError: postSignResult.lastError,
+      lastFailedStep: null
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unable to complete signed POF follow-up.";
@@ -287,7 +279,8 @@ export async function runBestEffortCommittedPofSignatureFollowUp(input: {
       queueId: input.finalized.queue_id,
       attemptCount: Math.max(1, Number(input.finalized.queue_attempt_count ?? 0)),
       nextRetryAt: null,
-      lastError: reason
+      lastError: reason,
+      lastFailedStep: null
     });
   }
 }
