@@ -20,6 +20,7 @@ const LEGACY_DEPENDENCY_TABLES = new Set(["pay_periods", "time_punches"]);
 const FINALIZE_INTAKE_SIGNATURE_RPC = "rpc_finalize_intake_assessment_signature";
 const PREPARE_ENROLLMENT_PACKET_REQUEST_RPC = "rpc_prepare_enrollment_packet_request";
 const TRANSITION_ENROLLMENT_PACKET_DELIVERY_STATE_RPC = "rpc_transition_enrollment_packet_delivery_state";
+const FINALIZE_ENROLLMENT_PACKET_SUBMISSION_RPC = "rpc_finalize_enrollment_packet_submission";
 const PREPARE_POF_REQUEST_DELIVERY_RPC = "rpc_prepare_pof_request_delivery";
 const TRANSITION_POF_REQUEST_DELIVERY_STATE_RPC = "rpc_transition_pof_request_delivery_state";
 const SYNC_SIGNED_POF_TO_MEMBER_CLINICAL_PROFILE_RPC = "rpc_sync_signed_pof_to_member_clinical_profile";
@@ -168,6 +169,55 @@ async function discoverExistingTables(supabase: ReturnType<typeof createSupabase
   return new Map(entries);
 }
 
+function normalizeRowsForUpsert(table: string, rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  if (table !== "billing_invoice_lines") return rows;
+
+  const nextLineNumberByInvoice = new Map<string, number>();
+  const resolveProductOrService = (row: Record<string, unknown>) => {
+    const explicit = String(row.product_or_service ?? "").trim();
+    if (explicit.length > 0) return explicit;
+    const lineType = String(row.line_type ?? "").trim();
+    switch (lineType) {
+      case "Transportation":
+        return "Transportation";
+      case "Ancillary":
+        return "Ancillary";
+      case "Adjustment":
+        return "Adjustment";
+      case "Credit":
+        return "Credit";
+      case "PriorBalance":
+        return "Prior Balance";
+      default:
+        return "Member Fees";
+    }
+  };
+
+  return rows.map((row): Record<string, unknown> => {
+    const invoiceId = String(row.invoice_id ?? "").trim() || "__unknown_invoice__";
+    const existingLineNumber = Number(row.line_number);
+    const productOrService = resolveProductOrService(row);
+    if (Number.isInteger(existingLineNumber) && existingLineNumber > 0) {
+      const current = nextLineNumberByInvoice.get(invoiceId) ?? 1;
+      if (existingLineNumber >= current) {
+        nextLineNumberByInvoice.set(invoiceId, existingLineNumber + 1);
+      }
+      return {
+        ...row,
+        product_or_service: productOrService
+      };
+    }
+
+    const nextLineNumber = nextLineNumberByInvoice.get(invoiceId) ?? 1;
+    nextLineNumberByInvoice.set(invoiceId, nextLineNumber + 1);
+    return {
+      ...row,
+      line_number: nextLineNumber,
+      product_or_service: productOrService
+    };
+  });
+}
+
 async function upsertRows(
   supabase: ReturnType<typeof createSupabaseAdminClient>,
   table: string,
@@ -178,10 +228,11 @@ async function upsertRows(
     console.log(`Skipping ${table}: table not found in current schema.`);
     return 0;
   }
-  if (rows.length === 0) return 0;
+  const preparedRows = normalizeRowsForUpsert(table, rows);
+  if (preparedRows.length === 0) return 0;
   const dedupedById = new Map<string, Record<string, unknown>>();
   const withoutId: Record<string, unknown>[] = [];
-  for (const row of rows) {
+  for (const row of preparedRows) {
     const id = row.id;
     if (typeof id === "string" && id.trim().length > 0) {
       dedupedById.set(id, row);
@@ -317,6 +368,15 @@ async function applySeedRpcPass(
         .map((row) => [cleanText((row as { user_id?: unknown }).user_id), row] as const)
         .filter((entry): entry is [string, (typeof rows.enrollmentPacketSenderSignatures)[number]] => Boolean(entry[0]))
     );
+    const enrollmentCaregiverSignatureByPacketId = new Map(
+      rows.enrollmentPacketSignatures
+        .map((row) => {
+          const signerRole = cleanText((row as { signer_role?: unknown }).signer_role)?.toLowerCase();
+          if (signerRole !== "caregiver") return null;
+          return [cleanText((row as { packet_id?: unknown }).packet_id), row] as const;
+        })
+        .filter((entry): entry is [string, (typeof rows.enrollmentPacketSignatures)[number]] => Boolean(entry?.[0]))
+    );
 
     for (const request of rows.enrollmentPacketRequests) {
       const packetId = cleanText((request as { id?: unknown }).id);
@@ -362,6 +422,8 @@ async function applySeedRpcPass(
       increment("rpc_prepare_enrollment_packet_request");
 
       const delivery = resolveEnrollmentPacketSeedDeliveryState(cleanText((request as { status?: unknown }).status));
+      const isCompletedSeed = delivery.status === "completed";
+      const transitionStatus = isCompletedSeed ? "in_progress" : delivery.status;
       try {
         await invokeSupabaseRpcOrThrow<unknown>(supabase, TRANSITION_ENROLLMENT_PACKET_DELIVERY_STATE_RPC, {
           p_packet_id: packetId,
@@ -370,7 +432,7 @@ async function applySeedRpcPass(
             cleanText((request as { updated_at?: unknown }).updated_at) ??
             cleanText((request as { created_at?: unknown }).created_at) ??
             now,
-          p_status: delivery.status,
+          p_status: transitionStatus,
           p_sent_at:
             delivery.sentAt === true
               ? cleanText((request as { sent_at?: unknown }).sent_at) ??
@@ -397,6 +459,57 @@ async function applySeedRpcPass(
         throw error;
       }
       increment("rpc_transition_enrollment_packet_delivery_state");
+
+      if (isCompletedSeed) {
+        const caregiverSignature = enrollmentCaregiverSignatureByPacketId.get(packetId);
+        const signerName =
+          cleanText((caregiverSignature as { signer_name?: unknown } | undefined)?.signer_name) ??
+          cleanText((fields as { caregiver_name?: unknown }).caregiver_name) ??
+          "Caregiver";
+        const signerEmail =
+          cleanText((caregiverSignature as { signer_email?: unknown } | undefined)?.signer_email) ??
+          cleanText((fields as { caregiver_email?: unknown }).caregiver_email) ??
+          caregiverEmail;
+        const signatureBlob =
+          cleanText((caregiverSignature as { signature_blob?: unknown } | undefined)?.signature_blob) ??
+          "data:image/png;base64,c2VlZGVkLWNhcmVnaXZlci1zaWduYXR1cmU=";
+        const completedAt =
+          cleanText((request as { completed_at?: unknown }).completed_at) ??
+          cleanText((request as { opened_at?: unknown }).opened_at) ??
+          cleanText((request as { sent_at?: unknown }).sent_at) ??
+          cleanText((request as { updated_at?: unknown }).updated_at) ??
+          now;
+        const consumedSubmissionTokenHash = createHash("sha256")
+          .update(`seed:enrollment-packet-submission:${packetId}`)
+          .digest("hex");
+
+        try {
+          await invokeSupabaseRpcOrThrow<unknown>(supabase, FINALIZE_ENROLLMENT_PACKET_SUBMISSION_RPC, {
+            p_packet_id: packetId,
+            p_rotated_token: cleanText((request as { token?: unknown }).token) ?? packetId,
+            p_consumed_submission_token_hash: consumedSubmissionTokenHash,
+            p_completed_at: completedAt,
+            p_filed_at: completedAt,
+            p_signer_name: signerName,
+            p_signer_email: signerEmail,
+            p_signature_blob: signatureBlob,
+            p_ip_address: cleanText((caregiverSignature as { ip_address?: unknown } | undefined)?.ip_address),
+            p_actor_user_id: senderUserId,
+            p_actor_email: "sales@memorylane.local",
+            p_upload_batch_id: null,
+            p_completed_metadata: { seeded: true, source: "seed-rpc-pass" },
+            p_filed_metadata: { seeded: true, source: "seed-rpc-pass" }
+          });
+        } catch (error) {
+          if (isMissingRpcFunctionError(error, FINALIZE_ENROLLMENT_PACKET_SUBMISSION_RPC)) {
+            throw new Error(
+              "Enrollment packet completion RPC is not available. Apply Supabase migration 0152_enrollment_packet_lifecycle_and_voiding.sql and rerun seed."
+            );
+          }
+          throw error;
+        }
+        increment("rpc_finalize_enrollment_packet_submission");
+      }
     }
 
     for (const request of rows.pofRequests) {

@@ -42,6 +42,19 @@ type TransportationLogRow = Tables["transportation_logs"]["Row"];
 
 export const CENTER_CLOSURE_TYPE_OPTIONS = ["Holiday", "Weather", "Planned", "Emergency", "Other"] as const;
 
+function requireMemberDisplayName(input: {
+  memberNameById: Map<string, string>;
+  memberId: string;
+  context: string;
+}) {
+  const memberName = input.memberNameById.get(input.memberId);
+  if (memberName) return memberName;
+  throw new Error(
+    `Billing read model ${input.context} references missing member ${input.memberId}. ` +
+      "Run `npm run repair:historical-drift -- --apply` before continuing."
+  );
+}
+
 export async function listPayors() {
   const { listPayors } = await import("@/lib/services/billing-configuration");
   return listPayors();
@@ -212,10 +225,15 @@ export async function getBillingBatchReviewRows(billingBatchId: string) {
   );
 
   return invoiceRows.map((invoice) => {
+    const memberId = String(invoice.member_id);
     const payor = payorByMember.get(String(invoice.member_id)) ?? null;
     return {
       invoiceId: String(invoice.id),
-      memberName: memberNameById.get(String(invoice.member_id)) ?? "Unknown Member",
+      memberName: requireMemberDisplayName({
+        memberNameById,
+        memberId,
+        context: "batch review"
+      }),
       payorName: payor ? formatBillingPayorDisplayName(payor) : "No payor contact designated",
       invoiceSource: invoice.invoice_source,
       billingMode: invoice.billing_mode_snapshot ?? "-",
@@ -331,6 +349,7 @@ export async function getVariableChargesQueue(input: { month: string }) {
     .filter((row) => String(row.billing_status ?? "Unbilled") !== "Billed")
     .filter((row) => row.billable !== false)
     .forEach((row) => {
+      const memberId = String(row.member_id);
       const amount = toAmount(
         asNumber(row.total_amount) > 0
           ? asNumber(row.total_amount)
@@ -339,7 +358,11 @@ export async function getVariableChargesQueue(input: { month: string }) {
       rows.push({
         type: "Transportation",
         id: String(row.id),
-        memberName: memberNameById.get(String(row.member_id)) ?? "Unknown Member",
+        memberName: requireMemberDisplayName({
+          memberNameById,
+          memberId,
+          context: "variable charge transportation queue"
+        }),
         chargeDate: normalizeDateOnly(row.service_date),
         description: `Transportation (${row.transport_type ?? "Trip"})`,
         amount,
@@ -351,6 +374,7 @@ export async function getVariableChargesQueue(input: { month: string }) {
   ((ancillaryData ?? []) as AncillaryChargeLogRow[])
     .filter((row) => String(row.billing_status ?? "Unbilled") !== "Billed")
     .forEach((row) => {
+      const memberId = String(row.member_id);
       const category = categoryById.get(String(row.category_id));
       const unitRate = asNumber(row.unit_rate) > 0 ? asNumber(row.unit_rate) : asNumber(category?.price_cents) / 100;
       const quantity = asNumber(row.quantity || 1);
@@ -358,7 +382,11 @@ export async function getVariableChargesQueue(input: { month: string }) {
       rows.push({
         type: "Ancillary",
         id: String(row.id),
-        memberName: memberNameById.get(String(row.member_id)) ?? "Unknown Member",
+        memberName: requireMemberDisplayName({
+          memberNameById,
+          memberId,
+          context: "variable charge ancillary queue"
+        }),
         chargeDate: normalizeDateOnly(row.service_date),
         description: String(category?.name ?? "Ancillary Charge"),
         amount,
@@ -370,10 +398,15 @@ export async function getVariableChargesQueue(input: { month: string }) {
   ((adjustmentData ?? []) as BillingAdjustmentRow[])
     .filter((row) => String(row.billing_status ?? "Unbilled") !== "Billed")
     .forEach((row) => {
+      const memberId = String(row.member_id);
       rows.push({
         type: "Adjustment",
         id: String(row.id),
-        memberName: memberNameById.get(String(row.member_id)) ?? "Unknown Member",
+        memberName: requireMemberDisplayName({
+          memberNameById,
+          memberId,
+          context: "variable charge adjustment queue"
+        }),
         chargeDate: normalizeDateOnly(row.adjustment_date),
         description: String(row.description ?? "Adjustment"),
         amount: toAmount(asNumber(row.amount)),

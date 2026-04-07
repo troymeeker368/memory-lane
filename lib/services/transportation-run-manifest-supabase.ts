@@ -329,6 +329,22 @@ function assertManifestMemberCoverage(input: {
   );
 }
 
+function requireManifestMember(input: {
+  memberId: string;
+  memberById: Map<string, MemberRow>;
+  selectedDate: string;
+  selectedShift: Shift;
+  selectedBusNumber: string;
+  context: string;
+}) {
+  const member = input.memberById.get(input.memberId);
+  if (member) return member;
+  throw new Error(
+    `Transportation manifest ${input.context} references missing member ${input.memberId}. ` +
+      `Run \`npm run repair:historical-drift -- --apply\` before posting runs (date ${input.selectedDate}, shift ${input.selectedShift}, bus ${input.selectedBusNumber}).`
+  );
+}
+
 export async function getTransportationRunManifestSupabase(input: {
   selectedDate: string;
   shift: Shift;
@@ -453,7 +469,14 @@ export async function getTransportationRunManifestSupabase(input: {
     if (!transportType) return;
     if ((slot.busNumber ?? "").trim() !== selectedBusNumber) return;
 
-    const member = memberById.get(schedule.member_id);
+    const member = requireManifestMember({
+      memberId: schedule.member_id,
+      memberById,
+      selectedDate,
+      selectedShift,
+      selectedBusNumber,
+      context: "schedule"
+    });
     const contact = preferredContactsByMember.get(schedule.member_id) ?? null;
     const attendance = attendanceByMemberId.get(schedule.member_id) ?? null;
     const existingLog = existingLogByMemberId.get(schedule.member_id) ?? null;
@@ -467,7 +490,7 @@ export async function getTransportationRunManifestSupabase(input: {
     let operationalStatus: TransportationOperationalStatus = "eligible";
     let operationalReasonCode: TransportationRunManifestRow["operationalReasonCode"] = null;
 
-    if (!member || member.status !== "active") {
+    if (member.status !== "active") {
       operationalStatus = "inactive";
       operationalReasonCode = "inactive";
     } else if (schedule.enrollment_date && selectedDate < schedule.enrollment_date) {
@@ -493,8 +516,8 @@ export async function getTransportationRunManifestSupabase(input: {
 
     upsertRow({
       memberId: schedule.member_id,
-      memberName: member?.display_name ?? "Unknown Member",
-      firstName: firstNameFromDisplayName(member?.display_name ?? "Member"),
+      memberName: member.display_name,
+      firstName: firstNameFromDisplayName(member.display_name),
       shift: selectedShift,
       busNumber: selectedBusNumber,
       transportType,
@@ -526,7 +549,14 @@ export async function getTransportationRunManifestSupabase(input: {
 
   manualAdditions.forEach((adjustment) => {
     if ((adjustment.bus_number ?? "").trim() !== selectedBusNumber) return;
-    const member = memberById.get(adjustment.member_id);
+    const member = requireManifestMember({
+      memberId: adjustment.member_id,
+      memberById,
+      selectedDate,
+      selectedShift,
+      selectedBusNumber,
+      context: "manual adjustment"
+    });
     const schedule = scheduleByMemberId.get(adjustment.member_id) ?? null;
     const attendance = attendanceByMemberId.get(adjustment.member_id) ?? null;
     const existingLog = existingLogByMemberId.get(adjustment.member_id) ?? null;
@@ -539,7 +569,7 @@ export async function getTransportationRunManifestSupabase(input: {
     let operationalStatus: TransportationOperationalStatus = "eligible";
     let operationalReasonCode: TransportationRunManifestRow["operationalReasonCode"] = null;
 
-    if (!member || member.status !== "active") {
+    if (member.status !== "active") {
       operationalStatus = "inactive";
       operationalReasonCode = "inactive";
     } else if (attendance?.status === "absent") {
@@ -555,8 +585,8 @@ export async function getTransportationRunManifestSupabase(input: {
 
     upsertRow({
       memberId: adjustment.member_id,
-      memberName: member?.display_name ?? "Unknown Member",
-      firstName: firstNameFromDisplayName(member?.display_name ?? "Member"),
+      memberName: member.display_name,
+      firstName: firstNameFromDisplayName(member.display_name),
       shift: selectedShift,
       busNumber: selectedBusNumber,
       transportType,
@@ -612,10 +642,27 @@ export async function getTransportationRunManifestSupabase(input: {
       .eq("run_id", existingRun.id)
       .order("created_at", { ascending: true });
     if (runResultsError) throw new Error(runResultsError.message);
-    existingRunResults = ((runResultsData ?? []) as TransportationRunResultRow[])
-      .map((row) => ({
+    const runResultRows = (runResultsData ?? []) as TransportationRunResultRow[];
+    assertManifestMemberCoverage({
+      requestedMemberIds: runResultRows.map((row) => row.member_id),
+      memberById,
+      selectedDate,
+      selectedShift,
+      selectedBusNumber
+    });
+    existingRunResults = runResultRows
+      .map((row) => {
+        const member = requireManifestMember({
+          memberId: row.member_id,
+          memberById,
+          selectedDate,
+          selectedShift,
+          selectedBusNumber,
+          context: "run result"
+        });
+        return {
         memberId: row.member_id,
-        memberName: memberById.get(row.member_id)?.display_name ?? "Unknown Member",
+        memberName: member.display_name,
         resultStatus: row.result_status,
         reasonCode: row.reason_code ?? null,
         reasonNotes: row.reason_notes ?? null,
@@ -623,7 +670,8 @@ export async function getTransportationRunManifestSupabase(input: {
         billingStatus: row.transportation_billing_status_snapshot,
         transportLogId: row.transport_log_id ?? null,
         createdAt: row.created_at
-      }))
+      };
+      })
       .sort((left, right) => left.memberName.localeCompare(right.memberName, undefined, { sensitivity: "base" }));
   }
 

@@ -374,7 +374,6 @@ export async function listPayors() {
 }
 
 export async function listCenterClosures(input?: { includeInactive?: boolean }) {
-  await ensureCenterClosuresForCurrentAndNextYear();
   const supabase = await createClient();
   let query = supabase
     .from("center_closures")

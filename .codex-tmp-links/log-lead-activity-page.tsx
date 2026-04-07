@@ -3,7 +3,7 @@ import Link from "next/link";
 import { SalesLeadActivityForm } from "@/components/forms/sales-lead-activity-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
-import { getLeadActivitySnapshot, getLeadFormLookups, listSalesLeadPickerOptions } from "@/lib/services/leads-read";
+import { getLeadActivitySnapshot, listSalesLeadPickerOptions } from "@/lib/services/leads-read";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
 type SalesActivitySnapshot = Awaited<ReturnType<typeof getLeadActivitySnapshot>>;
@@ -14,15 +14,8 @@ export default async function LogLeadActivityPage({ searchParams }: { searchPara
   const params = await searchParams;
 
   const leadId = typeof params.leadId === "string" ? params.leadId : undefined;
-  const partnerId = typeof params.partnerId === "string" ? params.partnerId : undefined;
-  const referralSourceId = typeof params.referralSourceId === "string" ? params.referralSourceId : undefined;
-  const [{ activities }, { partners, referralSources }, initialLeadOptions] = await Promise.all([
+  const [{ activities }, initialLeadOptions] = await Promise.all([
     getLeadActivitySnapshot({ leadId, includePartnerActivities: false }),
-    getLeadFormLookups({
-      includeLeads: false,
-      includePartnerId: partnerId,
-      includeReferralSourceId: referralSourceId
-    }),
     leadId ? listSalesLeadPickerOptions({ selectedId: leadId, limit: 1 }) : Promise.resolve([])
   ]);
   const initialLeadOption = initialLeadOptions[0] ?? null;
@@ -34,11 +27,9 @@ export default async function LogLeadActivityPage({ searchParams }: { searchPara
         <CardTitle>{selectedLeadName ? `Log Lead Activity - ${selectedLeadName}` : "Log Lead Activity"}</CardTitle>
         <div className="mt-3">
           <SalesLeadActivityForm
-            partners={partners}
-            referralSources={referralSources}
+            partners={[]}
+            referralSources={[]}
             initialLeadId={leadId}
-            initialPartnerId={partnerId}
-            initialReferralSourceId={referralSourceId}
             lockedLeadId={initialLeadOption?.id}
             initialLeadOption={initialLeadOption}
           />

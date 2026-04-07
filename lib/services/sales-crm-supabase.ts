@@ -25,6 +25,26 @@ function makeShortCode(prefix: string) {
   return `${prefix}-${token}`;
 }
 
+async function touchPartnerAndReferralLastTouched(input: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  partnerId: string;
+  referralSourceId: string;
+  nowDate: string;
+}) {
+  const [{ error: partnerTouchError }, { error: referralTouchError }] = await Promise.all([
+    input.supabase
+      .from("community_partner_organizations")
+      .update({ last_touched: input.nowDate })
+      .eq("id", input.partnerId),
+    input.supabase
+      .from("referral_sources")
+      .update({ last_touched: input.nowDate })
+      .eq("id", input.referralSourceId)
+  ]);
+  if (partnerTouchError) throw new Error(partnerTouchError.message);
+  if (referralTouchError) throw new Error(referralTouchError.message);
+}
+
 export async function createSalesLeadSupabase(input: {
   leadPatch: Record<string, unknown>;
   createdByUserId: string;
@@ -116,10 +136,12 @@ export async function createPartnerActivitySupabase(input: {
     allowRecentWindow: normalizedReplayInput.activityAt === null
   });
   if (existingActivityId) {
-    await Promise.all([
-      supabase.from("community_partner_organizations").update({ last_touched: nowDate }).eq("id", partner.id),
-      supabase.from("referral_sources").update({ last_touched: nowDate }).eq("id", referralSource.id)
-    ]);
+    await touchPartnerAndReferralLastTouched({
+      supabase,
+      partnerId: partner.id,
+      referralSourceId: referralSource.id,
+      nowDate
+    });
     return {
       partner,
       referralSource,
@@ -142,10 +164,12 @@ export async function createPartnerActivitySupabase(input: {
   });
   if (insertError) throw new Error(insertError.message);
 
-  await Promise.all([
-    supabase.from("community_partner_organizations").update({ last_touched: nowDate }).eq("id", partner.id),
-    supabase.from("referral_sources").update({ last_touched: nowDate }).eq("id", referralSource.id)
-  ]);
+  await touchPartnerAndReferralLastTouched({
+    supabase,
+    partnerId: partner.id,
+    referralSourceId: referralSource.id,
+    nowDate
+  });
 
   return {
     partner,
@@ -229,10 +253,11 @@ export async function createReferralSourceSupabase(input: {
     .single();
   if (error) throw new Error(error.message);
 
-  await supabase
+  const { error: partnerTouchError } = await supabase
     .from("community_partner_organizations")
     .update({ last_touched: nowDate })
     .eq("id", partner.id);
+  if (partnerTouchError) throw new Error(partnerTouchError.message);
 
   return {
     id: String(data.id),

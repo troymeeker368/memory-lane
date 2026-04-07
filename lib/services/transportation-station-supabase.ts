@@ -105,6 +105,11 @@ type PostgrestErrorLike = {
   details?: string | null;
   hint?: string | null;
 };
+type ManifestMemberRow = {
+  id: string;
+  display_name: string;
+  status: string;
+};
 
 function shiftsForSelection(selection: TransportationStationShift): Shift[] {
   if (selection === "Both") return ["AM", "PM"];
@@ -153,6 +158,38 @@ function isMissingTableError(error: PostgrestErrorLike | null | undefined, table
 function transportationManifestStorageRequiredError() {
   return new Error(
     "Transportation Station storage is not available. Run Supabase migration 0011_member_command_center_aux_schema.sql."
+  );
+}
+
+function assertManifestMemberCoverage(input: {
+  memberById: Map<string, ManifestMemberRow>;
+  referencedMemberIds: string[];
+  selectedDate: string;
+  selectedShift: TransportationStationShift;
+}) {
+  const missingMemberIds = input.referencedMemberIds.filter((memberId) => !input.memberById.has(memberId));
+  if (missingMemberIds.length === 0) return;
+
+  const previewIds = missingMemberIds.slice(0, 5).join(", ");
+  const remainder = missingMemberIds.length > 5 ? ` (+${missingMemberIds.length - 5} more)` : "";
+  throw new Error(
+    `Transportation Station cannot load because ${missingMemberIds.length} member id(s) referenced by schedule/adjustment data are missing from members: ${previewIds}${remainder}. ` +
+      `Run \`npm run repair:historical-drift -- --apply\` before continuing (date ${input.selectedDate}, shift ${input.selectedShift}).`
+  );
+}
+
+function requireManifestMember(input: {
+  memberById: Map<string, ManifestMemberRow>;
+  memberId: string;
+  selectedDate: string;
+  selectedShift: TransportationStationShift;
+  context: string;
+}) {
+  const member = input.memberById.get(input.memberId);
+  if (member) return member;
+  throw new Error(
+    `Transportation Station ${input.context} references missing member ${input.memberId}. ` +
+      `Run \`npm run repair:historical-drift -- --apply\` before continuing (date ${input.selectedDate}, shift ${input.selectedShift}).`
   );
 }
 
@@ -375,16 +412,27 @@ export async function getTransportationManifestSupabase(input?: {
     throw new Error(adjustmentsResult.error.message);
   })();
 
-  const memberById = new Map(
-    ((membersData.data ?? []) as Array<{ id: string; display_name: string; status: string }>).map((row) => [row.id, row] as const)
-  );
+  const memberById = new Map(((membersData.data ?? []) as ManifestMemberRow[]).map((row) => [row.id, row] as const));
+  const referencedMemberIds = Array.from(new Set([...memberIds, ...adjustments.map((row) => row.member_id)]));
+  assertManifestMemberCoverage({
+    memberById,
+    referencedMemberIds,
+    selectedDate,
+    selectedShift
+  });
 
   const scheduledRiders: TransportationManifestRider[] = [];
   const holdExcludedScheduledRiders: TransportationManifestRider[] = [];
   const scheduleWeekday = toScheduleWeekdayKey(weekday);
   schedules.forEach((schedule) => {
-    const member = memberById.get(schedule.member_id);
-    if (!member || member.status !== "active") return;
+    const member = requireManifestMember({
+      memberById,
+      memberId: schedule.member_id,
+      selectedDate,
+      selectedShift,
+      context: "schedule"
+    });
+    if (member.status !== "active") return;
     const resolution = resolveExpectedAttendanceFromSupabaseContext({
       context: expectedAttendanceContext,
       memberId: schedule.member_id,
@@ -441,7 +489,13 @@ export async function getTransportationManifestSupabase(input?: {
 
   const manualAdditions = adjustments.filter((row) => row.adjustment_type === "add");
   const manualAddRiders = manualAdditions.map((row) => {
-    const member = memberById.get(row.member_id);
+    const member = requireManifestMember({
+      memberById,
+      memberId: row.member_id,
+      selectedDate,
+      selectedShift,
+      context: "manual adjustment"
+    });
     const contact = preferredContactByMember.get(row.member_id) ?? null;
     const transportType = row.transport_type === "Door to Door" || row.transport_type === "Bus Stop"
       ? row.transport_type
@@ -457,7 +511,7 @@ export async function getTransportationManifestSupabase(input?: {
       key: `${row.member_id}:${row.shift}`,
       adjustmentId: row.id,
       memberId: row.member_id,
-      memberName: member?.display_name ?? "Unknown Member",
+      memberName: member.display_name,
       shift: row.shift,
       busNumber: row.bus_number,
       transportType,
@@ -515,17 +569,26 @@ export async function getTransportationManifestSupabase(input?: {
     .map((group) => ({ ...group, riders: [...group.riders].sort(sortRiders) }))
     .sort(sortGroups);
 
-  const summarize = (row: TransportationManifestAdjustmentRow): TransportationManifestAdjustmentSummary => ({
-    id: row.id,
-    memberId: row.member_id,
-    memberName: memberById.get(row.member_id)?.display_name ?? "Unknown Member",
-    shift: row.shift,
-    createdAt: row.created_at,
-    createdByName: row.created_by_name,
-    adjustmentType: row.adjustment_type,
-    busNumber: row.bus_number,
-    transportType: row.transport_type
-  });
+  const summarize = (row: TransportationManifestAdjustmentRow): TransportationManifestAdjustmentSummary => {
+    const member = requireManifestMember({
+      memberById,
+      memberId: row.member_id,
+      selectedDate,
+      selectedShift,
+      context: "adjustment summary"
+    });
+    return {
+      id: row.id,
+      memberId: row.member_id,
+      memberName: member.display_name,
+      shift: row.shift,
+      createdAt: row.created_at,
+      createdByName: row.created_by_name,
+      adjustmentType: row.adjustment_type,
+      busNumber: row.bus_number,
+      transportType: row.transport_type
+    };
+  };
 
   return {
     selectedDate,

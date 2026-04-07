@@ -20,6 +20,9 @@ export default async function LogPartnerActivityPage({ searchParams }: { searchP
     getLeadActivitySnapshot({ includeLeadActivities: false }),
     getLeadFormLookups({
       includeLeads: false,
+      includePartners: true,
+      includeReferralSources: true,
+      referralPartnerId: partnerId,
       includePartnerId: partnerId,
       includeReferralSourceId: referralSourceId
     })
