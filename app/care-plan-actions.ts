@@ -52,6 +52,14 @@ async function buildPersistedCarePlanActionState(input: {
   });
 }
 
+function getCommittedCarePlanId(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+  const candidate = error as { carePlanId?: string | null; partiallyCommitted?: boolean | null };
+  if (candidate.partiallyCommitted !== true) return null;
+  const carePlanId = String(candidate.carePlanId ?? "").trim();
+  return carePlanId.length > 0 ? carePlanId : null;
+}
+
 const carePlanSectionSchema = z.object({
   sectionType: z.enum(CARE_PLAN_SECTION_TYPES),
   shortTermGoals: z.string().min(1),
@@ -246,17 +254,20 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
       }
     });
   } catch (error) {
-    const carePlanId =
-      error && typeof error === "object" && "carePlanId" in error
-        ? String((error as { carePlanId?: string }).carePlanId ?? payload.data.carePlanId)
-        : payload.data.carePlanId;
-    revalidatePath(`/health/care-plans/${carePlanId}`);
+    const committedCarePlanId = getCommittedCarePlanId(error);
+    if (!committedCarePlanId) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : "Unable to review care plan."
+      };
+    }
+    revalidatePath(`/health/care-plans/${committedCarePlanId}`);
     return {
       ok: true as const,
       error: null,
-      id: carePlanId,
+      id: committedCarePlanId,
       ...await buildPersistedCarePlanActionState({
-        carePlanId,
+        carePlanId: committedCarePlanId,
         fallbackOperationalStatus: "follow_up_required",
         actionNeededMessage: error instanceof Error ? error.message : "Unable to review care plan.",
         failureRequiresStaffFollowUp: true
@@ -328,17 +339,20 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
       signatureImageDataUrl: payload.data.signatureImageDataUrl
     });
   } catch (error) {
-    const carePlanId =
-      error && typeof error === "object" && "carePlanId" in error
-        ? String((error as { carePlanId?: string }).carePlanId ?? payload.data.carePlanId)
-        : payload.data.carePlanId;
-    revalidatePath(`/health/care-plans/${carePlanId}`);
+    const committedCarePlanId = getCommittedCarePlanId(error);
+    if (!committedCarePlanId) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : "Unable to sign care plan."
+      };
+    }
+    revalidatePath(`/health/care-plans/${committedCarePlanId}`);
     return {
       ok: true as const,
       error: null,
-      id: carePlanId,
+      id: committedCarePlanId,
       ...await buildPersistedCarePlanActionState({
-        carePlanId,
+        carePlanId: committedCarePlanId,
         fallbackOperationalStatus: "follow_up_required",
         actionNeededMessage: error instanceof Error ? error.message : "Unable to sign care plan.",
         failureRequiresStaffFollowUp: true

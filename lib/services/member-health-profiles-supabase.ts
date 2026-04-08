@@ -33,6 +33,7 @@ import {
 import { resolveIntakePostSignReadiness, type IntakePostSignReadinessStatus } from "@/lib/services/intake-post-sign-readiness";
 import { toEasternISO } from "@/lib/timezone";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { listSharedMemberIndexPageSupabase } from "@/lib/services/member-list-read";
 
 export {
   HOSPITAL_PREFERENCE_DIRECTORY_SELECT,
@@ -389,28 +390,14 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   const supabase = await createClient();
   const queryText = filters?.q?.trim() ?? "";
   const status = filters?.status ?? "all";
-  const page = Number.isFinite(filters?.page) && Number(filters?.page) > 0 ? Math.floor(Number(filters?.page)) : 1;
-  const pageSize =
-    Number.isFinite(filters?.pageSize) && Number(filters?.pageSize) > 0 ? Math.floor(Number(filters?.pageSize)) : 25;
-
-  let membersQuery = supabase
-    .from("members")
-    .select(
-      "id, display_name, status, dob, enrollment_date, city, code_status, latest_assessment_id, latest_assessment_date, latest_assessment_track, latest_assessment_admission_review_required",
-      { count: "exact" }
-    )
-    .order("display_name", { ascending: true })
-    .range((page - 1) * pageSize, page * pageSize - 1);
-  if (status !== "all") {
-    membersQuery = membersQuery.eq("status", status);
-  }
-  if (queryText) {
-    membersQuery = membersQuery.ilike("display_name", buildSupabaseIlikePattern(queryText));
-  }
-
-  const { data: membersData, error: membersError, count: totalRows } = await membersQuery;
-  if (membersError) throw new Error(membersError.message);
-  const members = (membersData ?? []) as MemberRow[];
+  const membersPage = await listSharedMemberIndexPageSupabase({
+    q: queryText,
+    status,
+    page: filters?.page,
+    pageSize: filters?.pageSize,
+    includeLockerSearch: false
+  });
+  const members = membersPage.rows as MemberRow[];
 
   type MhpSummaryCountsRpcRow = {
     active_count: number | string | null;
@@ -443,10 +430,10 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
   if (members.length === 0) {
     return {
       rows: [],
-      page,
-      pageSize,
-      totalRows: totalRows ?? 0,
-      totalPages: Math.max(1, Math.ceil((totalRows ?? 0) / pageSize)),
+      page: membersPage.page,
+      pageSize: membersPage.pageSize,
+      totalRows: membersPage.totalRows,
+      totalPages: membersPage.totalPages,
       activeCount: summaryCounts.activeCount,
       withAlertsCount: summaryCounts.withAlertsCount
     };
@@ -498,10 +485,10 @@ export async function getMemberHealthProfileIndexSupabase(filters?: {
     .sort((a, b) => sortByLastName(a.member.display_name, b.member.display_name));
   return {
     rows,
-    page,
-    pageSize,
-    totalRows: totalRows ?? rows.length,
-    totalPages: Math.max(1, Math.ceil((totalRows ?? rows.length) / pageSize)),
+    page: membersPage.page,
+    pageSize: membersPage.pageSize,
+    totalRows: membersPage.totalRows,
+    totalPages: membersPage.totalPages,
     activeCount: summaryCounts.activeCount,
     withAlertsCount: summaryCounts.withAlertsCount
   };

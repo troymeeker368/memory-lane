@@ -564,6 +564,14 @@ export async function getBillingInvoiceDocumentModel(invoiceId: string) {
     .eq("id", invoice.member_id)
     .maybeSingle();
   if (memberError) throw new Error(memberError.message);
+  const memberRow = member as MemberDisplayNameRow | null;
+  const memberName = String(memberRow?.display_name ?? "").trim();
+  if (!memberName) {
+    throw new Error(
+      `Billing invoice document model references missing member ${String(invoice.member_id ?? "")}. ` +
+        "Run `npm run repair:historical-drift -- --apply` before continuing."
+    );
+  }
 
   const fallbackPayor = await getBillingPayorContact(invoice.member_id, {
     logMissing: true,
@@ -572,7 +580,7 @@ export async function getBillingInvoiceDocumentModel(invoiceId: string) {
 
   return buildBillingInvoiceDocumentModel({
     invoice: invoice as BillingInvoiceRow as Record<string, unknown>,
-    memberName: String((member as MemberDisplayNameRow | null)?.display_name ?? "Unknown Member"),
+    memberName,
     fallbackBillToSnapshot: buildBillingInvoiceBillToSnapshot(fallbackPayor),
     lines: ((lines ?? []) as BillingInvoiceLineRow[]) as Array<Record<string, unknown>>,
     generatedAt: new Date().toISOString()

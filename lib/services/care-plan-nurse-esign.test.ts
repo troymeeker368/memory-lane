@@ -21,6 +21,14 @@ test("care plan actions require a captured signature image payload", () => {
   assert.equal(source.includes("signatureImageDataUrl: payload.data.signatureImageDataUrl"), true);
 });
 
+test("care plan actions only report committed success when the service marked a partial commit", () => {
+  const source = readFileSync("app/care-plan-actions.ts", "utf8");
+  assert.equal(source.includes("function getCommittedCarePlanId"), true);
+  assert.equal(source.includes("candidate.partiallyCommitted !== true"), true);
+  assert.equal(source.includes('error: error instanceof Error ? error.message : "Unable to review care plan."'), true);
+  assert.equal(source.includes('error: error instanceof Error ? error.message : "Unable to sign care plan."'), true);
+});
+
 test("authorized nurse role can produce canonical care-plan nurse e-sign persistence payload", () => {
   assert.equal(isAuthorizedCarePlanSignerRole("nurse"), true);
 

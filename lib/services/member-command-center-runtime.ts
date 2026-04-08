@@ -44,6 +44,7 @@ import {
 } from "@/lib/services/member-command-center-selects";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
+import { listSharedMemberIndexPageSupabase } from "@/lib/services/member-list-read";
 const MEMBER_FILE_LIST_RPC = "rpc_list_member_files";
 const MEMBER_FILE_LIST_MIGRATION = "0145_reports_and_member_files_read_rpcs.sql";
 const DEFAULT_MEMBER_LOOKUP_LIMIT = 200;
@@ -147,38 +148,10 @@ export async function listMembersPageSupabase(filters?: {
   page?: number;
   pageSize?: number;
 }) {
-  const supabase = await createClient();
-  const page = Number.isFinite(filters?.page) && Number(filters?.page) > 0 ? Math.floor(Number(filters?.page)) : 1;
-  const pageSize =
-    Number.isFinite(filters?.pageSize) && Number(filters?.pageSize) > 0 ? Math.floor(Number(filters?.pageSize)) : 25;
-  const q = (filters?.q ?? "").trim();
-  const { rows, totalRows } = await selectMembersPageWithFallback(
-    async (selectClause) => {
-      let query = supabase
-        .from("members")
-        .select(selectClause, { count: "exact" })
-        .order("display_name", { ascending: true })
-        .range((page - 1) * pageSize, page * pageSize - 1);
-      if (filters?.status && filters.status !== "all") {
-        query = query.eq("status", filters.status);
-      }
-      if (q) {
-        const pattern = buildSupabaseIlikePattern(q);
-        query = query.or(`display_name.ilike.${pattern},locker_number.ilike.${pattern}`);
-      }
-      return query;
-    },
-    isMissingAnyColumnError,
-    "Unable to query members."
-  );
-
-  return {
-    rows,
-    page,
-    pageSize,
-    totalRows,
-    totalPages: Math.max(1, Math.ceil(totalRows / pageSize))
-  };
+  return listSharedMemberIndexPageSupabase({
+    ...filters,
+    includeLockerSearch: true
+  });
 }
 
 export async function findActiveMemberByLockerNumberSupabase(

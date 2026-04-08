@@ -56,6 +56,19 @@ function normalizeYear(value: number) {
   return Math.max(2000, Math.min(2100, Math.round(value)));
 }
 
+function requireBillingMemberDisplayName(input: {
+  memberNameById: Map<string, string>;
+  memberId: string;
+  context: string;
+}) {
+  const memberName = input.memberNameById.get(input.memberId);
+  if (memberName) return memberName;
+  throw new Error(
+    `Billing configuration ${input.context} references missing member ${input.memberId}. ` +
+      "Run `npm run repair:historical-drift -- --apply` before continuing."
+  );
+}
+
 function dateRangesOverlap(input: {
   leftStart: string;
   leftEnd: string | null;
@@ -417,7 +430,11 @@ export async function listMemberBillingSettings() {
 
   return settingsRows.map((row) => ({
     ...row,
-    member_name: memberNameById.get(String(row.member_id)) ?? "Unknown Member",
+    member_name: requireBillingMemberDisplayName({
+      memberNameById,
+      memberId: String(row.member_id),
+      context: "listMemberBillingSettings"
+    }),
     payor_name: formatBillingPayorDisplayName(
       payorByMember.get(String(row.member_id)) ?? {
         status: "missing",
@@ -462,7 +479,11 @@ export async function listBillingScheduleTemplates() {
   );
   return templateRows.map((row) => ({
     ...row,
-    member_name: memberNameById.get(String(row.member_id)) ?? "Unknown Member"
+    member_name: requireBillingMemberDisplayName({
+      memberNameById,
+      memberId: String(row.member_id),
+      context: "listBillingScheduleTemplates"
+    })
   }));
 }
 

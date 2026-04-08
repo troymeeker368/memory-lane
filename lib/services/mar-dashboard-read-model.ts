@@ -17,7 +17,7 @@ async function getMarDashboardClient(options?: { serviceRole?: boolean }) {
   return options?.serviceRole === true ? createServiceRoleClient("dashboard_mar_read") : createClient();
 }
 
-export async function getHealthDashboardMarTodayRows(options?: { serviceRole?: boolean }) {
+async function loadHealthDashboardMarTodayRows(options?: { serviceRole?: boolean }) {
   const supabase = await getMarDashboardClient(options);
   const { data, error } = await supabase
     .from("v_mar_today")
@@ -31,23 +31,34 @@ export async function getHealthDashboardMarTodayRows(options?: { serviceRole?: b
     .filter((row): row is MarTodayRow => Boolean(row));
 }
 
+export async function getHealthDashboardMarSnapshot(options?: { serviceRole?: boolean }) {
+  const todayRows = await loadHealthDashboardMarTodayRows(options);
+  return {
+    todayRows,
+    actionRows: todayRows.filter((row) => row.status !== "Given"),
+    recentRows: [...todayRows]
+      .filter((row) => row.status === "Given" && row.administeredAt !== null)
+      .sort((left, right) => {
+        const leftTime = Date.parse(left.administeredAt ?? "");
+        const rightTime = Date.parse(right.administeredAt ?? "");
+        return rightTime - leftTime;
+      })
+  } as const;
+}
+
+export async function getHealthDashboardMarTodayRows(options?: { serviceRole?: boolean }) {
+  return (await getHealthDashboardMarSnapshot(options)).todayRows;
+}
+
 export async function getHealthDashboardMarActionRows(options?: {
   serviceRole?: boolean;
   hoursAhead?: number;
 }) {
-  const supabase = await getMarDashboardClient(options);
-  const { data, error } = await supabase
-    .from("v_mar_today")
-    .select(MAR_DASHBOARD_TODAY_SELECT)
-    .in("status", ["Scheduled", "Not Given"])
-    .lte("scheduled_time", getDashboardTimeHorizon(options?.hoursAhead ?? 12))
-    .order("scheduled_time", { ascending: true });
-
-  if (error) throwMarSupabaseError(error, "v_mar_today");
-
-  return (data ?? [])
-    .map((row: unknown) => mapMarTodayRow((row ?? {}) as Record<string, unknown>))
-    .filter((row): row is MarTodayRow => Boolean(row));
+  const dashboard = await getHealthDashboardMarSnapshot(options);
+  return dashboard.actionRows.filter((row) => {
+    const scheduledTime = Date.parse(row.scheduledTime ?? "");
+    return Number.isFinite(scheduledTime) && scheduledTime <= Date.parse(getDashboardTimeHorizon(options?.hoursAhead ?? 12));
+  });
 }
 
 export async function getHealthDashboardMarRecentRows(options?: {
@@ -55,18 +66,5 @@ export async function getHealthDashboardMarRecentRows(options?: {
   limit?: number;
 }) {
   const safeLimit = Number.isFinite(options?.limit) && Number(options?.limit) > 0 ? Math.floor(Number(options?.limit)) : 8;
-  const supabase = await getMarDashboardClient(options);
-  const { data, error } = await supabase
-    .from("v_mar_today")
-    .select(MAR_DASHBOARD_TODAY_SELECT)
-    .eq("status", "Given")
-    .not("administered_at", "is", null)
-    .order("administered_at", { ascending: false })
-    .limit(safeLimit);
-
-  if (error) throwMarSupabaseError(error, "v_mar_today");
-
-  return (data ?? [])
-    .map((row: unknown) => mapMarTodayRow((row ?? {}) as Record<string, unknown>))
-    .filter((row): row is MarTodayRow => Boolean(row));
+  return (await getHealthDashboardMarSnapshot(options)).recentRows.slice(0, safeLimit);
 }

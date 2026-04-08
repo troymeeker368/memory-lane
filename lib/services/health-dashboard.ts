@@ -1,9 +1,6 @@
 import { getCarePlanDashboard } from "@/lib/services/care-plans";
 import { listIncidentDashboard } from "@/lib/services/incidents";
-import {
-  getHealthDashboardMarActionRows,
-  getHealthDashboardMarRecentRows
-} from "@/lib/services/mar-dashboard-read-model";
+import { getHealthDashboardMarSnapshot } from "@/lib/services/mar-dashboard-read-model";
 import { getProgressNoteDashboard } from "@/lib/services/progress-notes";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
@@ -44,8 +41,13 @@ function parseDate(value: string | null | undefined) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function getActionHorizon(hoursAhead: number) {
+  const safeHoursAhead = Number.isFinite(hoursAhead) && hoursAhead > 0 ? Math.floor(hoursAhead) : 12;
+  return new Date(Date.now() + safeHoursAhead * 60 * 60 * 1000);
+}
+
 function normalizeDashboardMarRow(
-  row: Awaited<ReturnType<typeof getHealthDashboardMarActionRows>>[number] | Awaited<ReturnType<typeof getHealthDashboardMarRecentRows>>[number]
+  row: Awaited<ReturnType<typeof getHealthDashboardMarSnapshot>>["todayRows"][number]
 ) {
   return {
     id: row.marScheduleId,
@@ -111,10 +113,9 @@ export async function getHealthDashboardData(options?: {
     totalPages: 1
   };
 
-  const [marActionRows, marRecentRows, bloodSugarResult, activeMemberCountResult, carePlans, incidents, progressNotes, careAlertRows] =
+  const [marSnapshot, bloodSugarResult, activeMemberCountResult, carePlans, incidents, progressNotes, careAlertRows] =
     await Promise.all([
-      getHealthDashboardMarActionRows({ hoursAhead: 12 }),
-      getHealthDashboardMarRecentRows({ limit: 8 }),
+      getHealthDashboardMarSnapshot(),
       supabase
         .from("v_blood_sugar_logs_detailed")
         .select("id, checked_at, member_id, member_name, reading_mg_dl, nurse_name, notes")
@@ -134,8 +135,14 @@ export async function getHealthDashboardData(options?: {
   if (bloodSugarResult.error) throw new Error(`Unable to load v_blood_sugar_logs_detailed: ${bloodSugarResult.error.message}`);
   if (activeMemberCountResult.error) throw new Error(`Unable to count active members: ${activeMemberCountResult.error.message}`);
 
-  const marRows = marActionRows.map(normalizeDashboardMarRow);
-  const recentMarRows = marRecentRows.map(normalizeDashboardMarRow);
+  const actionHorizon = getActionHorizon(12);
+  const marRows = marSnapshot.actionRows
+    .filter((row) => {
+      const scheduledTime = parseDate(row.scheduledTime);
+      return Boolean(scheduledTime && scheduledTime <= actionHorizon);
+    })
+    .map(normalizeDashboardMarRow);
+  const recentMarRows = marSnapshot.recentRows.slice(0, 8).map(normalizeDashboardMarRow);
   const bloodSugarRows = (bloodSugarResult.data ?? []) as DashboardBloodSugarRow[];
 
   const now = new Date();

@@ -125,6 +125,18 @@ function clean(value: string | null | undefined) {
   return normalized.length > 0 ? normalized : null;
 }
 
+function requireCarePlanMemberName(input: {
+  memberName: string | null;
+  memberId: string;
+  carePlanId: string;
+}) {
+  if (input.memberName) return input.memberName;
+  throw new Error(
+    `Care plan read model references missing member name for care plan ${input.carePlanId} (member ${input.memberId}). ` +
+      "Run `npm run repair:historical-drift -- --apply` before continuing."
+  );
+}
+
 function resolveCarePlanReadModelPostSignReadiness(input: {
   status: string | null | undefined;
   reason: string | null | undefined;
@@ -258,6 +270,13 @@ async function resolveCarePlanQueryMemberIds(queryText?: string | null) {
 function mapCarePlanListRows(payload: unknown) {
   const rows = Array.isArray(payload) ? (payload as CarePlanListPageRow[]) : [];
   return rows.map((plan) => {
+    const carePlanId = String(plan.id ?? "");
+    const memberId = String(plan.member_id ?? "");
+    const memberName = requireCarePlanMemberName({
+      memberName: clean(typeof plan.member_name === "string" ? plan.member_name : null),
+      memberId,
+      carePlanId
+    });
     const postSignReadiness = resolveCarePlanReadModelPostSignReadiness({
       status: typeof plan.post_sign_readiness_status === "string" ? plan.post_sign_readiness_status : null,
       reason: typeof plan.post_sign_readiness_reason === "string" ? plan.post_sign_readiness_reason : null,
@@ -267,9 +286,9 @@ function mapCarePlanListRows(payload: unknown) {
     });
 
     return {
-      id: String(plan.id ?? ""),
-      memberId: String(plan.member_id ?? ""),
-      memberName: clean(typeof plan.member_name === "string" ? plan.member_name : null) ?? "Unknown Member",
+      id: carePlanId,
+      memberId,
+      memberName,
       track: String(plan.track ?? "") as CarePlanTrack,
       enrollmentDate: String(plan.enrollment_date ?? ""),
       reviewDate: String(plan.review_date ?? ""),
@@ -280,8 +299,8 @@ function mapCarePlanListRows(payload: unknown) {
       postSignReadinessStatus: postSignReadiness.status,
       postSignReadinessReason: postSignReadiness.reason,
       hasExistingPlan: true,
-      actionHref: `/health/care-plans/${String(plan.id ?? "")}?view=review`,
-      openHref: `/health/care-plans/${String(plan.id ?? "")}`
+      actionHref: `/health/care-plans/${carePlanId}?view=review`,
+      openHref: `/health/care-plans/${carePlanId}`
     };
   });
 }

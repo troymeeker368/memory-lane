@@ -24,7 +24,10 @@ type MccMemberRowShape = {
   dob: string | null;
   city: string | null;
   code_status: string | null;
+  latest_assessment_id: string | null;
+  latest_assessment_date: string | null;
   latest_assessment_track: string | null;
+  latest_assessment_admission_review_required: boolean | null;
   updated_at: string | null;
 };
 
@@ -37,7 +40,7 @@ type MemberLookupRowShape = {
 };
 
 const MCC_MEMBER_BASE_SELECT =
-  "id, display_name, status, locker_number, enrollment_date, discharge_date, discharge_reason, discharge_disposition, dob, city, code_status, latest_assessment_track, updated_at";
+  "id, display_name, status, locker_number, enrollment_date, discharge_date, discharge_reason, discharge_disposition, dob, city, code_status, latest_assessment_id, latest_assessment_date, latest_assessment_track, latest_assessment_admission_review_required, updated_at";
 const MCC_MEMBER_CURRENT_SELECT = `${MCC_MEMBER_BASE_SELECT}, preferred_name, first_name:legal_first_name, last_name:legal_last_name`;
 const MEMBER_LOOKUP_SELECT = "id, display_name, status, enrollment_date, latest_assessment_track";
 const MCC_MEMBER_SCHEMA_MIGRATION = "0011_member_command_center_aux_schema.sql";
@@ -69,7 +72,13 @@ export function mapMccMemberRow(row: Record<string, unknown>): MccMemberRowShape
     dob: typeof row.dob === "string" ? row.dob : null,
     city: typeof row.city === "string" ? row.city : null,
     code_status: typeof row.code_status === "string" ? row.code_status : null,
+    latest_assessment_id: typeof row.latest_assessment_id === "string" ? row.latest_assessment_id : null,
+    latest_assessment_date: typeof row.latest_assessment_date === "string" ? row.latest_assessment_date : null,
     latest_assessment_track: typeof row.latest_assessment_track === "string" ? row.latest_assessment_track : null,
+    latest_assessment_admission_review_required:
+      typeof row.latest_assessment_admission_review_required === "boolean"
+        ? row.latest_assessment_admission_review_required
+        : null,
     updated_at: typeof row.updated_at === "string" ? row.updated_at : null
   };
 }

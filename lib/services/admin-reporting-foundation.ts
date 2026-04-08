@@ -54,11 +54,27 @@ export type {
 const MEMBER_DOCUMENTATION_REPORT_RPC = "rpc_get_member_documentation_summary";
 const ON_DEMAND_REPORT_ROW_LIMIT = 2000;
 
-function relationDisplayName(
-  value: { display_name?: string | null } | Array<{ display_name?: string | null }> | null | undefined
-) {
-  if (Array.isArray(value)) return value[0]?.display_name ?? "Unknown Member";
-  return value?.display_name ?? "Unknown Member";
+function relationDisplayName(input: {
+  value: { display_name?: string | null } | Array<{ display_name?: string | null }> | null | undefined;
+  context: string;
+  memberId?: string | null;
+}) {
+  const relation = Array.isArray(input.value) ? input.value[0] : input.value;
+  const displayName = (relation?.display_name ?? "").trim();
+  if (displayName) return displayName;
+  throw new Error(
+    `Admin reporting ${input.context} references missing member ${input.memberId ?? "(unknown)"}. ` +
+      "Run `npm run repair:historical-drift -- --apply` before continuing."
+  );
+}
+
+function requireMemberDocumentationName(row: MemberDocumentationSummaryRow) {
+  const memberName = (row.member_name ?? "").trim();
+  if (memberName) return memberName;
+  throw new Error(
+    `Admin reporting member documentation summary references missing member ${row.member_id}. ` +
+      "Run `npm run repair:historical-drift -- --apply` before continuing."
+  );
 }
 
 type MemberDocumentationSummaryRow = {
@@ -341,7 +357,11 @@ export async function getOnDemandReportData(input: {
       rows: (data ?? []).map((row) => ({
         invoiceDate: row.invoice_date ?? "",
         invoiceNumber: row.invoice_number ?? "",
-        memberName: relationDisplayName(row.member),
+        memberName: relationDisplayName({
+          value: row.member,
+          context: "billing-revenue on-demand report",
+          memberId: row.member_id ?? null
+        }),
         status: row.invoice_status ?? "",
         source: row.invoice_source ?? "",
         totalAmount: toCents(Number(row.total_amount ?? 0))
@@ -363,7 +383,7 @@ export async function getOnDemandReportData(input: {
     }
     const { data, error } = await supabase
       .from("transportation_logs")
-      .select("service_date, period, transport_type, member:members!transportation_logs_member_id_fkey(display_name), billing_status")
+      .select("service_date, member_id, period, transport_type, member:members!transportation_logs_member_id_fkey(display_name), billing_status")
       .gte("service_date", normalizedRange.from)
       .lte("service_date", normalizedRange.to)
       .order("service_date", { ascending: false });
@@ -381,7 +401,11 @@ export async function getOnDemandReportData(input: {
       ],
       rows: (data ?? []).map((row) => ({
         serviceDate: row.service_date ?? "",
-        memberName: relationDisplayName(row.member),
+        memberName: relationDisplayName({
+          value: row.member,
+          context: "transportation on-demand report",
+          memberId: row.member_id ?? null
+        }),
         period: row.period ?? "",
         transportType: row.transport_type ?? "",
         billingStatus: row.billing_status ?? ""
@@ -440,7 +464,7 @@ export async function getOnDemandReportData(input: {
       { key: "transportation", label: "Transportation Logs", kind: "integer" }
     ],
     rows: rows.map((row) => ({
-      memberName: row.member_name ?? "Unknown Member",
+      memberName: requireMemberDocumentationName(row),
       participation: Number(row.participation_count ?? 0),
       toileting: Number(row.toileting_count ?? 0),
       showers: Number(row.shower_count ?? 0),

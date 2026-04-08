@@ -15,7 +15,10 @@ export interface MccMemberRow {
   dob: string | null;
   city: string | null;
   code_status: string | null;
+  latest_assessment_id: string | null;
+  latest_assessment_date: string | null;
   latest_assessment_track: string | null;
+  latest_assessment_admission_review_required: boolean | null;
   updated_at: string | null;
 }
 
