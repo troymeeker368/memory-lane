@@ -1,5 +1,11 @@
 import { getCarePlanDashboard } from "@/lib/services/care-plans";
 import { listIncidentDashboard } from "@/lib/services/incidents";
+import {
+  type EnrollmentPacketMappingRunnerHealth,
+  getEnrollmentPacketMappingRunnerHealth,
+  type PofPostSignSyncRunnerHealth,
+  getPofPostSignSyncRunnerHealth
+} from "@/lib/services/internal-runner-health";
 import { getHealthDashboardMarSnapshot } from "@/lib/services/mar-dashboard-read-model";
 import { getProgressNoteDashboard } from "@/lib/services/progress-notes";
 import { createClient } from "@/lib/supabase/server";
@@ -34,6 +40,10 @@ type HealthDashboardCareAlertRpcRow = {
 };
 
 type CareAlertRiskLevel = "high" | "standard";
+type RunnerHealthSnapshot = {
+  pofPostSignSync: PofPostSignSyncRunnerHealth;
+  enrollmentPacketMapping: EnrollmentPacketMappingRunnerHealth;
+};
 
 function parseDate(value: string | null | undefined) {
   if (!value) return null;
@@ -113,7 +123,17 @@ export async function getHealthDashboardData(options?: {
     totalPages: 1
   };
 
-  const [marSnapshot, bloodSugarResult, activeMemberCountResult, carePlans, incidents, progressNotes, careAlertRows] =
+  const [
+    marSnapshot,
+    bloodSugarResult,
+    activeMemberCountResult,
+    carePlans,
+    incidents,
+    progressNotes,
+    pofRunnerHealth,
+    enrollmentRunnerHealth,
+    careAlertRows
+  ] =
     await Promise.all([
       getHealthDashboardMarSnapshot(),
       supabase
@@ -127,6 +147,8 @@ export async function getHealthDashboardData(options?: {
       options?.includeProgressNotes
         ? getProgressNoteDashboard({ page: 1, pageSize: 12, serviceRole: true })
         : Promise.resolve(emptyProgressNoteDashboard),
+      getPofPostSignSyncRunnerHealth({ emitSignals: false }),
+      getEnrollmentPacketMappingRunnerHealth({ emitSignals: false }),
       invokeSupabaseRpcOrThrow<HealthDashboardCareAlertRpcRow[]>(supabase, "rpc_get_health_dashboard_care_alerts", {
         p_limit: 12
       })
@@ -209,6 +231,10 @@ export async function getHealthDashboardData(options?: {
     bloodSugarRows,
     recentHealthDocs,
     careAlerts,
+    runnerHealth: {
+      pofPostSignSync: pofRunnerHealth,
+      enrollmentPacketMapping: enrollmentRunnerHealth
+    } satisfies RunnerHealthSnapshot,
     activeMemberCount: activeMemberCountResult.count ?? 0,
     carePlans,
     incidents: {

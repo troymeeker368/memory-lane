@@ -6,9 +6,14 @@ test("member directory paging/search boundary is shared between MCC and MHP inde
   const sharedSource = readFileSync("lib/services/member-list-read.ts", "utf8");
   const mccSource = readFileSync("lib/services/member-command-center-runtime.ts", "utf8");
   const mhpSource = readFileSync("lib/services/member-health-profiles-supabase.ts", "utf8");
+  const memberDirectoryPageSource = readFileSync("app/(portal)/members/page.tsx", "utf8");
+  const memberReadBoundarySource = readFileSync("lib/services/member-command-center-read.ts", "utf8");
 
   assert.equal(sharedSource.includes("export async function listSharedMemberIndexPageSupabase"), true);
   assert.equal(mccSource.includes("listSharedMemberIndexPageSupabase"), true);
   assert.equal(mhpSource.includes("listSharedMemberIndexPageSupabase"), true);
   assert.equal(sharedSource.includes("includeLockerSearch"), true);
+  assert.equal(memberDirectoryPageSource.includes('from "@/lib/services/member-command-center-read"'), true);
+  assert.equal(memberDirectoryPageSource.includes("listMembersPageSupabase"), true);
+  assert.equal(memberReadBoundarySource.includes("listMembersPageSupabase,"), true);
 });

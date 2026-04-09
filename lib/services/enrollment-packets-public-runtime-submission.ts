@@ -42,6 +42,16 @@ export type PublicEnrollmentPacketProgressInput = {
   intakePayload: EnrollmentPacketIntakePayload;
 };
 
+export class PublicEnrollmentPacketReplayDetectedError extends Error {
+  request: EnrollmentPacketRequestRow;
+
+  constructor(request: EnrollmentPacketRequestRow) {
+    super("Enrollment packet was already completed by another submission attempt.");
+    this.name = "PublicEnrollmentPacketReplayDetectedError";
+    this.request = request;
+  }
+}
+
 type PreparePublicEnrollmentPacketSubmissionInput = PublicEnrollmentPacketProgressInput & {
   request: EnrollmentPacketRequestRow;
   caregiverTypedName: string;
@@ -173,6 +183,11 @@ export async function preparePublicEnrollmentPacketSubmission(
       ipAttemptLimit: PUBLIC_ENROLLMENT_PACKET_IP_SUBMIT_ATTEMPT_LIMIT
     }
   });
+
+  const replayCheck = await loadRequestByToken(input.token);
+  if (replayCheck?.request && toStatus(replayCheck.request.status) === "completed") {
+    throw new PublicEnrollmentPacketReplayDetectedError(replayCheck.request);
+  }
 
   const savedProgress = await savePublicEnrollmentPacketProgress(input);
   const validationPayload = savedProgress.mergedPayload;

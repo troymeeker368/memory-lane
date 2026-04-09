@@ -27,6 +27,7 @@ import {
 } from "@/lib/services/enrollment-packets-public-runtime-finalize";
 import { completeCommittedPublicEnrollmentPacketPostCommitWork } from "@/lib/services/enrollment-packets-public-runtime-post-commit";
 import {
+  PublicEnrollmentPacketReplayDetectedError,
   loadPublicEnrollmentPacketPostCommitContext,
   loadPublicEnrollmentPacketSenderSignatureName,
   preparePublicEnrollmentPacketSubmission,
@@ -150,16 +151,26 @@ export async function submitPublicEnrollmentPacketWithDeps(
   let senderSignatureName = "Staff";
 
   try {
-    const preparedSubmission = await deps.preparePublicEnrollmentPacketSubmission({
-      request,
-      token: normalizedToken,
-      caregiverTypedName,
-      attested: input.attested,
-      caregiverIp: input.caregiverIp,
-      caregiverUserAgent: input.caregiverUserAgent,
-      intakePayload: input.intakePayload,
-      uploads
-    });
+    let preparedSubmission: Awaited<ReturnType<typeof deps.preparePublicEnrollmentPacketSubmission>>;
+    try {
+      preparedSubmission = await deps.preparePublicEnrollmentPacketSubmission({
+        request,
+        token: normalizedToken,
+        caregiverTypedName,
+        attested: input.attested,
+        caregiverIp: input.caregiverIp,
+        caregiverUserAgent: input.caregiverUserAgent,
+        intakePayload: input.intakePayload,
+        uploads
+      });
+    } catch (error) {
+      if (error instanceof PublicEnrollmentPacketReplayDetectedError) {
+        return deps.buildCommittedEnrollmentPacketReplayResult({
+          request: error.request
+        });
+      }
+      throw error;
+    }
     const replayCheck = await deps.loadRequestByToken(normalizedToken);
     if (replayCheck?.request && toStatus(replayCheck.request.status) === "completed") {
       return deps.buildCommittedEnrollmentPacketReplayResult({

@@ -327,6 +327,94 @@ function SummaryMetricCard({
   );
 }
 
+function runnerHealthToneClass(status: HealthDashboardSnapshot["runnerHealth"]["pofPostSignSync"]["healthStatus"]) {
+  if (status === "healthy") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (status === "degraded") return "border-amber-200 bg-amber-50 text-amber-800";
+  return "border-rose-200 bg-rose-50 text-rose-800";
+}
+
+function RunnerHealthPanel({ dashboard }: { dashboard: HealthDashboardSnapshot }) {
+  const cards = [
+    {
+      id: "pof-post-sign-sync",
+      label: "POF Post-Sign Sync",
+      href: "/notifications",
+      health: dashboard.runnerHealth.pofPostSignSync,
+      detail:
+        dashboard.runnerHealth.pofPostSignSync.healthStatus === "degraded"
+          ? `${dashboard.runnerHealth.pofPostSignSync.agedQueueRows} aged queue item(s)`
+          : dashboard.runnerHealth.pofPostSignSync.healthStatus === "missing_config"
+            ? "Runner secret needs configuration"
+            : "No delayed queue work detected"
+    },
+    {
+      id: "enrollment-packet-mapping",
+      label: "Enrollment Follow-Up",
+      href: "/notifications",
+      health: dashboard.runnerHealth.enrollmentPacketMapping,
+      detail:
+        dashboard.runnerHealth.enrollmentPacketMapping.healthStatus === "degraded"
+          ? [
+              dashboard.runnerHealth.enrollmentPacketMapping.agedQueueRows > 0
+                ? `${dashboard.runnerHealth.enrollmentPacketMapping.agedQueueRows} aged retry item(s)`
+                : null,
+              dashboard.runnerHealth.enrollmentPacketMapping.followUpAgedQueueRows > 0
+                ? `${dashboard.runnerHealth.enrollmentPacketMapping.followUpAgedQueueRows} aged follow-up item(s)`
+                : null,
+              dashboard.runnerHealth.enrollmentPacketMapping.staleClaimRows > 0
+                ? `${dashboard.runnerHealth.enrollmentPacketMapping.staleClaimRows} stale claimed item(s)`
+                : null
+            ]
+              .filter(Boolean)
+              .join(" | ")
+          : dashboard.runnerHealth.enrollmentPacketMapping.healthStatus === "missing_config"
+            ? "Runner secret needs configuration"
+            : "No delayed queue work detected"
+    }
+  ] as const;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">Workflow Runner Health</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Founder-visible status for queued clinical follow-up that can look complete before downstream work finishes.
+          </p>
+        </div>
+        <Link href="/notifications" className="text-sm font-semibold text-sky-700">
+          Open notifications
+        </Link>
+      </div>
+      <div className="mt-3 space-y-3">
+        {cards.map((card) => (
+          <div key={card.id} className={`rounded-xl border px-3 py-3 ${runnerHealthToneClass(card.health.healthStatus)}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{card.label}</p>
+                <p className="mt-1 text-xs">{card.detail}</p>
+                <p className="mt-2 text-xs">{card.health.releaseSafetyMessage}</p>
+              </div>
+              <span className="rounded-full border border-current px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]">
+                {card.health.healthStatus === "missing_config"
+                  ? "Missing Config"
+                  : card.health.healthStatus === "degraded"
+                    ? "Delayed"
+                    : "Healthy"}
+              </span>
+            </div>
+            <div className="mt-3">
+              <Link href={card.href} className="text-xs font-semibold underline underline-offset-4">
+                Review queue health
+              </Link>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DetailRail({ item }: { item: QueueItem | null }) {
   if (!item) {
     return (
@@ -727,6 +815,7 @@ export function NursingDashboardWorkspace({
           </div>
           <div className="space-y-4">
             <DetailRail item={selectedItem} />
+            <RunnerHealthPanel dashboard={dashboard} />
             <QuickEntryPanel capabilities={capabilities} dashboard={dashboard} />
           </div>
         </div>
@@ -895,6 +984,7 @@ export function NursingDashboardWorkspace({
           </div>
           <div className="space-y-4">
             <DetailRail item={selectedItem} />
+            <RunnerHealthPanel dashboard={dashboard} />
             <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
               <h3 className="text-sm font-semibold text-slate-900">Alert drill-down</h3>
               <div className="mt-3 flex flex-wrap gap-2">

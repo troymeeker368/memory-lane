@@ -1,6 +1,47 @@
 # Fix Prompt Generator Report
 Generated: 2026-04-08
 
+## 0. Execution Status Refresh
+
+After direct repo inspection on 2026-04-08, these prompts group into three buckets:
+
+### Already Implemented In Repo
+- `user_permissions` RLS/admin-boundary hardening already exists in:
+  - `supabase/migrations/0183_user_permissions_rls_hardening.sql`
+  - `supabase/migrations/0186_user_permissions_grants_hardening.sql`
+  - `supabase/migrations/0198_user_permissions_admin_boundary_hardening.sql`
+- Intake -> draft POF already routes through the canonical shared service and RPC boundary:
+  - `app/intake-actions.ts`
+  - `lib/services/intake-pof-mhp-cascade.ts`
+  - `lib/services/physician-orders-supabase.ts`
+- Shared staged-workflow readiness vocabulary is already live in:
+  - `lib/services/committed-workflow-state.ts`
+  - `lib/services/intake-post-sign-readiness.ts`
+  - `lib/services/enrollment-packet-readiness.ts`
+  - `lib/services/physician-order-clinical-sync.ts`
+  - `lib/services/care-plan-post-sign-readiness.ts`
+- Artifact/notification truth is already materially hardened in:
+  - `lib/services/intake-pof-mhp-cascade.ts`
+  - `lib/services/enrollment-packet-completion-cascade.ts`
+  - `lib/services/lifecycle-milestones.ts`
+
+### Implemented But Needed Explicit Validation Coverage
+- `0207` query/index hardening migration:
+  - `supabase/migrations/0207_system_events_open_alert_and_mhp_trgm_indexes.sql`
+- Shared member-list read boundary:
+  - `lib/services/member-list-read.ts`
+  - `lib/services/member-command-center-runtime.ts`
+  - `lib/services/member-health-profiles-supabase.ts`
+- MAR dashboard read consolidation:
+  - `lib/services/mar-dashboard-read-model.ts`
+  - `lib/services/health-dashboard.ts`
+
+### Still Truly Open
+- Main MAR workflow first-load containment in `lib/services/mar-workflow-read.ts`
+- Founder-visible runner health / stale-queue surfacing for enrollment and POF follow-up
+- Public enrollment packet pre-finalize work reduction
+- Member-file delete repair safety can still be improved further, even though it now records durable repair alerts
+
 ## 1. Issues Detected
 
 ### Issue 1. `user_permissions` still lacks repo-defined RLS protection

@@ -300,10 +300,14 @@ export async function getPofPostSignSyncRunnerHealth(input?: {
   actorUserId?: string | null;
   nowIso?: string;
   summary?: PofRunnerHealthSummary;
+  emitSignals?: boolean;
 }) {
   const timestamp = clean(input?.nowIso) ?? toEasternISO();
+  const emitSignals = input?.emitSignals !== false;
   if (getAcceptedPofPostSignSyncRunnerSecrets().length === 0) {
-    await recordPofRunnerConfigMissingSignal({ actorUserId: input?.actorUserId ?? null });
+    if (emitSignals) {
+      await recordPofRunnerConfigMissingSignal({ actorUserId: input?.actorUserId ?? null });
+    }
     const releaseSafety = resolveInternalRunnerReleaseSafety({
       runnerConfigured: false,
       healthStatus: "missing_config",
@@ -338,7 +342,7 @@ export async function getPofPostSignSyncRunnerHealth(input?: {
     };
   }
 
-  if (summary.agedQueueRows > 0) {
+  if (emitSignals && summary.agedQueueRows > 0) {
     await recordPofAgedQueueSignal({
       actorUserId: input?.actorUserId ?? null,
       summary
@@ -368,12 +372,16 @@ export async function getEnrollmentPacketMappingRunnerHealth(input?: {
   actorUserId?: string | null;
   nowIso?: string;
   summary?: EnrollmentPacketMappingRunnerHealthSummary;
+  emitSignals?: boolean;
 }) {
   const timestamp = clean(input?.nowIso) ?? toEasternISO();
+  const emitSignals = input?.emitSignals !== false;
   if (getAcceptedEnrollmentPacketMappingRunnerSecrets().length === 0) {
-    await recordEnrollmentPacketMappingRunnerConfigMissingSignal({
-      actorUserId: input?.actorUserId ?? null
-    });
+    if (emitSignals) {
+      await recordEnrollmentPacketMappingRunnerConfigMissingSignal({
+        actorUserId: input?.actorUserId ?? null
+      });
+    }
     const releaseSafety = resolveInternalRunnerReleaseSafety({
       runnerConfigured: false,
       healthStatus: "missing_config",
@@ -425,7 +433,7 @@ export async function getEnrollmentPacketMappingRunnerHealth(input?: {
     };
   }
 
-  if (summary.agedQueueRows > 0 || summary.followUpAgedQueueRows > 0 || summary.staleClaimRows > 0) {
+  if (emitSignals && (summary.agedQueueRows > 0 || summary.followUpAgedQueueRows > 0 || summary.staleClaimRows > 0)) {
     await recordEnrollmentPacketMappingDelayedSignal({
       actorUserId: input?.actorUserId ?? null,
       summary

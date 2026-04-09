@@ -195,6 +195,7 @@ export async function refreshMarWorkflowData(options?: { serviceRole?: boolean }
 export async function getMarWorkflowSnapshot(options?: {
   serviceRole?: boolean;
   historyLimit?: number;
+  notGivenLimit?: number;
   prnLimit?: number;
   memberOptions?: MarWorkflowMemberOption[];
   memberOptionsFallback?: MarWorkflowMemberOption[];
@@ -202,6 +203,7 @@ export async function getMarWorkflowSnapshot(options?: {
   const serviceRole = options?.serviceRole ?? false;
 
   const historyLimit = Math.max(10, Math.min(options?.historyLimit ?? 200, 500));
+  const notGivenLimit = Math.max(10, Math.min(options?.notGivenLimit ?? 100, 250));
   const prnLimit = Math.max(10, Math.min(options?.prnLimit ?? 200, 500));
   const supabase = await createClient({ serviceRole });
   const memberOptionsFallback = options?.memberOptionsFallback;
@@ -209,7 +211,11 @@ export async function getMarWorkflowSnapshot(options?: {
   const viewQueriesPromise = Promise.all([
     supabase.from("v_mar_today").select(MAR_TODAY_SELECT).order("scheduled_time", { ascending: true }),
     supabase.from("v_mar_overdue_today").select(MAR_TODAY_SELECT).order("scheduled_time", { ascending: true }),
-    supabase.from("v_mar_not_given_today").select(MAR_HISTORY_SELECT).order("administered_at", { ascending: false }),
+    supabase
+      .from("v_mar_not_given_today")
+      .select(MAR_HISTORY_SELECT)
+      .order("administered_at", { ascending: false })
+      .limit(notGivenLimit),
     supabase
       .from("v_mar_administration_history")
       .select(MAR_HISTORY_SELECT)

@@ -26,8 +26,6 @@ import {
 } from "@/lib/services/member-command-center-core";
 import {
   selectMemberLookupRowsWithFallback,
-  selectMembersPageWithFallback,
-  selectMembersWithFallback,
   selectMemberWithFallback
 } from "@/lib/services/member-command-center-member-queries";
 import {
@@ -44,7 +42,10 @@ import {
 } from "@/lib/services/member-command-center-selects";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
-import { listSharedMemberIndexPageSupabase } from "@/lib/services/member-list-read";
+import {
+  listSharedMemberIndexPageSupabase,
+  listSharedMemberRowsSupabase
+} from "@/lib/services/member-list-read";
 const MEMBER_FILE_LIST_RPC = "rpc_list_member_files";
 const MEMBER_FILE_LIST_MIGRATION = "0145_reports_and_member_files_read_rpcs.sql";
 const DEFAULT_MEMBER_LOOKUP_LIMIT = 200;
@@ -83,31 +84,18 @@ export async function listMembersSupabase(filters?: {
   limit?: number;
   allowUnbounded?: boolean;
 }) {
-  const supabase = await createClient();
   const q = (filters?.q ?? "").trim();
   const requestedLimit = filters?.limit;
   const normalizedLimit =
     Number.isFinite(requestedLimit) && Number(requestedLimit) > 0 ? Math.floor(Number(requestedLimit)) : null;
   const effectiveLimit = filters?.allowUnbounded ? normalizedLimit : normalizedLimit ?? DEFAULT_MEMBER_LOOKUP_LIMIT;
 
-  return selectMembersWithFallback(
-    async (selectClause) => {
-      let query = supabase.from("members").select(selectClause);
-      if (filters?.status && filters.status !== "all") {
-        query = query.eq("status", filters.status);
-      }
-      if (q) {
-        const pattern = buildSupabaseIlikePattern(q);
-        query = query.or(`display_name.ilike.${pattern},locker_number.ilike.${pattern}`);
-      }
-      if (effectiveLimit !== null) {
-        query = query.limit(effectiveLimit);
-      }
-      return query.order("display_name", { ascending: true });
-    },
-    isMissingAnyColumnError,
-    "Unable to query members."
-  );
+  return listSharedMemberRowsSupabase({
+    q,
+    status: filters?.status,
+    limit: effectiveLimit,
+    includeLockerSearch: true
+  });
 }
 
 export async function listMemberNameLookupSupabase(filters?: {

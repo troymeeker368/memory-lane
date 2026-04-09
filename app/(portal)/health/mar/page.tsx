@@ -12,14 +12,19 @@ import { getMarWorkflowSnapshot } from "@/lib/services/mar-workflow-read";
 // MAR is session-scoped and time-sensitive; today's/overdue views depend on current time.
 export const dynamic = "force-dynamic";
 
+const MAR_FIRST_LOAD_HISTORY_LIMIT = 100;
+const MAR_FIRST_LOAD_NOT_GIVEN_LIMIT = 100;
+const MAR_FIRST_LOAD_PRN_LIMIT = 100;
+
 export default async function MarWorkflowPage() {
   const profile = await requireMarAccess();
   const canDocument = canDocumentMar(profile);
   const canViewPhysicianOrders = canAccessPhysicianOrders(profile);
   const memberOptionSetsPromise = getMarMemberOptionSets({ serviceRole: false });
   const snapshotPromise = getMarWorkflowSnapshot({
-    historyLimit: 250,
-    prnLimit: 250,
+    historyLimit: MAR_FIRST_LOAD_HISTORY_LIMIT,
+    notGivenLimit: MAR_FIRST_LOAD_NOT_GIVEN_LIMIT,
+    prnLimit: MAR_FIRST_LOAD_PRN_LIMIT,
     serviceRole: false,
     memberOptionsFallback: []
   });
