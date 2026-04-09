@@ -37,6 +37,10 @@ function draftPofReadinessLabel(status: "not_signed" | "signed_pending_draft_pof
   return "Not signed";
 }
 
+function operationalReadinessLabel(status: AssessmentRecord["post_sign_readiness_status"]) {
+  return status === "post_sign_ready" ? "Yes" : "No";
+}
+
 export default async function HealthAssessmentDetailPage({
   params,
   searchParams
@@ -114,6 +118,7 @@ export default async function HealthAssessmentDetailPage({
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Signed At</p><p className="font-semibold">{assessment.signed_at ? formatDateTime(assessment.signed_at) : "-"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Post-Sign Readiness</p><p className="font-semibold">{getIntakePostSignReadinessLabel(assessment.post_sign_readiness_status)}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Draft POF Readiness</p><p className="font-semibold">{draftPofReadinessLabel(assessment.draft_pof_readiness_status)}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Operationally Ready</p><p className="font-semibold">{operationalReadinessLabel(assessment.post_sign_readiness_status)}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Draft POF Status</p><p className="font-semibold">{assessment.draft_pof_status ?? "pending"}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Draft POF Attempted</p><p className="font-semibold">{assessment.draft_pof_attempted_at ? formatDateTime(assessment.draft_pof_attempted_at) : "-"}</p></div>
         </div>

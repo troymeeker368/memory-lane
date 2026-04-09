@@ -27,6 +27,20 @@ test("buildAuditOutputPath keeps audit files inside the canonical directory", ()
   assert.equal(outputPath, path.join(getAuditOutputDir(), "nested", "report.md"));
 });
 
+test("buildAuditOutputPath collapses redundant docs/audits prefixes back to the canonical directory", () => {
+  const prefixedOutputPath = buildAuditOutputPath("docs/audits/workflow-simulation-audit-2026-04-09.md");
+  const windowsPrefixedOutputPath = buildAuditOutputPath("docs\\audits\\workflow-simulation-audit-2026-04-09.md");
+
+  assert.equal(
+    prefixedOutputPath,
+    path.join(getAuditOutputDir(), "workflow-simulation-audit-2026-04-09.md")
+  );
+  assert.equal(
+    windowsPrefixedOutputPath,
+    path.join(getAuditOutputDir(), "workflow-simulation-audit-2026-04-09.md")
+  );
+});
+
 test("buildAuditOutputPath rejects traversal outside the canonical directory", () => {
   assert.throws(
     () => buildAuditOutputPath(path.join("..", "outside.md")),

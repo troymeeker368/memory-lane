@@ -317,6 +317,7 @@ test("signed pof clinical sync rpc uses named conflict targets to avoid output-c
 test("care plan core save, MAR reconciliation, and shared profile sync now use canonical RPC boundaries", () => {
   const carePlanSource = readWorkspaceFile("lib/services/care-plans-supabase.ts");
   const marSource = readWorkspaceFile("lib/services/mar-workflow.ts");
+  const marReconcileSource = readWorkspaceFile("lib/services/mar-reconcile.ts");
   const profileSyncSource = readWorkspaceFile("lib/services/member-profile-sync.ts");
   const memberCommandCenterSource = readWorkspaceFile("lib/services/member-command-center.ts");
   const migrationSource = readWorkspaceFile("supabase/migrations/0056_shared_rpc_orchestration_hardening.sql");
@@ -327,8 +328,9 @@ test("care plan core save, MAR reconciliation, and shared profile sync now use c
   assert.equal(carePlanSource.includes('.from("care_plans").insert({'), false);
 
   assert.equal(marSource.includes('const MAR_MEDICATION_SYNC_RPC = "rpc_sync_mar_medications_from_member_profile";'), true);
-  assert.equal(marSource.includes('const MAR_RECONCILE_RPC = "rpc_reconcile_member_mar_state";'), true);
-  assert.equal(marSource.includes("MAR reconciliation RPC is not available."), true);
+  assert.equal(marSource.includes('return reconcileMarSchedulesForMember({'), true);
+  assert.equal(marReconcileSource.includes('const MAR_RECONCILE_RPC = "rpc_reconcile_member_mar_state";'), true);
+  assert.equal(marReconcileSource.includes("MAR reconciliation RPC is not available."), true);
   assert.equal(marSource.includes('.from("mar_schedules").insert(rowsToInsert)'), false);
   assert.equal(marSource.includes('.from("pof_medications").upsert(upsertRows'), false);
 

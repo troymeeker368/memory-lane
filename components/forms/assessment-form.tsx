@@ -786,7 +786,9 @@ export function AssessmentForm({
       ) : null}
 
       {status ? <p className="text-sm text-muted">{status}</p> : null}
-      <p className="text-xs text-muted">Saving creates an Intake Assessment PDF and adds it to member files.</p>
+      <p className="text-xs text-muted">
+        Saving commits the Intake Assessment first, then verifies draft POF and member-file follow-up. Use the saved assessment detail as the source of truth if readiness is not yet Ready.
+      </p>
     </div>
   );
 }

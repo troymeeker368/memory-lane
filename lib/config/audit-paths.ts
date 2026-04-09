@@ -57,7 +57,12 @@ export function buildAuditOutputPath(fileName: string) {
     );
   }
 
-  return assertAuditOutputPath(path.join(AUDIT_OUTPUT_DIR, trimmedName));
+  const normalizedRelativeName = normalizeAuditRelativePath(trimmedName);
+  if (!normalizedRelativeName) {
+    throw new Error("Audit output filename is required.");
+  }
+
+  return assertAuditOutputPath(path.join(AUDIT_OUTPUT_DIR, normalizedRelativeName));
 }
 
 export function ensureAuditOutputPath(fileName: string) {
@@ -65,4 +70,15 @@ export function ensureAuditOutputPath(fileName: string) {
   const outputPath = buildAuditOutputPath(fileName);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   return assertAuditOutputPath(outputPath);
+}
+
+function normalizeAuditRelativePath(input: string) {
+  const canonicalPrefix = `${AUDIT_OUTPUT_DIR_RELATIVE}/`;
+  let normalized = input.replace(/\\/g, "/").replace(/^\.\/+/, "");
+
+  while (normalized.startsWith(canonicalPrefix)) {
+    normalized = normalized.slice(canonicalPrefix.length);
+  }
+
+  return normalized.replace(/^\/+/, "");
 }

@@ -15,11 +15,11 @@ import {
   clean,
   recordMarFollowUpRepairAlert,
   type MarFollowUpAlertResult,
-  normalizeGenerationWindow,
   normalizeScheduledTimes,
   toMarFollowUpAlertResult,
   throwMarSupabaseError,
 } from "@/lib/services/mar-workflow-core";
+import { reconcileMarSchedulesForMember } from "@/lib/services/mar-reconcile";
 import { createClient } from "@/lib/supabase/server";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { recordWorkflowEvent } from "@/lib/services/workflow-observability";
@@ -37,7 +37,6 @@ type PhysicianOrderForSyncRow = {
   status: string;
 };
 const MAR_MEDICATION_SYNC_RPC = "rpc_sync_mar_medications_from_member_profile";
-const MAR_RECONCILE_RPC = "rpc_reconcile_member_mar_state";
 const MAR_RPC_MIGRATION = "0056_shared_rpc_orchestration_hardening.sql";
 const MAR_DOCUMENT_SCHEDULED_ADMIN_RPC = "rpc_document_scheduled_mar_administration";
 const MAR_DOCUMENT_SCHEDULED_ADMIN_MIGRATION = "0121_document_scheduled_mar_administration_rpc.sql";
@@ -45,15 +44,6 @@ const MAR_DOCUMENT_SCHEDULED_ADMIN_MIGRATION = "0121_document_scheduled_mar_admi
 type MarMedicationSyncRpcRow = {
   anchor_physician_order_id: string;
   synced_medications: number;
-};
-
-type MarReconcileRpcRow = {
-  anchor_physician_order_id: string;
-  synced_medications: number;
-  inserted_schedules: number;
-  patched_schedules: number;
-  reactivated_schedules: number;
-  deactivated_schedules: number;
 };
 
 type DocumentScheduledMarAdministrationRpcRow = {
@@ -125,34 +115,10 @@ export async function generateMarSchedulesForMember(input: {
   endDate?: string | null;
   serviceRole?: boolean;
 }) {
-  const serviceRole = input.serviceRole ?? true;
-  const memberId = await resolveMarMemberId(input.memberId, "generateMarSchedulesForMember", serviceRole);
-  const { startDate, endDate } = normalizeGenerationWindow(input.startDate, input.endDate);
-  const supabase = await createClient({ serviceRole });
-  try {
-    const data = await invokeSupabaseRpcOrThrow<unknown>(supabase, MAR_RECONCILE_RPC, {
-      p_member_id: memberId,
-      p_start_date: startDate,
-      p_end_date: endDate,
-      p_preferred_physician_order_id: null,
-      p_now: toEasternISO()
-    });
-    const row = (Array.isArray(data) ? data[0] : null) as MarReconcileRpcRow | null;
-    return {
-      inserted: Number(row?.inserted_schedules ?? 0),
-      patched: Number(row?.patched_schedules ?? 0),
-      reactivated: Number(row?.reactivated_schedules ?? 0),
-      deactivated: Number(row?.deactivated_schedules ?? 0)
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to reconcile MAR schedules.";
-    if (message.includes(MAR_RECONCILE_RPC)) {
-      throw new Error(
-        `MAR reconciliation RPC is not available. Apply Supabase migration ${MAR_RPC_MIGRATION} and refresh PostgREST schema cache.`
-      );
-    }
-    throw error;
-  }
+  return reconcileMarSchedulesForMember({
+    ...input,
+    actionLabel: "generateMarSchedulesForMember"
+  });
 }
 
 export async function documentScheduledMarAdministration(input: {

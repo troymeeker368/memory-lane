@@ -18,6 +18,10 @@ function draftPofReadinessLabel(status: "not_signed" | "signed_pending_draft_pof
   return "Not signed";
 }
 
+function operationalReadinessLabel(status: AssessmentWorkflowRow["post_sign_readiness_status"]) {
+  return status === "post_sign_ready" ? "Yes" : "No";
+}
+
 export default async function HealthAssessmentPage({
   searchParams
 }: {
@@ -84,7 +88,7 @@ export default async function HealthAssessmentPage({
                 <td>{getIntakePostSignReadinessLabel(row.post_sign_readiness_status)}</td>
                 <td>{draftPofReadinessLabel(row.draft_pof_readiness_status)}</td>
                 <td>{row.signed_by ?? "-"}</td>
-                <td>{row.complete ? "Yes" : "No"}</td>
+                <td>{operationalReadinessLabel(row.post_sign_readiness_status)}</td>
                 <td>
                   <Link className="font-semibold text-brand" href={`/health/assessment/${row.id}`}>
                     Detail
