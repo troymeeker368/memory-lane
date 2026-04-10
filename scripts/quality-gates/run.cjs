@@ -232,8 +232,8 @@ function runImplicitServiceRoleChecks() {
     ["lib/services/mar-member-options.ts", 1],
     ["lib/services/mar-monthly-report.ts", 1],
     ["lib/services/mar-prn-workflow.ts", 9],
-    ["lib/services/mar-workflow-read.ts", 4],
-    ["lib/services/mar-workflow.ts", 3],
+    ["lib/services/mar-workflow-read.ts", 2],
+    ["lib/services/mar-workflow.ts", 2],
     ["lib/services/notifications.ts", 2],
     ["lib/services/physician-order-post-sign-runtime.ts", 6],
     ["lib/services/physician-orders-supabase.ts", 1]

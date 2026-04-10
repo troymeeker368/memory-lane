@@ -21,7 +21,7 @@ export async function reconcileMarSchedulesForMember(input: {
   serviceRole?: boolean;
   actionLabel?: string;
 }) {
-  const serviceRole = input.serviceRole ?? true;
+  const serviceRole = input.serviceRole ?? false;
   const memberId = await resolveCanonicalMemberId(input.memberId, {
     actionLabel: input.actionLabel ?? "reconcileMarSchedulesForMember",
     serviceRole

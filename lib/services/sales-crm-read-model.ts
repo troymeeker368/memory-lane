@@ -541,10 +541,9 @@ export async function getSalesFormLookupsSupabase(options?: {
   referralPartnerId?: string | null;
 }) {
   const leadLimit = normalizePageSize(options?.leadLimit ?? SALES_LEAD_LOOKUP_DEFAULT_LIMIT, SALES_LEAD_LOOKUP_DEFAULT_LIMIT);
-  const shouldLoadLeads = options?.includeLeads !== false || Boolean(options?.includeLeadId);
-  const shouldLoadPartners = options?.includePartners !== false || Boolean(options?.includePartnerId);
-  const shouldLoadReferralSources =
-    options?.includeReferralSources !== false || Boolean(options?.includeReferralSourceId);
+  const shouldLoadLeads = options?.includeLeads !== false;
+  const shouldLoadPartners = options?.includePartners !== false;
+  const shouldLoadReferralSources = options?.includeReferralSources !== false;
   const referralPartner = shouldLoadReferralSources && options?.referralPartnerId
     ? await getSalesPartnerByIdOrCodeSupabase(options.referralPartnerId)
     : null;

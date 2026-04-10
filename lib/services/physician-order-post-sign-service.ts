@@ -285,7 +285,7 @@ export async function retryQueuedPhysicianOrderPostSignSync(input?: {
   serviceRole?: boolean;
   actor?: { id: string | null; fullName: string | null };
 }) {
-  const serviceRole = input?.serviceRole ?? true;
+  const serviceRole = input?.serviceRole ?? false;
   const now = toEasternISO();
   const limit = Math.min(100, Math.max(1, input?.limit ?? 25));
   const actor = input?.actor ?? {
