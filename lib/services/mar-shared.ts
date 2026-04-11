@@ -171,7 +171,11 @@ export interface MarPrnOption {
 
 export interface MarWorkflowSnapshot {
   today: MarTodayRow[];
+  todayTotalCount: number;
+  todayLimited: boolean;
   overdueToday: MarTodayRow[];
+  overdueTodayTotalCount: number;
+  overdueTodayLimited: boolean;
   notGivenToday: MarAdministrationHistoryRow[];
   history: MarAdministrationHistoryRow[];
   prnLog: MarAdministrationHistoryRow[];

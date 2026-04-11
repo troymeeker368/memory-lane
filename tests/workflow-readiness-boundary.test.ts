@@ -99,3 +99,10 @@ test("public POF signing UI surfaces readiness instead of implying fully live do
   assert.equal(source.includes("Downstream status:"), true);
   assert.equal(source.includes("actionNeededMessage ??"), true);
 });
+
+test("already-signed public POF page uses the shared readiness label", () => {
+  const source = readWorkspaceFile("app/sign/pof/[token]/page.tsx");
+
+  assert.equal(source.includes('Already Signed - ${context.postSignOutcome.readinessLabel}'), true);
+  assert.equal(source.includes("Already Signed, Clinical Sync Pending"), false);
+});

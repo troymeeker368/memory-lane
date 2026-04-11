@@ -3,8 +3,16 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui/card";
 import { getBillingMemberPayorLookups, getFinalizedInvoices } from "@/lib/services/billing-read";
 
-export default async function FinalizedInvoicesPage() {
-  const [invoices, lookups] = await Promise.all([getFinalizedInvoices(), getBillingMemberPayorLookups()]);
+export default async function FinalizedInvoicesPage({
+  searchParams
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const pageParam = Array.isArray(params.page) ? params.page[0] : params.page;
+  const page = Math.max(1, Math.trunc(Number(pageParam ?? 1) || 1));
+  const [invoicesPage, lookups] = await Promise.all([getFinalizedInvoices({ page }), getBillingMemberPayorLookups()]);
+  const invoices = invoicesPage.rows;
   const memberName = new Map(lookups.members.map((row) => [row.id, row.displayName] as const));
 
   return (
@@ -13,6 +21,23 @@ export default async function FinalizedInvoicesPage() {
       <p className="mt-1 text-sm text-muted">
         Finalized invoices are frozen snapshots; exports and future QuickBooks sync should read from these plus invoice lines.
       </p>
+      {invoicesPage.hasPreviousPage || invoicesPage.hasNextPage ? (
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-muted">
+            Page {invoicesPage.page} of {Math.max(1, Math.ceil(invoicesPage.totalCount / invoicesPage.pageSize))}
+          </span>
+          {invoicesPage.hasPreviousPage ? (
+            <Link href={`/operations/payor/invoices/finalized?page=${invoicesPage.page - 1}`} className="font-semibold text-brand">
+              Previous
+            </Link>
+          ) : null}
+          {invoicesPage.hasNextPage ? (
+            <Link href={`/operations/payor/invoices/finalized?page=${invoicesPage.page + 1}`} className="font-semibold text-brand">
+              Next
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
       <table className="mt-3">
         <thead>
           <tr>

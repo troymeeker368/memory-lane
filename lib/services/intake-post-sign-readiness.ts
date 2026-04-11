@@ -1,5 +1,6 @@
 import {
   getFounderWorkflowReadinessLabel,
+  getFounderWorkflowReadinessMeaning,
   type FounderWorkflowReadinessStage
 } from "@/lib/services/committed-workflow-state";
 import type { IntakePostSignFollowUpTaskType } from "@/lib/services/intake-post-sign-follow-up";
@@ -43,42 +44,39 @@ export function resolveIntakePostSignWorkflowReadinessStage(input: {
   draftPofStatus: string | null | undefined;
   openFollowUpTaskTypes?: IntakePostSignFollowUpTaskType[];
 }): FounderWorkflowReadinessStage {
-  const status = resolveIntakePostSignReadiness(input);
+  return resolveIntakePostSignReadinessStage(resolveIntakePostSignReadiness(input));
+}
+
+export function resolveIntakePostSignReadinessStage(
+  status: IntakePostSignReadinessStatus
+): FounderWorkflowReadinessStage {
   if (status === "post_sign_ready") return "ready";
   if (status === "draft_pof_failed") return "follow_up_required";
   if (status === "not_signed") return "committed";
   return "queued_degraded";
 }
 
-export function getIntakePostSignReadinessLabel(status: IntakePostSignReadinessStatus) {
-  const stage = resolveIntakePostSignWorkflowReadinessStage({
-    signatureStatus: status === "not_signed" ? "unsigned" : "signed",
-    draftPofStatus:
-      status === "draft_pof_failed"
-        ? "failed"
-        : status === "post_sign_ready" ||
-            status === "signed_pending_draft_pof_readback" ||
-            status === "signed_pending_member_file_pdf"
-          ? "created"
-          : "pending",
-    openFollowUpTaskTypes:
-      status === "signed_pending_draft_pof_readback"
-        ? ["draft_pof_creation"]
-        : status === "signed_pending_member_file_pdf"
-          ? ["member_file_pdf_persistence"]
-          : []
-  });
+export function getIntakePostSignWorkflowReadinessLabel(status: IntakePostSignReadinessStatus) {
+  return getFounderWorkflowReadinessLabel(resolveIntakePostSignReadinessStage(status));
+}
 
-  if (status === "post_sign_ready") return `${getFounderWorkflowReadinessLabel(stage)} - Intake Follow-up Complete`;
+export function getIntakePostSignWorkflowReadinessMeaning(status: IntakePostSignReadinessStatus) {
+  return getFounderWorkflowReadinessMeaning(resolveIntakePostSignReadinessStage(status));
+}
+
+export function getIntakePostSignReadinessLabel(status: IntakePostSignReadinessStatus) {
+  const readinessLabel = getIntakePostSignWorkflowReadinessLabel(status);
+
+  if (status === "post_sign_ready") return `${readinessLabel} - Intake Follow-up Complete`;
   if (status === "signed_pending_draft_pof_readback") {
-    return `${getFounderWorkflowReadinessLabel(stage)} - Draft POF Verification`;
+    return `${readinessLabel} - Draft POF Verification`;
   }
   if (status === "signed_pending_member_file_pdf") {
-    return `${getFounderWorkflowReadinessLabel(stage)} - Member File PDF`;
+    return `${readinessLabel} - Member File PDF`;
   }
-  if (status === "draft_pof_failed") return `${getFounderWorkflowReadinessLabel(stage)} - Draft POF Failed`;
-  if (status === "signed_pending_draft_pof") return `${getFounderWorkflowReadinessLabel(stage)} - Draft POF Pending`;
-  return getFounderWorkflowReadinessLabel(stage);
+  if (status === "draft_pof_failed") return `${readinessLabel} - Draft POF Failed`;
+  if (status === "signed_pending_draft_pof") return `${readinessLabel} - Draft POF Pending`;
+  return readinessLabel;
 }
 
 export function getIntakePostSignReadinessDetail(status: IntakePostSignReadinessStatus) {

@@ -144,6 +144,8 @@ export async function refreshMarWorkflowData(options?: { serviceRole?: boolean }
 
 export async function getMarWorkflowSnapshot(options?: {
   serviceRole?: boolean;
+  todayLimit?: number;
+  overdueLimit?: number;
   historyLimit?: number;
   notGivenLimit?: number;
   prnLimit?: number;
@@ -152,15 +154,29 @@ export async function getMarWorkflowSnapshot(options?: {
 }) {
   const serviceRole = options?.serviceRole ?? false;
 
+  const todayLimit = Math.max(1, Math.min(options?.todayLimit ?? 100, 500));
+  const overdueLimit = Math.max(1, Math.min(options?.overdueLimit ?? 100, 500));
   const historyLimit = Math.max(10, Math.min(options?.historyLimit ?? 200, 500));
   const notGivenLimit = Math.max(10, Math.min(options?.notGivenLimit ?? 100, 250));
   const prnLimit = Math.max(10, Math.min(options?.prnLimit ?? 200, 500));
   const supabase = await createClient({ serviceRole });
   const memberOptionsFallback = options?.memberOptionsFallback;
 
+  const countQueriesPromise = Promise.all([
+    supabase.from("v_mar_today").select("mar_schedule_id", { count: "exact", head: true }),
+    supabase.from("v_mar_overdue_today").select("mar_schedule_id", { count: "exact", head: true })
+  ]);
   const viewQueriesPromise = Promise.all([
-    supabase.from("v_mar_today").select(MAR_TODAY_SELECT).order("scheduled_time", { ascending: true }),
-    supabase.from("v_mar_overdue_today").select(MAR_TODAY_SELECT).order("scheduled_time", { ascending: true }),
+    supabase
+      .from("v_mar_today")
+      .select(MAR_TODAY_SELECT)
+      .order("scheduled_time", { ascending: true })
+      .limit(todayLimit),
+    supabase
+      .from("v_mar_overdue_today")
+      .select(MAR_TODAY_SELECT)
+      .order("scheduled_time", { ascending: true })
+      .limit(overdueLimit),
     supabase
       .from("v_mar_not_given_today")
       .select(MAR_HISTORY_SELECT)
@@ -182,6 +198,7 @@ export async function getMarWorkflowSnapshot(options?: {
       });
 
   const [
+    [{ count: todayTotalCount, error: todayCountError }, { count: overdueTodayTotalCount, error: overdueCountError }],
     [
       { data: todayRowsRaw, error: todayError },
       { data: overdueRowsRaw, error: overdueError },
@@ -192,6 +209,7 @@ export async function getMarWorkflowSnapshot(options?: {
     prnMedicationOptions,
     memberOptions
   ] = await Promise.all([
+    countQueriesPromise,
     viewQueriesPromise,
     prnSnapshotPromise,
     prnMedicationOptionsPromise,
@@ -200,6 +218,8 @@ export async function getMarWorkflowSnapshot(options?: {
 
   if (todayError) throwMarSupabaseError(todayError, "v_mar_today");
   if (overdueError) throwMarSupabaseError(overdueError, "v_mar_overdue_today");
+  if (todayCountError) throwMarSupabaseError(todayCountError, "v_mar_today");
+  if (overdueCountError) throwMarSupabaseError(overdueCountError, "v_mar_overdue_today");
   if (notGivenError) throwMarSupabaseError(notGivenError, "v_mar_not_given_today");
   if (historyError) throwMarSupabaseError(historyError, "v_mar_administration_history");
 
@@ -239,7 +259,11 @@ export async function getMarWorkflowSnapshot(options?: {
 
   return {
     today,
+    todayTotalCount: Number(todayTotalCount ?? today.length),
+    todayLimited: Number(todayTotalCount ?? today.length) > today.length,
     overdueToday,
+    overdueTodayTotalCount: Number(overdueTodayTotalCount ?? overdueToday.length),
+    overdueTodayLimited: Number(overdueTodayTotalCount ?? overdueToday.length) > overdueToday.length,
     notGivenToday,
     history: mergedHistory,
     prnLog: prnSnapshot.log,

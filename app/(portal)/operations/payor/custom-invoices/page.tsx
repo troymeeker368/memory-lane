@@ -13,7 +13,7 @@ import {
 import { listMemberNameLookupSupabase } from "@/lib/services/member-command-center-read";
 
 type WorkspaceTab = "custom-invoice" | "prorated-enrollment" | "drafts-history";
-type CustomInvoiceRow = Awaited<ReturnType<typeof getCustomInvoices>>[number];
+type CustomInvoiceRow = Awaited<ReturnType<typeof getCustomInvoices>>["rows"][number];
 
 const TABS: Array<{ key: WorkspaceTab; label: string }> = [
   { key: "custom-invoice", label: "Custom Invoice" },
@@ -209,12 +209,14 @@ export default async function CustomInvoicesPage({
   const query = await searchParams;
   const activeTab = normalizeTab(query.tab);
   const errorMessage = Array.isArray(query.error) ? query.error[0] : query.error;
-  const [lookups, draftInvoices, finalizedInvoices, members] = await Promise.all([
+  const [lookups, draftInvoicesPage, finalizedInvoicesPage, members] = await Promise.all([
     getBillingMemberPayorLookups(),
-    getCustomInvoices({ status: "Draft" }),
-    getCustomInvoices({ status: "Finalized" }),
+    getCustomInvoices({ status: "Draft", page: 1, pageSize: 50 }),
+    getCustomInvoices({ status: "Finalized", page: 1, pageSize: 50 }),
     listMemberNameLookupSupabase({ status: "active" })
   ]);
+  const draftInvoices = draftInvoicesPage.rows;
+  const finalizedInvoices = finalizedInvoicesPage.rows;
   const memberName = new Map(members.map((row) => [row.id, row.display_name] as const));
 
   return (
@@ -267,6 +269,19 @@ export default async function CustomInvoicesPage({
 
         {activeTab === "drafts-history" ? (
           <div className="mt-5 space-y-4">
+            {draftInvoicesPage.hasNextPage || finalizedInvoicesPage.hasNextPage ? (
+              <div className="rounded-lg border border-border bg-white px-3 py-2 text-xs text-muted">
+                Showing the most recent 50 custom invoices per section. Use{" "}
+                <Link href="/operations/payor/invoices/draft" className="font-semibold text-brand">
+                  Draft Invoices
+                </Link>{" "}
+                and{" "}
+                <Link href="/operations/payor/invoices/finalized" className="font-semibold text-brand">
+                  Finalized Invoices
+                </Link>{" "}
+                for full paged history.
+              </div>
+            ) : null}
             <InvoiceHistorySection
               title="Draft Custom Invoices"
               description="Drafts can still be reviewed, finalized, and reopened as PDF before they move into finalized history."

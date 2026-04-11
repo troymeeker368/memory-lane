@@ -22,7 +22,9 @@ type ReportsHomeAggregatesRpcRow = {
 };
 
 const REPORTS_HOME_AGGREGATES_RPC = "rpc_get_reports_home_staff_aggregates";
-const REPORTS_HOME_AGGREGATES_MIGRATION = "0145_reports_and_member_files_read_rpcs.sql";
+const REPORTS_HOME_AGGREGATES_MIGRATION = "0208_reports_home_recent_window.sql";
+export const REPORTS_HOME_AGGREGATES_WINDOW_DAYS = 180;
+export const REPORTS_HOME_AGGREGATES_WINDOW_LABEL = `last ${REPORTS_HOME_AGGREGATES_WINDOW_DAYS} days`;
 
 function toNumber(value: number | string | null | undefined) {
   const numeric = Number(value ?? 0);

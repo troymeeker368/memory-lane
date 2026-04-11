@@ -3,10 +3,16 @@ import test from "node:test";
 
 import {
   resolveEnrollmentPacketOperationalReadiness,
+  resolveEnrollmentPacketWorkflowReadinessStage,
   toEnrollmentPacketMappingSyncStatus
 } from "@/lib/services/enrollment-packet-readiness";
 import { resolveIntakeDraftPofReadiness } from "@/lib/services/intake-draft-pof-readiness";
-import { resolveIntakePostSignReadiness } from "@/lib/services/intake-post-sign-readiness";
+import {
+  getIntakePostSignWorkflowReadinessLabel,
+  getIntakePostSignWorkflowReadinessMeaning,
+  resolveIntakePostSignReadiness,
+  resolveIntakePostSignReadinessStage
+} from "@/lib/services/intake-post-sign-readiness";
 import { resolvePhysicianOrderClinicalSyncStatus } from "@/lib/services/physician-order-clinical-sync";
 
 test("enrollment packet readiness distinguishes completed from operationally ready", () => {
@@ -48,6 +54,25 @@ test("enrollment packet readiness keeps pending and failed mapping out of operat
   assert.equal(pendingReadiness, "filed_pending_mapping");
   assert.notEqual(failedReadiness, "operationally_ready");
   assert.equal(failedReadiness, "mapping_failed");
+});
+
+test("enrollment packet workflow readiness requires follow-up completion before ready", () => {
+  assert.equal(
+    resolveEnrollmentPacketWorkflowReadinessStage({
+      status: "completed",
+      mappingSyncStatus: "completed",
+      completionFollowUpStatus: "pending"
+    }),
+    "queued_degraded"
+  );
+  assert.equal(
+    resolveEnrollmentPacketWorkflowReadinessStage({
+      status: "completed",
+      mappingSyncStatus: "completed",
+      completionFollowUpStatus: "completed"
+    }),
+    "ready"
+  );
 });
 
 test("intake readiness keeps signed and draft-pof readiness separate", () => {
@@ -113,6 +138,15 @@ test("intake post-sign readiness requires member-file follow-up completion too",
       openFollowUpTaskTypes: ["member_file_pdf_persistence"]
     }),
     "draft_pof_failed"
+  );
+});
+
+test("intake workflow readiness exposes shared founder-stage label and meaning", () => {
+  assert.equal(getIntakePostSignWorkflowReadinessLabel("signed_pending_draft_pof_readback"), "Queued / Degraded");
+  assert.equal(resolveIntakePostSignReadinessStage("draft_pof_failed"), "follow_up_required");
+  assert.match(
+    getIntakePostSignWorkflowReadinessMeaning("draft_pof_failed"),
+    /staff intervention is still required/i
   );
 });
 

@@ -50,6 +50,8 @@ export type CompletedEnrollmentPacketListItem = EnrollmentPacketRequestSummary &
   leadMemberName: string | null;
   senderName: string | null;
   mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
+  completionFollowUpStatus: EnrollmentPacketCompletionFollowUpStatus;
+  completionFollowUpError: string | null;
   readinessStage: FounderWorkflowReadinessStage;
   readinessLabel: string;
   operationalReadinessStatus: EnrollmentPacketOperationalReadinessStatus;
@@ -202,6 +204,8 @@ export type OperationalEnrollmentPacketListItem = EnrollmentPacketRequestSummary
   leadMemberName: string | null;
   senderName: string | null;
   mappingSyncStatus: "not_started" | "pending" | "completed" | "failed";
+  completionFollowUpStatus: EnrollmentPacketCompletionFollowUpStatus;
+  completionFollowUpError: string | null;
   readinessStage: FounderWorkflowReadinessStage;
   readinessLabel: string;
   operationalReadinessStatus: EnrollmentPacketOperationalReadinessStatus;

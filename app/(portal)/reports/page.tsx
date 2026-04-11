@@ -5,7 +5,10 @@ import { requireModuleAccess } from "@/lib/auth";
 import { getAncillaryEntryCountLastDays } from "@/lib/services/ancillary";
 import { getProgressNoteComplianceLabel } from "@/lib/services/progress-note-model";
 import { staffNameToSlug } from "@/lib/services/activity-snapshots";
-import { getOperationsReports } from "@/lib/services/reports-ops";
+import {
+  getOperationsReports,
+  REPORTS_HOME_AGGREGATES_WINDOW_LABEL
+} from "@/lib/services/reports-ops";
 import { getReportingSnapshot } from "@/lib/services/reports";
 import { formatDate, formatOptionalDateTime, formatPercent } from "@/lib/utils";
 
@@ -62,6 +65,14 @@ export default async function ReportsPage() {
             )}
           </tbody>
         </table>
+      </Card>
+
+      <Card>
+        <CardTitle>Reports Home Snapshot</CardTitle>
+        <p className="mt-1 text-sm text-muted">
+          Staff productivity and time clock summaries use a rolling {REPORTS_HOME_AGGREGATES_WINDOW_LABEL} snapshot so
+          this page stays responsive.
+        </p>
       </Card>
 
       <Card className="table-wrap">

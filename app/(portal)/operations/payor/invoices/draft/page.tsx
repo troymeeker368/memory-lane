@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { submitPayorAction } from "@/app/(portal)/operations/payor/actions";
 import { Card, CardTitle } from "@/components/ui/card";
-import { getBillingMemberPayorLookups, getDraftInvoices } from "@/lib/services/billing-read";
+import { getBillingMemberPayorLookups, getDraftInvoices, listAllDraftInvoiceIds } from "@/lib/services/billing-read";
 
 function money(value: number) {
   return `$${value.toFixed(2)}`;
@@ -15,7 +15,14 @@ export default async function DraftInvoicesPage({
 }) {
   const params = await searchParams;
   const errorMessage = Array.isArray(params.error) ? params.error[0] : params.error;
-  const [invoices, lookups] = await Promise.all([getDraftInvoices(), getBillingMemberPayorLookups()]);
+  const pageParam = Array.isArray(params.page) ? params.page[0] : params.page;
+  const page = Math.max(1, Math.trunc(Number(pageParam ?? 1) || 1));
+  const [invoicesPage, lookups, allDraftInvoiceIds] = await Promise.all([
+    getDraftInvoices({ page }),
+    getBillingMemberPayorLookups(),
+    listAllDraftInvoiceIds()
+  ]);
+  const invoices = invoicesPage.rows;
   const memberName = new Map(lookups.members.map((row) => [row.id, row.displayName] as const));
   const totalAmount = invoices.reduce((sum, invoice) => sum + invoice.total_amount, 0);
 
@@ -59,14 +66,32 @@ export default async function DraftInvoicesPage({
           <form action={submitPayorAction} className="flex flex-wrap gap-2">
             <input type="hidden" name="intent" value="finalizeDraftInvoices" />
             <input type="hidden" name="returnPath" value="/operations/payor/invoices/draft" />
-            {invoices.map((invoice) => (
-              <input key={invoice.id} type="hidden" name="invoiceIds" value={invoice.id} />
+            {allDraftInvoiceIds.map((invoiceId) => (
+              <input key={invoiceId} type="hidden" name="invoiceIds" value={invoiceId} />
             ))}
             <button type="submit" className="rounded-lg border border-border px-3 py-2 text-sm font-semibold text-brand">
               Finalize All Drafts
             </button>
           </form>
         </div>
+
+        {invoicesPage.hasPreviousPage || invoicesPage.hasNextPage ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+            <span className="text-muted">
+              Page {invoicesPage.page} of {Math.max(1, Math.ceil(invoicesPage.totalCount / invoicesPage.pageSize))}
+            </span>
+            {invoicesPage.hasPreviousPage ? (
+              <Link href={`/operations/payor/invoices/draft?page=${invoicesPage.page - 1}`} className="font-semibold text-brand">
+                Previous
+              </Link>
+            ) : null}
+            {invoicesPage.hasNextPage ? (
+              <Link href={`/operations/payor/invoices/draft?page=${invoicesPage.page + 1}`} className="font-semibold text-brand">
+                Next
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
       </Card>
 
       <Card className="table-wrap">

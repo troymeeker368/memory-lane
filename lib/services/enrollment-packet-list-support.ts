@@ -6,6 +6,7 @@ import {
   isEnrollmentPacketOperationallyReady,
   resolveEnrollmentPacketWorkflowReadinessStage,
   resolveEnrollmentPacketOperationalReadiness,
+  toEnrollmentPacketCompletionFollowUpStatus,
   toEnrollmentPacketMappingSyncStatus
 } from "@/lib/services/enrollment-packet-readiness";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
@@ -162,6 +163,7 @@ export function buildEnrollmentPacketListPresentation(
 ) {
   const summary = toSummary(row);
   const mappingSyncStatus = toEnrollmentPacketMappingSyncStatus(row.mapping_sync_status);
+  const completionFollowUpStatus = toEnrollmentPacketCompletionFollowUpStatus(row.completion_follow_up_status);
   const readinessStage = resolveEnrollmentPacketWorkflowReadinessStage({
     status: row.status,
     mappingSyncStatus: row.mapping_sync_status,
@@ -174,6 +176,8 @@ export function buildEnrollmentPacketListPresentation(
     leadMemberName: row.lead_id ? names.leadNames.get(row.lead_id) ?? null : null,
     senderName: names.senderNames.get(row.sender_user_id) ?? null,
     mappingSyncStatus,
+    completionFollowUpStatus,
+    completionFollowUpError: clean(row.completion_follow_up_error),
     readinessStage,
     readinessLabel: getEnrollmentPacketWorkflowReadinessLabel(readinessStage),
     operationalReadinessStatus: resolveEnrollmentPacketOperationalReadiness({

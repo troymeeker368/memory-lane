@@ -19,6 +19,13 @@ function syncStatusLabel(status: "not_started" | "pending" | "completed" | "fail
   return "Pending";
 }
 
+function completionFollowUpLabel(status: "not_started" | "pending" | "completed" | "action_required") {
+  if (status === "completed") return "Completed";
+  if (status === "action_required") return "Action Required";
+  if (status === "not_started") return "Not Started";
+  return "Pending";
+}
+
 function readinessClassName(status: "committed" | "ready" | "follow_up_required" | "queued_degraded") {
   if (status === "ready") return "bg-emerald-100 text-emerald-800";
   if (status === "follow_up_required") return "bg-rose-100 text-rose-800";
@@ -107,7 +114,7 @@ export default async function CompletedEnrollmentPacketsPage({
               <th>Lead</th>
               <th>Caregiver Email</th>
               <th>Status</th>
-              <th>Operational Readiness</th>
+              <th>Workflow Readiness</th>
               <th>Sent</th>
               <th>Completed</th>
               <th>Sent By</th>
@@ -134,8 +141,12 @@ export default async function CompletedEnrollmentPacketsPage({
                         {packet.readinessLabel}
                       </span>
                       <p className="text-xs text-muted">Mapping sync: {syncStatusLabel(packet.mappingSyncStatus)}</p>
+                      <p className="text-xs text-muted">Follow-up: {completionFollowUpLabel(packet.completionFollowUpStatus)}</p>
                       {packet.mappingSyncError ? (
                         <p className="max-w-xs text-xs text-rose-700">{packet.mappingSyncError}</p>
+                      ) : null}
+                      {packet.completionFollowUpError ? (
+                        <p className="max-w-xs text-xs text-rose-700">{packet.completionFollowUpError}</p>
                       ) : null}
                     </div>
                   </td>

@@ -11,6 +11,7 @@ import type {
   getCustomInvoices as getCustomInvoicesImpl,
   getDraftInvoices as getDraftInvoicesImpl,
   getFinalizedInvoices as getFinalizedInvoicesImpl,
+  listAllDraftInvoiceIds as listAllDraftInvoiceIdsImpl,
   getVariableChargesQueue as getVariableChargesQueueImpl,
   listBillingScheduleTemplates as listBillingScheduleTemplatesImpl,
   listCenterClosures as listCenterClosuresImpl,
@@ -22,6 +23,8 @@ export { CENTER_CLOSURE_TYPE_OPTIONS } from "@/lib/services/billing-read-supabas
 
 type GetVariableChargesQueueInput = Parameters<typeof getVariableChargesQueueImpl>[0];
 type GetCustomInvoicesInput = Parameters<typeof getCustomInvoicesImpl>[0];
+type GetDraftInvoicesInput = Parameters<typeof getDraftInvoicesImpl>[0];
+type GetFinalizedInvoicesInput = Parameters<typeof getFinalizedInvoicesImpl>[0];
 type ListCenterClosuresInput = Parameters<typeof listCenterClosuresImpl>[0];
 type GetBillingBatchReviewRowsInput = Parameters<typeof getBillingBatchReviewRowsImpl>[0];
 type GetBillingGenerationPreviewInput = Parameters<typeof getBillingGenerationPreviewImpl>[0];
@@ -56,19 +59,24 @@ export async function getBillingMemberPayorLookups(): ReturnType<typeof getBilli
   return getBillingMemberPayorLookups();
 }
 
-export async function getDraftInvoices(): ReturnType<typeof getDraftInvoicesImpl> {
+export async function getDraftInvoices(input?: GetDraftInvoicesInput): ReturnType<typeof getDraftInvoicesImpl> {
   const { getDraftInvoices } = await import("@/lib/services/billing-read-supabase");
-  return getDraftInvoices();
+  return getDraftInvoices(input);
 }
 
-export async function getFinalizedInvoices(): ReturnType<typeof getFinalizedInvoicesImpl> {
+export async function getFinalizedInvoices(input?: GetFinalizedInvoicesInput): ReturnType<typeof getFinalizedInvoicesImpl> {
   const { getFinalizedInvoices } = await import("@/lib/services/billing-read-supabase");
-  return getFinalizedInvoices();
+  return getFinalizedInvoices(input);
 }
 
 export async function getCustomInvoices(input?: GetCustomInvoicesInput): ReturnType<typeof getCustomInvoicesImpl> {
   const { getCustomInvoices } = await import("@/lib/services/billing-read-supabase");
   return getCustomInvoices(input);
+}
+
+export async function listAllDraftInvoiceIds(): ReturnType<typeof listAllDraftInvoiceIdsImpl> {
+  const { listAllDraftInvoiceIds } = await import("@/lib/services/billing-read-supabase");
+  return listAllDraftInvoiceIds();
 }
 
 export async function getVariableChargesQueue(input: GetVariableChargesQueueInput): ReturnType<typeof getVariableChargesQueueImpl> {

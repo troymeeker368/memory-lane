@@ -39,8 +39,115 @@ type BillingExportJobRow = Tables["billing_export_jobs"]["Row"];
 type BillingInvoiceRow = Tables["billing_invoices"]["Row"];
 type MemberLookupRow = Pick<Tables["members"]["Row"], "id" | "display_name" | "status">;
 type TransportationLogRow = Tables["transportation_logs"]["Row"];
+type BillingInvoiceListRow = Pick<
+  BillingInvoiceRow,
+  | "id"
+  | "member_id"
+  | "billing_batch_id"
+  | "invoice_number"
+  | "invoice_month"
+  | "invoice_date"
+  | "due_date"
+  | "invoice_source"
+  | "invoice_status"
+  | "export_status"
+  | "payor_id"
+  | "billing_mode_snapshot"
+  | "monthly_billing_basis_snapshot"
+  | "transportation_billing_status_snapshot"
+  | "billing_method_snapshot"
+  | "base_period_start"
+  | "base_period_end"
+  | "variable_charge_period_start"
+  | "variable_charge_period_end"
+  | "base_program_billed_days"
+  | "member_daily_rate_snapshot"
+  | "base_program_amount"
+  | "transportation_amount"
+  | "ancillary_amount"
+  | "adjustment_amount"
+  | "total_amount"
+  | "payments_amount"
+  | "balance_due_amount"
+  | "bill_to_name_snapshot"
+  | "bill_to_address_line_1_snapshot"
+  | "bill_to_address_line_2_snapshot"
+  | "bill_to_address_line_3_snapshot"
+  | "bill_to_email_snapshot"
+  | "bill_to_phone_snapshot"
+  | "bill_to_message_snapshot"
+  | "notes"
+  | "finalized_at"
+  | "finalized_by"
+  | "created_by_user_id"
+  | "created_by_name"
+  | "created_at"
+  | "updated_at"
+>;
 
 export const CENTER_CLOSURE_TYPE_OPTIONS = ["Holiday", "Weather", "Planned", "Emergency", "Other"] as const;
+const BILLING_INVOICE_LIST_DEFAULT_PAGE_SIZE = 50;
+const BILLING_INVOICE_LIST_MAX_PAGE_SIZE = 100;
+const BILLING_INVOICE_LIST_SELECT = [
+  "id",
+  "member_id",
+  "billing_batch_id",
+  "invoice_number",
+  "invoice_month",
+  "invoice_date",
+  "due_date",
+  "invoice_source",
+  "invoice_status",
+  "export_status",
+  "payor_id",
+  "billing_mode_snapshot",
+  "monthly_billing_basis_snapshot",
+  "transportation_billing_status_snapshot",
+  "billing_method_snapshot",
+  "base_period_start",
+  "base_period_end",
+  "variable_charge_period_start",
+  "variable_charge_period_end",
+  "base_program_billed_days",
+  "member_daily_rate_snapshot",
+  "base_program_amount",
+  "transportation_amount",
+  "ancillary_amount",
+  "adjustment_amount",
+  "total_amount",
+  "payments_amount",
+  "balance_due_amount",
+  "bill_to_name_snapshot",
+  "bill_to_address_line_1_snapshot",
+  "bill_to_address_line_2_snapshot",
+  "bill_to_address_line_3_snapshot",
+  "bill_to_email_snapshot",
+  "bill_to_phone_snapshot",
+  "bill_to_message_snapshot",
+  "notes",
+  "finalized_at",
+  "finalized_by",
+  "created_by_user_id",
+  "created_by_name",
+  "created_at",
+  "updated_at"
+].join(", ");
+
+const FINALIZED_BILLING_INVOICE_STATUSES = ["Finalized", "Sent", "Paid", "PartiallyPaid", "Void"] as const;
+
+export type BillingInvoiceListPage = {
+  rows: ReturnType<typeof normalizeInvoiceRow>[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  hasPreviousPage: boolean;
+  hasNextPage: boolean;
+};
+
+type BillingInvoicePaginationInput = {
+  page?: number;
+  pageSize?: number;
+};
 
 function requireMemberDisplayName(input: {
   memberNameById: Map<string, string>;
@@ -53,6 +160,67 @@ function requireMemberDisplayName(input: {
     `Billing read model ${input.context} references missing member ${input.memberId}. ` +
       "Run `npm run repair:historical-drift -- --apply` before continuing."
   );
+}
+
+function resolveBillingInvoicePagination(input?: BillingInvoicePaginationInput) {
+  const page = Math.max(1, Math.trunc(Number(input?.page ?? 1) || 1));
+  const pageSize = Math.max(
+    1,
+    Math.min(
+      Math.trunc(Number(input?.pageSize ?? BILLING_INVOICE_LIST_DEFAULT_PAGE_SIZE) || BILLING_INVOICE_LIST_DEFAULT_PAGE_SIZE),
+      BILLING_INVOICE_LIST_MAX_PAGE_SIZE
+    )
+  );
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  return { page, pageSize, from, to };
+}
+
+async function loadBillingInvoiceListPage(input: {
+  invoiceSource?: "Custom" | null;
+  invoiceStatuses?: string[];
+  page?: number;
+  pageSize?: number;
+}): Promise<BillingInvoiceListPage> {
+  const supabase = await createClient();
+  const { page, pageSize, from, to } = resolveBillingInvoicePagination(input);
+  let query = supabase
+    .from("billing_invoices")
+    .select(BILLING_INVOICE_LIST_SELECT, { count: "exact" })
+    .order("invoice_month", { ascending: false })
+    .order("created_at", { ascending: false })
+    .range(from, to);
+  if (input.invoiceSource) {
+    query = query.eq("invoice_source", input.invoiceSource);
+  }
+  if (input.invoiceStatuses && input.invoiceStatuses.length > 0) {
+    query = query.in("invoice_status", input.invoiceStatuses);
+  }
+  const { data, error, count } = await query;
+  if (error) {
+    if (isMissingSchemaObjectError(error)) {
+      throw new Error(
+        buildMissingSchemaMessage({
+          objectName: "billing_invoices",
+          migration: "0015_schema_compatibility_backfill.sql"
+        })
+      );
+    }
+    throw new Error(error.message);
+  }
+
+  const rows = (Array.isArray(data) ? ((data as unknown) as BillingInvoiceListRow[]) : []).map((row) =>
+    normalizeInvoiceRow(row as unknown as BillingInvoiceRow)
+  );
+  const totalCount = Number(count ?? rows.length);
+  return {
+    rows,
+    page,
+    pageSize,
+    totalCount,
+    hasPreviousPage: page > 1,
+    hasNextPage: from + rows.length < totalCount
+  };
 }
 
 export async function listPayors() {
@@ -120,11 +288,42 @@ export async function getBillingBatches() {
   }));
 }
 
-export async function getDraftInvoices() {
+export async function getDraftInvoices(input?: BillingInvoicePaginationInput) {
+  return loadBillingInvoiceListPage({
+    page: input?.page,
+    pageSize: input?.pageSize,
+    invoiceStatuses: ["Draft"]
+  });
+}
+
+export async function getFinalizedInvoices(input?: BillingInvoicePaginationInput) {
+  return loadBillingInvoiceListPage({
+    page: input?.page,
+    pageSize: input?.pageSize,
+    invoiceStatuses: [...FINALIZED_BILLING_INVOICE_STATUSES]
+  });
+}
+
+export async function getCustomInvoices(input?: { status?: "Draft" | "Finalized" | "All"; page?: number; pageSize?: number }) {
+  const invoiceStatuses =
+    input?.status === "Draft"
+      ? ["Draft"]
+      : input?.status === "Finalized"
+        ? ["Finalized"]
+        : undefined;
+  return loadBillingInvoiceListPage({
+    invoiceSource: "Custom",
+    invoiceStatuses,
+    page: input?.page,
+    pageSize: input?.pageSize
+  });
+}
+
+export async function listAllDraftInvoiceIds() {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("billing_invoices")
-    .select("*")
+    .select("id")
     .eq("invoice_status", "Draft")
     .order("invoice_month", { ascending: false })
     .order("created_at", { ascending: false });
@@ -139,54 +338,7 @@ export async function getDraftInvoices() {
     }
     throw new Error(error.message);
   }
-  return (data ?? []).map(normalizeInvoiceRow);
-}
-
-export async function getFinalizedInvoices() {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("billing_invoices")
-    .select("*")
-    .in("invoice_status", ["Finalized", "Sent", "Paid", "PartiallyPaid", "Void"])
-    .order("invoice_month", { ascending: false })
-    .order("created_at", { ascending: false });
-  if (error) {
-    if (isMissingSchemaObjectError(error)) {
-      throw new Error(
-        buildMissingSchemaMessage({
-          objectName: "billing_invoices",
-          migration: "0015_schema_compatibility_backfill.sql"
-        })
-      );
-    }
-    throw new Error(error.message);
-  }
-  return (data ?? []).map(normalizeInvoiceRow);
-}
-
-export async function getCustomInvoices(input?: { status?: "Draft" | "Finalized" | "All" }) {
-  const supabase = await createClient();
-  let query = supabase
-    .from("billing_invoices")
-    .select("*")
-    .eq("invoice_source", "Custom")
-    .order("invoice_month", { ascending: false })
-    .order("created_at", { ascending: false });
-  if (input?.status === "Draft") query = query.eq("invoice_status", "Draft");
-  if (input?.status === "Finalized") query = query.eq("invoice_status", "Finalized");
-  const { data, error } = await query;
-  if (error) {
-    if (isMissingSchemaObjectError(error)) {
-      throw new Error(
-        buildMissingSchemaMessage({
-          objectName: "billing_invoices",
-          migration: "0015_schema_compatibility_backfill.sql"
-        })
-      );
-    }
-    throw new Error(error.message);
-  }
-  return (data ?? []).map(normalizeInvoiceRow);
+  return (data ?? []).map((row) => String(row.id));
 }
 
 export async function getBillingBatchReviewRows(billingBatchId: string) {

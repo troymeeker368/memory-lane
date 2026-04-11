@@ -68,7 +68,7 @@ export default async function PublicPofSigningPage({
       <div className="mx-auto max-w-3xl space-y-4 p-4">
         <DocumentBrandHeader title="Physician Order Form Signature" />
         <Card className={toneClasses}>
-          <CardTitle>{context.postSignOutcome.actionNeeded ? "Already Signed, Clinical Sync Pending" : "Already Signed"}</CardTitle>
+          <CardTitle>{`Already Signed - ${context.postSignOutcome.readinessLabel}`}</CardTitle>
           <p className="mt-2 text-sm text-muted">This POF was already signed on {context.request.signedAt ? formatDateTime(context.request.signedAt) : "a previous date"}.</p>
           {context.postSignOutcome.actionNeededMessage ? (
             <p className="mt-2 text-sm">{context.postSignOutcome.actionNeededMessage}</p>

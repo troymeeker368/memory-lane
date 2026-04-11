@@ -544,9 +544,11 @@ export async function getSalesFormLookupsSupabase(options?: {
   const shouldLoadLeads = options?.includeLeads !== false;
   const shouldLoadPartners = options?.includePartners !== false;
   const shouldLoadReferralSources = options?.includeReferralSources !== false;
+  const requestedReferralSourceId = clean(options?.includeReferralSourceId);
   const referralPartner = shouldLoadReferralSources && options?.referralPartnerId
     ? await getSalesPartnerByIdOrCodeSupabase(options.referralPartnerId)
     : null;
+  const shouldPrefetchReferralSources = shouldLoadReferralSources && Boolean(referralPartner?.id);
   const supabase = await createClient();
   const [leadResult, { data: partners, error: partnersError }, { data: referralSources, error: referralSourcesError }] = await Promise.all([
     shouldLoadLeads
@@ -559,7 +561,7 @@ export async function getSalesFormLookupsSupabase(options?: {
           .order("organization_name", { ascending: true })
           .limit(SALES_LOOKUP_PARTNER_LIMIT)
       : Promise.resolve({ data: [] as SalesPartnerRow[], error: null } as const),
-    shouldLoadReferralSources
+    shouldPrefetchReferralSources
       ? (() => {
           let query = supabase
             .from("referral_sources")
@@ -588,8 +590,8 @@ export async function getSalesFormLookupsSupabase(options?: {
     options?.includePartnerId && !partnerRows.some((row) => row.id === options.includePartnerId)
       ? fetchPartnerByIdSupabase(options.includePartnerId)
       : Promise.resolve(null),
-    options?.includeReferralSourceId && !referralRows.some((row) => row.id === options.includeReferralSourceId)
-      ? fetchReferralSourceByIdSupabase(options.includeReferralSourceId)
+    requestedReferralSourceId && !referralRows.some((row) => row.id === requestedReferralSourceId)
+      ? fetchReferralSourceByIdSupabase(requestedReferralSourceId)
       : Promise.resolve(null)
   ]);
 

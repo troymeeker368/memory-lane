@@ -15,13 +15,24 @@ export const dynamic = "force-dynamic";
 const MAR_FIRST_LOAD_HISTORY_LIMIT = 100;
 const MAR_FIRST_LOAD_NOT_GIVEN_LIMIT = 100;
 const MAR_FIRST_LOAD_PRN_LIMIT = 100;
+const MAR_FIRST_LOAD_TODAY_LIMIT = 150;
+const MAR_FIRST_LOAD_OVERDUE_LIMIT = 150;
 
-export default async function MarWorkflowPage() {
+export default async function MarWorkflowPage({
+  searchParams
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+  const queueParam = Array.isArray(resolvedSearchParams?.queue) ? resolvedSearchParams?.queue[0] : resolvedSearchParams?.queue;
+  const isFullQueueMode = queueParam === "full";
   const profile = await requireMarAccess();
   const canDocument = canDocumentMar(profile);
   const canViewPhysicianOrders = canAccessPhysicianOrders(profile);
   const memberOptionSetsPromise = getMarMemberOptionSets({ serviceRole: false });
   const snapshotPromise = getMarWorkflowSnapshot({
+    todayLimit: isFullQueueMode ? 500 : MAR_FIRST_LOAD_TODAY_LIMIT,
+    overdueLimit: isFullQueueMode ? 500 : MAR_FIRST_LOAD_OVERDUE_LIMIT,
     historyLimit: MAR_FIRST_LOAD_HISTORY_LIMIT,
     notGivenLimit: MAR_FIRST_LOAD_NOT_GIVEN_LIMIT,
     prnLimit: MAR_FIRST_LOAD_PRN_LIMIT,
@@ -90,19 +101,45 @@ export default async function MarWorkflowPage() {
           <p className="mt-1 text-sm text-danger">{loadError}</p>
         </Card>
       ) : snapshot ? (
-        <MarWorkflowBoardShell
-          canDocument={canDocument}
-          todayRows={snapshot.today}
-          overdueRows={snapshot.overdueToday}
-          notGivenRows={snapshot.notGivenToday}
-          historyRows={snapshot.history}
-          prnRows={snapshot.prnLog}
-          prnAwaitingOutcomeRows={snapshot.prnAwaitingOutcome}
-          prnEffectiveRows={snapshot.prnEffective}
-          prnIneffectiveRows={snapshot.prnIneffective}
-          prnMedicationOptions={snapshot.prnMedicationOptions}
-          memberOptions={snapshot.memberOptions}
-        />
+        <>
+          {snapshot.todayLimited || snapshot.overdueTodayLimited || isFullQueueMode ? (
+            <Card>
+              <CardTitle>{isFullQueueMode ? "Full Queue Mode" : "Contained First Load"}</CardTitle>
+              <p className="mt-1 text-sm text-muted">
+                {isFullQueueMode
+                  ? "This mode loads a larger center-wide Today and Overdue queue when staff need the full board in one pass."
+                  : `Default first load is intentionally contained to the first ${MAR_FIRST_LOAD_TODAY_LIMIT} Today rows and ${MAR_FIRST_LOAD_OVERDUE_LIMIT} Overdue rows so MAR does not pull the full center-wide live queues on every visit.`}
+              </p>
+              <p className="mt-2 text-xs text-muted">
+                Today loaded: {snapshot.today.length} of {snapshot.todayTotalCount}. Overdue loaded: {snapshot.overdueToday.length} of {snapshot.overdueTodayTotalCount}.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2 text-sm">
+                {isFullQueueMode ? (
+                  <Link href="/health/mar" className="font-semibold text-brand">
+                    Return to Contained Mode
+                  </Link>
+                ) : (
+                  <Link href="/health/mar?queue=full" className="font-semibold text-brand">
+                    Load Full Center-wide Queues
+                  </Link>
+                )}
+              </div>
+            </Card>
+          ) : null}
+          <MarWorkflowBoardShell
+            canDocument={canDocument}
+            todayRows={snapshot.today}
+            overdueRows={snapshot.overdueToday}
+            notGivenRows={snapshot.notGivenToday}
+            historyRows={snapshot.history}
+            prnRows={snapshot.prnLog}
+            prnAwaitingOutcomeRows={snapshot.prnAwaitingOutcome}
+            prnEffectiveRows={snapshot.prnEffective}
+            prnIneffectiveRows={snapshot.prnIneffective}
+            prnMedicationOptions={snapshot.prnMedicationOptions}
+            memberOptions={snapshot.memberOptions}
+          />
+        </>
       ) : null}
     </div>
   );

@@ -5,7 +5,10 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { requireModuleAccess } from "@/lib/auth";
 import { getAssessmentMembers } from "@/lib/services/documentation";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
-import { getIntakePostSignReadinessLabel } from "@/lib/services/intake-post-sign-readiness";
+import {
+  getIntakePostSignReadinessLabel,
+  getIntakePostSignWorkflowReadinessLabel
+} from "@/lib/services/intake-post-sign-readiness";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 import { formatDate } from "@/lib/utils";
 
@@ -16,10 +19,6 @@ function draftPofReadinessLabel(status: "not_signed" | "signed_pending_draft_pof
   if (status === "draft_pof_failed") return "Failed";
   if (status === "signed_pending_draft_pof") return "Pending";
   return "Not signed";
-}
-
-function operationalReadinessLabel(status: AssessmentWorkflowRow["post_sign_readiness_status"]) {
-  return status === "post_sign_ready" ? "Yes" : "No";
 }
 
 export default async function HealthAssessmentPage({
@@ -70,7 +69,7 @@ export default async function HealthAssessmentPage({
                 <th>Post-Sign Readiness</th>
                 <th>Draft POF Readiness</th>
                 <th>Signed By</th>
-                <th>Operationally Ready</th>
+                <th>Workflow Readiness</th>
                 <th>Open</th>
               </tr>
             </thead>
@@ -88,7 +87,7 @@ export default async function HealthAssessmentPage({
                 <td>{getIntakePostSignReadinessLabel(row.post_sign_readiness_status)}</td>
                 <td>{draftPofReadinessLabel(row.draft_pof_readiness_status)}</td>
                 <td>{row.signed_by ?? "-"}</td>
-                <td>{operationalReadinessLabel(row.post_sign_readiness_status)}</td>
+                <td>{getIntakePostSignWorkflowReadinessLabel(row.post_sign_readiness_status)}</td>
                 <td>
                   <Link className="font-semibold text-brand" href={`/health/assessment/${row.id}`}>
                     Detail
