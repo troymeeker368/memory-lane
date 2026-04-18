@@ -46,11 +46,14 @@ test("MAR actions keep local service-role audit logging but make it non-throwing
 });
 
 test("POF post-sign runner reports missing configuration explicitly", () => {
-  const source = readWorkspaceFile("app/api/internal/pof-post-sign-sync/route.ts");
+  const routeSource = readWorkspaceFile("app/api/internal/pof-post-sign-sync/route.ts");
+  const runnerHealthSource = readWorkspaceFile("lib/services/internal-runner-health.ts");
 
-  assert.equal(source.includes('alertKey: "pof_post_sign_sync_runner_not_configured"'), true);
-  assert.equal(source.includes("runnerConfigured: false"), true);
-  assert.equal(source.includes("runnerConfigured: true"), true);
+  assert.equal(routeSource.includes("getPofPostSignSyncRunnerHealth"), true);
+  assert.equal(routeSource.includes("getDefaultConfigError()"), true);
+  assert.equal(routeSource.includes("runnerConfigured: true"), true);
+  assert.equal(runnerHealthSource.includes('alertKey: "pof_post_sign_sync_runner_not_configured"'), true);
+  assert.equal(runnerHealthSource.includes("runnerConfigured: false"), true);
 });
 
 test("member file writes preserve committed storage when verification readback misses", () => {
