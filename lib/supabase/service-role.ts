@@ -41,6 +41,8 @@ const SERVICE_ROLE_USE_CASES = {
     "Live POF signing end-to-end verification scripts need explicit privileged reads and writes.",
   member_file_record_rpc:
     "Member file RPC mutations are service-only so database and storage state stay aligned.",
+  member_file_list_read:
+    "Member file list RPC reads run through a labeled server-only path after app-layer access checks.",
   member_file_storage:
     "Member file storage signing and object mutations must stay server-only and bypass user-scoped RLS.",
   member_file_backfill:

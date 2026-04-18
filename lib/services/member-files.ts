@@ -49,6 +49,23 @@ export {
 const UPSERT_MEMBER_FILE_BY_SOURCE_RPC = "rpc_upsert_member_file_by_source";
 const DELETE_MEMBER_FILE_RECORD_RPC = "rpc_delete_member_file_record";
 const MEMBER_FILE_RPC_MIGRATION = "0073_delivery_and_member_file_rpc_hardening.sql";
+const MAX_MEMBER_FILE_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_MEMBER_FILE_UPLOAD_MB = MAX_MEMBER_FILE_UPLOAD_BYTES / (1024 * 1024);
+const ALLOWED_MEMBER_FILE_UPLOAD_CONTENT_TYPES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "text/plain",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/octet-stream"
+]);
 
 type SaveGeneratedMemberPdfInput = {
   memberId: string;
@@ -114,6 +131,28 @@ function buildManualUploadDocumentSource(uploadToken: string) {
 
 function isDataUrl(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase().startsWith("data:");
+}
+
+function assertValidMemberFileUploadPayload(input: {
+  fileName: string;
+  contentType: string;
+  byteLength: number;
+}) {
+  const normalizedContentType = String(input.contentType ?? "").trim().toLowerCase();
+  const byteLength = Math.max(0, Math.trunc(Number(input.byteLength ?? 0)));
+  if (byteLength <= 0) {
+    throw new Error("Uploaded member file content is required.");
+  }
+  if (byteLength > MAX_MEMBER_FILE_UPLOAD_BYTES) {
+    throw new Error(
+      `Uploaded member file is too large. Maximum file size is ${MAX_MEMBER_FILE_UPLOAD_MB}MB.`
+    );
+  }
+  if (!normalizedContentType || !ALLOWED_MEMBER_FILE_UPLOAD_CONTENT_TYPES.has(normalizedContentType)) {
+    throw new Error(
+      `Uploaded member file type is not allowed for "${input.fileName}".`
+    );
+  }
 }
 
 type LegacyMemberFileBackfillRow = {
@@ -567,6 +606,11 @@ export async function saveCommandCenterMemberFileUpload(input: {
     throw new Error("Uploaded member file content is required.");
   }
   const contentType = String(input.fileType ?? "").trim() || parsed.contentType || "application/octet-stream";
+  assertValidMemberFileUploadPayload({
+    fileName,
+    contentType,
+    byteLength: parsed.bytes.length
+  });
   const objectName = slugifyMemberFileSegment(fileName) || `member-file-${uploadToken}`;
   const objectPath = `members/${memberId}/member-files/manual/${uploadToken}-${objectName}`;
   await uploadMemberDocumentObject({
@@ -822,7 +866,8 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     .from("member_files")
     .select("id")
     .eq("member_id", memberId)
-    .eq("file_name", defaultName);
+    .eq("file_name", defaultName)
+    .limit(1);
 
   if (duplicateError) {
     throw new Error(duplicateError.message);

@@ -3,6 +3,21 @@ import { normalizeOperationalDateOnly } from "@/lib/services/operations-calendar
 import { resolveCanonicalMemberId } from "@/lib/services/canonical-person-ref";
 import { toEasternISO } from "@/lib/timezone";
 
+type PostgrestErrorLike = {
+  code?: string | null;
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+};
+
+function isActiveHoldOverlapConstraintError(error: PostgrestErrorLike | null | undefined) {
+  if (!error) return false;
+  const code = String(error.code ?? "").toUpperCase();
+  const text = [error.message, error.details, error.hint].filter(Boolean).join(" ").toLowerCase();
+  if (code === "23P01") return true;
+  return text.includes("member_holds_no_overlapping_active_ranges");
+}
+
 
 type ResolveHoldMemberOptions = {
   canonicalInput?: boolean;
@@ -118,7 +133,12 @@ export async function createMemberHoldSupabase(input: {
     })
     .select("*")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (isActiveHoldOverlapConstraintError(error)) {
+      throw new Error("Member already has an overlapping active hold. End the existing hold or pick a non-overlapping date range.");
+    }
+    throw new Error(error.message);
+  }
   return data as MemberHoldRow;
 }
 

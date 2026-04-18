@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 
 import { createCommunityPartnerAction, createReferralSourceAction } from "@/app/sales-partner-actions";
-import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
+import { SalesPartnerSearchPicker } from "@/components/forms/sales-partner-search-picker";
 import { usePropSyncedState } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
 import { COMMUNITY_PARTNER_CATEGORY_OPTIONS } from "@/lib/canonical";
@@ -12,7 +12,7 @@ type ReferralSourceCategory = (typeof COMMUNITY_PARTNER_CATEGORY_OPTIONS)[number
 
 type PartnerLookup = {
   id: string;
-  partner_id?: string;
+  partner_id: string;
   organization_name: string;
 };
 
@@ -92,13 +92,6 @@ export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] 
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
   const [createdPartners, setCreatedPartners] = useState<PartnerLookup[]>([]);
-  const partnerOptions = useMemo(
-    () =>
-      [...partners, ...createdPartners]
-        .filter((partner, index, all) => all.findIndex((candidate) => candidate.id === partner.id) === index)
-        .sort((a, b) => a.organization_name.localeCompare(b.organization_name)),
-    [createdPartners, partners]
-  );
 
   const [form, setForm] = usePropSyncedState(
     () => ({
@@ -112,8 +105,9 @@ export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] 
       notes: "",
       active: true
     }),
-    [partnerOptions.length]
+    [createdPartners.length, partners.length]
   );
+  const [selectedPartner, setSelectedPartner] = useState<PartnerLookup | null>(null);
 
   const [showCreateOrgInline, setShowCreateOrgInline] = useState(false);
   const [orgForm, setOrgForm] = useState<{
@@ -130,26 +124,32 @@ export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] 
     primaryEmail: ""
   });
 
-  const selectedPartner = useMemo(
-    () => partnerOptions.find((partner) => partner.id === form.partnerId) ?? null,
-    [partnerOptions, form.partnerId]
-  );
-
-  useConstrainedSelection({
-    selectedId: form.partnerId,
-    setSelectedId: (nextPartnerId) => setForm((current) => ({ ...current, partnerId: nextPartnerId })),
-    options: partnerOptions,
-    autoSelectSingle: false
-  });
-
   return (
     <div className="space-y-3">
       <div>
         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">Organization</label>
-        <select className="h-11 w-full rounded-lg border border-border px-3" value={form.partnerId} onChange={(event) => setForm((current) => ({ ...current, partnerId: event.target.value }))}>
-          <option value="">Select Organization</option>
-          {partnerOptions.map((partner) => <option key={partner.id} value={partner.id}>{partner.organization_name}</option>)}
-        </select>
+        <SalesPartnerSearchPicker
+          value={form.partnerId}
+          initialOptions={partners}
+          extraOptions={createdPartners}
+          label="Organization"
+          emptyLabel="Select Organization"
+          onChange={(nextPartnerId) => {
+            setForm((current) => ({ ...current, partnerId: nextPartnerId }));
+            if (!nextPartnerId) setSelectedPartner(null);
+          }}
+          onSelectOption={(option) => {
+            setSelectedPartner(
+              option
+                ? {
+                    id: option.id,
+                    partner_id: option.partner_id,
+                    organization_name: option.organization_name
+                  }
+                : null
+            );
+          }}
+        />
         <button type="button" className="mt-2 text-xs font-semibold text-brand" onClick={() => setShowCreateOrgInline((current) => !current)}>
           {showCreateOrgInline ? "Hide inline organization create" : "Add organization inline"}
         </button>
@@ -198,6 +198,7 @@ export function NewReferralSourceForm({ partners }: { partners: PartnerLookup[] 
                 }
 
                 setCreatedPartners((current) => [...current, response.partner]);
+                setSelectedPartner(response.partner);
                 setForm((current) => ({ ...current, partnerId: response.partner.id }));
                 setShowCreateOrgInline(false);
                 setStatus(`Organization created and selected: ${response.partner.organization_name}`);

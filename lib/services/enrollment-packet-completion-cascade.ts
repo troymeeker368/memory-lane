@@ -99,7 +99,8 @@ async function hasLeadCompletionActivity(input: {
     .from("lead_activities")
     .select("id")
     .eq("lead_id", input.leadId)
-    .ilike("notes", `%${input.packetId}%`)
+    .eq("outcome", "Enrollment Packet Completed")
+    .eq("enrollment_packet_request_id", input.packetId)
     .limit(1)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -147,25 +148,29 @@ async function listPacketsMissingLeadCompletionActivity(input: {
 }) {
   const leadIds = Array.from(input.packetIdsByLeadId.keys());
   if (leadIds.length === 0) return new Set<string>();
+  const packetIds = Array.from(
+    new Set(
+      Array.from(input.packetIdsByLeadId.values())
+        .flat()
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+  if (packetIds.length === 0) return new Set<string>();
 
   const admin = createSupabaseAdminClient("enrollment_packet_workflow");
   const { data, error } = await admin
     .from("lead_activities")
-    .select("lead_id, notes")
+    .select("enrollment_packet_request_id")
     .eq("outcome", "Enrollment Packet Completed")
-    .in("lead_id", leadIds);
+    .in("lead_id", leadIds)
+    .in("enrollment_packet_request_id", packetIds);
   if (error) throw new Error(error.message);
 
   const completedPacketIds = new Set<string>();
-  for (const row of (data ?? []) as Array<{ lead_id: string | null; notes: string | null }>) {
-    const leadId = String(row.lead_id ?? "").trim();
-    if (!leadId) continue;
-    const notes = String(row.notes ?? "");
-    for (const packetId of input.packetIdsByLeadId.get(leadId) ?? []) {
-      if (notes.includes(packetId)) {
-        completedPacketIds.add(packetId);
-      }
-    }
+  for (const row of (data ?? []) as Array<{ enrollment_packet_request_id: string | null }>) {
+    const packetId = String(row.enrollment_packet_request_id ?? "").trim();
+    if (packetId) completedPacketIds.add(packetId);
   }
 
   const missingPacketIds = new Set<string>();

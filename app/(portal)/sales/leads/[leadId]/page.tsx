@@ -14,6 +14,27 @@ import { listOperationalEnrollmentPackets } from "@/lib/services/enrollment-pack
 import { getLeadById } from "@/lib/services/leads-read";
 import { formatDate, formatDateTime, formatOptionalDateTime } from "@/lib/utils";
 
+function readinessClassName(status: "committed" | "ready" | "follow_up_required" | "queued_degraded") {
+  if (status === "ready") return "bg-emerald-100 text-emerald-800";
+  if (status === "follow_up_required") return "bg-rose-100 text-rose-800";
+  if (status === "queued_degraded") return "bg-amber-100 text-amber-800";
+  return "bg-slate-100 text-slate-700";
+}
+
+function syncStatusLabel(status: "not_started" | "pending" | "completed" | "failed") {
+  if (status === "completed") return "Completed";
+  if (status === "failed") return "Failed";
+  if (status === "not_started") return "Not Started";
+  return "Pending";
+}
+
+function completionFollowUpLabel(status: "not_started" | "pending" | "completed" | "action_required") {
+  if (status === "completed") return "Completed";
+  if (status === "action_required") return "Action Required";
+  if (status === "not_started") return "Not Started";
+  return "Pending";
+}
+
 export default async function LeadDetailPage({ params }: { params: Promise<{ leadId: string }> }) {
   await requireModuleAccess("sales");
   const { leadId } = await params;
@@ -98,6 +119,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
           <thead>
             <tr>
               <th>Status</th>
+              <th>Workflow Readiness</th>
               <th>Sent</th>
               <th>Last Activity</th>
               <th>Completed</th>
@@ -108,7 +130,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
           <tbody>
             {packets.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-sm text-muted">
+                <td colSpan={7} className="text-sm text-muted">
                   No enrollment packets issued for this lead yet.
                 </td>
               </tr>
@@ -116,6 +138,15 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ lea
               packets.map((packet) => (
                 <tr key={packet.id}>
                   <td className="capitalize">{packet.status.replaceAll("_", " ")}</td>
+                  <td>
+                    <div className="space-y-1">
+                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${readinessClassName(packet.readinessStage)}`}>
+                        {packet.readinessLabel}
+                      </span>
+                      <p className="text-xs text-muted">Mapping sync: {syncStatusLabel(packet.mappingSyncStatus)}</p>
+                      <p className="text-xs text-muted">Follow-up: {completionFollowUpLabel(packet.completionFollowUpStatus)}</p>
+                    </div>
+                  </td>
                   <td>{packet.sentAt ? formatDateTime(packet.sentAt) : "-"}</td>
                   <td>{formatDateTime(packet.lastFamilyActivityAt ?? packet.updatedAt)}</td>
                   <td>

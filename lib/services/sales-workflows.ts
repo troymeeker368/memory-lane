@@ -70,7 +70,7 @@ const PIPELINE_STAGE_ORDER = [
   "Closed - Lost"
 ] as const;
 const SALES_DASHBOARD_SUMMARY_RPC = "rpc_get_sales_dashboard_summary";
-const SALES_DASHBOARD_SUMMARY_MIGRATION = "0197_sales_dashboard_follow_up_summary_rpc.sql";
+const SALES_DASHBOARD_SUMMARY_MIGRATION = "0209_sales_dashboard_summary_lead_count_slimming.sql";
 
 function resolveCanonicalLeadStageStatus(lead: Pick<LeadSummaryLike, "stage" | "status">) {
   return resolveCanonicalLeadState({

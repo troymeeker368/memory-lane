@@ -88,7 +88,7 @@ export default async function CompletedEnrollmentPacketsPage({
           >
             <option value="all">All Operational Readiness</option>
             <option value="operationally_ready">Operationally Ready</option>
-            <option value="filed_pending_mapping">Filed, Mapping Pending</option>
+            <option value="filed_pending_mapping">Filed, Mapping/Follow-up Pending</option>
             <option value="mapping_failed">Mapping Failed</option>
             <option value="not_filed">Not Filed</option>
           </select>

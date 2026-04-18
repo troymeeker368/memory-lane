@@ -42,3 +42,13 @@ test("dashboard member data stays behind shared dashboard services", () => {
   assert.equal(dashboardPageSource.includes("listMemberNameLookupSupabase"), false);
   assert.equal(dashboardPageSource.includes('supabase.from("members").select("id, display_name")'), false);
 });
+
+test("transportation add-rider member options reuse the shared picker boundary", () => {
+  const runtimeSource = readWorkspaceFile("lib/services/member-command-center-runtime.ts");
+
+  assert.equal(runtimeSource.includes("listMemberPickerOptionsSupabase({"), true);
+  assert.equal(
+    runtimeSource.includes('from("members")\n          .select("id, display_name, status")'),
+    false
+  );
+});

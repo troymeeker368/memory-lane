@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { loadSalesReferralSourcesForPartnerAction } from "@/app/lookup-actions";
+import { SalesPartnerSearchPicker } from "@/components/forms/sales-partner-search-picker";
 import { saveSalesLeadAction } from "@/app/sales-lead-actions";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
 import { Button } from "@/components/ui/button";
@@ -154,7 +155,6 @@ export function SalesInquiryForm({
   const [mergeTargetLeadId, setMergeTargetLeadId] = usePropSyncedState("", syncDeps);
   const normalizedInitialLead = normalizeLeadFormSummary(initialLead);
   const [loadedReferralSources, setLoadedReferralSources] = useState<ReferralSourceLookup[]>(referralSources);
-
   const defaultPartnerId =
     partners.find((partner) => partner.partner_id === (initialLead?.partner_id ?? initialPartnerId))?.id ?? "";
   const defaultReferralId =
@@ -166,6 +166,14 @@ export function SalesInquiryForm({
           return source ? partner.partner_id === source.partner_id : false;
         })?.id ?? ""
       : "";
+  const initialSelectedPartner = useMemo(
+    () => partners.find((partner) => partner.id === (defaultPartnerId || fallbackPartnerFromReferralId)) ?? null,
+    [defaultPartnerId, fallbackPartnerFromReferralId, partners]
+  );
+  const [selectedPartner, setSelectedPartner] = usePropSyncedState<PartnerLookup | null>(
+    () => initialSelectedPartner,
+    [initialSelectedPartner?.id ?? "", ...syncDeps]
+  );
 
   const [form, setForm] = usePropSyncedState<SalesLeadFormState>(
     () => ({
@@ -223,6 +231,12 @@ export function SalesInquiryForm({
   useEffect(() => {
     setLoadedReferralSources(referralSources);
   }, [referralSources]);
+
+  useEffect(() => {
+    if (!selectedPartner?.id) return;
+    if (loadedReferralSources.length > 0) return;
+    loadReferralSourcesForPartner(selectedPartner.id, form.referralSourceId || null);
+  }, [form.referralSourceId, loadedReferralSources.length, selectedPartner?.id]);
 
   function updateForm(updater: SalesLeadFormState | ((current: SalesLeadFormState) => SalesLeadFormState)) {
     setForm((current) => (typeof updater === "function" ? updater(current) : updater));
@@ -293,7 +307,6 @@ export function SalesInquiryForm({
   const showReferralName = form.leadSource === "Referral";
   const showLeadSourceOther = form.leadSource === "Other";
 
-  const selectedPartner = partners.find((partner) => partner.id === form.partnerId) ?? null;
   const filteredReferralSources = selectedPartner
     ? loadedReferralSources.filter((source) => source.partner_id === selectedPartner.partner_id)
     : [];
@@ -438,24 +451,36 @@ export function SalesInquiryForm({
 
       <div className="grid gap-3 md:grid-cols-2">
         <div>
-          <FieldLabel>Community Partner Organization</FieldLabel>
-          <select
-            className="h-11 w-full rounded-lg border border-border px-3"
+          <SalesPartnerSearchPicker
             value={form.partnerId}
-            onChange={(event) => {
-              const nextPartnerId = event.target.value;
+            initialOptions={partners}
+            onChange={(nextPartnerId) => {
               updateForm((current) => ({
                 ...current,
                 partnerId: nextPartnerId,
                 referralSourceId: "",
                 referralName: ""
               }));
+              if (!nextPartnerId) {
+                setSelectedPartner(null);
+                setLoadedReferralSources([]);
+                return;
+              }
               loadReferralSourcesForPartner(nextPartnerId);
             }}
-          >
-            <option value="">No linked Community Partner</option>
-            {partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.organization_name}</option>)}
-          </select>
+            onSelectOption={(option) => {
+              setSelectedPartner(
+                option
+                  ? {
+                      id: option.id,
+                      partner_id: option.partner_id,
+                      organization_name: option.organization_name
+                    }
+                  : null
+              );
+            }}
+            emptyOptionLabel="No linked Community Partner"
+          />
         </div>
 
         {showReferralName ? (
@@ -472,7 +497,7 @@ export function SalesInquiryForm({
                   ...current,
                   referralSourceId,
                   referralName: source ? source.contact_name : current.referralName,
-                  partnerId: source ? (partners.find((partner) => partner.partner_id === source.partner_id)?.id ?? current.partnerId) : current.partnerId
+                  partnerId: source && selectedPartner ? selectedPartner.id : current.partnerId
                 }));
               }}
             >

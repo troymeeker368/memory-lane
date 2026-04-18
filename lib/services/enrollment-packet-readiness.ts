@@ -38,19 +38,27 @@ export function toEnrollmentPacketCompletionFollowUpStatus(
 export function resolveEnrollmentPacketOperationalReadiness(input: {
   status: string | null | undefined;
   mappingSyncStatus: string | null | undefined;
+  completionFollowUpStatus?: string | null | undefined;
 }): EnrollmentPacketOperationalReadinessStatus {
   const packetStatus = normalizeEnrollmentPacketStatus(input.status);
   if (packetStatus === "not_filed") return "not_filed";
 
   const mappingSyncStatus = toEnrollmentPacketMappingSyncStatus(input.mappingSyncStatus);
-  if (mappingSyncStatus === "completed") return "operationally_ready";
   if (mappingSyncStatus === "failed") return "mapping_failed";
+  if (mappingSyncStatus === "completed") {
+    const completionFollowUpStatus =
+      input.completionFollowUpStatus == null
+        ? "completed"
+        : toEnrollmentPacketCompletionFollowUpStatus(input.completionFollowUpStatus);
+    return completionFollowUpStatus === "completed" ? "operationally_ready" : "filed_pending_mapping";
+  }
   return "filed_pending_mapping";
 }
 
 export function isEnrollmentPacketOperationallyReady(input: {
   status: string | null | undefined;
   mappingSyncStatus: string | null | undefined;
+  completionFollowUpStatus?: string | null | undefined;
 }) {
   return resolveEnrollmentPacketOperationalReadiness(input) === "operationally_ready";
 }

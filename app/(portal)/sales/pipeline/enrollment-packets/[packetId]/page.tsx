@@ -10,6 +10,27 @@ import {
 } from "@/lib/services/enrollment-packets";
 import { formatDateTime, formatOptionalDateTime } from "@/lib/utils";
 
+function readinessClassName(status: "committed" | "ready" | "follow_up_required" | "queued_degraded") {
+  if (status === "ready") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (status === "follow_up_required") return "border-rose-200 bg-rose-50 text-rose-800";
+  if (status === "queued_degraded") return "border-amber-200 bg-amber-50 text-amber-800";
+  return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
+function syncStatusLabel(status: "not_started" | "pending" | "completed" | "failed") {
+  if (status === "completed") return "Completed";
+  if (status === "failed") return "Failed";
+  if (status === "not_started") return "Not Started";
+  return "Pending";
+}
+
+function completionFollowUpLabel(status: "not_started" | "pending" | "completed" | "action_required") {
+  if (status === "completed") return "Completed";
+  if (status === "action_required") return "Action Required";
+  if (status === "not_started") return "Not Started";
+  return "Pending";
+}
+
 export default async function EnrollmentPacketDetailPage({
   params
 }: {
@@ -60,6 +81,14 @@ export default async function EnrollmentPacketDetailPage({
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted">Initiated By</p>
             <p className="font-semibold">{packet.senderName ?? packet.senderUserId}</p>
+          </div>
+          <div className={`rounded-lg border p-3 md:col-span-3 ${readinessClassName(packet.readinessStage)}`}>
+            <p className="text-xs text-muted">Workflow Readiness</p>
+            <p className="font-semibold">{packet.readinessLabel}</p>
+            <p className="mt-1 text-xs">Mapping sync: {syncStatusLabel(packet.mappingSyncStatus)}</p>
+            <p className="text-xs">Follow-up: {completionFollowUpLabel(packet.completionFollowUpStatus)}</p>
+            {packet.mappingSyncError ? <p className="mt-2 text-xs">{packet.mappingSyncError}</p> : null}
+            {packet.completionFollowUpError ? <p className="mt-1 text-xs">{packet.completionFollowUpError}</p> : null}
           </div>
         </div>
         {packet.voidReason ? (

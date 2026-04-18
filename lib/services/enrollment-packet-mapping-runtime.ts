@@ -322,6 +322,7 @@ export async function addLeadActivity(input: {
 }
 
 async function addLeadActivityStrict(input: {
+  enrollmentPacketRequestId: string;
   leadId: string;
   memberName: string | null;
   activityType: string;
@@ -352,6 +353,7 @@ async function addLeadActivityStrict(input: {
   });
   if (existingActivityId) return;
   const { error } = await admin.from("lead_activities").insert({
+    enrollment_packet_request_id: input.enrollmentPacketRequestId,
     lead_id: input.leadId,
     member_name: input.memberName,
     activity_at: activityAt,
@@ -379,6 +381,7 @@ export async function syncEnrollmentPacketLeadActivityOrQueue(input: {
 }) {
   try {
     await addLeadActivityStrict({
+      enrollmentPacketRequestId: input.packetId,
       leadId: input.leadId,
       memberName: input.memberName,
       activityType: input.activityType,
@@ -493,7 +496,8 @@ export async function recordEnrollmentPacketSubmittedMilestone(input: {
         : "pending";
   const operationalReadinessStatus = resolveEnrollmentPacketOperationalReadiness({
     status: "filed",
-    mappingSyncStatus
+    mappingSyncStatus,
+    completionFollowUpStatus: input.request.completion_follow_up_status
   });
   const metadata = {
     member_id: input.member.id,

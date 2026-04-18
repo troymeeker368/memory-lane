@@ -134,6 +134,10 @@ const BILLING_INVOICE_LIST_SELECT = [
 ].join(", ");
 
 const FINALIZED_BILLING_INVOICE_STATUSES = ["Finalized", "Sent", "Paid", "PartiallyPaid", "Void"] as const;
+const BILLING_BATCH_PAGE_LIMIT_DEFAULT = 50;
+const BILLING_BATCH_PAGE_LIMIT_MAX = 100;
+const BILLING_EXPORT_JOB_LIMIT_DEFAULT = 50;
+const BILLING_EXPORT_JOB_LIMIT_MAX = 100;
 
 export type BillingInvoiceListPage = {
   rows: ReturnType<typeof normalizeInvoiceRow>[];
@@ -145,6 +149,11 @@ export type BillingInvoiceListPage = {
 };
 
 type BillingInvoicePaginationInput = {
+  page?: number;
+  pageSize?: number;
+};
+
+type BillingPageInput = {
   page?: number;
   pageSize?: number;
 };
@@ -174,6 +183,40 @@ function resolveBillingInvoicePagination(input?: BillingInvoicePaginationInput) 
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   return { page, pageSize, from, to };
+}
+
+function buildBillingPageResult<T>(input: {
+  rows: T[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+}) {
+  return {
+    rows: input.rows,
+    page: input.page,
+    pageSize: input.pageSize,
+    totalCount: input.totalCount,
+    hasPreviousPage: input.page > 1,
+    hasNextPage: (input.page - 1) * input.pageSize + input.rows.length < input.totalCount
+  };
+}
+
+function resolveBillingReadLimit(input: {
+  requestedLimit?: number;
+  fallback: number;
+  max: number;
+}) {
+  const normalizedLimit = Number.isFinite(input.requestedLimit) ? Math.floor(Number(input.requestedLimit)) : input.fallback;
+  return Math.max(1, Math.min(normalizedLimit, input.max));
+}
+
+function normalizeBillingBatchRow(row: BillingBatchRow) {
+  return {
+    ...row,
+    invoice_count: asNumber(row.invoice_count),
+    total_amount: toAmount(asNumber(row.total_amount)),
+    dueState: computeDueState(row.next_due_date ?? null, row.completion_date ?? null)
+  };
 }
 
 async function loadBillingInvoiceListPage(input: {
@@ -262,13 +305,26 @@ export async function getBillingGenerationPreview(input: {
   return getBillingGenerationPreviewFromHelpers(input);
 }
 
-export async function getBillingBatches() {
+export async function getBillingBatches(input?: {
+  limit?: number;
+  includeBatchId?: string | null;
+}) {
   const supabase = await createClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("billing_batches")
     .select("*")
     .order("billing_month", { ascending: false })
     .order("created_at", { ascending: false });
+  if (input?.limit) {
+    query = query.limit(
+      resolveBillingReadLimit({
+        requestedLimit: input.limit,
+        fallback: BILLING_BATCH_PAGE_LIMIT_DEFAULT,
+        max: BILLING_BATCH_PAGE_LIMIT_MAX
+      })
+    );
+  }
+  const { data, error } = await query;
   if (error) {
     if (isMissingSchemaObjectError(error)) {
       throw new Error(
@@ -280,12 +336,26 @@ export async function getBillingBatches() {
     }
     throw new Error(error.message);
   }
-  return ((data ?? []) as BillingBatchRow[]).map((row) => ({
-    ...row,
-    invoice_count: asNumber(row.invoice_count),
-    total_amount: toAmount(asNumber(row.total_amount)),
-    dueState: computeDueState(row.next_due_date ?? null, row.completion_date ?? null)
-  }));
+  const batchRows = ((data ?? []) as BillingBatchRow[]).map(normalizeBillingBatchRow);
+  const includeBatchId = String(input?.includeBatchId ?? "").trim();
+  if (!includeBatchId || batchRows.some((row) => row.id === includeBatchId)) {
+    return batchRows;
+  }
+
+  const { data: includedBatch, error: includedBatchError } = await supabase
+    .from("billing_batches")
+    .select("*")
+    .eq("id", includeBatchId)
+    .maybeSingle();
+  if (includedBatchError) throw new Error(includedBatchError.message);
+  if (!includedBatch) return batchRows;
+
+  return [...batchRows, normalizeBillingBatchRow(includedBatch as BillingBatchRow)].sort((left, right) => {
+    if (left.billing_month !== right.billing_month) {
+      return left.billing_month < right.billing_month ? 1 : -1;
+    }
+    return String(left.created_at) < String(right.created_at) ? 1 : -1;
+  });
 }
 
 export async function getDraftInvoices(input?: BillingInvoicePaginationInput) {
@@ -570,13 +640,23 @@ export async function getVariableChargesQueue(input: { month: string }) {
   return rows.sort((left, right) => (left.chargeDate < right.chargeDate ? 1 : -1));
 }
 
-export async function getBillingExports() {
+export async function getBillingExports(input?: { limit?: number }) {
   const supabase = await createClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("billing_export_jobs")
     .select("*")
     .order("generated_at", { ascending: false })
     .order("created_at", { ascending: false });
+  if (input?.limit) {
+    query = query.limit(
+      resolveBillingReadLimit({
+        requestedLimit: input.limit,
+        fallback: BILLING_EXPORT_JOB_LIMIT_DEFAULT,
+        max: BILLING_EXPORT_JOB_LIMIT_MAX
+      })
+    );
+  }
+  const { data, error } = await query;
   if (error) {
     if (isMissingSchemaObjectError(error)) {
       throw new Error(

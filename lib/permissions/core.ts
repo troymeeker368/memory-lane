@@ -272,7 +272,7 @@ export function canManagePhysicianOrders(input: Pick<UserProfile, "role" | "perm
     role: input.role,
     permissions: input.permissions,
     module: "health",
-    action: "canView",
+    action: "canEdit",
     allowedRoles: PHYSICIAN_ORDER_MODULE_ROLES
   });
 }
@@ -286,7 +286,7 @@ export function canManagePofSignatureWorkflow(input: Pick<UserProfile, "role" | 
     role: input.role,
     permissions: input.permissions,
     module: "health",
-    action: "canView",
+    action: "canEdit",
     allowedRoles: PHYSICIAN_ORDER_SIGNATURE_WORKFLOW_ROLES
   });
 }
@@ -310,7 +310,7 @@ export function canDocumentMar(input: Pick<UserProfile, "role" | "permissions">)
     role: input.role,
     permissions: input.permissions,
     module: "health",
-    action: "canView",
+    action: "canEdit",
     allowedRoles: MAR_MODULE_ROLES
   });
 }

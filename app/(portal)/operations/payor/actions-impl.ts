@@ -188,10 +188,13 @@ async function handleSaveCenterClosure(formData: FormData) {
     updated_by_name: profile.full_name
   };
 
-  await upsertCenterClosure({
+  const saved = await upsertCenterClosure({
     id: id || undefined,
     ...payload
   });
+  if (id && !saved) {
+    throw new Error("Center closure not found.");
+  }
 
   revalidateBillingPaths();
 }
@@ -241,10 +244,13 @@ async function handleSaveClosureRule(formData: FormData) {
     updated_by_user_id: profile.id,
     updated_by_name: profile.full_name
   };
-  await upsertClosureRule({
+  const saved = await upsertClosureRule({
     id,
     ...payload
   });
+  if (!saved) {
+    throw new Error("Closure rule not found.");
+  }
 
   await ensureCenterClosuresForCurrentAndNextYear({
     generatedByUserId: profile.id,
@@ -299,7 +305,10 @@ async function handleSavePayor(formData: FormData) {
     updated_by_name: profile.full_name
   };
 
-  await upsertPayor({ id: id || undefined, ...payload });
+  const saved = await upsertPayor({ id: id || undefined, ...payload });
+  if (id && !saved) {
+    throw new Error("Payor not found.");
+  }
 
   revalidateBillingPaths();
 }
@@ -350,10 +359,13 @@ async function handleSaveMemberBillingSetting(formData: FormData) {
     updated_by_name: profile.full_name
   };
 
-  await upsertMemberBillingSetting({
+  const saved = await upsertMemberBillingSetting({
     id: id || undefined,
     row: payload
   });
+  if (id && !saved) {
+    throw new Error("Member billing setting not found.");
+  }
 
   revalidateBillingPaths();
 }
@@ -393,10 +405,13 @@ async function handleSaveBillingScheduleTemplate(formData: FormData) {
     updated_by_name: profile.full_name
   };
 
-  await upsertBillingScheduleTemplate({
+  const saved = await upsertBillingScheduleTemplate({
     id: id || undefined,
     row: payload
   });
+  if (id && !saved) {
+    throw new Error("Billing schedule template not found.");
+  }
 
   revalidateBillingPaths();
 }
@@ -438,13 +453,16 @@ async function handleSaveBillingAdjustment(formData: FormData) {
     created_by_name: profile.full_name
   };
 
-  await upsertBillingAdjustment({
+  const saved = await upsertBillingAdjustment({
     id: id || undefined,
     row: {
       ...payload,
       exclusion_reason: payload.billing_status === "Excluded" ? "Manually excluded" : null
     }
   });
+  if (id && !saved) {
+    throw new Error("Billing adjustment not found.");
+  }
 
   revalidateBillingPaths();
 }
@@ -565,10 +583,14 @@ async function handleFinalizeDraftInvoices(formData: FormData) {
     if (!access.ok) {
       redirectWithError(returnPath, access.error);
     }
-    const invoiceIds = formData
+    let invoiceIds = formData
       .getAll("invoiceIds")
       .map((value) => String(value ?? "").trim())
       .filter(Boolean);
+    if (invoiceIds.length === 0 && asString(formData, "finalizeScope") === "all") {
+      const { listAllDraftInvoiceIds } = await import("@/lib/services/billing-read-supabase");
+      invoiceIds = await listAllDraftInvoiceIds();
+    }
     const result = await finalizeInvoices({
       invoiceIds,
       finalizedBy: access.profile.full_name
@@ -593,7 +615,7 @@ async function handleSetVariableChargeStatus(formData: FormData) {
     table:
       table === "transportationLogs" || table === "ancillaryLogs" || table === "billingAdjustments"
         ? table
-        : "billingAdjustments",
+      : "billingAdjustments",
     id: asString(formData, "id"),
     billingStatus: status === "Billed" || status === "Excluded" ? status : "Unbilled",
     exclusionReason: asNullableString(formData, "exclusionReason")

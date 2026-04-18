@@ -27,13 +27,17 @@ function applyCompletedPacketOperationalReadinessFilter(
   operationalReadiness: CompletedEnrollmentPacketFilters["operationalReadiness"]
 ) {
   if (operationalReadiness === "operationally_ready") {
-    return query.eq("mapping_sync_status", "completed");
+    return query
+      .eq("mapping_sync_status", "completed")
+      .eq("completion_follow_up_status", "completed");
   }
   if (operationalReadiness === "mapping_failed") {
     return query.eq("mapping_sync_status", "failed");
   }
   if (operationalReadiness === "filed_pending_mapping") {
-    return query.or("mapping_sync_status.is.null,mapping_sync_status.eq.pending,mapping_sync_status.eq.not_started");
+    return query.or(
+      "mapping_sync_status.is.null,mapping_sync_status.eq.pending,mapping_sync_status.eq.not_started,and(mapping_sync_status.eq.completed,completion_follow_up_status.neq.completed)"
+    );
   }
   return query;
 }

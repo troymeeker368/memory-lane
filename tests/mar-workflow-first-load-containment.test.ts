@@ -7,6 +7,8 @@ test("MAR workflow first load caps history-style datasets without changing live 
   const marReadSource = readFileSync("lib/services/mar-workflow-read.ts", "utf8");
   const marWriteSource = readFileSync("lib/services/mar-workflow.ts", "utf8");
   const marReconcileSource = readFileSync("lib/services/mar-reconcile.ts", "utf8");
+  const marDashboardSource = readFileSync("lib/services/mar-dashboard-read-model.ts", "utf8");
+  const healthDashboardSource = readFileSync("lib/services/health-dashboard.ts", "utf8");
 
   assert.equal(marPageSource.includes("const MAR_FIRST_LOAD_HISTORY_LIMIT = 100;"), true);
   assert.equal(marPageSource.includes("const MAR_FIRST_LOAD_NOT_GIVEN_LIMIT = 100;"), true);
@@ -42,4 +44,16 @@ test("MAR workflow first load caps history-style datasets without changing live 
   assert.equal(marReadSource.includes("reconcileMarSchedulesForMember({"), true);
   assert.equal(marWriteSource.includes('import { reconcileMarSchedulesForMember } from "@/lib/services/mar-reconcile";'), true);
   assert.equal(marWriteSource.includes("return reconcileMarSchedulesForMember({"), true);
+  assert.equal(marDashboardSource.includes("const MAR_DASHBOARD_ACTION_WINDOW_HOURS = 12;"), true);
+  assert.equal(marDashboardSource.includes("const MAR_DASHBOARD_RECENT_LIMIT = 8;"), true);
+  assert.equal(marDashboardSource.includes('.neq("status", "Given")'), true);
+  assert.equal(marDashboardSource.includes('.lte("scheduled_time", getDashboardTimeHorizon(options?.hoursAhead ?? MAR_DASHBOARD_ACTION_WINDOW_HOURS))'), true);
+  assert.equal(marDashboardSource.includes('.eq("status", "Given")'), true);
+  assert.equal(marDashboardSource.includes('.order("administered_at", { ascending: false })'), true);
+  assert.equal(marDashboardSource.includes(".limit(getDashboardRecentLimit(options?.limit))"), true);
+  assert.equal(healthDashboardSource.includes("getHealthDashboardMarSnapshot({"), true);
+  assert.equal(healthDashboardSource.includes("hoursAhead: 12,"), true);
+  assert.equal(healthDashboardSource.includes("recentLimit: 8"), true);
+  assert.equal(healthDashboardSource.includes("const marRows = marSnapshot.actionRows.map(normalizeDashboardMarRow);"), true);
+  assert.equal(healthDashboardSource.includes("const recentMarRows = marSnapshot.recentRows.map(normalizeDashboardMarRow);"), true);
 });

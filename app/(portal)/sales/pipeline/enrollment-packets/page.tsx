@@ -6,6 +6,27 @@ import { requireModuleAccess } from "@/lib/auth";
 import { listOperationalEnrollmentPackets } from "@/lib/services/enrollment-packets";
 import { formatOptionalDateTime } from "@/lib/utils";
 
+function readinessClassName(status: "committed" | "ready" | "follow_up_required" | "queued_degraded") {
+  if (status === "ready") return "bg-emerald-100 text-emerald-800";
+  if (status === "follow_up_required") return "bg-rose-100 text-rose-800";
+  if (status === "queued_degraded") return "bg-amber-100 text-amber-800";
+  return "bg-slate-100 text-slate-700";
+}
+
+function syncStatusLabel(status: "not_started" | "pending" | "completed" | "failed") {
+  if (status === "completed") return "Completed";
+  if (status === "failed") return "Failed";
+  if (status === "not_started") return "Not Started";
+  return "Pending";
+}
+
+function completionFollowUpLabel(status: "not_started" | "pending" | "completed" | "action_required") {
+  if (status === "completed") return "Completed";
+  if (status === "action_required") return "Action Required";
+  if (status === "not_started") return "Not Started";
+  return "Pending";
+}
+
 function firstValue(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0] ?? "";
   return value ?? "";
@@ -75,6 +96,7 @@ export default async function SalesEnrollmentPacketsPage({
             <tr>
               <th>Lead</th>
               <th>Status</th>
+              <th>Workflow Readiness</th>
               <th>Sent</th>
               <th>Last Activity</th>
               <th>Completed</th>
@@ -86,7 +108,7 @@ export default async function SalesEnrollmentPacketsPage({
           <tbody>
             {packets.length === 0 ? (
               <tr>
-                <td colSpan={8} className="text-center text-sm text-muted">
+                <td colSpan={9} className="text-center text-sm text-muted">
                   No enrollment packets found for the current filters.
                 </td>
               </tr>
@@ -95,6 +117,21 @@ export default async function SalesEnrollmentPacketsPage({
                 <tr key={packet.id}>
                   <td>{packet.leadMemberName ?? packet.memberName}</td>
                   <td className="capitalize">{packet.status.replaceAll("_", " ")}</td>
+                  <td>
+                    <div className="space-y-1">
+                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${readinessClassName(packet.readinessStage)}`}>
+                        {packet.readinessLabel}
+                      </span>
+                      <p className="text-xs text-muted">Mapping sync: {syncStatusLabel(packet.mappingSyncStatus)}</p>
+                      <p className="text-xs text-muted">Follow-up: {completionFollowUpLabel(packet.completionFollowUpStatus)}</p>
+                      {packet.mappingSyncError ? (
+                        <p className="max-w-xs text-xs text-rose-700">{packet.mappingSyncError}</p>
+                      ) : null}
+                      {packet.completionFollowUpError ? (
+                        <p className="max-w-xs text-xs text-rose-700">{packet.completionFollowUpError}</p>
+                      ) : null}
+                    </div>
+                  </td>
                   <td>{formatOptionalDateTime(packet.sentAt)}</td>
                   <td>{formatOptionalDateTime(packet.lastFamilyActivityAt ?? packet.updatedAt)}</td>
                   <td>

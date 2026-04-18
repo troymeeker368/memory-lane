@@ -196,7 +196,8 @@ async function MemberHealthProfileOverviewSummaryPanels({
   canViewPhysicianOrders: boolean;
 }) {
   const overviewData = await getMemberHealthProfileOverviewSummaryReadModel(memberId, {
-    canonicalInput: true
+    canonicalInput: true,
+    includeRelatedPhysicianOrders: canViewPhysicianOrders
   });
   const carePlanSummary = overviewData.carePlanSummary;
   const progressNoteSummary = overviewData.progressNoteSummary;
@@ -319,56 +320,54 @@ async function MemberHealthProfileOverviewSummaryPanels({
         </table>
       </Card>
 
-      <Card className="table-wrap">
-        <SectionHeading
-          title="Related Physician Orders / POF"
-          lastUpdatedAt={physicianOrdersUpdatedAt}
-          lastUpdatedBy={physicianOrdersUpdatedBy}
-        />
-        <div className="mt-2 flex flex-wrap gap-2">
-          {canViewPhysicianOrders ? (
+      {canViewPhysicianOrders ? (
+        <Card className="table-wrap">
+          <SectionHeading
+            title="Related Physician Orders / POF"
+            lastUpdatedAt={physicianOrdersUpdatedAt}
+            lastUpdatedBy={physicianOrdersUpdatedBy}
+          />
+          <div className="mt-2 flex flex-wrap gap-2">
             <Link href={`/health/physician-orders?memberId=${memberId}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
               Open Member POF List
             </Link>
-          ) : null}
-          {canViewPhysicianOrders ? (
             <Link href={`/health/physician-orders/new?memberId=${memberId}`} className="rounded-lg border border-border px-3 py-2 text-sm font-semibold">
               New Physician Order
             </Link>
-          ) : null}
-        </div>
-        <table className="mt-3">
-          <thead><tr><th>Status</th><th>Clinical Sync</th><th>Provider</th><th>Sent</th><th>Signed</th><th>Updated</th><th>Open</th></tr></thead>
-          <tbody>
-            {relatedPhysicianOrders.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="text-sm text-muted">No physician orders found for this member yet.</td>
-              </tr>
-            ) : (
-              relatedPhysicianOrders.slice(0, 25).map((row) => (
-                <tr key={row.id}>
-                  <td>{row.status}</td>
-                  <td>
-                    <div className="space-y-1">
-                      <p>{row.clinicalSyncDetail?.label ?? clinicalSyncLabel(row.clinicalSyncStatus)}</p>
-                      {row.clinicalSyncDetail?.message ? (
-                        <p className={`max-w-xs text-xs ${row.clinicalSyncDetail.actionNeeded ? "text-amber-800" : "text-muted"}`}>
-                          {row.clinicalSyncDetail.message}
-                        </p>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td>{row.providerName ?? "-"}</td>
-                  <td>{row.completedDate ? formatDate(row.completedDate) : "-"}</td>
-                  <td>{row.signedDate ? formatDate(row.signedDate) : "-"}</td>
-                  <td>{formatDateTime(row.updatedAt)}</td>
-                  <td><Link className="font-semibold text-brand" href={`/health/physician-orders/${row.id}?from=mhp`}>Open</Link></td>
+          </div>
+          <table className="mt-3">
+            <thead><tr><th>Status</th><th>Clinical Sync</th><th>Provider</th><th>Sent</th><th>Signed</th><th>Updated</th><th>Open</th></tr></thead>
+            <tbody>
+              {relatedPhysicianOrders.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="text-sm text-muted">No physician orders found for this member yet.</td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </Card>
+              ) : (
+                relatedPhysicianOrders.slice(0, 25).map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.status}</td>
+                    <td>
+                      <div className="space-y-1">
+                        <p>{row.clinicalSyncDetail?.label ?? clinicalSyncLabel(row.clinicalSyncStatus)}</p>
+                        {row.clinicalSyncDetail?.message ? (
+                          <p className={`max-w-xs text-xs ${row.clinicalSyncDetail.actionNeeded ? "text-amber-800" : "text-muted"}`}>
+                            {row.clinicalSyncDetail.message}
+                          </p>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>{row.providerName ?? "-"}</td>
+                    <td>{row.completedDate ? formatDate(row.completedDate) : "-"}</td>
+                    <td>{row.signedDate ? formatDate(row.signedDate) : "-"}</td>
+                    <td>{formatDateTime(row.updatedAt)}</td>
+                    <td><Link className="font-semibold text-brand" href={`/health/physician-orders/${row.id}?from=mhp`}>Open</Link></td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </Card>
+      ) : null}
     </div>
   );
 }

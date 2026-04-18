@@ -6,7 +6,8 @@ import { requireCarePlanAuthorizedUser } from "@/lib/services/care-plan-authoriz
 import {
   getLeadFormLookups,
   listEnrollmentPacketEligibleLeadPicker,
-  listSalesLeadPickerOptions
+  listSalesLeadPickerOptions,
+  listSalesPartnerPickerOptions
 } from "@/lib/services/leads-read";
 import { listMemberPickerOptionsSupabase } from "@/lib/services/shared-lookups-supabase";
 
@@ -88,6 +89,15 @@ export async function searchEnrollmentPacketEligibleLeadsAction(input: MemberLoo
 export async function searchSalesLeadsAction(input: MemberLookupRequest) {
   await requireModuleAccess("sales");
   return listSalesLeadPickerOptions({
+    q: input.q,
+    selectedId: input.selectedId,
+    limit: input.limit ?? 25
+  });
+}
+
+export async function searchSalesPartnersAction(input: MemberLookupRequest) {
+  await requireModuleAccess("sales");
+  return listSalesPartnerPickerOptions({
     q: input.q,
     selectedId: input.selectedId,
     limit: input.limit ?? 25

@@ -47,7 +47,10 @@ export default async function BillingBatchesPage({
       billingMonth,
       batchType
     }),
-    getBillingBatches(),
+    getBillingBatches({
+      limit: 50,
+      includeBatchId: selectedBatchId || null
+    }),
     getBillingMemberPayorLookups(),
     getCurrentProfile()
   ]);

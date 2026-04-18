@@ -8,6 +8,7 @@ import {
   createPartnerActivityAction,
   createReferralSourceAction
 } from "@/app/sales-partner-actions";
+import { SalesPartnerSearchPicker } from "@/components/forms/sales-partner-search-picker";
 import { SalesLeadSearchPicker } from "@/components/forms/sales-lead-search-picker";
 import { useConstrainedSelection } from "@/components/forms/use-constrained-selection";
 import { usePropSyncedState, usePropSyncedStatus } from "@/components/forms/use-prop-synced-state";
@@ -50,12 +51,13 @@ export function SalesPartnerActivityForm({
   const [createdPartners, setCreatedPartners] = useState<PartnerLookup[]>([]);
   const [createdReferralSources, setCreatedReferralSources] = useState<ReferralSourceLookup[]>([]);
   const [loadedReferralSources, setLoadedReferralSources] = useState<ReferralSourceLookup[]>(referralSources);
-  const partnerOptions = useMemo(
-    () =>
-      [...partners, ...createdPartners]
-        .filter((partner, index, all) => all.findIndex((candidate) => candidate.id === partner.id) === index)
-        .sort((a, b) => a.organization_name.localeCompare(b.organization_name)),
-    [createdPartners, partners]
+  const initialSelectedPartner = useMemo(
+    () => [...createdPartners, ...partners].find((partner) => partner.id === initialPartnerId || partner.partner_id === initialPartnerId) ?? null,
+    [createdPartners, initialPartnerId, partners]
+  );
+  const [selectedPartner, setSelectedPartner] = usePropSyncedState<PartnerLookup | null>(
+    () => initialSelectedPartner,
+    [initialSelectedPartner?.id ?? "", initialLeadId, initialPartnerId, initialReferralSourceId]
   );
   const referralOptions = useMemo(
     () =>
@@ -66,7 +68,7 @@ export function SalesPartnerActivityForm({
   );
   const [form, setForm] = usePropSyncedState(
     () => ({
-      partnerId: initialPartnerId ?? "",
+      partnerId: initialSelectedPartner?.id ?? initialPartnerId ?? "",
       referralSourceId: initialReferralSourceId ?? "",
       leadId: initialLeadId ?? "",
       activityAt: now,
@@ -75,7 +77,7 @@ export function SalesPartnerActivityForm({
       nextFollowUpType: "Call" as (typeof LEAD_FOLLOW_UP_TYPES)[number],
       notes: ""
     }),
-    [initialLeadId, initialPartnerId, initialReferralSourceId, now]
+    [initialLeadId, initialPartnerId, initialReferralSourceId, initialSelectedPartner?.id ?? "", now]
   );
 
   const [showCreateOrgInline, setShowCreateOrgInline] = useState(false);
@@ -95,8 +97,6 @@ export function SalesPartnerActivityForm({
 
   const [showCreateReferralInline, setShowCreateReferralInline] = useState(false);
   const [newReferralName, setNewReferralName] = useState("");
-
-  const selectedPartner = partnerOptions.find((partner) => partner.id === form.partnerId) ?? null;
   const filteredReferralSources = selectedPartner
     ? referralOptions.filter((source) => source.partner_id === selectedPartner.partner_id)
     : [];
@@ -106,6 +106,12 @@ export function SalesPartnerActivityForm({
   useEffect(() => {
     setLoadedReferralSources(referralSources);
   }, [referralSources]);
+
+  useEffect(() => {
+    if (!selectedPartner?.id) return;
+    if (loadedReferralSources.length > 0) return;
+    loadReferralSourcesForPartner(selectedPartner.id, form.referralSourceId || null);
+  }, [form.referralSourceId, loadedReferralSources.length, selectedPartner?.id]);
 
   function loadReferralSourcesForPartner(nextPartnerId: string, selectedId?: string | null) {
     if (!nextPartnerId) {
@@ -122,17 +128,6 @@ export function SalesPartnerActivityForm({
   }
 
   useConstrainedSelection({
-    selectedId: form.partnerId,
-    setSelectedId: (nextPartnerId) =>
-      setForm((current) => ({
-        ...current,
-        partnerId: nextPartnerId,
-        referralSourceId: nextPartnerId ? current.referralSourceId : ""
-      })),
-    options: partnerOptions,
-    autoSelectSingle: false
-  });
-  useConstrainedSelection({
     selectedId: form.referralSourceId,
     setSelectedId: (nextReferralId) => setForm((current) => ({ ...current, referralSourceId: nextReferralId })),
     options: filteredReferralSources,
@@ -142,23 +137,37 @@ export function SalesPartnerActivityForm({
   return (
     <div className="space-y-3">
       <div>
-        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">Organization (Required)</label>
-        <select
-          className="h-11 w-full rounded-lg border border-border px-3"
+        <SalesPartnerSearchPicker
           value={form.partnerId}
-          onChange={(event) => {
-            const nextPartnerId = event.target.value;
+          initialOptions={partners}
+          extraOptions={createdPartners}
+          label="Organization (Required)"
+          emptyLabel="Select Community Partner Organization"
+          onChange={(nextPartnerId) => {
             setForm((current) => ({
               ...current,
               partnerId: nextPartnerId,
               referralSourceId: ""
             }));
+            if (!nextPartnerId) {
+              setSelectedPartner(null);
+              setLoadedReferralSources([]);
+              return;
+            }
             loadReferralSourcesForPartner(nextPartnerId);
           }}
-        >
-          <option value="">Select Community Partner Organization</option>
-          {partnerOptions.map((partner) => <option key={partner.id} value={partner.id}>{partner.organization_name}</option>)}
-        </select>
+          onSelectOption={(option) => {
+            setSelectedPartner(
+              option
+                ? {
+                    id: option.id,
+                    partner_id: option.partner_id,
+                    organization_name: option.organization_name
+                  }
+                : null
+            );
+          }}
+        />
         <button type="button" className="mt-2 text-xs font-semibold text-brand" onClick={() => setShowCreateOrgInline((current) => !current)}>
           {showCreateOrgInline ? "Hide inline organization create" : "Add organization inline"}
         </button>
@@ -207,6 +216,7 @@ export function SalesPartnerActivityForm({
                 }
 
                 setCreatedPartners((current) => [...current, response.partner]);
+                setSelectedPartner(response.partner);
                 setLoadedReferralSources([]);
                 setForm((current) => ({ ...current, partnerId: response.partner.id }));
                 setShowCreateOrgInline(false);

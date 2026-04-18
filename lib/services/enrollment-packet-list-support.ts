@@ -182,11 +182,13 @@ export function buildEnrollmentPacketListPresentation(
     readinessLabel: getEnrollmentPacketWorkflowReadinessLabel(readinessStage),
     operationalReadinessStatus: resolveEnrollmentPacketOperationalReadiness({
       status: row.status,
-      mappingSyncStatus: row.mapping_sync_status
+      mappingSyncStatus: row.mapping_sync_status,
+      completionFollowUpStatus: row.completion_follow_up_status
     }),
     operationallyReady: isEnrollmentPacketOperationallyReady({
       status: row.status,
-      mappingSyncStatus: row.mapping_sync_status
+      mappingSyncStatus: row.mapping_sync_status,
+      completionFollowUpStatus: row.completion_follow_up_status
     }),
     mappingSyncError: clean(row.mapping_sync_error)
   };

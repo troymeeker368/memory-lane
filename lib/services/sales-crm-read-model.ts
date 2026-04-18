@@ -83,6 +83,8 @@ export type SalesLeadPickerRow = Pick<
   "id" | "member_name" | "stage" | "partner_id" | "referral_source_id"
 >;
 
+export type SalesPartnerPickerRow = Pick<SalesPartnerRow, "id" | "partner_id" | "organization_name">;
+
 export type SalesLeadActivityRow = {
   id: string;
   lead_id: string;
@@ -220,6 +222,11 @@ const SALES_REFERRAL_SOURCE_LOOKUP_SELECT =
 const SALES_LEAD_LOOKUP_DEFAULT_LIMIT = 120;
 const SALES_LOOKUP_PARTNER_LIMIT = 250;
 const SALES_LOOKUP_REFERRAL_SOURCE_LIMIT = 250;
+type SalesListRange = {
+  start: number;
+  end: number;
+};
+
 function applyOpenLeadFilter<T extends { eq: (column: string, value: string) => T }>(query: T) {
   return query.eq("status", "open");
 }
@@ -304,6 +311,183 @@ function normalizeReferralSources(partners: SalesPartnerRow[], referralSources: 
     ...source,
     partner_id: partnerByInternalId.get(String(source.partner_id))?.partner_id ?? source.partner_id
   }));
+}
+
+function buildSalesPartnerSearchFilter(q?: string | null) {
+  const normalized = clean(q);
+  if (!normalized) return null;
+  const pattern = buildSupabaseIlikePattern(normalized);
+  return [
+    `organization_name.ilike.${pattern}`,
+    `category.ilike.${pattern}`,
+    `location.ilike.${pattern}`,
+    `primary_phone.ilike.${pattern}`,
+    `primary_email.ilike.${pattern}`
+  ].join(",");
+}
+
+function buildSalesReferralSourceSearchFilter(q?: string | null) {
+  const normalized = clean(q);
+  if (!normalized) return null;
+  const pattern = buildSupabaseIlikePattern(normalized);
+  return [
+    `contact_name.ilike.${pattern}`,
+    `organization_name.ilike.${pattern}`,
+    `job_title.ilike.${pattern}`,
+    `primary_phone.ilike.${pattern}`,
+    `primary_email.ilike.${pattern}`,
+    `preferred_contact_method.ilike.${pattern}`
+  ].join(",");
+}
+
+function normalizeSalesPartnerRow(row: Record<string, unknown>): SalesPartnerRow {
+  return {
+    id: String(row.id ?? ""),
+    partner_id: String(row.partner_id ?? ""),
+    organization_name: clean(row.organization_name) ?? "Unknown Organization",
+    category: clean(row.category),
+    location: clean(row.location),
+    primary_phone: clean(row.primary_phone),
+    primary_email: clean(row.primary_email),
+    active: row.active === false ? false : true,
+    last_touched: clean(row.last_touched)
+  };
+}
+
+function normalizeSalesReferralSourceRow(row: Record<string, unknown>): SalesReferralSourceRow {
+  return {
+    id: String(row.id ?? ""),
+    referral_source_id: String(row.referral_source_id ?? ""),
+    partner_id: String(row.partner_id ?? ""),
+    contact_name: clean(row.contact_name) ?? "",
+    organization_name: clean(row.organization_name),
+    job_title: clean(row.job_title),
+    primary_phone: clean(row.primary_phone),
+    primary_email: clean(row.primary_email),
+    preferred_contact_method: clean(row.preferred_contact_method),
+    active: row.active === false ? false : true,
+    last_touched: clean(row.last_touched)
+  };
+}
+
+async function listSalesPartnerRowsSupabase(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  input?: {
+    count?: "exact" | null;
+    ids?: Array<string | null | undefined>;
+    q?: string | null;
+    limit?: number;
+    range?: SalesListRange;
+  }
+) {
+  const partnerIds = normalizeUuidList(input?.ids ?? []);
+  const searchFilter = buildSalesPartnerSearchFilter(input?.q);
+
+  if (input?.count === "exact") {
+    let query = supabase
+      .from("community_partner_organizations")
+      .select(SALES_PARTNER_LOOKUP_SELECT, { count: "exact" })
+      .order("organization_name", { ascending: true });
+    if (partnerIds.length > 0) query = query.in("id", partnerIds);
+    if (searchFilter) query = query.or(searchFilter);
+    if (input?.range) {
+      query = query.range(input.range.start, input.range.end);
+    } else if (typeof input?.limit === "number") {
+      query = query.limit(input.limit);
+    }
+    const { data, error, count } = await query;
+    if (error) throw new Error(error.message);
+    return {
+      rows: ((data ?? []) as Array<Record<string, unknown> | null>)
+        .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+        .map((row) => normalizeSalesPartnerRow(row)),
+      count: count ?? null
+    };
+  }
+
+  let query = supabase.from("community_partner_organizations").select(SALES_PARTNER_LOOKUP_SELECT).order("organization_name", { ascending: true });
+  if (partnerIds.length > 0) query = query.in("id", partnerIds);
+  if (searchFilter) query = query.or(searchFilter);
+  if (input?.range) {
+    query = query.range(input.range.start, input.range.end);
+  } else if (typeof input?.limit === "number") {
+    query = query.limit(input.limit);
+  }
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return {
+    rows: ((data ?? []) as Array<Record<string, unknown> | null>)
+      .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+      .map((row) => normalizeSalesPartnerRow(row)),
+    count: null
+  };
+}
+
+async function listSalesReferralSourceRowsSupabase(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  input?: {
+    count?: "exact" | null;
+    ids?: Array<string | null | undefined>;
+    partnerId?: string | null;
+    partnerIds?: Array<string | null | undefined>;
+    q?: string | null;
+    limit?: number;
+    range?: SalesListRange;
+  }
+) {
+  const referralSourceIds = normalizeUuidList(input?.ids ?? []);
+  const partnerIds = normalizeUuidList(input?.partnerIds ?? []);
+  const partnerId = clean(input?.partnerId);
+  const searchFilter = buildSalesReferralSourceSearchFilter(input?.q);
+
+  if (input?.count === "exact") {
+    let query = supabase
+      .from("referral_sources")
+      .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT, { count: "exact" })
+      .order("organization_name", { ascending: true });
+    if (referralSourceIds.length > 0) query = query.in("id", referralSourceIds);
+    if (partnerIds.length > 0) {
+      query = query.in("partner_id", partnerIds);
+    } else if (partnerId) {
+      query = query.eq("partner_id", partnerId);
+    }
+    if (searchFilter) query = query.or(searchFilter);
+    if (input?.range) {
+      query = query.range(input.range.start, input.range.end);
+    } else if (typeof input?.limit === "number") {
+      query = query.limit(input.limit);
+    }
+    const { data, error, count } = await query;
+    if (error) throw new Error(error.message);
+    return {
+      rows: ((data ?? []) as Array<Record<string, unknown> | null>)
+        .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+        .map((row) => normalizeSalesReferralSourceRow(row)),
+      count: count ?? null
+    };
+  }
+
+  let query = supabase.from("referral_sources").select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT).order("organization_name", { ascending: true });
+  if (referralSourceIds.length > 0) query = query.in("id", referralSourceIds);
+  if (partnerIds.length > 0) {
+    query = query.in("partner_id", partnerIds);
+  } else if (partnerId) {
+    query = query.eq("partner_id", partnerId);
+  }
+  if (searchFilter) query = query.or(searchFilter);
+  if (input?.range) {
+    query = query.range(input.range.start, input.range.end);
+  } else if (typeof input?.limit === "number") {
+    query = query.limit(input.limit);
+  }
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return {
+    rows: ((data ?? []) as Array<Record<string, unknown> | null>)
+      .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+      .map((row) => normalizeSalesReferralSourceRow(row)),
+    count: null
+  };
 }
 
 function toNumber(value: number | string | null | undefined) {
@@ -530,10 +714,46 @@ export async function listSalesLeadPickerOptionsSupabase(input?: {
     }));
 }
 
+export async function listSalesPartnerPickerOptionsSupabase(input?: {
+  q?: string;
+  selectedId?: string | null;
+  limit?: number;
+  minQueryLength?: number;
+}): Promise<SalesPartnerPickerRow[]> {
+  const q = clean(input?.q);
+  const limit = normalizePageSize(input?.limit ?? 25, 25);
+  const minQueryLength =
+    Number.isFinite(input?.minQueryLength) && Number(input?.minQueryLength) > 0
+      ? Math.floor(Number(input?.minQueryLength))
+      : 2;
+  const selectedId = clean(input?.selectedId);
+  const supabase = await createClient();
+  const selectedPartnerPromise = selectedId ? fetchPartnerByIdSupabase(selectedId) : Promise.resolve(null);
+  const matchesPromise =
+    q && q.length >= minQueryLength ? listSalesPartnerRowsSupabase(supabase, { q, limit }) : Promise.resolve({ rows: [] as SalesPartnerRow[], count: null });
+
+  const [selectedPartner, matchesResult] = await Promise.all([selectedPartnerPromise, matchesPromise]);
+
+  const seen = new Set<string>();
+  return [selectedPartner, ...matchesResult.rows]
+    .filter((row): row is SalesPartnerRow => Boolean(row))
+    .map((row) => ({
+      id: row.id,
+      partner_id: row.partner_id,
+      organization_name: row.organization_name
+    }))
+    .filter((row) => {
+      if (!row.id || seen.has(row.id)) return false;
+      seen.add(row.id);
+      return true;
+    });
+}
+
 export async function getSalesFormLookupsSupabase(options?: {
   includeLeads?: boolean;
   includePartners?: boolean;
   includeReferralSources?: boolean;
+  prefetchPartnerOptions?: boolean;
   leadLimit?: number;
   includeLeadId?: string | null;
   includePartnerId?: string | null;
@@ -542,7 +762,8 @@ export async function getSalesFormLookupsSupabase(options?: {
 }) {
   const leadLimit = normalizePageSize(options?.leadLimit ?? SALES_LEAD_LOOKUP_DEFAULT_LIMIT, SALES_LEAD_LOOKUP_DEFAULT_LIMIT);
   const shouldLoadLeads = options?.includeLeads !== false;
-  const shouldLoadPartners = options?.includePartners !== false;
+  const requestedPartnerId = clean(options?.includePartnerId);
+  const shouldLoadPartners = options?.includePartners === true && options?.prefetchPartnerOptions === true;
   const shouldLoadReferralSources = options?.includeReferralSources !== false;
   const requestedReferralSourceId = clean(options?.includeReferralSourceId);
   const referralPartner = shouldLoadReferralSources && options?.referralPartnerId
@@ -550,50 +771,43 @@ export async function getSalesFormLookupsSupabase(options?: {
     : null;
   const shouldPrefetchReferralSources = shouldLoadReferralSources && Boolean(referralPartner?.id);
   const supabase = await createClient();
-  const [leadResult, { data: partners, error: partnersError }, { data: referralSources, error: referralSourcesError }] = await Promise.all([
+  const [leadResult, partnersResult, referralSourcesResult] = await Promise.all([
     shouldLoadLeads
       ? supabase.from("leads").select(SALES_LEAD_LOOKUP_SELECT).order("created_at", { ascending: false }).limit(leadLimit)
       : Promise.resolve({ data: [] as SalesLeadLookupRow[], error: null }),
     shouldLoadPartners
-      ? supabase
-          .from("community_partner_organizations")
-          .select(SALES_PARTNER_LOOKUP_SELECT)
-          .order("organization_name", { ascending: true })
-          .limit(SALES_LOOKUP_PARTNER_LIMIT)
-      : Promise.resolve({ data: [] as SalesPartnerRow[], error: null } as const),
+      ? listSalesPartnerRowsSupabase(supabase, { limit: SALES_LOOKUP_PARTNER_LIMIT })
+      : Promise.resolve({ rows: [] as SalesPartnerRow[], count: null }),
     shouldPrefetchReferralSources
-      ? (() => {
-          let query = supabase
-            .from("referral_sources")
-            .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT)
-            .order("organization_name", { ascending: true })
-            .limit(SALES_LOOKUP_REFERRAL_SOURCE_LIMIT);
-          if (referralPartner?.id) {
-            query = query.eq("partner_id", referralPartner.id);
-          }
-          return query;
-        })()
-      : Promise.resolve({ data: [] as SalesReferralSourceRow[], error: null } as const)
+      ? listSalesReferralSourceRowsSupabase(supabase, {
+          partnerId: referralPartner?.id ?? null,
+          limit: SALES_LOOKUP_REFERRAL_SOURCE_LIMIT
+        })
+      : Promise.resolve({ rows: [] as SalesReferralSourceRow[], count: null })
   ]);
   if (leadResult.error) throw new Error(leadResult.error.message);
-  if (partnersError) throw new Error(partnersError.message);
-  if (referralSourcesError) throw new Error(referralSourcesError.message);
 
   const leadRows = [...((leadResult.data ?? []) as SalesLeadLookupRow[])];
-  const partnerRows = [...(partners as SalesPartnerRow[])];
-  const referralRows = [...(referralSources as SalesReferralSourceRow[])];
+  const partnerRows = [...partnersResult.rows];
+  const referralRows = [...referralSourcesResult.rows];
 
   const [extraLead, extraPartner, extraReferralSource] = await Promise.all([
     options?.includeLeadId && !leadRows.some((row) => row.id === options.includeLeadId)
       ? getSalesLeadByIdSupabase(options.includeLeadId)
       : Promise.resolve(null),
-    options?.includePartnerId && !partnerRows.some((row) => row.id === options.includePartnerId)
-      ? fetchPartnerByIdSupabase(options.includePartnerId)
+    requestedPartnerId && !partnerRows.some((row) => row.id === requestedPartnerId || row.partner_id === requestedPartnerId)
+      ? fetchPartnerByIdSupabase(requestedPartnerId)
       : Promise.resolve(null),
     requestedReferralSourceId && !referralRows.some((row) => row.id === requestedReferralSourceId)
       ? fetchReferralSourceByIdSupabase(requestedReferralSourceId)
       : Promise.resolve(null)
   ]);
+  const selectedReferralPartnerId = clean(extraReferralSource?.partner_id);
+  const hasSelectedReferralPartner =
+    Boolean(selectedReferralPartnerId) &&
+    partnerRows.some((row) => row.id === selectedReferralPartnerId || row.partner_id === selectedReferralPartnerId);
+  const selectedReferralPartner =
+    selectedReferralPartnerId && !hasSelectedReferralPartner ? await fetchPartnerByIdSupabase(selectedReferralPartnerId) : null;
 
   if (extraLead) {
     leadRows.unshift({
@@ -608,6 +822,9 @@ export async function getSalesFormLookupsSupabase(options?: {
     });
   }
   if (extraPartner) partnerRows.unshift(extraPartner);
+  if (selectedReferralPartner && !partnerRows.some((row) => row.id === selectedReferralPartner.id)) {
+    partnerRows.unshift(selectedReferralPartner);
+  }
   if (extraReferralSource) referralRows.unshift(extraReferralSource);
 
   return {
@@ -632,29 +849,19 @@ export async function getSalesActivityContextLookupsSupabase(input?: { leadIds?:
     leadIds.length > 0
       ? supabase.from("leads").select("id, member_name").in("id", leadIds)
       : Promise.resolve({ data: [] as SalesLeadLookupRow[], error: null } as const),
-    partnerIds.length > 0
-      ? supabase
-          .from("community_partner_organizations")
-          .select(SALES_PARTNER_LOOKUP_SELECT)
-          .in("id", partnerIds)
-      : Promise.resolve({ data: [] as SalesPartnerRow[], error: null } as const),
+    partnerIds.length > 0 ? listSalesPartnerRowsSupabase(supabase, { ids: partnerIds }) : Promise.resolve({ rows: [] as SalesPartnerRow[], count: null }),
     referralSourceIds.length > 0
-      ? supabase.from("referral_sources").select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT).in("id", referralSourceIds)
-      : Promise.resolve({ data: [] as SalesReferralSourceRow[], error: null } as const)
+      ? listSalesReferralSourceRowsSupabase(supabase, { ids: referralSourceIds })
+      : Promise.resolve({ rows: [] as SalesReferralSourceRow[], count: null })
   ]);
   if (leadResult.error) throw new Error(leadResult.error.message);
-  if (partnerResult.error) throw new Error(partnerResult.error.message);
-  if (referralResult.error) throw new Error(referralResult.error.message);
 
   const leads = ((leadResult.data ?? []) as SalesLeadLookupRow[]).map((row) => ({
     ...row,
     member_name: row.member_name ?? "Unnamed Lead"
   }));
-  const partners = ((partnerResult.data ?? []) as SalesPartnerRow[]).map((partner) => ({
-    ...partner,
-    organization_name: partner.organization_name ?? "Unknown Organization"
-  }));
-  const referralSources = normalizeReferralSources(partners, (referralResult.data ?? []) as SalesReferralSourceRow[]).map(
+  const partners = partnerResult.rows;
+  const referralSources = normalizeReferralSources(partners, referralResult.rows).map(
     (row) => ({
       ...row,
       organization_name: row.organization_name ?? "Unknown Organization"
@@ -822,22 +1029,16 @@ export async function getSalesPartnerDirectoryPageSupabase(input?: { q?: string;
   const supabase = await createClient();
   const page = normalizePage(input?.page);
   const pageSize = normalizePageSize(input?.pageSize ?? 25, 25);
-  let query = supabase
-    .from("community_partner_organizations")
-    .select(SALES_PARTNER_LOOKUP_SELECT, { count: "exact" })
-    .order("organization_name", { ascending: true });
-  const q = clean(input?.q);
-  if (q) {
-    const pattern = buildSupabaseIlikePattern(q);
-    query = query.or(
-      `organization_name.ilike.${pattern},category.ilike.${pattern},location.ilike.${pattern},primary_phone.ilike.${pattern},primary_email.ilike.${pattern}`
-    );
-  }
-  query = query.range((page - 1) * pageSize, page * pageSize - 1);
-  const { data, error, count } = await query;
-  if (error) throw new Error(error.message);
+  const { rows, count } = await listSalesPartnerRowsSupabase(supabase, {
+    count: "exact",
+    q: input?.q,
+    range: {
+      start: (page - 1) * pageSize,
+      end: page * pageSize - 1
+    }
+  });
   return {
-    rows: (data ?? []) as SalesPartnerRow[],
+    rows,
     page,
     pageSize,
     totalRows: count ?? 0,
@@ -849,31 +1050,16 @@ export async function getSalesReferralSourceDirectoryPageSupabase(input?: { q?: 
   const supabase = await createClient();
   const page = normalizePage(input?.page);
   const pageSize = normalizePageSize(input?.pageSize ?? 25, 25);
-  let query = supabase
-    .from("referral_sources")
-    .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT, { count: "exact" })
-    .order("organization_name", { ascending: true });
-  const q = clean(input?.q);
-  if (q) {
-    const pattern = buildSupabaseIlikePattern(q);
-    query = query.or(
-      `contact_name.ilike.${pattern},organization_name.ilike.${pattern},job_title.ilike.${pattern},primary_phone.ilike.${pattern},primary_email.ilike.${pattern},preferred_contact_method.ilike.${pattern}`
-    );
-  }
-  query = query.range((page - 1) * pageSize, page * pageSize - 1);
-  const { data, error, count } = await query;
-  if (error) throw new Error(error.message);
-  const referralSources = (data ?? []) as SalesReferralSourceRow[];
+  const { rows: referralSources, count } = await listSalesReferralSourceRowsSupabase(supabase, {
+    count: "exact",
+    q: input?.q,
+    range: {
+      start: (page - 1) * pageSize,
+      end: page * pageSize - 1
+    }
+  });
   const partnerIds = Array.from(new Set(referralSources.map((row) => row.partner_id).filter(Boolean)));
-  let partners: SalesPartnerRow[] = [];
-  if (partnerIds.length > 0) {
-    const { data: partnerData, error: partnersError } = await supabase
-      .from("community_partner_organizations")
-      .select(SALES_PARTNER_LOOKUP_SELECT)
-      .in("id", partnerIds);
-    if (partnersError) throw new Error(partnersError.message);
-    partners = (partnerData ?? []) as SalesPartnerRow[];
-  }
+  const partners = partnerIds.length > 0 ? (await listSalesPartnerRowsSupabase(supabase, { ids: partnerIds })).rows : [];
   return {
     rows: normalizeReferralSources(partners, referralSources),
     page,
@@ -886,18 +1072,9 @@ export async function getSalesReferralSourceDirectoryPageSupabase(input?: { q?: 
 export async function getSalesReferralSourcesForPartnerIdsSupabase(partnerIds: string[]) {
   if (partnerIds.length === 0) return [] as SalesReferralSourceRow[];
   const supabase = await createClient();
-  const [{ data: partners, error: partnersError }, { data: referralSources, error: referralSourcesError }] = await Promise.all([
-    supabase
-      .from("community_partner_organizations")
-      .select("id, partner_id, organization_name, category, location, primary_phone, primary_email, active, last_touched")
-      .in("id", partnerIds),
-    supabase
-      .from("referral_sources")
-      .select(SALES_REFERRAL_SOURCE_LOOKUP_SELECT)
-      .in("partner_id", partnerIds)
-      .order("organization_name", { ascending: true })
+  const [partnersResult, referralSourcesResult] = await Promise.all([
+    listSalesPartnerRowsSupabase(supabase, { ids: partnerIds }),
+    listSalesReferralSourceRowsSupabase(supabase, { partnerIds })
   ]);
-  if (partnersError) throw new Error(partnersError.message);
-  if (referralSourcesError) throw new Error(referralSourcesError.message);
-  return normalizeReferralSources((partners ?? []) as SalesPartnerRow[], (referralSources ?? []) as SalesReferralSourceRow[]);
+  return normalizeReferralSources(partnersResult.rows, referralSourcesResult.rows);
 }

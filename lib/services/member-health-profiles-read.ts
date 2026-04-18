@@ -16,9 +16,14 @@ export {
 const MHP_OVERVIEW_HISTORY_LIMIT = 25;
 const MHP_OVERVIEW_RELATED_ROW_LIMIT = 25;
 
+type MemberHealthProfileOverviewReadOptions = {
+  canonicalInput?: boolean;
+  includeRelatedPhysicianOrders?: boolean;
+};
+
 async function resolveMemberHealthProfileOverviewMemberId(
   memberId: string,
-  options?: { canonicalInput?: boolean }
+  options?: MemberHealthProfileOverviewReadOptions
 ) {
   if (options?.canonicalInput) return memberId;
 
@@ -29,9 +34,10 @@ async function resolveMemberHealthProfileOverviewMemberId(
 
 export async function getMemberHealthProfileOverviewSupplement(
   memberId: string,
-  options?: { canonicalInput?: boolean }
+  options?: MemberHealthProfileOverviewReadOptions
 ) {
   const canonicalMemberId = await resolveMemberHealthProfileOverviewMemberId(memberId, options);
+  const shouldLoadRelatedPhysicianOrders = options?.includeRelatedPhysicianOrders !== false;
 
   const [carePlanSnapshot, progressNoteSummary, billingPayor, relatedPhysicianOrders] =
     await Promise.all([
@@ -41,10 +47,12 @@ export async function getMemberHealthProfileOverviewSupplement(
         source: "getMemberHealthProfileOverviewSupplement",
         canonicalInput: true
       }),
-      getPhysicianOrdersForMember(canonicalMemberId, {
-        canonicalInput: true,
-        limit: MHP_OVERVIEW_RELATED_ROW_LIMIT
-      })
+      shouldLoadRelatedPhysicianOrders
+        ? getPhysicianOrdersForMember(canonicalMemberId, {
+            canonicalInput: true,
+            limit: MHP_OVERVIEW_RELATED_ROW_LIMIT
+          })
+        : Promise.resolve([])
     ]);
 
   return {
@@ -63,7 +71,7 @@ type MemberHealthProfileOverviewAssessments = Awaited<
 
 export async function getMemberHealthProfileOverviewSummaryReadModel(
   memberId: string,
-  options?: { canonicalInput?: boolean }
+  options?: MemberHealthProfileOverviewReadOptions
 ): Promise<
   MemberHealthProfileOverviewSupplement & {
     assessments: MemberHealthProfileOverviewAssessments;
@@ -72,7 +80,8 @@ export async function getMemberHealthProfileOverviewSummaryReadModel(
   const canonicalMemberId = await resolveMemberHealthProfileOverviewMemberId(memberId, options);
   const [overviewData, assessments] = await Promise.all([
     getMemberHealthProfileOverviewSupplement(canonicalMemberId, {
-      canonicalInput: true
+      canonicalInput: true,
+      includeRelatedPhysicianOrders: options?.includeRelatedPhysicianOrders
     }),
     getMemberHealthProfileAssessmentsSupabaseModel(canonicalMemberId, {
       limit: MHP_OVERVIEW_HISTORY_LIMIT

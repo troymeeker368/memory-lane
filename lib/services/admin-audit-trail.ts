@@ -29,7 +29,10 @@ const ADMIN_AUDIT_AREA_SQL_TERMS = [
   { label: "Documentation", entityTypeTerms: ["documentation", "photo", "daily_activity", "toilet", "shower", "blood_sugar", "incident"] },
   { label: "Transportation", entityTypeTerms: ["transport"] },
   { label: "Member", entityTypeTerms: ["member", "care_plan", "physician_order", "pof", "intake"] },
-  { label: "Charges", entityTypeTerms: ["charge", "ancillary", "pricing"] }
+  {
+    label: "Charges",
+    entityTypeTerms: ["charge", "ancillary", "pricing", "billing", "invoice", "payor", "center_closure", "closure_rule"]
+  }
 ] as const;
 
 export function resolveAdminAuditArea(entityType: string) {

@@ -40,12 +40,14 @@ import {
   toMemberCommandCenterIndexProfileRow,
   toMemberCommandCenterIndexScheduleRow
 } from "@/lib/services/member-command-center-selects";
+import { listMemberPickerOptionsSupabase } from "@/lib/services/shared-lookups-supabase";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import {
   listSharedMemberIndexPageSupabase,
   listSharedMemberRowsSupabase
 } from "@/lib/services/member-list-read";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 const MEMBER_FILE_LIST_RPC = "rpc_list_member_files";
 const MEMBER_FILE_LIST_MIGRATION = "0145_reports_and_member_files_read_rpcs.sql";
 const DEFAULT_MEMBER_LOOKUP_LIMIT = 200;
@@ -240,7 +242,7 @@ export async function listMemberContactsSupabase(memberId: string, options?: Ens
 
 export async function listMemberFilesSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberFilesSupabase", options);
-  const supabase = await createClient();
+  const supabase = createServiceRoleClient("member_file_list_read");
   let rows: MemberFileRpcRow[];
   try {
     rows = await invokeSupabaseRpcOrThrow<MemberFileRpcRow[]>(supabase, MEMBER_FILE_LIST_RPC, {
@@ -487,45 +489,20 @@ export async function getTransportationAddRiderMemberOptionsSupabase(filters?: {
   selectedId?: string | null;
   limit?: number;
 }) {
-  const supabase = await createClient();
   const q = (filters?.q ?? "").trim();
   const selectedId = String(filters?.selectedId ?? "").trim();
   const limit =
     Number.isFinite(filters?.limit) && Number(filters?.limit) > 0 ? Math.min(50, Math.floor(Number(filters?.limit))) : 25;
-  if (q.length < 2 && !selectedId) {
-    return [];
-  }
-  const [selectedMemberResult, searchMembersResult] = await Promise.all([
-    selectedId
-      ? supabase
-          .from("members")
-          .select("id, display_name, status")
-          .eq("status", "active")
-          .eq("id", selectedId)
-          .maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
-    q.length >= 2
-      ? supabase
-          .from("members")
-          .select("id, display_name, status")
-          .eq("status", "active")
-          .ilike("display_name", buildSupabaseIlikePattern(q))
-          .order("display_name", { ascending: true })
-          .range(0, limit - 1)
-      : Promise.resolve({ data: [], error: null })
-  ]);
-  if (selectedMemberResult.error) throw new Error(selectedMemberResult.error.message);
-  if (searchMembersResult.error) throw new Error(searchMembersResult.error.message);
-  const memberMap = new Map<string, { id: string; display_name: string; status: "active" | "inactive" }>();
-  const selectedMember = selectedMemberResult.data as { id: string; display_name: string; status: "active" | "inactive" } | null;
-  if (selectedMember?.id) {
-    memberMap.set(selectedMember.id, selectedMember);
-  }
-  for (const member of (searchMembersResult.data ?? []) as Array<{ id: string; display_name: string; status: "active" | "inactive" }>) {
-    memberMap.set(member.id, member);
-  }
-  const members = Array.from(memberMap.values()).sort((left, right) => left.display_name.localeCompare(right.display_name));
+  const members = await listMemberPickerOptionsSupabase({
+    q,
+    selectedId,
+    status: "active",
+    limit,
+    minQueryLength: 2
+  });
   if (members.length === 0) return [];
+
+  const supabase = await createClient();
   const memberIds = members.map((row) => row.id);
   const [commandCentersResult, contactsResult] = await Promise.all([
     supabase.from("member_command_centers").select(MEMBER_COMMAND_CENTER_ADD_RIDER_ADDRESS_SELECT).in("member_id", memberIds),

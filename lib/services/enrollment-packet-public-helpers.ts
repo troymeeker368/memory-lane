@@ -395,7 +395,8 @@ function buildEnrollmentPacketActionNeededMessage(input: {
       readinessLabel: getEnrollmentPacketWorkflowReadinessLabel(readinessStage),
       operationalReadinessStatus: resolveEnrollmentPacketOperationalReadiness({
         status: input.status,
-        mappingSyncStatus: input.mappingSyncStatus
+        mappingSyncStatus: input.mappingSyncStatus,
+        completionFollowUpStatus
       }),
       actionNeededMessage:
         "Enrollment packet was completed, but downstream completion follow-up is still pending. Staff should wait for the canonical follow-up checks before treating the member as fully operationally ready."
@@ -413,7 +414,8 @@ function buildEnrollmentPacketActionNeededMessage(input: {
       readinessLabel: getEnrollmentPacketWorkflowReadinessLabel(readinessStage),
       operationalReadinessStatus: resolveEnrollmentPacketOperationalReadiness({
         status: input.status,
-        mappingSyncStatus: input.mappingSyncStatus
+        mappingSyncStatus: input.mappingSyncStatus,
+        completionFollowUpStatus
       }),
       actionNeededMessage:
         clean(input.completionFollowUpError) ??
@@ -423,7 +425,8 @@ function buildEnrollmentPacketActionNeededMessage(input: {
 
   const operationalReadinessStatus = resolveEnrollmentPacketOperationalReadiness({
     status: input.status,
-    mappingSyncStatus: input.mappingSyncStatus
+    mappingSyncStatus: input.mappingSyncStatus,
+    completionFollowUpStatus
   });
 
   if (operationalReadinessStatus === "filed_pending_mapping") {

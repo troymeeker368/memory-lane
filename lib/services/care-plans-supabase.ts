@@ -371,18 +371,12 @@ async function finalizeCaregiverDispatchAfterNurseSignature(input: {
         signatureName: input.actor.signatureName
       }
     });
-    await markCarePlanPostSignReady({
-      carePlanId: signedCarePlan.id,
-      actor: {
-        id: input.actor.id,
-        fullName: input.actor.fullName
-      }
-    });
     return {
       id: sent.id,
       memberId: sent.memberId,
       caregiverSignatureStatus: sent.caregiverSignatureStatus,
-      postSignReadinessStatus: "ready"
+      // Caregiver dispatch and signature still need to complete before this is operationally ready.
+      postSignReadinessStatus: "signed_pending_caregiver_dispatch"
     };
   }
 

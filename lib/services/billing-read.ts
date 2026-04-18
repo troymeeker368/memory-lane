@@ -84,9 +84,11 @@ export async function getVariableChargesQueue(input: GetVariableChargesQueueInpu
   return getVariableChargesQueue(input);
 }
 
-export async function getBillingBatches(): ReturnType<typeof getBillingBatchesImpl> {
+export async function getBillingBatches(
+  input?: Parameters<typeof getBillingBatchesImpl>[0]
+): ReturnType<typeof getBillingBatchesImpl> {
   const { getBillingBatches } = await import("@/lib/services/billing-read-supabase");
-  return getBillingBatches();
+  return getBillingBatches(input);
 }
 
 export async function getBillingBatchReviewRows(
@@ -103,9 +105,11 @@ export async function getBillingGenerationPreview(
   return getBillingGenerationPreview(input);
 }
 
-export async function getBillingExports(): ReturnType<typeof getBillingExportsImpl> {
+export async function getBillingExports(
+  input?: Parameters<typeof getBillingExportsImpl>[0]
+): ReturnType<typeof getBillingExportsImpl> {
   const { getBillingExports } = await import("@/lib/services/billing-read-supabase");
-  return getBillingExports();
+  return getBillingExports(input);
 }
 
 export async function getBillingDashboardSummary(): ReturnType<typeof getBillingDashboardSummaryImpl> {

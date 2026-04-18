@@ -38,6 +38,14 @@ test("enrollment packet readiness distinguishes completed from operationally rea
     }),
     "operationally_ready"
   );
+  assert.equal(
+    resolveEnrollmentPacketOperationalReadiness({
+      status: "completed",
+      mappingSyncStatus: "completed",
+      completionFollowUpStatus: "pending"
+    }),
+    "filed_pending_mapping"
+  );
 });
 
 test("enrollment packet readiness keeps pending and failed mapping out of operationally ready state", () => {
