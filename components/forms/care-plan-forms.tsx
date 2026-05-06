@@ -374,7 +374,7 @@ export function NewCarePlanForm({
               setStatus(`Error: ${response.error}`);
               return;
             }
-            if (response.actionNeeded) {
+            if ("actionNeeded" in response && response.actionNeeded) {
               if (response.id) {
                 router.push(`/health/care-plans/${response.id}?followUp=required&sourceAction=create`);
                 return;
@@ -594,7 +594,7 @@ export function CarePlanReviewForm({
               setStatus(`Error: ${response.error}`);
               return;
             }
-            if (response.actionNeeded) {
+            if ("actionNeeded" in response && response.actionNeeded) {
               if ("id" in response && response.id) {
                 router.push(`/health/care-plans/${response.id}?followUp=required&sourceAction=review`);
                 return;

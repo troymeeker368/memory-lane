@@ -27,6 +27,21 @@ function clean(value: string | null | undefined) {
   return normalized.length > 0 ? normalized : null;
 }
 
+const LEAD_ACTIVITY_IDEMPOTENCY_MIGRATION = "0222_lead_activity_idempotency_hardening.sql";
+
+function isPostgresUniqueViolation(error: { code?: string | null; message?: string | null; details?: string | null } | null | undefined) {
+  const text = [error?.message, error?.details].filter(Boolean).join(" ").toLowerCase();
+  return error?.code === "23505" || text.includes("duplicate key value") || text.includes("unique constraint");
+}
+
+function isMissingLeadActivityIdempotencyColumnError(
+  error: { code?: string | null; message?: string | null; details?: string | null } | null | undefined
+) {
+  const code = String(error?.code ?? "").toUpperCase();
+  const text = [error?.message, error?.details].filter(Boolean).join(" ").toLowerCase();
+  return (code === "42703" || code === "PGRST204") && text.includes("idempotency_key");
+}
+
 export const salesLeadActivityInputSchema = z
   .object({
     leadId: z.string().min(1),
@@ -149,28 +164,11 @@ export async function createSalesLeadActivity(input: {
     };
   }
   const activityReplayKey = buildLeadActivityReplayKey(normalizedReplayInput);
-  const { data: insertedActivity, error: insertError } = await supabase
-    .from("lead_activities")
-    .insert({
-    lead_id: canonicalLead.leadId,
-    member_name: lead.member_name,
-    activity_at: activityAt,
-    activity_type: input.activity.activityType,
-    outcome: input.activity.outcome,
-    lost_reason: input.activity.lostReason || null,
-    notes: input.activity.notes || null,
-    next_follow_up_date: nextFollowUpDate,
-    next_follow_up_type: nextFollowUpType,
-    completed_by_user_id: input.actor.id,
-    completed_by_name: input.actor.fullName,
-    partner_id: partnerId,
-    referral_source_id: referralSourceId
-    })
-    .select("id")
-    .single();
-  if (insertError) throw new Error(insertError.message);
+  const isClosedLostOutcome = input.activity.outcome === "Not a fit";
+  const isConversionOutcome =
+    input.activity.outcome === "Enrollment completed" || input.activity.outcome === "Member start confirmed";
 
-  if (input.activity.outcome === "Not a fit") {
+  if (isClosedLostOutcome) {
     await applyLeadStageTransitionSupabase({
       leadId: lead.id,
       requestedStage: "Closed - Lost",
@@ -187,7 +185,7 @@ export async function createSalesLeadActivity(input: {
     });
   }
 
-  if (input.activity.outcome === "Enrollment completed" || input.activity.outcome === "Member start confirmed") {
+  if (isConversionOutcome) {
     const memberDisplayName = clean(lead.member_name);
     if (!memberDisplayName) {
       throw new Error(`${input.source} cannot convert lead ${lead.id} because member_name is blank.`);
@@ -224,6 +222,53 @@ export async function createSalesLeadActivity(input: {
       memberEnrollmentDate: clean(lead.member_start_date),
       existingMemberId: canonicalLead.memberId ?? linkedMemberId
     });
+  }
+
+  const { data: insertedActivity, error: insertError } = await supabase
+    .from("lead_activities")
+    .insert({
+      lead_id: canonicalLead.leadId,
+      member_name: lead.member_name,
+      activity_at: activityAt,
+      activity_type: input.activity.activityType,
+      outcome: input.activity.outcome,
+      lost_reason: input.activity.lostReason || null,
+      notes: input.activity.notes || null,
+      next_follow_up_date: nextFollowUpDate,
+      next_follow_up_type: nextFollowUpType,
+      completed_by_user_id: input.actor.id,
+      completed_by_name: input.actor.fullName,
+      partner_id: partnerId,
+      referral_source_id: referralSourceId,
+      idempotency_key: activityReplayKey
+    })
+    .select("id")
+    .single();
+  if (insertError) {
+    if (isMissingLeadActivityIdempotencyColumnError(insertError)) {
+      throw new Error(
+        `Lead activity idempotency column is missing. Apply Supabase migration ${LEAD_ACTIVITY_IDEMPOTENCY_MIGRATION} before recording sales lead activities.`
+      );
+    }
+    if (isPostgresUniqueViolation(insertError)) {
+      const { data: existingByKey, error: existingByKeyError } = await supabase
+        .from("lead_activities")
+        .select("id")
+        .eq("idempotency_key", activityReplayKey)
+        .maybeSingle();
+      if (!existingByKeyError && existingByKey?.id) {
+        return {
+          leadId: lead.id,
+          activityId: String(existingByKey.id)
+        };
+      }
+    }
+    if (isConversionOutcome) {
+      throw new Error(
+        `Lead/member conversion committed, but lead activity persistence failed (${insertError.message}).`
+      );
+    }
+    throw new Error(insertError.message);
   }
 
   await insertAuditLogEntry({

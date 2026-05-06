@@ -47,6 +47,8 @@ const SERVICE_ROLE_USE_CASES = {
     "Member file storage signing and object mutations must stay server-only and bypass user-scoped RLS.",
   member_file_backfill:
     "Member file backfill scripts use explicit privileged access to reconcile storage metadata against canonical records.",
+  member_command_center_read:
+    "Member Command Center detail reads run after app-layer authorization and need stable access to canonical operational shell rows.",
   member_command_center_service_write:
     "Canonical Member Command Center repair and shell provisioning run on explicit privileged service workflows.",
   member_health_profile_backfill:

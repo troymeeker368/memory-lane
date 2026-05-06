@@ -42,7 +42,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Status</p><p className="font-semibold">{detail.member.status}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Discharge Date</p><p className="font-semibold">{formatOptionalDate(detail.member.discharge_date)}</p></div>
           <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Participation Log Entries</p><p className="font-semibold">{detail.counts.dailyActivities}</p></div>
-          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Health Entries</p><p className="font-semibold">{detail.counts.bloodSugar + detail.marToday.length + (canViewCarePlans ? detail.carePlans.length : 0)}</p></div>
+          <div className="rounded-lg border border-border p-3"><p className="text-xs text-muted">Health Entries</p><p className="font-semibold">{detail.counts.bloodSugar + detail.marToday.length + (canViewCarePlans ? detail.carePlansCount : 0)}</p></div>
         </div>
         {detail.member.status === "inactive" ? (
           <div className="mt-3 rounded-lg border border-border bg-brandPale p-3 text-sm">
@@ -161,7 +161,7 @@ export default async function MemberDetailPage({ params }: { params: Promise<{ m
       ) : null}
 
       {canViewCarePlans ? (
-      <RelatedSection title="Care Plans" count={detail.carePlans.length} viewAllHref="/health/care-plans/list" addHref={`/health/care-plans/new?memberId=${detail.member.id}`}>
+      <RelatedSection title="Care Plans" count={detail.carePlansCount} viewAllHref="/health/care-plans/list" addHref={`/health/care-plans/new?memberId=${detail.member.id}`}>
         <div className="space-y-2">
           {detail.latestCarePlan ? (
             <div className="rounded-lg border border-border bg-brandPale p-3 text-sm">

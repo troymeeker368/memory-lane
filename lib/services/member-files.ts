@@ -25,7 +25,6 @@ import {
 import { logSystemEvent } from "@/lib/services/system-event-service";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
-import { createClient } from "@/lib/supabase/server";
 import { toEasternISO } from "@/lib/timezone";
 
 export {
@@ -100,6 +99,29 @@ type MemberFileMutationActor = {
   permissions?: Parameters<typeof canPerformModuleAction>[3];
 };
 
+export function canAccessClinicalMemberFiles(actor: {
+  role: string | null | undefined;
+  permissions?: Parameters<typeof canPerformModuleAction>[3];
+}) {
+  const normalizedRole = normalizeRoleKey(actor.role);
+  const hasOperationsView = canPerformModuleAction(normalizedRole, "operations", "canView", actor.permissions);
+  const hasClinicalAccess = canAccessClinicalDocumentationForRole(normalizedRole);
+  return hasClinicalAccess && (hasOperationsView || hasClinicalAccess);
+}
+
+export function canViewMemberFileCategory(actor: {
+  role: string | null | undefined;
+  permissions?: Parameters<typeof canPerformModuleAction>[3];
+}, category: string | null | undefined) {
+  const normalizedRole = normalizeRoleKey(actor.role);
+  const hasOperationsView = canPerformModuleAction(normalizedRole, "operations", "canView", actor.permissions);
+  const hasClinicalAccess = canAccessClinicalDocumentationForRole(normalizedRole);
+
+  if (!hasOperationsView && !hasClinicalAccess) return false;
+  if (isClinicalMemberFileCategory(category) && !hasClinicalAccess) return false;
+  return true;
+}
+
 function assertAuthorizedMemberFileMutator(actor: MemberFileMutationActor) {
   const normalizedRole = normalizeRoleKey(actor.role);
   const hasOperationsEdit = canPerformModuleAction(normalizedRole, "operations", "canEdit", actor.permissions);
@@ -112,16 +134,16 @@ function assertAuthorizedMemberFileDownloader(
   actor: MemberFileMutationActor,
   category: string | null | undefined
 ) {
-  const normalizedRole = normalizeRoleKey(actor.role);
-  const hasOperationsView = canAccessModule(normalizedRole, "operations", actor.permissions);
-  const hasClinicalAccess = canAccessClinicalDocumentationForRole(normalizedRole);
-
-  if (!hasOperationsView && !hasClinicalAccess) {
+  if (!canViewMemberFileCategory(actor, category)) {
+    const normalizedRole = normalizeRoleKey(actor.role);
+    const hasOperationsView = canAccessModule(normalizedRole, "operations", actor.permissions);
+    if (!hasOperationsView) {
+      throw new Error("You do not have access to member files.");
+    }
+    if (isClinicalMemberFileCategory(category)) {
+      throw new Error("You do not have access to clinical member files.");
+    }
     throw new Error("You do not have access to member files.");
-  }
-
-  if (isClinicalMemberFileCategory(category) && !hasClinicalAccess) {
-    throw new Error("You do not have access to clinical member files.");
   }
 }
 

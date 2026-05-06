@@ -41,16 +41,16 @@ import {
   toMemberCommandCenterIndexScheduleRow
 } from "@/lib/services/member-command-center-selects";
 import { listMemberPickerOptionsSupabase } from "@/lib/services/shared-lookups-supabase";
-import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { buildSupabaseIlikePattern } from "@/lib/services/supabase-ilike";
 import {
   listSharedMemberIndexPageSupabase,
   listSharedMemberRowsSupabase
 } from "@/lib/services/member-list-read";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
-const MEMBER_FILE_LIST_RPC = "rpc_list_member_files";
-const MEMBER_FILE_LIST_MIGRATION = "0145_reports_and_member_files_read_rpcs.sql";
 const DEFAULT_MEMBER_LOOKUP_LIMIT = 200;
+const DEFAULT_MEMBER_FILE_PAGE_SIZE = 50;
+const MAX_MEMBER_FILE_PAGE_SIZE = 100;
+const CLINICAL_MEMBER_FILE_CATEGORIES = ["Assessment", "Care Plan", "Orders / POF", "Health Unit"] as const;
 
 export function buildMissingCanonicalMemberShellError(input: {
   memberId: string;
@@ -79,6 +79,23 @@ type MemberFileRpcRow = {
   updated_at: string;
   has_legacy_inline_data: boolean | null;
 };
+
+export interface MemberFileListPageResult {
+  rows: MemberFileRow[];
+  hasNextPage: boolean;
+}
+
+function normalizeMemberFilePageSize(rawPageSize?: number | null) {
+  if (!Number.isFinite(rawPageSize) || !rawPageSize || rawPageSize < 1) {
+    return DEFAULT_MEMBER_FILE_PAGE_SIZE;
+  }
+  return Math.min(MAX_MEMBER_FILE_PAGE_SIZE, Math.floor(Number(rawPageSize)));
+}
+
+function buildSupabaseQuotedInList(values: readonly string[]) {
+  const encoded = values.map((value) => `"${value.replace(/"/g, '\\"')}"`);
+  return `(${encoded.join(",")})`;
+}
 
 export async function listMembersSupabase(filters?: {
   q?: string;
@@ -190,7 +207,7 @@ export async function getMemberSupabase(memberId: string, options?: EnsureCanoni
 
 async function getMemberCommandCenterProfileReadOnlySupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberCommandCenterProfileReadOnlySupabase", options);
-  const supabase = await createClient();
+  const supabase = await getMccClient(options);
   const { data, error } = await supabase
     .from("member_command_centers")
     .select(MEMBER_COMMAND_CENTER_DETAIL_SELECT)
@@ -210,7 +227,7 @@ async function getMemberCommandCenterProfileReadOnlySupabase(memberId: string, o
 
 async function getMemberAttendanceScheduleReadOnlySupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getMemberAttendanceScheduleReadOnlySupabase", options);
-  const supabase = await createClient();
+  const supabase = await getMccClient(options);
   const { data, error } = await supabase
     .from("member_attendance_schedules")
     .select(MEMBER_ATTENDANCE_SCHEDULE_DETAIL_SELECT)
@@ -230,7 +247,7 @@ async function getMemberAttendanceScheduleReadOnlySupabase(memberId: string, opt
 
 export async function listMemberContactsSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberContactsSupabase", options);
-  const supabase = await createClient();
+  const supabase = await getMccClient(options);
   return selectMemberContactsRows((selectClause) =>
     supabase
       .from("member_contacts")
@@ -240,35 +257,96 @@ export async function listMemberContactsSupabase(memberId: string, options?: Ens
   );
 }
 
-export async function listMemberFilesSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
-  const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberFilesSupabase", options);
+export async function listMemberFilesPageSupabase(
+  memberId: string,
+  input?: {
+    offset?: number;
+    pageSize?: number;
+    includeClinicalCategories?: boolean;
+    options?: EnsureCanonicalMemberOptions;
+  }
+): Promise<MemberFileListPageResult> {
+  const canonicalMemberId = await resolveMccMemberId(
+    memberId,
+    "listMemberFilesPageSupabase",
+    input?.options
+  );
+  const offset =
+    Number.isFinite(input?.offset) && Number(input?.offset) > 0 ? Math.floor(Number(input?.offset)) : 0;
+  const pageSize = normalizeMemberFilePageSize(input?.pageSize);
+  const includeClinicalCategories = input?.includeClinicalCategories !== false;
   const supabase = createServiceRoleClient("member_file_list_read");
-  let rows: MemberFileRpcRow[];
-  try {
-    rows = await invokeSupabaseRpcOrThrow<MemberFileRpcRow[]>(supabase, MEMBER_FILE_LIST_RPC, {
-      p_member_id: canonicalMemberId
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to query member files.";
-    if (message.includes(MEMBER_FILE_LIST_RPC)) {
-      throw new Error(
-        `Member files list RPC is not available. Apply Supabase migration ${MEMBER_FILE_LIST_MIGRATION} and refresh PostgREST schema cache.`
-      );
-    }
-    throw error;
+  let query = supabase
+    .from("member_files")
+    .select(
+      "id, member_id, file_name, file_type, storage_object_path, category, category_other, document_source, pof_request_id, uploaded_by_user_id, uploaded_by_name, uploaded_at, updated_at"
+    )
+    .eq("member_id", canonicalMemberId)
+    .order("uploaded_at", { ascending: false });
+
+  if (!includeClinicalCategories) {
+    query = query.not("category", "in", buildSupabaseQuotedInList(CLINICAL_MEMBER_FILE_CATEGORIES));
   }
 
-  return rows.map((row) => ({
+  const { data, error } = await query.range(offset, offset + pageSize);
+
+  if (error) {
+    if (isMissingTableError(error, "member_files")) {
+      throw missingMccStorageError({
+        objectName: "member_files",
+        migration: "0011_member_command_center_aux_schema.sql"
+      });
+    }
+    throw new Error(error.message);
+  }
+
+  const fetchedRows = (data ?? []) as Array<Omit<MemberFileRpcRow, "has_legacy_inline_data">>;
+  const pageRows = fetchedRows.slice(0, pageSize);
+  const hasNextPage = fetchedRows.length > pageSize;
+  const missingStorageIds = pageRows
+    .filter((row) => !row.storage_object_path)
+    .map((row) => row.id);
+
+  const legacyInlineIds = new Set<string>();
+  if (missingStorageIds.length > 0) {
+    const { data: inlineData, error: inlineError } = await supabase
+      .from("member_files")
+      .select("id, file_data_url")
+      .in("id", missingStorageIds);
+    if (inlineError) {
+      throw new Error(inlineError.message);
+    }
+    ((inlineData ?? []) as Array<{ id: string; file_data_url: string | null }>).forEach((row) => {
+      if (row.file_data_url) {
+        legacyInlineIds.add(String(row.id));
+      }
+    });
+  }
+
+  const rows = pageRows.map((row) => ({
     ...row,
     storage_object_path: row.storage_object_path ?? null,
     pof_request_id: row.pof_request_id ?? null,
-    file_data_url: row.has_legacy_inline_data ? LEGACY_INLINE_MEMBER_FILE_SENTINEL : null
+    file_data_url: legacyInlineIds.has(row.id) ? LEGACY_INLINE_MEMBER_FILE_SENTINEL : null
   })) as MemberFileRow[];
+
+  return {
+    rows,
+    hasNextPage
+  };
+}
+
+export async function listMemberFilesSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
+  const page = await listMemberFilesPageSupabase(memberId, {
+    pageSize: MAX_MEMBER_FILE_PAGE_SIZE,
+    options
+  });
+  return page.rows;
 }
 
 export async function listMemberAllergiesSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberAllergiesSupabase", options);
-  const supabase = await createClient();
+  const supabase = await getMccClient(options);
   const { data, error } = await supabase
     .from("member_allergies")
     .select(MEMBER_ALLERGY_LIST_SELECT)
@@ -290,7 +368,7 @@ export async function listBusStopDirectorySupabase() {
 
 export async function getAvailableLockerNumbersForMemberSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "getAvailableLockerNumbersForMemberSupabase", options);
-  const supabase = await createClient();
+  const supabase = await getMccClient(options);
   const [{ data: memberData, error: memberError }, { data: activeLockerData, error: activeLockerError }] = await Promise.all([
     supabase
       .from("members")
@@ -424,11 +502,11 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string, opt
       import("@/lib/services/care-plans-read"),
       import("@/lib/services/enrollment-packet-intake-staging")
     ]);
-  const [storedProfile, storedSchedule, contacts, files, mhpAllergies, carePlanOverview, enrollmentPacketIntakeAlert] = await Promise.all([
+  const [storedProfile, storedSchedule, contacts, filesPage, mhpAllergies, carePlanOverview, enrollmentPacketIntakeAlert] = await Promise.all([
     getMemberCommandCenterProfileReadOnlySupabase(canonicalMemberId, canonicalOptions),
     getMemberAttendanceScheduleReadOnlySupabase(canonicalMemberId, canonicalOptions),
     listMemberContactsSupabase(canonicalMemberId, canonicalOptions),
-    listMemberFilesSupabase(canonicalMemberId, canonicalOptions),
+    listMemberFilesPageSupabase(canonicalMemberId, { options: canonicalOptions }),
     listMemberAllergiesSupabase(canonicalMemberId, canonicalOptions),
     getMemberCarePlanOverview(canonicalMemberId, { canonicalInput: true }),
     getLatestEnrollmentPacketPofStagingSummary(canonicalMemberId, { canonicalInput: true })
@@ -450,11 +528,12 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string, opt
     ...storedSchedule,
     make_up_days_available: storedSchedule.make_up_days_available ?? 0
   };
-  const supabase = await createClient();
-  const { count, error } = await supabase
+  const supabase = await getMccClient(canonicalOptions);
+  const { data: assessmentRows, error } = await supabase
     .from("intake_assessments")
-    .select("id", { count: "exact", head: true })
-    .eq("member_id", canonicalMemberId);
+    .select("id")
+    .eq("member_id", canonicalMemberId)
+    .limit(1);
   if (error) {
     if (isMissingTableError(error, "intake_assessments")) {
       throw missingMccStorageError({
@@ -464,14 +543,15 @@ export async function getMemberCommandCenterDetailSupabase(memberId: string, opt
     }
     throw new Error(error.message);
   }
-  const safeAssessmentsCount = count ?? 0;
+  const safeAssessmentsCount = (assessmentRows ?? []).length > 0 ? 1 : 0;
 
   return {
     member,
     profile,
     schedule,
     contacts,
-    files,
+    files: filesPage.rows,
+    filesHasNextPage: filesPage.hasNextPage,
     mhpAllergies,
     makeupBalance: schedule.make_up_days_available ?? 0,
     makeupLedger: [] as MakeupLedgerRow[],

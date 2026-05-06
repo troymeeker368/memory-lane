@@ -100,7 +100,7 @@ export async function upsertCenterBillingSettingSupabase(
 
 export async function listMemberBillingSettingsSupabase(memberId: string, options?: EnsureCanonicalMemberOptions) {
   const canonicalMemberId = await resolveMccMemberId(memberId, "listMemberBillingSettingsSupabase", options);
-  const supabase = await createClient();
+  const supabase = await getMccClient(options);
   const { data, error } = await supabase
     .from("member_billing_settings")
     .select("*")

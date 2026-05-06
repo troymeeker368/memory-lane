@@ -41,7 +41,10 @@ export async function getMemberHealthProfileOverviewSupplement(
 
   const [carePlanSnapshot, progressNoteSummary, billingPayor, relatedPhysicianOrders] =
     await Promise.all([
-      getMemberCarePlanSnapshot(canonicalMemberId, { canonicalInput: true }),
+      getMemberCarePlanSnapshot(canonicalMemberId, {
+        canonicalInput: true,
+        rowLimit: MHP_OVERVIEW_RELATED_ROW_LIMIT
+      }),
       getMemberProgressNoteSummary(canonicalMemberId, { canonicalInput: true }),
       getBillingPayorContact(canonicalMemberId, {
         source: "getMemberHealthProfileOverviewSupplement",

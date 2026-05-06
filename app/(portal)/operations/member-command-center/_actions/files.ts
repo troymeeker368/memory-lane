@@ -6,10 +6,12 @@ import {
   MEMBER_FILE_CATEGORY_OPTIONS
 } from "@/lib/canonical";
 import {
+  canAccessClinicalMemberFiles,
   deleteCommandCenterMemberFile,
   getMemberFileDownloadUrl,
   saveCommandCenterMemberFileUpload
 } from "@/lib/services/member-files";
+import { listMemberFilesPageSupabase } from "@/lib/services/member-command-center-runtime";
 
 import {
   requireCommandCenterEditor,
@@ -36,6 +38,18 @@ type NormalizedMemberFileUploadInput = {
   documentSource: string | null;
   uploadToken: string;
 };
+
+function buildMemberFileUploadResult(row: Awaited<ReturnType<typeof saveCommandCenterMemberFileUpload>>) {
+  if (row.verifiedPersisted === false) {
+    return {
+      ok: false,
+      error:
+        "File upload needs follow-up. The file write was attempted, but the canonical member-file record could not be verified in Supabase."
+    } as const;
+  }
+
+  return { ok: true, row } as const;
+}
 
 function normalizeMemberFileUploadInput(raw: {
   memberId?: string | null;
@@ -105,7 +119,7 @@ export async function addMemberFileAction(raw: AddMemberFileInput) {
     });
 
     revalidateCommandCenter(normalized.memberId);
-    return { ok: true, row: created };
+    return buildMemberFileUploadResult(created);
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to upload file." };
   }
@@ -153,7 +167,7 @@ export async function addMemberFileFormAction(formData: FormData) {
     });
 
     revalidateCommandCenter(normalized.memberId);
-    return { ok: true, row: created };
+    return buildMemberFileUploadResult(created);
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to upload file." };
   }
@@ -181,6 +195,36 @@ export async function deleteMemberFileAction(raw: { id: string; memberId: string
     return { ok: true };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Unable to delete file." };
+  }
+}
+
+export async function listMemberFilesPageAction(raw: { memberId: string; offset?: number; pageSize?: number }) {
+  try {
+    const viewer = await requireCommandCenterViewer();
+    const memberId = raw.memberId?.trim();
+    if (!memberId) {
+      return { ok: false, error: "Invalid member file list request." } as const;
+    }
+
+    const page = await listMemberFilesPageSupabase(memberId, {
+      offset: raw.offset,
+      pageSize: raw.pageSize,
+      includeClinicalCategories: canAccessClinicalMemberFiles({
+        role: viewer.role,
+        permissions: viewer.permissions
+      })
+    });
+
+    return {
+      ok: true,
+      rows: page.rows,
+      hasNextPage: page.hasNextPage
+    } as const;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to load member files."
+    } as const;
   }
 }
 

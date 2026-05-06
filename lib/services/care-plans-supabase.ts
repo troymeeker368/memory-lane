@@ -575,8 +575,11 @@ async function assertCarePlanWriteBoundaryAligned(input: {
   if (detail.versions.length === 0) {
     throw new Error("Care plan version history did not persist.");
   }
-  if (detail.carePlan.postSignReadinessStatus !== "ready") {
-    throw new Error("Care plan post-sign readiness did not finalize to ready.");
+  const readinessStatus = detail.carePlan.postSignReadinessStatus;
+  if (readinessStatus !== "ready" && readinessStatus !== "signed_pending_caregiver_dispatch") {
+    throw new Error(
+      `Care plan post-sign readiness landed in an unexpected state (${readinessStatus}).`
+    );
   }
   if (
     clean(input.expectedCaregiverStatus) &&

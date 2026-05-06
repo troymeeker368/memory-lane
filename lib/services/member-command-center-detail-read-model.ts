@@ -2,6 +2,7 @@ import { cache } from "react";
 
 import { resolveActiveEffectiveMemberRowForDate } from "@/lib/services/billing-effective";
 import { loadExpectedAttendanceSupabaseContext, resolveExpectedAttendanceFromSupabaseContext } from "@/lib/services/expected-attendance-supabase";
+import { canAccessClinicalMemberFiles, canViewMemberFileCategory } from "@/lib/services/member-files";
 import {
   getAvailableLockerNumbersForMemberSupabase,
   getMemberCommandCenterDetailSupabase,
@@ -243,7 +244,10 @@ export function buildMemberCommandCenterBaseViewModel(detail: MemberCommandCente
 
 async function loadMemberCommandCenterActiveBillingSetting(detail: MemberCommandCenterDetail) {
   const billingDate = toEasternDate();
-  const memberBillingSettings = await listMemberBillingSettingsSupabase(detail.member.id, { canonicalInput: true });
+  const memberBillingSettings = await listMemberBillingSettingsSupabase(detail.member.id, {
+    canonicalInput: true,
+    serviceRole: true
+  });
 
   return resolveActiveEffectiveMemberRowForDate(detail.member.id, billingDate, memberBillingSettings);
 }
@@ -323,12 +327,32 @@ export async function getMemberCommandCenterDetailPageData(input: {
   actor: {
     id: string;
     fullName: string;
+    role: string;
+    permissions: unknown;
   };
 }) {
-  const detail = await getMemberCommandCenterDetailSupabase(input.memberId);
+  const detail = await getMemberCommandCenterDetailSupabase(input.memberId, { serviceRole: true });
   if (!detail) return null;
+  const includeClinicalCategories = canAccessClinicalMemberFiles({
+    role: input.actor.role,
+    permissions: input.actor.permissions as Parameters<typeof canViewMemberFileCategory>[0]["permissions"]
+  });
+  const filteredDetail = includeClinicalCategories
+    ? detail
+    : {
+        ...detail,
+        files: detail.files.filter((row) =>
+          canViewMemberFileCategory(
+            {
+              role: input.actor.role,
+              permissions: input.actor.permissions as Parameters<typeof canViewMemberFileCategory>[0]["permissions"]
+            },
+            row.category
+          )
+        )
+      };
 
-  const base = buildMemberCommandCenterBaseViewModel(detail);
+  const base = buildMemberCommandCenterBaseViewModel(filteredDetail);
   const needsBillingWorkspace = input.tab === "attendance" || input.tab === "pricing";
   const needsAttendanceWorkspace = input.tab === "attendance";
   const needsTransportLookups = input.tab === "transportation" && Boolean(input.canEdit);
@@ -341,9 +365,9 @@ export async function getMemberCommandCenterDetailPageData(input: {
     lockerOptions,
     pofSection
   ] = await Promise.all([
-    needsBillingWorkspace ? loadMemberCommandCenterActiveBillingSetting(detail) : Promise.resolve(null),
+    needsBillingWorkspace ? loadMemberCommandCenterActiveBillingSetting(filteredDetail) : Promise.resolve(null),
     needsAttendanceWorkspace
-      ? loadMemberCommandCenterAttendanceWorkspace(detail)
+      ? loadMemberCommandCenterAttendanceWorkspace(filteredDetail)
       : Promise.resolve({
           effectiveScheduleTodayLabel: "-",
           activeOverrideCount: 0
@@ -355,11 +379,14 @@ export async function getMemberCommandCenterDetailPageData(input: {
           busNumberOptions: []
         }),
     needsLockerOptions
-      ? getAvailableLockerNumbersForMemberSupabase(detail.member.id, { canonicalInput: true })
+      ? getAvailableLockerNumbersForMemberSupabase(filteredDetail.member.id, {
+          canonicalInput: true,
+          serviceRole: true
+        })
       : Promise.resolve([]),
     input.includePofWorkflow
       ? loadMemberCommandCenterPofSection({
-          memberId: detail.member.id,
+          memberId: filteredDetail.member.id,
           actorUserId: input.actor.id,
           actorFullName: input.actor.fullName
         })
@@ -367,7 +394,7 @@ export async function getMemberCommandCenterDetailPageData(input: {
   ]);
 
   return {
-    detail,
+    detail: filteredDetail,
     shared: base,
     attendanceBilling: needsBillingWorkspace
       ? {
@@ -394,6 +421,8 @@ export async function getMemberCommandCenterDetailPageReadModel(input: {
   includePofSection: boolean;
   actorUserId: string;
   actorFullName: string;
+  actorRole: string;
+  actorPermissions: unknown;
 }) {
   const detailPageData = await getMemberCommandCenterDetailPageData({
     memberId: input.memberId,
@@ -402,7 +431,9 @@ export async function getMemberCommandCenterDetailPageReadModel(input: {
     includePofWorkflow: input.includePofSection,
     actor: {
       id: input.actorUserId,
-      fullName: input.actorFullName
+      fullName: input.actorFullName,
+      role: input.actorRole,
+      permissions: input.actorPermissions
     }
   });
   if (!detailPageData) return null;

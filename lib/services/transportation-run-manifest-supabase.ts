@@ -13,7 +13,7 @@ import {
 } from "@/lib/services/expected-attendance-supabase";
 import {
   buildTransportLocationLabel,
-  getTransportSlotForScheduleDay,
+  type TransportMode,
   toScheduleWeekdayKey,
   type ScheduleWeekdayKey
 } from "@/lib/services/member-schedule-selectors";
@@ -24,9 +24,13 @@ import type {
 import type { TransportationManifestAdjustmentRow } from "@/lib/services/transportation-station-supabase";
 import { listPreferredContactsByMemberSupabase } from "@/lib/services/transportation-contact-preferences-supabase";
 import { resolveEffectiveTransportationBillingStatus } from "@/lib/services/billing-effective";
+import {
+  formatTransportationContactAddress,
+  getScheduleTransportSlotOrNull,
+  parseTransportationModeOrThrow
+} from "@/lib/services/transportation-manifest-shared";
 
 type Shift = "AM" | "PM";
-type TransportMode = "Bus Stop" | "Door to Door";
 type TransportationBillingStatus = "BillNormally" | "Waived" | "IncludedInProgramRate";
 
 type MemberRow = {
@@ -258,15 +262,6 @@ function firstNameFromDisplayName(displayName: string) {
   return displayName.trim().split(/\s+/)[0] ?? displayName.trim();
 }
 
-function formatContactAddress(contact: MemberContactRow | null) {
-  return (
-    [contact?.street_address, contact?.city, contact?.state, contact?.zip]
-      .map((value) => (value ?? "").trim())
-      .filter(Boolean)
-      .join(", ") || null
-  );
-}
-
 function statusLabelFromCode(code: TransportationRunManifestRow["operationalReasonCode"]) {
   switch (code) {
     case "absent":
@@ -286,11 +281,6 @@ function statusLabelFromCode(code: TransportationRunManifestRow["operationalReas
     default:
       return null;
   }
-}
-
-function coerceTransportMode(mode: string | null | undefined): TransportMode | null {
-  if (mode === "Bus Stop" || mode === "Door to Door") return mode;
-  return null;
 }
 
 function mapRunRow(row: TransportationRunRow): TransportationRunHistoryEntry {
@@ -464,9 +454,13 @@ export async function getTransportationRunManifestSupabase(input: {
 
   schedules.forEach((schedule) => {
     if (!scheduleWeekday) return;
-    const slot = getTransportSlotForScheduleDay(schedule as Parameters<typeof getTransportSlotForScheduleDay>[0], scheduleWeekday, selectedShift);
-    const transportType = coerceTransportMode(slot.mode);
-    if (!transportType) return;
+    const slot = getScheduleTransportSlotOrNull({
+      schedule: schedule as Parameters<typeof getScheduleTransportSlotOrNull>[0]["schedule"],
+      weekday: scheduleWeekday,
+      shift: selectedShift
+    });
+    if (!slot) return;
+    const transportType = slot.mode;
     if ((slot.busNumber ?? "").trim() !== selectedBusNumber) return;
 
     const member = requireManifestMember({
@@ -533,7 +527,7 @@ export async function getTransportationRunManifestSupabase(input: {
       caregiverContactPhone: normalizePhoneForStorage(
         contact?.cellular_number ?? contact?.home_number ?? contact?.work_number ?? null
       ),
-      caregiverContactAddress: formatContactAddress(contact),
+      caregiverContactAddress: formatTransportationContactAddress(contact),
       riderSource: "schedule",
       attendanceStatus: attendance?.status ?? "not-recorded",
       operationalStatus,
@@ -561,7 +555,13 @@ export async function getTransportationRunManifestSupabase(input: {
     const attendance = attendanceByMemberId.get(adjustment.member_id) ?? null;
     const existingLog = existingLogByMemberId.get(adjustment.member_id) ?? null;
     const contact = preferredContactsByMember.get(adjustment.member_id) ?? null;
-    const transportType = coerceTransportMode(adjustment.transport_type) ?? "Door to Door";
+    const transportType = parseTransportationModeOrThrow({
+      mode: adjustment.transport_type,
+      selectedDate,
+      shift: selectedShift,
+      memberId: adjustment.member_id,
+      context: "transportation_manifest_adjustments.transport_type"
+    });
     const billingStatus = resolveEffectiveTransportationBillingStatus({
       attendanceSetting: schedule
     });
@@ -606,7 +606,7 @@ export async function getTransportationRunManifestSupabase(input: {
           contact?.work_number ??
           null
       ),
-      caregiverContactAddress: adjustment.caregiver_contact_address_snapshot ?? formatContactAddress(contact),
+      caregiverContactAddress: adjustment.caregiver_contact_address_snapshot ?? formatTransportationContactAddress(contact),
       riderSource: "manual-add",
       attendanceStatus: attendance?.status ?? "not-recorded",
       operationalStatus,

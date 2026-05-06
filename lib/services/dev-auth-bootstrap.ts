@@ -101,7 +101,8 @@ export async function listDevAuthBootstrapAccounts(): Promise<DevAuthBootstrapAc
     .order("full_name");
 
   if (error) {
-    throw new Error(`Unable to load dev bootstrap staff accounts: ${error.message}`);
+    console.warn(`Unable to load dev bootstrap staff accounts: ${error.message}`);
+    return [];
   }
 
   const rows = (data ?? []).map((row) => ({

@@ -24,5 +24,6 @@ export {
   addMemberFileAction,
   addMemberFileFormAction,
   deleteMemberFileAction,
-  getMemberFileDownloadUrlAction
+  getMemberFileDownloadUrlAction,
+  listMemberFilesPageAction
 } from "./_actions/files";

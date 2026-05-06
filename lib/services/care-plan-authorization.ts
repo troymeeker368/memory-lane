@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { requireNavItemAccess } from "@/lib/auth";
-import { normalizeRoleKey } from "@/lib/permissions";
+import { normalizeRoleKey, type PermissionAction } from "@/lib/permissions";
 import { getManagedUserSignatureName } from "@/lib/services/user-management";
 
 export const CARE_PLAN_AUTHORIZED_ROLES = ["admin", "nurse"] as const;
@@ -24,8 +24,8 @@ export function canAccessCarePlansForRole(role: string | null | undefined) {
   return isCarePlanAuthorizedRole(role);
 }
 
-export async function requireCarePlanAuthorizedUser(): Promise<CarePlanAuthorizedUser> {
-  const profile = await requireNavItemAccess("/health/care-plans");
+export async function requireCarePlanAuthorizedUser(action: PermissionAction = "canView"): Promise<CarePlanAuthorizedUser> {
+  const profile = await requireNavItemAccess("/health/care-plans", action);
   if (!isCarePlanAuthorizedRole(profile.role)) {
     redirect("/unauthorized?module=health&action=care-plans");
   }

@@ -11,7 +11,7 @@ import { buildCarePlanPdfDataUrl } from "@/lib/services/care-plan-pdf";
 import { toEasternISO } from "@/lib/timezone";
 
 export async function generateCarePlanPdfAction(input: { carePlanId: string; persistToMemberFiles?: boolean }) {
-  const user = await requireCarePlanAuthorizedUser();
+  const user = await requireCarePlanAuthorizedUser("canEdit");
   const carePlanId = String(input.carePlanId ?? "").trim();
   const persistToMemberFiles = input.persistToMemberFiles !== false;
   if (!carePlanId) {

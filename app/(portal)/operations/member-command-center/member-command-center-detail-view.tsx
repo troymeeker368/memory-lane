@@ -483,6 +483,7 @@ export async function MemberCommandCenterDetailView({
             key={`mcc-files-${detail.member.id}-${base.filesUpdatedAt ?? "na"}`}
             memberId={detail.member.id}
             rows={detail.files}
+            hasNextPage={detail.filesHasNextPage}
             canEdit={canEdit}
           />
         </div>

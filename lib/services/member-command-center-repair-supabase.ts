@@ -1,6 +1,5 @@
 import "server-only";
 
-import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import {
   defaultAttendanceSchedule,
@@ -24,7 +23,7 @@ export async function backfillMissingMemberCommandCenterRowsSupabase(memberIds: 
     };
   }
 
-  const supabase = await createClient();
+  const supabase = createServiceRoleClient("historical_drift_repair");
   const targetMembers = await selectMembersWithFallback(
     (selectClause) => supabase.from("members").select(selectClause).in("id", normalizedMemberIds),
     isMissingAnyColumnError,

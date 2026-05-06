@@ -24,7 +24,7 @@ async function loadCarePlanEsignService() {
 
 async function buildPersistedCarePlanActionState(input: {
   carePlanId: string;
-  fallbackOperationalStatus: string;
+  fallbackOperationalStatus: "ready" | "follow_up_required";
   actionNeededMessage?: string | null;
   failureRequiresStaffFollowUp?: boolean;
 }) {
@@ -114,7 +114,7 @@ const createCarePlanSchema = z
   });
 
 export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSchema>) {
-  const user = await requireCarePlanAuthorizedUser();
+  const user = await requireCarePlanAuthorizedUser("canEdit");
   const payload = createCarePlanSchema.safeParse(raw);
   if (!payload.success) return { ok: false as const, error: "Invalid care plan submission." };
 
@@ -176,7 +176,9 @@ export async function createCarePlanAction(raw: z.infer<typeof createCarePlanSch
     id: createdCarePlan.id,
     ...await buildPersistedCarePlanActionState({
       carePlanId: createdCarePlan.id,
-      fallbackOperationalStatus: "ready"
+      fallbackOperationalStatus: "follow_up_required",
+      actionNeededMessage: "Care plan write committed, but persisted readiness reload needs follow-up.",
+      failureRequiresStaffFollowUp: true
     })
   };
 }
@@ -227,7 +229,7 @@ const reviewCarePlanSchema = z
   });
 
 export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSchema>) {
-  const user = await requireCarePlanAuthorizedUser();
+  const user = await requireCarePlanAuthorizedUser("canEdit");
   const payload = reviewCarePlanSchema.safeParse(raw);
   if (!payload.success) return { ok: false as const, error: "Invalid care plan review submission." };
 
@@ -288,7 +290,9 @@ export async function reviewCarePlanAction(raw: z.infer<typeof reviewCarePlanSch
     error: null,
     ...await buildPersistedCarePlanActionState({
       carePlanId: reviewedCarePlan.id,
-      fallbackOperationalStatus: "ready"
+      fallbackOperationalStatus: "follow_up_required",
+      actionNeededMessage: "Care plan review committed, but persisted readiness reload needs follow-up.",
+      failureRequiresStaffFollowUp: true
     })
   };
 }
@@ -300,7 +304,7 @@ const signCarePlanSchema = z.object({
 });
 
 export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>) {
-  const user = await requireCarePlanAuthorizedUser();
+  const user = await requireCarePlanAuthorizedUser("canEdit");
   const payload = signCarePlanSchema.safeParse(raw);
   if (!payload.success) {
     const attested = typeof (raw as { attested?: unknown }).attested === "boolean"
@@ -373,7 +377,9 @@ export async function signCarePlanAction(raw: z.infer<typeof signCarePlanSchema>
     status: signedCarePlan.caregiverSignatureStatus,
     ...await buildPersistedCarePlanActionState({
       carePlanId: signedCarePlan.id,
-      fallbackOperationalStatus: "ready"
+      fallbackOperationalStatus: "follow_up_required",
+      actionNeededMessage: "Care plan signature committed, but persisted readiness reload needs follow-up.",
+      failureRequiresStaffFollowUp: true
     })
   };
 }
@@ -387,7 +393,7 @@ const sendCaregiverSignatureSchema = z.object({
 });
 
 export async function sendCarePlanToCaregiverAction(raw: z.infer<typeof sendCaregiverSignatureSchema>) {
-  const user = await requireCarePlanAuthorizedUser();
+  const user = await requireCarePlanAuthorizedUser("canEdit");
   const payload = sendCaregiverSignatureSchema.safeParse(raw);
   if (!payload.success) {
     return { ok: false, error: "Invalid caregiver signature send request." } as const;

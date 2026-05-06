@@ -227,6 +227,7 @@ export async function listCarePlanRows(filters?: {
   status?: string;
   query?: string;
   carePlanId?: string;
+  limit?: number;
   serviceRole?: boolean;
   canonicalInput?: boolean;
 }) {
@@ -244,6 +245,10 @@ export async function listCarePlanRows(filters?: {
   if (filters?.carePlanId) query = query.eq("id", filters.carePlanId);
   if (canonicalMemberId) query = query.eq("member_id", canonicalMemberId);
   if (filters?.track && filters.track !== "All") query = query.eq("track", filters.track);
+  const rowLimit = filters?.limit;
+  if (Number.isFinite(rowLimit) && Number(rowLimit) > 0) {
+    query = query.limit(Math.floor(Number(rowLimit)));
+  }
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   const plans = ((data ?? []) as unknown) as DbCarePlan[];
@@ -590,24 +595,37 @@ export async function getMemberCarePlanOverview(
 
 export async function getMemberCarePlanSnapshot(
   memberId: string,
-  options?: ResolveCarePlanMemberOptions
+  options?: ResolveCarePlanMemberOptions & { rowLimit?: number }
 ): Promise<MemberCarePlanSnapshot> {
   const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getMemberCarePlanSnapshot", options);
   const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
   const [rows, latestRow] = await Promise.all([
     listCarePlanRows({
       memberId: canonicalMemberId,
+      limit: options?.rowLimit,
       canonicalInput: true,
       serviceRole: options?.serviceRole
     }),
     getLatestCarePlanSummaryRow(supabase, canonicalMemberId)
   ]);
-  const latest = latestRow ? rows.find((row) => row.id === latestRow.id) ?? null : null;
+  let latest = latestRow ? rows.find((row) => row.id === latestRow.id) ?? null : null;
+  if (latestRow && !latest) {
+    latest =
+      (
+        await listCarePlanRows({
+          carePlanId: latestRow.id,
+          canonicalInput: true,
+          serviceRole: options?.serviceRole
+        })
+      )[0] ?? null;
+  }
 
   return {
     rows,
     latest,
-    summary: buildMemberCarePlanSummary(canonicalMemberId, latest)
+    summary: latest
+      ? buildMemberCarePlanSummary(canonicalMemberId, latest)
+      : buildMemberCarePlanSummaryFromLatestRow(canonicalMemberId, latestRow)
   };
 }
 

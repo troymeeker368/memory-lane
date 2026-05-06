@@ -6,7 +6,7 @@ import { normalizePhoneForStorage } from "@/lib/phone";
 import { normalizeOperationalDateOnly, getWeekdayForDate, type OperationsWeekdayKey } from "@/lib/services/operations-calendar";
 import {
   buildTransportLocationLabel,
-  getTransportSlotForScheduleDay,
+  type TransportMode,
   toScheduleWeekdayKey
 } from "@/lib/services/member-schedule-selectors";
 import { getConfiguredBusNumbers } from "@/lib/services/operations-settings";
@@ -20,9 +20,13 @@ import {
   type MemberContactRow
 } from "@/lib/services/member-command-center-read";
 import { listPreferredContactsByMemberSupabase } from "@/lib/services/transportation-contact-preferences-supabase";
+import {
+  formatTransportationContactAddress,
+  getScheduleTransportSlotOrNull,
+  parseTransportationModeOrThrow
+} from "@/lib/services/transportation-manifest-shared";
 
 type Shift = "AM" | "PM";
-type TransportMode = "Bus Stop" | "Door to Door";
 type BusNumber = string;
 
 export interface TransportationManifestAdjustmentRow {
@@ -443,8 +447,12 @@ export async function getTransportationManifestSupabase(input?: {
     const contact = preferredContactByMember.get(schedule.member_id) ?? null;
     selectedShifts.forEach((shift) => {
       if (!scheduleWeekday) return;
-    const slot = getTransportSlotForScheduleDay(schedule as Parameters<typeof getTransportSlotForScheduleDay>[0], scheduleWeekday, shift);
-      if (slot.mode !== "Bus Stop" && slot.mode !== "Door to Door") return;
+      const slot = getScheduleTransportSlotOrNull({
+        schedule: schedule as Parameters<typeof getScheduleTransportSlotOrNull>[0]["schedule"],
+        weekday: scheduleWeekday,
+        shift
+      });
+      if (!slot) return;
       const rider: TransportationManifestRider = {
         key: `${member.id}:${shift}`,
         adjustmentId: null,
@@ -464,11 +472,7 @@ export async function getTransportationManifestSupabase(input?: {
         caregiverContactName: contact?.contact_name ?? null,
         caregiverContactPhone:
           normalizePhoneForStorage(contact?.cellular_number ?? contact?.home_number ?? contact?.work_number ?? null),
-        caregiverContactAddress:
-          [contact?.street_address, contact?.city, contact?.state, contact?.zip]
-            .map((value) => (value ?? "").trim())
-            .filter(Boolean)
-            .join(", ") || null,
+        caregiverContactAddress: formatTransportationContactAddress(contact),
         notes: null,
         source: "schedule"
       };
@@ -497,16 +501,17 @@ export async function getTransportationManifestSupabase(input?: {
       context: "manual adjustment"
     });
     const contact = preferredContactByMember.get(row.member_id) ?? null;
-    const transportType = row.transport_type === "Door to Door" || row.transport_type === "Bus Stop"
-      ? row.transport_type
-      : "Door to Door";
+    const transportType = parseTransportationModeOrThrow({
+      mode: row.transport_type,
+      selectedDate,
+      shift: row.shift,
+      memberId: row.member_id,
+      context: "transportation_manifest_adjustments.transport_type"
+    });
     const busStopName = row.bus_stop_name ?? null;
     const doorToDoorAddress =
       row.door_to_door_address ??
-      ([contact?.street_address, contact?.city, contact?.state, contact?.zip]
-        .map((value) => (value ?? "").trim())
-        .filter(Boolean)
-        .join(", ") || null);
+      formatTransportationContactAddress(contact);
     return {
       key: `${row.member_id}:${row.shift}`,
       adjustmentId: row.id,
@@ -534,10 +539,7 @@ export async function getTransportationManifestSupabase(input?: {
         ),
       caregiverContactAddress:
         row.caregiver_contact_address_snapshot ??
-        ([contact?.street_address, contact?.city, contact?.state, contact?.zip]
-          .map((value) => (value ?? "").trim())
-          .filter(Boolean)
-          .join(", ") || null),
+        formatTransportationContactAddress(contact),
       notes: row.notes ?? null,
       source: "manual-add"
     } satisfies TransportationManifestRider;

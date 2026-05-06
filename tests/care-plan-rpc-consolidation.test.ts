@@ -15,6 +15,14 @@ test("care plan list service uses one canonical list read-model RPC", () => {
   assert.equal(source.includes("mapCarePlanListRows"), true);
 });
 
+test("care plan snapshot backfills latest row when a bounded page excludes it", () => {
+  const source = readWorkspaceFile("lib/services/care-plans-read-model.ts");
+
+  assert.equal(source.includes("if (latestRow && !latest) {"), true);
+  assert.equal(source.includes("carePlanId: latestRow.id"), true);
+  assert.equal(source.includes("buildMemberCarePlanSummaryFromLatestRow(canonicalMemberId, latestRow)"), true);
+});
+
 test("care plan consolidation migration adds list read model and drops summary helper RPC", () => {
   const source = readWorkspaceFile("supabase/migrations/0131_care_plan_list_read_model_consolidation.sql");
 

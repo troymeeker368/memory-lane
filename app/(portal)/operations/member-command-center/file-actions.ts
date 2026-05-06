@@ -4,7 +4,8 @@ import {
   addMemberFileAction as addMemberFileActionImpl,
   addMemberFileFormAction as addMemberFileFormActionImpl,
   deleteMemberFileAction as deleteMemberFileActionImpl,
-  getMemberFileDownloadUrlAction as getMemberFileDownloadUrlActionImpl
+  getMemberFileDownloadUrlAction as getMemberFileDownloadUrlActionImpl,
+  listMemberFilesPageAction as listMemberFilesPageActionImpl
 } from "./actions-impl";
 
 type AddMemberFileInput = {
@@ -23,6 +24,12 @@ type MemberFileRefInput = {
   memberId: string;
 };
 
+type MemberFileListPageInput = {
+  memberId: string;
+  offset?: number;
+  pageSize?: number;
+};
+
 export async function addMemberFileAction(raw: AddMemberFileInput) {
   return addMemberFileActionImpl(raw);
 }
@@ -37,4 +44,8 @@ export async function deleteMemberFileAction(raw: MemberFileRefInput) {
 
 export async function getMemberFileDownloadUrlAction(raw: MemberFileRefInput) {
   return getMemberFileDownloadUrlActionImpl(raw);
+}
+
+export async function listMemberFilesPageAction(raw: MemberFileListPageInput) {
+  return listMemberFilesPageActionImpl(raw);
 }

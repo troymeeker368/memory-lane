@@ -1,5 +1,11 @@
 import { resolveCanonicalLeadRef } from "@/lib/services/canonical-person-ref";
 import {
+  getSalesPartnerByIdOrCodeSupabase,
+  getSalesReferralSourceByIdOrCodeSupabase,
+  type SalesPartnerRow,
+  type SalesReferralSourceRow
+} from "@/lib/services/sales-crm-read-model";
+import {
   normalizeLeadFormFollowUpType,
   normalizeLeadFormLeadSource,
   normalizeLeadFormLikelihood,
@@ -35,7 +41,6 @@ const LEAD_DETAIL_SELECT = [
   "lost_reason",
   "closed_date"
 ].join(", ");
-const PARTNER_DETAIL_SELECT = "id, partner_id, organization_name, category, location, primary_phone, primary_email, notes, last_touched";
 const REFERRAL_SOURCE_DETAIL_SELECT =
   "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, last_touched";
 const LEAD_ACTIVITY_DETAIL_SELECT =
@@ -111,7 +116,7 @@ type LeadPartnerRow = {
   last_touched: string | null;
 };
 
-function normalizeLeadPartnerRow(row: Record<string, unknown> | null): LeadPartnerRow | null {
+function normalizeLeadPartnerRow(row: SalesPartnerRow | null): LeadPartnerRow | null {
   if (!row) return null;
   const category = typeof row.category === "string" ? row.category : null;
   return {
@@ -142,6 +147,22 @@ type LeadReferralSourceRow = {
   last_touched: string | null;
 };
 
+function normalizeLeadReferralSourceRow(row: SalesReferralSourceRow | LeadReferralSourceRow | null): LeadReferralSourceRow | null {
+  if (!row) return null;
+  return {
+    id: String(row.id ?? ""),
+    referral_source_id: typeof row.referral_source_id === "string" ? row.referral_source_id : null,
+    partner_id: typeof row.partner_id === "string" ? row.partner_id : null,
+    contact_name: typeof row.contact_name === "string" ? row.contact_name : null,
+    organization_name: typeof row.organization_name === "string" ? row.organization_name : null,
+    job_title: typeof row.job_title === "string" ? row.job_title : null,
+    primary_phone: typeof row.primary_phone === "string" ? row.primary_phone : null,
+    primary_email: typeof row.primary_email === "string" ? row.primary_email : null,
+    preferred_contact_method: typeof row.preferred_contact_method === "string" ? row.preferred_contact_method : null,
+    last_touched: typeof row.last_touched === "string" ? row.last_touched : null
+  };
+}
+
 type LeadPartnerActivityRow = {
   id: string;
   activity_at: string;
@@ -153,10 +174,6 @@ type LeadPartnerActivityRow = {
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function isInvalidUuidFilterError(message: string) {
-  return message.toLowerCase().includes("invalid input syntax for type uuid");
 }
 
 export async function getLeadDetail(leadId: string): Promise<{
@@ -215,31 +232,21 @@ export async function getLeadDetail(leadId: string): Promise<{
   const referralSourceId = String(lead.referral_source_id ?? "").trim();
   const referralName = String(lead.referral_name ?? "").trim();
 
-  const partnerPromise = partnerId
-    ? (() => {
-        const filters = [
-          isUuid(partnerId) ? `id.eq.${partnerId}` : null,
-          `partner_id.eq.${partnerId}`
-        ].filter(Boolean) as string[];
-        return supabase.from("community_partner_organizations").select(PARTNER_DETAIL_SELECT).or(filters.join(",")).maybeSingle();
-      })()
-    : Promise.resolve({ data: null, error: null } as const);
+  const partnerPromise = partnerId ? getSalesPartnerByIdOrCodeSupabase(partnerId) : Promise.resolve(null);
 
   const referralSourcePromise = referralSourceId
-    ? (() => {
-        const filters = [
-          isUuid(referralSourceId) ? `id.eq.${referralSourceId}` : null,
-          `referral_source_id.eq.${referralSourceId}`
-        ].filter(Boolean) as string[];
-        return supabase.from("referral_sources").select(REFERRAL_SOURCE_DETAIL_SELECT).or(filters.join(",")).maybeSingle();
-      })()
+    ? getSalesReferralSourceByIdOrCodeSupabase(referralSourceId)
     : referralName
       ? supabase
           .from("referral_sources")
           .select(REFERRAL_SOURCE_DETAIL_SELECT)
           .or(`contact_name.eq.${referralName},organization_name.eq.${referralName}`)
           .maybeSingle()
-      : Promise.resolve({ data: null, error: null } as const);
+          .then(({ data, error }) => {
+            if (error) throw new Error(error.message);
+            return ((data as unknown) as LeadReferralSourceRow | null) ?? null;
+          })
+      : Promise.resolve(null as LeadReferralSourceRow | null);
 
   const [activitiesResult, stageHistoryResult, partnerResult, referralSourceResult] = await Promise.all([
     supabase
@@ -258,17 +265,10 @@ export async function getLeadDetail(leadId: string): Promise<{
 
   if (activitiesResult.error) throw new Error(activitiesResult.error.message);
   if (stageHistoryResult.error) throw new Error(stageHistoryResult.error.message);
-  if (partnerResult.error && !isInvalidUuidFilterError(partnerResult.error.message)) {
-    throw new Error(partnerResult.error.message);
-  }
-  if (referralSourceResult.error && !isInvalidUuidFilterError(referralSourceResult.error.message)) {
-    throw new Error(referralSourceResult.error.message);
-  }
-
-  const partner = partnerResult.error ? null : normalizeLeadPartnerRow((partnerResult.data as Record<string, unknown> | null) ?? null);
-  const referralSource = referralSourceResult.error
-    ? null
-    : ((referralSourceResult.data as unknown as LeadReferralSourceRow | null) ?? null);
+  const partner = normalizeLeadPartnerRow(partnerResult as SalesPartnerRow | null);
+  const referralSource = normalizeLeadReferralSourceRow(
+    (referralSourceResult as SalesReferralSourceRow | LeadReferralSourceRow | null) ?? null
+  );
 
   let partnerActivitiesQuery = supabase
     .from("partner_activities")

@@ -6,7 +6,8 @@ import { MEMBER_FILE_CATEGORY_OPTIONS } from "@/lib/canonical";
 import {
   addMemberFileFormAction,
   deleteMemberFileAction,
-  getMemberFileDownloadUrlAction
+  getMemberFileDownloadUrlAction,
+  listMemberFilesPageAction
 } from "@/app/(portal)/operations/member-command-center/file-actions";
 import { useScopedMutation } from "@/components/forms/use-scoped-mutation";
 import { MutationNotice } from "@/components/ui/mutation-notice";
@@ -31,6 +32,8 @@ type FileManagerFeedback =
       message: string;
     }
   | null;
+
+const MEMBER_FILE_PAGE_SIZE = 50;
 
 function createUploadToken() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -62,10 +65,12 @@ function formatDocumentSource(value: string | null | undefined) {
 export function MemberCommandCenterFileManager({
   memberId,
   rows,
+  hasNextPage: initialHasNextPage,
   canEdit
 }: {
   memberId: string;
   rows: FileRow[];
+  hasNextPage: boolean;
   canEdit: boolean;
 }) {
   const [feedback, setFeedback] = useState<FileManagerFeedback>(null);
@@ -74,13 +79,16 @@ export function MemberCommandCenterFileManager({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadToken, setUploadToken] = useState<string | null>(null);
   const [localRows, setLocalRows] = useState<FileRow[]>(rows);
+  const [hasNextPage, setHasNextPage] = useState(initialHasNextPage);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const { isSaving, run } = useScopedMutation();
 
   const showCustomCategory = useMemo(() => category === "Other", [category]);
 
   useEffect(() => {
     setLocalRows(rows);
-  }, [rows]);
+    setHasNextPage(initialHasNextPage);
+  }, [initialHasNextPage, rows]);
 
   useEffect(() => {
     setFeedback(null);
@@ -189,6 +197,37 @@ export function MemberCommandCenterFileManager({
         setFeedback({ kind: "error", message: result.error });
       }
     });
+  }
+
+  async function onLoadMore() {
+    if (isLoadingMore || !hasNextPage) return;
+    setFeedback(null);
+    setIsLoadingMore(true);
+    try {
+      const result = await listMemberFilesPageAction({
+        memberId,
+        offset: localRows.length,
+        pageSize: MEMBER_FILE_PAGE_SIZE
+      });
+      if (!result.ok) {
+        setFeedback({ kind: "error", message: result.error });
+        return;
+      }
+
+      setLocalRows((current) => {
+        const seen = new Set(current.map((row) => row.id));
+        const additions = result.rows.filter((row) => !seen.has(row.id));
+        return [...current, ...additions];
+      });
+      setHasNextPage(result.hasNextPage);
+    } catch (error) {
+      setFeedback({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Unable to load more member files."
+      });
+    } finally {
+      setIsLoadingMore(false);
+    }
   }
 
   return (
@@ -331,6 +370,19 @@ export function MemberCommandCenterFileManager({
           </tbody>
         </table>
       </div>
+
+      {hasNextPage ? (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            className="rounded-lg border border-border px-3 py-2 text-sm font-semibold"
+            onClick={onLoadMore}
+            disabled={isSaving || isLoadingMore}
+          >
+            {isLoadingMore ? "Loading..." : "Load Older Files"}
+          </button>
+        </div>
+      ) : null}
 
       <MutationNotice kind="error" message={feedback?.kind === "error" ? feedback.message : null} />
       <MutationNotice kind="success" message={feedback?.kind === "success" ? feedback.message : null} />

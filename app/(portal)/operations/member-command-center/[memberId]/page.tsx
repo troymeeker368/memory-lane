@@ -47,7 +47,9 @@ export default async function MemberCommandCenterDetailPage({
     canEdit,
     includePofSection: canAccessPofWorkflow,
     actorUserId: profile.id,
-    actorFullName: profile.full_name
+    actorFullName: profile.full_name,
+    actorRole: profile.role,
+    actorPermissions: profile.permissions
   });
 
   if (!detailPageData) notFound();

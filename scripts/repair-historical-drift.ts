@@ -216,7 +216,7 @@ async function applyMemberShellRepair(memberIds: string[]) {
 }
 
 async function applyMemberFileRepair(batchSize: number) {
-  const { backfillLegacyMemberFileStorageBatch } = await import("../lib/services/member-files");
+  const { backfillLegacyMemberFileStorageBatch } = await import("../lib/services/member-files-backfill");
   let scanned = 0;
   let repaired = 0;
   const failures: Array<{ id: string; error: string }> = [];
@@ -283,10 +283,9 @@ async function main() {
     );
   }
 
-  const { repairOperationalSettingsSingleton } = await import("../lib/services/operations-settings");
-
   let operationsSettingsCreated = false;
   if (!operationsSettings.exists) {
+    const { repairOperationalSettingsSingleton } = await import("../lib/services/operations-settings");
     await repairOperationalSettingsSingleton();
     operationsSettingsCreated = true;
   }

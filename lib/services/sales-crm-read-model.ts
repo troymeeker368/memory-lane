@@ -30,6 +30,7 @@ export interface SalesPartnerRow {
   location?: string | null;
   primary_phone?: string | null;
   primary_email?: string | null;
+  notes?: string | null;
   active: boolean;
   last_touched: string | null;
 }
@@ -217,7 +218,11 @@ const ENROLLMENT_PACKET_ELIGIBLE_LEAD_STAGES = [...getEnrollmentPacketEligibleLe
 const SALES_LEAD_LOOKUP_SELECT = "id, member_name, caregiver_name, stage, status, created_at, partner_id, referral_source_id";
 const SALES_PARTNER_LOOKUP_SELECT =
   "id, partner_id, organization_name, category, location, primary_phone, primary_email, active, last_touched";
+const SALES_PARTNER_DETAIL_SELECT =
+  "id, partner_id, organization_name, category, location, primary_phone, primary_email, notes, active, last_touched";
 const SALES_REFERRAL_SOURCE_LOOKUP_SELECT =
+  "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, active, last_touched";
+const SALES_REFERRAL_SOURCE_DETAIL_SELECT =
   "id, referral_source_id, partner_id, contact_name, organization_name, job_title, primary_phone, primary_email, preferred_contact_method, active, last_touched";
 const SALES_LEAD_LOOKUP_DEFAULT_LIMIT = 120;
 const SALES_LOOKUP_PARTNER_LIMIT = 250;
@@ -349,6 +354,7 @@ function normalizeSalesPartnerRow(row: Record<string, unknown>): SalesPartnerRow
     location: clean(row.location),
     primary_phone: clean(row.primary_phone),
     primary_email: clean(row.primary_email),
+    notes: clean(row.notes),
     active: row.active === false ? false : true,
     last_touched: clean(row.last_touched)
   };
@@ -546,11 +552,11 @@ export async function getSalesPartnerByIdOrCodeSupabase(rawPartnerId: string) {
 
   const { data, error } = await supabase
     .from("community_partner_organizations")
-    .select("id, partner_id, organization_name, category, active, last_touched")
+    .select(SALES_PARTNER_DETAIL_SELECT)
     .or(filters.join(","))
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return (data as SalesPartnerRow | null) ?? null;
+  return data ? normalizeSalesPartnerRow(data as Record<string, unknown>) : null;
 }
 
 export async function getSalesReferralSourceByIdOrCodeSupabase(rawSourceId: string) {
@@ -562,11 +568,11 @@ export async function getSalesReferralSourceByIdOrCodeSupabase(rawSourceId: stri
 
   const { data, error } = await supabase
     .from("referral_sources")
-    .select("id, referral_source_id, partner_id, contact_name, organization_name, active, last_touched")
+    .select(SALES_REFERRAL_SOURCE_DETAIL_SELECT)
     .or(filters.join(","))
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return (data as SalesReferralSourceRow | null) ?? null;
+  return data ? normalizeSalesReferralSourceRow(data as Record<string, unknown>) : null;
 }
 
 export async function resolveSalesPartnerAndReferralSupabase(input: {

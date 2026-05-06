@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 import { buildMemberDocumentStorageUri, MEMBER_DOCUMENTS_BUCKET } from "@/lib/services/member-files-core";
@@ -6,7 +6,12 @@ import { buildMemberDocumentStorageUri, MEMBER_DOCUMENTS_BUCKET } from "@/lib/se
 const MEMBER_FILE_ROW_SELECT =
   "id, member_id, file_name, file_type, storage_object_path, category, category_other, document_source, pof_request_id, uploaded_by_user_id, uploaded_by_name, uploaded_at, updated_at" as const;
 
-export type MemberFilesClient = Awaited<ReturnType<typeof createClient>> | ReturnType<typeof createServiceRoleClient>;
+export type MemberFilesClient = SupabaseClient;
+
+async function createMemberFilesUserScopedClient() {
+  const { createClient } = await import("@/lib/supabase/server");
+  return createClient();
+}
 
 export function createMemberFilesRecordClient() {
   // Member file RPC/database mutations are service-only so storage and row state stay aligned.
@@ -22,7 +27,7 @@ export async function loadMemberFileRowById(memberFileId: string, options?: { su
   const normalized = String(memberFileId ?? "").trim();
   if (!normalized) return null;
 
-  const supabase = options?.supabase ?? (await createClient());
+  const supabase = options?.supabase ?? (await createMemberFilesUserScopedClient());
   const { data, error } = await supabase
     .from("member_files")
     .select(MEMBER_FILE_ROW_SELECT)
@@ -41,7 +46,7 @@ export async function loadMemberFileRowByDocumentSource(input: {
   const documentSource = String(input.documentSource ?? "").trim();
   if (!memberId || !documentSource) return null;
 
-  const supabase = input.supabase ?? (await createClient());
+  const supabase = input.supabase ?? (await createMemberFilesUserScopedClient());
   const { data, error } = await supabase
     .from("member_files")
     .select(MEMBER_FILE_ROW_SELECT)

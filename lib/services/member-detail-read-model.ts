@@ -107,6 +107,7 @@ type MemberDetailCountsRpcRow = {
 };
 
 const MEMBER_DETAIL_PREVIEW_LIMIT = 50;
+const MEMBER_DETAIL_CARE_PLAN_PREVIEW_LIMIT = 25;
 const MEMBER_DETAIL_COUNTS_RPC = "rpc_get_member_detail_counts";
 const MEMBER_DETAIL_COUNTS_MIGRATION = "0122_member_detail_and_care_plan_performance_hardening.sql";
 
@@ -284,12 +285,24 @@ export async function getMemberDetail(
   const assessments = canViewAssessments ? ((assessmentsResult.data ?? []) as MemberDetailAssessmentRow[]) : [];
   const photos = (photosResult.data ?? []) as MemberDetailPhotoRow[];
 
-  const carePlans =
+  const carePlanReadModel =
     isStaffViewer || !canViewCarePlans
       ? null
-      : await (await import("@/lib/services/care-plans-read")).getMemberCarePlanSnapshot(canonicalMemberId, {
-          canonicalInput: true
-        });
+      : await (async () => {
+          const { getMemberCarePlanOverview, getMemberCarePlanSnapshot } = await import("@/lib/services/care-plans-read");
+          const [carePlanOverview, carePlanSnapshot] = await Promise.all([
+            getMemberCarePlanOverview(canonicalMemberId, { canonicalInput: true }),
+            getMemberCarePlanSnapshot(canonicalMemberId, {
+              canonicalInput: true,
+              rowLimit: MEMBER_DETAIL_CARE_PLAN_PREVIEW_LIMIT
+            })
+          ]);
+
+          return {
+            carePlanOverview,
+            carePlanSnapshot
+          };
+        })();
 
   return {
     member: member as MemberDetailMember,
@@ -311,8 +324,9 @@ export async function getMemberDetail(
     ancillary,
     assessments,
     photos,
-    carePlans: carePlans?.rows ?? [],
-    latestCarePlan: carePlans?.latest ?? null,
+    carePlans: carePlanReadModel?.carePlanSnapshot.rows ?? [],
+    carePlansCount: carePlanReadModel?.carePlanOverview.carePlanCount ?? 0,
+    latestCarePlan: carePlanReadModel?.carePlanSnapshot.latest ?? null,
     marToday: [] as Array<{
       id: string;
       date: string;
