@@ -124,6 +124,10 @@ export async function submitPublicEnrollmentPacketWithDeps(
   if (!matchedRequest) throw new Error("This enrollment packet link is invalid.");
   const request = matchedRequest.request;
   const status = toStatus(request.status);
+  if (isExpired(request.token_expires_at) && matchedRequest.tokenMatch !== "consumed") {
+    await recordEnrollmentPacketExpiredIfNeeded(request);
+    throw new Error("This enrollment packet link has expired.");
+  }
   if (matchedRequest.tokenMatch === "consumed" && status === "completed") {
     return deps.buildCommittedEnrollmentPacketReplayResult({ request });
   }

@@ -9,12 +9,15 @@ function readWorkspaceFile(relativePath: string) {
 
 test("member detail bounds care-plan preview reads but preserves canonical total count", () => {
   const readModelSource = readWorkspaceFile("lib/services/member-detail-read-model.ts");
+  const carePlanSource = readWorkspaceFile("lib/services/care-plans-read-model.ts");
   const pageSource = readWorkspaceFile("app/(portal)/members/[memberId]/page.tsx");
 
   assert.equal(readModelSource.includes("const MEMBER_DETAIL_CARE_PLAN_PREVIEW_LIMIT = 25;"), true);
-  assert.equal(readModelSource.includes("getMemberCarePlanOverview(canonicalMemberId, { canonicalInput: true })"), true);
+  assert.equal(readModelSource.includes("getMemberCarePlanPreview(canonicalMemberId, {"), true);
   assert.equal(readModelSource.includes("rowLimit: MEMBER_DETAIL_CARE_PLAN_PREVIEW_LIMIT"), true);
-  assert.equal(readModelSource.includes("carePlansCount: carePlanReadModel?.carePlanOverview.carePlanCount ?? 0"), true);
+  assert.equal(readModelSource.includes("carePlansCount: carePlanReadModel?.carePlanCount ?? 0"), true);
+  assert.equal(carePlanSource.includes('resolveCarePlanMemberId(memberId, "getMemberCarePlanPreview", options)'), true);
+  assert.equal(carePlanSource.includes('supabase.from("care_plans").select("id", { count: "exact", head: true }).eq("member_id", canonicalMemberId)'), true);
   assert.equal(pageSource.includes("count={detail.carePlansCount}"), true);
   assert.equal(
     pageSource.includes(

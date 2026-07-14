@@ -65,6 +65,15 @@ test("assessment form keeps degraded intake outcomes out of the clean success pa
   assert.equal(source.includes("Assessment was committed, but workflow readiness is"), true);
 });
 
+test("assessment detail read model keeps committed draft POF readback misses out of ready state", () => {
+  const source = readWorkspaceFile("lib/services/assessment-detail-read-model.ts");
+
+  assert.equal(source.includes('filter((task) => task.status === "action_required")'), true);
+  assert.equal(source.includes("openFollowUpTaskTypes"), true);
+  assert.equal(source.includes("post_sign_readiness_status: postSignReadinessStatus"), true);
+  assert.equal(source.includes("post_sign_ready: isIntakePostSignReady({"), true);
+});
+
 test("signed physician orders stay queued degraded until downstream clinical sync completes", () => {
   const detail = buildPhysicianOrderClinicalSyncDetail({
     status: "Signed",

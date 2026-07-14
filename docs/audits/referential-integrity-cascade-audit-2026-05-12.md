@@ -1,0 +1,76 @@
+1. Orphan Records Detected
+
+None.
+
+Notes:
+- This was a schema-and-service audit pass, not a live database row scan.
+- Direct orphan protection is present for the obvious child links in the core chain, including `intake_assessments.member_id`, `physician_orders.member_id`, `member_health_profiles.member_id`, `pof_medications(physician_order_id, member_id)`, `mar_schedules(pof_medication_id, member_id)`, and `mar_administrations(mar_schedule_id, pof_medication_id, member_id)` via [`/D:/Memory Lane App/supabase/migrations/0127_clinical_lineage_enforcement.sql`](/D:/Memory Lane App/supabase/migrations/0127_clinical_lineage_enforcement.sql:1).
+- Care-plan diagnosis lineage is also protected by composite FKs in [`/D:/Memory Lane App/supabase/migrations/0085_care_plan_diagnosis_relation.sql`](/D:/Memory Lane App/supabase/migrations/0085_care_plan_diagnosis_relation.sql:27).
+
+2. Missing Lifecycle Cascades
+
+- MAR generation can still proceed without a canonical signed POF. The shared MAR sync RPC synthesizes a system-generated physician order when no anchor POF exists, which breaks the intended `intake -> POF -> signed POF -> MAR` chain and can make MAR look operational without the upstream order lifecycle. See [`/D:/Memory Lane App/supabase/migrations/0056_shared_rpc_orchestration_hardening.sql`](/D:/Memory Lane App/supabase/migrations/0056_shared_rpc_orchestration_hardening.sql:637) and [`/D:/Memory Lane App/lib/services/mar-reconcile.ts`](/D:/Memory Lane App/lib/services/mar-reconcile.ts:33).
+- Signed POF does not hard-guarantee downstream MHP/MCC/MAR completion. The sign flow can legitimately return `postSignStatus: "queued"` after the physician order is already signed, which means provider signature truth can exist while downstream clinical sync is still incomplete. See [`/D:/Memory Lane App/lib/services/physician-order-post-sign-service.ts`](/D:/Memory Lane App/lib/services/physician-order-post-sign-service.ts:79) and the retry-oriented RPC boundary in [`/D:/Memory Lane App/supabase/migrations/0155_signed_pof_post_sign_sync_rpc_consolidation.sql`](/D:/Memory Lane App/supabase/migrations/0155_signed_pof_post_sign_sync_rpc_consolidation.sql:1).
+- Signed-POF retry sync can overwrite newer downstream clinical edits. The post-sign sync RPC re-hydrates MHP/diagnosis/medication/allergy state from the signed POF snapshot, and the retry runner will keep re-running that path after the order is already signed. That means later staff edits can be clobbered by a stale retry. See [`/D:/Memory Lane App/supabase/migrations/0205_fix_signed_pof_sync_member_id_ambiguity.sql`](/D:/Memory Lane App/supabase/migrations/0205_fix_signed_pof_sync_member_id_ambiguity.sql:71) and [`/D:/Memory Lane App/lib/services/physician-order-post-sign-service.ts`](/D:/Memory Lane App/lib/services/physician-order-post-sign-service.ts:248).
+- Enrollment packet `completed` / `filed` does not hard-guarantee downstream operational shells and completed-packet filing. The completion cascade explicitly checks for missing `member_command_centers`, `member_health_profiles`, attendance shells, lead activity, and completed-packet member-file linkage after the packet is already considered complete. See [`/D:/Memory Lane App/lib/services/enrollment-packet-completion-cascade.ts`](/D:/Memory Lane App/lib/services/enrollment-packet-completion-cascade.ts:335).
+- Enrollment packet follow-up truth can still go green while required-document gaps remain. The public runtime records `missing_required_document` milestones, but the readiness consensus path does not appear to treat that signal as blocking completion truth. See [`/D:/Memory Lane App/lib/services/enrollment-packets-public-runtime-cascade.ts`](/D:/Memory Lane App/lib/services/enrollment-packets-public-runtime-cascade.ts:177) and [`/D:/Memory Lane App/lib/services/enrollment-packets-public-runtime-follow-up.ts`](/D:/Memory Lane App/lib/services/enrollment-packets-public-runtime-follow-up.ts:82).
+- Signed intake does not hard-guarantee draft POF creation or intake PDF persistence. The post-sign workflow can leave `draftPofStatus: "failed"` or queue follow-up work for POF creation / member-file persistence after the intake signature is already committed. See [`/D:/Memory Lane App/lib/services/intake-pof-mhp-cascade.ts`](/D:/Memory Lane App/lib/services/intake-pof-mhp-cascade.ts:393).
+
+3. Duplicate Canonical Records
+
+None newly detected in the current schema/worktree.
+
+Confirmed guards:
+- One active enrollment packet per active member/lead window: [`/D:/Memory Lane App/supabase/migrations/0152_enrollment_packet_lifecycle_and_voiding.sql`](/D:/Memory Lane App/supabase/migrations/0152_enrollment_packet_lifecycle_and_voiding.sql:42)
+- One member per source lead and one care-plan root per member/track: [`/D:/Memory Lane App/supabase/migrations/0049_workflow_hardening_constraints.sql`](/D:/Memory Lane App/supabase/migrations/0049_workflow_hardening_constraints.sql:74)
+- One active signed POF per member: [`/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql`](/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql:127)
+- One MHP per member: [`/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql`](/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql:132)
+- Intake creation idempotency key: [`/D:/Memory Lane App/supabase/migrations/0165_idempotency_write_roots_and_dedupe_contracts.sql`](/D:/Memory Lane App/supabase/migrations/0165_idempotency_write_roots_and_dedupe_contracts.sql:11)
+
+4. Lifecycle State Violations
+
+- `care_plans.status = 'Completed'` is still not relationally coupled to `nurse_signature_status = 'signed'` or `post_sign_readiness_status = 'ready'`. The database allows a completed care plan state without proving final nurse signature or post-sign readiness. Compare the base status column in [`/D:/Memory Lane App/supabase/migrations/0013_care_plans_and_billing_execution.sql`](/D:/Memory Lane App/supabase/migrations/0013_care_plans_and_billing_execution.sql:1) with the separate signature/readiness fields added later in [`/D:/Memory Lane App/supabase/migrations/0023_care_plan_nurse_esign.sql`](/D:/Memory Lane App/supabase/migrations/0023_care_plan_nurse_esign.sql:1) and [`/D:/Memory Lane App/supabase/migrations/0112_care_plan_post_sign_readiness.sql`](/D:/Memory Lane App/supabase/migrations/0112_care_plan_post_sign_readiness.sql:1).
+- Enrollment packet `status = 'completed'` is only coupled to `completed_at`, not to caregiver signature evidence, completed artifact linkage, or downstream mapping success. See [`/D:/Memory Lane App/supabase/migrations/0162_enrollment_packet_status_coupled_constraints.sql`](/D:/Memory Lane App/supabase/migrations/0162_enrollment_packet_status_coupled_constraints.sql:57) plus the repair-oriented completion cascade in [`/D:/Memory Lane App/lib/services/enrollment-packet-completion-cascade.ts`](/D:/Memory Lane App/lib/services/enrollment-packet-completion-cascade.ts:375).
+- Signed POF can be operationally incomplete by design until queue retries finish. This is surfaced better than before, but it still means “signed” and “downstream-ready” are different truths in production. See [`/D:/Memory Lane App/lib/services/physician-order-post-sign-service.ts`](/D:/Memory Lane App/lib/services/physician-order-post-sign-service.ts:135).
+- Physician-order `signed` / `superseded` state is under-constrained at the table layer. The schema stores `status`, `is_active_signed`, `superseded_by`, `superseded_at`, `signed_at`, and `effective_at` independently, without a check coupling them into valid state combinations. See [`/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql`](/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql:80).
+- MAR administration truth is under-constrained against inactive or ended meds/schedules. The lineage FKs are good, but the database still does not block administrations against inactive or date-ended medication/schedule rows. See [`/D:/Memory Lane App/supabase/migrations/0028_pof_seeded_mar_workflow.sql`](/D:/Memory Lane App/supabase/migrations/0028_pof_seeded_mar_workflow.sql:60) and [`/D:/Memory Lane App/supabase/migrations/0127_clinical_lineage_enforcement.sql`](/D:/Memory Lane App/supabase/migrations/0127_clinical_lineage_enforcement.sql:205).
+
+5. Missing Constraints
+
+- Intake assessments store `member_id` and `lead_id` independently, but no later constraint ties `intake_assessments.lead_id` back to the member's canonical `source_lead_id`. A mismatched lead/member pair can still be stored on an intake. See [`/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql`](/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql:1) and [`/D:/Memory Lane App/supabase/migrations/0025_canonical_identity_backfill.sql`](/D:/Memory Lane App/supabase/migrations/0025_canonical_identity_backfill.sql:60).
+- `physician_orders (intake_assessment_id, member_id) -> intake_assessments (id, member_id)` is missing. Current schema only FK-links `intake_assessment_id` to `intake_assessments(id)`, so a physician order could theoretically point at another member's intake if application logic drifted. Source: [`/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql`](/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql:80) and absence of a composite fix in [`/D:/Memory Lane App/supabase/migrations/0127_clinical_lineage_enforcement.sql`](/D:/Memory Lane App/supabase/migrations/0127_clinical_lineage_enforcement.sql:107).
+- `member_health_profiles (active_physician_order_id, member_id) -> physician_orders (id, member_id)` is missing. Current schema only FK-links `active_physician_order_id` to `physician_orders(id)`, so the active POF anchor can drift across members unless service logic prevents it. Source: [`/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql`](/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql:132).
+- `member_command_centers (source_assessment_id, member_id) -> intake_assessments (id, member_id)` is missing. Current schema only FK-links `source_assessment_id` to `intake_assessments(id)`, so source assessment lineage is not member-bound at the database layer. Source: [`/D:/Memory Lane App/supabase/migrations/0011_member_command_center_aux_schema.sql`](/D:/Memory Lane App/supabase/migrations/0011_member_command_center_aux_schema.sql:12).
+- `pof_requests (physician_order_id, member_id) -> physician_orders (id, member_id)` is missing. Current schema stores the request's member and physician order separately, so an e-sign request can drift across the wrong member/order pair. Source: [`/D:/Memory Lane App/supabase/migrations/0019_pof_esign_workflow.sql`](/D:/Memory Lane App/supabase/migrations/0019_pof_esign_workflow.sql:1).
+- Care-plan signature/event tables do not use the later `(care_plan_id, member_id)` composite lineage contract. `care_plan_signature_events` and `care_plan_nurse_signatures` each link `care_plan_id` and `member_id` separately, even though `care_plans(id, member_id)` exists later. Source: [`/D:/Memory Lane App/supabase/migrations/0020_care_plan_canonical_esign.sql`](/D:/Memory Lane App/supabase/migrations/0020_care_plan_canonical_esign.sql:58), [`/D:/Memory Lane App/supabase/migrations/0023_care_plan_nurse_esign.sql`](/D:/Memory Lane App/supabase/migrations/0023_care_plan_nurse_esign.sql:29), and [`/D:/Memory Lane App/supabase/migrations/0085_care_plan_diagnosis_relation.sql`](/D:/Memory Lane App/supabase/migrations/0085_care_plan_diagnosis_relation.sql:12).
+
+6. Suggested Fix Prompts
+
+- Add composite lineage FKs for the clinical chain. Create a forward-only Supabase migration that adds and validates:
+  1. `physician_orders (intake_assessment_id, member_id) -> intake_assessments (id, member_id)`
+  2. `member_health_profiles (active_physician_order_id, member_id) -> physician_orders (id, member_id)`
+  3. `member_command_centers (source_assessment_id, member_id) -> intake_assessments (id, member_id)`
+  4. `pof_requests (physician_order_id, member_id) -> physician_orders (id, member_id)`
+  5. composite `care_plan_id/member_id` lineage FKs for care-plan signature/event tables
+  Preflight-clean mismatched rows first, fail loudly if any remain, then validate the constraints.
+
+- Remove synthetic MAR anchor fallback. Refactor the shared MAR sync path so it fails explicitly when no canonical signed POF exists instead of auto-creating a system-generated physician order. Preserve repair tooling for legacy cleanup, but do not let MAR generation invent missing clinical lineage at runtime.
+
+- Convert signed-POF downstream sync from queue-backed partial truth into stricter canonical readiness. Keep provider signature persistence, but add a canonical `post_sign_readiness_status` / `post_sign_readiness_reason` field on `physician_orders` that is updated only by the shared RPC path, and make all read models treat `signed` plus non-ready status as operationally incomplete. Remove any UI assumptions that signed alone means MAR/MHP/MCC are ready, and protect post-sign retries from overwriting newer staff edits without an explicit merge/version rule.
+
+- Tighten enrollment-packet completion truth. Add a canonical completion readiness field or coupled constraint so `completed` / `filed` cannot be treated as fully done unless completed-packet member-file linkage, downstream mapping success, and required operational shells are present. Keep the repair job for legacy cleanup, but stop using completed/filed alone as the source of truth for downstream readiness.
+
+- Harden care-plan terminal state enforcement. Add a canonical transition RPC or check strategy so `care_plans.status = 'Completed'` requires `nurse_signature_status = 'signed'` and `post_sign_readiness_status = 'ready'`. Make direct updates that bypass those conditions fail explicitly, and add MAR-side checks that block administrations against inactive or ended medications/schedules.
+
+7. Founder Summary
+
+No new major referential-integrity regression stands out in today’s worktree, but the same production gap remains: some of the most important lifecycle handoffs are still “committed now, repaired by queue later” instead of being fully guaranteed by the relational contract.
+
+The biggest operational risk is not classic orphan rows anymore. It is false readiness and synthetic lineage:
+- MAR can still be generated by inventing a fallback physician-order anchor when no canonical signed POF exists
+- a POF can be signed while MHP/MCC/MAR sync is still incomplete
+- queued signed-POF retries can replay stale clinical snapshots over newer downstream edits
+- an enrollment packet can be completed/filed while downstream artifacts still need repair
+- a care plan can be marked completed without a hard database rule tying that state to final signature/readiness truth
+
+Safest next step: remove the synthetic MAR-anchor fallback and add the missing composite lineage constraints first, then tighten readiness/state coupling for signed POF, completed enrollment packets, and completed care plans so downstream consumers stop treating queued follow-up as finished truth.

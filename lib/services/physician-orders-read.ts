@@ -81,6 +81,7 @@ type PhysicianOrderMemberHistorySelectRow = {
 };
 
 const DEFAULT_PHYSICIAN_ORDER_PAGE_SIZE = 50;
+const MAX_PHYSICIAN_ORDER_PAGE_SIZE = 100;
 const MAX_PHYSICIAN_ORDER_SEARCH_MEMBER_MATCHES = 500;
 
 type PhysicianOrderIndexFilters = {
@@ -106,7 +107,7 @@ function normalizePage(value?: number | null) {
 
 function normalizePageSize(value?: number | null) {
   if (!Number.isFinite(value) || !value || value < 1) return DEFAULT_PHYSICIAN_ORDER_PAGE_SIZE;
-  return Math.floor(value);
+  return Math.min(MAX_PHYSICIAN_ORDER_PAGE_SIZE, Math.floor(value));
 }
 
 async function buildPhysicianOrderSearchClauses(filters?: PhysicianOrderIndexFilters) {

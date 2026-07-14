@@ -26,7 +26,7 @@ export default async function MemberCommandCenterIndexPage({
   const status = parseEnumSearchParam(firstSearchParam(params.status), ["all", "active", "inactive"] as const, "active");
   const page = parsePositivePageParam(firstSearchParam(params.page));
 
-  const result = await getMemberCommandCenterIndexSupabase({ q, status, page, pageSize: 25 });
+  const result = await getMemberCommandCenterIndexSupabase({ q, status, page, pageSize: 25, serviceRole: true });
   const pageHref = (targetPage: number) => {
     const query = new URLSearchParams();
     if (q) query.set("q", q);

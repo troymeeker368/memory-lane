@@ -75,7 +75,8 @@ export async function generateMemberNameBadgePdfAction(input: {
         id: profile.id,
         name: profile.full_name
       },
-      generatedAtIso: toEasternISO()
+      generatedAtIso: toEasternISO(),
+      replaceExistingByDocumentSource: true
     });
   } catch (error) {
     const message = normalizeBadgeActionError(error);

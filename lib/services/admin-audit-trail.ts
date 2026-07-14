@@ -46,16 +46,41 @@ export function resolveAdminAuditArea(entityType: string) {
   return "General";
 }
 
+function tokenizeAdminAuditAreaFilter(areaFilter: string) {
+  return Array.from(
+    new Set(
+      areaFilter
+        .split(/[,\s/]+/)
+        .map((term) => term.trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
+function resolveAdminAuditAreaTerms(areaToken: string) {
+  const exactMatches = ADMIN_AUDIT_AREA_SQL_TERMS.filter(({ label, entityTypeTerms }) => {
+    const normalizedLabelTokens = label.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    return normalizedLabelTokens.includes(areaToken) || entityTypeTerms.some((term) => term === areaToken);
+  });
+  if (exactMatches.length > 0) {
+    return exactMatches.flatMap(({ entityTypeTerms }) => entityTypeTerms);
+  }
+  if (areaToken.length < 3) {
+    return [areaToken];
+  }
+  const partialMatches = ADMIN_AUDIT_AREA_SQL_TERMS.filter(({ label, entityTypeTerms }) => {
+    const normalizedLabel = label.toLowerCase();
+    return normalizedLabel.includes(areaToken) || entityTypeTerms.some((term) => term.includes(areaToken));
+  });
+  if (partialMatches.length > 0) {
+    return partialMatches.flatMap(({ entityTypeTerms }) => entityTypeTerms);
+  }
+  return [areaToken];
+}
+
 function resolveAdminAuditAreaSqlFilter(areaFilter: string) {
   if (!areaFilter) return null;
-  const matchingAreas = ADMIN_AUDIT_AREA_SQL_TERMS.filter(({ label, entityTypeTerms }) => {
-    const normalizedLabel = label.toLowerCase();
-    return normalizedLabel.includes(areaFilter) || entityTypeTerms.some((term) => term.includes(areaFilter));
-  });
-  const terms: string[] = matchingAreas.flatMap(({ entityTypeTerms }) => entityTypeTerms);
-  if (terms.length === 0) {
-    terms.push(areaFilter);
-  }
+  const terms = tokenizeAdminAuditAreaFilter(areaFilter).flatMap((token) => resolveAdminAuditAreaTerms(token));
   if (terms.length === 0) return null;
   return Array.from(new Set(terms)).map((term) => `entity_type.ilike.%${term}%`).join(",");
 }
@@ -97,7 +122,7 @@ export async function listAdminAuditTrailRows(input?: {
   const actorIds = Array.from(
     new Set(
       pageRows
-    .map((row) => row.actor_user_id)
+        .map((row) => row.actor_user_id)
         .filter((value: string | null): value is string => Boolean(value))
     )
   );
@@ -110,7 +135,7 @@ export async function listAdminAuditTrailRows(input?: {
     if (profilesError) {
       throw new Error(profilesError.message);
     }
-  (profiles ?? []).forEach((profile) => {
+    (profiles ?? []).forEach((profile) => {
       profileNameById.set(String(profile.id), String(profile.full_name ?? ""));
     });
   }

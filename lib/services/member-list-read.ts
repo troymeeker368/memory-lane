@@ -10,6 +10,16 @@ import type { MccMemberRow } from "@/lib/services/member-command-center-types";
 export type SharedMemberIndexRow = MccMemberRow;
 export type SharedMemberListRow = MccMemberRow;
 
+const DEFAULT_SHARED_MEMBER_INDEX_PAGE_SIZE = 25;
+const MAX_SHARED_MEMBER_INDEX_PAGE_SIZE = 100;
+
+function resolveSharedMemberIndexPageSize(rawPageSize?: number | null) {
+  if (!Number.isFinite(rawPageSize) || !rawPageSize || rawPageSize < 1) {
+    return DEFAULT_SHARED_MEMBER_INDEX_PAGE_SIZE;
+  }
+  return Math.min(MAX_SHARED_MEMBER_INDEX_PAGE_SIZE, Math.floor(rawPageSize));
+}
+
 export async function listSharedMemberRowsSupabase(filters?: {
   q?: string;
   status?: "all" | "active" | "inactive";
@@ -53,8 +63,7 @@ export async function listSharedMemberIndexPageSupabase(filters?: {
 }) {
   const supabase = await createClient();
   const page = Number.isFinite(filters?.page) && Number(filters?.page) > 0 ? Math.floor(Number(filters?.page)) : 1;
-  const pageSize =
-    Number.isFinite(filters?.pageSize) && Number(filters?.pageSize) > 0 ? Math.floor(Number(filters?.pageSize)) : 25;
+  const pageSize = resolveSharedMemberIndexPageSize(filters?.pageSize);
   const q = (filters?.q ?? "").trim();
   const includeLockerSearch = filters?.includeLockerSearch === true;
 

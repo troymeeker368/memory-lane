@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { getCurrentProfile } from "@/lib/auth";
+import { getCurrentProfile, requireModuleAction } from "@/lib/auth";
 import {
   completeIntakeAssessmentPostSignWorkflow,
   createIntakeAssessmentWithResponses
@@ -154,7 +154,10 @@ export async function createAssessmentAction(raw: z.infer<typeof assessmentSchem
     return { ok: false as const, error: "Invalid assessment." };
   }
 
-  const profile = await getCurrentProfile();
+  const [profile] = await Promise.all([
+    getCurrentProfile(),
+    requireModuleAction("health", "canEdit")
+  ]);
   if (!isAuthorizedIntakeAssessmentSignerRole(profile.role)) {
     return { ok: false as const, error: "Only nurse or admin users may electronically sign Intake Assessments." };
   }

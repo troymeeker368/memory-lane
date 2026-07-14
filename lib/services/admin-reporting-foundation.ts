@@ -22,8 +22,13 @@ import {
   type ReportingCenterBillingSettingRow,
   type ReportingMemberBillingSettingRow
 } from "@/lib/services/admin-reporting-core";
+import { getDocumentationTracker } from "@/lib/services/documentation";
 import { loadReportingAttendanceDataset } from "@/lib/services/reporting-attendance-dataset";
-import { buildLeadStageOutcomeSummaryRows } from "@/lib/services/sales-workflows";
+import {
+  buildLeadStageOutcomeSummaryRows,
+  fetchSalesPipelineSummaryCountsSupabase
+} from "@/lib/services/sales-workflows";
+import { invokeSupabaseRpcOrThrow } from "@/lib/supabase/rpc";
 import { createClient } from "@/lib/supabase/server";
 import { toEasternDate } from "@/lib/timezone";
 
@@ -53,6 +58,132 @@ export type {
 
 const MEMBER_DOCUMENTATION_REPORT_RPC = "rpc_get_member_documentation_summary";
 const ON_DEMAND_REPORT_ROW_LIMIT = 2000;
+const REPORTS_HOME_AGGREGATES_RPC = "rpc_get_reports_home_staff_aggregates";
+const REPORTS_HOME_AGGREGATES_MIGRATION = "0208_reports_home_recent_window.sql";
+export const REPORTS_HOME_AGGREGATES_WINDOW_DAYS = 180;
+export const REPORTS_HOME_AGGREGATES_WINDOW_LABEL = `last ${REPORTS_HOME_AGGREGATES_WINDOW_DAYS} days`;
+const NON_VOID_ANCILLARY_RECONCILIATION_SQL_FILTER = "reconciliation_status.is.null,reconciliation_status.neq.void";
+
+type ReportsHomeTimelyDocsRow = {
+  staff_name: string;
+  on_time: number | null;
+  late: number | null;
+  total: number | null;
+  on_time_percent: number | null;
+};
+
+type ReportsHomeToiletedRow = {
+  member_name: string | null;
+  last_toileted_at: string | null;
+  staff_name: string | null;
+};
+
+type ReportsHomeStaffProductivityRow = {
+  staff_name: string;
+  activity_logs: number | string | null;
+  toilet_logs: number | string | null;
+  shower_logs: number | string | null;
+  transportation_logs: number | string | null;
+};
+
+type ReportsHomeTimeSummaryRow = {
+  staff_name: string;
+  punches: number | string | null;
+  outside_fence: number | string | null;
+};
+
+type ReportsHomeAggregatesRpcRow = {
+  staff_productivity: unknown;
+  time_summary: unknown;
+};
+
+function toNumber(value: number | string | null | undefined) {
+  const numeric = Number(value ?? 0);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function parseReportsHomeStaffProductivityRows(payload: unknown) {
+  const rows = Array.isArray(payload) ? (payload as ReportsHomeStaffProductivityRow[]) : [];
+  return rows.map((row) => ({
+    staff_name: String(row.staff_name ?? "Unknown Staff"),
+    activity_logs: toNumber(row.activity_logs),
+    toilet_logs: toNumber(row.toilet_logs),
+    shower_logs: toNumber(row.shower_logs),
+    transportation_logs: toNumber(row.transportation_logs)
+  }));
+}
+
+function parseReportsHomeTimeSummaryRows(payload: unknown) {
+  const rows = Array.isArray(payload) ? (payload as ReportsHomeTimeSummaryRow[]) : [];
+  return rows.map((row) => ({
+    staff_name: String(row.staff_name ?? "Unknown Staff"),
+    punches: toNumber(row.punches),
+    outside_fence: toNumber(row.outside_fence)
+  }));
+}
+
+export async function getReportsHomeDocumentationSnapshot() {
+  const supabase = await createClient();
+  const [
+    { data: timelyDocs, error: timelyDocsError },
+    documentationTracker,
+    { data: toileted, error: toiletedError }
+  ] = await Promise.all([
+    supabase.from("v_timely_docs_summary").select("staff_name, on_time, late, total, on_time_percent").limit(50),
+    getDocumentationTracker({ page: 1, pageSize: 50 }),
+    supabase.from("v_last_toileted").select("member_name, last_toileted_at, staff_name").limit(100)
+  ]);
+  if (timelyDocsError) throw new Error(`Unable to load v_timely_docs_summary: ${timelyDocsError.message}`);
+  if (toiletedError) throw new Error(`Unable to load v_last_toileted: ${toiletedError.message}`);
+
+  return {
+    timelyDocs: (timelyDocs ?? []) as ReportsHomeTimelyDocsRow[],
+    careTracker: documentationTracker.rows,
+    toileted: (toileted ?? []) as ReportsHomeToiletedRow[]
+  };
+}
+
+export async function getReportsHomeOperationsSnapshot() {
+  const supabase = await createClient();
+  const [
+    aggregateRows,
+    { data: ancillaryRows, error: ancillaryError },
+    pipelineSummary
+  ] = await Promise.all([
+    invokeSupabaseRpcOrThrow<ReportsHomeAggregatesRpcRow[]>(supabase, REPORTS_HOME_AGGREGATES_RPC, {}).catch((error) => {
+      const message = error instanceof Error ? error.message : "Unable to load reports home aggregates.";
+      if (message.includes(REPORTS_HOME_AGGREGATES_RPC)) {
+        throw new Error(
+          `Reports home aggregates RPC is not available. Apply Supabase migration ${REPORTS_HOME_AGGREGATES_MIGRATION} and refresh PostgREST schema cache.`
+        );
+      }
+      throw error;
+    }),
+    supabase.from("v_monthly_ancillary_summary").select("month_label, total_amount_cents"),
+    fetchSalesPipelineSummaryCountsSupabase(supabase)
+  ]);
+  if (ancillaryError) throw new Error(`Unable to load v_monthly_ancillary_summary: ${ancillaryError.message}`);
+  const aggregateRow = aggregateRows?.[0];
+  if (!aggregateRow) {
+    throw new Error("Reports home aggregates RPC returned no rows.");
+  }
+
+  const ancillaryByMonth = new Map<string, number>();
+  (ancillaryRows ?? []).forEach((row) => {
+    ancillaryByMonth.set(row.month_label, (ancillaryByMonth.get(row.month_label) ?? 0) + Number(row.total_amount_cents ?? 0));
+  });
+
+  return {
+    staffProductivity: parseReportsHomeStaffProductivityRows(aggregateRow.staff_productivity),
+    timeSummary: parseReportsHomeTimeSummaryRows(aggregateRow.time_summary),
+    pipeline: {
+      open: pipelineSummary.openLeadCount,
+      won: pipelineSummary.wonLeadCount,
+      lost: pipelineSummary.lostLeadCount
+    },
+    ancillaryMonthlyRows: Array.from(ancillaryByMonth.entries()).map(([month, total_cents]) => ({ month, total_cents }))
+  };
+}
 
 function relationDisplayName(input: {
   value: { display_name?: string | null } | Array<{ display_name?: string | null }> | null | undefined;
@@ -225,7 +356,8 @@ export async function getAdminRevenueSummary(input: AdminRevenueSummaryInput): P
     .from("v_ancillary_charge_logs_detailed")
     .select("amount_cents, category_name, reconciliation_status, service_date")
     .gte("service_date", normalizedRange.from)
-    .lte("service_date", normalizedRange.to);
+    .lte("service_date", normalizedRange.to)
+    .or(NON_VOID_ANCILLARY_RECONCILIATION_SQL_FILTER);
   if (ancillaryError) throw new Error(ancillaryError.message);
 
   let ancillaryTotalCents = 0;
@@ -234,8 +366,6 @@ export async function getAdminRevenueSummary(input: AdminRevenueSummaryInput): P
   let latePickupTotalCents = 0;
   let latePickupCount = 0;
   (ancillaryRows ?? []).forEach((row) => {
-    const reconciliationStatus = String(row.reconciliation_status ?? "open").toLowerCase();
-    if (reconciliationStatus === "void") return;
     const amountCents = Number(row.amount_cents ?? 0);
     ancillaryTotalCents += amountCents;
     const category = String(row.category_name ?? "").toLowerCase();

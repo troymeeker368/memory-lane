@@ -2,7 +2,8 @@ import Link from "next/link";
 
 import { AssessmentFormBoundary } from "@/components/forms/assessment-form-boundary";
 import { Card, CardTitle } from "@/components/ui/card";
-import { requireModuleAccess } from "@/lib/auth";
+import { requireModuleAction, requireRoles } from "@/lib/auth";
+import { CLINICAL_DOCUMENTATION_ACCESS_ROLES } from "@/lib/permissions";
 import { getAssessmentMembers } from "@/lib/services/documentation";
 import { getDocumentationWorkflows } from "@/lib/services/documentation-workflows";
 import {
@@ -26,7 +27,10 @@ export default async function HealthAssessmentPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const profile = await requireModuleAccess("health");
+  const [profile] = await Promise.all([
+    requireModuleAction("health", "canEdit"),
+    requireRoles(CLINICAL_DOCUMENTATION_ACCESS_ROLES)
+  ]);
   const params = await searchParams;
   const initialMemberId =
     typeof params.leadId === "string"

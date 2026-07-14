@@ -3,7 +3,7 @@ import "server-only";
 import {
   getSalesPartnerByIdOrCodeSupabase,
   getSalesReferralSourceByIdOrCodeSupabase,
-  getSalesReferralSourcesForPartnerIdsSupabase,
+  getSalesReferralSourcesForPartnerRowsSupabase,
   type SalesPartnerRow,
   type SalesReferralSourceRow
 } from "@/lib/services/sales-crm-read-model";
@@ -104,7 +104,7 @@ export async function getPartnerDetail(partnerId: string) {
   const partner = normalizePartnerDetailRow(await getSalesPartnerByIdOrCodeSupabase(partnerId));
   if (!partner) return null;
 
-  const referralSources = await getSalesReferralSourcesForPartnerIdsSupabase([partner.id]);
+  const referralSources = await getSalesReferralSourcesForPartnerRowsSupabase([partner]);
 
   const sourceUuidIds = referralSources
     .map((source) => String(source.id ?? ""))

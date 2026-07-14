@@ -15,6 +15,7 @@ import {
   maybeRecordRepeatedFailureAlert
 } from "@/lib/services/workflow-observability";
 import {
+  buildLeadActivityReplayKey,
   findExistingLeadActivityReplayId,
   normalizeLeadActivityReplayInput
 } from "@/lib/services/sales-activity-idempotency";
@@ -95,6 +96,11 @@ function getEnrollmentPacketMappingAlertAgeMinutes(
   const parsed = Number(configuredValue ?? defaultMinutes);
   if (!Number.isFinite(parsed)) return defaultMinutes;
   return Math.max(5, Math.trunc(parsed));
+}
+
+function isPostgresUniqueViolation(error: { code?: string | null; message?: string | null; details?: string | null } | null | undefined) {
+  const text = [error?.message, error?.details].filter(Boolean).join(" ").toLowerCase();
+  return error?.code === "23505" || text.includes("duplicate key value") || text.includes("unique constraint");
 }
 
 export async function emitEnrollmentPacketMappingRetryHealthAlerts(input: {
@@ -352,6 +358,7 @@ async function addLeadActivityStrict(input: {
     allowRecentWindow: !requestedActivityAt
   });
   if (existingActivityId) return;
+  const activityReplayKey = buildLeadActivityReplayKey(normalizedReplayInput);
   const { error } = await admin.from("lead_activities").insert({
     enrollment_packet_request_id: input.enrollmentPacketRequestId,
     lead_id: input.leadId,
@@ -361,9 +368,21 @@ async function addLeadActivityStrict(input: {
     outcome: input.outcome,
     notes: input.notes,
     completed_by_user_id: input.completedByUserId,
-    completed_by_name: input.completedByName
+    completed_by_name: input.completedByName,
+    idempotency_key: activityReplayKey
   });
-  if (error) throw new Error(error.message);
+  if (!error) return;
+  if (isPostgresUniqueViolation(error)) {
+    const { data: existingByKey, error: existingByKeyError } = await admin
+      .from("lead_activities")
+      .select("id")
+      .eq("idempotency_key", activityReplayKey)
+      .maybeSingle();
+    if (!existingByKeyError && existingByKey?.id) {
+      return;
+    }
+  }
+  throw new Error(error.message);
 }
 
 export async function syncEnrollmentPacketLeadActivityOrQueue(input: {

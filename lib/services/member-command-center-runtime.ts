@@ -404,6 +404,7 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
   status?: "all" | "active" | "inactive";
   page?: number;
   pageSize?: number;
+  serviceRole?: boolean;
 }): Promise<MemberCommandCenterIndexResult> {
   const membersPage = await listMembersPageSupabase(filters);
   const members = membersPage.rows;
@@ -417,7 +418,7 @@ export async function getMemberCommandCenterIndexSupabase(filters?: {
     };
   }
   const memberIds = members.map((row) => row.id);
-  const supabase = await createClient();
+  const supabase = await getMccClient({ serviceRole: filters?.serviceRole });
   const [{ data: profilesData, error: profilesError }, { data: schedulesData, error: schedulesError }] = await Promise.all([
     supabase.from("member_command_centers").select(MEMBER_COMMAND_CENTER_INDEX_PROFILE_SELECT).in("member_id", memberIds),
     supabase.from("member_attendance_schedules").select(MEMBER_COMMAND_CENTER_INDEX_SCHEDULE_SELECT).in("member_id", memberIds)

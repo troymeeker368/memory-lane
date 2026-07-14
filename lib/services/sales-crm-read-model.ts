@@ -227,6 +227,8 @@ const SALES_REFERRAL_SOURCE_DETAIL_SELECT =
 const SALES_LEAD_LOOKUP_DEFAULT_LIMIT = 120;
 const SALES_LOOKUP_PARTNER_LIMIT = 250;
 const SALES_LOOKUP_REFERRAL_SOURCE_LIMIT = 250;
+const MAX_SALES_LIST_PAGE_SIZE = 100;
+const MAX_SALES_LOOKUP_LIMIT = 250;
 type SalesListRange = {
   start: number;
   end: number;
@@ -305,12 +307,20 @@ function normalizePage(rawPage?: number | null) {
   return Math.floor(rawPage);
 }
 
-function normalizePageSize(rawPageSize?: number | null, fallback = 25) {
+function normalizePageSize(rawPageSize?: number | null, fallback = 25, max = MAX_SALES_LOOKUP_LIMIT) {
   if (!Number.isFinite(rawPageSize) || !rawPageSize || rawPageSize < 1) return fallback;
-  return Math.floor(rawPageSize);
+  return Math.min(max, Math.floor(rawPageSize));
 }
 
-function normalizeReferralSources(partners: SalesPartnerRow[], referralSources: SalesReferralSourceRow[]) {
+type SalesPartnerIdentityRow = {
+  id: string;
+  partner_id: string | null;
+};
+
+export function normalizeSalesReferralSourcesWithPartnerRows(
+  partners: SalesPartnerIdentityRow[],
+  referralSources: SalesReferralSourceRow[]
+) {
   const partnerByInternalId = new Map(partners.map((partner) => [String(partner.id), partner]));
   return referralSources.map((source) => ({
     ...source,
@@ -839,7 +849,7 @@ export async function getSalesFormLookupsSupabase(options?: {
       member_name: row.member_name ?? "Unnamed Lead"
     })),
     partners: partnerRows,
-    referralSources: normalizeReferralSources(partnerRows, referralRows).map((row) => ({
+    referralSources: normalizeSalesReferralSourcesWithPartnerRows(partnerRows, referralRows).map((row) => ({
       ...row,
       organization_name: row.organization_name ?? "Unknown Organization"
     }))
@@ -867,7 +877,7 @@ export async function getSalesActivityContextLookupsSupabase(input?: { leadIds?:
     member_name: row.member_name ?? "Unnamed Lead"
   }));
   const partners = partnerResult.rows;
-  const referralSources = normalizeReferralSources(partners, referralResult.rows).map(
+  const referralSources = normalizeSalesReferralSourcesWithPartnerRows(partners, referralResult.rows).map(
     (row) => ({
       ...row,
       organization_name: row.organization_name ?? "Unknown Organization"
@@ -923,7 +933,9 @@ export async function getSalesLeadListSupabase(input?: {
   const supabase = await createClient();
   const page = normalizePage(input?.page);
   const hasPagination = Boolean(input?.pageSize || input?.limit);
-  const pageSize = hasPagination ? normalizePageSize(input?.pageSize ?? input?.limit ?? 25, input?.limit ?? 25) : 0;
+  const pageSize = hasPagination
+    ? normalizePageSize(input?.pageSize ?? input?.limit ?? 25, input?.limit ?? 25, MAX_SALES_LIST_PAGE_SIZE)
+    : 0;
   let query = hasPagination ? supabase.from("leads").select(SALES_LEAD_READ_SELECT, { count: "exact" }) : supabase.from("leads").select(SALES_LEAD_READ_SELECT);
 
   if (input?.status) {
@@ -1034,7 +1046,7 @@ export async function getSalesRecentActivitySnapshotSupabase(options?: {
 export async function getSalesPartnerDirectoryPageSupabase(input?: { q?: string; page?: number; pageSize?: number }) {
   const supabase = await createClient();
   const page = normalizePage(input?.page);
-  const pageSize = normalizePageSize(input?.pageSize ?? 25, 25);
+  const pageSize = normalizePageSize(input?.pageSize ?? 25, 25, MAX_SALES_LIST_PAGE_SIZE);
   const { rows, count } = await listSalesPartnerRowsSupabase(supabase, {
     count: "exact",
     q: input?.q,
@@ -1055,7 +1067,7 @@ export async function getSalesPartnerDirectoryPageSupabase(input?: { q?: string;
 export async function getSalesReferralSourceDirectoryPageSupabase(input?: { q?: string; page?: number; pageSize?: number }) {
   const supabase = await createClient();
   const page = normalizePage(input?.page);
-  const pageSize = normalizePageSize(input?.pageSize ?? 25, 25);
+  const pageSize = normalizePageSize(input?.pageSize ?? 25, 25, MAX_SALES_LIST_PAGE_SIZE);
   const { rows: referralSources, count } = await listSalesReferralSourceRowsSupabase(supabase, {
     count: "exact",
     q: input?.q,
@@ -1067,7 +1079,7 @@ export async function getSalesReferralSourceDirectoryPageSupabase(input?: { q?: 
   const partnerIds = Array.from(new Set(referralSources.map((row) => row.partner_id).filter(Boolean)));
   const partners = partnerIds.length > 0 ? (await listSalesPartnerRowsSupabase(supabase, { ids: partnerIds })).rows : [];
   return {
-    rows: normalizeReferralSources(partners, referralSources),
+    rows: normalizeSalesReferralSourcesWithPartnerRows(partners, referralSources),
     page,
     pageSize,
     totalRows: count ?? 0,
@@ -1082,5 +1094,13 @@ export async function getSalesReferralSourcesForPartnerIdsSupabase(partnerIds: s
     listSalesPartnerRowsSupabase(supabase, { ids: partnerIds }),
     listSalesReferralSourceRowsSupabase(supabase, { partnerIds })
   ]);
-  return normalizeReferralSources(partnersResult.rows, referralSourcesResult.rows);
+  return normalizeSalesReferralSourcesWithPartnerRows(partnersResult.rows, referralSourcesResult.rows);
+}
+
+export async function getSalesReferralSourcesForPartnerRowsSupabase(partners: SalesPartnerIdentityRow[]) {
+  const partnerIds = normalizeUuidList(partners.map((partner) => String(partner.id ?? "")));
+  if (partnerIds.length === 0) return [] as SalesReferralSourceRow[];
+  const supabase = await createClient();
+  const referralSourcesResult = await listSalesReferralSourceRowsSupabase(supabase, { partnerIds });
+  return normalizeSalesReferralSourcesWithPartnerRows(partners, referralSourcesResult.rows);
 }

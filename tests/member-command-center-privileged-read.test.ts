@@ -9,6 +9,7 @@ function readWorkspaceFile(relativePath: string) {
 
 test("Member Command Center detail reads use the privileged canonical read path after app authorization", () => {
   const detailReadModelSource = readWorkspaceFile("lib/services/member-command-center-detail-read-model.ts");
+  const indexPageSource = readWorkspaceFile("app/(portal)/operations/member-command-center/page.tsx");
   const runtimeSource = readWorkspaceFile("lib/services/member-command-center-runtime.ts");
   const serviceRoleSource = readWorkspaceFile("lib/supabase/service-role.ts");
 
@@ -18,5 +19,7 @@ test("Member Command Center detail reads use the privileged canonical read path 
   );
   assert.equal(runtimeSource.includes("getMemberCommandCenterProfileReadOnlySupabase"), true);
   assert.equal(runtimeSource.includes("const supabase = await getMccClient(options);"), true);
+  assert.equal(indexPageSource.includes("serviceRole: true"), true);
+  assert.equal(runtimeSource.includes("const supabase = await getMccClient({ serviceRole: filters?.serviceRole });"), true);
   assert.equal(serviceRoleSource.includes("member_command_center_read"), true);
 });

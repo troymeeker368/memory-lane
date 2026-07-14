@@ -593,21 +593,22 @@ export async function getMemberCarePlanOverview(
   };
 }
 
-export async function getMemberCarePlanSnapshot(
-  memberId: string,
-  options?: ResolveCarePlanMemberOptions & { rowLimit?: number }
-): Promise<MemberCarePlanSnapshot> {
-  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getMemberCarePlanSnapshot", options);
-  const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
+async function loadMemberCarePlanSnapshotPayload(input: {
+  canonicalMemberId: string;
+  rowLimit?: number;
+  serviceRole?: boolean;
+}): Promise<MemberCarePlanSnapshot> {
+  const supabase = await createClient({ serviceRole: Boolean(input.serviceRole) });
   const [rows, latestRow] = await Promise.all([
     listCarePlanRows({
-      memberId: canonicalMemberId,
-      limit: options?.rowLimit,
+      memberId: input.canonicalMemberId,
+      limit: input.rowLimit,
       canonicalInput: true,
-      serviceRole: options?.serviceRole
+      serviceRole: input.serviceRole
     }),
-    getLatestCarePlanSummaryRow(supabase, canonicalMemberId)
+    getLatestCarePlanSummaryRow(supabase, input.canonicalMemberId)
   ]);
+
   let latest = latestRow ? rows.find((row) => row.id === latestRow.id) ?? null : null;
   if (latestRow && !latest) {
     latest =
@@ -615,7 +616,7 @@ export async function getMemberCarePlanSnapshot(
         await listCarePlanRows({
           carePlanId: latestRow.id,
           canonicalInput: true,
-          serviceRole: options?.serviceRole
+          serviceRole: input.serviceRole
         })
       )[0] ?? null;
   }
@@ -624,9 +625,47 @@ export async function getMemberCarePlanSnapshot(
     rows,
     latest,
     summary: latest
-      ? buildMemberCarePlanSummary(canonicalMemberId, latest)
-      : buildMemberCarePlanSummaryFromLatestRow(canonicalMemberId, latestRow)
+      ? buildMemberCarePlanSummary(input.canonicalMemberId, latest)
+      : buildMemberCarePlanSummaryFromLatestRow(input.canonicalMemberId, latestRow)
   };
+}
+
+export async function getMemberCarePlanPreview(
+  memberId: string,
+  options?: ResolveCarePlanMemberOptions & { rowLimit?: number }
+): Promise<
+  MemberCarePlanSnapshot & {
+    carePlanCount: number;
+  }
+> {
+  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getMemberCarePlanPreview", options);
+  const supabase = await createClient({ serviceRole: Boolean(options?.serviceRole) });
+  const [snapshot, { count, error: countError }] = await Promise.all([
+    loadMemberCarePlanSnapshotPayload({
+      canonicalMemberId,
+      rowLimit: options?.rowLimit,
+      serviceRole: options?.serviceRole
+    }),
+    supabase.from("care_plans").select("id", { count: "exact", head: true }).eq("member_id", canonicalMemberId)
+  ]);
+  if (countError) throw new Error(countError.message);
+
+  return {
+    ...snapshot,
+    carePlanCount: Number(count ?? 0)
+  };
+}
+
+export async function getMemberCarePlanSnapshot(
+  memberId: string,
+  options?: ResolveCarePlanMemberOptions & { rowLimit?: number }
+): Promise<MemberCarePlanSnapshot> {
+  const canonicalMemberId = await resolveCarePlanMemberId(memberId, "getMemberCarePlanSnapshot", options);
+  return loadMemberCarePlanSnapshotPayload({
+    canonicalMemberId,
+    rowLimit: options?.rowLimit,
+    serviceRole: options?.serviceRole
+  });
 }
 
 export async function getLatestCarePlanIdForMember(

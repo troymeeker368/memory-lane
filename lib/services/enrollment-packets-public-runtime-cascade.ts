@@ -8,7 +8,11 @@ import {
   buildPublicEnrollmentPacketSubmitResult
 } from "@/lib/services/enrollment-packet-public-helpers";
 import { loadEnrollmentPacketArtifactOps, loadPacketFields, loadRequestById, recordEnrollmentPacketActionRequired } from "@/lib/services/enrollment-packet-mapping-runtime";
-import { resolveEnrollmentPacketCompletionFollowUp, persistEnrollmentPacketCompletionFollowUpState } from "@/lib/services/enrollment-packets-public-runtime-follow-up";
+import {
+  buildEnrollmentPacketPostCommitFollowUpMessage,
+  resolveEnrollmentPacketCompletionFollowUp,
+  persistEnrollmentPacketCompletionFollowUpState
+} from "@/lib/services/enrollment-packets-public-runtime-follow-up";
 import { recordWorkflowMilestone } from "@/lib/services/lifecycle-milestones";
 import { recordImmediateSystemAlert } from "@/lib/services/workflow-observability";
 import { toEasternISO } from "@/lib/timezone";
@@ -266,12 +270,19 @@ export async function runEnrollmentPacketCascadeAndBuildResult(input: {
     completionFollowUpError = resolvedFollowUp.completionFollowUpError;
   }
 
-  await persistEnrollmentPacketCompletionFollowUpState({
+  const persistedFollowUpState = await persistEnrollmentPacketCompletionFollowUpState({
     request: input.request,
     memberId: input.member.id,
     status: completionFollowUpStatus,
     error: completionFollowUpError
   });
+  if (!persistedFollowUpState.ok) {
+    const persistedTruthMessage = buildEnrollmentPacketPostCommitFollowUpMessage({
+      existingMessage: completionFollowUpError,
+      reason: `completion follow-up state persistence failed (${persistedFollowUpState.error})`
+    });
+    throw new Error(persistedTruthMessage);
+  }
 
   return {
     failedMappingRunId: cascadeResult.failedMappingRunId,

@@ -677,6 +677,7 @@ export interface BillingDashboardSummary {
   priorMonthAncillaryWaiting: number;
   currentDraftBatchTotal: number;
   finalizedBatchTotalsByMonth: Array<{ billingMonth: string; totalAmount: number }>;
+  batches: ReturnType<typeof normalizeBillingBatchRow>[];
 }
 
 export async function getBillingDashboardSummary(): Promise<BillingDashboardSummary> {
@@ -719,18 +720,18 @@ export async function getBillingDashboardSummary(): Promise<BillingDashboardSumm
     priorMonthTransportationWaiting,
     priorMonthAncillaryWaiting,
     currentDraftBatchTotal,
-    finalizedBatchTotalsByMonth
+    finalizedBatchTotalsByMonth,
+    batches
   };
 }
 
 export async function getBillingModuleIndex() {
   const supabase = await createClient();
-  const [payorResponse, memberSettingResponse, scheduleTemplateResponse, dashboard, batches] = await Promise.all([
+  const [payorResponse, memberSettingResponse, scheduleTemplateResponse, dashboard] = await Promise.all([
     supabase.from("member_contacts").select("id", { count: "exact", head: true }).eq("is_payor", true),
     supabase.from("member_billing_settings").select("id", { count: "exact", head: true }).eq("active", true),
     supabase.from("billing_schedule_templates").select("id", { count: "exact", head: true }).eq("active", true),
-    getBillingDashboardSummary(),
-    getBillingBatches()
+    getBillingDashboardSummary()
   ]);
 
   if (payorResponse.error) {
@@ -749,6 +750,6 @@ export async function getBillingModuleIndex() {
     memberBillingSettingCount,
     scheduleTemplateCount,
     dashboard,
-    latestBatch: batches[0] ?? null
+    latestBatch: dashboard.batches[0] ?? null
   };
 }

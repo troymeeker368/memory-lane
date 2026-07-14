@@ -31,7 +31,7 @@ Important caveat:
 2. Signed POF is still not equivalent to completed downstream clinical sync.
    Evidence:
    - [`/D:/Memory Lane App/supabase/migrations/0155_signed_pof_post_sign_sync_rpc_consolidation.sql`](/D:/Memory Lane App/supabase/migrations/0155_signed_pof_post_sign_sync_rpc_consolidation.sql) still stages follow-up through one replay-safe RPC that separately performs MHP/MCC sync and MAR reconciliation.
-   - [`/D:/Memory Lane App/tests/pof-post-sign-rpc-consolidation.test.ts`](/D:/Memory Lane App/tests/pof-post-sign-rpc-consolidation.test.ts) confirms runtime still routes committed follow-up through `rpc_run_signed_pof_post_sign_sync`.
+   - [`/D:/Memory Lane App/lib/services/physician-order-post-sign-service.ts`](/D:/Memory Lane App/lib/services/physician-order-post-sign-service.ts) still treats `queued` as a valid durable post-sign outcome when downstream sync is incomplete.
    - `pof_post_sign_sync_queue` still exists as a durable queue root in [`/D:/Memory Lane App/supabase/migrations/0037_shared_rpc_standardization_lead_pof.sql`](/D:/Memory Lane App/supabase/migrations/0037_shared_rpc_standardization_lead_pof.sql).
    Why it matters:
    - "POF signed without downstream MHP sync" remains a valid persisted state whenever queue execution is pending, stuck, or failed.
@@ -39,10 +39,9 @@ Important caveat:
 3. Enrollment packet `completed` still does not mean downstream member conversion and follow-up are finished.
    Evidence:
    - [`/D:/Memory Lane App/supabase/migrations/0180_enrollment_completion_follow_up_state.sql`](/D:/Memory Lane App/supabase/migrations/0180_enrollment_completion_follow_up_state.sql) finalizes packets with `status = 'completed'` while separately setting `mapping_sync_status = 'pending'` and `completion_follow_up_status = 'pending'`.
-   - [`/D:/Memory Lane App/tests/enrollment-packet-completion-truth.test.ts`](/D:/Memory Lane App/tests/enrollment-packet-completion-truth.test.ts) confirms listing/read-model logic treats `completion_follow_up_status` as the real readiness signal.
-   - The canonical conversion RPC still treats `mapping_sync_status = 'completed'` as the durable member-conversion success marker in [`/D:/Memory Lane App/supabase/migrations/0149_enrollment_packet_contact_replay_idempotency.sql`](/D:/Memory Lane App/supabase/migrations/0149_enrollment_packet_contact_replay_idempotency.sql).
+   - [`/D:/Memory Lane App/lib/services/enrollment-packet-readiness.ts`](/D:/Memory Lane App/lib/services/enrollment-packet-readiness.ts) still treats packet status alone as insufficient and requires follow-up completion for `operationally_ready`.
    Why it matters:
-   - "Enrollment packet completed without member creation" remains structurally possible as an intermediate persisted state until mapping/follow-up completes.
+   - "Enrollment packet completed without member creation" remains structurally possible as an intermediate persisted state until mapping and follow-up complete.
 
 ## 3. Duplicate Canonical Records
 
@@ -52,7 +51,7 @@ The main duplicate guards for the focused entities remain present:
 
 - `members.source_lead_id` remains unique via [`/D:/Memory Lane App/supabase/migrations/0049_workflow_hardening_constraints.sql`](/D:/Memory Lane App/supabase/migrations/0049_workflow_hardening_constraints.sql).
 - Active enrollment packets remain limited to one active root per member and per lead via [`/D:/Memory Lane App/supabase/migrations/0152_enrollment_packet_lifecycle_and_voiding.sql`](/D:/Memory Lane App/supabase/migrations/0152_enrollment_packet_lifecycle_and_voiding.sql).
-- `member_health_profiles.member_id` remains one-to-one with the canonical member root in [`/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql`](/D:/Memory Lane App/supabase/migrations/0006_intake_pof_mhp_supabase.sql).
+- `member_health_profiles.member_id` remains one-to-one with the canonical member root, evidenced by runtime conflict targeting on `member_health_profiles_member_id_key`.
 - Care-plan roots remain unique per `member_id + track` via [`/D:/Memory Lane App/supabase/migrations/0049_workflow_hardening_constraints.sql`](/D:/Memory Lane App/supabase/migrations/0049_workflow_hardening_constraints.sql).
 - POF medication source rows remain lineage-deduped per order/member in [`/D:/Memory Lane App/supabase/migrations/0127_clinical_lineage_enforcement.sql`](/D:/Memory Lane App/supabase/migrations/0127_clinical_lineage_enforcement.sql).
 
@@ -69,7 +68,7 @@ This static audit cannot prove whether historical duplicates already exist in th
 
 2. Signed POF rows can remain durable while downstream sync is still incomplete.
    Evidence:
-   - The queue-backed follow-up contract still exists in [`/D:/Memory Lane App/supabase/migrations/0037_shared_rpc_standardization_lead_pof.sql`](/D:/Memory Lane App/supabase/migrations/0037_shared_rpc_standardization_lead_pof.sql) and [`/D:/Memory Lane App/supabase/migrations/0174_pof_post_sign_queue_outcome_rpc.sql`](/D:/Memory Lane App/supabase/migrations/0174_pof_post_sign_queue_outcome_rpc.sql).
+   - The queue-backed follow-up contract still exists in [`/D:/Memory Lane App/supabase/migrations/0037_shared_rpc_standardization_lead_pof.sql`](/D:/Memory Lane App/supabase/migrations/0037_shared_rpc_standardization_lead_pof.sql) and [`/D:/Memory Lane App/lib/services/physician-order-post-sign-service.ts`](/D:/Memory Lane App/lib/services/physician-order-post-sign-service.ts).
    Impact:
    - Operational readiness still depends on queue completion, not signature alone.
 

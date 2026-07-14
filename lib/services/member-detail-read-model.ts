@@ -289,19 +289,11 @@ export async function getMemberDetail(
     isStaffViewer || !canViewCarePlans
       ? null
       : await (async () => {
-          const { getMemberCarePlanOverview, getMemberCarePlanSnapshot } = await import("@/lib/services/care-plans-read");
-          const [carePlanOverview, carePlanSnapshot] = await Promise.all([
-            getMemberCarePlanOverview(canonicalMemberId, { canonicalInput: true }),
-            getMemberCarePlanSnapshot(canonicalMemberId, {
-              canonicalInput: true,
-              rowLimit: MEMBER_DETAIL_CARE_PLAN_PREVIEW_LIMIT
-            })
-          ]);
-
-          return {
-            carePlanOverview,
-            carePlanSnapshot
-          };
+          const { getMemberCarePlanPreview } = await import("@/lib/services/care-plans-read");
+          return getMemberCarePlanPreview(canonicalMemberId, {
+            canonicalInput: true,
+            rowLimit: MEMBER_DETAIL_CARE_PLAN_PREVIEW_LIMIT
+          });
         })();
 
   return {
@@ -324,9 +316,9 @@ export async function getMemberDetail(
     ancillary,
     assessments,
     photos,
-    carePlans: carePlanReadModel?.carePlanSnapshot.rows ?? [],
-    carePlansCount: carePlanReadModel?.carePlanOverview.carePlanCount ?? 0,
-    latestCarePlan: carePlanReadModel?.carePlanSnapshot.latest ?? null,
+    carePlans: carePlanReadModel?.rows ?? [],
+    carePlansCount: carePlanReadModel?.carePlanCount ?? 0,
+    latestCarePlan: carePlanReadModel?.latest ?? null,
     marToday: [] as Array<{
       id: string;
       date: string;

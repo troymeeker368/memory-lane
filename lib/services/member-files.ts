@@ -799,22 +799,44 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
     }
   }
 
-  if (input.replaceExistingByDocumentSource) {
-    const { data: existing, error: existingError } = await admin
-      .from("member_files")
-      .select("id")
-      .eq("member_id", memberId)
-      .eq("document_source", input.documentSource)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+  async function cleanupSupersededGeneratedPdfObject(cleanupInput: {
+    existingMemberFileId: string;
+    previousStorageObjectPath: string | null;
+    nextStorageObjectPath: string;
+    verifiedPersisted: boolean;
+  }) {
+    if (!cleanupInput.verifiedPersisted) return;
+    if (!cleanupInput.previousStorageObjectPath || cleanupInput.previousStorageObjectPath === cleanupInput.nextStorageObjectPath) return;
 
-    if (existingError) {
-      throw new Error(existingError.message);
+    try {
+      await deleteMemberDocumentObject(cleanupInput.previousStorageObjectPath);
+    } catch (cleanupError) {
+      await recordImmediateSystemAlert({
+        entityType: "member_file",
+        entityId: cleanupInput.existingMemberFileId,
+        severity: "medium",
+        alertKey: "generated_member_file_replaced_storage_cleanup_failed",
+        metadata: {
+          member_id: memberId,
+          document_source: input.documentSource,
+          previous_storage_object_path: cleanupInput.previousStorageObjectPath,
+          next_storage_object_path: cleanupInput.nextStorageObjectPath,
+          cleanup_error: cleanupError instanceof Error ? cleanupError.message : "Unknown cleanup error."
+        }
+      });
     }
+  }
+
+  if (input.replaceExistingByDocumentSource) {
+    const existing = await loadMemberFileRowByDocumentSource({
+      memberId,
+      documentSource: input.documentSource,
+      supabase: admin
+    });
 
     if (existing) {
       const existingId = String(existing.id);
+      const previousStorageObjectPath = String(existing.storage_object_path ?? "").trim() || null;
       const storageObjectPath = await uploadGeneratedPdfObject(existingId, defaultName);
       let upserted;
       try {
@@ -874,12 +896,19 @@ export async function saveGeneratedMemberPdfToFiles(input: SaveGeneratedMemberPd
         alertKey: "generated_member_file_verification_pending",
         supabase: admin
       });
+      const verifiedPersisted = Boolean((updated as { verifiedPersisted?: boolean }).verifiedPersisted ?? true);
+      await cleanupSupersededGeneratedPdfObject({
+        existingMemberFileId: existingId,
+        previousStorageObjectPath,
+        nextStorageObjectPath: storageObjectPath,
+        verifiedPersisted
+      });
       return {
         created: updated,
         downloadUrl: await buildGeneratedPdfDownloadUrl(storageObjectPath),
         fileName: defaultName,
         generatedAtIso: now,
-        verifiedPersisted: Boolean((updated as { verifiedPersisted?: boolean }).verifiedPersisted ?? true)
+        verifiedPersisted
       };
     }
   }

@@ -376,7 +376,8 @@ async function savePofPdfToMemberFiles(input: {
       id: input.uploadedBy.id,
       name: input.uploadedBy.name
     },
-    generatedAtIso: toEasternISO()
+    generatedAtIso: toEasternISO(),
+    replaceExistingByDocumentSource: true
   });
 }
 

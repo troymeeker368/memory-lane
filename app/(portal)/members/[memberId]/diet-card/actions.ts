@@ -46,7 +46,8 @@ export async function generateMemberDietCardPdfAction(input: { memberId: string 
         id: profile.id,
         name: profile.full_name
       },
-      generatedAtIso: toEasternISO()
+      generatedAtIso: toEasternISO(),
+      replaceExistingByDocumentSource: true
     });
 
     revalidatePath(`/members/${memberId}/diet-card`);

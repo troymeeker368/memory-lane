@@ -177,6 +177,9 @@ export async function persistEnrollmentPacketCompletionFollowUpState(input: {
       checkedAt: toEasternISO(),
       error: input.error
     });
+    return {
+      ok: true as const
+    };
   } catch (followUpStateError) {
     const message =
       followUpStateError instanceof Error
@@ -196,6 +199,10 @@ export async function persistEnrollmentPacketCompletionFollowUpState(input: {
         error: message
       }
     });
+    return {
+      ok: false as const,
+      error: message
+    };
   }
 }
 

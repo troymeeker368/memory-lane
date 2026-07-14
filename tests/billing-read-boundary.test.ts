@@ -26,6 +26,9 @@ test("billing invoice list reads use one paged narrow-field boundary", () => {
   assert.equal(source.includes("export async function listAllDraftInvoiceIds()"), true);
   assert.equal(source.includes("export async function getBillingBatches(input?: {"), true);
   assert.equal(source.includes("export async function getBillingExports(input?: { limit?: number })"), true);
+  assert.equal(source.includes("batches: ReturnType<typeof normalizeBillingBatchRow>[];"), true);
+  assert.equal(source.includes("latestBatch: dashboard.batches[0] ?? null"), true);
+  assert.equal(source.includes("getBillingDashboardSummary(),\r\n    getBillingBatches()"), false);
   assert.equal(draftPageSource.includes("listAllDraftInvoiceIds()"), false);
   assert.equal(draftPageSource.includes('name="finalizeScope" value="all"'), true);
   assert.equal(actionsSource.includes('if (invoiceIds.length === 0 && asString(formData, "finalizeScope") === "all")'), true);

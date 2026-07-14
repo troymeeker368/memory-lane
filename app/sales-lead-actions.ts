@@ -15,7 +15,12 @@ import {
 } from "@/lib/canonical";
 import { normalizeRoleKey } from "@/lib/permissions";
 import { memberRoutes, salesRoutes } from "@/lib/routes";
-import { createSalesLeadActivity, salesLeadActivityInputSchema } from "@/lib/services/sales-lead-activities";
+import {
+  CommittedLeadActivityFollowUpError,
+  createSalesLeadActivity,
+  salesLeadActivityInputSchema
+} from "@/lib/services/sales-lead-activities";
+import { buildCommittedWorkflowActionState } from "@/lib/services/committed-workflow-state";
 import { createLeadWithMemberConversionSupabase } from "@/lib/services/sales-lead-conversion-supabase";
 import {
   createSalesLeadSupabase,
@@ -533,6 +538,22 @@ export async function createSalesLeadActivityAction(raw: z.infer<typeof salesLea
       source: "createSalesLeadActivityAction"
     });
   } catch (error) {
+    if (error instanceof CommittedLeadActivityFollowUpError) {
+      revalidatePath(salesRoutes.activities);
+      revalidatePath(salesRoutes.newEntriesLogLeadActivity);
+      revalidatePath(salesRoutes.leadDetail(error.leadId));
+      revalidatePath(salesRoutes.pipelineLeadsTable);
+      revalidatePath(salesRoutes.pipelineByStage);
+      return {
+        ok: true as const,
+        leadId: error.leadId,
+        ...buildCommittedWorkflowActionState({
+          operationalStatus: "follow_up_required",
+          readinessStage: "follow_up_required",
+          actionNeededMessage: error.message
+        })
+      };
+    }
     return { error: error instanceof Error ? error.message : "Unable to create lead activity." };
   }
 

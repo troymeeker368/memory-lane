@@ -215,6 +215,11 @@ export async function getPublicEnrollmentPacketContext(
   if (toStatus(request.status) === "voided") {
     return { state: "voided" };
   }
+  const tokenExpired = isExpired(request.token_expires_at);
+  if (tokenExpired && matched.tokenMatch !== "consumed") {
+    await recordEnrollmentPacketExpiredIfNeeded(request);
+    return { state: "expired" };
+  }
   if (toStatus(request.status) === "completed") {
     const completedRequest = (await loadRequestById(request.id)) ?? request;
     const completedResult = buildPublicEnrollmentPacketSubmitResult({
@@ -237,7 +242,7 @@ export async function getPublicEnrollmentPacketContext(
       actionNeededMessage: completedResult.actionNeededMessage
     };
   }
-  if (isExpired(request.token_expires_at)) {
+  if (tokenExpired) {
     await recordEnrollmentPacketExpiredIfNeeded(request);
     return { state: "expired" };
   }

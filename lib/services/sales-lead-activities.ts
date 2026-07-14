@@ -29,6 +29,18 @@ function clean(value: string | null | undefined) {
 
 const LEAD_ACTIVITY_IDEMPOTENCY_MIGRATION = "0222_lead_activity_idempotency_hardening.sql";
 
+export class CommittedLeadActivityFollowUpError extends Error {
+  leadId: string;
+  activityReplayKey: string;
+
+  constructor(input: { leadId: string; activityReplayKey: string; reason: string }) {
+    super(`Lead/member conversion committed, but lead activity persistence failed (${input.reason}).`);
+    this.name = "CommittedLeadActivityFollowUpError";
+    this.leadId = input.leadId;
+    this.activityReplayKey = input.activityReplayKey;
+  }
+}
+
 function isPostgresUniqueViolation(error: { code?: string | null; message?: string | null; details?: string | null } | null | undefined) {
   const text = [error?.message, error?.details].filter(Boolean).join(" ").toLowerCase();
   return error?.code === "23505" || text.includes("duplicate key value") || text.includes("unique constraint");
@@ -264,9 +276,11 @@ export async function createSalesLeadActivity(input: {
       }
     }
     if (isConversionOutcome) {
-      throw new Error(
-        `Lead/member conversion committed, but lead activity persistence failed (${insertError.message}).`
-      );
+      throw new CommittedLeadActivityFollowUpError({
+        leadId: lead.id,
+        activityReplayKey,
+        reason: insertError.message
+      });
     }
     throw new Error(insertError.message);
   }

@@ -9,6 +9,8 @@ test("assessment history uses post-sign readiness as the operational readiness s
   assert.equal(pageSource.includes("Workflow Readiness"), true);
   assert.equal(pageSource.includes("getIntakePostSignWorkflowReadinessLabel(row.post_sign_readiness_status)"), true);
   assert.equal(pageSource.includes('row.complete ? "Yes" : "No"'), false);
+  assert.equal(pageSource.includes('requireModuleAction("health", "canEdit")'), true);
+  assert.equal(pageSource.includes("requireRoles(CLINICAL_DOCUMENTATION_ACCESS_ROLES)"), true);
 });
 
 test("assessment form does not overstate downstream readiness on save", () => {
